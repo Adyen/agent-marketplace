@@ -1,0 +1,5 @@
+{
+  "command": "scripts/on-stop.sh",
+  "event": "post_cascade_response",
+  "type": "command"
+}

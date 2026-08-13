@@ -1,0 +1,5 @@
+{
+  "command": "scripts/on-prompt.sh",
+  "event": "pre_user_prompt",
+  "type": "command"
+}

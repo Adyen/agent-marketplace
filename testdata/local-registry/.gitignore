@@ -1,0 +1,3 @@
+# The skill dirs are symlinks to real skills — don't commit the symlinks.
+agent-marketplace
+agent-marketplace-development

@@ -1,0 +1,60 @@
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    labels: []
+    base_branches:
+      - main
+    ignore_title_keywords:
+      - WIP
+      - DO NOT REVIEW
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 10
+  tools:
+    golangci-lint:
+      enabled: true
+  path_filters:
+    - "!dist/**"
+    - "!.idea/**"
+    - "!.agents/skills/**"
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        This repository is a Go CLI. Review for deterministic behavior, explicit errors with context, safe filesystem operations, and idiomatic Go 1.26 code. Prefer simple standard-library solutions. Do not suggest comments unless the code is genuinely unclear or documenting an exported API.
+    - path: "cmd/agent-marketplace/**/*.go"
+      instructions: |
+        Review CLI behavior from the user's perspective. Validate Cobra argument/flag combinations, scope handling, stdout/stderr behavior, and error messages. Commands that mutate config or symlinks must remain idempotent and should not partially apply changes without returning a useful error.
+    - path: "internal/config/**/*.go"
+      instructions: |
+        This package owns layered config semantics. Preserve precedence order, source stamping, inherited list behavior where specific registry entries win over top-level defaults, local-path registry detection, and validation rules. Required registries must remain immune to excludes.
+    - path: "internal/resolver/**/*.go"
+      instructions: |
+        This package is policy-critical. Check selection, excludes, required/default handling, local overrides, collections, name-collision detection, and deterministic ordering. Be strict about regressions that could silently enable, disable, or overwrite skills.
+    - path: "internal/materialize/**/*.go"
+      instructions: |
+        This package mutates symlinks under repo and user skill directories and performs drift detection. Review for symlink safety, preservation of non-symlink files, orphan cleanup correctness, deterministic results, and clear error aggregation. Drift detection must be read-only and accurately distinguish missing links, wrong targets, dead links, orphaned links, and stale caches. Review relative symlink target resolution and repo-vs-global scope classification carefully.
+    - path: "internal/cache/**/*.go"
+      instructions: |
+        This package shells out to git and manages cached registry clones. Review command construction, stale-cache fallback behavior, ref checkout/reset safety, path handling, and error messages. Do not suggest logging registry contents or secrets.
+
+    - path: "internal/collection/**/*.go"
+      instructions: |
+        Collections expand into concrete skills. Review cycle handling, missing member reporting, deterministic ordering, and preservation of collection provenance so remove/exclude behavior remains correct.
+    - path: "internal/tui/**/*.go"
+      instructions: |
+        The TUI uses Bubble Tea. Review state transitions, key handling, terminal-safe rendering, async command effects, and consistency with non-interactive CLI behavior. Watch for changes that make tests flaky or depend on terminal dimensions without guards.
+    - path: "**/*_test.go"
+      instructions: |
+        Tests should isolate HOME, repository roots, git remotes, cache directories, and filesystem state with temporary directories. Prefer table-driven tests for policy matrices. Changes to hot paths such as sync, status, Resolve, DiscoverSkills, and collection expansion should keep or add benchmarks when performance is affected.
+    - path: "Makefile"
+      instructions: |
+        Keep CI-friendly targets deterministic. The quality gates are make ci-lint, make test, and make build. Do not recommend targets that require unavailable local tools unless gracefully optional.
+chat:
+  auto_reply: true

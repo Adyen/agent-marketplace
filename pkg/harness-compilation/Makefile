@@ -1,0 +1,16 @@
+.PHONY: build test lint vet clean
+
+build:
+	CGO_ENABLED=0 go build ./...
+
+test:
+	go test ./...
+
+lint:
+	go mod tidy
+	go fmt ./...
+	go vet ./...
+	@command -v golangci-lint > /dev/null 2>&1 && golangci-lint run || { echo \"golangci-lint not found, skipping...\"; exit 0; }
+
+vet:
+	go vet ./...

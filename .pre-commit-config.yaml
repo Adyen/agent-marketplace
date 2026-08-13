@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: test
+        name: make test
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: lint
+        name: make lint
+        entry: make lint
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: build
+        name: make build
+        entry: make build
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

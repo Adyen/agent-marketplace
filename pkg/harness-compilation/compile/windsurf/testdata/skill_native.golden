@@ -1,0 +1,9 @@
+---
+name: deploy
+description: Deploy the app
+triggers:
+  - mention
+---
+# Deploy
+
+Use the workflow.

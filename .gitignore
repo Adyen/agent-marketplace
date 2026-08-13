@@ -1,0 +1,30 @@
+/agent-marketplace
+/.agents/skills/
+/.agents/config.local.yaml
+/.claude
+/.codex
+/.devin
+/.factory
+/.gemini
+/.windsurf/
+
+# Dev artifacts
+.DS_Store
+/dist/
+/.tmp/
+/.windsurf/
+/.devin/skills/
+/.devin/hooks.v1.json
+/.devin/config.local.json
+/.devin/mcp_config.local.json
+/.gemini/
+/.factory/commands/
+.beads
+.envrc.local
+
+# E2E report artifact
+e2e/e2e-report.json
+.envrc.local
+
+# IDEA
+/.idea/

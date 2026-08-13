@@ -1,0 +1,16 @@
+{
+  "kind": "subagent",
+  "name": "demo-agent",
+  "description": "Demo agent for golden testing",
+  "body": "You are a demo agent. Execute tasks with high reasoning effort.\n",
+  "model": "sonnet",
+  "tools": [
+    "Read",
+    "Write"
+  ],
+  "effort": "high",
+  "disallowedTools": [
+    "Bash"
+  ],
+  "isolation": "worktree"
+}

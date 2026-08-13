@@ -1,0 +1,13 @@
+{
+  "PreToolUse": [
+    {
+      "hooks": [
+        {
+          "command": "${DROID_PLUGIN_ROOT}/scripts/check.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
+    }
+  ]
+}

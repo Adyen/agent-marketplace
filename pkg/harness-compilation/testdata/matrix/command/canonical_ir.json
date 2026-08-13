@@ -1,0 +1,5 @@
+{
+  "kind": "command",
+  "name": "demo-cmd",
+  "body": "Run the demo command.\n"
+}

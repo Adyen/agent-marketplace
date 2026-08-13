@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "command": "/plugins/demo/scripts/check.sh",
+        "event": "PreToolUse",
+        "matcher": "Read",
+        "type": "command"
+      }
+    ]
+  }
+}

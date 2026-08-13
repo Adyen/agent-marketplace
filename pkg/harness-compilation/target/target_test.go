@@ -1,0 +1,100 @@
+package target
+
+import (
+	"slices"
+	"testing"
+)
+
+func TestDefinitionsHaveUniqueCompleteIdentity(t *testing.T) {
+	definitions := Definitions()
+	if len(definitions) == 0 {
+		t.Fatal("target registry must not be empty")
+	}
+
+	seen := make(map[Target]bool, len(definitions))
+	for _, definition := range definitions {
+		if definition.Target == "" {
+			t.Fatal("target definition has empty identity")
+		}
+		if seen[definition.Target] {
+			t.Fatalf("target %q is declared more than once", definition.Target)
+		}
+		seen[definition.Target] = true
+		if definition.Label == "" || definition.RepoRoot == "" || definition.UserRoot == "" {
+			t.Fatalf("target %q has incomplete user-facing or root metadata: %#v", definition.Target, definition)
+		}
+		if definition.Conversion && (!definition.Compiler || !definition.Ingester) {
+			t.Fatalf("target %q exposes conversion without compiler and ingester capabilities", definition.Target)
+		}
+	}
+}
+
+func TestLookupRejectsUnknownAndNonCanonicalNames(t *testing.T) {
+	if definition, ok := Lookup("devin"); !ok || definition.RepoRoot != ".devin" || definition.UserRoot != ".config/devin" {
+		t.Fatalf("Lookup(\"devin\") = %#v, %v, want canonical Devin roots", definition, ok)
+	}
+	for _, name := range []string{"", " factory ", "Factory"} {
+		if _, ok := Lookup(name); ok {
+			t.Errorf("Lookup(%q) unexpectedly found a target", name)
+		}
+		if IsValid(name) {
+			t.Errorf("IsValid(%q) unexpectedly accepted a target", name)
+		}
+	}
+}
+
+func TestCapabilityListsMatchDefinitions(t *testing.T) {
+	var wantTargets, wantCompiler, wantIngester, wantConversion []Target
+	seenOrder := make(map[int]Target)
+	for _, definition := range Definitions() {
+		wantTargets = append(wantTargets, definition.Target)
+		if definition.Compiler {
+			wantCompiler = append(wantCompiler, definition.Target)
+		}
+		if definition.Ingester {
+			wantIngester = append(wantIngester, definition.Target)
+		}
+		if definition.Conversion {
+			wantConversion = append(wantConversion, definition.Target)
+		}
+		if definition.UI {
+			if other, exists := seenOrder[definition.UIOrder]; exists {
+				t.Errorf("UIOrder %d is shared by %q and %q", definition.UIOrder, other, definition.Target)
+			}
+			seenOrder[definition.UIOrder] = definition.Target
+		}
+		if got := IsCompilerTarget(string(definition.Target)); got != definition.Compiler {
+			t.Errorf("IsCompilerTarget(%q) = %t, want %t", definition.Target, got, definition.Compiler)
+		}
+		if got := IsIngesterTarget(string(definition.Target)); got != definition.Ingester {
+			t.Errorf("IsIngesterTarget(%q) = %t, want %t", definition.Target, got, definition.Ingester)
+		}
+		if got := IsConversionTarget(string(definition.Target)); got != definition.Conversion {
+			t.Errorf("IsConversionTarget(%q) = %t, want %t", definition.Target, got, definition.Conversion)
+		}
+	}
+	if !slices.Equal(Targets(), wantTargets) {
+		t.Errorf("Targets() = %v, want %v", Targets(), wantTargets)
+	}
+	if !slices.Equal(CompilerTargets(), wantCompiler) {
+		t.Errorf("CompilerTargets() = %v, want %v", CompilerTargets(), wantCompiler)
+	}
+	if !slices.Equal(IngesterTargets(), wantIngester) {
+		t.Errorf("IngesterTargets() = %v, want %v", IngesterTargets(), wantIngester)
+	}
+	if !slices.Equal(ConversionTargets(), wantConversion) {
+		t.Errorf("ConversionTargets() = %v, want %v", ConversionTargets(), wantConversion)
+	}
+	if !slices.Equal(Names(), namesFor(wantTargets)) {
+		t.Errorf("Names() = %v, want %v", Names(), namesFor(wantTargets))
+	}
+	if !slices.Equal(CompilerNames(), namesFor(wantCompiler)) {
+		t.Errorf("CompilerNames() = %v, want %v", CompilerNames(), namesFor(wantCompiler))
+	}
+	if !slices.Equal(IngesterNames(), namesFor(wantIngester)) {
+		t.Errorf("IngesterNames() = %v, want %v", IngesterNames(), namesFor(wantIngester))
+	}
+	if !slices.Equal(ConversionNames(), namesFor(wantConversion)) {
+		t.Errorf("ConversionNames() = %v, want %v", ConversionNames(), namesFor(wantConversion))
+	}
+}

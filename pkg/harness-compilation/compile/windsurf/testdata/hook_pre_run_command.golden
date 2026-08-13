@@ -1,0 +1,6 @@
+{
+  "command": "scripts/check-bash.sh",
+  "event": "pre_run_command",
+  "matcher": "Bash",
+  "type": "command"
+}

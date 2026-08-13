@@ -1,0 +1,4 @@
+name = 'demo-cmd'
+description = 'Demo command for golden testing'
+prompt = """Run the demo command.
+"""

@@ -1,0 +1,10 @@
+{
+  "kind": "skill",
+  "name": "demo-skill",
+  "description": "Demo skill for golden testing",
+  "body": "You are a demo skill. Help the user with demo tasks.\n",
+  "triggers": [
+    "click",
+    "mention"
+  ]
+}

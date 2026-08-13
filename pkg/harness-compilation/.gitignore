@@ -1,0 +1,5 @@
+# Compiled binaries
+/hcc
+
+# Dev artifacts
+.DS_Store

@@ -1,0 +1,131 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/testutil"
+)
+
+var testMainHome string
+
+func TestMain(m *testing.M) {
+	// Use a visible stderr logger for TestMain diagnostics. Command tests
+	// re-configure the default logger, so it is reset before cleanup.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
+	// The runtime allowlist is now derived from effective configuration
+	// layers. Tests that exercise allowlist behavior declare allowed_registries
+	// in their fixture configs; all other tests use temp-directory git repos
+	// and example.com URLs with no allowlist configured (permitting all).
+
+	home, cleanup, err := testutil.IsolatedHome()
+	if err != nil {
+		slog.Error("failed to create isolated test home", "err", err)
+		os.Exit(1)
+	}
+	testMainHome = home
+
+	// Neutralize managed org config so the developer's real
+	// /etc/agent-marketplace/config.yaml does not leak into test execution.
+	// Use a private temp directory so the path cannot collide with another run.
+	// Individual tests that need an org config set the test override explicitly
+	// with config.SetTestV3OrganizationConfigPath.
+	orgDir, err := os.MkdirTemp("", "agent-marketplace-test-org-config-*")
+	if err != nil {
+		slog.Error("failed to create isolated org config directory", "err", err)
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			slog.Error("failed to remove isolated test home", "err", cleanupErr)
+		}
+		os.Exit(1)
+	}
+	orgConfigPath := filepath.Join(orgDir, "nonexistent-v3-org-config-for-tests.yaml")
+
+	fail := func(msg string, err error) {
+		slog.Error(msg, "err", err)
+		_ = os.RemoveAll(orgDir)
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			slog.Error("failed to remove isolated test home", "err", cleanupErr)
+		}
+		os.Exit(1)
+	}
+
+	config.SetTestV3OrganizationConfigPath(nil, orgConfigPath)
+
+	if err := os.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "false"); err != nil {
+		fail("failed to disable logging in cmd tests", err)
+	}
+
+	code := m.Run()
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	_ = os.RemoveAll(orgDir)
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		slog.Error("failed to remove isolated test home", "err", cleanupErr)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+func TestMainIsolatesHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home != testMainHome {
+		t.Fatalf("UserHomeDir() = %q, want isolated test home %q", home, testMainHome)
+	}
+}
+
+func TestStartupTargetRegistrationsAreValid(t *testing.T) {
+	if err := validateStartupTargetRegistrations(); err != nil {
+		t.Fatalf("startup target registration validation failed: %v", err)
+	}
+}
+
+func TestVersionFlagPrintsVersion(t *testing.T) {
+	output, err := executeCommand("--version")
+	if err != nil {
+		t.Fatalf("expected version flag to succeed: %v", err)
+	}
+
+	if output != defaultVersion+"\n" {
+		t.Fatalf("expected version output %q, got %q", defaultVersion+"\n", output)
+	}
+}
+
+func TestHelpListsPlaceholderSubcommands(t *testing.T) {
+	output, err := executeCommand("--help")
+	if err != nil {
+		t.Fatalf("expected help flag to succeed: %v", err)
+	}
+
+	for _, subcommand := range []string{"sync", "list", "install", "remove", "update", "status"} {
+		if !strings.Contains(output, subcommand) {
+			t.Fatalf("expected help output to contain %q, got %q", subcommand, output)
+		}
+	}
+}
+
+func executeCommand(args ...string) (string, error) {
+	return executeCommandContext(context.Background(), args...)
+}
+
+func executeCommandContext(ctx context.Context, args ...string) (string, error) {
+	cmd := newRootCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs(args)
+	cmd.SetContext(ctx)
+
+	err := cmd.Execute()
+	return output.String(), err
+}

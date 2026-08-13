@@ -1,0 +1,9 @@
+{
+  "PreToolUse": [
+    {
+      "command": "/plugins/demo/scripts/check.sh",
+      "matcher": "Read",
+      "type": "command"
+    }
+  ]
+}

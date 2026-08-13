@@ -1,0 +1,4 @@
+---
+description: Format the project
+---
+make fmt
