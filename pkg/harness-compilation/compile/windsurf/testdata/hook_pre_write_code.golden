@@ -1,0 +1,6 @@
+{
+  "command": "scripts/check-write.sh",
+  "event": "pre_write_code",
+  "matcher": "Write",
+  "type": "command"
+}

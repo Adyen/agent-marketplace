@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
+        "type": "command"
+      }
+    ]
+  }
+}

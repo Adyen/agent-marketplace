@@ -1,0 +1,221 @@
+cells:
+    - from: claude
+      to: claude
+      class: identity
+      allowedLosses:
+        - description
+        - triggers
+    - from: claude
+      to: cursor
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+    - from: claude
+      to: devin
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+    - from: claude
+      to: factory
+      class: marquee
+      allowedLosses:
+        - description
+        - triggers
+    - from: claude
+      to: gemini
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+    - from: claude
+      to: windsurf
+      class: marquee
+      allowedLosses:
+        - description
+        - triggers
+    - from: cursor
+      to: claude
+      class: cross
+    - from: cursor
+      to: cursor
+      class: identity
+    - from: cursor
+      to: devin
+      class: cross
+      diagnostics:
+        - skill.devin.trigger-unmappable
+        - skill.devin.trigger-unmappable
+      allowedLosses:
+        - triggers
+    - from: cursor
+      to: factory
+      class: cross
+    - from: cursor
+      to: gemini
+      class: cross
+    - from: cursor
+      to: windsurf
+      class: cross
+    - from: devin
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: devin
+      class: identity
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: factory
+      to: claude
+      class: cross
+    - from: factory
+      to: cursor
+      class: cross
+    - from: factory
+      to: devin
+      class: cross
+      diagnostics:
+        - skill.devin.trigger-unmappable
+        - skill.devin.trigger-unmappable
+      allowedLosses:
+        - triggers
+    - from: factory
+      to: factory
+      class: identity
+    - from: factory
+      to: gemini
+      class: cross
+    - from: factory
+      to: windsurf
+      class: cross
+    - from: gemini
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: gemini
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: gemini
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: gemini
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: gemini
+      to: gemini
+      class: identity
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: gemini
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: gemini
+      class: marquee
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: windsurf
+      class: identity
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers

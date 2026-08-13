@@ -1,0 +1,23 @@
+{
+  "agents": [
+    {
+      "description": "Demo agent for golden testing",
+      "model": "sonnet",
+      "name": "demo-agent",
+      "tools": [
+        "Read",
+        "Grep"
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "description": "Demo skill for golden testing",
+      "name": "demo-skill",
+      "triggers": [
+        "click",
+        "mention"
+      ]
+    }
+  ]
+}

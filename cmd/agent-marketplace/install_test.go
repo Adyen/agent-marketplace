@@ -1,0 +1,1100 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
+)
+
+func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack", "puppet"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "vm-lifecycle")
+	if err != nil {
+		t.Fatalf("expected install command to succeed: %v\n%s", err, output)
+	}
+
+	if output != "Installed vm-lifecycle in this repo\n" {
+		t.Fatalf("expected install output, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install: %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("expected repo config registry to include installed skill, got %#v", cfg.Registries[0].Skills)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
+}
+
+func TestInstallCommandAddsSkillToExistingRegistrySpecificList(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack", "puppet"})
+	writeSkill(t, working, "k8s-onboarding", "Kubernetes onboarding", []string{"k8s"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - vm-lifecycle
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "k8s-onboarding")
+	if err != nil {
+		t.Fatalf("expected install command to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install: %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle", "k8s-onboarding"}) {
+		t.Fatalf("expected registry-specific skills to include installed skill, got %#v", cfg.Registries[0].Skills)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-onboarding"))
+}
+
+func TestInstallCommandAddsTagToRepoConfigAndSyncsMatchingSkills(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "k8s-app-onboarding", "Kubernetes app onboarding", []string{"k8s", "helm"})
+	writeSkill(t, working, "k8s-conventions", "Kubernetes conventions", []string{"k8s"})
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--tag", "k8s")
+	if err != nil {
+		t.Fatalf("expected tag install command to succeed: %v\n%s", err, output)
+	}
+
+	if output != "Installed k8s-app-onboarding, k8s-conventions in this repo\n" {
+		t.Fatalf("expected tag install output, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after tag install: %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.Tags, []string{"k8s"}) {
+		t.Fatalf("expected repo config to include installed tag, got %#v", cfg.Tags)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-app-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-app-onboarding"))
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-conventions"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-conventions"))
+}
+
+func TestInstallCommandAddsAllDiscoveredSkillsToRepoConfigAndSyncsThem(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "k8s-app-onboarding", "Kubernetes app onboarding", []string{"k8s"})
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err != nil {
+		t.Fatalf("expected install --all command to succeed: %v\n%s", err, output)
+	}
+
+	if output != "Installed k8s-app-onboarding, vm-lifecycle in this repo\n" {
+		t.Fatalf("expected install --all output, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --all: %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"k8s-app-onboarding", "vm-lifecycle"}) {
+		t.Fatalf("expected repo config registry to include all discovered skills, got %#v", cfg.Registries[0].Skills)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-app-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-app-onboarding"))
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
+}
+
+func TestInstallCommandAddsAllDiscoveredSkillsForSingleRegistryWhenRegistryFlagIsSet(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	infraOrigin, infraWorking := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, infraWorking, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	writeSkill(t, infraWorking, "network-change-workflow", "Network change workflow", []string{"network"})
+	commitAndPushAll(t, infraWorking, "Add infra skills")
+
+	securityOrigin, securityWorking := createBareRepoWithWorkingClone(t, "example-security-skills.git")
+	writeSkill(t, securityWorking, "secret-scanning", "Secret scanning", []string{"security"})
+	commitAndPushAll(t, securityWorking, "Add security skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+infraOrigin+`
+    ref: main
+  - url: `+securityOrigin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all", "--registry", securityOrigin)
+	if err != nil {
+		t.Fatalf("expected install --all --registry command to succeed: %v\n%s", err, output)
+	}
+
+	if output != "Installed secret-scanning in this repo\n" {
+		t.Fatalf("expected install --all --registry output, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after registry-scoped install --all: %v", err)
+	}
+
+	if got := cfg.Registries[0].Skills; !got.IsZero() {
+		t.Fatalf("expected non-targeted registry skills to remain unset, got %#v", got)
+	}
+
+	if got := cfg.Registries[1].Skills.Include; !reflect.DeepEqual(got, []string{"secret-scanning"}) {
+		t.Fatalf("expected targeted registry skills to include all discovered skills, got %#v", got)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "secret-scanning"), filepath.Join(cache.RegistryCachePath(securityOrigin, "main"), "secret-scanning"))
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle")); !os.IsNotExist(err) {
+		t.Fatalf("expected non-targeted registry skill to remain unsynced, got err=%v", err)
+	}
+}
+
+func TestInstallCommandFailsWhenInstallAllFindsCrossRegistryNameCollision(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	infraOrigin, infraWorking := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, infraWorking, "shared-skill", "Shared skill", []string{"infra"})
+	commitAndPushAll(t, infraWorking, "Add infra skills")
+
+	securityOrigin, securityWorking := createBareRepoWithWorkingClone(t, "example-security-skills.git")
+	writeSkill(t, securityWorking, "shared-skill", "Shared skill", []string{"security"})
+	commitAndPushAll(t, securityWorking, "Add security skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+infraOrigin+`
+    ref: main
+  - url: `+securityOrigin+`
+    ref: main
+`)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected initial config to be readable: %v", err)
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err == nil {
+		t.Fatalf("expected install --all command to fail, got success with output %q", output)
+	}
+
+	if !strings.Contains(err.Error(), `skill "shared-skill" is provided by multiple registries`) {
+		t.Fatalf("expected collision error, got %v", err)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to remain readable: %v", err)
+	}
+
+	if string(after) != string(before) {
+		t.Fatalf("expected config to remain unchanged on collision\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestInstallCommandFailsWhenSkillDoesNotExist(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected initial config to be readable: %v", err)
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "missing-skill")
+	if err == nil {
+		t.Fatalf("expected install command to fail, got success with output %q", output)
+	}
+
+	if !strings.Contains(err.Error(), "\"missing-skill\" not found in configured registries") {
+		t.Fatalf("expected missing skill error, got %v", err)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to remain readable: %v", err)
+	}
+
+	if string(after) != string(before) {
+		t.Fatalf("expected config to remain unchanged on failure\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestInstallCommandFailsWhenSkillIsMalformed(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "awesome-ai.git")
+	writeFile(t, filepath.Join(working, "skills", "broken-skill", "SKILL.md"), `---
+name: broken-skill
+description: [unterminated
+metadata:
+  tags:
+    - broken
+---
+
+# Broken
+`)
+	commitAndPushAll(t, working, "Add malformed skill")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected initial config to be readable: %v", err)
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "broken-skill")
+	if err == nil {
+		t.Fatalf("expected install command to fail for malformed skill, got success with output %q", output)
+	}
+
+	for _, needle := range []string{
+		"skill \"broken-skill\" cannot be installed",
+		"failed to parse",
+		"skills/broken-skill/SKILL.md",
+		"did not find expected ',' or ']'",
+	} {
+		if !strings.Contains(output, needle) {
+			t.Fatalf("expected install output to contain %q, got:\n%s", needle, output)
+		}
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to remain readable: %v", err)
+	}
+
+	if string(after) != string(before) {
+		t.Fatalf("expected config to remain unchanged on failure\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestInstallCommandFailsWhenTagDoesNotExist(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected initial config to be readable: %v", err)
+	}
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--tag", "missing-tag")
+	if err == nil {
+		t.Fatalf("expected tag install command to fail, got success with output %q", output)
+	}
+
+	if !strings.Contains(err.Error(), "tag \"missing-tag\" not found in configured registries") {
+		t.Fatalf("expected missing tag error, got %v", err)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config to remain readable: %v", err)
+	}
+
+	if string(after) != string(before) {
+		t.Fatalf("expected config to remain unchanged on failure\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestInstallSubagentWithWindsurfTargetReturnsSuccess(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-agents.git")
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	commitAndPushAll(t, working, "Add subagent")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v2
+harnesses:
+  - windsurf
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--kind", "subagent", "worker-generic")
+	if err != nil {
+		t.Fatalf("expected subagent install to succeed for windsurf target: %v\n%s", err, output)
+	}
+
+	if output != "Installed worker-generic in this repo\n" {
+		t.Fatalf("expected install output, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after subagent install: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Registries[0].Subagents.Include, []string{"worker-generic"}) {
+		t.Fatalf("expected repo config registry to include installed subagent, got %#v", cfg.Registries[0].Subagents)
+	}
+}
+
+func TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	writeSkill(t, working, "k8s-onboarding", "Kubernetes onboarding", []string{"k8s"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	// Start with a minimal config so FindRepoRoot can locate the repo.
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "vm-lifecycle", "--from", origin, "--ref", "main")
+	if err != nil {
+		t.Fatalf("expected install --from to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed vm-lifecycle") {
+		t.Fatalf("expected install output for vm-lifecycle, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --from: %v", err)
+	}
+
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry entry, got %d", len(cfg.Registries))
+	}
+	if cfg.Registries[0].URL != origin {
+		t.Fatalf("expected registry URL %q, got %q", origin, cfg.Registries[0].URL)
+	}
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("expected registry to include vm-lifecycle, got %#v", cfg.Registries[0].Skills)
+	}
+
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
+}
+
+func TestInstallFromFlagWithoutNameInstallsAllResources(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	writeSkill(t, working, "k8s-onboarding", "Kubernetes onboarding", []string{"k8s"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", origin, "--ref", "main")
+	if err != nil {
+		t.Fatalf("expected install --from (bundle mode) to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed k8s-onboarding, vm-lifecycle") {
+		t.Fatalf("expected install output for both skills, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --from: %v", err)
+	}
+
+	if !cfg.Registries[0].Default {
+		t.Fatalf("expected registry entry to have default=true (bundle mode), got false")
+	}
+}
+
+func TestInstallFromFlagWithKindFilter(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-agents-resources.git")
+	writeSkill(t, working, "deploy-helper", "Deploy helper", []string{"deploy"})
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	commitAndPushAll(t, working, "Add mixed resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--kind", "subagent")
+	if err != nil {
+		t.Fatalf("expected install --from --kind subagent to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed worker-generic") {
+		t.Fatalf("expected only subagent installed, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+
+	// Bundle mode with --kind uses default:true; --kind only filters reported names.
+	if !cfg.Registries[0].Default {
+		t.Fatalf("expected registry entry to have default=true (bundle mode with --kind), got false")
+	}
+}
+
+func TestInstallFromFlagWithWebURLInfersResourceName(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	// Each skill lives in its own subdirectory that acts as a bundle root
+	// (contains skills/ dir), so --path can target a specific skill.
+	writeSkill(t, filepath.Join(working, "vm-lifecycle"), "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	writeSkill(t, filepath.Join(working, "k8s-onboarding"), "k8s-onboarding", "Kubernetes onboarding", []string{"k8s"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	// Install without a name arg — the skill name should be inferred from the URL path.
+	// We simulate a web URL by using --from with --path pointing to a specific bundle dir.
+	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--path", "vm-lifecycle")
+	if err != nil {
+		t.Fatalf("expected install --from --path (name inference) to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed vm-lifecycle") {
+		t.Fatalf("expected vm-lifecycle installed via name inference, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry entry, got %d", len(cfg.Registries))
+	}
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("expected only vm-lifecycle included (not bundle mode), got %#v", cfg.Registries[0].Skills)
+	}
+}
+
+func TestInstallFromFlagIncompatibleWithTagAndAll(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "--from", "some-url", "--tag", "k8s")
+	if err == nil {
+		t.Fatal("expected --from + --tag to fail")
+	}
+	if !strings.Contains(err.Error(), "cannot specify both --from and --tag") {
+		t.Fatalf("expected incompatible flags error, got %v", err)
+	}
+
+	_, err = executeCommand("install", "--from", "some-url", "--all")
+	if err == nil {
+		t.Fatal("expected --from + --all to fail")
+	}
+	if !strings.Contains(err.Error(), "cannot specify both --from and --all") {
+		t.Fatalf("expected incompatible flags error, got %v", err)
+	}
+}
+
+func TestInstallFromFlagRefAndPathRequireFrom(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "some-skill", "--ref", "main")
+	if err == nil {
+		t.Fatal("expected --ref without --from to fail")
+	}
+	if !strings.Contains(err.Error(), "--ref requires --from") {
+		t.Fatalf("expected --ref requires --from error, got %v", err)
+	}
+
+	_, err = executeCommand("install", "some-skill", "--path", "sub/dir")
+	if err == nil {
+		t.Fatal("expected --path without --from to fail")
+	}
+	if !strings.Contains(err.Error(), "--path requires --from") {
+		t.Fatalf("expected --path requires --from error, got %v", err)
+	}
+}
+
+func TestInstallFromFlagBlockedURLReturnsError(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+allowed_registries:
+  - ^gitlab\.example\.com/
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "some-skill", "--from", "https://github.com/evil/repo.git")
+	if err == nil {
+		t.Fatal("expected blocked URL to fail")
+	}
+	if !strings.Contains(err.Error(), "blocked by allowed_registries") {
+		t.Fatalf("expected blocked URL error, got %v", err)
+	}
+}
+
+func TestInstallFromFlagAcceptsScopeLocal(t *testing.T) {
+	// --from --scope local is now allowed (LREG-005): the local config
+	// layer is visible during discovery. The command should proceed
+	// past scope validation and fail only for an invalid/bogus URL.
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+allowed_registries:
+  - ^gitlab\.example\.com/
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "--from", "some-url", "--scope", "local")
+	if err == nil {
+		t.Fatal("expected --from with bogus URL to fail")
+	}
+	// The rejection guard for --from --scope local has been removed.
+	// The failure should come from allowlist validation, not from
+	// a "--from cannot be combined with --scope local" error.
+	if strings.Contains(err.Error(), "--from cannot be combined with --scope local") {
+		t.Fatalf("should no longer reject --from --scope local, got %v", err)
+	}
+}
+
+func TestInstallAllDiscoversAllResourceKinds(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "mixed-resources.git")
+	// Use bare-plugin layout: skills/ dir alongside commands/ and agents/.
+	writeSkill(t, working, "deploy-helper", "Deploy helper", []string{"deploy"})
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	writeCommand(t, working, "build-project", "Build the project", "make build")
+	commitAndPushAll(t, working, "Add mixed resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err != nil {
+		t.Fatalf("expected install --all with mixed kinds to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --all: %v", err)
+	}
+
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
+	}
+	entry := cfg.Registries[0]
+
+	// Verify skills were installed.
+	if !reflect.DeepEqual(entry.Skills.Include, []string{"deploy-helper"}) {
+		t.Fatalf("expected skills [deploy-helper], got %#v", entry.Skills.Include)
+	}
+	// Verify subagents were installed.
+	if !reflect.DeepEqual(entry.Subagents.Include, []string{"worker-generic"}) {
+		t.Fatalf("expected subagents [worker-generic], got %#v", entry.Subagents.Include)
+	}
+	// Verify commands were installed.
+	if !reflect.DeepEqual(entry.Commands.Include, []string{"build-project"}) {
+		t.Fatalf("expected commands [build-project], got %#v", entry.Commands.Include)
+	}
+}
+
+func TestInstallAllPreservesExistingRepoConfigFields(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "preserve-config.git")
+	writeSkill(t, working, "new-skill", "New skill", []string{"test"})
+	writeCommand(t, working, "new-cmd", "New command", "echo new")
+	commitAndPushAll(t, working, "Add resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v2
+tags:
+  - existing-tag
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - already-installed-skill
+    commands:
+      include:
+        - already-installed-cmd
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err != nil {
+		t.Fatalf("expected install --all to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --all: %v", err)
+	}
+
+	// Tags must be preserved.
+	if !reflect.DeepEqual(cfg.Tags, []string{"existing-tag"}) {
+		t.Fatalf("expected tags [existing-tag], got %v", cfg.Tags)
+	}
+
+	// Existing skills must be preserved alongside new ones.
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
+	}
+	entry := cfg.Registries[0]
+
+	expectedSkills := []string{"already-installed-skill", "new-skill"}
+	if !reflect.DeepEqual(entry.Skills.Include, expectedSkills) {
+		t.Fatalf("expected skills %v, got %v", expectedSkills, entry.Skills.Include)
+	}
+
+	expectedCommands := []string{"already-installed-cmd", "new-cmd"}
+	if !reflect.DeepEqual(entry.Commands.Include, expectedCommands) {
+		t.Fatalf("expected commands %v, got %v", expectedCommands, entry.Commands.Include)
+	}
+
+	// Verify the raw YAML file still contains the apiVersion and tags.
+	raw, err := os.ReadFile(filepath.Join(repoRoot, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read repo config: %v", err)
+	}
+	if !strings.Contains(string(raw), "apiVersion:") {
+		t.Fatal("repo config YAML missing apiVersion after install --all")
+	}
+	if !strings.Contains(string(raw), "existing-tag") {
+		t.Fatal("repo config YAML missing existing-tag after install --all")
+	}
+}
+
+func TestInstallAllWithKindFlagFiltersToSingleKind(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "mixed-resources.git")
+	writeSkill(t, filepath.Join(working, "skills"), "deploy-helper", "Deploy helper", []string{"deploy"})
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	commitAndPushAll(t, working, "Add mixed resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all", "--kind", "subagent")
+	if err != nil {
+		t.Fatalf("expected install --all --kind subagent to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+
+	entry := cfg.Registries[0]
+	// Only subagents should be installed, not skills.
+	if !reflect.DeepEqual(entry.Subagents.Include, []string{"worker-generic"}) {
+		t.Fatalf("expected subagents [worker-generic], got %#v", entry.Subagents.Include)
+	}
+	if len(entry.Skills.Include) > 0 {
+		t.Fatalf("expected no skills installed with --kind subagent, got %#v", entry.Skills.Include)
+	}
+}
+
+func TestInstallFromBundleModeDiscoversAllResourceKinds(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "mixed-resources.git")
+	writeSkill(t, filepath.Join(working, "skills"), "deploy-helper", "Deploy helper", []string{"deploy"})
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	writeCommand(t, working, "build-project", "Build the project", "make build")
+	commitAndPushAll(t, working, "Add mixed resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", origin, "--ref", "main")
+	if err != nil {
+		t.Fatalf("expected install --from (bundle mode, multi-kind) to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --from: %v", err)
+	}
+
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
+	}
+	entry := cfg.Registries[0]
+
+	// Bundle mode without --kind sets default:true instead of listing
+	// individual includes for each kind.
+	if !entry.Default {
+		t.Fatalf("expected registry entry to have default=true (bundle mode), got false")
+	}
+}
+
+func TestInstallFromBundleModeWithKindFilter(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "mixed-resources.git")
+	writeSkill(t, filepath.Join(working, "skills"), "deploy-helper", "Deploy helper", []string{"deploy"})
+	writeSubagent(t, working, "worker-generic", "Worker", []string{"Read"})
+	commitAndPushAll(t, working, "Add mixed resources")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--kind", "subagent")
+	if err != nil {
+		t.Fatalf("expected install --from --kind subagent to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+
+	entry := cfg.Registries[0]
+	// Bundle mode with --kind still uses default:true (all resources
+	// auto-selected); the --kind flag only filters the reported names.
+	if !entry.Default {
+		t.Fatalf("expected registry entry to have default=true (bundle mode with --kind), got false")
+	}
+}
+
+func TestInstallAllWithNonexistentRegistryStillErrors(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "some-registry.git")
+	writeSkill(t, working, "some-skill", "Some skill", []string{"test"})
+	commitAndPushAll(t, working, "Add skill")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "--all", "--registry", "nonexistent-registry")
+	if err == nil {
+		t.Fatal("expected install --all --registry <nonexistent> to fail")
+	}
+	if !strings.Contains(err.Error(), "not found in repo config") {
+		t.Fatalf("expected registry-not-found error, got %v", err)
+	}
+}
+
+func TestInstallFromMetaDirectoryInstallsAllSubBundleResources(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-multi-plugin.git")
+
+	// Create a meta-directory with two sub-bundle directories.
+	// Each sub-directory is a bundle root (has skills/ dir), but the
+	// parent "plugins" directory is NOT a bundle root.
+	writeFile(t, filepath.Join(working, "plugins", "chargeback_analyst", "skills", "chargeback_analyst", "SKILL.md"), `---
+name: chargeback-analyst
+description: Chargeback analyst
+metadata:
+  tags:
+    - payments
+---
+
+# Chargeback Analyst
+`)
+	writeFile(t, filepath.Join(working, "plugins", "dispute_handler", "skills", "dispute_handler", "SKILL.md"), `---
+name: dispute-handler
+description: Dispute handler
+metadata:
+  tags:
+    - payments
+---
+
+# Dispute Handler
+`)
+	commitAndPushAll(t, working, "Add multi-plugin structure")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	// Install from the meta-directory (no specific resource name).
+	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--path", "plugins")
+	if err != nil {
+		t.Fatalf("expected install --from meta-directory to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed") {
+		t.Fatalf("expected install output to contain 'Installed', got %q", output)
+	}
+	if !strings.Contains(output, "chargeback-analyst") {
+		t.Fatalf("expected output to include chargeback-analyst, got %q", output)
+	}
+	if !strings.Contains(output, "dispute-handler") {
+		t.Fatalf("expected output to include dispute-handler, got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install: %v", err)
+	}
+	if len(cfg.Registries) == 0 {
+		t.Fatal("expected at least one registry entry in config")
+	}
+}
+
+func TestInstallNamedResourceFromMetaDirectory(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-multi-plugin.git")
+
+	writeFile(t, filepath.Join(working, "plugins", "chargeback_analyst", "skills", "chargeback_analyst", "SKILL.md"), `---
+name: chargeback-analyst
+description: Chargeback analyst
+metadata:
+  tags:
+    - payments
+---
+
+# Chargeback Analyst
+`)
+	writeFile(t, filepath.Join(working, "plugins", "dispute_handler", "skills", "dispute_handler", "SKILL.md"), `---
+name: dispute-handler
+description: Dispute handler
+metadata:
+  tags:
+    - payments
+---
+
+# Dispute Handler
+`)
+	commitAndPushAll(t, working, "Add multi-plugin structure")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	// Install a specific resource from the meta-directory.
+	output, err := executeCommand("install", "chargeback-analyst", "--from", origin, "--ref", "main", "--path", "plugins")
+	if err != nil {
+		t.Fatalf("expected install <name> --from meta-directory to succeed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Installed chargeback-analyst") {
+		t.Fatalf("expected output to include chargeback-analyst, got %q", output)
+	}
+	if strings.Contains(output, "dispute-handler") {
+		t.Fatalf("expected output NOT to include dispute-handler (only one resource), got %q", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install: %v", err)
+	}
+	if len(cfg.Registries) == 0 {
+		t.Fatal("expected at least one registry entry in config")
+	}
+}
+
+func TestInstallPositionalURLSuggestsFromFlag(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	_, err := executeCommand("install", "https://gitlab.example.com/example-org/infra-skills/-/tree/main/skills/helm-chart-mirroring")
+	if err == nil {
+		t.Fatal("expected positional URL install to fail with hint about --from")
+	}
+	if !strings.Contains(err.Error(), "--from") {
+		t.Fatalf("expected error to suggest --from, got %v", err)
+	}
+}

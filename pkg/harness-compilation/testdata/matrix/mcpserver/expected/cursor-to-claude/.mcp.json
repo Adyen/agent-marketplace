@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "demo-server": {
+      "args": [
+        "-y",
+        "demo-mcp-server"
+      ],
+      "command": "npx",
+      "env": {
+        "DEMO_API_KEY": "${CLAUDE_PLUGIN_ROOT}/.env"
+      }
+    }
+  }
+}

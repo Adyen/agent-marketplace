@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "github": {
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "command": "npx",
+      "env": {
+        "GITHUB_TOKEN": "${env:GITHUB_TOKEN}",
+        "LITERAL": "keep-me",
+        "SETTINGS": "${file:./settings.json}"
+      }
+    }
+  }
+}

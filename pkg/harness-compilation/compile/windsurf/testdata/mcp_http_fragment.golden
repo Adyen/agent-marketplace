@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "genai-grafana": {
+      "disabled": false,
+      "headers": {
+        "x-litellm-api-key": "Bearer ${env:GENAI_API_KEY}",
+        "x-mcp-servers": "grafana"
+      },
+      "type": "http",
+      "url": "https://genai-platform.example.com/mcp/"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "example-echo": {
+      "command": "/usr/local/bin/echo-mcp-server",
+      "args": ["--port", "8080"],
+      "disabled": true
+    },
+    "example-search": {
+      "command": "/usr/local/bin/search-mcp-server",
+      "args": ["--index", "/data/search-index"],
+      "disabled": true
+    }
+  }
+}

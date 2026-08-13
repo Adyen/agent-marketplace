@@ -1,0 +1,173 @@
+cells:
+    - from: claude
+      to: claude
+      class: identity
+    - from: claude
+      to: cursor
+      class: cross
+    - from: claude
+      to: devin
+      class: cross
+      allowedLosses:
+        - env
+    - from: claude
+      to: factory
+      class: marquee
+    - from: claude
+      to: gemini
+      class: cross
+    - from: claude
+      to: windsurf
+      class: marquee
+    - from: cursor
+      to: claude
+      class: cross
+    - from: cursor
+      to: cursor
+      class: identity
+    - from: cursor
+      to: devin
+      class: cross
+      allowedLosses:
+        - env
+    - from: cursor
+      to: factory
+      class: cross
+    - from: cursor
+      to: gemini
+      class: cross
+    - from: cursor
+      to: windsurf
+      class: cross
+    - from: devin
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: devin
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: devin
+      to: devin
+      class: identity
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: devin
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: devin
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: devin
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: factory
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+      allowedLosses:
+        - env
+    - from: factory
+      to: factory
+      class: identity
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: gemini
+      to: claude
+      class: cross
+    - from: gemini
+      to: cursor
+      class: cross
+    - from: gemini
+      to: devin
+      class: cross
+      allowedLosses:
+        - env
+    - from: gemini
+      to: factory
+      class: cross
+    - from: gemini
+      to: gemini
+      class: identity
+    - from: gemini
+      to: windsurf
+      class: cross
+    - from: windsurf
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+    - from: windsurf
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+    - from: windsurf
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - env
+    - from: windsurf
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+    - from: windsurf
+      to: gemini
+      class: marquee
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+    - from: windsurf
+      to: windsurf
+      class: identity
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized

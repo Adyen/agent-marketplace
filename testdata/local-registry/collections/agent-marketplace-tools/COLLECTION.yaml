@@ -1,0 +1,7 @@
+name: agent-marketplace-tools
+description: >
+  Skills for working with the agent-marketplace CLI and developing new skills.
+  Suitable for any repo that uses or extends the marketplace.
+skills:
+  - name: agent-marketplace
+  - name: agent-marketplace-development

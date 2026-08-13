@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "code-quality-mcp-server": {
+      "args": [
+        "/path/to/code_quality_mcp/server.py"
+      ],
+      "command": "python",
+      "env": {
+        "QUALITY_INSIGHTS_TOKEN": "${QUALITY_INSIGHTS_TOKEN}",
+        "USER_GROUPS": "${USER_GROUPS}"
+      },
+      "type": "stdio"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "kind": "hook",
+  "name": "PreToolUse-command",
+  "event": "PreToolUse",
+  "matcher": "Read",
+  "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
+  "type": "command"
+}

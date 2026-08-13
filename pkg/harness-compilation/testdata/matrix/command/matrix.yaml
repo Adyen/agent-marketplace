@@ -1,0 +1,199 @@
+cells:
+    - from: claude
+      to: claude
+      class: identity
+    - from: claude
+      to: cursor
+      class: cross
+    - from: claude
+      to: devin
+      class: cross
+    - from: claude
+      to: factory
+      class: marquee
+    - from: claude
+      to: gemini
+      class: cross
+    - from: claude
+      to: windsurf
+      class: marquee
+    - from: cursor
+      to: claude
+      class: cross
+      allowedLosses:
+        - description
+    - from: cursor
+      to: cursor
+      class: identity
+      allowedLosses:
+        - description
+    - from: cursor
+      to: devin
+      class: cross
+      allowedLosses:
+        - description
+    - from: cursor
+      to: factory
+      class: cross
+      allowedLosses:
+        - description
+    - from: cursor
+      to: gemini
+      class: cross
+      allowedLosses:
+        - description
+    - from: cursor
+      to: windsurf
+      class: cross
+      allowedLosses:
+        - description
+    - from: devin
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: devin
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: devin
+      to: devin
+      class: identity
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: devin
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: devin
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: devin
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: factory
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: factory
+      class: identity
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: factory
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: gemini
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: gemini
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: gemini
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: gemini
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: gemini
+      to: gemini
+      class: identity
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: gemini
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: gemini
+      class: marquee
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: windsurf
+      class: identity
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description

@@ -1,0 +1,12 @@
+{
+  "agents": [
+    {
+      "description": "Demo agent for golden testing",
+      "model": "sonnet",
+      "name": "demo-agent",
+      "tools": [
+        "Read"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "command": "/plugins/demo/scripts/check.sh",
+  "event": "pre_read_code",
+  "type": "command"
+}

@@ -1,0 +1,695 @@
+package pipeline
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+)
+
+type Loaders struct {
+	Org    func() (*config.Config, error)
+	Global func() (*config.Config, error)
+	Repo   func() (*config.Config, error)
+	Local  func() (*config.LocalConfig, error)
+}
+
+type ResolveOptions struct {
+	RepoRoot         string
+	MaterializeRoot  string // where to materialize harness files; defaults to RepoRoot if empty
+	LocalConfigDir   string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
+	CatalogMode      catalog.LoadMode
+	Loaders          Loaders
+	CatalogOption    []catalog.LoadOption
+	Gitignore        bool
+	NoBackup         bool
+	RequireTargetSet bool
+	// EffectiveOpts overrides the paths used by config.LoadEffective.
+	EffectiveOpts config.LoadEffectiveOptions
+	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
+	// validation as non-fatal. Used by the remove path so a previously-allowed
+	// registry can still be removed after the policy is tightened.
+	IgnoreBlockedRegistries bool
+}
+
+type ResolveResult struct {
+	OrgCfg               *config.Config
+	GlobalCfg            *config.Config
+	RepoCfg              *config.Config
+	LocalCfg             *config.LocalConfig
+	MergedCfg            *config.Config
+	LoadedCfg            *config.Config
+	MaterializationModes config.MaterializationModes
+	CatalogLoad          catalog.LoadResult
+	Resolved             []resolver.ResolvedArtifact
+	ConfigErrors         []error
+	CatalogErrors        []error
+	ResolveErrors        []error
+	Errors               []error
+	Warnings             []error
+	TargetHarnesses      []hcc.Target
+	TargetHarnessSource  config.Source
+	Managed              bool
+	Diagnostics          config.ManagedInstallationDiagnostics
+}
+
+// TargetHarnessSetMissingError is returned by Resolve/Sync when the machine-wide
+// target harness set is required but not configured.
+type TargetHarnessSetMissingError struct{}
+
+func (e *TargetHarnessSetMissingError) Error() string {
+	return "no machine-wide target harness set configured; add harnesses to ~/.agents/config.yaml or run 'agent-marketplace migrate'"
+}
+
+// Remediation returns a user-facing hint about how to configure the target set.
+func (e *TargetHarnessSetMissingError) Remediation() string {
+	return "run 'agent-marketplace migrate' or add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml"
+}
+
+type SyncResult struct {
+	ResolveResult
+	Report *materialize.Report
+
+	// CatalogTrustErrors are the hard failures raised BEFORE materialization:
+	// config load/validation, catalog load, and resolve. They are the errors
+	// that make this run's view of the registries unreliable — while any of
+	// them is present, "selected but not found" may mean "unreachable", not
+	// "removed upstream".
+	//
+	// MaterializeErrors are the hard failures raised AFTER the catalog was read
+	// and the selections resolved: backup failures, materialize diagnostics
+	// promoted to errors, and the materialize.Run error itself. They say
+	// nothing about whether the catalog was trustworthy.
+	//
+	// Both are disjoint subsets of Errors, which stays the single flat list
+	// callers join for the exit code. The split exists because bead
+	// agent-marketplace-tbjf found `--prune-stale` gated on len(Errors) == 0:
+	// a compile failure in one unrelated resource silently disabled pruning of
+	// selections that were verifiably gone. Callers that need the distinction
+	// must read these fields rather than string-match or type-sniff Errors.
+	CatalogTrustErrors []error
+	MaterializeErrors  []error
+}
+
+// hccTargetsFromStrings converts a []string harness list into []hcc.Target.
+func hccTargetsFromStrings(targets []string) []hcc.Target {
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]hcc.Target, len(targets))
+	for i, t := range targets {
+		out[i] = hcc.Target(t)
+	}
+	return out
+}
+
+// targetHarnessSetFromEC returns the effective target harness set and its
+// source from an EffectiveConfig. The user-personal layer wins over the
+// organization layer; repo and local layers are ignored.
+func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Source) {
+	if len(ec.TargetHarnesses) > 0 {
+		return hccTargetsFromStrings(ec.TargetHarnesses), ec.TargetHarnessSource
+	}
+	if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
+		return hccTargetsFromStrings(ec.User.Config.Harnesses), config.UserPersonal
+	}
+	if ec.Organization.Config != nil && len(ec.Organization.Config.Harnesses) > 0 {
+		return hccTargetsFromStrings(ec.Organization.Config.Harnesses), ec.Organization.Source
+	}
+	return nil, config.SourceUnset
+}
+
+// CatalogTrusted reports whether this run's view of the registries is reliable
+// enough to conclude that a selected-but-absent resource is genuinely gone
+// upstream rather than merely unreachable. It is the gate `sync --prune-stale`
+// consults before removing anything from a user's config.
+func (r SyncResult) CatalogTrusted() bool { return len(r.CatalogTrustErrors) == 0 }
+
+// addMaterializeError records a post-resolve failure in both MaterializeErrors
+// (the category) and Errors (the flat list that drives the exit code). Every
+// append after the catalog has been read goes through here so the two cannot
+// drift apart, which is what would silently re-introduce the tbjf bug.
+func (r *SyncResult) addMaterializeError(errs ...error) {
+	r.MaterializeErrors = append(r.MaterializeErrors, errs...)
+	r.Errors = append(r.Errors, errs...)
+}
+
+// SoftWarnings derives the advisory warnings implied by a ResolveResult's
+// catalog and resolve errors: overlaps, name collisions, soft
+// selected-not-found, soft malformed selections, collection-member ambiguity,
+// and the other resolver warnings.
+//
+// Resolve deliberately leaves these in CatalogErrors/ResolveErrors rather than
+// promoting them, because whether an unresolved selection is advisory or fatal
+// is the CALLER's policy (`sync --strict` makes some of them fatal). This
+// function is the one place that classification lives, so `sync`, `sync
+// --check` and any future caller cannot drift apart: `sync --check` used to
+// have no equivalent at all and silently showed none of them.
+//
+// The returned slice excludes ResolveResult.Warnings, which the caller already
+// has; append it to that list rather than using it alone.
+func SoftWarnings(resolved ResolveResult) []error {
+	var warnings []error
+	// Surface catalog overlap warnings as soft warnings for parity with the
+	// status command's WARNINGS section.
+	for _, catErr := range resolved.CatalogErrors {
+		if catalog.IsOverlapWarning(catErr) {
+			warnings = append(warnings, catErr)
+		}
+	}
+	for _, resolveErr := range resolved.ResolveErrors {
+		if resolver.IsNameCollision(resolveErr) || resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsWarning(resolveErr) {
+			warnings = append(warnings, resolveErr)
+		}
+		// A path-less collection member that several configured locations of
+		// the same repository provide is reported, not fatal: the resolver
+		// still binds one deterministically.
+		if resolver.IsCollectionMemberAmbiguity(resolveErr) {
+			warnings = append(warnings, resolveErr)
+		}
+		// A present-but-malformed selection is reported at the same severity as
+		// a stale one so an unfixable registry-side syntax error does not fail
+		// every consumer's sync — but with the opposite remediation.
+		if resolver.IsSoftSelectedMalformed(resolveErr) {
+			warnings = append(warnings, resolveErr)
+		}
+	}
+	return warnings
+}
+
+func DefaultLoaders() Loaders {
+	return Loaders{Org: config.LoadOrganizationConfig, Global: config.LoadGlobalConfig, Repo: config.LoadRepoConfig, Local: config.LoadLocalConfig}
+}
+
+// filterBlockedRegistryErrors removes RegistryURLBlockedError values from errs,
+// logging each ignored error as a warning. It returns the remaining errors.
+func filterBlockedRegistryErrors(errs []error) []error {
+	filtered := make([]error, 0, len(errs))
+	for _, err := range errs {
+		if config.IsRegistryURLBlockedError(err) {
+			slog.Warn("ignoring blocked registry error during remove", "error", err)
+			continue
+		}
+		filtered = append(filtered, err)
+	}
+	return filtered
+}
+
+func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
+	start := time.Now()
+	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode)
+	var result ResolveResult
+	// Every early return below must still hand back a valid policy: an unset
+	// mode matches neither "symlink" nor "file" and would silently pick a
+	// branch in materialize.Run for callers that materialize before checking
+	// Errors.
+	result.MaterializationModes = config.DefaultMaterializationModes()
+	defer func() {
+		registries := 0
+		if result.MergedCfg != nil {
+			registries = len(result.MergedCfg.Registries)
+		}
+		slog.Debug("pipeline resolve end",
+			"duration_ms", time.Since(start).Milliseconds(),
+			"registries", registries,
+			"resolved", len(result.Resolved),
+			"config_errors", len(result.ConfigErrors),
+			"catalog_errors", len(result.CatalogErrors),
+			"resolve_errors", len(result.ResolveErrors),
+			"errors", len(result.Errors),
+		)
+	}()
+
+	if ctx.Err() != nil {
+		result.Errors = []error{ctx.Err()}
+		return result
+	}
+	var ec config.EffectiveConfig
+	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
+	if useLoaders {
+		loaders := opts.Loaders
+		if loaders.Org == nil {
+			loaders.Org = config.LoadOrganizationConfig
+		}
+		if loaders.Global == nil {
+			loaders.Global = config.LoadGlobalConfig
+		}
+		if loaders.Repo == nil {
+			loaders.Repo = config.LoadRepoConfig
+		}
+		if loaders.Local == nil {
+			loaders.Local = config.LoadLocalConfig
+		}
+		var errs []error
+		orgCfg, err := loaders.Org()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		globalCfg, err := loaders.Global()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		repoCfg, err := loaders.Repo()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		localCfg, err := loaders.Local()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		ec = config.EffectiveConfig{
+			Organization: config.LayerResult{Source: config.Organization, Config: orgCfg},
+			User:         config.LayerResult{Source: config.UserPersonal, Config: globalCfg},
+			Repo:         config.LayerResult{Source: config.RepoCommitted, Config: repoCfg},
+			Local:        localCfg,
+			Errors:       errs,
+		}
+	} else {
+		effectiveOpts := opts.EffectiveOpts
+		if effectiveOpts.RepoRoot == "" {
+			effectiveOpts.RepoRoot = opts.RepoRoot
+		}
+		if effectiveOpts.LocalConfigDir == "" {
+			effectiveOpts.LocalConfigDir = opts.LocalConfigDir
+		}
+		ec = config.LoadEffective(ctx, effectiveOpts)
+	}
+
+	result.Diagnostics = ec.Diagnostics
+	result.Warnings = ec.Warnings
+	result.OrgCfg = ec.Organization.Config
+	result.GlobalCfg = ec.User.Config
+	result.RepoCfg = ec.Repo.Config
+	result.LocalCfg = ec.Local
+	result.Managed = ec.Managed
+
+	config.LogManagedDiagnostics(ec.Diagnostics)
+
+	if opts.IgnoreBlockedRegistries {
+		ec.Errors = filterBlockedRegistryErrors(ec.Errors)
+	}
+
+	for _, err := range ec.Errors {
+		slog.Error("effective config error", "error", err)
+	}
+
+	if opts.Gitignore {
+		gitignoreDir := opts.LocalConfigDir
+		if gitignoreDir == "" {
+			gitignoreDir = opts.RepoRoot
+		}
+		EnsureLocalConfigGitignored(gitignoreDir)
+	}
+	if len(ec.Errors) > 0 {
+		result.ConfigErrors = ec.Errors
+		result.Errors = ec.Errors
+		return result
+	}
+
+	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
+
+	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
+		result.Errors = []error{&TargetHarnessSetMissingError{}}
+		return result
+	}
+
+	var mergedCfg *config.Config
+	if ec.Merged != nil {
+		// config.LoadEffective already merged the layers and validated the
+		// registry URLs against the resolved allowlist.
+		mergedCfg = ec.Merged
+	} else {
+		// Custom loaders bypass config.LoadEffective, so we still need to
+		// merge the layers and enforce the allowlist here.
+		layers := make([]config.Layer, 0, 4)
+		if result.OrgCfg != nil {
+			src := ec.Organization.Source
+			if src == config.SourceUnset {
+				src = config.Organization
+			}
+			layers = append(layers, config.Layer{Source: src, Config: result.OrgCfg})
+		}
+		if result.GlobalCfg != nil {
+			layers = append(layers, config.Layer{Source: config.UserPersonal, Config: result.GlobalCfg})
+		}
+		if result.RepoCfg != nil {
+			layers = append(layers, config.Layer{Source: config.RepoCommitted, Config: result.RepoCfg})
+		}
+		if l := config.LocalConfigAsLayer(result.LocalCfg); l != nil {
+			layers = append(layers, *l)
+		}
+		mergedCfg = config.MergeLayers(layers)
+
+		// Enforce registry URL allowlist before any network fetch. The allowlist
+		// is resolved from the effective configuration layers; omission permits all
+		// remote origins and an explicit empty list denies all remote origins.
+		var effectiveAllowlist []string
+		if mergedCfg.AllowedRegistries != nil {
+			effectiveAllowlist = *mergedCfg.AllowedRegistries
+		}
+		if err := config.ValidateRegistryURLs(mergedCfg.Registries, effectiveAllowlist); err != nil {
+			ec.Errors = append(ec.Errors, err)
+			if opts.IgnoreBlockedRegistries {
+				ec.Errors = filterBlockedRegistryErrors(ec.Errors)
+			}
+			if len(ec.Errors) > 0 {
+				result.ConfigErrors = ec.Errors
+				result.Errors = ec.Errors
+				return result
+			}
+		}
+	}
+	result.MergedCfg = mergedCfg
+	materializationModes, modeErr := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
+	if modeErr != nil {
+		result.ConfigErrors = append(result.ConfigErrors, modeErr)
+		result.Errors = append(result.Errors, modeErr)
+		return result
+	}
+	result.MaterializationModes = materializationModes
+	slog.Debug("config layers merged",
+		"org", result.OrgCfg != nil,
+		"user", result.GlobalCfg != nil,
+		"repo", result.RepoCfg != nil,
+		"local", result.LocalCfg != nil,
+		"registries", len(mergedCfg.Registries),
+	)
+
+	catalogOpts := opts.CatalogOption
+	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
+		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
+	}
+	loadResult := catalog.LoadRegistries(mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
+	result.CatalogLoad = loadResult
+	result.CatalogErrors = loadResult.Errors
+	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors))
+	// Overlap warnings are soft; don't add them to the hard error list.
+	var errs []error
+	for _, err := range loadResult.Errors {
+		if !catalog.IsOverlapWarning(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	loadedCfg := loadResult.Config
+
+	// Malformed resources are dropped from Entries by the ingesters, so the
+	// resolver needs them separately to tell "failed validation" apart from
+	// "removed upstream" for a selection it cannot find.
+	resolved, resolveErrs := resolver.Resolve(
+		loadedCfg,
+		catalog.EntriesByKey(loadResult.Catalogs),
+		result.LocalCfg,
+		resolver.WithResources(loadResult.ResourceCatalogs),
+		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
+		resolver.WithTargetHarnesses(result.TargetHarnesses),
+	)
+	result.LoadedCfg = loadedCfg
+	result.Resolved = resolved
+	result.ResolveErrors = resolveErrs
+	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(resolveErrs))
+	for _, resolveErr := range resolveErrs {
+		if resolver.IsWarning(resolveErr) {
+			continue
+		}
+		if resolver.IsSoftSelectedNotFound(resolveErr) {
+			continue
+		}
+		if resolver.IsSoftSelectedMalformed(resolveErr) {
+			continue
+		}
+		errs = append(errs, resolveErr)
+	}
+	result.Errors = errs
+	return result
+}
+
+func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
+	start := time.Now()
+	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot)
+	opts.CatalogMode = catalog.LoadModeRefresh
+	opts.Gitignore = true
+	opts.RequireTargetSet = true
+	resolved := Resolve(ctx, opts)
+	result := SyncResult{ResolveResult: resolved}
+	defer func() {
+		written := 0
+		removed := 0
+		if result.Report != nil {
+			for _, target := range result.Report.PerRoot {
+				written += len(target.Written)
+				removed += len(target.Removed)
+			}
+		}
+		slog.Info("pipeline sync end",
+			"duration_ms", time.Since(start).Milliseconds(),
+			"resolved", len(result.Resolved),
+			"written", written,
+			"removed", removed,
+			"warnings", len(result.Warnings),
+			"errors", len(result.Errors),
+			"catalog_trust_errors", len(result.CatalogTrustErrors),
+			"materialize_errors", len(result.MaterializeErrors),
+		)
+	}()
+	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
+
+	// Compute the materialization root once and reuse it for both the
+	// ancestor-exclude detection (below) and the actual materialize.Run
+	// call further down. The warning root and the write root must always
+	// agree, so deriving them from a single value avoids future drift.
+	matRoot := opts.MaterializeRoot
+	if matRoot == "" {
+		matRoot = opts.RepoRoot
+	}
+	targets := resolved.TargetHarnesses
+	result.Warnings = append(result.Warnings, detectAncestorMaterializedExcludes(
+		matRoot,
+		opts.RepoRoot,
+		targets,
+		skillExcludesFromLocal(resolved.LocalCfg),
+		resolved.Resolved,
+	)...)
+
+	if len(resolved.Errors) > 0 {
+		filteredErrors := make([]error, 0, len(resolved.Errors))
+		for _, err := range resolved.Errors {
+			if resolver.IsNameCollision(err) {
+				continue
+			}
+			if resolver.IsSoftSelectedNotFound(err) {
+				continue
+			}
+			if resolver.IsSoftSelectedMalformed(err) {
+				continue
+			}
+			filteredErrors = append(filteredErrors, err)
+		}
+		result.Errors = filteredErrors
+	}
+
+	// Everything hard that is known at this point predates materialization, so
+	// it is exactly the set that makes the catalog untrustworthy. Recording it
+	// here — instead of re-deriving the config/catalog/resolve filters in a
+	// second place — is what keeps the category honest as those filters change.
+	// The copy keeps it independent of the appends below.
+	result.CatalogTrustErrors = append([]error(nil), result.Errors...)
+
+	if len(result.Errors) > 0 {
+		return result
+	}
+
+	if !opts.NoBackup {
+		backupCfg, err := resolved.MergedCfg.ToBackupConfig()
+		if err != nil {
+			result.addMaterializeError(err)
+			return result
+		}
+		if backupCfg.Enabled {
+			bCfg := backup.Config{
+				Enabled:   backupCfg.Enabled,
+				MaxDays:   backupCfg.MaxDays,
+				MaxPerDay: backupCfg.MaxPerDay,
+			}
+			managed := CollectManagedPaths(resolved.Resolved)
+			if len(managed) > 0 {
+				slog.Debug("creating harness backups", "targets", len(managed))
+				if err := backup.Create(managed); err != nil {
+					result.addMaterializeError(fmt.Errorf("backup: %w", err))
+					return result
+				}
+				slog.Debug("rotating harness backups", "max_days", bCfg.MaxDays, "max_per_day", bCfg.MaxPerDay)
+				if err := backup.Rotate(bCfg); err != nil {
+					result.addMaterializeError(fmt.Errorf("backup rotate: %w", err))
+					return result
+				}
+			}
+		}
+	}
+
+	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	if report != nil {
+		result.Report = report
+		slog.Debug("materialization report received", "targets", len(report.PerRoot), "diagnostics", len(report.Diags))
+		for _, d := range report.Diags {
+			// Both severities are promoted through the SAME type so an error
+			// keeps the resource, source location and hint that a warning has
+			// always kept (bead agent-marketplace-oc2r).
+			switch d.Severity {
+			case diag.SeverityError:
+				slog.Warn("materialize diagnostic promoted to error",
+					"code", d.Code, "resource", d.Resource,
+					"source_file", d.Source.File, "source_line", d.Source.Line)
+				result.addMaterializeError(newDiagIssue(d))
+			case diag.SeverityWarning:
+				result.Warnings = append(result.Warnings, newDiagIssue(d))
+			}
+		}
+	}
+	if err != nil {
+		result.addMaterializeError(err)
+	}
+	return result
+}
+
+// CollectManagedPaths returns the managed paths (component subdirectories and
+// root config files) for each machine-scope target that has resolved artifacts.
+//
+// The IsMachineScope filter below is a DECISION, not an oversight, and bead
+// agent-marketplace-5exj.30 re-affirmed it after bead .27 made
+// harness.TargetInfo.AggregateFiles.Project truthful and a repo-scope collector
+// became a two-line edit. Repo-scope aggregates are recovered through
+// internal/ownership's mandatory per-mutation raw-byte backups — root-keyed, so
+// they can tell two repositories apart, which the archive layout in
+// internal/backup structurally cannot — as each target migrates onto that store.
+// The full argument, including why the three alternatives are worse, is in the
+// internal/backup package doc; read it before widening this filter.
+//
+// TestCollectManagedPathsIsMachineScopeOnlyByDecision pins the filter so
+// widening it is a deliberate act that fails a test naming the decision.
+func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]backup.ManagedPaths {
+	seen := make(map[hcc.Target]bool)
+	for _, r := range resolved {
+		if !r.Source.IsMachineScope() {
+			continue
+		}
+		for _, t := range r.Harnesses {
+			seen[t] = true
+		}
+	}
+
+	result := make(map[hcc.Target]backup.ManagedPaths, len(seen))
+	for t := range seen {
+		root, ok := harness.MachineRoot(t)
+		if !ok {
+			continue
+		}
+		info, ok := harness.TargetInfoMap[t]
+		if !ok {
+			continue
+		}
+		// Machine-scope component directories can diverge from the repo-scope
+		// component names (e.g. Windsurf writes machine-wide workflows to
+		// global_workflows/). ComponentsForScope is the same source of truth
+		// materialization uses, so backup coverage cannot drift from the
+		// directories that are actually written.
+		machineComponents := info.ComponentsForScope(true)
+		// Shared aggregate configuration files used to live in a hand-maintained
+		// rootConfigFiles map here, which had no Devin entry and therefore left
+		// hooks.v1.json, config.json, and mcp_config.json outside backup coverage.
+		// TargetInfo.AggregateFilesForScope is now the single source of truth that
+		// both materialization and this collector read, so a target cannot declare
+		// an aggregate file that backups do not cover. Bead
+		// agent-marketplace-5exj.27 made that declaration truthful — until then
+		// Gemini's settings.json was merged into on every sync with no backup at
+		// all, because it is not inside any Gemini component directory.
+		machineAggregates := info.AggregateFilesForScope(true)
+		relPaths := make([]string, 0, len(machineComponents)+len(machineAggregates))
+		relPaths = append(relPaths, machineComponents...)
+		for _, rel := range machineAggregates {
+			// An aggregate can live inside a component directory that is already
+			// archived whole (Claude's hooks/hooks.json inside hooks/). Adding it
+			// again would write the same bytes into the archive twice; the
+			// coverage is identical either way, so keep the archive minimal.
+			if coveredByAncestor(rel, relPaths) {
+				continue
+			}
+			relPaths = append(relPaths, rel)
+		}
+		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths}
+	}
+	return result
+}
+
+// coveredByAncestor reports whether rel is the same path as, or lives beneath,
+// one of the already-collected managed paths. backup.Create archives a
+// directory recursively, so a path covered this way is already recoverable.
+//
+// It is the predicate behind the backup-coverage contract asserted by
+// TestCollectManagedPathsCoversEveryDeclaredAggregate: every declared
+// machine-scope aggregate is recoverable, whether it is collected in its own
+// right (Gemini's settings.json) or as part of a component directory (Claude's
+// hooks/hooks.json).
+func coveredByAncestor(rel string, collected []string) bool {
+	rel = path.Clean(filepath.ToSlash(rel))
+	for _, candidate := range collected {
+		candidate = path.Clean(filepath.ToSlash(candidate))
+		if rel == candidate || strings.HasPrefix(rel, candidate+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func EnsureLocalConfigGitignored(repoRoot string) {
+	localConfigPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	if _, err := os.Stat(localConfigPath); err != nil {
+		return
+	}
+
+	gitignorePath := filepath.Join(repoRoot, ".gitignore")
+	entry := ".agents/config.local.yaml"
+
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to read gitignore", "path", gitignorePath, "error", err)
+			return
+		}
+		if err := os.WriteFile(gitignorePath, []byte(entry+"\n"), 0o644); err != nil {
+			slog.Warn("failed to create gitignore", "path", gitignorePath, "error", err)
+		}
+		return
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == entry {
+			return
+		}
+	}
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		slog.Warn("failed to open gitignore for appending", "path", gitignorePath, "error", err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	if !strings.HasSuffix(string(data), "\n") {
+		_, _ = f.WriteString("\n")
+	}
+	_, _ = f.WriteString(entry + "\n")
+}

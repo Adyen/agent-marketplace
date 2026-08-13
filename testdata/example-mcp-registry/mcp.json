@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "example-echo": {
+      "command": "/usr/local/bin/echo-mcp-server",
+      "args": ["--port", "8080"],
+      "env": {
+        "LOG_LEVEL": "info"
+      },
+      "disabled": true
+    },
+    "example-search": {
+      "command": "/usr/local/bin/search-mcp-server",
+      "args": ["--index", "/data/search-index"],
+      "disabled": true
+    },
+    "example-overlap": {
+      "command": "/usr/local/bin/overlap-mcp-server",
+      "disabled": true
+    }
+  }
+}
