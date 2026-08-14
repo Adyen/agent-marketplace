@@ -98,6 +98,21 @@ func TestSubagentFieldMatrix(t *testing.T) {
 			wantDiags: []wantDiag{{diag.CodeSubagentDevinModelDefault, diag.SeverityWarning}},
 		},
 		{
+			// Droid spells "use the invoking agent's model" as `model: inherit`.
+			// Devin has no parent-model inheritance, so the value is treated as
+			// unset and Devin's default subagent model is used. No warning is
+			// emitted because the source explicitly asked for inheritance, not
+			// a concrete model alias.
+			name:     "inherit model is treated as Devin default without warning",
+			subagent: ir.NewSubagent("demo", "Demo subagent", "Body\n", "inherit", nil, "", nil, "", nil, subagentSource),
+			wantPath: "agents/demo.md",
+			wantBytes: "---\n" +
+				"name: demo\n" +
+				"description: Demo subagent\n" +
+				"---\n" +
+				"Body\n",
+		},
+		{
 			name:     "unmappable model is omitted with its own warning",
 			subagent: ir.NewSubagent("demo", "Demo subagent", "Body\n", "claude-sonnet-4-5-20250929", nil, "", nil, "", nil, subagentSource),
 			wantPath: "agents/demo.md",

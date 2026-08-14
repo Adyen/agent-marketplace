@@ -319,19 +319,25 @@ func effortDiagnostics(s *ir.Subagent, source diag.SourceRef) []diag.Diagnostic 
 	}}
 }
 
-// mapSubagentModel resolves the subagent model and reports the two distinct
-// model losses the plan requires.
+// mapSubagentModel resolves the subagent model and reports the model losses the
+// plan requires.
 //
 // Plan, models: "An unmappable explicit model is omitted and emits a warning.
 // An empty subagent model stays empty and emits a warning because Devin
 // interprets absence as its default subagent model, not parent-model
 // inheritance."
 //
-// These are deliberately separate codes. subagent.devin.model-unmappable says
-// "you asked for a model this target cannot name"; subagent.devin.model-default
-// says "you asked for nothing, and on Devin that is a concrete choice rather
-// than inheritance". Collapsing them would hide the second case, which is the
-// one a user migrating from an inheriting harness gets wrong.
+// Droid spells parent-model inheritance as the explicit model value `inherit`.
+// Devin has no equivalent concept, so `inherit` is treated as unset and Devin's
+// default subagent model is used. No warning is emitted because the source
+// explicitly asked for inheritance, not a concrete model alias.
+//
+// These are deliberately separate codes for the remaining two cases.
+// subagent.devin.model-unmappable says "you asked for a model this target
+// cannot name"; subagent.devin.model-default says "you asked for nothing, and
+// on Devin that is a concrete choice rather than inheritance". Collapsing them
+// would hide the second case, which is the one a user migrating from an
+// inheriting harness gets wrong.
 //
 // An unmappable model degrades to the same default, so the unmappable case does
 // not additionally emit the default warning: the model-unmappable diagnostic
@@ -348,6 +354,17 @@ func mapSubagentModel(resource string, source diag.SourceRef, model string, opts
 			Hint:     "Set an explicit stable Devin model alias (sonnet, opus, or haiku) when a fixed model is required",
 			Source:   source,
 		}}
+	}
+	if strings.EqualFold(model, "inherit") {
+		// `model: inherit` means "use the invoking agent's model" in Droid, but
+		// Devin has no parent-model inheritance. Treat it as unset so Devin uses
+		// its default subagent model. Honor an explicit model override if the
+		// caller provided one keyed by the original `inherit` value.
+		if override, ok := opts.ModelOverride()[model]; ok && override != "" {
+			return override, nil
+		}
+		slog.Debug("devin subagent model is inherit; using default subagent model", "target", mapping.TargetDevin, "resource", resource)
+		return "", nil
 	}
 	return mapModel(resource, source, model, opts, diag.CodeSubagentDevinModelUnmappable)
 }
