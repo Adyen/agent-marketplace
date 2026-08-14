@@ -286,10 +286,10 @@ type LoggingConfig struct {
 }
 
 type Config struct {
-	// APIVersion is the schema version sentinel. v2 configs must set
-	// "agent-marketplace/v2"; v1 configs have no apiVersion field.
-	// The loader rejects configs that are missing or mismatched and
-	// suggests running `agent-marketplace migrate`.
+	// APIVersion is the schema version sentinel. v3 configs must set
+	// "agent-marketplace/v3"; v2 configs set "agent-marketplace/v2"; v1
+	// configs have no apiVersion field. The loader rejects configs that
+	// are missing or mismatched and suggests running `agent-marketplace migrate`.
 	APIVersion string `yaml:"apiVersion,omitempty"`
 
 	// Harnesses lists the target harnesses to materialize into (e.g.
@@ -739,17 +739,13 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool) error {
 	var errs []error
 
-	// v2/v3 schema gating: apiVersion must be correct when present. It is
-	// required on Config-schema files (global/repo) but optional on local
-	// configs, which are generated without it. Legacy loaders still gate on
-	// v2, while the v3 loading boundary accepts v3 for strict validation.
+	// v2/v3 schema gating: apiVersion must be present when required and, if
+	// present, must be one of the supported versions. v3 is the current
+	// schema; v2 is accepted for backward compatibility and is rewritten
+	// to v3 by `agent-marketplace migrate`.
 	if v := strings.TrimSpace(c.APIVersion); v == "" {
 		if requireAPIVersion {
-			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))
-		}
-	} else if requireAPIVersion {
-		if v != APIVersionV2 {
-			errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q; run `agent-marketplace migrate`", v, APIVersionV2))
+			errs = append(errs, fmt.Errorf("missing apiVersion: add %q or %q", APIVersionV2, APIVersionV3))
 		}
 	} else if v != APIVersionV2 && v != APIVersionV3 {
 		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q; run `agent-marketplace migrate`", v, APIVersionV2, APIVersionV3))
@@ -759,7 +755,7 @@ func (c Config) validate(requireHarnesses, requireAPIVersion bool) error {
 	// must not be empty. Organization/project/local configs may omit it and
 	// inherit from the user layer during merge.
 	if requireHarnesses && len(c.Harnesses) == 0 {
-		errs = append(errs, fmt.Errorf("harnesses is required at apiVersion %q: add a harnesses list (e.g. harnesses: [factory])", APIVersionV2))
+		errs = append(errs, fmt.Errorf("harnesses is required: add a harnesses list (e.g. harnesses: [factory])"))
 	}
 
 	errs = append(errs, validateConfigHarnessTargets(c)...)

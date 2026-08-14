@@ -837,6 +837,25 @@ harnesses:
 	}
 }
 
+func TestLoadConfigAcceptsV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+registries:
+  - url: git@example.com:repo.git
+    ref: main
+`))
+
+	cfg, err := loadConfig(path, true)
+	if err != nil {
+		t.Fatalf("expected v3 config to load through loadConfig: %v", err)
+	}
+	if cfg.APIVersion != APIVersionV3 {
+		t.Fatalf("expected apiVersion %q, got %q", APIVersionV3, cfg.APIVersion)
+	}
+}
+
 func TestLoadConfigFromPathRejectsV3RepoHarnesses(t *testing.T) {
 	// A config.yaml that is not the global path is treated as a repo config.
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
