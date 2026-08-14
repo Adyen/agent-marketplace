@@ -1098,3 +1098,76 @@ registries: []
 		t.Fatalf("expected error to suggest --from, got %v", err)
 	}
 }
+
+// TestInstallCommandRejectsUserScopeForRepoRelativeRegistry verifies that
+// installing a skill from a repo-relative local registry at user scope is
+// refused before anything is written to ~/.agents/config.yaml.
+func TestInstallCommandRejectsUserScopeForRepoRelativeRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	skillDir := filepath.Join(repoRoot, "plugins", "gitlab-mr", "skills", "my-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: my-skill\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: ./plugins/gitlab-mr
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "my-skill", "--scope", "user")
+	if err == nil {
+		t.Fatalf("expected install --scope user to fail for repo-relative registry, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "repo-relative") || !strings.Contains(combined, "global config") {
+		t.Fatalf("expected repo-relative global config error, got err=%v output=%s", err, output)
+	}
+
+	// The user config must not contain the repo-relative URL.
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if data, readErr := os.ReadFile(globalConfig); readErr == nil {
+		if strings.Contains(string(data), "plugins/gitlab-mr") {
+			t.Fatalf("repo-relative URL leaked into user config:\n%s", string(data))
+		}
+	}
+}
+
+// TestInstallCommandFailsFastOnMissingLocalRegistry verifies that installing
+// from a missing local ad-hoc registry fails before writing a broken entry to
+// the repo config.
+func TestInstallCommandFailsFastOnMissingLocalRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", "./missing-registry", "some-skill")
+	if err == nil {
+		t.Fatalf("expected install --from missing registry to fail, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "local registry path does not exist") {
+		t.Fatalf("expected missing local registry error, got err=%v output=%s", err, output)
+	}
+
+	// No broken registry entry should be persisted.
+	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if data, readErr := os.ReadFile(repoConfig); readErr == nil {
+		if strings.Contains(string(data), "missing-registry") {
+			t.Fatalf("missing local registry URL leaked into repo config:\n%s", string(data))
+		}
+	}
+}

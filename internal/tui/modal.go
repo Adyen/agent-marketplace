@@ -86,6 +86,17 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = pathErr
 				break
 			}
+			// Repo-relative local paths are valid in repo/local configs but
+			// meaningless machine-wide; refuse to write them to the user
+			// (global) config when enabling. Disabling an existing broken entry
+			// is still allowed so users can clean it up.
+			if act.enable && (config.RegistryEntry{URL: act.registryURL}).IsRepoRelativeLocal() {
+				return configWrittenMsg{
+					skillName: act.skillName,
+					enabled:   false,
+					err:       &config.GlobalRelativeRegistryError{URL: act.registryURL},
+				}
+			}
 			if act.enable {
 				if err := config.EnsureRegistryWithPathsInConfig(globalPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
 					return configWrittenMsg{
@@ -217,6 +228,12 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 			return nil
 		}
 		for _, url := range competing {
+			// Competing repo-relative local registries cannot be shadowed into
+			// the user (global) config; skip them to avoid leaking a
+			// project-local path machine-wide.
+			if act.scope == scopeGlobal && (config.RegistryEntry{URL: url}).IsRepoRelativeLocal() {
+				continue
+			}
 			meta, ok := competingMeta[url]
 			if ok {
 				// Ensure the competing registry entry exists in the target

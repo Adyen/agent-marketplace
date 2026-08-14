@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -536,5 +537,79 @@ func TestCompactToggleModalDoesNotAdvertiseMachineExclude(t *testing.T) {
 	out := renderToggleModal(m)
 	if !contains(out, "[e] unavailable") || contains(out, "[e] exclude") {
 		t.Fatalf("machine-scoped compact actions are misleading:\n%s", out)
+	}
+}
+
+// TestRunScopedToggleGlobalRejectsRepoRelativeRegistry verifies that enabling a
+// skill globally from a repo-relative local registry is refused, and that no
+// global config file is written.
+func TestRunScopedToggleGlobalRejectsRepoRelativeRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	act := toggleAction{
+		skillName:   "audit",
+		scope:       scopeGlobal,
+		enable:      true,
+		registryURL: "./plugins/gitlab-mr",
+	}
+
+	msg := runScopedToggle(repoRoot, act)()
+	cw, ok := msg.(configWrittenMsg)
+	if !ok {
+		t.Fatalf("expected configWrittenMsg, got %T", msg)
+	}
+	if cw.err == nil {
+		t.Fatalf("expected error for global toggle of repo-relative registry")
+	}
+	var gre *config.GlobalRelativeRegistryError
+	if !errors.As(cw.err, &gre) {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", cw.err, cw.err)
+	}
+	if gre.URL != act.registryURL {
+		t.Fatalf("expected error URL %q, got %q", act.registryURL, gre.URL)
+	}
+
+	// The global config must not have been created.
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if _, err := os.Stat(globalConfig); !os.IsNotExist(err) {
+		t.Fatalf("expected no global config written, got %v", err)
+	}
+}
+
+// TestRunScopedToggleProjectAllowsRepoRelativeRegistry verifies that enabling a
+// skill at project scope from a repo-relative registry still works; only the
+// global layer refuses the write.
+func TestRunScopedToggleProjectAllowsRepoRelativeRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	agentsDir := filepath.Join(repoRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Create a local registry under the repo.
+	regDir := filepath.Join(repoRoot, "plugins", "gitlab-mr")
+	if err := os.MkdirAll(filepath.Join(regDir, "skills", "audit"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(regDir, "skills", "audit", "SKILL.md"), []byte("---\nname: audit\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+
+	act := toggleAction{
+		skillName:   "audit",
+		scope:       scopeProject,
+		enable:      true,
+		registryURL: "./plugins/gitlab-mr",
+	}
+
+	msg := runScopedToggle(repoRoot, act)()
+	cw, ok := msg.(configWrittenMsg)
+	if !ok {
+		t.Fatalf("expected configWrittenMsg, got %T", msg)
+	}
+	if cw.err != nil {
+		t.Fatalf("project-scope toggle of repo-relative registry should succeed: %v", cw.err)
 	}
 }

@@ -370,6 +370,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, fmt.Errorf("%s %q was found but no providing registry entry could be identified", skill.KindLabel(match.kind), resourceName)
 			}
 		} else {
+			// Repo-relative local registries are project-local and cannot be
+			// shadowed into the user-personal (global) config.
+			if opts.Scope == ScopeUser && entry.IsRepoRelativeLocal() {
+				return nil, &config.GlobalRelativeRegistryError{URL: entry.URL}
+			}
 			// Always write the include scoped to the providing registry entry,
 			// creating a shadow entry in the target scope's config when the
 			// registry is only defined at a lower layer. Keeping every selection
@@ -786,6 +791,34 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
 		return nil, err
+	}
+
+	// Repo-relative local registries are project-local and cannot be written to
+	// the user-personal (global) config.
+	if opts.Scope == ScopeUser && syntheticEntry.IsRepoRelativeLocal() {
+		return nil, &config.GlobalRelativeRegistryError{URL: fromURL}
+	}
+
+	// For local filesystem registries, verify the path exists before writing
+	// the registry entry to the config, so a typo fails fast instead of
+	// leaving a broken entry behind.
+	if syntheticEntry.IsLocal() {
+		baseDir := repoRoot
+		if opts.LocalConfigDir != "" {
+			baseDir = opts.LocalConfigDir
+		}
+		localPath, err := syntheticEntry.ResolveLocalPath(baseDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve local registry path: %w", err)
+		}
+		if info, err := os.Stat(localPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("local registry path does not exist: %s", localPath)
+			}
+			return nil, fmt.Errorf("stat local registry path %q: %w", localPath, err)
+		} else if !info.IsDir() {
+			return nil, fmt.Errorf("local registry path is not a directory: %s", localPath)
+		}
 	}
 
 	// Persist the registry entry to the target config scope.

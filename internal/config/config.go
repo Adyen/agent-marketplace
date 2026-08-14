@@ -627,6 +627,43 @@ func (e RegistryEntry) IsLocal() bool {
 	return u[0] == '/' || strings.HasPrefix(u, "~/")
 }
 
+// IsRepoRelativeLocal reports whether the registry URL is a local filesystem
+// path that is relative to a project root (e.g. "./plugins/foo" or ".").
+// Such URLs are valid in repo and local configs, where they resolve against the
+// current repo root, but they are meaningless in the user-personal (global)
+// config layer because they have no stable meaning outside the repo that
+// contains them.
+func (e RegistryEntry) IsRepoRelativeLocal() bool {
+	if !e.IsLocal() {
+		return false
+	}
+	u := strings.TrimSpace(e.URL)
+	if u == "" {
+		return false
+	}
+	if filepath.IsAbs(u) {
+		return false
+	}
+	if strings.HasPrefix(u, "~/") {
+		return false
+	}
+	return true
+}
+
+// GlobalRelativeRegistryError is returned when an operation attempts to write a
+// repo-relative local registry URL into the user-personal (machine-wide) config
+// layer. Such URLs are only meaningful within the repo that defined them.
+type GlobalRelativeRegistryError struct {
+	URL string
+}
+
+func (e *GlobalRelativeRegistryError) Error() string {
+	if e == nil {
+		return "cannot write repo-relative registry to the global config"
+	}
+	return fmt.Sprintf("cannot write repo-relative registry %q to the global config; use an absolute path or a git remote", e.URL)
+}
+
 // urlContainsPathTraversal reports whether a registry URL contains a ".." path
 // component. This applies to local paths, home-relative paths, and absolute paths;
 // it also catches relative-looking URLs that are not valid git remotes. The check
