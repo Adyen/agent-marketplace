@@ -217,6 +217,9 @@ func BenchmarkRenderListVisibleRows(b *testing.B) {
 	for _, height := range []int{25, 50, 100} {
 		b.Run(fmt.Sprintf("visible_%d", height), func(b *testing.B) {
 			m := NewModel("/repo", "/home")
+			m.width = 120
+			m.height = height + 3
+			m.loading = false
 			m.rows = append([]row(nil), rows...)
 			m.recomputeView()
 			m.listOffset = 0
@@ -227,5 +230,26 @@ func BenchmarkRenderListVisibleRows(b *testing.B) {
 				_ = renderList(m, height)
 			}
 		})
+	}
+}
+
+func BenchmarkClampListOffset(b *testing.B) {
+	m := NewModel("/repo", "/home")
+	m.width = 50
+	m.height = 28
+	m.flatItems = make([]flatItem, 500)
+	for i := range m.flatItems {
+		m.flatItems[i] = flatItem{Kind: flatSection, SectionTitle: fmt.Sprintf("long-section-title-%03d-with-wrapped-content", i)}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.cursor++
+		if m.cursor == len(m.flatItems) {
+			m.cursor = 0
+			m.listOffset = 0
+		}
+		m.clampListOffset()
 	}
 }
