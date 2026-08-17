@@ -43,7 +43,6 @@ type snapshotLoadedMsg struct {
 	warnings             []error
 	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
-	pendingMigration     migrationPrompt
 }
 
 type reloadMsg snapshotLoadedMsg
@@ -164,11 +163,6 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	})
 	defer releaseExactLease()
 
-	// v2 is the canonical schema, so declaring apiVersion agent-marketplace/v2
-	// is not, by itself, a reason to show a remediation modal. Structural
-	// issues are reported as config errors instead.
-	pendingMigration := pendingMigrationFor(repoRoot, homeDir)
-
 	if len(resolvedResult.ConfigErrors) > 0 {
 		return snapshotLoadedMsg{errs: resolvedResult.ConfigErrors}
 	}
@@ -184,7 +178,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			}
 		}
 		if len(hardErrs) > 0 {
-			return snapshotLoadedMsg{errs: hardErrs, warnings: overlapWarnings, pendingMigration: pendingMigration}
+			return snapshotLoadedMsg{errs: hardErrs, warnings: overlapWarnings}
 		}
 		// No hard errors; carry overlap warnings forward to the final warnings.
 		// Store them in a temp var since `warnings` is declared below.
@@ -242,8 +236,10 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 		targetHarnesses:      resolvedResult.TargetHarnesses,
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
-		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
+		errs:                 errs,
+		warnings:             warnings,
+		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}
 	if resolvedResult.MergedCfg != nil {
 		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)

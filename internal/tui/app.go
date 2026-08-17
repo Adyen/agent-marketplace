@@ -253,14 +253,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
-		m.applySnapshotStatus(msg)
-		if msg.pendingMigration.hasConfigs() {
-			m.migrationPrompt = msg.pendingMigration
-			m.pane = paneMigrationModal
-			m.refreshing = false
-			return m, nil
-		}
-		if msg.mergedCfg == nil && len(m.errs) > 0 {
+		if msg.mergedCfg == nil && len(msg.errs) > 0 {
+			m.errs = append(m.errs, msg.errs...)
+			m.warnings = msg.warnings
 			m.refreshing = false
 			return m, nil
 		}
@@ -278,13 +273,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.applySnapshotStatus(msg.snapshotLoadedMsg)
-		if msg.pendingMigration.hasConfigs() {
-			m.migrationPrompt = msg.pendingMigration
-			m.pane = paneMigrationModal
-			return m, nil
-		}
-		if msg.mergedCfg == nil && len(m.errs) > 0 {
+		m.refreshToken = 0
+		if msg.mergedCfg == nil && len(msg.errs) > 0 {
+			m.errs = append(m.errs, msg.errs...)
 			return m, nil
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
@@ -446,22 +437,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
 		return m, toastExpiryCmd(2 * time.Second)
-
-	case migrationDoneMsg:
-		if msg.err != nil {
-			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
-			m.toast = fmt.Sprintf("migration error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("migration failed", "count", msg.count, "err", msg.err)
-			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
-		}
-		m.recordOperationSuccess(operationMigration)
-		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
-		m.toastExp = time.Now().Add(2 * time.Second)
-		m.migrationPrompt = migrationPrompt{}
-		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -658,8 +633,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case paneInitModal:
 		return m.handleInitModalKey(msg)
-	case paneMigrationModal:
-		return m.handleMigrationModalKey(msg)
 	case paneHarnessModal:
 		return m.handleHarnessModalKey(msg)
 	case paneEditConfigModal:

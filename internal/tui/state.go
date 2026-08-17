@@ -33,7 +33,6 @@ const (
 	paneConfirm
 	paneToggleModal
 	paneInitModal
-	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
 )
@@ -216,8 +215,6 @@ type Model struct {
 	// Set when enabling a colliding resource; cleared on configWrittenMsg.
 	pendingExcludeAction  *toggleAction
 	selectionAfterDisable string
-
-	migrationPrompt migrationPrompt
 
 	// spinner provides an animated indicator in the footer while
 	// loading, refreshing, or syncing.
