@@ -23,9 +23,11 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Remediate structural issues in config files",
 		Args:  cobra.NoArgs,
 		Long: `Migrate performs structural remediation on user, repository, and
-repository-personal config files. It preserves valid v2 and v3 apiVersion
-values, accepts v3 as a compatibility alias, and only changes files when
-structural remediation is needed.
+repository-personal config files. It removes layer-forbidden fields (for
+example, top-level harnesses in repo or local configs), converts legacy
+collection syntax, and ensures every file declares a valid apiVersion. Valid
+agent-marketplace/v3 files are accepted as a compatibility alias and are only
+rewritten when structural changes are required.
 
 Existing user-personal harnesses are preserved. If a user config needs a
 harness set, migration uses the --harnesses flag in non-interactive mode, or

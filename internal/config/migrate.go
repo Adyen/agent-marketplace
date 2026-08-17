@@ -57,13 +57,21 @@ type migrationFile struct {
 // MigrateConfigFiles performs structural remediation on user personal,
 // repository committed, and repository personal config files in one
 // transactional pass. It does not rewrite a valid v2 or v3 config to another
-// schema version; when changes are required, output is canonicalized to v2.
-// All inputs are validated before any file is written.
+// schema version unless changes are required; when changes are required the
+// output is canonicalized to agent-marketplace/v2. All inputs are validated
+// before any file is written.
 //
-// When initializing a missing user personal config, the target harness set is
-// chosen from existing user harnesses first, then the explicit harnesses
-// argument. Repository harnesses remain project-scoped and are never moved to
-// the user config.
+// The machine-wide target harness set is chosen as follows:
+//  1. Harnesses already present in the user personal config.
+//  2. The explicit harnesses argument.
+//  3. Harnesses declared in the repository committed config (moved to user).
+//  4. If none of the above are available, ErrHarnessesRequired is returned.
+//
+// The following structural fixes are applied:
+//   - Top-level harnesses, backup, and logging are removed from repo configs.
+//   - Top-level harnesses, backup, logging, and allowed_registries are removed
+//     from local configs.
+//   - Legacy collections sequences are converted to the {include: [...]} form.
 func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*MigrateResult, error) {
 	slog.Info("migrating config files",
 		"user", paths.User,
@@ -137,7 +145,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 	}
 	slog.Info("resolved migration target harnesses", "harnesses", targetHarnesses)
 
-	// Build the migrated document for each existing file.
+	// Build the remediated document for each existing file.
 	for _, name := range layerOrder {
 		f := files[name]
 		if f == nil || !f.exists {
@@ -282,8 +290,8 @@ func resolveMigrationTargetHarnesses(files map[string]*migrationFile, explicitHa
 }
 
 // migrateFileNode sets harnesses when provided and converts legacy
-// collections. It tracks whether any change was made. The caller is
-// responsible for canonicalizing apiVersion after structural edits.
+// collections. It tracks whether any change was made. The caller is responsible
+// for canonicalizing the apiVersion after all structural edits.
 func migrateFileNode(f *migrationFile, harnesses []string) error {
 	if f == nil || !f.exists {
 		return nil
@@ -315,10 +323,12 @@ func migrateFileNode(f *migrationFile, harnesses []string) error {
 	return nil
 }
 
-// canonicalizeMigrationAPIVersion ensures the file declares a valid
-// apiVersion. Valid v2 and v3 files are left untouched when no structural
-// remediation is needed. New or structurally remediated files use canonical
-// v2; this keeps migration from forcing a schema-version rewrite on users.
+// canonicalizeMigrationAPIVersion ensures the file declares a valid apiVersion.
+// If the file was modified and declares v3, it is rewritten to the canonical v2.
+// If apiVersion is missing, it is inserted as v2. Unsupported values are also
+// replaced with v2. When no modifications were made and the apiVersion is
+// already valid, the document is left untouched so valid v3 aliases remain
+// readable and stable.
 func canonicalizeMigrationAPIVersion(f *migrationFile) {
 	if f == nil || !f.exists {
 		return
@@ -432,8 +442,8 @@ func joinCommentText(existing, addition string) string {
 	return existing + "\n" + addition
 }
 
-// validateMigratedFiles serializes each migrated document and validates it
-// against the strict v3 rules for its layer.
+// validateMigratedFiles serializes each remediated document and validates it
+// against the strict layer rules.
 func validateMigratedFiles(files map[string]*migrationFile) error {
 	layerOrder := []string{"user", "repo", "local"}
 	for _, name := range layerOrder {

@@ -54,15 +54,15 @@ registries:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated {
-		t.Fatalf("expected valid user config to be unchanged: %+v", result)
+		t.Fatalf("expected user config to be unchanged (already valid v2): %+v", result)
 	}
-	if result.RepoMigrated {
-		t.Fatalf("expected valid repository config to be unchanged: %+v", result)
+	if !result.RepoMigrated {
+		t.Fatalf("expected repo to be migrated: %+v", result)
 	}
 
 	userData := readConfigString(t, userPath)
 	if !strings.Contains(userData, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected user config to remain v2, got:\n%s", userData)
+		t.Fatalf("expected user config to be v2, got:\n%s", userData)
 	}
 	if !strings.Contains(userData, "harnesses:") {
 		t.Fatalf("expected user harnesses to be preserved, got:\n%s", userData)
@@ -70,7 +70,7 @@ registries:
 
 	repoData := readConfigString(t, repoPath)
 	if !strings.Contains(repoData, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected repo config to remain v2, got:\n%s", repoData)
+		t.Fatalf("expected repo config to be v2, got:\n%s", repoData)
 	}
 	if !strings.Contains(repoData, "harnesses:") || !strings.Contains(repoData, "- factory") {
 		t.Fatalf("expected repo harnesses to be preserved, got:\n%s", repoData)
@@ -427,12 +427,12 @@ registries:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated || result.RepoMigrated {
-		t.Fatalf("expected valid v2 configs to remain unchanged: %+v", result)
+		t.Fatalf("expected no migration for already-valid v2 configs: %+v", result)
 	}
 
 	repoCfg, errs := loadV3Config([]byte(readConfigString(t, repoPath)), repoLayer, false)
 	if len(errs) > 0 {
-		t.Fatalf("expected valid migrated repo config: %v", errors.Join(errs...))
+		t.Fatalf("expected valid repo config: %v", errors.Join(errs...))
 	}
 	if len(repoCfg.Collections.Include) != 0 || len(repoCfg.Collections.Exclude) != 0 {
 		t.Fatalf("expected empty collections selector, got %+v", repoCfg.Collections)
@@ -442,7 +442,7 @@ registries:
 	if err != nil {
 		t.Fatalf("expected second migration to succeed: %v", err)
 	}
-	if result.RepoMigrated {
+	if result.UserMigrated || result.RepoMigrated {
 		t.Fatalf("expected second migration to be idempotent: %+v", result)
 	}
 }
@@ -574,7 +574,7 @@ skills:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated {
-		t.Fatalf("expected user config to remain unchanged")
+		t.Fatalf("expected user to be unchanged (already valid v2)")
 	}
 	if result.RepoMigrated {
 		t.Fatalf("expected repo to be skipped because it shares the user path")

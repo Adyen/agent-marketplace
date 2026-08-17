@@ -65,7 +65,7 @@ registries:
 `)
 	_, errs := loadV3LocalConfig(data)
 	if len(errs) != 0 {
-		t.Fatalf("expected local config to accept required/default, got: %v", errs)
+		t.Fatalf("expected local config to accept required and default, got errors: %v", errs)
 	}
 }
 
@@ -208,7 +208,7 @@ registries:
 `)
 	_, errs := loadV3LocalConfig(data)
 	if len(errs) != 0 {
-		t.Fatalf("expected aliased required/default to be accepted, got: %v", errs)
+		t.Fatalf("expected local config to accept aliased required and default, got errors: %v", errs)
 	}
 }
 

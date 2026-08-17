@@ -95,7 +95,7 @@ func (e *TargetHarnessSetMissingError) Error() string {
 
 // Remediation returns a user-facing hint about how to configure the target set.
 func (e *TargetHarnessSetMissingError) Remediation() string {
-	return "add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml"
+	return "add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml or run 'agent-marketplace migrate' to remediate config structure"
 }
 
 type SyncResult struct {
