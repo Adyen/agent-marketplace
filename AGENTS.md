@@ -7,9 +7,12 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 ## Core Concept
 
 - **Registry repos** contain agent resources (skill directories with `SKILL.md`, commands, subagents, hooks, MCP server definitions). Content is ingested through `harness-compilation` so resources can be authored in any harness layout and compiled into any target harness.
-- The CLI reads **layered configs**: external organization (`/etc/agent-marketplace/config.yaml`), user-personal (`~/.agents/config.yaml`), repo committed (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`, gitignored). Every layer supports recursive local-file `include`; included fragments merge below their containing file, while CLI edits remain rooted in the selected config file. The canonical schema is v2; v3 remains an accepted compatibility alias. Regular roots reject v1 configs (no `apiVersion`), included fragments and local roots may omit it, and `agent-marketplace migrate` performs structural remediation without forcing a schema rewrite. See [the precedence reference](./docs/PRECEDENCE.md) for include syntax, validation, and merge order.
-- Target harnesses are resolved from the project config when it declares top-level `harnesses:`, then from the user-personal config, with organization as fallback. Registry entries may further narrow their targets.
-- Each registry entry can declare `harnesses:` to narrow its targets; the entry's list is intersected with the effective target set.
+- The CLI reads **layered configs**: external organization (`/etc/agent-marketplace/config.yaml`, managed external layer), user-personal (`~/.agents/config.yaml`), repo committed (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`, gitignored). Every layer supports recursive local-file `include`; included fragments merge below their containing file, while CLI edits remain rooted in the selected config file. Configs are merged in precedence order with source stamped on every registry entry (`Source` enum). The canonical schema is v2; v3 remains an accepted compatibility alias. Regular roots reject v1 configs (no `apiVersion`), included fragments and local roots may omit it, and `agent-marketplace migrate` performs structural remediation without forcing a schema rewrite. See [the precedence reference](./docs/PRECEDENCE.md) for include syntax, validation, and merge order.
+- The **machine-wide Target Harness Set** is resolved outside the merged registry config:
+  - `~/.agents/config.yaml` (user-personal) is authoritative.
+  - `/etc/agent-marketplace/config.yaml` (organization) is the fallback.
+  - Top-level `harnesses:` in repo or local configs is forbidden and stripped.
+- Each registry entry can declare `harnesses:` to narrow its targets; the entry's list is intersected with the machine-wide set.
 - Catalog-only commands (`list`) work without a configured target set and warn; target-dependent commands (`sync`) require a configured set and exit with an error if missing.
 - Resources are **materialized** into native harness layouts (e.g. `.factory/skills/`, `.claude/skills/`, `.cursor/rules/`, `.gemini/skills/`, `.windsurf/`, `.devin/skills/`, `.agents/skills/`, `.codex/agents/`) via `harness-compilation`. In the default mode, skills and target-declared skill-directory kinds use symlinks to the registry cache; file mode writes regular files/trees for targets that support it. Other artifacts are compiled per target. Config is the source of truth; generated entries are ephemeral.
 - **Devin is a harness target.** Roots are `<repo>/.devin` and `~/.config/devin`. Skills and converted commands are directory symlinks at `skills/<name>/`, each containing `SKILL.md` (a command carries `x-agent-marketplace-kind: command`), subagents are file symlinks at `agents/<name>.md`, hooks go to `hooks.v1.json` (project) or the `hooks` member of `config.json` (user), and MCP servers go to `mcp_config.json` in both scopes. Rules are out of scope for this target (a scope decision, not a Devin limit): nothing is emitted and a `rule.devin.unsupported` warning is reported without failing the run. Devin is symlink-only: `materialization.mode: file` is refused (`materialize.devin.symlink-required`) rather than degraded. Select it through the TUI harness modal (`H`) or by adding `devin` to the applicable `harnesses:` list. Devin is also a conversion target (`convert --from/--to devin`, `source_harness: devin`), and autodetection prefers a `.devin` workspace marker over compatibility layouts.
@@ -23,7 +26,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 |---|---|
 | CLI sync, not git submodules | No submodule friction; marketplace UX for browsing/installing |
 | Harness-compilation materialization | Native per-harness outputs instead of one-size-fits-all symlinks |
-| v2/v3 organization config with project target harnesses | `/etc/agent-marketplace/config.yaml` is the managed external org layer; v2 is canonical and v3 is a compatibility alias; project `harnesses` wins, then user, then org; per-entry `harnesses` narrows the set |
+| v2/v3 organization config with machine-wide Target Harness Set | `/etc/agent-marketplace/config.yaml` is the managed external org layer; v2 is canonical and v3 is a compatibility alias; user-personal `harnesses` wins, org is fallback, repo/local top-level `harnesses` forbidden; per-entry `harnesses` narrows the set |
 | Multi-resource kinds (skill/command/subagent/hook/mcp) | Full IR fidelity; same selection/exclude UX across all kinds |
 | Tags in `metadata.tags` | Uses the spec's extension point; no deviation |
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |
@@ -59,8 +62,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace sync --check` — check drift without reconciling; exits 1 if out of sync
 - `agent-marketplace update` / `update --bump` — pull latest for pinned refs
 - `agent-marketplace status` — show resources, harnesses, targets, refs, cache freshness, source layer, drift, errors. Includes a `HARNESS TARGETS` table with capabilities and repo/machine roots
-- `agent-marketplace migrate --harnesses <targets>` — remediate structural config issues while preserving v2 (v1 configs are rejected). Migration never adds `devin` or `codex` implicitly
-- `agent-marketplace convert --from <harness> --to <harness> --out <dir> <path>` — one-shot layout conversion; `claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex` are valid in both directions
+- `agent-marketplace migrate --harnesses <targets>` — remediate structural issues in config files; leaves valid v2 files untouched and accepts v3 as a compatibility alias (v1 configs are rejected). Migration never adds `devin`
+- `agent-marketplace convert --from <harness> --to <harness> --out <dir> <path>` — one-shot layout conversion; `claude`, `factory`, `cursor`, `windsurf`, `gemini`, and `devin` are valid in both directions
 - `agent-marketplace doctor` — show local harness/root diagnostics and non-blocking Devin CLI compatibility guidance
 - `agent-marketplace doctor --repair` — preview or interactively repair Devin and Codex shared-aggregate ownership state
 - `agent-marketplace doctor --repair --yes` — adopt exact current desired matches without prompting; destructive orphan removal and conflict replacement still require interactive confirmation
@@ -169,7 +172,7 @@ agent-marketplace/
 ├── CODING_STANDARDS.md ← code-change requirements
 ├── go.mod
 ├── docs/
-│   ├── adoption-guide.md         ← v3 onboarding guide
+│   ├── adoption-guide.md         ← v2 canonical onboarding guide
 │   ├── PRECEDENCE.md             ← selection & precedence reference
 │   └── plans/                    ← phased implementation plans
 ├── e2e/              ← declarative E2E test suite (required Ubuntu CI; Docker locally)

@@ -69,10 +69,10 @@ func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
 	return migrationPrompt{configs: configs}
 }
 
-// configPathNeedsMigration is retained for compatibility with the migration
-// helpers, but schema versions are no longer a reason for the TUI to prompt.
-// Structural remediation remains available through the explicit migrate
-// command.
+// configPathNeedsMigration reports whether the TUI should surface a modal for
+// the given config path. The v2 schema is canonical, so declaring
+// agent-marketplace/v2 is not, by itself, a reason to prompt the user. The
+// migrate command remains available for structural remediation.
 func configPathNeedsMigration(path string) bool {
 	_ = path
 	return false
@@ -165,7 +165,7 @@ func renderMigrationModal(m Model) string {
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 	b.WriteString("This config has structural issues that must be fixed.\n")
-	b.WriteString("Valid agent-marketplace/v3 files are accepted as a compatibility alias.\n\n")
+	b.WriteString("Valid agent-marketplace/v3 files are still accepted as a compatibility alias.\n\n")
 	b.WriteString("Runs the in-process equivalent of:\n")
 	fmt.Fprintf(&b, "```sh\nagent-marketplace migrate --harnesses %s\n```\n\n", harnessesFlag)
 	b.WriteString("Adds or updates these top-level lines before your existing config:\n")

@@ -74,7 +74,6 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 	repoLayer: {
 		"include":            true,
 		"apiVersion":         true,
-		"harnesses":          true,
 		"allowed_registries": true,
 		"registries":         true,
 		"collections":        true,
@@ -257,7 +256,11 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 
 		key := keyNode.Value
 		if !allowed[key] {
-			errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			if key == "harnesses" && (kind == repoLayer || kind == localLayer) {
+				errs = append(errs, fmt.Errorf("line %d: %s configuration cannot declare top-level harnesses; the target harness set is machine-wide and must live in the user-personal config", keyNode.Line, kind.name()))
+			} else {
+				errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			}
 			continue
 		}
 
@@ -278,8 +281,7 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 }
 
 // validateV3RegistryEntryNode validates one registry entry mapping. It checks
-// that every key is allowed for the layer and that required/default are not
-// used in repository personal configs.
+// that every key is allowed for the layer.
 func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 	var errs []error
 	for i := 0; i < len(node.Content); i += 2 {

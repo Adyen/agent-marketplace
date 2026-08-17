@@ -217,10 +217,10 @@ func globalConfigPath() (string, error) {
 }
 
 // loadEffectiveOrganization reads the externally managed organization config
-// at path. It accepts the canonical v2 schema and the v3 compatibility alias,
-// loading both with strict per-layer rules. Windows is always treated as
-// unmanaged. A missing file is valid (unmanaged). Any other read error is a
-// hard error.
+// at path. It is loaded with strict per-layer rules and stamped Organization.
+// Windows is always treated as unmanaged. A missing file is valid (unmanaged).
+// A present file whose apiVersion is not "agent-marketplace/v2" or
+// "agent-marketplace/v3" is a hard error. Any other read error is a hard error.
 func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
@@ -256,8 +256,8 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 
 // LoadOrganizationConfig reads the externally managed organization config at
 // the default path. It returns nil when the file is missing. It returns an
-// error when the file is present but cannot be read or declares an unsupported
-// apiVersion.
+// error when the file is present but cannot be read or does not declare
+// apiVersion "agent-marketplace/v2" or "agent-marketplace/v3".
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)
@@ -284,7 +284,11 @@ func loadEffectiveUser(override string) LayerResult {
 		}
 		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
 	}
-	return LayerResult{Source: UserPersonal, Path: path, Config: cfg}
+	errs := []error(nil)
+	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+		errs = append(errs, logErrs...)
+	}
+	return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
 }
 
 func loadEffectiveRepo(repoRoot, override string) LayerResult {

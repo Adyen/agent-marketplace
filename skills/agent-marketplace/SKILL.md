@@ -58,7 +58,7 @@ The canonical v2 schema materializes native harness files instead of the old def
 .devin/
 ```
 
-## What the Native Schema Provides
+## What the Current Schema Adds
 
 - **Layered target harness set** — project-level `harnesses:` takes precedence; when absent, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
 - **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin, codex]` to compile resources into each harness' layout.
@@ -159,7 +159,7 @@ agent-marketplace sync --check                 # Check drift without writing
 agent-marketplace status                       # Show resources, HARNESS TARGETS, refs, cache, drift
 agent-marketplace update                       # Refresh registry caches
 agent-marketplace update --bump                # Bump pinned refs when newer refs exist
-agent-marketplace migrate --harnesses factory  # Remediate structural config issues
+agent-marketplace migrate --harnesses factory  # Remediate structural issues; valid v2 files are left untouched
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
 agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery
@@ -200,7 +200,7 @@ ownership state, and nothing else:
 ## Config Reference
 
 ```yaml
-# .agents/config.yaml (committed repo config)
+# .agents/config.yaml (committed repo config — no top-level harnesses)
 apiVersion: agent-marketplace/v2
 
 registries:
@@ -231,8 +231,8 @@ tags:
   - puppet
 ```
 
-- **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` remains accepted as a compatibility alias.
-- **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex`.
+- **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` is accepted as a compatibility alias.
+- **`harnesses`** is machine-wide and belongs in `~/.agents/config.yaml` or `/etc/agent-marketplace/config.yaml`; repo and local configs must not declare it. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, and `devin`.
 - **`source_harness`** is optional per registry entry; empty means autodetect.
 - **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
 - **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
@@ -319,11 +319,9 @@ warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not sel
   → agent-marketplace install "genai-atlassian" --kind mcp
 ```
 
-## Config Remediation
+## Legacy v1 Migration
 
-v1 configs (no `apiVersion`) are rejected by the loader. v2 is the canonical
-schema and v3 is accepted as a compatibility alias. `migrate` is reserved for
-structural remediation and does not rewrite valid v2 or v3 files:
+v1 configs (no `apiVersion`) are rejected by the loader. If you have a v1 or v2 config with structural issues (for example, top-level `harnesses` in a repo or local file), `migrate` remediates them while keeping the canonical v2 format and moves the machine-wide `harnesses:` list to `~/.agents/config.yaml`:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
