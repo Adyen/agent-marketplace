@@ -4,7 +4,7 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-Organization, user, and committed repository configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` files use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. The loader rejects v1 configs (no `apiVersion`) in the regular config layers. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is the canonical format for organization, user, and committed repository configs. `agent-marketplace/v3` is still accepted as a compatibility alias. Generated `config.local.yaml` files use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. The loader rejects v1 configs (no `apiVersion`) in the regular config layers. `agent-marketplace migrate` performs structural remediation (for example, removing layer-forbidden top-level fields), not a schema bump, and leaves valid v2 files untouched.
 
 ## Layer order
 

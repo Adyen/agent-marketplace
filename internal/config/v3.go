@@ -132,7 +132,7 @@ func resolveAlias(n *yaml.Node) *yaml.Node {
 func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		var cfg Config
-		if err := cfg.validate(requireHarnesses, kind != localLayer, kind.name()); err != nil {
+		if err := cfg.validate(requireHarnesses, kind != localLayer); err != nil {
 			return nil, []error{fmt.Errorf("validate empty %s config: %w", kind.name(), err)}
 		}
 		return &cfg, nil
@@ -176,7 +176,7 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 	// apiVersion is required for Config-schema files (org/user/repo) but
 	// optional for local configs, which are generated without it.
 	requireAPIVersion := kind != localLayer
-	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion, kind.name()); err != nil {
+	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion); err != nil {
 		nodeErrs = append(nodeErrs, err)
 	}
 
@@ -252,7 +252,11 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 
 		key := keyNode.Value
 		if !allowed[key] {
-			errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			if key == "harnesses" && (kind == repoLayer || kind == localLayer) {
+				errs = append(errs, fmt.Errorf("line %d: %s configuration cannot declare top-level harnesses; the target harness set is machine-wide and must live in the user-personal config", keyNode.Line, kind.name()))
+			} else {
+				errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			}
 			continue
 		}
 
@@ -273,8 +277,7 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 }
 
 // validateV3RegistryEntryNode validates one registry entry mapping. It checks
-// that every key is allowed for the layer and that required/default are not
-// used in repository personal configs.
+// that every key is allowed for the layer.
 func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 	var errs []error
 	for i := 0; i < len(node.Content); i += 2 {

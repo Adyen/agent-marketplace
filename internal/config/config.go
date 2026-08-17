@@ -789,8 +789,8 @@ func (e *ScopeBoundaryError) Error() string {
 const (
 	// APIVersionV2 is the canonical apiVersion sentinel.
 	APIVersionV2 = "agent-marketplace/v2"
-	// APIVersionV3 is an alias accepted for reading but not emitted by
-	// generators or documentation.
+	// APIVersionV3 is an alias that is still accepted for reading but
+	// should not be emitted by generators or documentation.
 	APIVersionV3 = "agent-marketplace/v3"
 )
 
@@ -812,9 +812,9 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
-	// v2 is canonical; v3 is retained as a compatibility alias. apiVersion is
-	// required on Config-schema files (global/repo/org) but optional on local
-	// configs, which are generated without it.
+	// v2 is canonical; v3 is retained as a compatibility alias.
+	// apiVersion is required on Config-schema files (global/repo/org) but
+	// optional on local configs, which are generated without it.
 	if v := strings.TrimSpace(c.APIVersion); v == "" {
 		if requireAPIVersion {
 			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))

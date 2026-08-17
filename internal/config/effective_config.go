@@ -217,10 +217,10 @@ func globalConfigPath() (string, error) {
 }
 
 // loadEffectiveOrganization reads the externally managed organization config
-// at path. It accepts the canonical v2 schema and the v3 compatibility alias,
-// loading both with strict per-layer rules. Windows is always treated as
-// unmanaged. A missing file is valid (unmanaged). Any other read error is a
-// hard error.
+// at path. It is loaded with strict per-layer rules and stamped Organization.
+// Windows is always treated as unmanaged. A missing file is valid (unmanaged).
+// A present file whose apiVersion is not "agent-marketplace/v2" or
+// "agent-marketplace/v3" is a hard error. Any other read error is a hard error.
 func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
@@ -229,7 +229,7 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 
 	data, readErr := os.ReadFile(path)
 	if readErr == nil {
-		lr := loadOrganizationConfig(path, data)
+		lr := loadV3OrganizationConfig(path, data)
 		return lr, inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
 	}
 	if !errors.Is(readErr, os.ErrNotExist) {
@@ -243,8 +243,8 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 
 // LoadOrganizationConfig reads the externally managed organization config at
 // the default path. It returns nil when the file is missing. It returns an
-// error when the file is present but cannot be read or declares an unsupported
-// apiVersion.
+// error when the file is present but cannot be read or does not declare
+// apiVersion "agent-marketplace/v2" or "agent-marketplace/v3".
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)
@@ -284,7 +284,7 @@ func loadEffectiveUser(override string) LayerResult {
 
 	cfg, errs := loadV3Config(data, userLayer, false)
 	if len(errs) > 0 {
-		return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
+		return LayerResult{Source: UserPersonal, Path: path, Errors: errs}
 	}
 	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
 		errs = append(errs, logErrs...)
@@ -310,6 +310,12 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 	}
 
 	cfg, errs := loadV3Config(data, repoLayer, false)
+	if cfg != nil && len(errs) > 0 {
+		// Repository-committed configs are not allowed to declare a top-level
+		// harness set. Keep the rest of the config so callers can surface the
+		// structural error without using the invalid harness list.
+		cfg.Harnesses = nil
+	}
 	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Errors: errs}
 }
 

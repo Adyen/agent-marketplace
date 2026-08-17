@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -244,22 +243,6 @@ func DefaultHarnesses() []string {
 	return []string{"factory", "windsurf"}
 }
 
-// loadV3OrV2Config reads a Config from path using the strict layer-aware
-// loader. v2 is the canonical schema and v3 is accepted as a compatibility
-// alias; neither version is rewritten while loading.
-func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	cfg, errs := loadV3Config(data, kind, requireHarnesses)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
-	}
-	return cfg, nil
-}
-
 func LoadGlobalConfig() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -267,13 +250,18 @@ func LoadGlobalConfig() (*Config, error) {
 	}
 
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	cfg, err := loadV3OrV2Config(configPath, userLayer, false)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("config skipped", "layer", "user", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read config %q: %w", configPath, err)
+	}
+
+	cfg, errs := loadV3Config(data, userLayer, false)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", configPath, errors.Join(errs...))
 	}
 
 	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
@@ -316,37 +304,31 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 // Harnesses is not required; project-level configs may omit it. When the path
 // is a local config (config.local.yaml), apiVersion is also not required —
 // these files use the LocalConfig schema and are generated without it. Editor
-// helpers read every scope's config through this function, so the leniency
-// here keeps remove/exclude operations working against local configs.
+// helpers read every scope's config through this function, so the per-layer
+// allowlist here keeps remove/exclude operations working against local configs.
 func LoadConfigFromPath(path string) (*Config, error) {
-	if isLocalConfigPath(path) {
-		cfg, err := loadConfigGated(path, false, false, localLayer.name())
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				slog.Debug("config skipped", "path", path, "reason", "not_found")
-				return nil, nil
-			}
-			return nil, err
-		}
-
-		slog.Debug("config loaded", "path", path, "registries", len(cfg.Registries))
-		return cfg, nil
-	}
-
-	var kind layerKind
-	if isGlobalConfigPath(path) {
-		kind = userLayer
-	} else {
-		kind = repoLayer
-	}
-
-	cfg, err := loadV3OrV2Config(path, kind, false)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("config skipped", "path", path, "reason", "not_found")
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+
+	var kind layerKind
+	switch {
+	case isLocalConfigPath(path):
+		kind = localLayer
+	case isGlobalConfigPath(path):
+		kind = userLayer
+	default:
+		kind = repoLayer
+	}
+
+	cfg, errs := loadV3Config(data, kind, false)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
 	}
 
 	slog.Debug("config loaded", "path", path, "registries", len(cfg.Registries))
@@ -356,14 +338,20 @@ func LoadConfigFromPath(path string) (*Config, error) {
 // LoadLocalConfigFromPath loads a LocalConfig from an explicit file path.
 // Unlike LoadLocalConfig, it does not use FindRepoRoot.
 func LoadLocalConfigFromPath(path string) (*LocalConfig, error) {
-	cfg, err := loadLocalConfig(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("local config skipped", "path", path, "reason", "not_found")
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read local config %q: %w", path, err)
 	}
+
+	cfg, errs := loadV3LocalConfig(data)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate local config %q: %w", path, errors.Join(errs...))
+	}
+
 	slog.Debug("local config loaded", "path", path, "registries", len(cfg.Registries))
 	return cfg, nil
 }
@@ -381,13 +369,18 @@ func LoadRepoConfig() (*Config, error) {
 	}
 
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	cfg, err := loadV3OrV2Config(configPath, repoLayer, false)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("config skipped", "layer", "repo", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read config %q: %w", configPath, err)
+	}
+
+	cfg, errs := loadV3Config(data, repoLayer, false)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", configPath, errors.Join(errs...))
 	}
 	slog.Debug("config loaded", "layer", "repo", "path", configPath, "registries", len(cfg.Registries))
 	return cfg, nil
@@ -403,13 +396,18 @@ func LoadLocalConfig() (*LocalConfig, error) {
 	}
 
 	configPath := filepath.Join(localDir, ".agents", "config.local.yaml")
-	cfg, err := loadLocalConfig(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("local config skipped", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("read local config %q: %w", configPath, err)
+	}
+
+	cfg, errs := loadV3LocalConfig(data)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate local config %q: %w", configPath, errors.Join(errs...))
 	}
 
 	slog.Debug("local config loaded", "path", configPath, "registries", len(cfg.Registries))
@@ -436,18 +434,6 @@ func IsHomeDir(path string) bool {
 }
 
 func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	layer := "repository committed"
-	if requireHarnesses {
-		layer = "user personal"
-	}
-	return loadConfigGated(path, requireHarnesses, true, layer)
-}
-
-// loadConfigGated reads and validates a Config, with independent control over
-// whether harnesses and apiVersion are required. Local config files
-// (config.local.yaml) are loaded with requireAPIVersion=false because they use
-// the LocalConfig schema and are generated without an apiVersion field.
-func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, layer string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -459,32 +445,20 @@ func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, laye
 	}
 	normalizeConfigHarnessTargets(&cfg)
 
-	if err := cfg.validate(requireHarnesses, requireAPIVersion, layer); err != nil {
+	if err := cfg.validate(requireHarnesses, true); err != nil {
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
 	}
-
 	return &cfg, nil
 }
 
 func loadLocalConfig(path string) (*LocalConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
+		return nil, fmt.Errorf("read local config %q: %w", path, err)
 	}
-
-	var cfg LocalConfig
-	if len(bytes.TrimSpace(data)) == 0 {
-		return &cfg, nil
+	cfg, errs := loadV3LocalConfig(data)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate local config %q: %w", path, errors.Join(errs...))
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeLocalConfigHarnessTargets(&cfg)
-	if err := cfg.ValidateBasic(); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-
-	return &cfg, nil
+	return cfg, nil
 }

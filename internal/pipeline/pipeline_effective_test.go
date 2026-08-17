@@ -111,13 +111,13 @@ registries:
 	}
 }
 
-func TestSync_AcceptsV2OrganizationConfig(t *testing.T) {
+func TestSync_InvalidOrgBlocksBeforeCatalog(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v1
 harnesses:
   - factory
 registries: []
@@ -134,11 +134,14 @@ registries: []
 		},
 	})
 
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected sync to accept v2 organization config, got: %v", result.Errors)
+	if len(result.Errors) == 0 {
+		t.Fatalf("expected sync to fail on invalid organization config")
 	}
-	if !reflect.DeepEqual(result.TargetHarnesses, []hcc.Target{hcc.TargetFactory}) {
-		t.Fatalf("expected v2 organization target harness [factory], got %v", result.TargetHarnesses)
+	if !strings.Contains(joinErrors(result.Errors), "unsupported apiVersion") {
+		t.Fatalf("expected unsupported apiVersion error, got: %v", result.Errors)
+	}
+	if len(result.CatalogLoad.Catalogs) != 0 {
+		t.Fatalf("expected no catalog load when config validation fails, got %d", len(result.CatalogLoad.Catalogs))
 	}
 }
 

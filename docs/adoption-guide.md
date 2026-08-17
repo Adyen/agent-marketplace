@@ -2,7 +2,7 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs (no `apiVersion`). `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is the canonical config format. The loader also accepts `agent-marketplace/v3` as a compatibility alias, but it never rewrites a valid v2 file. v1 configs (no `apiVersion`) are rejected by the loader. `agent-marketplace migrate` performs structural remediation (for example, removing layer-forbidden top-level fields and converting legacy collection syntax), not a schema bump.
 
 ## 30-second setup
 
@@ -82,9 +82,9 @@ allowed_registries:
   - "^gitlab\.example\.com/"
 ```
 
-## Remediating a legacy config
+## Remediating a legacy v1 repo
 
-v1 configs (no `apiVersion`) are rejected by the loader. Use `migrate` for structural issues such as legacy collection syntax; it preserves the canonical v2 apiVersion:
+v1 configs (no `apiVersion`) are rejected by the loader. If you have an old v1 or v2 config with structural issues (for example, top-level `harnesses` in a repo or local file, or legacy collection syntax), `migrate` remediates them while keeping the canonical v2 format:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
@@ -112,7 +112,7 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config.
+`migrate` writes the machine-wide `harnesses:` list to `~/.agents/config.yaml` and removes top-level `harnesses` from repo and local configs. It does not rewrite a valid v2 file.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated

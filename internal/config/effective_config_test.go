@@ -299,7 +299,7 @@ registries: []
 		t.Fatalf("expected no errors for valid v2 organization config, got: %v", ec.Errors)
 	}
 	if !ec.Managed {
-		t.Fatalf("expected valid v2 organization config to be managed")
+		t.Fatalf("expected managed for valid v2 organization layer")
 	}
 	if ec.Organization.Source != Organization {
 		t.Fatalf("expected organization source %v, got %v", Organization, ec.Organization.Source)
