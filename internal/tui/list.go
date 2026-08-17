@@ -43,17 +43,12 @@ func renderList(m Model, visibleHeight int) string {
 	renderedHeight := 0
 	for i := m.listOffset; i < len(m.flatItems); i++ {
 		line := formatFlatItem(m.flatItems[i])
-		wrap := ansi.StringWidth(line) > listWidth
 		if i == m.cursor {
 			line = styleSelected.Render(line)
 		} else {
 			line = stylizeFlatItem(m.flatItems[i], line)
 		}
-		itemHeight := 1
-		if wrap {
-			line = cellbuf.Wrap(line, listWidth, "")
-			itemHeight = strings.Count(line, "\n") + 1
-		}
+		line, itemHeight := wrapFlatItem(line, listWidth)
 		if renderedHeight > 0 && renderedHeight+itemHeight > visibleHeight {
 			break
 		}
@@ -69,14 +64,16 @@ func renderList(m Model, visibleHeight int) string {
 }
 
 func flatItemHeight(item flatItem, width int) int {
-	if width < 1 {
-		return 1
+	_, height := wrapFlatItem(formatFlatItem(item), width)
+	return height
+}
+
+func wrapFlatItem(line string, width int) (string, int) {
+	if width < 1 || ansi.StringWidth(line) <= width {
+		return line, 1
 	}
-	line := formatFlatItem(item)
-	if ansi.StringWidth(line) <= width {
-		return 1
-	}
-	return strings.Count(cellbuf.Wrap(line, width, ""), "\n") + 1
+	wrapped := cellbuf.Wrap(line, width, "")
+	return wrapped, strings.Count(wrapped, "\n") + 1
 }
 
 // formatFlatItem returns the unstyled text for a flat item, used for the

@@ -130,11 +130,15 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		oldWidth, oldHeight := m.width, m.height
 		m.width = msg.Width
 		m.height = msg.Height
 		m.detailViewport.Width = msg.Width
 		m.detailViewport.Height = msg.Height
 		m.clampListOffset()
+		layout := screenLayoutFor(m.height, m.filterActive)
+		listWidth, detailWidth := paneWidths(m.width)
+		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -763,76 +767,98 @@ func (m Model) View() string {
 
 	// paneToggleModal renders as an overlay on top of the normal two-pane
 	// layout so the user can still see the list behind the modal.
-	if m.pane == paneToggleModal {
-		modal := renderToggleModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
+	var modal string
+	switch m.pane {
+	case paneToggleModal:
+		modal = renderToggleModal(m)
+	case paneInitModal:
+		modal = renderInitModal(m)
+	case paneMigrationModal:
+		modal = renderMigrationModal(m)
+	case paneHarnessModal:
+		modal = renderHarnessModal(m)
+	case paneEditConfigModal:
+		modal = renderEditConfigModal(m)
 	}
-
-	if m.pane == paneInitModal {
-		modal := renderInitModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
+	if modal == "" {
+		return base
 	}
-
-	if m.pane == paneMigrationModal {
-		modal := renderMigrationModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	if m.pane == paneHarnessModal {
-		modal := renderHarnessModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	if m.pane == paneEditConfigModal {
-		modal := renderEditConfigModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	return base
+	return fitTerminal(centerOverlay(base, modal, m.width, m.height), m.width, m.height)
 }
 
 // renderBaseScreen renders the standard header + tabs + two-pane layout +
 // footer without any overlay. Extracted so overlays can composite on top.
 func (m Model) renderBaseScreen() string {
-	header := renderHeader(m)
-	tabBar := renderTabBar(m.activeTab)
-	footer := renderFooter(m)
-	listWidth, detailWidth := paneWidths(m.width)
-	mainHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabBar) - lipgloss.Height(footer)
-	if m.filterActive {
-		mainHeight--
-	}
-	mainHeight = max(0, mainHeight)
-
-	searchLine := ""
-	if m.filterActive {
-		searchLine = m.searchInput.View() + "\n"
+	layout := screenLayoutFor(m.height, m.filterActive)
+	if !layout.header {
+		return ""
 	}
 
-	var screen string
-	if mainHeight == 0 {
-		screen = header + "\n" + tabBar + "\n" + searchLine + footer
-	} else {
+	parts := []string{renderHeader(m)}
+	if layout.tabs {
+		parts = append(parts, renderTabBar(m.activeTab))
+	}
+	if layout.search {
+		parts = append(parts, m.searchInput.View())
+	}
+	if layout.mainHeight > 0 {
+		listWidth, detailWidth := paneWidths(m.width)
 		listBox := lipgloss.NewStyle().
 			Width(listWidth).
-			Height(mainHeight).
-			MaxHeight(mainHeight).
-			Render(renderList(m, mainHeight))
+			Height(layout.mainHeight).
+			MaxHeight(layout.mainHeight).
+			Render(renderList(m, layout.mainHeight))
 
 		detailBox := lipgloss.NewStyle().
 			Width(detailWidth).
-			Height(mainHeight).
-			MaxHeight(mainHeight).
+			Height(layout.mainHeight).
+			MaxHeight(layout.mainHeight).
 			PaddingLeft(1).
 			Render(renderDetail(m))
 
-		panes := lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
-		screen = header + "\n" + tabBar + "\n" + searchLine + panes + "\n" + footer
+		parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox))
 	}
-	if m.width < 1 || m.height < 1 {
+	if layout.footer {
+		parts = append(parts, renderFooter(m))
+	}
+	return fitTerminal(strings.Join(parts, "\n"), m.width, m.height)
+}
+
+type screenLayout struct {
+	header     bool
+	tabs       bool
+	search     bool
+	footer     bool
+	mainHeight int
+}
+
+func screenLayoutFor(height int, filterActive bool) screenLayout {
+	if height < 1 {
+		return screenLayout{}
+	}
+	layout := screenLayout{header: true}
+	if height == 1 {
+		return layout
+	}
+	layout.footer = true
+	remaining := height - 2
+	if filterActive && remaining > 0 {
+		layout.search = true
+		remaining--
+	}
+	if remaining > 0 {
+		layout.tabs = true
+		remaining--
+	}
+	layout.mainHeight = remaining
+	return layout
+}
+
+func fitTerminal(content string, width, height int) string {
+	if width < 1 || height < 1 {
 		return ""
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(screen)
+	return lipgloss.NewStyle().MaxWidth(width).MaxHeight(height).Render(content)
 }
 
 func paneWidths(totalWidth int) (listWidth, detailWidth int) {
@@ -935,11 +961,7 @@ func (m *Model) listHeightOffsets(width int) []int {
 // listVisibleHeight computes how many rows fit in the left pane,
 // mirroring the same calculation used in View().
 func (m Model) listVisibleHeight() int {
-	height := m.height - 3
-	if m.filterActive {
-		height--
-	}
-	return max(1, height)
+	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
 }
 
 func Run(repoRoot, homeDir string) error {

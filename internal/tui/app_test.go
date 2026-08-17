@@ -143,20 +143,10 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 }
 
 func TestViewFitsTerminalWithLongContent(t *testing.T) {
-	m := NewModel(t.TempDir(), t.TempDir())
-	m.loading = false
 	r := mkRow("selected-resource-with-a-long-name", withProject, withRegistry("https://example.com/a/very/long/registry/location.git", "registry-with-a-long-name"))
 	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"
 	r.Artifact.Description = strings.Repeat("long description content ", 12)
-	m.rows = []row{r}
-	m.filteredRows = m.rows
-	m.rebuildFlatItems()
-	for i := range m.flatItems {
-		if m.flatItems[i].Kind == flatArtifact {
-			m.cursor = i
-			break
-		}
-	}
+	m := modelWithSelectedRow(t, r)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	out := ansi.Strip(updated.(Model).View())
@@ -193,6 +183,38 @@ func TestDownKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	}
 }
 
+func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
+	rows := []row{
+		mkRow("alpha", withGlobal),
+		mkRow("bravo", withGlobal),
+		mkRow("charlie", withGlobal),
+		mkRow("delta", withGlobal),
+		mkRow("echo", withGlobal),
+		mkRow("foxtrot", withGlobal),
+		mkRow("golf", withGlobal),
+		mkRow("omega", withGlobal),
+	}
+	m := NewModel(t.TempDir(), t.TempDir())
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 9})
+	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{rows: rows})
+	m = loaded.(Model)
+	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
+		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View()))
+	}
+
+	bottom, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	m = bottom.(Model)
+	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "omega") {
+		t.Fatalf("bottom navigation moved the selection outside the list pane:\n%s", ansi.Strip(m.View()))
+	}
+
+	top, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = top.(Model)
+	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
+		t.Fatalf("top navigation did not restore the first list rows:\n%s", ansi.Strip(m.View()))
+	}
+}
+
 func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
@@ -221,7 +243,9 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 		filterActive bool
 	}{
 		{name: "no pane rows", width: 80, height: 3},
+		{name: "header and footer", width: 80, height: 2},
 		{name: "active search", width: 80, height: 4, filterActive: true},
+		{name: "active search without tabs", width: 80, height: 3, filterActive: true},
 		{name: "single cell", width: 1, height: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,25 +265,36 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
+			if tc.height >= 2 && !strings.Contains(out, "~ in sync") {
+				t.Fatalf("View() omitted the persistent footer from a %d-line terminal: %q", tc.height, out)
+			}
 		})
+	}
+}
+
+func TestInitialModalFitsTerminal(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.pane = paneInitModal
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	out := ansi.Strip(updated.(Model).View())
+	lines := strings.Split(out, "\n")
+	if len(lines) > 8 {
+		t.Fatalf("View() produced %d lines for an 8-line terminal: %q", len(lines), out)
+	}
+	for _, line := range lines {
+		if width := ansi.StringWidth(line); width > 30 {
+			t.Fatalf("View() produced a %d-column modal line for a 30-column terminal: %q", width, line)
+		}
 	}
 }
 
 func TestViewWrapsUnicodeDetailWithoutDataLoss(t *testing.T) {
 	const source = "/缓存/技能/非常长的资源位置/另一个目录/SKILL.md"
-	m := NewModel(t.TempDir(), t.TempDir())
-	m.loading = false
 	r := mkRow("unicode", withGlobal)
 	r.Artifact.Path = source
-	m.rows = []row{r}
-	m.filteredRows = m.rows
-	m.rebuildFlatItems()
-	for i := range m.flatItems {
-		if m.flatItems[i].Kind == flatArtifact {
-			m.cursor = i
-			break
-		}
-	}
+	m := modelWithSelectedRow(t, r)
 
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	out := ansi.Strip(updated.(Model).View())

@@ -213,12 +213,22 @@ func BenchmarkRecomputeView(b *testing.B) {
 // rows.
 func BenchmarkRenderListVisibleRows(b *testing.B) {
 	rows := buildBenchRows(500)
+	cases := []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{name: "wide_25", width: 120, height: 25},
+		{name: "wide_50", width: 120, height: 50},
+		{name: "wide_100", width: 120, height: 100},
+		{name: "wrapped_25", width: 30, height: 25},
+	}
 
-	for _, height := range []int{25, 50, 100} {
-		b.Run(fmt.Sprintf("visible_%d", height), func(b *testing.B) {
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
-			m.width = 120
-			m.height = height + 3
+			m.width = c.width
+			m.height = c.height + 3
 			m.loading = false
 			m.rows = append([]row(nil), rows...)
 			m.recomputeView()
@@ -227,13 +237,65 @@ func BenchmarkRenderListVisibleRows(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = renderList(m, height)
+				_ = renderList(m, c.height)
 			}
 		})
 	}
 }
 
 func BenchmarkClampListOffset(b *testing.B) {
+	b.Run("cache_hit", func(b *testing.B) {
+		m := benchmarkClampModel()
+		m.listHeightOffsets(20)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			m.cursor = (m.cursor + 1) % len(m.flatItems)
+			m.clampListOffset()
+		}
+	})
+	b.Run("resize_rebuild", func(b *testing.B) {
+		m := benchmarkClampModel()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			m.width = 39 + i%2
+			m.cursor = (m.cursor + 1) % len(m.flatItems)
+			m.clampListOffset()
+		}
+	})
+}
+
+func BenchmarkRenderBaseScreen(b *testing.B) {
+	r := mkRow("selected-resource-with-a-long-name", withProject, withRegistry("https://example.com/a/very/long/registry/location.git", "registry-with-a-long-name"))
+	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"
+	r.Artifact.Description = "long description content that wraps in the detail pane"
+	m := modelWithSelectedRow(b, r)
+	m.width = 80
+	m.height = 24
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.renderBaseScreen()
+	}
+}
+
+func BenchmarkRenderDetail(b *testing.B) {
+	r := mkRow("selected-resource-with-a-long-name", withProject, withRegistry("https://example.com/a/very/long/registry/location.git", "registry-with-a-long-name"))
+	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"
+	r.Artifact.Description = "long description content that wraps in the detail pane"
+	m := modelWithSelectedRow(b, r)
+	m.width = 80
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = renderDetail(m)
+	}
+}
+
+func benchmarkClampModel() Model {
 	m := NewModel("/repo", "/home")
 	m.width = 50
 	m.height = 28
@@ -241,15 +303,5 @@ func BenchmarkClampListOffset(b *testing.B) {
 	for i := range m.flatItems {
 		m.flatItems[i] = flatItem{Kind: flatSection, SectionTitle: fmt.Sprintf("long-section-title-%03d-with-wrapped-content", i)}
 	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		m.cursor++
-		if m.cursor == len(m.flatItems) {
-			m.cursor = 0
-			m.listOffset = 0
-		}
-		m.clampListOffset()
-	}
+	return m
 }
