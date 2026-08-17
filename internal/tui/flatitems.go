@@ -32,6 +32,7 @@ func (m *Model) rebuildFlatItems() {
 		fold = map[string]bool{}
 	}
 	m.flatItems = buildTree(m.filteredRows, m.activeTab, fold)
+	m.listHeightPrefix = m.listHeightPrefix[:0]
 }
 
 // selectedRow returns the skill row the cursor currently points to, if any.

@@ -168,9 +168,11 @@ type Model struct {
 	globalHarnesses  []string
 	projectHarnesses []string
 
-	listOffset int // first visible flatItems index in the left pane (current tab)
-	width      int
-	height     int
+	listOffset       int // first visible flatItems index in the left pane (current tab)
+	listHeightPrefix []int
+	listHeightWidth  int
+	width            int
+	height           int
 
 	// Top tab bar and per-tab navigation state. When switching tabs we swap
 	// cursor/listOffset/filter in+out of tabStates so each tab keeps its

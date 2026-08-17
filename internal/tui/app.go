@@ -134,6 +134,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.detailViewport.Width = msg.Width
 		m.detailViewport.Height = msg.Height
+		m.clampListOffset()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -796,43 +797,51 @@ func (m Model) renderBaseScreen() string {
 	header := renderHeader(m)
 	tabBar := renderTabBar(m.activeTab)
 	footer := renderFooter(m)
-
+	listWidth, detailWidth := paneWidths(m.width)
 	mainHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabBar) - lipgloss.Height(footer)
-	if mainHeight < 1 {
-		mainHeight = 1
+	if m.filterActive {
+		mainHeight--
 	}
-
-	listWidth := m.width * 2 / 5
-	if listWidth < 20 {
-		listWidth = 20
-	}
-	detailWidth := m.width - listWidth
-	if detailWidth < 20 {
-		detailWidth = 20
-	}
-
-	listContent := renderList(m, mainHeight)
-	detailContent := renderDetail(m)
-
-	listBox := lipgloss.NewStyle().
-		Width(listWidth).
-		Height(mainHeight).
-		Render(listContent)
-
-	detailBox := lipgloss.NewStyle().
-		Width(detailWidth).
-		Height(mainHeight).
-		PaddingLeft(1).
-		Render(detailContent)
-
-	panes := lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
+	mainHeight = max(0, mainHeight)
 
 	searchLine := ""
 	if m.filterActive {
 		searchLine = m.searchInput.View() + "\n"
 	}
 
-	return header + "\n" + tabBar + "\n" + searchLine + panes + "\n" + footer
+	var screen string
+	if mainHeight == 0 {
+		screen = header + "\n" + tabBar + "\n" + searchLine + footer
+	} else {
+		listBox := lipgloss.NewStyle().
+			Width(listWidth).
+			Height(mainHeight).
+			MaxHeight(mainHeight).
+			Render(renderList(m, mainHeight))
+
+		detailBox := lipgloss.NewStyle().
+			Width(detailWidth).
+			Height(mainHeight).
+			MaxHeight(mainHeight).
+			PaddingLeft(1).
+			Render(renderDetail(m))
+
+		panes := lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
+		screen = header + "\n" + tabBar + "\n" + searchLine + panes + "\n" + footer
+	}
+	if m.width < 1 || m.height < 1 {
+		return ""
+	}
+	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(screen)
+}
+
+func paneWidths(totalWidth int) (listWidth, detailWidth int) {
+	totalWidth = max(0, totalWidth)
+	listWidth = totalWidth * 2 / 5
+	if totalWidth >= 40 && listWidth < 20 {
+		listWidth = 20
+	}
+	return listWidth, totalWidth - listWidth
 }
 
 func renderHeader(m Model) string {
@@ -874,44 +883,63 @@ func (m *Model) applyFilter() []row {
 // clampListOffset adjusts listOffset so the cursor stays visible in the
 // left pane. Must be called after any change to cursor or filteredRows.
 func (m *Model) clampListOffset() {
-	vh := m.listVisibleHeight()
-	if vh < 1 {
-		vh = 1
+	if len(m.flatItems) == 0 {
+		m.cursor = 0
+		m.listOffset = 0
+		return
 	}
+	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
+	m.listOffset = min(max(0, m.listOffset), len(m.flatItems)-1)
 
 	// Cursor above the visible window
 	if m.cursor < m.listOffset {
 		m.listOffset = m.cursor
 	}
-	// Cursor below the visible window
-	if m.cursor >= m.listOffset+vh {
-		m.listOffset = m.cursor - vh + 1
-	}
 
-	// Clamp to valid range
-	maxOffset := max(0, len(m.flatItems)-vh)
-	if m.listOffset > maxOffset {
-		m.listOffset = maxOffset
+	listWidth, _ := paneWidths(m.width)
+	visibleHeight := m.listVisibleHeight()
+	heights := m.listHeightOffsets(listWidth)
+	cursorBottom := heights[m.cursor+1]
+	if cursorBottom-heights[m.listOffset] <= visibleHeight {
+		return
 	}
-	if m.listOffset < 0 {
-		m.listOffset = 0
+	low, high := m.listOffset, m.cursor
+	for low < high {
+		mid := low + (high-low)/2
+		if cursorBottom-heights[mid] <= visibleHeight {
+			high = mid
+		} else {
+			low = mid + 1
+		}
 	}
+	m.listOffset = low
+}
+
+func (m *Model) listHeightOffsets(width int) []int {
+	if m.listHeightWidth == width && len(m.listHeightPrefix) == len(m.flatItems)+1 {
+		return m.listHeightPrefix
+	}
+	if cap(m.listHeightPrefix) < len(m.flatItems)+1 {
+		m.listHeightPrefix = make([]int, len(m.flatItems)+1)
+	} else {
+		m.listHeightPrefix = m.listHeightPrefix[:len(m.flatItems)+1]
+		m.listHeightPrefix[0] = 0
+	}
+	for i := range m.flatItems {
+		m.listHeightPrefix[i+1] = m.listHeightPrefix[i] + flatItemHeight(m.flatItems[i], width)
+	}
+	m.listHeightWidth = width
+	return m.listHeightPrefix
 }
 
 // listVisibleHeight computes how many rows fit in the left pane,
 // mirroring the same calculation used in View().
 func (m Model) listVisibleHeight() int {
-	header := renderHeader(m)
-	tabBar := renderTabBar(m.activeTab)
-	footer := renderFooter(m)
-	h := m.height - lipgloss.Height(header) - lipgloss.Height(tabBar) - lipgloss.Height(footer)
+	height := m.height - 3
 	if m.filterActive {
-		h-- // search line
+		height--
 	}
-	if h < 1 {
-		h = 1
-	}
-	return h
+	return max(1, height)
 }
 
 func Run(repoRoot, homeDir string) error {

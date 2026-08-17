@@ -6,6 +6,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/cellbuf"
 )
 
 var (
@@ -33,28 +35,48 @@ func renderList(m Model, visibleHeight int) string {
 		return styleListEmpty.Render("No resources found")
 	}
 
-	if visibleHeight < 1 {
-		visibleHeight = 1
+	listWidth, _ := paneWidths(m.width)
+	if visibleHeight < 1 || listWidth < 1 {
+		return ""
 	}
-
-	start := m.listOffset
-	end := start + visibleHeight
-	if end > len(m.flatItems) {
-		end = len(m.flatItems)
-	}
-
 	var b strings.Builder
-	for i := start; i < end; i++ {
+	renderedHeight := 0
+	for i := m.listOffset; i < len(m.flatItems); i++ {
 		line := formatFlatItem(m.flatItems[i])
+		wrap := ansi.StringWidth(line) > listWidth
 		if i == m.cursor {
-			b.WriteString(styleSelected.Render(line))
+			line = styleSelected.Render(line)
 		} else {
-			b.WriteString(stylizeFlatItem(m.flatItems[i], line))
+			line = stylizeFlatItem(m.flatItems[i], line)
 		}
+		itemHeight := 1
+		if wrap {
+			line = cellbuf.Wrap(line, listWidth, "")
+			itemHeight = strings.Count(line, "\n") + 1
+		}
+		if renderedHeight > 0 && renderedHeight+itemHeight > visibleHeight {
+			break
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
+		renderedHeight += itemHeight
+		if renderedHeight >= visibleHeight {
+			break
+		}
 	}
 
 	return b.String()
+}
+
+func flatItemHeight(item flatItem, width int) int {
+	if width < 1 {
+		return 1
+	}
+	line := formatFlatItem(item)
+	if ansi.StringWidth(line) <= width {
+		return 1
+	}
+	return strings.Count(cellbuf.Wrap(line, width, ""), "\n") + 1
 }
 
 // formatFlatItem returns the unstyled text for a flat item, used for the
