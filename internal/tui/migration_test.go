@@ -1,14 +1,9 @@
 package tui
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -42,11 +37,8 @@ func TestSnapshotV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
-	if m.pane == paneMigrationModal {
-		t.Fatalf("did not expect migration modal for v2 config, got pane=%v", m.pane)
-	}
-	if len(m.migrationPrompt.configs) != 0 {
-		t.Fatalf("expected no pending migration, got %d", len(m.migrationPrompt.configs))
+	if m.pane != paneList {
+		t.Fatalf("expected list pane for v2 config, got pane=%v", m.pane)
 	}
 }
 
@@ -79,75 +71,11 @@ func TestSnapshotV1ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
-	if m.pane == paneMigrationModal {
-		t.Fatalf("did not expect migration modal for v1 config, got pane=%v", m.pane)
-	}
-	if len(m.migrationPrompt.configs) != 0 {
-		t.Fatalf("expected no pending migration, got %d", len(m.migrationPrompt.configs))
-	}
-}
-
-func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
-	repoRoot := t.TempDir()
-	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeV2Config(t, configPath)
-	before, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read before: %v", err)
-	}
-
-	m := NewModel(repoRoot, t.TempDir())
-	m.pane = paneMigrationModal
-	m.migrationPrompt = pendingMigrationFor(repoRoot, "")
-
-	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	m = mi.(Model)
-	if cmd != nil {
-		t.Fatalf("leave should not emit a migration command")
-	}
 	if m.pane != paneList {
-		t.Fatalf("leave should close modal, got pane=%v", m.pane)
+		t.Fatalf("expected list pane for v1 config, got pane=%v", m.pane)
 	}
-
-	after, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read after: %v", err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("leave changed config:\nbefore:\n%s\nafter:\n%s", before, after)
-	}
-}
-
-func TestRenderMigrationModalIncludesActions(t *testing.T) {
-	defaultHarnesses := config.DefaultHarnesses()
-	harnessesFlag := strings.Join(defaultHarnesses, ",")
-	harnessesList := fmt.Sprintf("%v", defaultHarnesses)
-
-	m := NewModel("/repo", "/home")
-	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
-
-	out := renderMigrationModal(m)
-	for _, want := range []string{
-		"Config remediation required",
-		"Project",
-		"agent-marketplace migrate --harnesses " + harnessesFlag,
-		"apiVersion: agent-marketplace/v2",
-		"Existing registries, selected skills, excludes, and comments are preserved",
-		"harnesses: " + harnessesList,
-		"[m]",
-		"[l]",
-		"leave config unchanged",
-	} {
-		if !contains(out, want) {
-			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
-		}
-	}
-	for _, h := range defaultHarnesses {
-		want := "  - " + h
-		if !contains(out, want) {
-			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
-		}
+	if len(m.errs) == 0 {
+		t.Fatalf("expected config errors for v1 config")
 	}
 }
 

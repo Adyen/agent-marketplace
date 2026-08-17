@@ -64,9 +64,6 @@ type keyMap struct {
 	HarnessSave    key.Binding
 	HarnessCancel  key.Binding
 
-	MigrationRun   key.Binding
-	MigrationLeave key.Binding
-
 	// Edit config modal
 	EditConfigGlobal  key.Binding
 	EditConfigProject key.Binding
@@ -142,9 +139,6 @@ var defaultKeyMap = keyMap{
 	HarnessProject: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "edit project")),
 	HarnessSave:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "save")),
 	HarnessCancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-
-	MigrationRun:   key.NewBinding(key.WithKeys("m", "enter"), key.WithHelp("m/enter", "run migration")),
-	MigrationLeave: key.NewBinding(key.WithKeys("l", "esc"), key.WithHelp("l/esc", "leave config")),
 
 	// Edit config modal
 	EditConfigGlobal:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "edit global")),

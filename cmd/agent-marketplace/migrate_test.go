@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandPreservesValidV2UserAndRepo(t *testing.T) {
+func TestMigrateCommandRemediatesV2UserAndRepo(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
