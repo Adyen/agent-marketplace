@@ -25,6 +25,7 @@ const (
 	HarnessWindsurf = targetmeta.TargetWindsurf
 	HarnessGemini   = targetmeta.TargetGemini
 	HarnessDevin    = targetmeta.TargetDevin
+	HarnessCodex    = targetmeta.TargetCodex
 )
 
 // Bundle holds the result of ingesting a harness-specific source layout:
@@ -209,6 +210,7 @@ type StrictDetector interface {
 // markers by devinWinsOverCompatibilityLayouts, which is strictly earlier than
 // anything this list can express.
 var autodetectOrder = []Harness{
+	HarnessCodex,
 	HarnessClaude,
 	HarnessFactory,
 	HarnessCursor,
