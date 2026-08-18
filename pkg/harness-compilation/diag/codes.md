@@ -32,6 +32,7 @@ comparison in non-test code.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `ingest.codex.bundle-manifest-synthesized` | Codex workspace has no bundle manifest; manifest synthesized | Codex bundle metadata is synthesized from the native layout |
 | `subagent.cursor.model-passthrough` | Cursor model not in mapping table; passed through unchanged | Add the model to the mapping table if a Cursor-specific ID exists |
 | `ingest.claude.bundle-manifest-synthesized` | Workspace form has no plugin.json; manifest synthesized | Add a .claude-plugin/plugin.json to the source if a manifest is needed |
 | `ingest.factory.bundle-manifest-synthesized` | Workspace form has no plugin.json; manifest synthesized | Add a .factory-plugin/plugin.json to the source if a manifest is needed |
@@ -66,6 +67,9 @@ comparison in non-test code.
 | `rule.claude.no-primitive` | Claude Code has no rules directory primitive; rule dropped | Claude reads project guidance from CLAUDE.md; reference the rule content there instead |
 | `rule.gemini.no-primitive` | Gemini CLI has no rules directory primitive; rule dropped | Gemini reads project guidance from GEMINI.md; reference the rule content there instead |
 | `rule.devin.unsupported` | Rules are out of scope for the Devin target; no rule artifact was emitted | This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
+| `rule.codex.unsupported` | Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted | Use a supported resource kind or manage AGENTS.md separately |
+| `compile.codex.field-dropped` | A benign IR field has no documented Codex equivalent and was omitted | Remove the field or choose a target that represents it |
+| `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
@@ -492,6 +496,11 @@ key or a hook event name), the resource name, and content digests are reported.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
+| `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
+| `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
+| `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |
+| `ingest.codex.duplicate-identity` | Duplicate Codex resource identity was suppressed without choosing a winner | Rename one duplicate native resource |
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
