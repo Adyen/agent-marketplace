@@ -4,20 +4,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func TestSupportedHarnessTargets(t *testing.T) {
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini"}
+	want := targetmeta.CompilerNames()
 	got := SupportedHarnessTargets()
-	if len(got) != len(want) {
-		t.Fatalf("SupportedHarnessTargets() = %v, want %v", got, want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("SupportedHarnessTargets() = %v, want registry compiler targets %v", got, want)
 	}
-	for i, v := range want {
-		if got[i] != v {
-			t.Fatalf("SupportedHarnessTargets()[%d] = %q, want %q", i, got[i], v)
-		}
+	if !slices.Contains(got, string(targetmeta.TargetDevin)) {
+		t.Fatal("SupportedHarnessTargets() omits Devin")
 	}
 }
 

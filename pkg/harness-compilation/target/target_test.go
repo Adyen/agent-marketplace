@@ -1,9 +1,36 @@
 package target
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 )
+
+func TestCodexIdentityIsNotPubliclyDiscoverable(t *testing.T) {
+	if TargetCodex != "codex" {
+		t.Fatalf("TargetCodex = %q, want codex", TargetCodex)
+	}
+	if _, ok := Lookup(string(TargetCodex)); ok {
+		t.Fatal("Codex must remain undiscoverable until target promotion")
+	}
+	if slices.Contains(Targets(), TargetCodex) {
+		t.Fatal("Codex must remain absent from public target lists until promotion")
+	}
+}
+
+func TestExistingDefinitionsRemainUnchanged(t *testing.T) {
+	want := []Definition{
+		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
+		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
+		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2},
+		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
+		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
+		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
+	}
+	if got := Definitions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Definitions() = %#v, want %#v", got, want)
+	}
+}
 
 func TestDefinitionsHaveUniqueCompleteIdentity(t *testing.T) {
 	definitions := Definitions()

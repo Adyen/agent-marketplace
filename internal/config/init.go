@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,22 +22,12 @@ var ErrAlreadyInitialized = errors.New("user personal config already initialized
 // SupportedHarnessTargets returns the canonical list of known harness target
 // IDs in a stable order.
 func SupportedHarnessTargets() []string {
-	return []string{
-		string(hcc.TargetFactory),
-		string(hcc.TargetClaude),
-		string(hcc.TargetCursor),
-		string(hcc.TargetWindsurf),
-		string(hcc.TargetGemini),
-	}
+	return targetmeta.CompilerNames()
 }
 
 // IsSupportedHarness reports whether id is a known harness target.
 func IsSupportedHarness(id string) bool {
-	switch hcc.Target(id) {
-	case hcc.TargetFactory, hcc.TargetClaude, hcc.TargetCursor, hcc.TargetWindsurf, hcc.TargetGemini:
-		return true
-	}
-	return false
+	return targetmeta.IsCompilerTarget(id)
 }
 
 // DetectInstalledHarnesses scans the user's home directory for harness
