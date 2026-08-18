@@ -57,6 +57,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -243,6 +244,8 @@ func devinFragmentEntries(rel string, data []byte, resource string) ([]devinEntr
 		}
 		return devinHookEntries(rel, doc, resource)
 	case harness.DevinUserConfigFile:
+		fallthrough
+	case codexHooksFile:
 		var doc map[string]map[string][]json.RawMessage
 		if err := devinDecode(data, &doc); err != nil {
 			return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
@@ -373,7 +376,8 @@ type devinAggregateReport struct {
 // side-effect-free contract — and would make a read-only command block behind a
 // long-running sync.
 func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *devinAggregateWork, dryRun bool) *Report {
-	if key.target != hcc.TargetDevin {
+	isCodex := key.target == hcc.Target(targetmeta.TargetCodex)
+	if key.target != hcc.TargetDevin && !isCodex {
 		// Every other target's aggregates are still handled by the generic
 		// marker-merge path. Routing them here would need per-target container
 		// shapes this reconciler deliberately does not guess at.
@@ -384,6 +388,9 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 		return report
 	}
 	rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
+	if isCodex {
+		rels = []string{codexHooksFile}
+	}
 	sort.Strings(rels)
 
 	desiredByRel := make(map[string][]devinEntry, len(rels))
@@ -746,7 +753,7 @@ func devinContainerNode(doc *jsonc.Document, rel string) (container *jsonc.Node,
 		return root, "", nil
 	case harness.DevinMcpConfigFile:
 		member = devinMcpServersKey
-	case harness.DevinUserConfigFile:
+	case harness.DevinUserConfigFile, codexHooksFile:
 		member = devinHooksKey
 	default:
 		return nil, "", fmt.Errorf("unknown Devin aggregate %q", rel)
