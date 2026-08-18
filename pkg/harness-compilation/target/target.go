@@ -5,6 +5,8 @@
 // target identity and user-facing metadata free of import cycles.
 package target
 
+import "fmt"
+
 // Target identifies a harness layout used as a compilation destination or
 // source format.
 type Target string
@@ -24,15 +26,30 @@ const (
 // harness-compilation packages; completeness tests verify those registrations
 // at the integration boundary.
 type Definition struct {
-	Target     Target
-	Label      string
-	RepoRoot   string
-	UserRoot   string
-	Compiler   bool
-	Ingester   bool
-	Conversion bool
-	UI         bool
-	UIOrder    int
+	Target           Target
+	Label            string
+	RepoRoot         string
+	UserRoot         string
+	PartitionedRoots bool
+	Compiler         bool
+	Ingester         bool
+	Conversion       bool
+	UI               bool
+	UIOrder          int
+}
+
+// ValidateDefinition rejects target metadata that mixes or omits the legacy
+// single-root and partitioned-root models.
+func ValidateDefinition(definition Definition) error {
+	hasRepoRoot := definition.RepoRoot != ""
+	hasUserRoot := definition.UserRoot != ""
+	if hasRepoRoot != hasUserRoot {
+		return fmt.Errorf("target %q must declare both legacy roots", definition.Target)
+	}
+	if definition.PartitionedRoots == hasRepoRoot {
+		return fmt.Errorf("target %q must declare exactly one root model", definition.Target)
+	}
+	return nil
 }
 
 var definitions = []Definition{

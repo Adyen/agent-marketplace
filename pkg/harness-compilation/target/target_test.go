@@ -32,6 +32,28 @@ func TestExistingDefinitionsRemainUnchanged(t *testing.T) {
 	}
 }
 
+func TestValidateDefinitionRootModels(t *testing.T) {
+	tests := []struct {
+		name    string
+		def     Definition
+		wantErr bool
+	}{
+		{name: "legacy", def: Definition{Target: "legacy", RepoRoot: ".legacy", UserRoot: ".legacy"}},
+		{name: "partitioned", def: Definition{Target: "split", PartitionedRoots: true}},
+		{name: "neither", def: Definition{Target: "missing"}, wantErr: true},
+		{name: "mixed", def: Definition{Target: "mixed", RepoRoot: ".mixed", UserRoot: ".mixed", PartitionedRoots: true}, wantErr: true},
+		{name: "partial legacy", def: Definition{Target: "partial", RepoRoot: ".partial"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDefinition(tt.def)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateDefinition(%#v) error = %v, wantErr %t", tt.def, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestDefinitionsHaveUniqueCompleteIdentity(t *testing.T) {
 	definitions := Definitions()
 	if len(definitions) == 0 {
@@ -40,6 +62,9 @@ func TestDefinitionsHaveUniqueCompleteIdentity(t *testing.T) {
 
 	seen := make(map[Target]bool, len(definitions))
 	for _, definition := range definitions {
+		if err := ValidateDefinition(definition); err != nil {
+			t.Fatalf("target %q has invalid root metadata: %v", definition.Target, err)
+		}
 		if definition.Target == "" {
 			t.Fatal("target definition has empty identity")
 		}
