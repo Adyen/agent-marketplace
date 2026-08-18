@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -40,36 +42,38 @@ func load(src fs.FS) (*ingest.Bundle, error) {
 	if !Detect(src) {
 		return nil, fmt.Errorf("ingest/codex: no .codex source marker")
 	}
-	resources, err := loadSkills(src)
-	if err != nil {
-		return nil, err
-	}
-	for _, loader := range []func(fs.FS) ([]ir.Resource, error){loadSubagents, loadHooks, loadMCP, loadPrompts} {
-		loaded, err := loader(src)
-		if err != nil {
-			return nil, err
-		}
+	slog.Info("codex ingest start", "source", ingest.HarnessCodex)
+	var resources []ir.Resource
+	diagnostics := []diag.Diagnostic{{Code: diag.CodeIngestCodexManifestSynthesized, Severity: diag.SeverityInfo, Resource: "bundle", Message: "Codex workspace has no bundle manifest; manifest synthesized"}}
+	for _, loader := range []func(fs.FS) ([]ir.Resource, []diag.Diagnostic){loadSkills, loadSubagents, loadHooks, loadMCP, loadPrompts} {
+		loaded, loaderDiagnostics := loader(src)
 		resources = append(resources, loaded...)
+		diagnostics = append(diagnostics, loaderDiagnostics...)
 	}
-	return &ingest.Bundle{Manifest: ir.Manifest{Name: "codex-workspace"}, Resources: resources}, nil
+	resources, duplicateDiagnostics := suppressDuplicates(resources)
+	diagnostics = append(diagnostics, duplicateDiagnostics...)
+	slog.Info("codex ingest complete", "source", ingest.HarnessCodex, "resources", len(resources), "diagnostics", len(diagnostics))
+	return &ingest.Bundle{Manifest: ir.Manifest{Name: "codex-workspace"}, Resources: resources, Diagnostics: diagnostics}, nil
 }
 
-func loadSkills(src fs.FS) ([]ir.Resource, error) {
+func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	entries, err := fs.ReadDir(src, ".agents/skills")
 	if err != nil {
 		if isMissing(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, []diag.Diagnostic{loadFailure(".agents/skills", err)}
 	}
 	var resources []ir.Resource
+	var diagnostics []diag.Diagnostic
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		skill, err := bundle.LoadSkill(src, path.Join(".agents/skills", entry.Name()))
 		if err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, loadFailure(path.Join(".agents/skills", entry.Name(), "SKILL.md"), err))
+			continue
 		}
 		if marker, ok := skill.Extra[kindKey]; ok && marker == "command" {
 			delete(skill.Extra, kindKey)
@@ -78,7 +82,7 @@ func loadSkills(src fs.FS) ([]ir.Resource, error) {
 		}
 		resources = append(resources, skill)
 	}
-	return resources, nil
+	return resources, diagnostics
 }
 
 type subagentDocument struct {
@@ -89,20 +93,23 @@ type subagentDocument struct {
 	Instructions string `toml:"developer_instructions"`
 }
 
-func loadSubagents(src fs.FS) ([]ir.Resource, error) {
+func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	files, err := filesWithSuffix(src, ".codex/agents", ".toml")
 	if err != nil {
-		return nil, err
+		return nil, []diag.Diagnostic{loadFailure(".codex/agents", err)}
 	}
 	resources := make([]ir.Resource, 0, len(files))
+	var diagnostics []diag.Diagnostic
 	for _, file := range files {
 		raw, err := fs.ReadFile(src, file)
 		if err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, loadFailure(file, err))
+			continue
 		}
 		var doc subagentDocument
 		if err := toml.Unmarshal(raw, &doc); err != nil {
-			return nil, fmt.Errorf("ingest/codex: parse %s: %w", file, err)
+			diagnostics = append(diagnostics, loadFailure(file, err))
+			continue
 		}
 		name := doc.Name
 		if name == "" {
@@ -110,7 +117,7 @@ func loadSubagents(src fs.FS) ([]ir.Resource, error) {
 		}
 		resources = append(resources, ir.NewSubagent(name, doc.Description, doc.Instructions, doc.Model, nil, doc.Effort, nil, "", nil, ir.SourceRef{File: file, Line: 1}))
 	}
-	return resources, nil
+	return resources, diagnostics
 }
 
 type hooksDocument struct {
@@ -125,18 +132,18 @@ type hookHandler struct {
 	Command string `json:"command"`
 }
 
-func loadHooks(src fs.FS) ([]ir.Resource, error) {
+func loadHooks(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	const file = ".codex/hooks.json"
 	raw, err := fs.ReadFile(src, file)
 	if isMissing(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, []diag.Diagnostic{loadFailure(file, err)}
 	}
 	var doc hooksDocument
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("ingest/codex: parse %s: %w", file, err)
+		return nil, []diag.Diagnostic{loadFailure(file, err)}
 	}
 	events := make([]string, 0, len(doc.Hooks))
 	for event := range doc.Hooks {
@@ -159,24 +166,26 @@ type configDocument struct {
 	MCP map[string]mcpDocument `toml:"mcp_servers"`
 }
 type mcpDocument struct {
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	URL     string            `toml:"url"`
+	Command     string            `toml:"command"`
+	Args        []string          `toml:"args"`
+	Env         map[string]string `toml:"env"`
+	URL         string            `toml:"url"`
+	HTTPHeaders map[string]string `toml:"http_headers"`
+	Enabled     *bool             `toml:"enabled"`
 }
 
-func loadMCP(src fs.FS) ([]ir.Resource, error) {
+func loadMCP(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	const file = ".codex/config.toml"
 	raw, err := fs.ReadFile(src, file)
 	if isMissing(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, []diag.Diagnostic{loadFailure(file, err)}
 	}
 	var doc configDocument
 	if err := toml.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("ingest/codex: parse %s: %w", file, err)
+		return nil, []diag.Diagnostic{loadFailure(file, err)}
 	}
 	names := make([]string, 0, len(doc.MCP))
 	for name := range doc.MCP {
@@ -190,26 +199,35 @@ func loadMCP(src fs.FS) ([]ir.Resource, error) {
 		if server.URL != "" {
 			options = append(options, ir.WithMcpURL(server.URL))
 		}
+		if server.HTTPHeaders != nil {
+			options = append(options, ir.WithMcpHeaders(server.HTTPHeaders))
+		}
+		if server.Enabled != nil {
+			options = append(options, ir.WithMcpDisabled(!*server.Enabled))
+		}
 		resources = append(resources, ir.NewMcpServerWithOptions(name, server.Command, server.Args, server.Env, nil, ir.SourceRef{File: file, Line: 1}, options...))
 	}
 	return resources, nil
 }
 
-func loadPrompts(src fs.FS) ([]ir.Resource, error) {
+func loadPrompts(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 	files, err := filesWithSuffix(src, ".codex/prompts", ".md")
 	if err != nil {
-		return nil, err
+		return nil, []diag.Diagnostic{loadFailure(".codex/prompts", err)}
 	}
 	resources := make([]ir.Resource, 0, len(files))
+	diagnostics := make([]diag.Diagnostic, 0, len(files))
 	for _, file := range files {
 		raw, err := fs.ReadFile(src, file)
 		if err != nil {
-			return nil, err
+			diagnostics = append(diagnostics, loadFailure(file, err))
+			continue
 		}
 		name := strings.TrimSuffix(path.Base(file), ".md")
 		resources = append(resources, ir.NewCommand(name, "Deprecated Codex prompt", string(raw), nil, ir.SourceRef{File: file, Line: 1}))
+		diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexPromptDeprecated, Severity: diag.SeverityWarning, Resource: name, Message: "deprecated Codex prompt ingested as a command", Source: diag.SourceRef{File: file, Line: 1}})
 	}
-	return resources, nil
+	return resources, diagnostics
 }
 
 func filesWithSuffix(src fs.FS, dir, suffix string) ([]string, error) {
@@ -230,3 +248,30 @@ func filesWithSuffix(src fs.FS, dir, suffix string) ([]string, error) {
 }
 
 func isMissing(err error) bool { return errors.Is(err, fs.ErrNotExist) }
+
+func loadFailure(file string, err error) diag.Diagnostic {
+	slog.Error("codex ingest resource skipped", "file", file, "code", diag.CodeIngestCodexLoadResourceFailed)
+	return diag.Diagnostic{Code: diag.CodeIngestCodexLoadResourceFailed, Severity: diag.SeverityError, Resource: path.Base(file), Message: "malformed Codex resource was skipped", Hint: "fix the reported native file; independent valid resources were retained", Source: diag.SourceRef{File: file, Line: 1}}
+}
+
+func suppressDuplicates(resources []ir.Resource) ([]ir.Resource, []diag.Diagnostic) {
+	counts := make(map[string]int, len(resources))
+	for _, resource := range resources {
+		counts[resource.Kind().String()+"\x00"+resource.Name()]++
+	}
+	kept := resources[:0]
+	var diagnostics []diag.Diagnostic
+	reported := map[string]bool{}
+	for _, resource := range resources {
+		key := resource.Kind().String() + "\x00" + resource.Name()
+		if counts[key] == 1 {
+			kept = append(kept, resource)
+			continue
+		}
+		if !reported[key] {
+			diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeIngestCodexDuplicateIdentity, Severity: diag.SeverityError, Resource: resource.Name(), Message: "duplicate Codex resource identity was suppressed without choosing a winner"})
+			reported[key] = true
+		}
+	}
+	return kept, diagnostics
+}

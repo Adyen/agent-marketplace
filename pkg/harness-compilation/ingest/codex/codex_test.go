@@ -4,6 +4,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -54,5 +55,43 @@ func TestLoadHooksMCPAndDeprecatedPrompts(t *testing.T) {
 		if resource.Kind() != want[i] {
 			t.Errorf("resource %d kind = %s, want %s", i, resource.Kind(), want[i])
 		}
+	}
+	if len(bundle.Diagnostics) == 0 {
+		t.Fatal("deprecated prompt did not produce a diagnostic")
+	}
+}
+
+func TestMalformedResourceDoesNotDiscardIndependentResources(t *testing.T) {
+	src := fstest.MapFS{
+		".codex/agents/bad.toml":       {Data: []byte("name = [")},
+		".codex/agents/good.toml":      {Data: []byte("name = 'good'\ndeveloper_instructions = 'Good.'\n")},
+		".agents/skills/demo/SKILL.md": {Data: []byte("---\nname: demo\ndescription: Demo\n---\nBody\n")},
+	}
+	bundle, err := LoadBundle(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Resources) != 2 {
+		t.Fatalf("resources = %#v, want valid skill and subagent", bundle.Resources)
+	}
+	if !diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("diagnostics = %#v, want malformed-resource error", bundle.Diagnostics)
+	}
+}
+
+func TestDuplicateIdentityIsRejectedWithoutChoosingWinner(t *testing.T) {
+	src := fstest.MapFS{
+		".codex/agents/a.toml": {Data: []byte("name = 'same'\ndeveloper_instructions = 'A'\n")},
+		".codex/agents/b.toml": {Data: []byte("name = 'same'\ndeveloper_instructions = 'B'\n")},
+	}
+	bundle, err := LoadBundle(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Resources) != 0 {
+		t.Fatalf("resources = %#v, want both duplicates suppressed", bundle.Resources)
+	}
+	if !diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("diagnostics = %#v", bundle.Diagnostics)
 	}
 }
