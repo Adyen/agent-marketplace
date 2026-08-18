@@ -1,9 +1,11 @@
 package codex
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 
+	compilecodex "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -33,6 +35,36 @@ func TestDetectRequiresCodexMarkerAndLoadsSiblingSkills(t *testing.T) {
 	for i, resource := range bundle.Resources {
 		if resource.Kind() != want[i] {
 			t.Errorf("resource %d kind = %s, want %s", i, resource.Kind(), want[i])
+		}
+	}
+}
+
+func TestNativeSecurityFieldsRoundTrip(t *testing.T) {
+	src := fstest.MapFS{
+		".codex/agents/reviewer.toml": {Data: []byte("name = 'reviewer'\ndeveloper_instructions = 'Review.'\nsandbox_mode = 'read-only'\n")},
+		".codex/config.toml":          {Data: []byte("[mcp_servers.private]\nurl = 'https://example.test/mcp'\nbearer_token_env_var = 'TOKEN'\n[mcp_servers.private.env_http_headers]\nX_API_KEY = 'API_KEY'\n")},
+	}
+	bundle, err := LoadBundle(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Resources) != 2 {
+		t.Fatalf("resources = %#v", bundle.Resources)
+	}
+	for _, resource := range bundle.Resources {
+		artifacts, diagnostics, err := (compilecodex.Compiler{}).Translate(resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diag.HasErrors(diagnostics) || len(artifacts) != 1 {
+			t.Fatalf("round trip %s = %#v, %#v", resource.Name(), artifacts, diagnostics)
+		}
+		text := string(artifacts[0].Bytes)
+		if resource.Kind() == ir.KindSubagent && !strings.Contains(text, "sandbox_mode = 'read-only'") {
+			t.Errorf("sandbox mode lost:\n%s", text)
+		}
+		if resource.Kind() == ir.KindMcpServer && (!strings.Contains(text, "bearer_token_env_var = 'TOKEN'") || !strings.Contains(text, "env_http_headers")) {
+			t.Errorf("MCP authentication lost:\n%s", text)
 		}
 	}
 }

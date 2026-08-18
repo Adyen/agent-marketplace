@@ -88,6 +88,9 @@ func subagent(s *ir.Subagent) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	writeTOMLString(&b, "model", s.Model)
 	writeTOMLString(&b, "model_reasoning_effort", s.Effort)
 	writeTOMLString(&b, "developer_instructions", s.Body)
+	if s.Ext.Codex != nil {
+		writeTOMLString(&b, "sandbox_mode", s.Ext.Codex.SandboxMode)
+	}
 	var diagnostics []diag.Diagnostic
 	if len(s.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted unmodeled extension fields"))
@@ -124,6 +127,9 @@ func mcp(m *ir.McpServer) ([]artifact.Artifact, []diag.Diagnostic, error) {
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeMcpCodexSecurityUnsupported, diag.SeverityError, m.Name(), m.Source, "Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed")}, nil
 	}
 	entry := mcpOutput{Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, HTTPHeaders: m.Headers}
+	if m.Ext.Codex != nil {
+		entry.BearerTokenEnvVar, entry.EnvHTTPHeaders = m.Ext.Codex.BearerTokenEnvVar, m.Ext.Codex.EnvHTTPHeaders
+	}
 	if m.DisabledSet {
 		enabled := !m.Disabled
 		entry.Enabled = &enabled
@@ -143,12 +149,14 @@ type mcpConfig struct {
 	Servers map[string]mcpOutput `toml:"mcp_servers"`
 }
 type mcpOutput struct {
-	Command     string            `toml:"command,omitempty"`
-	Args        []string          `toml:"args,omitempty"`
-	Env         map[string]string `toml:"env,omitempty"`
-	URL         string            `toml:"url,omitempty"`
-	HTTPHeaders map[string]string `toml:"http_headers,omitempty"`
-	Enabled     *bool             `toml:"enabled,omitempty"`
+	Command           string            `toml:"command,omitempty"`
+	Args              []string          `toml:"args,omitempty"`
+	Env               map[string]string `toml:"env,omitempty"`
+	URL               string            `toml:"url,omitempty"`
+	HTTPHeaders       map[string]string `toml:"http_headers,omitempty"`
+	EnvHTTPHeaders    map[string]string `toml:"env_http_headers,omitempty"`
+	BearerTokenEnvVar string            `toml:"bearer_token_env_var,omitempty"`
+	Enabled           *bool             `toml:"enabled,omitempty"`
 }
 
 func writeTOMLString(b *strings.Builder, key, value string) {

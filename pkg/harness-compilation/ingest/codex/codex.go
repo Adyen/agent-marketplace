@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 const kindKey = "x-agent-marketplace-kind"
@@ -91,6 +92,7 @@ type subagentDocument struct {
 	Model        string `toml:"model"`
 	Effort       string `toml:"model_reasoning_effort"`
 	Instructions string `toml:"developer_instructions"`
+	SandboxMode  string `toml:"sandbox_mode"`
 }
 
 func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
@@ -115,7 +117,11 @@ func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 		if name == "" {
 			name = strings.TrimSuffix(path.Base(file), ".toml")
 		}
-		resources = append(resources, ir.NewSubagent(name, doc.Description, doc.Instructions, doc.Model, nil, doc.Effort, nil, "", nil, ir.SourceRef{File: file, Line: 1}))
+		subagent := ir.NewSubagent(name, doc.Description, doc.Instructions, doc.Model, nil, doc.Effort, nil, "", nil, ir.SourceRef{File: file, Line: 1})
+		if doc.SandboxMode != "" {
+			subagent.Ext.Codex = &extpkg.Codex{SandboxMode: doc.SandboxMode}
+		}
+		resources = append(resources, subagent)
 	}
 	return resources, diagnostics
 }
@@ -166,12 +172,14 @@ type configDocument struct {
 	MCP map[string]mcpDocument `toml:"mcp_servers"`
 }
 type mcpDocument struct {
-	Command     string            `toml:"command"`
-	Args        []string          `toml:"args"`
-	Env         map[string]string `toml:"env"`
-	URL         string            `toml:"url"`
-	HTTPHeaders map[string]string `toml:"http_headers"`
-	Enabled     *bool             `toml:"enabled"`
+	Command           string            `toml:"command"`
+	Args              []string          `toml:"args"`
+	Env               map[string]string `toml:"env"`
+	URL               string            `toml:"url"`
+	HTTPHeaders       map[string]string `toml:"http_headers"`
+	Enabled           *bool             `toml:"enabled"`
+	EnvHTTPHeaders    map[string]string `toml:"env_http_headers"`
+	BearerTokenEnvVar string            `toml:"bearer_token_env_var"`
 }
 
 func loadMCP(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
@@ -205,7 +213,11 @@ func loadMCP(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 		if server.Enabled != nil {
 			options = append(options, ir.WithMcpDisabled(!*server.Enabled))
 		}
-		resources = append(resources, ir.NewMcpServerWithOptions(name, server.Command, server.Args, server.Env, nil, ir.SourceRef{File: file, Line: 1}, options...))
+		resource := ir.NewMcpServerWithOptions(name, server.Command, server.Args, server.Env, nil, ir.SourceRef{File: file, Line: 1}, options...)
+		if server.BearerTokenEnvVar != "" || server.EnvHTTPHeaders != nil {
+			resource.Ext.Codex = &extpkg.Codex{BearerTokenEnvVar: server.BearerTokenEnvVar, EnvHTTPHeaders: server.EnvHTTPHeaders}
+		}
+		resources = append(resources, resource)
 	}
 	return resources, nil
 }
