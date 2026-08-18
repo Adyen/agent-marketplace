@@ -192,6 +192,12 @@ func Rotate(cfg Config) error {
 			continue
 		}
 		targetDir := filepath.Join(dir, entry.Name())
+		if entry.Name() == codexTargetName {
+			if err := rotateCodexSets(targetDir, maxDays, maxPerDay); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := rotateTarget(targetDir, maxDays, maxPerDay); err != nil {
 			return err
 		}
@@ -306,6 +312,20 @@ func ListBackups() (map[hcc.Target][]string, error) {
 		}
 		target := hcc.Target(entry.Name())
 		targetDir := filepath.Join(dir, entry.Name())
+		if entry.Name() == codexTargetName {
+			sets, err := loadCompleteCodexSets(targetDir)
+			if err != nil {
+				return nil, fmt.Errorf("backup: list Codex sets: %w", err)
+			}
+			if len(sets) > 0 {
+				operations := make([]string, 0, len(sets))
+				for _, set := range sets {
+					operations = append(operations, set.Operation)
+				}
+				result[target] = operations
+			}
+			continue
+		}
 		archives, err := filepath.Glob(filepath.Join(targetDir, "*.tar.gz"))
 		if err != nil {
 			return nil, fmt.Errorf("backup: list archives in %s: %w", targetDir, err)

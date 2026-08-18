@@ -169,6 +169,26 @@ func TestMaterialize_BasicWrite(t *testing.T) {
 	}
 }
 
+func TestMaterialize_RefusesExternalReconciliationArtifact(t *testing.T) {
+	out := t.TempDir()
+	path := filepath.Join(out, "config.toml")
+	original := []byte("handwritten = true\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := &Result{Artifacts: []Artifact{{Path: "config.toml", Bytes: []byte("generated = true\n"), ExternalReconciliationRequired: true}}}
+	if _, err := Materialize(result, out); !errors.Is(err, ErrExternalReconciliationRequired) {
+		t.Fatalf("Materialize error = %v, want %v", err, ErrExternalReconciliationRequired)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("externally reconciled file changed:\n%s", got)
+	}
+}
+
 func TestMaterialize_DeduplicatesIdenticalArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	result := &Result{

@@ -29,7 +29,7 @@ const blockedAllComponents = "*"
 // stopped `.devin/skills/` and `.devin/agents/` from pruning as well. Devin
 // hooks and MCP servers write to shared aggregate FILES, not to component
 // directories, so they now block no component here and are prune-suppressed
-// per file by devinAggregateWork.incomplete instead.
+// per file by ownedJSONAggregateWork.incomplete instead.
 type blockedOutputs map[outputKey]map[string]bool
 
 // mark records components for an output key. Marking zero components still
@@ -90,7 +90,7 @@ func componentName(rel string) string {
 //
 // It returns nil — block nothing — when the resource's whole output is a shared
 // aggregate FILE rather than a component directory. That is the Devin hook and
-// MCP case, and the file is prune-suppressed by devinAggregateWork.incomplete,
+// MCP case, and the file is prune-suppressed by ownedJSONAggregateWork.incomplete,
 // which is strictly narrower than any component would be.
 //
 // It falls back to the wildcard whenever the mapping is not known, so an

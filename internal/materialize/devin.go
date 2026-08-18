@@ -57,10 +57,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
-	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // Aggregate container member names. `mcpServers` is the object MCP entries are
@@ -76,13 +76,13 @@ const (
 	devinEmptyDocument = "{}\n"
 )
 
-// devinEntry is one desired aggregate entry with its ownership identity.
+// ownedJSONEntry is one desired aggregate entry with its ownership identity.
 //
 // raw holds the CANONICAL bytes of the entry value (sorted object keys, no
 // insignificant whitespace) so that the digest recorded in ownership state is
 // reproducible from the file on a later run: an existing entry is canonicalized
 // the same way before its digest is compared.
-type devinEntry struct {
+type ownedJSONEntry struct {
 	rel       string
 	kind      ownership.EntryKind
 	container string
@@ -92,13 +92,13 @@ type devinEntry struct {
 	resource  string
 }
 
-func (e devinEntry) id() ownership.EntryID {
+func (e ownedJSONEntry) id() ownership.EntryID {
 	return ownership.EntryID{Kind: e.kind, Container: e.container, Key: e.key, IdentityDigest: e.identity}
 }
 
-func (e devinEntry) valueDigest() string { return ownership.Digest(e.raw) }
+func (e ownedJSONEntry) valueDigest() string { return ownership.Digest(e.raw) }
 
-func (e devinEntry) ownershipEntry() ownership.Entry {
+func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 	return ownership.Entry{
 		Kind:           e.kind,
 		Container:      e.container,
@@ -109,12 +109,12 @@ func (e devinEntry) ownershipEntry() ownership.Entry {
 	}
 }
 
-// devinAggregateWork is the desired aggregate state for one output key.
-type devinAggregateWork struct {
+// ownedJSONAggregateWork is the desired aggregate state for one output key.
+type ownedJSONAggregateWork struct {
 	// entries is in insertion order, which is the deterministic bundle resource
 	// order the plan requires ("Generated hooks use deterministic resource
 	// ordering after handwritten hooks").
-	entries []devinEntry
+	entries []ownedJSONEntry
 	// incomplete records, PER FILE, that a resource which would have
 	// contributed to that file was skipped this run. Pruning is suppressed for
 	// exactly those files, which is narrower than internal/materialize's
@@ -129,7 +129,7 @@ type devinAggregateWork struct {
 // collected. "Duplicate desired hook tuples collapse before patching" (plan,
 // entry identities); the same first-wins rule applies to a duplicated MCP key so
 // two resources can never produce two members with one key.
-func (w *devinAggregateWork) add(entry devinEntry) {
+func (w *ownedJSONAggregateWork) add(entry ownedJSONEntry) {
 	if w.seen == nil {
 		w.seen = make(map[string]bool)
 	}
@@ -144,7 +144,7 @@ func (w *devinAggregateWork) add(entry devinEntry) {
 	w.entries = append(w.entries, entry)
 }
 
-func (w *devinAggregateWork) markIncomplete(rel string) {
+func (w *ownedJSONAggregateWork) markIncomplete(rel string) {
 	if w.incomplete == nil {
 		w.incomplete = make(map[string]bool, 2)
 	}
@@ -190,15 +190,15 @@ func isDevinAggregatePath(path string, machineScope bool) bool {
 // The fragments must not reach the generic plan path: hcc.Materialize would
 // write them as whole files (clobbering handwritten content) or marker-merge
 // them (inferring ownership from file content).
-func splitDevinAggregateArtifacts(artifacts []artifact.Artifact, machineScope bool, resource string) ([]artifact.Artifact, []devinEntry, error) {
+func splitDevinAggregateArtifacts(artifacts []artifact.Artifact, machineScope bool, resource string) ([]artifact.Artifact, []ownedJSONEntry, error) {
 	var rest []artifact.Artifact
-	var entries []devinEntry
+	var entries []ownedJSONEntry
 	for _, a := range artifacts {
 		if !isDevinAggregatePath(a.Path, machineScope) {
 			rest = append(rest, a)
 			continue
 		}
-		parsed, err := devinFragmentEntries(a.Path, a.Bytes, resource)
+		parsed, err := ownedJSONFragmentEntries(a.Path, a.Bytes, resource)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -213,20 +213,20 @@ func splitDevinAggregateArtifacts(artifacts []artifact.Artifact, machineScope bo
 //	hooks.v1.json   {"<Event>": [ {rule} ]}
 //	config.json     {"hooks": {"<Event>": [ {rule} ]}}
 //	mcp_config.json {"mcpServers": {"<key>": {server}}}
-func devinFragmentEntries(rel string, data []byte, resource string) ([]devinEntry, error) {
+func ownedJSONFragmentEntries(rel string, data []byte, resource string) ([]ownedJSONEntry, error) {
 	switch rel {
 	case harness.DevinMcpConfigFile:
 		var doc map[string]map[string]json.RawMessage
 		if err := devinDecode(data, &doc); err != nil {
 			return nil, fmt.Errorf("decode %s fragment: %w", rel, err)
 		}
-		var entries []devinEntry
+		var entries []ownedJSONEntry
 		for _, key := range sortedKeys(doc[devinMcpServersKey]) {
 			raw, err := devinCanonicalJSON(doc[devinMcpServersKey][key])
 			if err != nil {
 				return nil, fmt.Errorf("canonicalize %s entry: %w", rel, err)
 			}
-			entries = append(entries, devinEntry{
+			entries = append(entries, ownedJSONEntry{
 				rel:       rel,
 				kind:      ownership.KindMcpServer,
 				container: devinMcpServersKey,
@@ -256,8 +256,8 @@ func devinFragmentEntries(rel string, data []byte, resource string) ([]devinEntr
 	}
 }
 
-func devinHookEntries(rel string, events map[string][]json.RawMessage, resource string) ([]devinEntry, error) {
-	var entries []devinEntry
+func devinHookEntries(rel string, events map[string][]json.RawMessage, resource string) ([]ownedJSONEntry, error) {
+	var entries []ownedJSONEntry
 	for _, event := range sortedKeys(events) {
 		for _, rule := range events[event] {
 			raw, err := devinCanonicalJSON(rule)
@@ -268,7 +268,7 @@ func devinHookEntries(rel string, events map[string][]json.RawMessage, resource 
 			if err != nil {
 				return nil, fmt.Errorf("identity for %s entry: %w", rel, err)
 			}
-			entries = append(entries, devinEntry{
+			entries = append(entries, ownedJSONEntry{
 				rel:       rel,
 				kind:      ownership.KindHook,
 				container: event,
@@ -375,12 +375,8 @@ type devinAggregateReport struct {
 // create locks/<rootKey>.lock under the state root — breaking Open's documented
 // side-effect-free contract — and would make a read-only command block behind a
 // long-running sync.
-func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *devinAggregateWork, dryRun bool) *Report {
-	isCodex := key.target == hcc.Target(targetmeta.TargetCodex)
-	if key.target != hcc.TargetDevin && !isCodex {
-		// Every other target's aggregates are still handled by the generic
-		// marker-merge path. Routing them here would need per-target container
-		// shapes this reconciler deliberately does not guess at.
+func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+	if key.target != hcc.TargetDevin {
 		return report
 	}
 	info, ok := harness.TargetInfoMap[key.target]
@@ -388,12 +384,18 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 		return report
 	}
 	rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
-	if isCodex {
-		rels = []string{codexHooksFile}
-	}
+	return reconcileOwnedJSONAggregates(ctx, report, key, outDir, rels, work, dryRun)
+}
+
+func reconcileCodexHooks(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+	return reconcileOwnedJSONAggregates(ctx, report, key, outDir, []string{codexHooksFile}, work, dryRun)
+}
+
+func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outputKey, outDir string, rels []string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+	rels = append([]string(nil), rels...)
 	sort.Strings(rels)
 
-	desiredByRel := make(map[string][]devinEntry, len(rels))
+	desiredByRel := make(map[string][]ownedJSONEntry, len(rels))
 	if work != nil {
 		for _, entry := range work.entries {
 			desiredByRel[entry.rel] = append(desiredByRel[entry.rel], entry)
@@ -409,6 +411,12 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 	}
 	if !anyWork {
 		return report
+	}
+	if !dryRun {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			report.Diags = append(report.Diags, devinDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", fmt.Sprintf("create aggregate root %s: %v", outDir, err)))
+			return report
+		}
 	}
 
 	// The observer is how a WAIT reaches the report. A contended acquisition that
@@ -461,18 +469,28 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 // into the report. It is a function rather than an inline loop only so the dry-run
 // path can reuse it verbatim without a session around it.
 func appendDevinAggregateReports(report *Report, store *ownership.Store, key outputKey, outDir string, rels []string,
-	desiredByRel map[string][]devinEntry, work *devinAggregateWork, dryRun bool) *Report {
+	desiredByRel map[string][]ownedJSONEntry, work *ownedJSONAggregateWork, dryRun bool) *Report {
 	for _, rel := range rels {
 		fileReport := reconcileDevinAggregateFile(store, key, outDir, rel, desiredByRel[rel], work != nil && work.incomplete[rel], dryRun)
 		report.Diags = append(report.Diags, fileReport.diags...)
 		if !fileReport.written {
 			continue
 		}
-		tr := TargetReport{Target: key.target, MachineScope: key.machineScope, OutDir: outDir, Written: []string{rel}}
+		tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: aggregateRootID(key), OutDir: outDir, Written: []string{rel}}
 		report.PerRoot = append(report.PerRoot, tr)
 		report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
 	}
 	return report
+}
+
+func aggregateRootID(key outputKey) string {
+	if key.target != hcc.Target(targetmeta.TargetCodex) {
+		return ""
+	}
+	if key.machineScope {
+		return "machine-codex"
+	}
+	return "repo-codex"
 }
 
 // devinLockReporter turns the per-root lock's observable transitions into report
@@ -602,7 +620,7 @@ func devinPriorForApply(raw []byte, readErr error, proof ownership.Proof) (gen u
 }
 
 // reconcileDevinAggregateFile patches ONE aggregate file.
-func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []devinEntry, incomplete, dryRun bool) devinAggregateReport {
+func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []ownedJSONEntry, incomplete, dryRun bool) devinAggregateReport {
 	var out devinAggregateReport
 	abs := filepath.Join(outDir, rel)
 
@@ -650,7 +668,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 		return out
 	}
 
-	container, containerMember, shapeErr := devinContainerNode(doc, rel)
+	container, containerMember, shapeErr := ownedJSONContainerNode(doc, rel)
 	if shapeErr != nil {
 		out.diags = append(out.diags, devinShapeDiag(key, outDir, rel, shapeErr))
 		return out
@@ -686,7 +704,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 	}
 	drift := ownership.Classify(proof, existingValues, desiredValues)
 
-	plan := devinPatchPlan(outDir, rel, desired, existing, drift, incomplete)
+	plan := devinPatchPlan(outDir, rel, desired, existing, drift, proof, incomplete)
 	out.diags = append(out.diags, plan.diags(key)...)
 
 	if applyErr := devinApplyPatch(doc, container, containerMember, rel, plan); applyErr != nil {
@@ -704,16 +722,12 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 		return out
 	}
 
-	ownedEntries := make([]ownership.Entry, 0, len(plan.owned))
-	for _, entry := range plan.owned {
-		ownedEntries = append(ownedEntries, entry.ownershipEntry())
-	}
 	priorGen, priorDigest := devinPriorForApply(raw, readErr, proof)
 	result, applyErr := store.Apply(ownership.Mutation{
 		Rel:                   rel,
 		AbsFile:               abs,
 		NextBytes:             next,
-		Entries:               ownedEntries,
+		Entries:               plan.owned,
 		Reason:                ownership.ReasonSync,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
@@ -723,7 +737,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 		return out
 	}
 	slog.Info("devin aggregate reconciled", "target", key.target, "machine_scope", key.machineScope,
-		"file", rel, "generation", result.Generation, "owned_entries", len(ownedEntries),
+		"file", rel, "generation", result.Generation, "owned_entries", len(plan.owned),
 		"pruned", len(plan.prune), "collisions", len(plan.collisions), "replaced_drifted", len(plan.drifted))
 	out.written = true
 	return out
@@ -743,7 +757,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 // literal node, so an empty object created that way could not then be patched
 // member-by-member. An absent container holds no unmanaged content and no
 // comments, so devinApplyPatch renders it whole instead.
-func devinContainerNode(doc *jsonc.Document, rel string) (container *jsonc.Node, member string, err error) {
+func ownedJSONContainerNode(doc *jsonc.Document, rel string) (container *jsonc.Node, member string, err error) {
 	root := doc.Root()
 	if root.Kind() != jsonc.KindObject {
 		return nil, "", fmt.Errorf("aggregate %q root is not a JSON object; it was left unchanged", rel)
@@ -756,7 +770,7 @@ func devinContainerNode(doc *jsonc.Document, rel string) (container *jsonc.Node,
 	case harness.DevinUserConfigFile, codexHooksFile:
 		member = devinHooksKey
 	default:
-		return nil, "", fmt.Errorf("unknown Devin aggregate %q", rel)
+		return nil, "", fmt.Errorf("unknown ownership-reconciled JSON aggregate %q", rel)
 	}
 	node, ok := root.Member(member)
 	if !ok {
@@ -864,12 +878,12 @@ type devinPatch struct {
 	deleteHookEvent []string
 	// owned is the entry set the new content claims: what ownership state
 	// records for the next generation.
-	owned []devinEntry
+	owned []ownership.Entry
 
 	collisions      []ownership.EntryID
 	drifted         []ownership.EntryID
 	prune           []ownership.EntryID
-	satisfied       []devinEntry
+	satisfied       []ownedJSONEntry
 	prunePostponed  []ownership.EntryID
 	pruneSuppressed bool
 }
@@ -892,7 +906,7 @@ type devinPatch struct {
 //     hooks."
 //   - "A partial run does not prune" — when incomplete is set, the prune list is
 //     emptied for this file.
-func devinPatchPlan(outDir, rel string, desired []devinEntry, existing []devinExistingEntry, drift ownership.DriftReport, incomplete bool) devinPatch {
+func devinPatchPlan(outDir, rel string, desired []ownedJSONEntry, existing []devinExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool) devinPatch {
 	patch := devinPatch{outDir: outDir, rel: rel, writeMcp: map[string][]byte{}, hookElements: map[string][][]byte{}}
 
 	collision := make(map[string]bool, len(drift.Collisions))
@@ -930,13 +944,14 @@ func devinPatchPlan(outDir, rel string, desired []devinEntry, existing []devinEx
 				continue // preserved unmanaged entry wins; only ours fails
 			}
 			patch.writeMcp[entry.key] = entry.raw
-			patch.owned = append(patch.owned, entry)
+			patch.owned = append(patch.owned, entry.ownershipEntry())
 		}
 		for _, id := range drift.Stale {
 			if stale[devinIDKey(id)] {
 				patch.deleteMcp = append(patch.deleteMcp, id.Key)
 			}
 		}
+		retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
 		return patch
 	}
 
@@ -949,7 +964,7 @@ func devinPatchPlan(outDir, rel string, desired []devinEntry, existing []devinEx
 		unmanagedIdentities[devinIDKey(id)] = true
 	}
 
-	desiredByEvent := make(map[string][]devinEntry)
+	desiredByEvent := make(map[string][]ownedJSONEntry)
 	events := map[string]bool{}
 	for _, entry := range desired {
 		if unmanagedIdentities[devinIDKey(entry.id())] {
@@ -988,7 +1003,7 @@ func devinPatchPlan(outDir, rel string, desired []devinEntry, existing []devinEx
 		}
 		for _, entry := range desiredByEvent[event] {
 			elements = append(elements, entry.raw)
-			patch.owned = append(patch.owned, entry)
+			patch.owned = append(patch.owned, entry.ownershipEntry())
 		}
 		if len(elements) == 0 {
 			patch.deleteHookEvent = append(patch.deleteHookEvent, event)
@@ -996,11 +1011,34 @@ func devinPatchPlan(outDir, rel string, desired []devinEntry, existing []devinEx
 		}
 		patch.hookElements[event] = elements
 	}
+	retainPostponedOwnership(&patch, existing, drift.Stale, proof, incomplete)
 	return patch
 }
 
+func retainPostponedOwnership(patch *devinPatch, existing []devinExistingEntry, stale []ownership.EntryID, proof ownership.Proof, incomplete bool) {
+	if !incomplete {
+		return
+	}
+	for _, entry := range existing {
+		if !containsOwnershipID(stale, entry.value.ID) {
+			continue
+		}
+		resource, _ := proof.Resource(entry.value.ID)
+		patch.owned = append(patch.owned, ownership.Entry{Kind: entry.value.ID.Kind, Container: entry.value.ID.Container, Key: entry.value.ID.Key, IdentityDigest: entry.value.ID.IdentityDigest, ValueDigest: entry.value.ValueDigest, Resource: resource})
+	}
+}
+
+func containsOwnershipID(ids []ownership.EntryID, want ownership.EntryID) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
 // devinDesires reports whether an identity is in a desired slice.
-func devinDesires(desired []devinEntry, id ownership.EntryID) bool {
+func devinDesires(desired []ownedJSONEntry, id ownership.EntryID) bool {
 	want := devinIDKey(id)
 	for _, entry := range desired {
 		if devinIDKey(entry.id()) == want {

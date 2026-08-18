@@ -75,13 +75,13 @@ import (
 
 // devinMcpDesired builds one desired mcp_config.json entry with canonical value
 // bytes, so its digest is the same one the reconciler derives from the file.
-func devinMcpDesired(t *testing.T, key, command string) devinEntry {
+func devinMcpDesired(t *testing.T, key, command string) ownedJSONEntry {
 	t.Helper()
 	raw, err := devinCanonicalJSON([]byte(`{"command":"` + command + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return devinEntry{
+	return ownedJSONEntry{
 		rel:       harness.DevinMcpConfigFile,
 		kind:      ownership.KindMcpServer,
 		container: devinMcpServersKey,
@@ -144,7 +144,7 @@ func TestAdversarialTwoPartialRunsMustNotLoseAnEntry(t *testing.T) {
 		// Build desired entries on the main test goroutine; devinMcpDesired uses
 		// t.Fatal, which only exits the calling goroutine and must not be called
 		// from a racer goroutine.
-		entries := []devinEntry{
+		entries := []ownedJSONEntry{
 			devinMcpDesired(t, "alpha", "alpha-binary"),
 			devinMcpDesired(t, "beta", "beta-binary"),
 		}
@@ -152,9 +152,9 @@ func TestAdversarialTwoPartialRunsMustNotLoseAnEntry(t *testing.T) {
 		var wg sync.WaitGroup
 		for _, e := range entries {
 			wg.Add(1)
-			go func(entry devinEntry) {
+			go func(entry ownedJSONEntry) {
 				defer wg.Done()
-				work := &devinAggregateWork{}
+				work := &ownedJSONAggregateWork{}
 				work.add(entry)
 				// A partial run: this racer had a resource skipped for this
 				// file, so it is forbidden to prune anything from it.
@@ -251,7 +251,7 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 	// Build desired entries on the main test goroutine; devinMcpDesired uses
 	// t.Fatal, which only exits the calling goroutine and must not be called
 	// from a racer goroutine.
-	entries := []devinEntry{
+	entries := []ownedJSONEntry{
 		devinMcpDesired(t, "alpha", "alpha-binary"),
 		devinMcpDesired(t, "beta", "beta-binary"),
 	}
@@ -259,9 +259,9 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, e := range entries {
 		wg.Add(1)
-		go func(entry devinEntry) {
+		go func(entry ownedJSONEntry) {
 			defer wg.Done()
-			work := &devinAggregateWork{}
+			work := &ownedJSONAggregateWork{}
 			work.add(entry)
 			work.markIncomplete(rel)
 			<-start
@@ -381,7 +381,7 @@ func TestDevinLostUpdateChildProcess(t *testing.T) {
 	root := os.Getenv(devinLostUpdateRootEnv)
 	t.Setenv("XDG_STATE_HOME", os.Getenv(devinLostUpdateStateEnv))
 
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.add(devinMcpDesired(t, name, name+"-binary"))
 	work.markIncomplete(harness.DevinMcpConfigFile)
 

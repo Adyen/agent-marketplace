@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -63,6 +64,10 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bool) []string {
 	t.Helper()
 	outDir := t.TempDir()
+	relativeRoot := outDir
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		relativeRoot, _ = ownership.CanonicalRoot(outDir)
+	}
 	if target == hcc.Target(targetmeta.TargetCodex) && machineScope {
 		t.Setenv("HOME", outDir)
 		t.Setenv("CODEX_HOME", filepath.Join(outDir, ".codex"))
@@ -87,7 +92,7 @@ func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bo
 				if !a.MergeWithExisting {
 					continue
 				}
-				rel, relErr := filepath.Rel(outDir, filepath.Join(plan.outDir, a.Path))
+				rel, relErr := filepath.Rel(relativeRoot, filepath.Join(plan.outDir, a.Path))
 				if relErr != nil {
 					t.Fatalf("filepath.Rel(%s, %s): %v", outDir, filepath.Join(plan.outDir, a.Path), relErr)
 				}

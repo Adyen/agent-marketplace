@@ -39,9 +39,9 @@ func (e codexMCPEntry) owned() ownership.Entry {
 
 // splitCodexOwnedArtifacts keeps ownership-reconciled files out of the generic
 // marker merge path.
-func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, []devinEntry, []codexMCPEntry, error) {
+func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, []ownedJSONEntry, []codexMCPEntry, error) {
 	var rest []artifact.Artifact
-	var hooks []devinEntry
+	var hooks []ownedJSONEntry
 	var mcps []codexMCPEntry
 	for _, candidate := range artifacts {
 		if !candidate.ExternalReconciliationRequired {
@@ -50,7 +50,7 @@ func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([
 		}
 		switch candidate.Path {
 		case ".codex/hooks.json":
-			parsed, err := devinFragmentEntries(codexHooksFile, candidate.Bytes, resource)
+			parsed, err := ownedJSONFragmentEntries(codexHooksFile, candidate.Bytes, resource)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("decode Codex hooks fragment: %w", err)
 			}
@@ -76,6 +76,10 @@ func codexDesiredMCP(raw []byte, resource string) ([]codexMCPEntry, error) {
 	entries := make([]codexMCPEntry, 0, len(sections))
 	for name, section := range sections {
 		fragment := append([]byte(nil), raw[section.start:section.end]...)
+		fragment, err = canonicalCodexMCPFragment(fragment, name)
+		if err != nil {
+			return nil, err
+		}
 		if len(fragment) > 0 && fragment[len(fragment)-1] != '\n' {
 			fragment = append(fragment, '\n')
 		}
@@ -83,6 +87,57 @@ func codexDesiredMCP(raw []byte, resource string) ([]codexMCPEntry, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	return entries, nil
+}
+
+func canonicalCodexMCPFragment(raw []byte, name string) ([]byte, error) {
+	quotedName, err := json.Marshal(name)
+	if err != nil {
+		return nil, err
+	}
+	type edit struct {
+		start, end  int
+		replacement []byte
+	}
+	var edits []edit
+	var parser unstable.Parser
+	parser.Reset(raw)
+	for parser.NextExpression() {
+		node := parser.Expression()
+		if node.Kind != unstable.Table {
+			continue
+		}
+		var keys []string
+		it := node.Key()
+		for it.Next() {
+			keys = append(keys, string(it.Node().Data))
+		}
+		if len(keys) < 2 || keys[0] != "mcp_servers" || keys[1] != name {
+			continue
+		}
+		var header bytes.Buffer
+		header.WriteString("[mcp_servers.")
+		header.Write(quotedName)
+		for _, key := range keys[2:] {
+			header.WriteByte('.')
+			header.WriteString(key)
+		}
+		header.WriteString("]\n")
+		first := int(node.Child().Raw.Offset)
+		edits = append(edits, edit{start: bytes.LastIndexByte(raw[:first], '\n') + 1, end: lineEnd(raw, first), replacement: header.Bytes()})
+	}
+	if err := parser.Error(); err != nil {
+		return nil, err
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	next := append([]byte(nil), raw...)
+	for _, candidate := range edits {
+		patched := make([]byte, 0, len(next)-(candidate.end-candidate.start)+len(candidate.replacement))
+		patched = append(patched, next[:candidate.start]...)
+		patched = append(patched, candidate.replacement...)
+		patched = append(patched, next[candidate.end:]...)
+		next = patched
+	}
+	return next, nil
 }
 
 func codexMCPValues(raw []byte) (map[string]any, error) {
@@ -104,6 +159,7 @@ func codexMCPValues(raw []byte) (map[string]any, error) {
 type codexMCPSection struct {
 	start, end int
 	value      ownership.EntryValue
+	alternate  bool
 }
 
 func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.EntryValue, error) {
@@ -115,6 +171,7 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 	var parser unstable.Parser
 	parser.Reset(raw)
 	current := ""
+	inMCPRoot := false
 	for parser.NextExpression() {
 		node := parser.Expression()
 		switch node.Kind {
@@ -125,9 +182,11 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 				keys = append(keys, string(it.Node().Data))
 			}
 			current = ""
+			inMCPRoot = len(keys) == 1 && keys[0] == "mcp_servers"
 			if len(keys) < 2 || keys[0] != "mcp_servers" {
 				continue
 			}
+			inMCPRoot = false
 			current = keys[1]
 			first := node.Child().Raw.Offset
 			start := bytes.LastIndexByte(raw[:first], '\n') + 1
@@ -138,7 +197,34 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 			section.end = lineEnd(raw, int(first))
 			sections[current] = section
 		case unstable.KeyValue:
+			var keys []string
+			it := node.Key()
+			for it.Next() {
+				keys = append(keys, string(it.Node().Data))
+			}
+			if inMCPRoot {
+				if len(keys) != 1 {
+					return nil, nil, fmt.Errorf("ambiguous dotted MCP server definition")
+				}
+				if _, duplicate := sections[keys[0]]; duplicate {
+					return nil, nil, fmt.Errorf("duplicate MCP server definition %q", keys[0])
+				}
+				start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
+				sections[keys[0]] = codexMCPSection{start: start, end: lineEnd(raw, int(node.Value().Raw.Offset+node.Value().Raw.Length)), alternate: true}
+				continue
+			}
 			if current == "" {
+				if len(keys) >= 3 && keys[0] == "mcp_servers" {
+					name := keys[1]
+					section := sections[name]
+					start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
+					if section.end == 0 || start < section.start {
+						section.start = start
+					}
+					section.end = lineEnd(raw, int(node.Value().Raw.Offset+node.Value().Raw.Length))
+					section.alternate = true
+					sections[name] = section
+				}
 				continue
 			}
 			section := sections[current]
@@ -177,11 +263,26 @@ func lineEnd(raw []byte, offset int) int {
 	return len(raw)
 }
 
-func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root string, desired []codexMCPEntry, dryRun bool) *Report {
+func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
+	seen := make(map[string]string, len(desired))
+	for _, entry := range desired {
+		if first, duplicate := seen[entry.name]; duplicate {
+			slog.Error("Codex MCP reconciliation refused duplicate desired identity", "target", key.target, "machine_scope", key.machineScope, "server", entry.name, "first_resource", first, "second_resource", entry.resource, "code", diag.CodeMaterializeCodexDuplicateIdentity)
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexDuplicateIdentity, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q is produced by both %q and %q; neither definition was written", entry.name, first, entry.resource)})
+			return report
+		}
+		seen[entry.name] = entry.resource
+	}
 	abs := filepath.Join(root, codexMCPFile)
 	if len(desired) == 0 {
 		if _, err := os.Lstat(abs); os.IsNotExist(err) {
 			return report
+		}
+	}
+	if !dryRun {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return codexMCPDiag(report, key, fmt.Errorf("create Codex config root: %w", err))
 		}
 	}
 	store, err := ownership.Open(root)
@@ -204,11 +305,16 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 		sections, existing, err := codexMCPSections(raw)
 		if err != nil {
 			if readErr == nil && !dryRun {
-				_, _ = store.BackupOnly(codexMCPFile, abs, ownership.ReasonSync)
+				if _, backupErr := store.BackupOnly(codexMCPFile, abs, ownership.ReasonSync); backupErr != nil {
+					slog.Error("Codex MCP malformed-file safety backup failed", "target", key.target, "machine_scope", key.machineScope, "file", abs, "error", backupErr)
+					report.Diags = append(report.Diags, devinAggregateCodedDiag(key, root, codexMCPFile, backupErr, diag.CodeOwnershipSafetyBackup))
+					return err
+				}
 			}
 			return err
 		}
-		proof, _ := store.Proof(codexMCPFile)
+		proof, proofErr := store.Proof(codexMCPFile)
+		report.Diags = append(report.Diags, devinProofDiags(key, root, codexMCPFile, proofErr)...)
 		desiredValues := make([]ownership.EntryValue, 0, len(desired))
 		byName := make(map[string]codexMCPEntry, len(desired))
 		for _, entry := range desired {
@@ -226,24 +332,41 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 			replacement []byte
 		}
 		var edits []edit
-		for _, id := range drift.Stale {
-			if section, ok := sections[id.Key]; ok {
-				edits = append(edits, edit{start: section.start, end: section.end})
+		owned := make([]ownership.Entry, 0, len(desired)+len(drift.Stale))
+		if !incomplete {
+			for _, id := range drift.Stale {
+				if section, ok := sections[id.Key]; ok {
+					if section.alternate {
+						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.codex.aggregate-unpatchable", Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)})
+						resource, _ := proof.Resource(id)
+						owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
+						continue
+					}
+					edits = append(edits, edit{start: section.start, end: section.end})
+				}
 			}
 		}
-		owned := make([]ownership.Entry, 0, len(desired))
 		for _, entry := range desired {
 			if collisions[entry.name] {
 				continue
 			}
-			owned = append(owned, entry.owned())
 			section, exists := sections[entry.name]
 			if exists && proof.Classify(entry.id(), section.value.ValueDigest) == ownership.StatusOwnedClean && section.value.ValueDigest == entry.valueDigest {
+				owned = append(owned, entry.owned())
 				continue
 			}
 			if exists {
+				if section.alternate {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.codex.aggregate-unpatchable", Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be replaced safely; existing entry preserved", entry.name)})
+					if resource, ok := proof.Resource(entry.id()); ok {
+						owned = append(owned, ownership.Entry{Kind: entry.id().Kind, Container: entry.id().Container, Key: entry.id().Key, IdentityDigest: entry.id().IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
+					}
+					continue
+				}
+				owned = append(owned, entry.owned())
 				edits = append(edits, edit{start: section.start, end: section.end, replacement: entry.raw})
 			} else {
+				owned = append(owned, entry.owned())
 				prefix := []byte(nil)
 				if len(raw) > 0 && raw[len(raw)-1] != '\n' {
 					prefix = []byte("\n")
@@ -252,6 +375,16 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 					prefix = append(prefix, '\n')
 				}
 				edits = append(edits, edit{start: len(raw), end: len(raw), replacement: append(prefix, entry.raw...)})
+			}
+		}
+		if incomplete {
+			for _, id := range drift.Stale {
+				section, ok := sections[id.Key]
+				if !ok {
+					continue
+				}
+				resource, _ := proof.Resource(id)
+				owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
 			}
 		}
 		sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
@@ -264,6 +397,7 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 			next = patched
 		}
 		if bytes.Equal(raw, next) {
+			slog.Debug("Codex MCP configuration already in sync", "target", key.target, "machine_scope", key.machineScope, "file", abs, "owned_entries", len(owned))
 			return nil
 		}
 		if dryRun {
@@ -286,16 +420,18 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 	if err != nil {
 		return codexMCPDiag(report, key, err)
 	}
+	slog.Debug("Codex MCP reconciliation complete", "target", key.target, "machine_scope", key.machineScope, "root", root, "dry_run", dryRun)
 	return report
 }
 
 func codexMCPMarkWritten(report *Report, key outputKey, root string) {
-	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, OutDir: root, Written: []string{codexMCPFile}}
+	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: aggregateRootID(key), OutDir: root, Written: []string{codexMCPFile}}
 	report.PerRoot = append(report.PerRoot, tr)
 	report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
 }
 
 func codexMCPDiag(report *Report, key outputKey, err error) *Report {
+	slog.Error("Codex MCP reconciliation failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.codex.aggregate-malformed", "error", err)
 	report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.codex.aggregate-malformed", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("reconcile Codex config.toml: %v", err)})
 	return report
 }

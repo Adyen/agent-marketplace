@@ -471,7 +471,7 @@ func mcpEntryFromBytes(t *testing.T, raw []byte, key, resource string) ownership
 	if err != nil {
 		t.Fatal(err)
 	}
-	container, _, err := devinContainerNode(doc, harness.DevinMcpConfigFile)
+	container, _, err := ownedJSONContainerNode(doc, harness.DevinMcpConfigFile)
 	if err != nil {
 		t.Fatal(err)
 	}

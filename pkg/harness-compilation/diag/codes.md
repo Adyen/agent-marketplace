@@ -501,6 +501,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
 | `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |
 | `ingest.codex.duplicate-identity` | Duplicate Codex resource identity was suppressed without choosing a winner | Rename one duplicate native resource |
+| `materialize.codex.duplicate-identity` | Duplicate desired Codex aggregate identity was suppressed without choosing a winner | Rename one duplicate selected resource |
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |

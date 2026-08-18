@@ -195,7 +195,7 @@ type RepairFile struct {
 	DesiredEntries  int
 
 	store   *ownership.Store
-	desired []devinEntry
+	desired []ownedJSONEntry
 }
 
 // AbsFile returns the absolute aggregate path.
@@ -267,7 +267,7 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 		rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
 		sort.Strings(rels)
 
-		desiredByRel := make(map[string][]devinEntry, len(rels))
+		desiredByRel := make(map[string][]ownedJSONEntry, len(rels))
 		if work := aggregates[key]; work != nil {
 			for _, entry := range work.entries {
 				desiredByRel[entry.rel] = append(desiredByRel[entry.rel], entry)
@@ -314,7 +314,7 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 }
 
 // previewDevinAggregateFile computes the candidates for one aggregate file.
-func previewDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []devinEntry) (*RepairFile, []diag.Diagnostic) {
+func previewDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []ownedJSONEntry) (*RepairFile, []diag.Diagnostic) {
 	var diags []diag.Diagnostic
 	state, stateDiags := readDevinAggregateState(store, key, outDir, rel)
 	diags = append(diags, stateDiags...)
@@ -421,7 +421,7 @@ func readDevinAggregateState(store *ownership.Store, key outputKey, outDir, rel 
 		// exit-code contract.
 		return nil, append(diags, devinAggregateCodedDiag(key, outDir, rel, parseErr, diag.CodeMaterializeDevinAggregateMalformed))
 	}
-	container, containerMember, shapeErr := devinContainerNode(doc, rel)
+	container, containerMember, shapeErr := ownedJSONContainerNode(doc, rel)
 	if shapeErr != nil {
 		return nil, append(diags, devinShapeDiag(key, outDir, rel, shapeErr))
 	}
@@ -453,7 +453,7 @@ func readDevinAggregateState(store *ownership.Store, key outputKey, outDir, rel 
 	return state, diags
 }
 
-func devinEntryValues(entries []devinEntry) []ownership.EntryValue {
+func devinEntryValues(entries []ownedJSONEntry) []ownership.EntryValue {
 	values := make([]ownership.EntryValue, 0, len(entries))
 	for _, entry := range entries {
 		values = append(values, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
@@ -881,14 +881,14 @@ func findDevinConflict(candidates []ownership.ConflictCandidate, id ownership.En
 
 // devinDesiredEntry returns the desired entry for one identity, which carries
 // the canonical bytes a replacement writes.
-func devinDesiredEntry(desired []devinEntry, id ownership.EntryID) (devinEntry, bool) {
+func devinDesiredEntry(desired []ownedJSONEntry, id ownership.EntryID) (ownedJSONEntry, bool) {
 	want := devinIDKey(id)
 	for _, entry := range desired {
 		if devinIDKey(entry.id()) == want {
 			return entry, true
 		}
 	}
-	return devinEntry{}, false
+	return ownedJSONEntry{}, false
 }
 
 // replaceDevinEntry overwrites the value of ONE existing member through jsonc,
@@ -1053,7 +1053,7 @@ func removeDevinEntry(state *devinAggregateState, rel string, id ownership.Entry
 // to the Devin target, so the desired set a repair compares against is the same
 // desired set sync would write. Deriving it a second, independent way would
 // make "exact match" mean two different things in two commands.
-func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifact) (map[outputKey]*devinAggregateWork, []outputKey, []diag.Diagnostic) {
+func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifact) (map[outputKey]*ownedJSONAggregateWork, []outputKey, []diag.Diagnostic) {
 	// The fourth return is the whole-run diagnostic list (nil-resource warnings
 	// for every target). It is dropped rather than reported: those warnings
 	// belong to sync, and repeating a Claude resource's warning in a Devin

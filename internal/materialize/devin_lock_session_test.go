@@ -723,7 +723,7 @@ func TestDevinBackupOnlyFailureKeepsTheCodedErrorsOwnCode(t *testing.T) {
 	// held elsewhere. Run's own outer session would refuse before reaching it.
 	key := outputKey{target: hcc.TargetDevin, machineScope: false}
 	out := reconcileDevinAggregateFile(store, key, projectRoot, harness.DevinMcpConfigFile,
-		[]devinEntry{}, false, false)
+		[]ownedJSONEntry{}, false, false)
 
 	var backupCoded, malformedSeen bool
 	for _, d := range out.diags {

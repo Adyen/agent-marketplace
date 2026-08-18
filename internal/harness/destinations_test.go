@@ -1,12 +1,14 @@
 package harness
 
 import (
+	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -84,6 +86,26 @@ func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 	}
 }
 
+func TestResolveDestinationsCanonicalizesMissingCodexHomeBelowSymlink(t *testing.T) {
+	home, realParent, linkParent := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(realParent, linkParent); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(linkParent, "missing"))
+	destinations, err := ResolveDestinations(hcc.Target(targetmeta.TargetCodex), true, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ownership.CanonicalRoot(filepath.Join(realParent, "missing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := destinations[1].Root; got != want {
+		t.Fatalf("canonical CODEX_HOME = %q, want %q", got, want)
+	}
+}
+
 func TestResolveDestinationsCodexScopes(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
@@ -91,6 +113,9 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", customCodexHome)
 	codex := hcc.Target(targetmeta.TargetCodex)
+	repoRoot, _ := ownership.CanonicalRoot(repo)
+	homeRoot, _ := ownership.CanonicalRoot(home)
+	customRoot, _ := ownership.CanonicalRoot(customCodexHome)
 
 	tests := []struct {
 		name         string
@@ -100,16 +125,16 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 		{
 			name: "repository",
 			want: []Destination{
-				{ID: "repo-agents", Root: filepath.Join(repo, ".agents"), Prefix: ".agents"},
-				{ID: "repo-codex", Root: filepath.Join(repo, ".codex"), Prefix: ".codex", InstallationEvidence: true},
+				{ID: "repo-agents", Root: filepath.Join(repoRoot, ".agents"), Prefix: ".agents"},
+				{ID: "repo-codex", Root: filepath.Join(repoRoot, ".codex"), Prefix: ".codex", InstallationEvidence: true},
 			},
 		},
 		{
 			name:         "machine",
 			machineScope: true,
 			want: []Destination{
-				{ID: "machine-agents", Root: filepath.Join(home, ".agents"), Prefix: ".agents"},
-				{ID: "machine-codex", Root: customCodexHome, Prefix: ".codex", InstallationEvidence: true},
+				{ID: "machine-agents", Root: filepath.Join(homeRoot, ".agents"), Prefix: ".agents"},
+				{ID: "machine-codex", Root: customRoot, Prefix: ".codex", InstallationEvidence: true},
 			},
 		},
 	}
