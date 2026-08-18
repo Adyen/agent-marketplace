@@ -12,6 +12,14 @@ _Avoid_: Provider, compatibility layout
 The canonical on-disk format from which a resource bundle is ingested.
 _Avoid_: Harness target, import path
 
+**Source marker**:
+A harness-specific path whose presence is sufficient to autodetect a source layout. A source marker identifies the layout but does not contain every resource in it.
+_Avoid_: Install root, source layout
+
+**Full harness support**:
+A harness target and source layout that supports compilation, ingestion, bidirectional conversion, UI selection, repository and machine scopes, and every marketplace-selectable resource kind. Unsupported non-selectable IR kinds are diagnosed explicitly.
+_Avoid_: Registry entry, partial compiler
+
 **Converted command skill**:
 A command represented as a skill in a harness that has no command primitive while retaining its command identity.
 _Avoid_: Native command
