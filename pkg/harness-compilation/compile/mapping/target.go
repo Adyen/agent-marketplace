@@ -14,4 +14,5 @@ const (
 	TargetWindsurf = targetmeta.TargetWindsurf
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
+	TargetCodex    = targetmeta.TargetCodex
 )

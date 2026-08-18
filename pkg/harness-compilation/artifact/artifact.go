@@ -19,6 +19,7 @@ type Artifact struct {
 	Mode              fs.FileMode // File permissions (0 means use default)
 	Fragment          bool        // True if this is a fragment to be merged
 	FragmentKey       string      // Key for grouping fragments (empty if not a fragment)
+	FragmentOrderKey  string      // Optional deterministic ordering key within a fragment group
 	MergeWithExisting bool        // True if materialization merges into an existing file
 	ManagedByField    string      // Ownership marker field injected into managed entries
 	ManagedByValue    string      // Ownership marker value injected into managed entries
