@@ -421,6 +421,7 @@ type compilePhaseResult struct {
 	// see internal/materialize/devin.go for why that path is unusable here.
 	devinAggregates map[outputKey]*devinAggregateWork
 	codexAggregates map[outputKey]*devinAggregateWork
+	codexMCP        map[outputKey][]codexMCPEntry
 }
 
 // Run compiles and materializes the given resolved skills into their
@@ -634,6 +635,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	devinAggregates := make(map[outputKey]*devinAggregateWork)
 	codexAggregates := make(map[outputKey]*devinAggregateWork)
+	codexMCP := make(map[outputKey][]codexMCPEntry)
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
@@ -723,13 +725,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			}
 		}
 		if w.target == hcc.Target(targetmeta.TargetCodex) {
-			rest, aggregateEntries, aggregateErr := splitCodexOwnedJSONArtifacts(result.Artifacts, w.skill.Name)
+			rest, aggregateEntries, mcpEntries, aggregateErr := splitCodexOwnedArtifacts(result.Artifacts, w.skill.Name)
 			if aggregateErr != nil {
 				blocked.blockResource(key, w)
 				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.codex.aggregate-malformed", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: aggregateErr.Error()})
 				continue
 			}
 			result.Artifacts = rest
+			codexMCP[key] = append(codexMCP[key], mcpEntries...)
 			if len(aggregateEntries) > 0 {
 				aggregate := codexAggregates[key]
 				if aggregate == nil {
@@ -866,6 +869,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		artifactMeta:    artifactMeta,
 		devinAggregates: devinAggregates,
 		codexAggregates: codexAggregates,
+		codexMCP:        codexMCP,
 	}
 }
 
@@ -1024,6 +1028,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			for _, destination := range destinations {
 				if destination.Prefix == ".codex" {
 					report = reconcileDevinAggregates(ctx, report, key, destination.Root, compileResult.codexAggregates[key], dryRun)
+					report = reconcileCodexMCP(ctx, report, key, destination.Root, compileResult.codexMCP[key], dryRun)
 					break
 				}
 			}

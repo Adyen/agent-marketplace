@@ -351,6 +351,10 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 }
 
 func MachineRoot(target hcc.Target) (string, bool) {
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		home, err := os.UserHomeDir()
+		return home, err == nil
+	}
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
 }
