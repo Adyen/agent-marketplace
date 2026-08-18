@@ -16,6 +16,7 @@ const (
 	TargetWindsurf Target = "windsurf"
 	TargetGemini   Target = "gemini"
 	TargetDevin    Target = "devin"
+	TargetCodex    Target = "codex"
 )
 
 // Definition is the metadata every target must declare. Compiler and Ingester
