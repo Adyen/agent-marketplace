@@ -25,6 +25,7 @@ const (
 	TargetWindsurf = mapping.TargetWindsurf
 	TargetGemini   = mapping.TargetGemini
 	TargetDevin    = mapping.TargetDevin
+	TargetCodex    = mapping.TargetCodex
 )
 
 // Compiler is the interface that each target compiler must implement.
