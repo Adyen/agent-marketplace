@@ -357,8 +357,20 @@ func MachineRoot(target hcc.Target) (string, bool) {
 
 func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	roots := InstallRoots
+	codex := hcc.Target(targetmeta.TargetCodex)
 
 	m := map[hcc.Target]TargetInfo{
+		codex: {
+			Components:       []string{".agents", ".codex"},
+			PlanStrategy:     PlanSubtree,
+			SkillPathPattern: ".agents/skills/%s/SKILL.md",
+			SkillDirKinds:    map[ir.ResourceKind]bool{ir.KindCommand: true},
+			AggregateFiles: AggregateFileSet{
+				Project: []string{".codex/config.toml", ".codex/hooks.json"},
+				User:    []string{".codex/config.toml", ".codex/hooks.json"},
+			},
+			OwnershipReconciledAggregates: true,
+		},
 		hcc.TargetClaude: {
 			Roots:        roots[hcc.TargetClaude],
 			Components:   []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},
@@ -542,6 +554,12 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// causing materialize to write to empty or relative paths.
 	for target := range m {
 		if _, ok := InstallRoots[target]; !ok {
+			// Codex is deliberately staged privately until final promotion. Its
+			// partitioned destinations are resolved by ResolveDestinations and
+			// therefore cannot have a single InstallRoots entry.
+			if target == hcc.Target(targetmeta.TargetCodex) {
+				continue
+			}
 			return nil, fmt.Errorf("harness: InstallRoots missing entry for target %q present in TargetInfoMap", target)
 		}
 	}
