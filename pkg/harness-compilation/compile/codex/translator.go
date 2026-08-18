@@ -113,7 +113,7 @@ func hook(h *ir.Hook) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if h.Timeout != nil || h.Prompt != "" || len(h.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "Codex hook output omitted fields without a documented command-handler equivalent"))
 	}
-	return []artifact.Artifact{{Path: ".codex/hooks.json", Bytes: raw, Fragment: true, FragmentKey: "hooks", FragmentOrderKey: h.Name(), MergeWithExisting: true, DedupeFragmentEntries: true}}, diagnostics, nil
+	return []artifact.Artifact{{Path: ".codex/hooks.json", Bytes: raw, Fragment: true, FragmentKey: "hooks", FragmentOrderKey: h.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true, DedupeFragmentEntries: true}}, diagnostics, nil
 }
 
 func mcp(m *ir.McpServer) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -136,7 +136,7 @@ func mcp(m *ir.McpServer) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if len(m.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, m.Name(), m.Source, "Codex MCP output omitted unmodeled extension fields"))
 	}
-	return []artifact.Artifact{{Path: ".codex/config.toml", Bytes: raw, Fragment: true, FragmentKey: "mcp_servers", FragmentOrderKey: m.Name(), MergeWithExisting: true}}, diagnostics, nil
+	return []artifact.Artifact{{Path: ".codex/config.toml", Bytes: raw, Fragment: true, FragmentKey: "mcp_servers", FragmentOrderKey: m.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true}}, diagnostics, nil
 }
 
 type mcpConfig struct {

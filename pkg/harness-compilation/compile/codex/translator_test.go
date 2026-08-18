@@ -33,6 +33,9 @@ func TestCompilerNativePaths(t *testing.T) {
 			if len(result.Artifacts) != 1 || result.Artifacts[0].Path != tt.wantPath {
 				t.Fatalf("artifacts = %#v, want path %q", result.Artifacts, tt.wantPath)
 			}
+			if (tt.name == "hook" || tt.name == "mcp") && !result.Artifacts[0].ExternalReconciliationRequired {
+				t.Errorf("%s aggregate does not require ownership-safe external reconciliation", tt.name)
+			}
 			text := string(result.Artifacts[0].Bytes)
 			for _, want := range tt.contains {
 				if !strings.Contains(text, want) {

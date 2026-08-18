@@ -150,12 +150,13 @@ func mergeJSON(path string, fragments []Artifact) (Artifact, error) {
 	}
 
 	return Artifact{
-		Path:                  path,
-		Bytes:                 bytes,
-		MergeWithExisting:     anyMergeWithExisting(fragments),
-		ManagedByField:        firstManagedByField(fragments),
-		ManagedByValue:        firstManagedByValue(fragments),
-		DedupeFragmentEntries: dedupe,
+		Path:                           path,
+		Bytes:                          bytes,
+		MergeWithExisting:              anyMergeWithExisting(fragments),
+		ExternalReconciliationRequired: anyExternalReconciliationRequired(fragments),
+		ManagedByField:                 firstManagedByField(fragments),
+		ManagedByValue:                 firstManagedByValue(fragments),
+		DedupeFragmentEntries:          dedupe,
 	}, nil
 }
 
@@ -278,11 +279,12 @@ func mergeText(path string, fragments []Artifact) (Artifact, error) {
 	}
 
 	return Artifact{
-		Path:              path,
-		Bytes:             []byte(sb.String()),
-		MergeWithExisting: anyMergeWithExisting(fragments),
-		ManagedByField:    firstManagedByField(fragments),
-		ManagedByValue:    firstManagedByValue(fragments),
+		Path:                           path,
+		Bytes:                          []byte(sb.String()),
+		MergeWithExisting:              anyMergeWithExisting(fragments),
+		ExternalReconciliationRequired: anyExternalReconciliationRequired(fragments),
+		ManagedByField:                 firstManagedByField(fragments),
+		ManagedByValue:                 firstManagedByValue(fragments),
 	}, nil
 }
 
@@ -298,6 +300,15 @@ func anyDedupeFragmentEntries(artifacts []Artifact) bool {
 func anyMergeWithExisting(artifacts []Artifact) bool {
 	for _, a := range artifacts {
 		if a.MergeWithExisting {
+			return true
+		}
+	}
+	return false
+}
+
+func anyExternalReconciliationRequired(artifacts []Artifact) bool {
+	for _, a := range artifacts {
+		if a.ExternalReconciliationRequired {
 			return true
 		}
 	}
