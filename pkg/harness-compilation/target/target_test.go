@@ -18,6 +18,9 @@ func TestCodexIdentityIsNotPubliclyDiscoverable(t *testing.T) {
 	if slices.Contains(Targets(), TargetCodex) {
 		t.Fatal("Codex must remain absent from public target lists until promotion")
 	}
+	if !IsPrivate(string(TargetCodex)) || IsPrivate("unknown") || IsPrivate(string(TargetClaude)) {
+		t.Fatal("only the pre-promotion Codex identity may be private")
+	}
 }
 
 func TestCodexNativeLayoutIsAvailableBeforePromotion(t *testing.T) {

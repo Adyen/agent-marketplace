@@ -87,6 +87,10 @@ func IsValid(name string) bool {
 	return ok
 }
 
+// IsPrivate reports whether name is a known implementation target that is not
+// yet exposed through discovery, conversion, or UI target lists.
+func IsPrivate(name string) bool { return Target(name) == TargetCodex }
+
 // Targets returns all target identifiers in stable display order.
 func Targets() []Target {
 	return targetsWhere(func(Definition) bool { return true })

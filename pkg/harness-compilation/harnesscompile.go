@@ -111,6 +111,8 @@ func ValidateTargetRegistrations() error {
 	for _, t := range compile.RegisteredTargets() {
 		definition, ok := targetmeta.Lookup(string(t))
 		switch {
+		case !ok && targetmeta.IsPrivate(string(t)):
+			continue
 		case !ok:
 			errs = append(errs, fmt.Errorf("compiler registered for undeclared target %q", t))
 		case !definition.Compiler:
@@ -120,6 +122,8 @@ func ValidateTargetRegistrations() error {
 	for _, h := range ingest.RegisteredSources() {
 		definition, ok := targetmeta.Lookup(string(h))
 		switch {
+		case !ok && targetmeta.IsPrivate(string(h)):
+			continue
 		case !ok:
 			errs = append(errs, fmt.Errorf("ingester registered for undeclared target %q", h))
 		case !definition.Ingester:
