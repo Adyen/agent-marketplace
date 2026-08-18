@@ -420,6 +420,7 @@ type compilePhaseResult struct {
 	// the generic merge path never writes or marker-merges a Devin aggregate;
 	// see internal/materialize/devin.go for why that path is unusable here.
 	devinAggregates map[outputKey]*devinAggregateWork
+	codexAggregates map[outputKey]*devinAggregateWork
 }
 
 // Run compiles and materializes the given resolved skills into their
@@ -571,6 +572,25 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			allOutputs[outputKey{target: target, machineScope: true}] = true
 		}
 	}
+	codex := hcc.Target(targetmeta.TargetCodex)
+	for _, machineScope := range []bool{false, true} {
+		destinations, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
+		if err != nil {
+			continue
+		}
+		for _, destination := range destinations {
+			// .agents is shared by multiple harnesses and is never a Codex
+			// installation marker. Only the resolved Codex home/root can revive
+			// an empty output key for ownership pruning.
+			if destination.Prefix != ".codex" {
+				continue
+			}
+			if outputDirExists(destination.Root) {
+				allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
+				break
+			}
+		}
+	}
 }
 
 // sameOutputDir reports whether two output directory paths refer to the same
@@ -613,6 +633,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	devinAggregates := make(map[outputKey]*devinAggregateWork)
+	codexAggregates := make(map[outputKey]*devinAggregateWork)
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
@@ -695,6 +716,25 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				if aggregate == nil {
 					aggregate = &devinAggregateWork{}
 					devinAggregates[key] = aggregate
+				}
+				for _, entry := range aggregateEntries {
+					aggregate.add(entry)
+				}
+			}
+		}
+		if w.target == hcc.Target(targetmeta.TargetCodex) {
+			rest, aggregateEntries, aggregateErr := splitCodexOwnedJSONArtifacts(result.Artifacts, w.skill.Name)
+			if aggregateErr != nil {
+				blocked.blockResource(key, w)
+				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.codex.aggregate-malformed", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: aggregateErr.Error()})
+				continue
+			}
+			result.Artifacts = rest
+			if len(aggregateEntries) > 0 {
+				aggregate := codexAggregates[key]
+				if aggregate == nil {
+					aggregate = &devinAggregateWork{}
+					codexAggregates[key] = aggregate
 				}
 				for _, entry := range aggregateEntries {
 					aggregate.add(entry)
@@ -825,6 +865,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		blocked:         blocked,
 		artifactMeta:    artifactMeta,
 		devinAggregates: devinAggregates,
+		codexAggregates: codexAggregates,
 	}
 }
 
@@ -974,6 +1015,19 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
 		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
+		if isCodex {
+			destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+			if err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+				continue
+			}
+			for _, destination := range destinations {
+				if destination.Prefix == ".codex" {
+					report = reconcileDevinAggregates(ctx, report, key, destination.Root, compileResult.codexAggregates[key], dryRun)
+					break
+				}
+			}
+		}
 	}
 
 	return report
