@@ -33,9 +33,9 @@ func devinBenchEnv(b *testing.B) string {
 
 // devinBenchWork compiles n hooks and n MCP servers into desired aggregate work,
 // so the measurement covers the reconciler rather than the compilers.
-func devinBenchWork(b *testing.B, n int, machineScope bool) *devinAggregateWork {
+func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateWork {
 	b.Helper()
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	opts := []hcc.Option{}
 	if machineScope {
 		opts = append(opts, hcc.WithScope(hcc.ScopeUser))
@@ -47,7 +47,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *devinAggregateWork 
 		if err != nil {
 			b.Fatal(err)
 		}
-		entries, err := devinFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, name)
+		entries, err := ownedJSONFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, name)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *devinAggregateWork 
 		if err != nil {
 			b.Fatal(err)
 		}
-		mcpEntries, err := devinFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, server)
+		mcpEntries, err := ownedJSONFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, server)
 		if err != nil {
 			b.Fatal(err)
 		}

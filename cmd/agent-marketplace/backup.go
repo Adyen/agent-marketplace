@@ -22,6 +22,7 @@ func validBackupTargets() []string {
 	for target := range harness.MakeInstallRoots() {
 		targets = append(targets, string(target))
 	}
+	targets = append(targets, "codex")
 	sort.Strings(targets)
 	return targets
 }
@@ -75,7 +76,11 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 	}
 
 	managed := pipeline.CollectManagedPaths(resolved.Resolved)
-	if len(managed) == 0 {
+	codexPartitions, err := pipeline.CollectCodexBackupPartitions(resolved.Resolved)
+	if err != nil {
+		return fmt.Errorf("resolve Codex backup partitions: %w", err)
+	}
+	if len(managed) == 0 && len(codexPartitions) == 0 {
 		if _, err := fmt.Fprintln(out, "No managed paths to back up."); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
@@ -90,6 +95,11 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 	if err := backup.Create(managed); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
+	if len(codexPartitions) > 0 {
+		if _, err := backup.CreateCodexSet(codexPartitions); err != nil {
+			return fmt.Errorf("backup Codex set: %w", err)
+		}
+	}
 	if err := backup.Rotate(bCfg); err != nil {
 		return fmt.Errorf("backup rotate: %w", err)
 	}
@@ -97,6 +107,9 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 	targets := make([]string, 0, len(managed))
 	for t := range managed {
 		targets = append(targets, string(t))
+	}
+	if len(codexPartitions) > 0 {
+		targets = append(targets, "codex")
 	}
 	sort.Strings(targets)
 	if _, err := fmt.Fprintf(out, "Backup created for: %s\n", strings.Join(targets, ", ")); err != nil {
@@ -134,6 +147,18 @@ func newBackupListCmd() *cobra.Command {
 
 func runBackupRestore(out io.Writer, target string) error {
 	t := hcc.Target(strings.ToLower(target))
+	if t == hcc.Target("codex") {
+		partitions, err := pipeline.CodexBackupPartitions()
+		if err != nil {
+			return err
+		}
+		operation, err := backup.RestoreCodexSet(partitions)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "Overlay-restored %s from backup %s\n", target, operation)
+		return err
+	}
 
 	dstDir, ok := harness.MachineRoot(t)
 	if !ok {

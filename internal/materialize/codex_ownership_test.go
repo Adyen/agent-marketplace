@@ -83,7 +83,7 @@ func TestCodexMCPReconcilePreservesUnmanagedTOML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# keep this comment", "model = 'gpt-5.6-terra'", "mcp_servers.handwritten", "mcp_servers.managed"} {
+	for _, want := range []string{"# keep this comment", "model = 'gpt-5.6-terra'", "mcp_servers.handwritten", `mcp_servers."managed"`} {
 		if !strings.Contains(string(after), want) {
 			t.Errorf("config lost %q:\n%s", want, after)
 		}
@@ -111,7 +111,7 @@ func TestCodexMCPReconcilePreservesUnmanagedTOML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(pruned), "mcp_servers.managed") || !strings.Contains(string(pruned), "mcp_servers.handwritten") {
+	if strings.Contains(string(pruned), `mcp_servers."managed"`) || !strings.Contains(string(pruned), "mcp_servers.handwritten") {
 		t.Fatalf("ownership prune wrong:\n%s", pruned)
 	}
 }

@@ -289,6 +289,7 @@ const (
 	CodeMcpCodexSecurityUnsupported              = "mcp.codex.security-unsupported"               // Codex MCP cannot preserve authentication or transport semantics
 	CodeIngestCodexLoadResourceFailed            = "ingest.codex.load-resource-failed"            // One malformed Codex resource was skipped
 	CodeIngestCodexDuplicateIdentity             = "ingest.codex.duplicate-identity"              // Duplicate native identity suppressed
+	CodeMaterializeCodexDuplicateIdentity        = "materialize.codex.duplicate-identity"         // Duplicate desired Codex aggregate identity suppressed
 	CodeSubagentFactoryDisallowedToolsDropped    = "subagent.factory.disallowed-tools-dropped"    // Factory cannot represent disallowedTools
 	CodeSubagentFactoryIsolationDropped          = "subagent.factory.isolation-dropped"           // Factory cannot represent isolation
 	CodeSubagentGeminiToolUnknown                = "subagent.gemini.tool-unknown"                 // Gemini tool not in mapping table; artifact suppressed
@@ -526,6 +527,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMcpCodexSecurityUnsupported, SeverityError, "Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed", "Use documented Codex MCP fields or remove the unsupported setting explicitly"},
 	{CodeIngestCodexLoadResourceFailed, SeverityError, "One malformed Codex resource or aggregate was skipped", "Fix the reported native file; independent valid resources were retained"},
 	{CodeIngestCodexDuplicateIdentity, SeverityError, "Duplicate Codex resource identity was suppressed without choosing a winner", "Rename one duplicate native resource"},
+	{CodeMaterializeCodexDuplicateIdentity, SeverityError, "Duplicate desired Codex aggregate identity was suppressed without choosing a winner", "Rename one duplicate selected resource"},
 	{CodeSubagentFactoryDisallowedToolsDropped, SeverityError, "Factory cannot represent disallowedTools; artifact suppressed", "Use a target that supports disallowedTools or remove the restriction explicitly"},
 	{CodeSubagentFactoryIsolationDropped, SeverityError, "Factory cannot represent isolation; artifact suppressed", "Use a target that supports isolation or remove the restriction explicitly"},
 	{CodeSubagentGeminiToolUnknown, SeverityError, "Gemini tool is not in the mapping table; artifact suppressed", "Add the tool to the mapping table or remove the explicit tool"},

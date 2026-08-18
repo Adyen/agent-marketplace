@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -43,7 +44,7 @@ func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination
 				root = configured
 			}
 		}
-		root, err = canonicalRoot(root)
+		root, err = canonicalCodexRoot(root)
 		if err != nil {
 			return nil, err
 		}
@@ -56,6 +57,14 @@ func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination
 		})
 	}
 	return destinations, nil
+}
+
+func canonicalCodexRoot(path string) (string, error) {
+	root, err := ownership.CanonicalRoot(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve Codex destination %q: %w", path, err)
+	}
+	return root, nil
 }
 
 func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {

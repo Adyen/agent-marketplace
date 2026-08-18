@@ -65,7 +65,7 @@ func TestDevinKillMidSectionChildProcess(t *testing.T) {
 	root := os.Getenv(devinKillRootEnv)
 	t.Setenv("XDG_STATE_HOME", os.Getenv(devinKillStateEnv))
 
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.add(devinHookDesired(t, "echo committed"))
 	work.add(devinMcpDesired(t, "never", "never-binary"))
 
@@ -109,7 +109,7 @@ func TestDevinKillMidSectionChildProcess(t *testing.T) {
 }
 
 // devinHookDesired builds one desired hooks.v1.json entry.
-func devinHookDesired(t *testing.T, command string) devinEntry {
+func devinHookDesired(t *testing.T, command string) ownedJSONEntry {
 	t.Helper()
 	raw, err := devinCanonicalJSON([]byte(`{"type":"command","command":"` + command + `"}`))
 	if err != nil {
@@ -119,7 +119,7 @@ func devinHookDesired(t *testing.T, command string) devinEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return devinEntry{
+	return ownedJSONEntry{
 		rel:       harness.DevinProjectHooksFile,
 		kind:      ownership.KindHook,
 		container: "PostToolUse",
@@ -223,7 +223,7 @@ func TestAdversarialSIGKILLBetweenTwoGenerationsLeavesTheRootUsable(t *testing.T
 
 	// 4. The next run resolves whatever was left and finishes the job, without a
 	// single error diagnostic.
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.add(devinHookDesired(t, "echo committed"))
 	work.add(devinMcpDesired(t, "never", "never-binary"))
 	report := reconcileDevinAggregates(context.Background(), newDevinReport(),

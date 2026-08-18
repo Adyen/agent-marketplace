@@ -37,7 +37,7 @@ import (
 // decision: This helper is named devinB6HookDesired because devin_test.go's
 // sibling devin_wrp8_kill_unix_test.go already declares a devinHookDesired with
 // a different (single-argument) signature.
-func devinB6HookDesired(t *testing.T, event, command string) devinEntry {
+func devinB6HookDesired(t *testing.T, event, command string) ownedJSONEntry {
 	t.Helper()
 	raw, err := devinCanonicalJSON([]byte(`{"type":"command","command":"` + command + `"}`))
 	if err != nil {
@@ -47,7 +47,7 @@ func devinB6HookDesired(t *testing.T, event, command string) devinEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return devinEntry{
+	return ownedJSONEntry{
 		rel:       harness.DevinProjectHooksFile,
 		kind:      ownership.KindHook,
 		container: event,
@@ -57,7 +57,7 @@ func devinB6HookDesired(t *testing.T, event, command string) devinEntry {
 	}
 }
 
-func b6ChildEntry(t *testing.T, idx int) devinEntry {
+func b6ChildEntry(t *testing.T, idx int) ownedJSONEntry {
 	if idx < 4 {
 		return devinMcpDesired(t, fmt.Sprintf("server-%d", idx), fmt.Sprintf("cmd-%d", idx))
 	}
@@ -117,7 +117,7 @@ func TestDevinB6SerializationChildProcess(t *testing.T) {
 	defer func() { devinLockAcquisitionHook = nil }()
 
 	entry := b6ChildEntry(t, idx)
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.add(entry)
 	// Every child is a partial run: it must not prune entries written by siblings.
 	work.markIncomplete(harness.DevinMcpConfigFile)

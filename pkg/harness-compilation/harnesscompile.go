@@ -542,6 +542,10 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 //	}
 var ErrPartialResult = errors.New("result contains error diagnostics; only resources that compiled cleanly were materialized")
 
+// ErrExternalReconciliationRequired reports that generic materialization was
+// asked to write a shared file whose ownership must be reconciled externally.
+var ErrExternalReconciliationRequired = errors.New("artifact requires external ownership reconciliation")
+
 // Materialize writes a Result to disk using staged-then-rename for individual
 // artifacts. It merges fragment artifacts before writing, validates paths, detects
 // identical files via sha256, and supports dry-run and prune-stale modes.
@@ -583,6 +587,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	artifacts, err := artifact.MergeFragments(r.Artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
+	}
+	for _, candidate := range artifacts {
+		if candidate.ExternalReconciliationRequired {
+			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+		}
 	}
 
 	// Validate all artifact paths and reject symlinked destination parents
