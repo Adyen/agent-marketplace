@@ -10,6 +10,14 @@ type Bag struct {
 	Windsurf *Windsurf `json:"windsurf,omitempty"`
 	Gemini   *Gemini   `json:"gemini,omitempty"`
 	Claude   *Claude   `json:"claude,omitempty"`
+	Codex    *Codex    `json:"codex,omitempty"`
+}
+
+// Codex preserves documented native fields without changing canonical semantics.
+type Codex struct {
+	SandboxMode       string            `json:"sandboxMode,omitempty"`
+	BearerTokenEnvVar string            `json:"bearerTokenEnvVar,omitempty"`
+	EnvHTTPHeaders    map[string]string `json:"envHttpHeaders,omitempty"`
 }
 
 // Factory preserves Factory Droid-specific fields that do not belong in the
