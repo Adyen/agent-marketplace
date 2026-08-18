@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // probeResources returns one resource of every compilable ir.ResourceKind.
@@ -62,6 +63,10 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bool) []string {
 	t.Helper()
 	outDir := t.TempDir()
+	if target == hcc.Target(targetmeta.TargetCodex) && machineScope {
+		t.Setenv("HOME", outDir)
+		t.Setenv("CODEX_HOME", filepath.Join(outDir, ".codex"))
+	}
 
 	seen := make(map[string]bool)
 	for _, kind := range sortedKinds(probeResources()) {
@@ -228,18 +233,19 @@ func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 // than SymlinkOnly. This test stays a statement about the registry as it stands;
 // TestAggregateProtectedPathsKeysOffOwnership below is the statement about the
 // predicate itself, over targets that do not exist yet.
-func TestAggregateProtectedPathsStaysDevinOnly(t *testing.T) {
+func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
+	codex := hcc.Target(targetmeta.TargetCodex)
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
 			protected := aggregateProtectedPaths(target, machineScope)
-			if target == hcc.TargetDevin {
+			if target == hcc.TargetDevin || target == codex {
 				declared := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
 				if len(protected) != len(declared) {
-					t.Errorf("devin (machine_scope=%v): protected %v does not cover declared %v", machineScope, protected, declared)
+					t.Errorf("%s (machine_scope=%v): protected %v does not cover declared %v", target, machineScope, protected, declared)
 				}
 				for _, rel := range declared {
 					if !protected[rel] {
-						t.Errorf("devin (machine_scope=%v): %q is not protected from marker stripping", machineScope, rel)
+						t.Errorf("%s (machine_scope=%v): %q is not protected from marker stripping", target, machineScope, rel)
 					}
 				}
 				continue

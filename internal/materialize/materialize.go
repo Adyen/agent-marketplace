@@ -27,9 +27,11 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -626,7 +628,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		// marker there would be exactly the heuristic ownership inference the
 		// promoted plan forbids — plus a member Devin would forward to its hook
 		// runtime. See internal/materialize/devin.go.
-		if w.target != hcc.TargetDevin {
+		if w.target != hcc.TargetDevin && w.target != hcc.Target(targetmeta.TargetCodex) {
 			switch w.skill.Resource.Kind() {
 			case ir.KindMcpServer, ir.KindHook, ir.KindSkill, ir.KindSubagent:
 				compileOptions = append(compileOptions, hcc.WithManagedBy("_managed_by", "agent-marketplace"))
@@ -891,7 +893,8 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 
 	for _, key := range sortedOutputs {
 		roots, ok := harness.MakeInstallRoots()[key.target]
-		if !ok {
+		isCodex := key.target == hcc.Target(targetmeta.TargetCodex)
+		if !ok && !isCodex {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.target.unknown",
 				Severity: diag.SeverityError,
@@ -900,7 +903,17 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			})
 			continue
 		}
-		outDir := roots.For(key.machineScope, repoRoot)
+		outDir := repoRoot
+		if !isCodex {
+			outDir = roots.For(key.machineScope, repoRoot)
+		} else if key.machineScope {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: "resolve home directory for Codex destinations"})
+				continue
+			}
+			outDir = home
+		}
 
 		if !dryRun {
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -1363,6 +1376,9 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 }
 
 func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		return codexMaterializePlans(outDir, artifacts, linkedSkills, machineScope)
+	}
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
 		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
@@ -1371,6 +1387,37 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 		return windsurfMaterializePlans(outDir, artifacts, machineScope, noPruneComponents(target, linkedSkills))
 	}
 	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
+}
+
+func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
+	destinations, err := harness.ResolveDestinations(hcc.Target(targetmeta.TargetCodex), machineScope, repoRoot)
+	if err != nil {
+		slog.Error("resolve Codex materialization destinations", "code", "materialize.destination.error", "error", err)
+		return nil
+	}
+	var plans []materializePlan
+	for _, destination := range destinations {
+		var routed []artifact.Artifact
+		prefix := strings.TrimSuffix(filepath.ToSlash(destination.Prefix), "/") + "/"
+		for _, candidate := range artifacts {
+			if !strings.HasPrefix(filepath.ToSlash(candidate.Path), prefix) {
+				continue
+			}
+			rel, routeErr := destination.RouteArtifact(candidate.Path)
+			if routeErr != nil {
+				slog.Error("route Codex artifact", "code", "materialize.destination.error", "destination", destination.ID, "error", routeErr)
+				continue
+			}
+			candidate.Path = rel
+			routed = append(routed, candidate)
+		}
+		destinationPlans := subtreeMaterializePlans(destination.Root, routed, destination.Info.Components, destination.Info.ArtifactRootPrefix, noPruneComponents(hcc.Target(targetmeta.TargetCodex), linkedSkills))
+		for i := range destinationPlans {
+			destinationPlans[i].reportPrefix = filepath.ToSlash(filepath.Join(destination.Prefix, destinationPlans[i].reportPrefix))
+		}
+		plans = append(plans, destinationPlans...)
+	}
+	return plans
 }
 
 func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, components []string, rootPrefix string, noPrune map[string]bool) []materializePlan {
