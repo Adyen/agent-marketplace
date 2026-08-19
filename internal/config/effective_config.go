@@ -89,6 +89,7 @@ type EffectiveConfig struct {
 	// layer explicitly sets an empty allowlist (denying all remote origins),
 	// and non-empty when an allowlist is configured.
 	Allowed             []string
+	AllowedMarketplaces []string
 	TargetHarnesses     []string
 	TargetHarnessSource Source
 	Errors              []error
@@ -219,6 +220,17 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 
 	if err := ValidateRegistryURLs(merged.Registries, allowed); err != nil {
 		slog.Error("registry allowlist rejected one or more URLs", "error", err)
+		ec.Errors = append(ec.Errors, err)
+	}
+
+	var allowedMarketplaces []string
+	if merged.AllowedMarketplaces != nil {
+		allowedMarketplaces = *merged.AllowedMarketplaces
+	}
+	ec.AllowedMarketplaces = allowedMarketplaces
+
+	if err := ValidateMarketplaceURLs(merged.Marketplaces, allowedMarketplaces); err != nil {
+		slog.Error("marketplace allowlist rejected one or more URLs", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
 

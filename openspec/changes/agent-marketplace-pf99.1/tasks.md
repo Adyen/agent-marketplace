@@ -18,13 +18,13 @@
 - [x] `pkg/marketplace/analyze/codes.md` — catalog documentation.
 - [x] `pkg/marketplace/analyze/codes_test.go` — catalog parity test.
 
-## Consumer config (next slice)
-- [ ] `internal/config/marketplace.go` — `MarketplaceEntry`,
+## Consumer config
+- [x] `internal/config/marketplace.go` — `MarketplaceEntry`,
   `MarketplaceResourcePin`, validation helpers.
-- [ ] `internal/config/allowed_marketplaces.go` — `ValidateMarketplaceURLs`.
-- [ ] Wire `marketplaces`/`allowed_marketplaces` into `Config`,
+- [x] `internal/config/allowed_marketplaces.go` — `ValidateMarketplaceURLs`.
+- [x] Wire `marketplaces`/`allowed_marketplaces` into `Config`,
   `LocalConfig`, `v3.go`, `merge.go`, `effective_config.go`.
-- [ ] `internal/config/marketplace_test.go` and bench.
+- [x] `internal/config/marketplace_test.go` and bench.
 
 ## Canonical artifact (next slice)
 - [ ] `pkg/harness-compilation/artifact/canonical.go` — encode/decode/verify.

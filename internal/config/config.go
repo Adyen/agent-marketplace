@@ -451,9 +451,10 @@ type Config struct {
 	// Harnesses lists the target harnesses to materialize into (e.g.
 	// "factory", "cursor", "claude"). Required at v2; the loader errors
 	// hard if absent.
-	Harnesses   []string        `yaml:"harnesses,omitempty"`
-	Registries  []RegistryEntry `yaml:"registries,omitempty"`
-	Collections KindSelector    `yaml:"collections,omitempty"`
+	Harnesses    []string           `yaml:"harnesses,omitempty"`
+	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
+	Marketplaces []MarketplaceEntry `yaml:"marketplaces,omitempty"`
+	Collections  KindSelector       `yaml:"collections,omitempty"`
 
 	// Top-level per-kind defaults. During merge, each registry entry inherits
 	// these selectors unless it provides its own per-entry selectors.
@@ -477,11 +478,8 @@ type Config struct {
 	// Uses *[]string rather than []string to preserve the nil vs empty
 	// distinction through YAML marshal/unmarshal round-trips (omitempty
 	// on []string loses the distinction).
-	AllowedRegistries *[]string `yaml:"allowed_registries,omitempty"`
-
-	// Telemetry is the machine-scope telemetry policy. It is only allowed in
-	// the organization and user-personal configuration layers.
-	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
+	AllowedRegistries   *[]string `yaml:"allowed_registries,omitempty"`
+	AllowedMarketplaces *[]string `yaml:"allowed_marketplaces,omitempty"`
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource
@@ -539,14 +537,15 @@ type LocalConfig struct {
 	// APIVersionV2 or APIVersionV3, where v2 is canonical and v3 is
 	// accepted as a compatibility alias. Without this field the strict
 	// (KnownFields) decoder rejects any hand-added apiVersion line.
-	APIVersion  string          `yaml:"apiVersion,omitempty"`
-	Registries  []RegistryEntry `yaml:"registries,omitempty"`
-	Skills      KindSelector    `yaml:"skills,omitempty"`
-	Commands    KindSelector    `yaml:"commands,omitempty"`
-	Subagents   KindSelector    `yaml:"subagents,omitempty"`
-	Hooks       KindSelector    `yaml:"hooks,omitempty"`
-	MCP         KindSelector    `yaml:"mcp,omitempty"`
-	Collections KindSelector    `yaml:"collections,omitempty"`
+	APIVersion   string             `yaml:"apiVersion,omitempty"`
+	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
+	Marketplaces []MarketplaceEntry `yaml:"marketplaces,omitempty"`
+	Skills       KindSelector       `yaml:"skills,omitempty"`
+	Commands     KindSelector       `yaml:"commands,omitempty"`
+	Subagents    KindSelector       `yaml:"subagents,omitempty"`
+	Hooks        KindSelector       `yaml:"hooks,omitempty"`
+	MCP          KindSelector       `yaml:"mcp,omitempty"`
+	Collections  KindSelector       `yaml:"collections,omitempty"`
 	// Materialization is a project-only override. It never changes the
 	// user-wide policy resolved from ~/.agents/config.yaml.
 	Materialization *MaterializationConfig `yaml:"materialization,omitempty"`
@@ -1018,6 +1017,8 @@ func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string)
 	errs = append(errs, validateConfigHarnessTargets(c)...)
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)
+	errs = append(errs, ValidateMarketplaceEntries(c.Marketplaces)...)
+	errs = append(errs, validateAllowedMarketplacePatterns(c.AllowedMarketplaces)...)
 	errs = append(errs, validateBackup(c.Backup)...)
 	errs = append(errs, validateMaterialization(c.Materialization)...)
 	if requireHarnesses {
@@ -1042,6 +1043,7 @@ func (c Config) ValidateBasic() error {
 	errs = append(errs, validateConfigHarnessTargets(c)...)
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)
+	errs = append(errs, ValidateMarketplaceEntries(c.Marketplaces)...)
 	errs = append(errs, validateBackup(c.Backup)...)
 	errs = append(errs, validateMaterialization(c.Materialization)...)
 
