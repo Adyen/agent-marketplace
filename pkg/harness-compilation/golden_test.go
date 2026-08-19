@@ -29,11 +29,10 @@ var goldenBundle = filepath.Join("testdata", "resources")
 //
 //	UPDATE_GOLDEN=1 go test -run TestGolden_AllTargets
 //
-// No target is exempt. The shared bundle deliberately contains nothing that
-// only one target can represent, so every compiler-backed target compiles it
-// cleanly and every tree is compared byte for byte. Restriction-suppression
-// behaviour is covered where it belongs: the per-target subagent tests in
-// compile/<target> and the subagent conversion matrix in testdata/matrix.
+// No target is exempt. Every compiler-backed target has its complete output
+// compared byte for byte. Artifacts marked for external reconciliation are
+// still golden-tested, but only after this test proves generic Materialize
+// refuses the complete result without writing anything.
 func TestGolden_AllTargets(t *testing.T) {
 	targets := targetmeta.CompilerTargets()
 
@@ -69,15 +68,7 @@ func TestGolden_AllTargets(t *testing.T) {
 				}
 			}
 
-			outDir := t.TempDir()
-			// A partial result is materialized, not refused: every resource that
-			// compiled cleanly reaches disk, which is exactly what the golden
-			// tree describes.
-			report, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite))
-			if err != nil && !errors.Is(err, ErrPartialResult) {
-				t.Fatalf("Materialize(%s): %v", target, err)
-			}
-			if len(report.Written) == 0 && len(report.Skipped) == 0 {
+			if len(result.Artifacts) == 0 {
 				// A target that emits only warning diagnostics may legitimately
 				// produce zero artifacts (every resource kind reported as lossy
 				// or deferred). There is no golden directory to compare in that
@@ -94,8 +85,64 @@ func TestGolden_AllTargets(t *testing.T) {
 				t.Fatalf("no artifacts written for target %s", target)
 			}
 
+			outDir := t.TempDir()
+			stageGoldenResult(t, result, outDir)
 			testutil.AssertGoldenDir(t, outDir, expectedDir)
 		})
+	}
+}
+
+// stageGoldenResult writes a compiler result into an empty test directory.
+// Generic Materialize remains the path for ordinary artifacts. Externally
+// reconciled aggregates are written by the test only after Materialize proves
+// it refuses the complete result before mutating the destination.
+func stageGoldenResult(t *testing.T, result *Result, outDir string) {
+	t.Helper()
+
+	ordinary := &Result{Diagnostics: result.Diagnostics, Skipped: result.Skipped}
+	var external []Artifact
+	for _, candidate := range result.Artifacts {
+		if candidate.ExternalReconciliationRequired {
+			external = append(external, candidate)
+			continue
+		}
+		ordinary.Artifacts = append(ordinary.Artifacts, candidate)
+	}
+
+	if len(external) > 0 {
+		if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); !errors.Is(err, ErrExternalReconciliationRequired) {
+			t.Fatalf("Materialize externally reconciled result error = %v, want %v", err, ErrExternalReconciliationRequired)
+		}
+		entries, err := os.ReadDir(outDir)
+		if err != nil {
+			t.Fatalf("read refused materialization directory: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("Materialize wrote %d entries before refusing external reconciliation", len(entries))
+		}
+	}
+
+	if len(ordinary.Artifacts) > 0 {
+		if _, err := Materialize(ordinary, outDir, WithWriteMode(WriteModeOverwrite)); err != nil && !errors.Is(err, ErrPartialResult) {
+			t.Fatalf("Materialize ordinary golden artifacts: %v", err)
+		}
+	}
+
+	for _, candidate := range external {
+		if err := candidate.Validate(); err != nil {
+			t.Fatalf("validate golden artifact %q: %v", candidate.Path, err)
+		}
+		path := filepath.Join(outDir, candidate.Path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create golden artifact directory %q: %v", filepath.Dir(path), err)
+		}
+		mode := candidate.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		if err := os.WriteFile(path, candidate.Bytes, mode); err != nil {
+			t.Fatalf("write golden artifact %q: %v", candidate.Path, err)
+		}
 	}
 }
 

@@ -1,9 +1,9 @@
 // Package harnesscompile converts AI-agent configuration resources from
 // a canonical source format into vendor-specific layouts.
 //
-// It supports six conversion targets (Claude Code, Factory Droid, Cursor,
-// Windsurf, Gemini CLI, and Devin CLI), each with a registered compiler and
-// ingester.
+// It supports seven conversion targets (Claude Code, Factory Droid, Cursor,
+// Windsurf, Gemini CLI, Devin CLI, and Codex), each with a registered compiler
+// and ingester.
 package harnesscompile
 
 import (
@@ -36,6 +36,7 @@ const (
 	TargetWindsurf = targetmeta.TargetWindsurf
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
+	TargetCodex    = targetmeta.TargetCodex
 )
 
 // Harness is a backward-compatible alias for Target. It allows callers to
@@ -50,6 +51,7 @@ const (
 	HarnessWindsurf Harness = TargetWindsurf
 	HarnessGemini   Harness = TargetGemini
 	HarnessDevin    Harness = TargetDevin
+	HarnessCodex    Harness = TargetCodex
 )
 
 // TargetDefinition is the shared metadata declaration for a target.
@@ -83,8 +85,8 @@ func ValidateTargetRegistrations() error {
 			errs = append(errs, fmt.Errorf("target %q is declared more than once", t))
 		}
 		seen[definition.Target] = true
-		if definition.RepoRoot == "" || definition.UserRoot == "" {
-			errs = append(errs, fmt.Errorf("target %q has incomplete root metadata", t))
+		if err := targetmeta.ValidateDefinition(definition); err != nil {
+			errs = append(errs, err)
 		}
 		if definition.Compiler {
 			if _, ok := compile.Lookup(compile.Target(t)); !ok {
@@ -111,8 +113,6 @@ func ValidateTargetRegistrations() error {
 	for _, t := range compile.RegisteredTargets() {
 		definition, ok := targetmeta.Lookup(string(t))
 		switch {
-		case !ok && targetmeta.IsPrivate(string(t)):
-			continue
 		case !ok:
 			errs = append(errs, fmt.Errorf("compiler registered for undeclared target %q", t))
 		case !definition.Compiler:
@@ -122,8 +122,6 @@ func ValidateTargetRegistrations() error {
 	for _, h := range ingest.RegisteredSources() {
 		definition, ok := targetmeta.Lookup(string(h))
 		switch {
-		case !ok && targetmeta.IsPrivate(string(h)):
-			continue
 		case !ok:
 			errs = append(errs, fmt.Errorf("ingester registered for undeclared target %q", h))
 		case !definition.Ingester:
@@ -793,9 +791,12 @@ func sameArtifact(a, b Artifact) bool {
 		a.Mode == b.Mode &&
 		a.Fragment == b.Fragment &&
 		a.FragmentKey == b.FragmentKey &&
+		a.FragmentOrderKey == b.FragmentOrderKey &&
 		a.MergeWithExisting == b.MergeWithExisting &&
+		a.ExternalReconciliationRequired == b.ExternalReconciliationRequired &&
 		a.ManagedByField == b.ManagedByField &&
-		a.ManagedByValue == b.ManagedByValue
+		a.ManagedByValue == b.ManagedByValue &&
+		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
 func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport) ([]Artifact, []Artifact, error) {

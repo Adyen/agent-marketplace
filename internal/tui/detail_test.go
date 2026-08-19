@@ -458,7 +458,7 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 
 func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
-	m.rows = []row{mkRow("audit", withProject, withHarnesses("factory", "cursor"), withRegistry("sec.git", "security"))}
+	m.rows = []row{mkRow("audit", withProject, withHarnesses("codex"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 	for i, it := range m.flatItems {
@@ -469,7 +469,7 @@ func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 	}
 
 	out := renderDetail(m)
-	for _, want := range []string{"Targets:", "factory, cursor"} {
+	for _, want := range []string{"Targets:", "Codex"} {
 		if !contains(out, want) {
 			t.Fatalf("detail missing %q:\n%s", want, out)
 		}
@@ -489,7 +489,7 @@ func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 	}
 
 	out := renderDetail(m)
-	for _, want := range []string{"Would target:", "factory"} {
+	for _, want := range []string{"Would target:", "Factory Droid"} {
 		if !contains(out, want) {
 			t.Fatalf("detail missing %q:\n%s", want, out)
 		}

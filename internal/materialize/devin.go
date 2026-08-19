@@ -169,6 +169,60 @@ func devinAggregateRels(kind ir.ResourceKind, machineScope bool) []string {
 	}
 }
 
+type devinOwnedAggregateHandler struct{}
+
+func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+	rest, entries, err := splitDevinAggregateArtifacts(artifacts, key.machineScope, resource)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return rest, nil
+	}
+	aggregate := state.devin[key]
+	if aggregate == nil {
+		aggregate = &ownedJSONAggregateWork{}
+		state.devin[key] = aggregate
+	}
+	for _, entry := range entries {
+		aggregate.add(entry)
+	}
+	return rest, nil
+}
+
+func (devinOwnedAggregateHandler) markIncomplete(state ownedAggregateState, key outputKey, kind ir.ResourceKind) {
+	rels := devinAggregateRels(kind, key.machineScope)
+	if len(rels) == 0 {
+		return
+	}
+	aggregate := state.devin[key]
+	if aggregate == nil {
+		aggregate = &ownedJSONAggregateWork{}
+		state.devin[key] = aggregate
+	}
+	for _, rel := range rels {
+		aggregate.markIncomplete(rel)
+	}
+}
+
+func (devinOwnedAggregateHandler) aggregateRels(kind ir.ResourceKind, machineScope bool) []string {
+	return devinAggregateRels(kind, machineScope)
+}
+
+func (devinOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource string, err error) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeMaterializeDevinAggregateMalformed,
+		Severity: diag.SeverityError,
+		Target:   string(key.target),
+		Resource: resource,
+		Message:  fmt.Sprintf("compiled Devin aggregate fragment for resource %q could not be read: %v", resource, err),
+	}
+}
+
+func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, _ []harness.Destination, dryRun bool) *Report {
+	return reconcileDevinAggregates(ctx, report, key, outDir, state.devin[key], dryRun)
+}
+
 // isDevinAggregatePath reports whether an artifact path is one of the Devin
 // shared aggregate files for the given scope.
 func isDevinAggregatePath(path string, machineScope bool) bool {
@@ -476,6 +530,7 @@ func appendDevinAggregateReports(report *Report, store *ownership.Store, key out
 		if !fileReport.written {
 			continue
 		}
+		appendCodexTrustReviewDiagnostic(report, key, rel, dryRun)
 		tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: aggregateRootID(key), OutDir: outDir, Written: []string{rel}}
 		report.PerRoot = append(report.PerRoot, tr)
 		report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
@@ -843,10 +898,14 @@ func devinExistingEntries(rel string, container *jsonc.Node) ([]devinExistingEnt
 			if err != nil {
 				return nil, fmt.Errorf("aggregate %q event %q entry %d has no derivable identity; it was left unchanged", rel, event, i)
 			}
+			valueDigest := ownership.Digest(normalized)
+			if rel == codexHooksFile {
+				valueDigest = ownership.Digest(element.Raw())
+			}
 			out = append(out, devinExistingEntry{
 				value: ownership.EntryValue{
 					ID:          ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: identity},
-					ValueDigest: ownership.Digest(normalized),
+					ValueDigest: valueDigest,
 				},
 				container: event,
 				raw:       element.Raw(),

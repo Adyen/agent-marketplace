@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func TestMachineRootUsesCurrentHome(t *testing.T) {
@@ -54,10 +55,16 @@ func TestComponentsForScope(t *testing.T) {
 	}
 }
 
-func TestInstallRootsContainsAllTargets(t *testing.T) {
-	targets := hcc.Targets()
-	for _, target := range targets {
+func TestInstallRootsContainsOnlyLegacyRootTargets(t *testing.T) {
+	for _, definition := range targetmeta.Definitions() {
+		target := hcc.Target(definition.Target)
 		roots, ok := InstallRoots[target]
+		if definition.PartitionedRoots {
+			if ok {
+				t.Errorf("InstallRoots contains partitioned target %q: %#v", target, roots)
+			}
+			continue
+		}
 		if !ok {
 			t.Errorf("InstallRoots missing entry for target %q", target)
 			continue

@@ -3,8 +3,6 @@ package materialize
 import (
 	"strings"
 
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
-
 	"github.com/Adyen/agent-marketplace/internal/harness"
 )
 
@@ -89,9 +87,9 @@ func componentName(rel string) string {
 // would have written into.
 //
 // It returns nil — block nothing — when the resource's whole output is a shared
-// aggregate FILE rather than a component directory. That is the Devin hook and
-// MCP case, and the file is prune-suppressed by ownedJSONAggregateWork.incomplete,
-// which is strictly narrower than any component would be.
+// aggregate FILE rather than a component directory. The target's aggregate
+// handler suppresses pruning for that exact file, which is strictly narrower
+// than any component would be.
 //
 // It falls back to the wildcard whenever the mapping is not known, so an
 // unmapped kind keeps today's fail-closed behaviour rather than silently
@@ -105,7 +103,7 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 		return []string{blockedAllComponents}
 	}
 	kind := w.skill.Resource.Kind()
-	if key.target == hcc.TargetDevin && len(devinAggregateRels(kind, key.machineScope)) > 0 {
+	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
 		return nil
 	}
 	if info.UsesSkillDir(kind) {

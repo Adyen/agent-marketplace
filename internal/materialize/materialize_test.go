@@ -4393,6 +4393,29 @@ func TestRunFileModePortableManifestPruneAndMigration(t *testing.T) {
 	}
 }
 
+func TestCodexPortableManifestAloneSchedulesReconciliation(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	state, err := loadPortableState(repoRoot, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.add(hcc.TargetCodex, ".agents/skills/demo/SKILL.md", "sha256:demo")
+	if err := state.save(false); err != nil {
+		t.Fatal(err)
+	}
+
+	outputs := make(map[outputKey]bool)
+	var diagnostics []diag.Diagnostic
+	addPortableManifestOutputKeys(repoRoot, false, outputs, &diagnostics)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	if !outputs[outputKey{target: hcc.TargetCodex}] {
+		t.Fatalf("Codex manifest did not schedule reconciliation: %#v", outputs)
+	}
+}
+
 func TestSyncPortableArtifactFilesUsesDefaultFileModeForDigest(t *testing.T) {
 	outDir := t.TempDir()
 	cacheDir := t.TempDir()

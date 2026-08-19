@@ -22,7 +22,7 @@ func validBackupTargets() []string {
 	for target := range harness.MakeInstallRoots() {
 		targets = append(targets, string(target))
 	}
-	targets = append(targets, "codex")
+	targets = append(targets, string(hcc.TargetCodex))
 	sort.Strings(targets)
 	return targets
 }
@@ -109,7 +109,7 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 		targets = append(targets, string(t))
 	}
 	if len(codexPartitions) > 0 {
-		targets = append(targets, "codex")
+		targets = append(targets, targetDisplayName(string(hcc.TargetCodex)))
 	}
 	sort.Strings(targets)
 	if _, err := fmt.Fprintf(out, "Backup created for: %s\n", strings.Join(targets, ", ")); err != nil {
@@ -147,7 +147,7 @@ func newBackupListCmd() *cobra.Command {
 
 func runBackupRestore(out io.Writer, target string) error {
 	t := hcc.Target(strings.ToLower(target))
-	if t == hcc.Target("codex") {
+	if t == hcc.TargetCodex {
 		partitions, err := pipeline.CodexBackupPartitions()
 		if err != nil {
 			return err
@@ -156,7 +156,7 @@ func runBackupRestore(out io.Writer, target string) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(out, "Overlay-restored %s from backup %s\n", target, operation)
+		_, err = fmt.Fprintf(out, "Overlay-restored %s from backup %s\n", targetDisplayName(string(t)), operation)
 		return err
 	}
 
@@ -216,7 +216,7 @@ func runBackupList(out io.Writer) error {
 	sort.Strings(targets)
 	for _, target := range targets {
 		timestamps := backups[hcc.Target(target)]
-		if _, err := fmt.Fprintf(out, "\n%s (%d):\n", target, len(timestamps)); err != nil {
+		if _, err := fmt.Fprintf(out, "\n%s (%d):\n", targetDisplayName(target), len(timestamps)); err != nil {
 			return err
 		}
 		for _, ts := range timestamps {

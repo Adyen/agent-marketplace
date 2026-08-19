@@ -278,6 +278,123 @@ cells:
       diagnostics:
         - ingest.windsurf.bundle-manifest-synthesized
         - ingest.windsurf.subagent-via-agents-md-skipped
+    - from: claude
+      to: codex
+      class: cross
+      diagnostics:
+        - subagent.security-restriction-unsupported
+    - from: cursor
+      to: codex
+      class: cross
+      diagnostics:
+        - subagent.security-restriction-unsupported
+    - from: devin
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - subagent.security-restriction-unsupported
+    - from: factory
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.factory.reasoning-effort-mapped-to-model
+        - subagent.security-restriction-unsupported
+    - from: gemini
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+        - subagent.security-restriction-unsupported
+    - from: windsurf
+      to: codex
+      class: drop
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.subagent-via-agents-md-skipped
+    - from: codex
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - model
+        - tools
+    - from: codex
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - model
+        - tools
+    - from: codex
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+        - subagent.devin.effort-dropped
+        - subagent.devin.model-default
+      allowedLosses:
+        - disallowedTools
+        - effort
+        - isolation
+        - model
+        - tools
+    - from: codex
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - model
+        - tools
+    - from: codex
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+      allowedLosses:
+        - disallowedTools
+        - effort
+        - isolation
+        - model
+        - tools
+    - from: codex
+      to: windsurf
+      class: drop
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+        - subagent.codex.model-dropped
+        - subagent.windsurf.no-primitive
+    - from: codex
+      to: codex
+      class: identity
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - ingest.codex.field-dropped
+      allowedLosses:
+        - disallowedTools
+        - isolation
+        - model
+        - tools
     - from: windsurf
       to: devin
       class: drop

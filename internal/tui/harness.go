@@ -137,9 +137,9 @@ func renderHarnessModal(m Model) string {
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 	fmt.Fprintf(&b, "  Editing:   %s\n", activeStyle.Render(modal.scope.label()))
-	fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m)))
-	fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses))
-	fmt.Fprintf(&b, "  Project:   %s\n\n", harnessListLabel(m.projectHarnesses))
+	fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m), ", "))
+	fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses, ", "))
+	fmt.Fprintf(&b, "  Project:   %s\n\n", harnessListLabel(m.projectHarnesses, ", "))
 
 	for i, opt := range knownHarnessOptions {
 		cursor := "  "
@@ -187,11 +187,20 @@ func effectiveHarnesses(m Model) []string {
 	return m.globalHarnesses
 }
 
-func harnessListLabel(harnesses []string) string {
+func harnessListLabel(harnesses []string, separator string) string {
 	if len(harnesses) == 0 {
 		return "none"
 	}
-	return strings.Join(harnesses, ", ")
+	labels := make([]string, len(harnesses))
+	for i, id := range harnesses {
+		definition, ok := targetmeta.Lookup(id)
+		if !ok {
+			labels[i] = id
+			continue
+		}
+		labels[i] = definition.Label
+	}
+	return strings.Join(labels, separator)
 }
 
 func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

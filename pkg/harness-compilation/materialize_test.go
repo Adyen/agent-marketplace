@@ -263,6 +263,28 @@ func TestMaterialize_RejectsConflictingDuplicateArtifacts(t *testing.T) {
 	}
 }
 
+func TestSameArtifactIncludesBehavioralMetadata(t *testing.T) {
+	base := Artifact{Path: "support.js", Bytes: []byte("same")}
+	tests := []struct {
+		name   string
+		mutate func(*Artifact)
+	}{
+		{"fragment order", func(a *Artifact) { a.FragmentOrderKey = "later" }},
+		{"external reconciliation", func(a *Artifact) { a.ExternalReconciliationRequired = true }},
+		{"fragment deduplication", func(a *Artifact) { a.DedupeFragmentEntries = true }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := base
+			tt.mutate(&changed)
+			if sameArtifact(base, changed) {
+				t.Fatal("artifacts with different behavioral metadata compare equal")
+			}
+		})
+	}
+}
+
 func TestMaterialize_FailIfExists(t *testing.T) {
 	outDir := t.TempDir()
 

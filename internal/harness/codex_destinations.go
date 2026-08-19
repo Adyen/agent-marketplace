@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -17,21 +18,17 @@ var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
 	hcc.Target(targetmeta.TargetCodex): resolveCodexDestinations,
 }
 
-func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination, error) {
+func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
 	if !ok {
 		return nil, fmt.Errorf("codex native layout is not registered")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 
 	scope := "repo-"
 	base := repoRoot
 	if machineScope {
 		scope = "machine-"
-		base = home
+		base = homeDir
 	}
 	destinations := make([]Destination, 0, len(layout.Partitions))
 	for _, partition := range layout.Partitions {
@@ -44,7 +41,7 @@ func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination
 				root = configured
 			}
 		}
-		root, err = canonicalCodexRoot(root)
+		root, err := canonicalCodexRoot(root)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +53,23 @@ func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination
 			Info:                 codexTargetInfo(partition),
 		})
 	}
+	if !machineScope {
+		canonicalRepo, err := canonicalCodexRoot(repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		for _, destination := range destinations {
+			if !isStrictlyWithin(canonicalRepo, destination.Root) {
+				return nil, fmt.Errorf("codex repository destinations must remain inside the repository root")
+			}
+		}
+	}
 	return destinations, nil
+}
+
+func isStrictlyWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func canonicalCodexRoot(path string) (string, error) {

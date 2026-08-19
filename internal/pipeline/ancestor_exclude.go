@@ -156,6 +156,20 @@ func skillMaterializedAt(root, name string, targets []hcc.Target) (hcc.Target, b
 func skillDir(target hcc.Target, root, name string) string {
 	roots, ok := harness.InstallRoots[target]
 	if !ok {
+		if target != hcc.TargetCodex {
+			return ""
+		}
+		destinations, err := harness.ResolveDestinations(target, false, root)
+		if err != nil {
+			return ""
+		}
+		for _, destination := range destinations {
+			if destination.ID != "repo-agents" || destination.Info.SkillPathPattern == "" {
+				continue
+			}
+			skillRel := filepath.Dir(fmt.Sprintf(destination.Info.SkillPathPattern, name))
+			return filepath.Join(destination.Root, skillRel)
+		}
 		return ""
 	}
 	installRoot := roots.For(false, root)

@@ -38,6 +38,12 @@ var envTable = []envEntry{
 		// diagnostic. Expanding an empty replacement into the artifact would be a
 		// silently faked value and is forbidden.
 		TargetDevin: {Value: "", Literal: true},
+		// Codex provenance: verified 2026-08-19 against
+		// https://developers.openai.com/codex/hooks. Codex supplies
+		// CLAUDE_PLUGIN_ROOT only to plugin-bundled hooks; plugin packaging is
+		// outside this compiler's output contract, so callers must provide the
+		// literal root for directly materialized hooks and MCP configuration.
+		TargetCodex: {Value: "", Literal: true},
 	}},
 }
 

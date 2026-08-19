@@ -7,7 +7,10 @@ import (
 )
 
 func BenchmarkMachineRoot(b *testing.B) {
-	targets := hcc.Targets()
+	targets := make([]hcc.Target, 0, len(MakeInstallRoots()))
+	for target := range MakeInstallRoots() {
+		targets = append(targets, target)
+	}
 	if len(targets) == 0 {
 		b.Fatal("target registry is empty")
 	}

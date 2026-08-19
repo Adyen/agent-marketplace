@@ -51,6 +51,7 @@
 package materialize
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -58,6 +59,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -170,15 +172,14 @@ func (c OrphanCandidate) Identity() string { return devinIdentityLabel(c.Candida
 // "orphan candidates are never described as currently owned".
 func (c OrphanCandidate) Evidence() string { return c.Candidate.Evidence().Summary() }
 
-// RepairFile is the repair preview for ONE Devin aggregate file, plus the
-// handles needed to act on it.
+// RepairFile is the repair preview for one ownership-reconciled aggregate file,
+// plus the handles needed to act on it.
 type RepairFile struct {
 	Target       hcc.Target
 	MachineScope bool
-	// OutDir is the canonical Devin install root the aggregate lives under.
+	// OutDir is the canonical target install root the aggregate lives under.
 	OutDir string
-	// Rel is the output-relative aggregate path (hooks.v1.json, config.json, or
-	// mcp_config.json).
+	// Rel is the output-relative aggregate path.
 	Rel string
 
 	Adoptions []AdoptionCandidate
@@ -196,6 +197,10 @@ type RepairFile struct {
 
 	store   *ownership.Store
 	desired []ownedJSONEntry
+	// codexMCPDesired is populated only for Codex config.toml. JSON-backed
+	// aggregates continue to use desired above and the existing JSON repair
+	// path.
+	codexMCPDesired []codexMCPEntry
 }
 
 // AbsFile returns the absolute aggregate path.
@@ -245,6 +250,7 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	slog.Info("devin repair preview start", "repo_root", repoRoot)
 	preview := &RepairPreview{}
 
 	aggregates, keys, diags := devinDesiredAggregates(repoRoot, resolved)
@@ -364,7 +370,7 @@ func previewDevinAggregateFile(store *ownership.Store, key outputKey, outDir, re
 		})
 	}
 
-	slog.Debug("devin repair preview for aggregate",
+	slog.Debug(repairLogMessage(key.target, "preview for aggregate"),
 		"target", key.target, "machine_scope", key.machineScope, "file", rel,
 		"existing_entries", len(state.existingValues), "desired_entries", len(desiredValues),
 		"adoption_candidates", len(file.Adoptions), "orphan_candidates", len(file.Orphans),
@@ -578,13 +584,31 @@ func (f *RepairFile) adoptLocked(indices []int) (ownership.Result, error) {
 		return ownership.Result{}, err
 	}
 	key := outputKey{target: f.Target, machineScope: f.MachineScope}
-	state, diags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
-	if state == nil {
-		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, devinDiagSummary(diags))
+	var (
+		raw      []byte
+		existing []ownership.EntryValue
+		proof    ownership.Proof
+		diags    []diag.Diagnostic
+	)
+	if f.isCodexMCP() {
+		state, stateDiags := readCodexMCPRepairState(f.store, key, f.OutDir)
+		diags = stateDiags
+		if state != nil {
+			raw, existing, proof = state.raw, state.existing, state.proof
+		}
+	} else {
+		state, stateDiags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
+		diags = stateDiags
+		if state != nil {
+			raw, existing, proof = state.raw, state.existingValues, state.proof
+		}
+	}
+	if raw == nil {
+		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, repairDiagSummary(f.Target, diags))
 	}
 
-	desiredValues := devinEntryValues(f.desired)
-	current := ownership.ExactAdoptionCandidates(state.proof, state.existingValues, desiredValues)
+	desiredValues := f.repairDesiredValues()
+	current := ownership.ExactAdoptionCandidates(proof, existing, desiredValues)
 	currentByID := make(map[string]ownership.AdoptionCandidate, len(current))
 	for _, candidate := range current {
 		currentByID[devinIDKey(candidate.EntryID())] = candidate
@@ -615,26 +639,41 @@ func (f *RepairFile) adoptLocked(indices []int) (ownership.Result, error) {
 		entries = append(entries, fresh.Entry(selected.Resource))
 	}
 
-	priorGen, priorDigest := devinPriorForApply(state.raw, nil, state.proof)
+	priorGen, priorDigest := devinPriorForApply(raw, nil, proof)
 	result, err := f.store.Apply(ownership.Mutation{
 		Rel:                   f.Rel,
 		AbsFile:               f.AbsFile(),
-		NextBytes:             state.raw,
+		NextBytes:             raw,
 		Entries:               entries,
 		Reason:                ownership.ReasonAdoption,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
 	})
 	if err != nil {
-		slog.Error("devin repair adoption failed; the aggregate was left exactly as found",
-			"file", f.Rel, "out_dir", f.OutDir, "adopted", len(indices), "error", err,
+		slog.Error(repairLogMessage(f.Target, "adoption failed; the aggregate was left exactly as found"),
+			"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "adopted", len(indices), "error", err,
 			"code", diag.CodeDoctorRepairFailed)
 		return ownership.Result{}, err
 	}
-	slog.Info("devin repair adopted exact matches",
-		"file", f.Rel, "out_dir", f.OutDir, "adopted", len(indices),
+	slog.Info(repairLogMessage(f.Target, "adopted exact matches"),
+		"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "adopted", len(indices),
 		"owned_entries", len(entries), "generation", result.Generation, "backup", result.BackupPath)
 	return result, nil
+}
+
+func (f *RepairFile) isCodexMCP() bool {
+	return f.Target == hcc.TargetCodex && f.Rel == codexMCPFile
+}
+
+func (f *RepairFile) repairDesiredValues() []ownership.EntryValue {
+	if !f.isCodexMCP() {
+		return devinEntryValues(f.desired)
+	}
+	values := make([]ownership.EntryValue, 0, len(f.codexMCPDesired))
+	for _, entry := range f.codexMCPDesired {
+		values = append(values, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest})
+	}
+	return values
 }
 
 // RemoveOrphan removes ONE evidence-backed orphan entry.
@@ -670,16 +709,45 @@ func (f *RepairFile) removeOrphanLocked(index int, confirmed bool) (ownership.Re
 	}
 	selected := f.Orphans[index]
 	key := outputKey{target: f.Target, machineScope: f.MachineScope}
-	state, diags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
-	if state == nil || state.container == nil {
-		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, devinDiagSummary(diags))
+	var (
+		raw, next []byte
+		existing  []ownership.EntryValue
+		proof     ownership.Proof
+		diags     []diag.Diagnostic
+		remove    func(ownership.EntryID, string) ([]byte, error)
+	)
+	if f.isCodexMCP() {
+		state, stateDiags := readCodexMCPRepairState(f.store, key, f.OutDir)
+		diags = stateDiags
+		if state != nil {
+			raw, existing, proof = state.raw, state.existing, state.proof
+			remove = state.remove
+		}
+	} else {
+		state, stateDiags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
+		diags = stateDiags
+		if state != nil && state.container != nil {
+			raw, existing, proof = state.raw, state.existingValues, state.proof
+			remove = func(id ownership.EntryID, digest string) ([]byte, error) {
+				if err := removeDevinEntry(state, f.Rel, id, digest); err != nil {
+					return nil, err
+				}
+				if !state.doc.Changed() {
+					return nil, fmt.Errorf("aggregate %q produced no edit", f.Rel)
+				}
+				return state.doc.Bytes(), nil
+			}
+		}
+	}
+	if remove == nil {
+		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, repairDiagSummary(f.Target, diags))
 	}
 
 	// Re-nominate from the CURRENT file and the CURRENT evidence. A candidate
 	// that stopped being nominated between preview and confirmation is refused:
 	// the evidence, not the user's earlier "yes", is what authorizes a delete.
-	desiredValues := devinEntryValues(f.desired)
-	fresh, err := f.store.OrphanCandidates(state.proof, f.Rel, state.existingValues, desiredValues)
+	desiredValues := f.repairDesiredValues()
+	fresh, err := f.store.OrphanCandidates(proof, f.Rel, existing, desiredValues)
 	if err != nil {
 		return ownership.Result{}, err
 	}
@@ -699,10 +767,11 @@ func (f *RepairFile) removeOrphanLocked(index int, confirmed bool) (ownership.Re
 	// The CONFIRMED value digest is passed alongside the identity, and it is not
 	// redundant: it is what makes the deletion pick the element the user was
 	// shown. See [removeDevinEntry].
-	if err := removeDevinEntry(state, f.Rel, selected.Candidate.EntryID(), selected.Candidate.ValueDigest()); err != nil {
+	next, err = remove(selected.Candidate.EntryID(), selected.Candidate.ValueDigest())
+	if err != nil {
 		return ownership.Result{}, err
 	}
-	if !state.doc.Changed() {
+	if bytes.Equal(raw, next) {
 		return ownership.Result{}, fmt.Errorf("%w: %s entry %q in %q produced no edit",
 			ErrRepairCandidateStale, selected.EntryKind(), selected.Identity(), f.Rel)
 	}
@@ -711,11 +780,11 @@ func (f *RepairFile) removeOrphanLocked(index int, confirmed bool) (ownership.Re
 	if err != nil {
 		return ownership.Result{}, err
 	}
-	priorGen, priorDigest := devinPriorForApply(state.raw, nil, state.proof)
+	priorGen, priorDigest := devinPriorForApply(raw, nil, proof)
 	result, applyErr := f.store.Apply(ownership.Mutation{
 		Rel:                   f.Rel,
 		AbsFile:               f.AbsFile(),
-		NextBytes:             state.doc.Bytes(),
+		NextBytes:             next,
 		Entries:               entries,
 		Reason:                ownership.ReasonOrphanRemoval,
 		Confirmed:             confirmed,
@@ -723,13 +792,13 @@ func (f *RepairFile) removeOrphanLocked(index int, confirmed bool) (ownership.Re
 		ExpectPriorDigest:     priorDigest,
 	})
 	if applyErr != nil {
-		slog.Error("devin repair orphan removal failed; the aggregate was left exactly as found",
-			"file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
+		slog.Error(repairLogMessage(f.Target, "orphan removal failed; the aggregate was left exactly as found"),
+			"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
 			"error", applyErr, "code", diag.CodeDoctorRepairFailed)
 		return ownership.Result{}, applyErr
 	}
-	slog.Info("devin repair removed an evidence-backed orphan entry",
-		"file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
+	slog.Info(repairLogMessage(f.Target, "removed an evidence-backed orphan entry"),
+		"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
 		"generation", result.Generation, "backup", result.BackupPath)
 	return result, nil
 }
@@ -783,7 +852,7 @@ func (f *RepairFile) ReplaceConflict(index int, confirmed bool) (ownership.Resul
 	}
 	selected := f.Conflicts[index]
 	id := selected.Candidate.EntryID()
-	if !devinConflictReplaceable(f.Rel, id) {
+	if !f.isCodexMCP() && !devinConflictReplaceable(f.Rel, id) {
 		// The scope fence is decided from the aggregate's name and the entry's
 		// identity alone, so it is answered before any lock is taken: refusing a
 		// hook must not create locks/<rootKey>.lock.
@@ -806,13 +875,42 @@ func (f *RepairFile) replaceConflictLocked(index int, confirmed bool) (ownership
 	}
 
 	key := outputKey{target: f.Target, machineScope: f.MachineScope}
-	state, diags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
-	if state == nil || state.container == nil {
-		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, devinDiagSummary(diags))
+	var (
+		raw, next []byte
+		existing  []ownership.EntryValue
+		proof     ownership.Proof
+		diags     []diag.Diagnostic
+		replace   func(ownership.EntryID, []byte) ([]byte, error)
+	)
+	if f.isCodexMCP() {
+		state, stateDiags := readCodexMCPRepairState(f.store, key, f.OutDir)
+		diags = stateDiags
+		if state != nil {
+			raw, existing, proof = state.raw, state.existing, state.proof
+			replace = state.replace
+		}
+	} else {
+		state, stateDiags := readDevinAggregateState(f.store, key, f.OutDir, f.Rel)
+		diags = stateDiags
+		if state != nil && state.container != nil {
+			raw, existing, proof = state.raw, state.existingValues, state.proof
+			replace = func(id ownership.EntryID, replacement []byte) ([]byte, error) {
+				if err := replaceDevinEntry(state, f.Rel, id, replacement); err != nil {
+					return nil, err
+				}
+				if !state.doc.Changed() {
+					return nil, fmt.Errorf("aggregate %q produced no edit", f.Rel)
+				}
+				return state.doc.Bytes(), nil
+			}
+		}
+	}
+	if replace == nil {
+		return ownership.Result{}, fmt.Errorf("%w: aggregate %q could not be re-read (%s)", ErrRepairCandidateStale, f.Rel, repairDiagSummary(f.Target, diags))
 	}
 
-	desiredValues := devinEntryValues(f.desired)
-	fresh, ok := findDevinConflict(ownership.ValueConflictCandidates(state.proof, state.existingValues, desiredValues), id)
+	desiredValues := f.repairDesiredValues()
+	fresh, ok := findDevinConflict(ownership.ValueConflictCandidates(proof, existing, desiredValues), id)
 	if !ok ||
 		fresh.ExistingValueDigest() != selected.Candidate.ExistingValueDigest() ||
 		fresh.DesiredValueDigest() != selected.Candidate.DesiredValueDigest() {
@@ -820,15 +918,16 @@ func (f *RepairFile) replaceConflictLocked(index int, confirmed bool) (ownership
 			ErrRepairCandidateStale, selected.EntryKind(), selected.Identity(), f.Rel)
 	}
 
-	replacement, ok := devinDesiredEntry(f.desired, id)
+	replacement, resource, ok := f.repairDesiredEntry(id)
 	if !ok {
 		return ownership.Result{}, fmt.Errorf("%w: %s entry %q in %q is no longer desired",
 			ErrRepairCandidateStale, selected.EntryKind(), selected.Identity(), f.Rel)
 	}
-	if err := replaceDevinEntry(state, f.Rel, id, replacement.raw); err != nil {
+	next, err := replace(id, replacement)
+	if err != nil {
 		return ownership.Result{}, err
 	}
-	if !state.doc.Changed() {
+	if bytes.Equal(raw, next) {
 		return ownership.Result{}, fmt.Errorf("%w: %s entry %q in %q produced no edit",
 			ErrRepairCandidateStale, selected.EntryKind(), selected.Identity(), f.Rel)
 	}
@@ -840,13 +939,13 @@ func (f *RepairFile) replaceConflictLocked(index int, confirmed bool) (ownership
 	// The replaced entry becomes OURS at the desired digest. That is the whole
 	// point: the next sync classifies it clean instead of reporting the same
 	// collision, which is what opens the loop.
-	entries = append(entries, selected.Candidate.Entry(replacement.resource))
+	entries = append(entries, selected.Candidate.Entry(resource))
 
-	priorGen, priorDigest := devinPriorForApply(state.raw, nil, state.proof)
+	priorGen, priorDigest := devinPriorForApply(raw, nil, proof)
 	result, applyErr := f.store.Apply(ownership.Mutation{
 		Rel:                   f.Rel,
 		AbsFile:               f.AbsFile(),
-		NextBytes:             state.doc.Bytes(),
+		NextBytes:             next,
 		Entries:               entries,
 		Reason:                ownership.ReasonConflictReplace,
 		Confirmed:             confirmed,
@@ -854,18 +953,54 @@ func (f *RepairFile) replaceConflictLocked(index int, confirmed bool) (ownership
 		ExpectPriorDigest:     priorDigest,
 	})
 	if applyErr != nil {
-		slog.Error("devin repair conflict replacement failed; the aggregate was left exactly as found",
-			"file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
+		slog.Error(repairLogMessage(f.Target, "conflict replacement failed; the aggregate was left exactly as found"),
+			"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
 			"existing_digest", selected.ExistingValueDigest(), "generated_digest", selected.DesiredValueDigest(),
 			"error", applyErr, "code", diag.CodeDoctorRepairFailed)
 		return ownership.Result{}, applyErr
 	}
-	slog.Info("devin repair replaced a conflicting unmanaged entry with the generated entry",
-		"file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
-		"resource", replacement.resource, "replaced_digest", selected.ExistingValueDigest(),
+	slog.Info(repairLogMessage(f.Target, "replaced a conflicting unmanaged entry with the generated entry"),
+		"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "kind", selected.EntryKind(), "identity", selected.Identity(),
+		"resource", resource, "replaced_digest", selected.ExistingValueDigest(),
 		"generated_digest", selected.DesiredValueDigest(), "generation", result.Generation,
 		"backup", result.BackupPath, "code", diag.CodeDoctorRepairConflictReplaceable)
 	return result, nil
+}
+
+func repairLogMessage(target hcc.Target, action string) string {
+	return fmt.Sprintf("%s repair %s", target, action)
+}
+
+func repairDiagSummary(target hcc.Target, diagnostics []diag.Diagnostic) string {
+	if target != hcc.TargetCodex {
+		return devinDiagSummary(diagnostics)
+	}
+	if len(diagnostics) == 0 {
+		return "no diagnostics"
+	}
+	codes := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "" {
+			codes = append(codes, "unclassified diagnostic")
+			continue
+		}
+		codes = append(codes, diagnostic.Code)
+	}
+	return strings.Join(codes, "; ")
+}
+
+func (f *RepairFile) repairDesiredEntry(id ownership.EntryID) ([]byte, string, bool) {
+	if !f.isCodexMCP() {
+		entry, ok := devinDesiredEntry(f.desired, id)
+		return entry.raw, entry.resource, ok
+	}
+	want := devinIDKey(id)
+	for _, entry := range f.codexMCPDesired {
+		if devinIDKey(entry.id()) == want {
+			return entry.raw, entry.resource, true
+		}
+	}
+	return nil, "", false
 }
 
 // findDevinConflict looks one identity up in a freshly derived candidate list.
@@ -929,8 +1064,8 @@ func (f *RepairFile) requireCompleteGeneration() error {
 	if journal == nil {
 		return nil
 	}
-	slog.Warn("devin repair refused: an interrupted ownership generation is still in flight",
-		"file", f.Rel, "out_dir", f.OutDir, "in_flight_file", journal.File,
+	slog.Warn(repairLogMessage(f.Target, "refused: an interrupted ownership generation is still in flight"),
+		"target", f.Target, "file", f.Rel, "out_dir", f.OutDir, "in_flight_file", journal.File,
 		"in_flight_generation", journal.Generation, "phase", string(journal.Phase),
 		"code", diag.CodeDoctorRepairFailed)
 	return fmt.Errorf("%w (generation %d for %q is in phase %q)",
@@ -1054,39 +1189,46 @@ func removeDevinEntry(state *devinAggregateState, rel string, id ownership.Entry
 // desired set sync would write. Deriving it a second, independent way would
 // make "exact match" mean two different things in two commands.
 func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifact) (map[outputKey]*ownedJSONAggregateWork, []outputKey, []diag.Diagnostic) {
+	compiled, keys := compileRepairTarget(repoRoot, resolved, hcc.TargetDevin)
+	return compiled.devinAggregates, keys, compiled.allDiags
+}
+
+// compileRepairTarget reuses sync's compile phases for one repair provider.
+// This keeps exact-match classification tied to the bytes sync would write.
+func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, target hcc.Target) (compilePhaseResult, []outputKey) {
 	// The fourth return is the whole-run diagnostic list (nil-resource warnings
 	// for every target). It is dropped rather than reported: those warnings
-	// belong to sync, and repeating a Claude resource's warning in a Devin
+	// belong to sync, and repeating another target's warning in a target-local
 	// repair preview would be noise the user cannot act on here.
 	work, allOutputs, blocked, _ := buildWorkItems(resolved, repoRoot)
 
-	devinWork := work[:0:0]
+	targetWork := work[:0:0]
 	for _, item := range work {
-		if item.target == hcc.TargetDevin {
-			devinWork = append(devinWork, item)
+		if item.target == target {
+			targetWork = append(targetWork, item)
 		}
 	}
-	devinOutputs := make(map[outputKey]bool)
+	targetOutputs := make(map[outputKey]bool)
 	for key := range allOutputs {
-		if key.target == hcc.TargetDevin {
-			devinOutputs[key] = true
+		if key.target == target {
+			targetOutputs[key] = true
 		}
 	}
-	devinBlocked := make(blockedOutputs)
+	targetBlocked := make(blockedOutputs)
 	for key, components := range blocked {
-		if key.target != hcc.TargetDevin {
+		if key.target != target {
 			continue
 		}
-		devinBlocked.mark(key)
+		targetBlocked.mark(key)
 		for component := range components {
-			devinBlocked.mark(key, component)
+			targetBlocked.mark(key, component)
 		}
 	}
 
-	compiled := compileWorkItems(devinWork, nil, devinOutputs, devinBlocked, repoRoot)
+	compiled := compileWorkItems(targetWork, nil, targetOutputs, targetBlocked, repoRoot)
 
-	keys := make([]outputKey, 0, len(devinOutputs))
-	for key := range devinOutputs {
+	keys := make([]outputKey, 0, len(targetOutputs))
+	for key := range targetOutputs {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool {
@@ -1096,5 +1238,5 @@ func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifac
 		return string(keys[i].target) < string(keys[j].target)
 	})
 
-	return compiled.devinAggregates, keys, compiled.allDiags
+	return compiled, keys
 }

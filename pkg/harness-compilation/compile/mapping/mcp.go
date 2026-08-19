@@ -16,6 +16,10 @@ const mcpUnmappable = ""
 // mcpTable is the curated interpolation pattern table for MCP server
 // configuration. Different targets use different variable interpolation
 // syntaxes in their MCP config files.
+//
+// Codex provenance for every Codex cell below: verified 2026-08-19 against
+// https://developers.openai.com/codex/mcp. Codex supports literal values and
+// environment-backed HTTP credentials, but documents no file interpolation.
 var mcpTable = []mcpEntry{
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	// Claude and Factory use inline environment variable values.
@@ -29,6 +33,7 @@ var mcpTable = []mcpEntry{
 		// "MCP servers → Schema") show ${env:VAR} interpolation; the 3000.3.27
 		// interpolation probe is still pending.
 		TargetDevin: "${env:VAR}",
+		TargetCodex: "inline",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -42,6 +47,7 @@ var mcpTable = []mcpEntry{
 		// Devin provenance: bundled 3000.3 docs document
 		// "oauthClientSecret": "${env:OAUTH_CLIENT_SECRET}"; 3000.3.27 probe pending.
 		TargetDevin: "${env:VAR}",
+		TargetCodex: "${env:VAR}",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -56,6 +62,7 @@ var mcpTable = []mcpEntry{
 		// style with zero Devin evidence in the 3000.3 snapshot, so it is
 		// explicitly unmappable rather than guessed.
 		TargetDevin: mcpUnmappable,
+		TargetCodex: mcpUnmappable,
 	}},
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -61,6 +62,41 @@ func TestRunWritesCodexSubagentsToNativeDestination(t *testing.T) {
 	}
 }
 
+func TestRunExpandsCodexPluginRootFromBundle(t *testing.T) {
+	repo, home, state, bundleRoot := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", state)
+	hookPath := filepath.Join(bundleRoot, "hooks", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mcpPath := filepath.Join(bundleRoot, ".mcp.json")
+	if err := os.WriteFile(mcpPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := ir.NewHook("check", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	mcp := ir.NewMcpServer("docs", "node", []string{"${CLAUDE_PLUGIN_ROOT}/server.js"}, nil, nil, ir.SourceRef{File: ".mcp.json"})
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Name: hook.Name(), Path: hookPath, Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
+		{Entry: catalog.Entry{Name: mcp.Name(), Path: mcpPath, Resource: mcp}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
+	}
+	if report, err := Run(context.Background(), repo, resolved); err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("Run: report=%#v err=%v", report, err)
+	}
+	for _, path := range []string{filepath.Join(repo, ".codex", "hooks.json"), filepath.Join(repo, ".codex", "config.toml")} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "${CLAUDE_PLUGIN_ROOT}") || !strings.Contains(string(raw), filepath.ToSlash(bundleRoot)) {
+			t.Errorf("%s did not expand plugin root from bundle:\n%s", path, raw)
+		}
+	}
+}
+
 func TestRunWritesMachineCodexResourcesAcrossCustomRoots(t *testing.T) {
 	repo, home, codexHome := t.TempDir(), t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
@@ -88,6 +124,42 @@ func TestRunWritesMachineCodexResourcesAcrossCustomRoots(t *testing.T) {
 		if _, err := os.Lstat(path); err != nil {
 			t.Errorf("native machine resource %s not written: %v", path, err)
 		}
+	}
+}
+
+func TestRunPrunesSymlinkModeCodexSkillWithoutCodexRoot(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
+
+	skillDir := filepath.Join(repo, "source-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: demo\ndescription: Demo\n---\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "demo", Path: skillDir, Resource: ir.NewSkill("demo", "Demo", "Body\n", nil, nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
+	}}
+	if report, err := Run(context.Background(), repo, resolved); err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed: report=%#v err=%v", report, err)
+	}
+	link := filepath.Join(repo, ".agents", "skills", "demo")
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("native skill symlink not written: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("skill-only sync unexpectedly created .codex: %v", err)
+	}
+
+	if report, err := Run(context.Background(), repo, nil); err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("deinit: report=%#v err=%v", report, err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("native skill symlink not pruned: %v", err)
 	}
 }
 

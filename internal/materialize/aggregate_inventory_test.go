@@ -262,6 +262,16 @@ func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 	}
 }
 
+func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
+	for _, target := range sortedTargets(t) {
+		hasHandler := ownedAggregateHandlerFor(target) != nil
+		wantHandler := harness.TargetInfoMap[target].OwnershipReconciledAggregates
+		if hasHandler != wantHandler {
+			t.Errorf("%s: owned aggregate handler = %v, ownership-reconciled metadata = %v", target, hasHandler, wantHandler)
+		}
+	}
+}
+
 // TestAggregateProtectedPathsKeysOffOwnership is the bead
 // agent-marketplace-5exj.29 acceptance test: the prune fence is driven by
 // harness.TargetInfo.OwnershipReconciledAggregates, not by SymlinkOnly.

@@ -15,9 +15,31 @@ type Bag struct {
 
 // Codex preserves documented native fields without changing canonical semantics.
 type Codex struct {
-	SandboxMode       string            `json:"sandboxMode,omitempty"`
-	BearerTokenEnvVar string            `json:"bearerTokenEnvVar,omitempty"`
-	EnvHTTPHeaders    map[string]string `json:"envHttpHeaders,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	ReasoningEffort        string            `json:"reasoningEffort,omitempty"`
+	NativeHook             bool              `json:"nativeHook,omitempty"`
+	HookAsync              *bool             `json:"hookAsync,omitempty"`
+	HookStatusMessage      *string           `json:"hookStatusMessage,omitempty"`
+	CommandWindows         *string           `json:"commandWindows,omitempty"`
+	AdditionalContextLimit *int              `json:"additionalContextLimit,omitempty"`
+	MCP                    *CodexMCP         `json:"mcp,omitempty"`
+	SandboxMode            string            `json:"sandboxMode,omitempty"`
+	BearerTokenEnvVar      string            `json:"bearerTokenEnvVar,omitempty"`
+	EnvHTTPHeaders         map[string]string `json:"envHttpHeaders,omitempty"`
+}
+
+// CodexMCP preserves native literal-vs-forwarded MCP values. Strings that
+// resemble another harness's interpolation syntax remain literal in Codex.
+type CodexMCP struct {
+	Command                 string            `json:"command,omitempty"`
+	Args                    []string          `json:"args,omitempty"`
+	CWD                     string            `json:"cwd,omitempty"`
+	ExperimentalEnvironment string            `json:"experimentalEnvironment,omitempty"`
+	Env                     map[string]string `json:"env,omitempty"`
+	EnvVars                 []string          `json:"envVars,omitempty"`
+	RemoteEnvVars           []string          `json:"remoteEnvVars,omitempty"`
+	URL                     string            `json:"url,omitempty"`
+	HTTPHeaders             map[string]string `json:"httpHeaders,omitempty"`
 }
 
 // Factory preserves Factory Droid-specific fields that do not belong in the

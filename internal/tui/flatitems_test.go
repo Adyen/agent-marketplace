@@ -362,12 +362,12 @@ func TestRenderListHidesDefaultHarnessBadge(t *testing.T) {
 func TestRenderListShowsRegistryOverrideHarnessBadge(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.loading = false
-	m.rows = []row{mkRow("audit", withProject, withHarnesses("factory", "cursor"), withHarnessSource("registry override"), withRegistry("sec.git", "security"))}
+	m.rows = []row{mkRow("audit", withProject, withHarnesses("codex"), withHarnessSource("registry override"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
 	out := renderList(m, 24)
-	if !contains(out, "{factory,cursor}") {
+	if !contains(out, "{Codex}") {
 		t.Fatalf("renderList should include registry override harness badge, got:\n%s", out)
 	}
 }

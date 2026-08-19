@@ -27,6 +27,7 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -428,6 +429,40 @@ type targetWork struct {
 	diags     []diag.Diagnostic
 }
 
+// ownedAggregateState keeps the existing format-specific desired state behind
+// the small handler boundary. The concrete handlers deliberately retain their
+// native entry types: JSON hook arrays and TOML MCP tables do not share a safe
+// generic patch model.
+type ownedAggregateState struct {
+	devin           map[outputKey]*ownedJSONAggregateWork
+	codex           map[outputKey]*ownedJSONAggregateWork
+	codexMCP        map[outputKey][]codexMCPEntry
+	codexMCPBlocked map[outputKey]bool
+}
+
+// ownedAggregateHandler is the target-aware seam for ownership-reconciled
+// aggregate files. Shared orchestration dispatches resources and controls when
+// reconciliation runs; each concrete handler keeps its existing extraction,
+// identity, validation, and patching rules.
+type ownedAggregateHandler interface {
+	extract(ownedAggregateState, outputKey, []artifact.Artifact, string) ([]artifact.Artifact, error)
+	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
+	aggregateRels(ir.ResourceKind, bool) []string
+	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
+	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
+}
+
+func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
+	switch target {
+	case hcc.TargetDevin:
+		return devinOwnedAggregateHandler{}
+	case hcc.TargetCodex:
+		return codexOwnedAggregateHandler{}
+	default:
+		return nil
+	}
+}
+
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
 	allDiags   []diag.Diagnostic
@@ -439,14 +474,22 @@ type compilePhaseResult struct {
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
 	artifactMeta map[outputKey]map[string]skillLink
-	// devinAggregates holds the desired Devin shared-aggregate entries per
-	// output key. They are removed from result.Artifacts during compilation so
-	// the generic merge path never writes or marker-merges a Devin aggregate;
-	// see internal/materialize/devin.go for why that path is unusable here.
+	// These format-specific maps remain visible to target-local repair and Codex
+	// destination-overlap preflight. Normal compilation and execution reach them
+	// only through ownedAggregateHandler.
 	devinAggregates map[outputKey]*ownedJSONAggregateWork
 	codexAggregates map[outputKey]*ownedJSONAggregateWork
 	codexMCP        map[outputKey][]codexMCPEntry
 	codexMCPBlocked map[outputKey]bool
+}
+
+func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
+	return ownedAggregateState{
+		devin:           r.devinAggregates,
+		codex:           r.codexAggregates,
+		codexMCP:        r.codexMCP,
+		codexMCPBlocked: r.codexMCPBlocked,
+	}
 }
 
 // Run compiles and materializes the given resolved skills into their
@@ -576,7 +619,7 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 	roots := harness.MakeInstallRoots()
 	for _, entry := range state.entries {
 		target := hcc.Target(entry.Target)
-		if _, ok := roots[target]; ok {
+		if _, ok := roots[target]; ok || target == hcc.Target(targetmeta.TargetCodex) {
 			allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 		}
 	}
@@ -605,10 +648,13 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			continue
 		}
 		for _, destination := range destinations {
-			// Shared native partitions are not installation markers. Only a
-			// destination declared as installation evidence can revive an empty
-			// output key for ownership pruning.
+			// Shared native partitions are not installation markers, but durable
+			// managed-link evidence must still revive their output key for prune.
 			if !destination.InstallationEvidence {
+				if destinationHasManagedSymlink(destination, machineScope) {
+					allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
+					break
+				}
 				continue
 			}
 			if outputDirExists(destination.Root) {
@@ -617,6 +663,21 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			}
 		}
 	}
+}
+
+func destinationHasManagedSymlink(destination harness.Destination, machineScope bool) bool {
+	for _, component := range destination.Info.ComponentsForScope(machineScope) {
+		entries, err := os.ReadDir(filepath.Join(destination.Root, component))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if isManagedSymlink(filepath.Join(destination.Root, component, entry.Name())) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sameOutputDir reports whether two output directory paths refer to the same
@@ -662,37 +723,45 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	codexAggregates := make(map[outputKey]*ownedJSONAggregateWork)
 	codexMCP := make(map[outputKey][]codexMCPEntry)
 	codexMCPBlocked := make(map[outputKey]bool)
+	ownedAggregates := ownedAggregateState{
+		devin:           devinAggregates,
+		codex:           codexAggregates,
+		codexMCP:        codexMCP,
+		codexMCPBlocked: codexMCPBlocked,
+	}
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
+		aggregateHandler := ownedAggregateHandlerFor(w.target)
 		compileOptions := []hcc.Option{}
+		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
+			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
+		}
 		// Resources that emit merge-with-existing JSON fragments must carry the
 		// ownership marker so materialization merges into (rather than clobbers)
 		// any pre-existing file. Skills and subagents contribute entries to the
 		// plugin manifest (.factory-plugin/.claude-plugin plugin.json), which is
 		// merged per-entry just like mcp.json and hooks.json.
 		//
-		// Devin is deliberately excluded. Its aggregates are reconciled against
-		// the durable ownership store instead, and an in-file `_managed_by`
-		// marker there would be exactly the heuristic ownership inference the
-		// promoted plan forbids — plus a member Devin would forward to its hook
-		// runtime. See internal/materialize/devin.go.
-		if w.target != hcc.TargetDevin && w.target != hcc.Target(targetmeta.TargetCodex) {
+		// Ownership-reconciled targets are deliberately excluded. An in-file
+		// `_managed_by` marker would turn file contents into proof of ownership,
+		// exactly the heuristic the durable ownership store exists to avoid.
+		info, knownTarget := harness.TargetInfoMap[w.target]
+		if !knownTarget || !info.OwnershipReconciledAggregates {
 			switch w.skill.Resource.Kind() {
 			case ir.KindMcpServer, ir.KindHook, ir.KindSkill, ir.KindSubagent:
 				compileOptions = append(compileOptions, hcc.WithManagedBy("_managed_by", "agent-marketplace"))
 			}
 		} else if w.machineScope {
-			// Scope selects the Devin hook aggregate: project scope writes
-			// hooks.v1.json, user scope patches config.json#hooks. The default is
-			// ScopeProject, so only the machine-scope pass has to say so.
+			// Ownership-backed compilers use ScopeUser to select their native
+			// machine aggregate layout. ScopeProject is the default, so only the
+			// machine-scope pass has to say so.
 			compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 		}
 		result, err := hcc.Compile(w.skill.Resource, w.target, compileOptions...)
 		if err != nil {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
-			markCodexAggregateIncomplete(codexAggregates, codexMCPBlocked, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{
 				Code:     "materialize.compile.error",
 				Severity: diag.SeverityError,
@@ -705,16 +774,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 		if result == nil {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
-			markCodexAggregateIncomplete(codexAggregates, codexMCPBlocked, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			continue
 		}
 
 		result.Artifacts = append([]artifact.Artifact(nil), result.Artifacts...)
 		if diag.HasErrors(result.Diagnostics) {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
-			markCodexAggregateIncomplete(codexAggregates, codexMCPBlocked, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			tw := byTarget[key]
 			if tw == nil {
 				tw = &targetWork{}
@@ -725,55 +792,17 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 		resourceKind := w.skill.Resource.Kind()
 
-		// Devin shared-aggregate fragments leave the generic artifact pipeline
-		// here, before any plan can see them.
-		if w.target == hcc.TargetDevin {
-			rest, aggregateEntries, aggregateErr := splitDevinAggregateArtifacts(result.Artifacts, w.machineScope, w.skill.Name)
+		// Ownership-reconciled fragments leave the generic artifact pipeline
+		// before any marker-merge or whole-file plan can see them.
+		if aggregateHandler != nil {
+			rest, aggregateErr := aggregateHandler.extract(ownedAggregates, key, result.Artifacts, w.skill.Name)
 			if aggregateErr != nil {
 				blocked.blockResource(key, w)
-				markCodexAggregateIncomplete(codexAggregates, codexMCPBlocked, key, w)
-				markDevinAggregateIncomplete(devinAggregates, key, w)
-				allDiags = append(allDiags, diag.Diagnostic{
-					Code:     diag.CodeMaterializeDevinAggregateMalformed,
-					Severity: diag.SeverityError,
-					Target:   string(w.target),
-					Resource: w.skill.Name,
-					Message:  fmt.Sprintf("compiled Devin aggregate fragment for resource %q could not be read: %v", w.skill.Name, aggregateErr),
-				})
+				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
 			}
 			result.Artifacts = rest
-			if len(aggregateEntries) > 0 {
-				aggregate := devinAggregates[key]
-				if aggregate == nil {
-					aggregate = &ownedJSONAggregateWork{}
-					devinAggregates[key] = aggregate
-				}
-				for _, entry := range aggregateEntries {
-					aggregate.add(entry)
-				}
-			}
-		}
-		if w.target == hcc.Target(targetmeta.TargetCodex) {
-			rest, aggregateEntries, mcpEntries, aggregateErr := splitCodexOwnedArtifacts(result.Artifacts, w.skill.Name)
-			if aggregateErr != nil {
-				blocked.blockResource(key, w)
-				markCodexAggregateIncomplete(codexAggregates, codexMCPBlocked, key, w)
-				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.codex.aggregate-malformed", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: aggregateErr.Error()})
-				continue
-			}
-			result.Artifacts = rest
-			codexMCP[key] = append(codexMCP[key], mcpEntries...)
-			if len(aggregateEntries) > 0 {
-				aggregate := codexAggregates[key]
-				if aggregate == nil {
-					aggregate = &ownedJSONAggregateWork{}
-					codexAggregates[key] = aggregate
-				}
-				for _, entry := range aggregateEntries {
-					aggregate.add(entry)
-				}
-			}
 		}
 
 		// For hooks, expand ${DROID_PLUGIN_ROOT} to a relative path.
@@ -905,6 +934,22 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	}
 }
 
+func sourceBundleRoot(resource resolver.ResolvedArtifact) string {
+	source := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(resource.Resource).File))
+	if source == "." || filepath.IsAbs(source) || source == ".." || strings.HasPrefix(source, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	path := filepath.Clean(resource.Path)
+	root := path
+	for range strings.Split(source, string(os.PathSeparator)) {
+		root = filepath.Dir(root)
+	}
+	if filepath.Clean(filepath.Join(root, source)) != path {
+		return ""
+	}
+	return root
+}
+
 // usesSkillDir reports whether a resource kind materializes as a skill DIRECTORY
 // (skills/<name>/ plus support files) for a target. It is the single lookup that
 // routes a Devin command through the same directory-symlink path as a skill,
@@ -917,54 +962,29 @@ func usesSkillDir(target hcc.Target, kind ir.ResourceKind) bool {
 	return info.UsesSkillDir(kind)
 }
 
-// markDevinAggregateIncomplete records that a SKIPPED resource would have
-// contributed to a Devin aggregate file, so pruning is suppressed for exactly
-// that file. A skipped resource produces no artifacts, so the files it would
-// have written are derived from its kind and scope instead.
-func markDevinAggregateIncomplete(aggregates map[outputKey]*ownedJSONAggregateWork, key outputKey, w skillTarget) {
-	if key.target != hcc.TargetDevin || w.skill.Resource == nil {
+// markOwnedAggregateIncomplete records that a skipped resource may have
+// contributed to one of its target's shared files. The concrete handler keeps
+// suppression at the narrowest format-specific file boundary.
+func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggregateState, key outputKey, w skillTarget) {
+	if handler == nil || w.skill.Resource == nil {
 		return
 	}
-	rels := devinAggregateRels(w.skill.Resource.Kind(), key.machineScope)
-	if len(rels) == 0 {
-		return
-	}
-	aggregate := aggregates[key]
-	if aggregate == nil {
-		aggregate = &ownedJSONAggregateWork{}
-		aggregates[key] = aggregate
-	}
-	for _, rel := range rels {
-		aggregate.markIncomplete(rel)
-	}
-}
-
-func markCodexAggregateIncomplete(hooks map[outputKey]*ownedJSONAggregateWork, mcps map[outputKey]bool, key outputKey, w skillTarget) {
-	if key.target != hcc.Target(targetmeta.TargetCodex) || w.skill.Resource == nil {
-		return
-	}
-	switch w.skill.Resource.Kind() {
-	case ir.KindHook:
-		aggregate := hooks[key]
-		if aggregate == nil {
-			aggregate = &ownedJSONAggregateWork{}
-			hooks[key] = aggregate
-		}
-		aggregate.markIncomplete(codexHooksFile)
-	case ir.KindMcpServer:
-		mcps[key] = true
-	}
+	handler.markIncomplete(state, key, w.skill.Resource.Kind())
 }
 
 // executeMaterializePlans writes compiled artifacts to disk and syncs skill links.
 //
-// ctx is carried for one reason: reconcileDevinAggregates opens a per-canonical-root
-// critical section, and a contended acquisition must abandon its wait when the run
-// is cancelled instead of ignoring Ctrl-C for the whole lock timeout.
+// ctx reaches the owned-aggregate handlers because their per-canonical-root
+// critical sections must abandon a contended wait when the run is cancelled.
 func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
 	report := &Report{
 		PerTarget: make(map[hcc.Target]TargetReport),
 		Diags:     compileResult.allDiags,
+	}
+	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
+	if preflightDiag != nil {
+		report.Diags = append(report.Diags, *preflightDiag)
+		return report
 	}
 
 	// Sort output keys for deterministic PerRoot ordering.
@@ -1076,16 +1096,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
-		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
-		if isCodex {
-			for _, destination := range codexDestinations {
-				if destination.Info.OwnershipReconciledAggregates {
-					report = reconcileCodexHooks(ctx, report, key, destination.Root, compileResult.codexAggregates[key], dryRun)
-					report = reconcileCodexMCP(ctx, report, key, destination.Root, compileResult.codexMCP[key], compileResult.codexMCPBlocked[key], dryRun)
-					break
-				}
-			}
+		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
+		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
+			report = aggregateHandler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, codexDestinations, dryRun)
 		}
 	}
 
@@ -1093,7 +1106,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1155,7 +1168,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 		}
 
-		cacheDir := cachedPlanDir(key.target, key.machineScope, outDir, plan.reportPrefix, plan.artifacts)
+		cacheMachineScope, cacheOutDir := key.machineScope, outDir
+		if key.target == hcc.Target(targetmeta.TargetCodex) && coalescedCodexPartitions[codexPlanPartitionKey(plan)] {
+			// A coalesced physical partition must also have one cache target;
+			// otherwise identical repo/machine bytes produce different symlink
+			// targets and rewrite the destination twice.
+			cacheMachineScope, cacheOutDir = false, plan.root
+		}
+		cacheDir := cachedPlanDir(key.target, cacheMachineScope, cacheOutDir, plan.reportPrefix, plan.artifacts)
 		if matErr := prepareArtifactLinkCache(cacheDir, regularArtifacts, dryRun); matErr != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",

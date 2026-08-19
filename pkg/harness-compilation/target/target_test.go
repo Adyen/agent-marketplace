@@ -8,22 +8,24 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestCodexIdentityIsNotPubliclyDiscoverable(t *testing.T) {
+func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 	if TargetCodex != "codex" {
 		t.Fatalf("TargetCodex = %q, want codex", TargetCodex)
 	}
-	if _, ok := Lookup(string(TargetCodex)); ok {
-		t.Fatal("Codex must remain undiscoverable until target promotion")
+	definition, ok := Lookup(string(TargetCodex))
+	if !ok {
+		t.Fatal("Codex must be publicly discoverable after target promotion")
 	}
-	if slices.Contains(Targets(), TargetCodex) {
-		t.Fatal("Codex must remain absent from public target lists until promotion")
+	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
+	if !reflect.DeepEqual(definition, want) {
+		t.Fatalf("Lookup(codex) = %#v, want %#v", definition, want)
 	}
-	if !IsPrivate(string(TargetCodex)) || IsPrivate("unknown") || IsPrivate(string(TargetClaude)) {
-		t.Fatal("only the pre-promotion Codex identity may be private")
+	if !slices.Contains(Targets(), TargetCodex) {
+		t.Fatal("Codex must be present in public target lists after promotion")
 	}
 }
 
-func TestCodexNativeLayoutIsAvailableBeforePromotion(t *testing.T) {
+func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 	want := NativeLayout{Partitions: []NativePartition{
 		{
 			ID:         "agents",
@@ -85,7 +87,7 @@ func TestCodexNativeLayoutIsAvailableBeforePromotion(t *testing.T) {
 	}
 }
 
-func TestExistingDefinitionsRemainUnchanged(t *testing.T) {
+func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 	want := []Definition{
 		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
 		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
@@ -93,6 +95,7 @@ func TestExistingDefinitionsRemainUnchanged(t *testing.T) {
 		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
 		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
 		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
+		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
 	}
 	if got := Definitions(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)
@@ -139,7 +142,7 @@ func TestDefinitionsHaveUniqueCompleteIdentity(t *testing.T) {
 			t.Fatalf("target %q is declared more than once", definition.Target)
 		}
 		seen[definition.Target] = true
-		if definition.Label == "" || definition.RepoRoot == "" || definition.UserRoot == "" {
+		if definition.Label == "" {
 			t.Fatalf("target %q has incomplete user-facing or root metadata: %#v", definition.Target, definition)
 		}
 		if definition.Conversion && (!definition.Compiler || !definition.Ingester) {
