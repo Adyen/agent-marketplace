@@ -1,25 +1,25 @@
 # Tasks: agent-marketplace-pf99.3
 
 ## Domain and interfaces
-- [ ] `pkg/marketplace/store/domain.go` — Marketplace, Source, ResourceRevision,
+- [x] `pkg/marketplace/store/domain.go` — Marketplace, Source, ResourceRevision,
   SourceOccurrence, CollectionRevision, Revocation, Job, ID types.
-- [ ] `pkg/marketplace/store/metadata.go` — `MetadataStore` interface with methods
+- [x] `pkg/marketplace/store/metadata.go` — `MetadataStore` interface with methods
   for CRUD and query of all domain entities.
-- [ ] `pkg/marketplace/store/blob.go` — `BlobStore` interface for content-addressed
+- [x] `pkg/marketplace/store/blob.go` — `BlobStore` interface for content-addressed
   read/write/exists/delete of blobs by digest.
-- [ ] `pkg/marketplace/store/errors.go` — typed errors (`ErrNotFound`, `ErrConflict`,
+- [x] `pkg/marketplace/store/errors.go` — typed errors (`ErrNotFound`, `ErrConflict`,
   `ErrLeaseExpired`, `ErrTopology`, etc.).
 
 ## Metadata adapters
-- [ ] `pkg/marketplace/store/sqlite` — SQLite implementation with embedded migrations,
+- [x] `pkg/marketplace/store/sqlite` — SQLite implementation with embedded migrations,
   WAL, busy timeout, retry, and split-process safety.
-- [ ] `pkg/marketplace/store/postgres` — PostgreSQL implementation with same schema
+- [x] `pkg/marketplace/store/postgres` — PostgreSQL implementation with same schema
   and concurrency behavior for distributed roles.
 
 ## Blob adapters
-- [ ] `pkg/marketplace/store/fsblob` — filesystem blob store with SHA-256 key layout
+- [x] `pkg/marketplace/store/fsblob` — filesystem blob store with SHA-256 key layout
   and atomic writes.
-- [ ] `pkg/marketplace/store/s3blob` — S3-compatible blob store using the AWS SDK v2
+- [x] `pkg/marketplace/store/s3blob` — S3-compatible blob store using the AWS SDK v2
   S3 client, with endpoint override for MinIO/Ceph/R2.
 
 ## Jobs
