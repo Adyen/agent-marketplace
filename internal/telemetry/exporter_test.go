@@ -21,10 +21,13 @@ import (
 
 func TestAuthHeaderResolution(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XDG_STATE_HOME", dir)
 
 	tenant := filepath.Join(dir, "tenant")
-	if err := os.WriteFile(tenant, []byte("tenant-42\n"), 0o600); err != nil {
+	if err := os.WriteFile(tenant, []byte("tenant-42"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("OTEL_AUTH_TOKEN", "token-99")
@@ -225,6 +228,9 @@ func TestCommunityNotFolded(t *testing.T) {
 
 func TestTLSWithCAFile(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XDG_STATE_HOME", dir)
 
 	var gotRequest atomic.Bool

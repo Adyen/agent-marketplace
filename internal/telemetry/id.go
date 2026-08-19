@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,30 +21,38 @@ func LoadInstallationID(path string) (string, error) {
 		return "", errors.New("empty installation id path")
 	}
 
+	slog.Debug("loading installation id", "path", path)
+
 	data, err := os.ReadFile(path)
 	if err == nil {
 		id := strings.TrimSpace(string(data))
 		if id != "" {
+			slog.Debug("loaded existing installation id", "path", path)
 			return id, nil
 		}
 	} else if !os.IsNotExist(err) {
+		slog.Error("failed to read installation id", "path", path, "error", err)
 		return "", fmt.Errorf("read installation id: %w", err)
 	}
 
 	id, err := generateInstallationID()
 	if err != nil {
+		slog.Error("failed to generate installation id", "path", path, "error", err)
 		return "", err
 	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Error("failed to create installation id directory", "path", path, "directory", dir, "error", err)
 		return "", fmt.Errorf("create installation id directory: %w", err)
 	}
 
 	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+		slog.Error("failed to write installation id", "path", path, "error", err)
 		return "", fmt.Errorf("write installation id: %w", err)
 	}
 
+	slog.Info("generated new installation id", "path", path)
 	return id, nil
 }
 
@@ -54,7 +63,10 @@ func ResetInstallationID(path string) error {
 		return errors.New("empty installation id path")
 	}
 
+	slog.Info("resetting installation id", "path", path)
+
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Error("failed to remove installation id", "path", path, "error", err)
 		return fmt.Errorf("remove installation id: %w", err)
 	}
 
@@ -64,12 +76,14 @@ func ResetInstallationID(path string) error {
 	telemetryRoot := filepath.Dir(path)
 	queueRoot := filepath.Join(telemetryRoot, "queue")
 	if err := os.RemoveAll(queueRoot); err != nil {
+		slog.Error("failed to remove queued payloads", "path", queueRoot, "error", err)
 		return fmt.Errorf("remove queued payloads: %w", err)
 	}
 
 	diagRoot := filepath.Join(telemetryRoot, "diagnostic")
 	_ = os.RemoveAll(diagRoot)
 
+	slog.Info("reset installation id complete", "path", path)
 	return nil
 }
 
