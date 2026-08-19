@@ -562,6 +562,23 @@ func TestPruneCodexConversionStaleReturnsAllErrors(t *testing.T) {
 	assertFileContents(t, filepath.Join(outDir, "second.txt"), "stale\n")
 }
 
+func TestPruneCodexConversionStaleStopsAtParentFixedPoint(t *testing.T) {
+	var removed []string
+	err := pruneCodexConversionStaleWith("root", []string{"../stale.txt"}, func(path string) error {
+		removed = append(removed, path)
+		if len(removed) > 2 {
+			t.Fatal("parent cleanup did not stop when filepath.Dir stopped progressing")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("prune stale output: %v", err)
+	}
+	if got, want := strings.Join(removed, ","), strings.Join([]string{"stale.txt", "."}, ","); got != want {
+		t.Fatalf("removed paths = %q, want %q", got, want)
+	}
+}
+
 func TestFinishCodexConversionReportsFailedPruneAfterCommit(t *testing.T) {
 	report := &hcc.WriteReport{Written: []string{codexConversionHooksPath}, Removed: []string{"stale.txt"}}
 	injected := errors.New("injected prune failure")

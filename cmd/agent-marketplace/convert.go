@@ -697,19 +697,24 @@ func pruneCodexConversionStale(outDir string, removed []string) error {
 	return pruneCodexConversionStaleWith(outDir, removed, os.Remove)
 }
 
-func pruneCodexConversionStaleWith(outDir string, removed []string, removeFile func(string) error) error {
+func pruneCodexConversionStaleWith(outDir string, removed []string, removePath func(string) error) error {
 	root := filepath.Clean(outDir)
 	var pruneErrors []error
 	for _, rel := range removed {
 		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := removeFile(path); err != nil && !os.IsNotExist(err) {
+		if err := removePath(path); err != nil && !os.IsNotExist(err) {
 			pruneErrors = append(pruneErrors, fmt.Errorf("remove stale file %q: %w", rel, err))
 			continue
 		}
-		for dir := filepath.Dir(path); dir != root; dir = filepath.Dir(dir) {
-			if err := os.Remove(dir); err != nil {
+		for dir := filepath.Dir(path); dir != root; {
+			if err := removePath(dir); err != nil {
 				break
 			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
 	}
 	return errors.Join(pruneErrors...)
