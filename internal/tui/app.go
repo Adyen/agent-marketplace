@@ -1006,8 +1006,6 @@ func (m Model) View() string {
 		modal = renderToggleModal(m)
 	case paneInitModal:
 		modal = renderInitModal(m)
-	case paneMigrationModal:
-		modal = renderMigrationModal(m)
 	case paneHarnessModal:
 		modal = renderHarnessModal(m)
 	case paneEditConfigModal:
