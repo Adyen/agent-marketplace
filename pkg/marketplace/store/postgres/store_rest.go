@@ -121,7 +121,7 @@ func (s *Store) PutCollectionRevision(ctx context.Context, cr store.CollectionRe
 		   manifest_digest = EXCLUDED.manifest_digest,
 		   members = EXCLUDED.members,
 		   created_at = EXCLUDED.created_at`,
-		cr.ID, cr.SourceID, cr.Members, membersJSON, timeToMicro(cr.CreatedAt),
+		cr.ID, cr.SourceID, cr.ManifestDigest, membersJSON, timeToMicro(cr.CreatedAt),
 	)
 	return err
 }
