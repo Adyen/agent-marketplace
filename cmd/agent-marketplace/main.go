@@ -119,7 +119,7 @@ func newRootCmd() *cobra.Command {
 		newTUICmd(),
 		newBackupCmd(),
 		newDeinitCmd(),
-		newTelemetryCmd(),
+		newServeCmd(),
 	)
 
 	return rootCmd

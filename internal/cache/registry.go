@@ -401,3 +401,15 @@ func truncateGitError(message string) string {
 	}
 	return string(runes[:maxGitErrorChars-1]) + "…"
 }
+
+// ValidateGitURL wraps validateGitURL for reuse by Marketplace acquisition.
+func ValidateGitURL(raw string) error { return validateGitURL(raw) }
+
+// ValidateGitRef wraps validateGitRef for reuse by Marketplace acquisition.
+func ValidateGitRef(raw string) error { return validateGitRef(raw) }
+
+// ResolveRemoteRef wraps resolveRemoteRef for reuse by Marketplace acquisition.
+func ResolveRemoteRef(repoDir, ref string) (string, error) { return resolveRemoteRef(repoDir, ref) }
+
+// GitEnv returns the hardened environment used for git subprocesses.
+func GitEnv() []string { return gitEnv() }
