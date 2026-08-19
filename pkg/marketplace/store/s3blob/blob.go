@@ -78,7 +78,8 @@ func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, er
 	})
 	if err != nil {
 		var noSuchKey *types.NoSuchKey
-		if errors.As(err, &noSuchKey) {
+		var noSuchBucket *types.NoSuchBucket
+		if errors.As(err, &noSuchKey) || errors.As(err, &noSuchBucket) {
 			return nil, store.ErrNotFound
 		}
 		return nil, fmt.Errorf("get blob %s: %w", digest, err)
@@ -119,7 +120,8 @@ func (s *Store) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, e
 
 	var notFound *types.NotFound
 	var noSuchKey *types.NoSuchKey
-	if errors.As(err, &notFound) || errors.As(err, &noSuchKey) {
+	var noSuchBucket *types.NoSuchBucket
+	if errors.As(err, &notFound) || errors.As(err, &noSuchKey) || errors.As(err, &noSuchBucket) {
 		return false, nil
 	}
 	return false, fmt.Errorf("head blob %s: %w", digest, err)
@@ -133,7 +135,8 @@ func (s *Store) Delete(ctx context.Context, digest store.ArchiveDigest) error {
 	})
 	if err != nil {
 		var noSuchKey *types.NoSuchKey
-		if errors.As(err, &noSuchKey) {
+		var noSuchBucket *types.NoSuchBucket
+		if errors.As(err, &noSuchKey) || errors.As(err, &noSuchBucket) {
 			return store.ErrNotFound
 		}
 		return fmt.Errorf("delete blob %s: %w", digest, err)
