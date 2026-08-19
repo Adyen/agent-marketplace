@@ -89,7 +89,7 @@ func TestCodexMCPReconcilePreservesUnmanagedTOML(t *testing.T) {
 		}
 	}
 	updated := ir.NewMcpServer("managed", "npx", []string{"updated"}, map[string]string{"TOKEN": "${TOKEN}"}, nil, ir.SourceRef{})
-	selection[0].Entry.Resource = updated
+	selection[0].Resource = updated
 	if report, err := Run(context.Background(), repo, selection, WithDryRun()); err != nil || report.InSync() {
 		t.Fatalf("dry-run update: report=%#v err=%v", report, err)
 	}

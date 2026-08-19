@@ -171,7 +171,7 @@ func TestCodexCompileFailurePreservesOwnedHook(t *testing.T) {
 	}
 
 	invalid := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "prompt", nil, ir.SourceRef{})
-	selection[0].Entry.Resource = invalid
+	selection[0].Resource = invalid
 	report, err := Run(context.Background(), repo, selection)
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestCodexCompileFailurePreservesOwnedMCP(t *testing.T) {
 	}
 	invalid := ir.NewMcpServer("managed", "npx", []string{"managed"}, map[string]string{"TOKEN": "${TOKEN}"}, nil, ir.SourceRef{})
 	invalid.OAuthClientID = "unsupported"
-	selection[0].Entry.Resource = invalid
+	selection[0].Resource = invalid
 	report, err := Run(context.Background(), repo, selection)
 	if err != nil || !hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("rejected MCP: report=%#v err=%v", report, err)
@@ -226,8 +226,8 @@ func TestCodexIncompleteReconcileRetainsHookOwnershipProof(t *testing.T) {
 	if report, err := Run(context.Background(), repo, selection); err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed: report=%#v err=%v", report, err)
 	}
-	selection[0].Entry.Resource = ir.NewHookWithMatcher("a", "PreToolUse", "Bash", "./a", "prompt", nil, ir.SourceRef{})
-	selection[1].Entry.Resource = ir.NewHookWithMatcher("b", "PostToolUse", "Bash", "./changed", "command", nil, ir.SourceRef{})
+	selection[0].Resource = ir.NewHookWithMatcher("a", "PreToolUse", "Bash", "./a", "prompt", nil, ir.SourceRef{})
+	selection[1].Resource = ir.NewHookWithMatcher("b", "PostToolUse", "Bash", "./changed", "command", nil, ir.SourceRef{})
 	if _, err := Run(context.Background(), repo, selection); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestCodexIncompleteReconcileRetainsMCPOwnershipProof(t *testing.T) {
 		t.Fatalf("seed: report=%#v err=%v", report, err)
 	}
 	a.OAuthClientID = "unsupported"
-	selection[1].Entry.Resource = ir.NewMcpServer("b", "npx", []string{"changed"}, map[string]string{"TOKEN": "${TOKEN}"}, nil, ir.SourceRef{})
+	selection[1].Resource = ir.NewMcpServer("b", "npx", []string{"changed"}, map[string]string{"TOKEN": "${TOKEN}"}, nil, ir.SourceRef{})
 	if _, err := Run(context.Background(), repo, selection); err != nil {
 		t.Fatal(err)
 	}
