@@ -107,7 +107,7 @@ func TestHelpListsPlaceholderSubcommands(t *testing.T) {
 		t.Fatalf("expected help flag to succeed: %v", err)
 	}
 
-	for _, subcommand := range []string{"sync", "list", "install", "remove", "update", "status"} {
+	for _, subcommand := range []string{"sync", "list", "install", "remove", "update", "status", "telemetry"} {
 		if !strings.Contains(output, subcommand) {
 			t.Fatalf("expected help output to contain %q, got %q", subcommand, output)
 		}

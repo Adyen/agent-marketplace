@@ -23,6 +23,8 @@ import (
 const defaultVersion = "dev"
 
 var version = defaultVersion
+var diagnosticEnabled bool
+var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
 	close     func() error
@@ -53,6 +55,9 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			initRootLogging(cmd, debug)
+			if shouldSkipTargetValidation(cmd) {
+				return nil
+			}
 			if err := validateStartupTargetRegistrations(); err != nil {
 				slog.Error("validate harness target registrations", "error", err)
 				return fmt.Errorf("validate harness target registrations: %w", err)
@@ -93,6 +98,8 @@ func newRootCmd() *cobra.Command {
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
+	rootCmd.PersistentFlags().BoolVar(&diagnosticEnabled, "diagnostic", false, "Capture diagnostic telemetry for this invocation")
+	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
 		newInitCmd(),
@@ -109,6 +116,7 @@ func newRootCmd() *cobra.Command {
 		newTUICmd(),
 		newBackupCmd(),
 		newDeinitCmd(),
+		newTelemetryCmd(),
 	)
 
 	return rootCmd
@@ -286,4 +294,13 @@ func runRemove(out io.Writer, skillName string, scope pipeline.Scope, scopeSpeci
 		_, err = fmt.Fprintf(out, "  (excluded in %s — applies across all repos)\n", globalPath)
 	}
 	return err
+}
+
+func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Annotations != nil && c.Annotations["skip-target-validation"] == "true" {
+			return true
+		}
+	}
+	return false
 }

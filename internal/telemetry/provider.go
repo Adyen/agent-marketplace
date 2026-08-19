@@ -2,12 +2,15 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +44,8 @@ type Telemetry struct {
 	sendClients        map[string]*http.Client
 	logger             *slog.Logger
 	allowedMetricAttrs map[string]struct{}
+	failurePath        string
+	failureMu          sync.Mutex
 
 	// lastFailure holds a *error so the concrete type stored in the Value is
 	// always consistent regardless of the dynamic error type.
@@ -124,6 +129,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		logger:             logger,
 		sendClients:        make(map[string]*http.Client),
 		allowedMetricAttrs: make(map[string]struct{}, len(tmcfg.MetricSchemaAttributes)),
+		failurePath:        filepath.Join(filepath.Dir(state.InstallationIDPath), "last-delivery-failure"),
 	}
 	for _, a := range tmcfg.MetricSchemaAttributes {
 		t.allowedMetricAttrs[string(a)] = struct{}{}
@@ -363,20 +369,69 @@ func (t *Telemetry) InstallationID() string {
 // LastDeliveryFailure returns the most recent delivery failure, if any.
 func (t *Telemetry) LastDeliveryFailure() error {
 	v := t.lastFailure.Load()
-	if v == nil {
+	if v != nil {
+		if p, ok := v.(*error); ok {
+			return *p
+		}
+	}
+
+	if t.failurePath == "" {
 		return nil
 	}
-	if p, ok := v.(*error); ok {
-		return *p
+	df, rerr := ReadLastDeliveryFailure(t.failurePath)
+	if rerr != nil {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%s: %s", df.Time.Format(time.RFC3339), df.Error)
 }
 
 func (t *Telemetry) recordFailure(err error) {
-	if err != nil {
-		p := err
-		t.lastFailure.Store(&p)
+	if err == nil {
+		return
 	}
+
+	p := err
+	t.lastFailure.Store(&p)
+
+	if t.failurePath == "" {
+		return
+	}
+
+	t.failureMu.Lock()
+	defer t.failureMu.Unlock()
+
+	df := DeliveryFailure{Time: time.Now().UTC(), Error: err.Error()}
+	data, merr := json.Marshal(df)
+	if merr != nil {
+		slog.Error("failed to marshal last delivery failure", "path", t.failurePath, "error", merr)
+		return
+	}
+	if werr := os.WriteFile(t.failurePath, data, 0o600); werr != nil {
+		slog.Error("failed to write last delivery failure", "path", t.failurePath, "error", werr)
+	}
+}
+
+// DeliveryFailure is the persisted record of a delivery failure.
+type DeliveryFailure struct {
+	Time  time.Time `json:"time"`
+	Error string    `json:"error"`
+}
+
+// ReadLastDeliveryFailure reads a persisted delivery failure record. It returns
+// an empty DeliveryFailure and no error when the file does not exist.
+func ReadLastDeliveryFailure(path string) (DeliveryFailure, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return DeliveryFailure{}, nil
+		}
+		return DeliveryFailure{}, err
+	}
+	var df DeliveryFailure
+	if err := json.Unmarshal(data, &df); err != nil {
+		return DeliveryFailure{}, err
+	}
+	return df, nil
 }
 
 func queueRootFromInstallationIDPath(path string) string {

@@ -11,6 +11,27 @@ import (
 	"strings"
 )
 
+// ReadInstallationID returns the durable installation ID stored at path without
+// creating one. It returns ("", nil) when the file does not exist.
+func ReadInstallationID(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		slog.Error("failed to read installation id", "path", path, "error", err)
+		return "", fmt.Errorf("read installation id: %w", err)
+	}
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return "", nil
+	}
+	return id, nil
+}
+
 // LoadInstallationID returns the durable installation ID stored at path.
 //
 // If no file exists, it creates the parent directories with 0o700 permissions,
