@@ -23,27 +23,27 @@
   S3 client, with endpoint override for MinIO/Ceph/R2.
 
 ## Jobs
-- [ ] `pkg/marketplace/job/job.go` — `Job` type and status constants.
-- [ ] `pkg/marketplace/job/lease.go` — lease acquisition, extension, expiry, release.
-- [ ] `pkg/marketplace/job/retry.go` — exponential backoff with jitter and max attempts.
-- [ ] `pkg/marketplace/job/scheduler.go` — enqueue/dequeue/complete/fail helpers over
+- [x] `pkg/marketplace/job/job.go` — `Job` type and status constants.
+- [x] `pkg/marketplace/job/lease.go` — lease acquisition, extension, expiry, release.
+- [x] `pkg/marketplace/job/retry.go` — exponential backoff with jitter and max attempts.
+- [x] `pkg/marketplace/job/scheduler.go` — enqueue/dequeue/complete/fail helpers over
   `MetadataStore`.
 
 ## Atomic publication and consistency
-- [ ] `pkg/marketplace/store/atomic.go` — `PublishSourceRevision` helper that uploads
+- [x] `pkg/marketplace/store/atomic.go` — `PublishSourceRevision` helper that uploads
   blobs before committing metadata.
-- [ ] Startup consistency checks and missing-blob readiness failures.
+- [x] Startup consistency checks and missing-blob readiness failures.
 
 ## Tests and benchmarks
-- [ ] Unit tests for each adapter.
-- [ ] Conformance tests covering all metadata/blob pairings and topology constraints.
-- [ ] Job lease expiry/recovery tests.
-- [ ] Benchmarks for hot paths (job dequeue, blob read/write).
+- [x] Unit tests for each adapter.
+- [x] Conformance tests covering all metadata/blob pairings and topology constraints.
+- [x] Job lease expiry/recovery tests.
+- [x] Benchmarks for hot paths (job dequeue, blob read/write).
 
 ## Verification
-- [ ] `go test ./pkg/marketplace/...`
-- [ ] `make lint`
-- [ ] `make build`
+- [x] `go test ./pkg/marketplace/...`
+- [x] `make lint`
+- [x] `make build`
 
 ## OpenSpec
 - [x] `openspec/changes/agent-marketplace-pf99.3/{.openspec.yaml,proposal.md,design.md,tasks.md}`

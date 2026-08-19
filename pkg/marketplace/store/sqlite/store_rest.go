@@ -522,6 +522,10 @@ func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 		 FROM resource_revisions
 		 WHERE archive_digest IS NOT NULL AND archive_digest != ''
 		UNION
+		 SELECT DISTINCT manifest_digest AS digest
+		 FROM source_occurrences
+		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''
+		UNION
 		 SELECT DISTINCT mirrored_artifact_digest AS digest
 		 FROM source_occurrences
 		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''`,
