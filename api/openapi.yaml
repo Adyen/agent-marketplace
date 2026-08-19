@@ -1,0 +1,203 @@
+openapi: 3.0.3
+info:
+  title: agent-marketplace API
+  version: 1.0.0
+  description: |
+    Public API for discovering, listing, and acquiring agent resources from an
+    agent-marketplace instance.
+
+servers:
+  - url: /api/v1
+    description: Marketplace API v1
+
+paths:
+  /.well-known/agent-marketplace.json:
+    get:
+      operationId: getWellKnown
+      summary: Marketplace instance metadata and capabilities
+      responses:
+        "200":
+          description: Instance metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WellKnown"
+
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Marketplace capabilities
+      responses:
+        "200":
+          description: Capability block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+
+  /api/v1/resources:
+    get:
+      operationId: listResources
+      summary: List selectable resources
+      parameters:
+        - in: query
+          name: kind
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: query
+          name: source_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resource list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceListItem"
+
+  /api/v1/artifacts/{kind}/{name}:
+    get:
+      operationId: getArtifact
+      summary: Download a canonical artifact
+      parameters:
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: revision
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Canonical artifact tar.gz
+          content:
+            application/vnd.agent-marketplace.artifact.v1.tar+gzip:
+              schema:
+                type: string
+                format: binary
+
+components:
+  schemas:
+    Capabilities:
+      type: object
+      required:
+        - api_versions
+        - artifact_schema_versions
+        - resource_kinds
+        - acquisition_modes
+        - features
+      properties:
+        api_versions:
+          type: array
+          items:
+            type: string
+            enum:
+              - v1
+        artifact_schema_versions:
+          type: array
+          items:
+            type: string
+            enum:
+              - v1
+        resource_kinds:
+          type: array
+          items:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        acquisition_modes:
+          type: array
+          items:
+            type: string
+            enum:
+              - index
+              - mirror
+        features:
+          type: array
+          items:
+            type: string
+
+    WellKnown:
+      allOf:
+        - $ref: "#/components/schemas/Capabilities"
+        - type: object
+          required:
+            - instance_id
+            - canonical_url
+            - api_base
+            - browser_route_template
+          properties:
+            instance_id:
+              type: string
+            canonical_url:
+              type: string
+              format: uri
+            api_base:
+              type: string
+            browser_route_template:
+              type: string
+
+    ResourceListItem:
+      type: object
+      required:
+        - source_id
+        - kind
+        - name
+        - revision
+        - content_digest
+      properties:
+        source_id:
+          type: string
+        source_slug:
+          type: string
+        kind:
+          type: string
+          enum:
+            - skill
+            - command
+            - subagent
+            - hook
+            - mcpserver
+            - collection
+        name:
+          type: string
+        revision:
+          type: string
+        content_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        description:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
