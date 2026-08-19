@@ -120,3 +120,30 @@ func TestEngineNilResource(t *testing.T) {
 		t.Fatal("expected error for nil resource")
 	}
 }
+
+func TestEngineMaxFindingsPreservesRejects(t *testing.T) {
+	ctx := context.Background()
+	opts := DefaultOptions()
+	opts.Policy = PublicPolicy()
+	opts.Limits.MaxFindings = 1
+
+	s := ir.NewSkill("review", "Review", "Review <!-- hidden --> carefully.", []string{"user"}, nil, ir.SourceRef{})
+	s.AllowedTools = []string{"read_file"}
+
+	engine := NewEngine()
+	report, err := engine.Analyze(ctx, s, nil, opts)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if !report.Rejected {
+		t.Fatal("expected HTML comment to reject")
+	}
+	if len(report.Findings) == 0 {
+		t.Fatal("expected at least one finding")
+	}
+	for _, f := range report.Findings {
+		if f.PolicyOutcome != OutcomeReject {
+			t.Errorf("MaxFindings should preserve reject findings first, got %s", f.PolicyOutcome)
+		}
+	}
+}

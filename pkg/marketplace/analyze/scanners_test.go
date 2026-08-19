@@ -69,6 +69,9 @@ func TestScanTerminalControl(t *testing.T) {
 		{"osc", "\x1b]0;title\x07", 1},
 		{"clean", "hello\tworld\n", 0},
 		{"c0", "\x00\x01\x02", 1},
+		{"del", "hello\x7fworld", 1},
+		{"c1_csi", "abc\u009b31mdef", 1},
+		{"c1_raw", "abc\x9bdef", 1},
 	}
 
 	for _, tc := range cases {
@@ -83,19 +86,26 @@ func TestScanTerminalControl(t *testing.T) {
 
 func TestScanDangerousURLs(t *testing.T) {
 	cases := []struct {
+		name    string
 		content string
 		want    int
 	}{
-		{"javascript:alert(1)", 1},
-		{"data:text/html,<script>", 1},
-		{"file:///etc/passwd", 1},
-		{"vbscript:msgbox", 1},
-		{"https://example.com", 0},
-		{"jAvAsCrIpT:doIt()", 1},
+		{"plain", "javascript:alert(1)", 1},
+		{"data", "data:text/html,<script>", 1},
+		{"file", "file:///etc/passwd", 1},
+		{"vbscript", "vbscript:msgbox", 1},
+		{"https", "https://example.com", 0},
+		{"mixedcase", "jAvAsCrIpT:doIt()", 1},
+		{"percent", "javascript%3aalert(1)", 1},
+		{"htmlhex", "javascript&#x3a;alert(1)", 1},
+		{"htmldec", "javascript&#58;alert(1)", 1},
+		{"htmlnamed", "javascript&colon;alert(1)", 1},
+		{"backslash", "javascript\\x3aalert(1)", 1},
+		{"fullpercent", "%6a%61%76%61%73%63%72%69%70%74%3aalert(1)", 1},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.content, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			got := ScanDangerousURLs(tc.content, "file", "test")
 			if len(got) != tc.want {
 				t.Fatalf("got %d findings, want %d", len(got), tc.want)
@@ -130,23 +140,28 @@ func TestScanRemoteReferences(t *testing.T) {
 
 func TestScanSuspiciousPaths(t *testing.T) {
 	cases := []struct {
+		name    string
 		content string
 		want    int
 	}{
-		{"cd ../etc", 1},
-		{"~/ssh/config", 1},
-		{"C:\\Windows\\System32", 1},
-		{"\\\\server\\share", 1},
-		{"/etc/passwd", 1},
-		{"/etc/shadow", 1},
-		{"~/.ssh", 1},
-		{"https://example.com/path", 0},
-		{"//cdn.example.com/lib.js", 0},
-		{"a normal sentence", 0},
+		{"dots", "cd ../etc", 1},
+		{"tilde", "~/ssh/config", 1},
+		{"windows", "C:\\Windows\\System32", 1},
+		{"unc", "\\\\server\\share", 1},
+		{"passwd", "/etc/passwd", 1},
+		{"shadow", "/etc/shadow", 1},
+		{"ssh", "~/.ssh", 1},
+		{"https", "https://example.com/path", 0},
+		{"cdn", "//cdn.example.com/lib.js", 0},
+		{"normal", "a normal sentence", 0},
+		{"percentdots", "%2e%2e/%2e%2e/etc/passwd", 3},
+		{"backslashdots", "\\x2e\\x2e/etc/passwd", 2},
+		{"htmldots", "&#x2e;&#x2e;/etc/passwd", 2},
+		{"fullpercent", "%2fetc%2fpasswd", 1},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.content, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			got := ScanSuspiciousPaths(tc.content, "file", "test")
 			if len(got) != tc.want {
 				t.Fatalf("got %d findings, want %d: %v", len(got), tc.want, got)
@@ -168,6 +183,20 @@ func TestScanObfuscatedInstructions(t *testing.T) {
 		{"htmlentity", "&#x65;&#x76;&#x61;&#x6c;"},
 		{"backslash", "\\x65\\x76\\x61\\x6c"},
 		{"homoglyph", "Аpple"}, // Cyrillic А + Latin pple
+		// Adversarial bypasses.
+		{"percent_script", "jav%61script:alert(1)"},
+		{"backslash_eval", "ev\\x61l("},
+		{"html_url", "javascript&#x3a;alert(1)"},
+		{"short_base64", "ZXZhbA"},
+		{"upper_hex", "0X6576616c"},
+		{"unicode_ws", "eval\u00a0("},
+		{"js_comment", "eval/*x*/("},
+		{"eval_dot_call", "eval.call(...)"},
+		{"window_eval", "window[\"eval\"]"},
+		{"setTimeout", "setTimeout(\"...\",0)"},
+		{"new_function", "new Function(...)"},
+		{"exec_rm", "exec(\"rm -rf /\")"},
+		{"cyrillic_eval", "еval"}, // Cyrillic е + Latin val
 	}
 
 	for _, tc := range cases {
