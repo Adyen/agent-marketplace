@@ -1,0 +1,257 @@
+package artifact
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
+
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+)
+
+// BuildResult is the unified output of building a resource or collection artifact.
+type BuildResult struct {
+	Artifact       hccartifact.CanonicalArtifact
+	RawArchive     []byte
+	ContentDigest  string
+	ArchiveDigest  string
+	RevisionDigest string
+	Findings       []analyze.Finding
+	Capabilities   []string
+	Rejected       bool
+	RejectReason   string
+}
+
+// BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
+// canonical tar.gz artifact. If the analyzer rejects the resource, no artifact
+// or raw archive is emitted.
+func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.FileSet, opts analyze.Options) (BuildResult, error) {
+	if r == nil {
+		return BuildResult{}, fmt.Errorf("nil resource")
+	}
+
+	caps := ExtractCapabilities(r)
+
+	engine := analyze.NewEngine()
+	report, err := engine.Analyze(ctx, r, files, opts)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("analyze: %w", err)
+	}
+
+	if report.Rejected {
+		return BuildResult{
+			Findings:     report.Findings,
+			Capabilities: caps,
+			Rejected:     true,
+			RejectReason: "policy rejected one or more findings",
+		}, nil
+	}
+
+	base, err := hccartifact.FromIR(r)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("from IR: %w", err)
+	}
+
+	base.Manifest.AnalyzerVersion = analyzerVersion(opts)
+	base.Manifest.Capabilities = caps
+	base.Manifest.Findings = ToCanonicalFindings(report.Findings)
+	base.Manifest.Provenance = provenanceFromSource(opts)
+	base.Manifest.Revision = opts.Source.Ref
+	base.Manifest.SourceID = opts.Source.ID
+	base.Manifest.SourceSlug = opts.Source.Slug
+
+	raw, digest, err := hccartifact.Encode(base)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("encode artifact: %w", err)
+	}
+
+	// Decode the raw archive to obtain an artifact whose rawArchive field is
+	// populated, so downstream ValidateArchive/VerifyArchiveDigest calls work.
+	artifact, _, err := hccartifact.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("decode artifact: %w", err)
+	}
+
+	revisionDigest, err := buildRevisionDigest(r, base.Manifest.ContentDigest, digest, opts)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("revision digest: %w", err)
+	}
+
+	return BuildResult{
+		Artifact:       artifact,
+		RawArchive:     raw,
+		ContentDigest:  base.Manifest.ContentDigest,
+		ArchiveDigest:  digest,
+		RevisionDigest: revisionDigest,
+		Findings:       report.Findings,
+		Capabilities:   caps,
+		Rejected:       false,
+	}, nil
+}
+
+// BuildCollectionManifest builds a collection manifest and wraps it in a
+// canonical artifact. If memberResults is provided, a source revision manifest
+// is also produced and its digest is returned in BuildResult.RevisionDigest.
+func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResults []BuildResult, opts analyze.Options) (BuildResult, error) {
+	if c == nil {
+		return BuildResult{}, fmt.Errorf("nil collection")
+	}
+
+	engine := analyze.NewEngine()
+	report, err := engine.Analyze(ctx, c, nil, opts)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("analyze collection: %w", err)
+	}
+
+	caps := ExtractCapabilities(c)
+
+	if report.Rejected {
+		return BuildResult{
+			Findings:     report.Findings,
+			Capabilities: caps,
+			Rejected:     true,
+			RejectReason: "policy rejected one or more collection findings",
+		}, nil
+	}
+
+	manifest, err := hccartifact.CollectionFromIR(c)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("collection from IR: %w", err)
+	}
+	manifest.Provenance = provenanceFromSource(opts)
+	if manifest.SupportedSchemas == nil {
+		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
+	}
+
+	payload, _, err := hccartifact.EncodeCollectionManifest(manifest)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("encode collection manifest: %w", err)
+	}
+
+	// The artifact content digest is over the payload bytes (the collection
+	// manifest JSON), not the collection manifest's self-referential digest.
+	artifactContentDigest := hccartifact.ContentDigest(payload)
+
+	artifact := hccartifact.CanonicalArtifact{
+		Manifest: hccartifact.CanonicalManifest{
+			SchemaVersion:    hccartifact.CanonicalArtifactSchemaV1,
+			ArtifactVersion:  hccartifact.CanonicalArtifactSchemaV1,
+			Kind:             "collection",
+			Name:             c.Name(),
+			Revision:         opts.Source.Ref,
+			ContentDigest:    artifactContentDigest,
+			AnalyzerVersion:  analyzerVersion(opts),
+			Capabilities:     caps,
+			Findings:         ToCanonicalFindings(report.Findings),
+			Provenance:       provenanceFromSource(opts),
+			SupportedSchemas: []string{hccartifact.CanonicalArtifactSchemaV1},
+		},
+		Payload: payload,
+	}
+
+	raw, archiveDigest, err := hccartifact.Encode(artifact)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("encode collection artifact: %w", err)
+	}
+
+	decoded, _, err := hccartifact.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("decode collection artifact: %w", err)
+	}
+
+	revisionDigest := ""
+	if len(memberResults) > 0 {
+		revManifest := SourceRevisionManifest{
+			SchemaVersion: SourceRevisionSchemaV1,
+			SourceURL:     opts.Source.RegistryURL,
+			Ref:           opts.Source.Ref,
+			Path:          opts.Source.Path,
+			Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
+		}
+		for _, mr := range memberResults {
+			kind := memberKind(mr)
+			name := ""
+			if mr.Artifact.Manifest.Name != "" {
+				name = mr.Artifact.Manifest.Name
+			}
+			revManifest.Resources = append(revManifest.Resources, RevisionResource{
+				Kind:          kind,
+				Name:          name,
+				ContentDigest: mr.ContentDigest,
+				ArchiveDigest: mr.ArchiveDigest,
+				Rejected:      mr.Rejected,
+			})
+		}
+		_, digest, err := EncodeSourceRevisionManifest(revManifest)
+		if err != nil {
+			return BuildResult{}, fmt.Errorf("encode revision manifest: %w", err)
+		}
+		revisionDigest = digest
+	}
+
+	return BuildResult{
+		Artifact:       decoded,
+		RawArchive:     raw,
+		ContentDigest:  artifactContentDigest,
+		ArchiveDigest:  archiveDigest,
+		RevisionDigest: revisionDigest,
+		Findings:       report.Findings,
+		Capabilities:   caps,
+		Rejected:       false,
+	}, nil
+}
+
+func analyzerVersion(opts analyze.Options) string {
+	if opts.Version != "" {
+		return opts.Version
+	}
+	return analyze.AnalyzerVersionV1
+}
+
+func provenanceFromSource(opts analyze.Options) hccartifact.CanonicalProvenance {
+	return hccartifact.CanonicalProvenance{
+		RegistryURL: opts.Source.RegistryURL,
+		Ref:         opts.Source.Ref,
+		Path:        opts.Source.Path,
+		Generator:   fmt.Sprintf("agent-marketplace artifact v%s", analyzerVersion(opts)),
+	}
+}
+
+func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, opts analyze.Options) (string, error) {
+	if r == nil {
+		return "", nil
+	}
+	rev := SourceRevisionManifest{
+		SchemaVersion: SourceRevisionSchemaV1,
+		SourceURL:     opts.Source.RegistryURL,
+		Ref:           opts.Source.Ref,
+		Path:          opts.Source.Path,
+		Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
+		Resources: []RevisionResource{{
+			Kind:          r.Kind().String(),
+			Name:          r.Name(),
+			ContentDigest: contentDigest,
+			ArchiveDigest: archiveDigest,
+			Rejected:      false,
+		}},
+	}
+	_, digest, err := EncodeSourceRevisionManifest(rev)
+	if err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
+func memberKind(mr BuildResult) string {
+	if mr.Artifact.Manifest.Kind != "" {
+		return mr.Artifact.Manifest.Kind
+	}
+	for _, c := range mr.Capabilities {
+		if c == "skill" || c == "command" || c == "subagent" || c == "hook" || c == "mcp" || c == "collection" {
+			return c
+		}
+	}
+	return "resource"
+}
