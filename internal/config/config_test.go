@@ -186,6 +186,24 @@ func TestConfigValidateAcceptsValidConfig(t *testing.T) {
 	}
 }
 
+func TestConfigValidateAcceptsV3(t *testing.T) {
+	cfg := Config{
+		APIVersion: APIVersionV3,
+		Harnesses:  []string{"factory"},
+		Registries: []RegistryEntry{
+			{URL: "git@example.com:repo.git", Ref: "main"},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected v3 config to pass Validate: %v", err)
+	}
+
+	if err := cfg.ValidateWithoutHarnesses(); err != nil {
+		t.Fatalf("expected v3 config to pass ValidateWithoutHarnesses: %v", err)
+	}
+}
+
 func TestConfigValidateRejectsPathTraversal(t *testing.T) {
 	base := Config{
 		APIVersion: APIVersionV2,
