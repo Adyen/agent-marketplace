@@ -96,6 +96,15 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
+	if err := blobs.Put(ctx, store.ArchiveDigest(occ.SourceRevisionManifestDigest), []byte("manifest bytes")); err != nil {
+		t.Fatalf("Put manifest blob: %v", err)
+	}
+
+	err = meta.ReadyCheck(ctx, blobs)
+	if !errors.Is(err, store.ErrBlobMissing) {
+		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
+	}
+
 	if err := blobs.Put(ctx, occ.MirroredArtifactDigest, []byte("occurrence archive bytes")); err != nil {
 		t.Fatalf("Put occurrence blob: %v", err)
 	}
