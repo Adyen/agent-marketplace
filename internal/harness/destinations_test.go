@@ -29,12 +29,15 @@ func TestResolveDestinationsUsesRegisteredProvider(t *testing.T) {
 	target := hcc.Target("partitioned-test")
 	repo := t.TempDir()
 	want := []Destination{{ID: "repo-test", Root: t.TempDir(), Prefix: ".test"}}
-	resolvedLayoutProviders[target] = func(machineScope bool, repoRoot string) ([]Destination, error) {
+	resolvedLayoutProviders[target] = func(machineScope bool, repoRoot, homeDir string) ([]Destination, error) {
 		if machineScope {
 			t.Fatal("provider received machine scope")
 		}
 		if repoRoot != repo {
 			t.Fatalf("provider repo root = %q, want %q", repoRoot, repo)
+		}
+		if homeDir != "" {
+			t.Fatalf("provider home directory = %q, want empty", homeDir)
 		}
 		return want, nil
 	}
@@ -116,6 +119,18 @@ func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
 	}
 }
 
+func TestResolveDestinationsExistingTargetUsesCurrentHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := ResolveDestinations(hcc.TargetFactory, true, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Root != filepath.Join(home, ".factory") {
+		t.Fatalf("ResolveDestinations(factory machine) = %#v", got)
+	}
+}
+
 func TestResolveDestinationsCanonicalizesMissingCodexHomeBelowSymlink(t *testing.T) {
 	home, realParent, linkParent := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(realParent, linkParent); err != nil {
@@ -133,6 +148,28 @@ func TestResolveDestinationsCanonicalizesMissingCodexHomeBelowSymlink(t *testing
 	}
 	if got := destinations[1].Root; got != want {
 		t.Fatalf("canonical CODEX_HOME = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDestinationsRefusesRepoRootsEscapingThroughSymlinks(t *testing.T) {
+	for _, name := range []string{".agents", ".codex"} {
+		t.Run(name, func(t *testing.T) {
+			repo, outside := t.TempDir(), t.TempDir()
+			sentinel := filepath.Join(outside, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("keep\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(repo, name)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			if _, err := ResolveDestinations(hcc.Target(targetmeta.TargetCodex), false, repo); err == nil {
+				t.Fatal("ResolveDestinations accepted a repository destination outside the repository")
+			}
+			got, err := os.ReadFile(sentinel)
+			if err != nil || string(got) != "keep\n" {
+				t.Fatalf("outside sentinel changed: %q, %v", got, err)
+			}
+		})
 	}
 }
 
@@ -183,6 +220,29 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEveryPartitionedCompilerTargetHasResolvedDestinations(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex-home"))
+	for _, definition := range targetmeta.Definitions() {
+		if !definition.Compiler || !definition.PartitionedRoots {
+			continue
+		}
+		target := hcc.Target(definition.Target)
+		if destinations, err := ResolveDestinations(target, false, repo); err != nil || len(destinations) == 0 {
+			t.Errorf("ResolveDestinations(%s, repo) = %#v, %v", target, destinations, err)
+		}
+		destinations, err := ResolveMachineDestinationsForHome(target, home)
+		if err != nil || len(destinations) == 0 {
+			t.Errorf("ResolveMachineDestinationsForHome(%s) = %#v, %v", target, destinations, err)
+			continue
+		}
+		if !slices.ContainsFunc(destinations, func(destination Destination) bool { return destination.InstallationEvidence }) {
+			t.Errorf("%s has no machine installation-evidence destination: %#v", target, destinations)
+		}
 	}
 }
 

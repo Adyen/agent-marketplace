@@ -135,6 +135,7 @@ func TestInitHelp(t *testing.T) {
 func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 
 	if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
 		t.Fatalf("mkdir factory root: %v", err)

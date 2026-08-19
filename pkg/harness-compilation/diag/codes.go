@@ -62,21 +62,26 @@ const (
 	// DIFFERENT outcome, so it has its own error code
 	// (CodeMcpDevinInterpolationUnrepresentable) rather than a second severity
 	// for this one.
-	CodeMcpInterpolationUnsupported  = "mcp.interpolation-unsupported"           // A single MCP value used an interpolation style the target cannot represent
-	CodeRuleClaudeNoPrimitive        = "rule.claude.no-primitive"                // Claude has no rules directory primitive
-	CodeRuleGeminiNoPrimitive        = "rule.gemini.no-primitive"                // Gemini has no rules directory primitive
-	CodeRuleDevinUnsupported         = "rule.devin.unsupported"                  // Rules are out of scope for the Devin target (a scope decision, not a Devin limit)
-	CodeRuleCodexUnsupported         = "rule.codex.unsupported"                  // Codex rules and AGENTS.md generation are out of scope
-	CodeCodexFieldDropped            = "compile.codex.field-dropped"             // Benign IR field has no documented Codex equivalent
-	CodeIngestCodexPromptDeprecated  = "ingest.codex.prompt-deprecated"          // Deprecated prompt ingested as command
-	CodeRuleFactoryMetadataDropped   = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
-	CodeCanonicalFieldOverridesExtra = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
-	CodeHookPromptUnsupported        = "hook.prompt.unsupported"                 // Target cannot represent prompt hooks
-	CodeHookGeminiEventUnmappable    = "hook.gemini.event-unmappable"            // Gemini has no equivalent event
-	CodeHookGeminiUnsupportedType    = "hook.gemini.unsupported-type"            // Gemini cannot represent hook type
-	CodeHookWindsurfUnsupportedType  = "hook.windsurf.unsupported-type"          // Windsurf cannot represent hook type
-	CodeSkillSupportFilesDeferred    = "skill.support-files-deferred"            // Support file bytes are unavailable to this layer
-	CodeMcpLiteralCredential         = "mcp.credentials.literal-secret"          // Literal credential-like value detected
+	CodeMcpInterpolationUnsupported   = "mcp.interpolation-unsupported"           // A single MCP value used an interpolation style the target cannot represent
+	CodeRuleClaudeNoPrimitive         = "rule.claude.no-primitive"                // Claude has no rules directory primitive
+	CodeRuleGeminiNoPrimitive         = "rule.gemini.no-primitive"                // Gemini has no rules directory primitive
+	CodeRuleDevinUnsupported          = "rule.devin.unsupported"                  // Rules are out of scope for the Devin target (a scope decision, not a Devin limit)
+	CodeRuleCodexUnsupported          = "rule.codex.unsupported"                  // Codex rules and AGENTS.md generation are out of scope
+	CodeCodexFieldDropped             = "compile.codex.field-dropped"             // Benign IR field has no documented Codex equivalent
+	CodeSubagentCodexModelDropped     = "subagent.codex.model-dropped"            // Codex-only model omitted for a non-Codex target
+	CodeSubagentCodexEffortDropped    = "subagent.codex.effort-dropped"           // Codex-only reasoning effort omitted for a non-Codex target
+	CodeHookCodexPluginRootUnresolved = "hook.codex.plugin-root-unresolved"       // Command carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
+	CodeMcpCodexPluginRootUnresolved  = "mcp.codex.plugin-root-unresolved"        // Value carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
+	CodeIngestCodexPromptDeprecated   = "ingest.codex.prompt-deprecated"          // Deprecated prompt ingested as command
+	CodeIngestCodexFieldDropped       = "ingest.codex.field-dropped"              // Benign native Codex field omitted
+	CodeRuleFactoryMetadataDropped    = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
+	CodeCanonicalFieldOverridesExtra  = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
+	CodeHookPromptUnsupported         = "hook.prompt.unsupported"                 // Target cannot represent prompt hooks
+	CodeHookGeminiEventUnmappable     = "hook.gemini.event-unmappable"            // Gemini has no equivalent event
+	CodeHookGeminiUnsupportedType     = "hook.gemini.unsupported-type"            // Gemini cannot represent hook type
+	CodeHookWindsurfUnsupportedType   = "hook.windsurf.unsupported-type"          // Windsurf cannot represent hook type
+	CodeSkillSupportFilesDeferred     = "skill.support-files-deferred"            // Support file bytes are unavailable to this layer
+	CodeMcpLiteralCredential          = "mcp.credentials.literal-secret"          // Literal credential-like value detected
 
 	CodeSkillDevinModelUnmappable    = "skill.devin.model-unmappable"    // Explicit skill model is not a stable Devin alias
 	CodeSkillDevinTriggerUnmappable  = "skill.devin.trigger-unmappable"  // Trigger is outside Devin's user/model vocabulary
@@ -261,6 +266,11 @@ const (
 	// a hook event name), and resource names.
 	CodeMaterializeDevinHookSatisfiedByUnmanaged = "materialize.devin.hook-satisfied-by-unmanaged" // A semantically identical handwritten hook already exists; no entry was added
 	CodeMaterializeDevinAggregatePrunePostponed  = "materialize.devin.aggregate-prune-postponed"   // A resource was skipped this run, so stale owned entries were not pruned
+	CodeMaterializeCodexAggregateMalformed       = "materialize.codex.aggregate-malformed"         // A Codex aggregate could not be parsed or safely reconciled
+	CodeMaterializeCodexAggregateUnpatchable     = "materialize.codex.aggregate-unpatchable"       // A Codex aggregate entry uses a native form that cannot be safely patched
+	CodeMaterializeDestinationOverlap            = "materialize.destination.overlap"               // Resolved Codex destinations overlap in a way that cannot be safely coalesced
+	CodeMaterializeCodexTrustReview              = "materialize.codex.trust-review"                // Repository Codex hooks or MCP configuration changed and may require trust review
+	CodeMaterializeCodexTrustReviewPending       = "materialize.codex.trust-review-pending"        // A check found a pending repository Codex change without mutating files or trust state
 
 	// Devin DOCTOR warning codes (work package D11). Both are warnings and
 	// NEITHER blocks anything: "Sync does not require a Devin binary. `doctor`
@@ -285,10 +295,17 @@ const (
 // Error codes.
 const (
 	CodeSkillCodexSecurityRestrictionUnsupported = "skill.codex.security-restriction-unsupported" // Codex skill cannot enforce an explicit restriction
+	CodeHookEventUnmappable                      = "hook.event-unmappable"                        // Target cannot preserve this hook event
+	CodeHookNativeLiteralUnsupported             = "hook.native-literal-unsupported"              // Native Codex hook literal would be reinterpreted
+	CodeHookCodexNativeFieldsUnsupported         = "hook.codex.native-fields-unsupported"         // Target cannot preserve native Codex hook fields
 	CodeHookCodexUnsupported                     = "hook.codex.unsupported"                       // Codex does not execute this hook event or handler
+	CodeMcpSecurityRestrictionUnsupported        = "mcp.security-restriction-unsupported"         // Target cannot preserve native MCP authority or literal semantics
 	CodeMcpCodexSecurityUnsupported              = "mcp.codex.security-unsupported"               // Codex MCP cannot preserve authentication or transport semantics
 	CodeIngestCodexLoadResourceFailed            = "ingest.codex.load-resource-failed"            // One malformed Codex resource was skipped
 	CodeIngestCodexDuplicateIdentity             = "ingest.codex.duplicate-identity"              // Duplicate native identity suppressed
+	CodeIngestCodexHookUnsupported               = "ingest.codex.hook-unsupported"                // Unsupported native hook skipped
+	CodeIngestCodexMcpSecurityUnsupported        = "ingest.codex.mcp-security-unsupported"        // Security-sensitive native MCP fields cannot be represented
+	CodeIngestCodexSubagentSecurityUnsupported   = "ingest.codex.subagent-security-unsupported"   // Authority-bearing native subagent fields cannot be represented
 	CodeMaterializeCodexDuplicateIdentity        = "materialize.codex.duplicate-identity"         // Duplicate desired Codex aggregate identity suppressed
 	CodeSubagentFactoryDisallowedToolsDropped    = "subagent.factory.disallowed-tools-dropped"    // Factory cannot represent disallowedTools
 	CodeSubagentFactoryIsolationDropped          = "subagent.factory.isolation-dropped"           // Factory cannot represent isolation
@@ -480,7 +497,12 @@ var codeCatalog = []CodeDoc{
 	{CodeRuleDevinUnsupported, SeverityWarning, "Rules are out of scope for the Devin target; no rule artifact was emitted", "This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at .devin/rules/<name>.md is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under .devin/rules by hand"},
 	{CodeRuleCodexUnsupported, SeverityWarning, "Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted", "Use a supported resource kind or manage AGENTS.md separately"},
 	{CodeCodexFieldDropped, SeverityWarning, "A benign IR field has no documented Codex equivalent and was omitted", "Remove the field or choose a target that represents it"},
+	{CodeSubagentCodexModelDropped, SeverityWarning, "A Codex-only subagent model was omitted for a non-Codex target", "Compile to Codex to preserve the native-only model, or choose a portable canonical model"},
+	{CodeSubagentCodexEffortDropped, SeverityWarning, "A Codex-only subagent reasoning effort was omitted for a non-Codex target", "Compile to Codex to preserve the native-only effort, or use a portable canonical effort"},
+	{CodeHookCodexPluginRootUnresolved, SeverityWarning, "The hook command references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the command resolves, or use an absolute command path"},
+	{CodeMcpCodexPluginRootUnresolved, SeverityWarning, "An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the value resolves, or use an absolute path"},
 	{CodeIngestCodexPromptDeprecated, SeverityWarning, "A deprecated Codex prompt was ingested as a command", "Move the prompt to a command skill under .agents/skills"},
+	{CodeIngestCodexFieldDropped, SeverityWarning, "A benign native Codex field has no canonical equivalent and was omitted", "Remove the field or keep the resource in Codex format"},
 	{CodeRuleFactoryMetadataDropped, SeverityWarning, "Factory rules are plain markdown; globs/alwaysApply metadata dropped", "Factory does not support conditional (glob-scoped) rule application; the rule body is emitted verbatim"},
 	{CodeCanonicalFieldOverridesExtra, SeverityWarning, "Canonical field overrides a conflicting preserved extra", "The canonical modeled value wins; rename the extension field to preserve both values"},
 	{CodeHookPromptUnsupported, SeverityWarning, "Target cannot represent prompt hooks; hook dropped", "Use a command hook on this target"},
@@ -523,10 +545,17 @@ var codeCatalog = []CodeDoc{
 
 	// Error
 	{CodeSkillCodexSecurityRestrictionUnsupported, SeverityError, "Codex skills cannot enforce an explicit security restriction; artifact suppressed", "Remove the restriction explicitly or use a target that represents it"},
+	{CodeHookEventUnmappable, SeverityError, "Target cannot preserve this hook event; hook suppressed", "Use a hook event documented by the target"},
+	{CodeHookNativeLiteralUnsupported, SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", "Remove the target-specific interpolation token or keep the hook in Codex format"},
+	{CodeHookCodexNativeFieldsUnsupported, SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", "Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format"},
 	{CodeHookCodexUnsupported, SeverityError, "Codex does not execute this hook event or handler; hook suppressed", "Use a documented Codex command hook event"},
+	{CodeMcpSecurityRestrictionUnsupported, SeverityError, "Target cannot preserve native MCP authority or literal semantics; server suppressed", "Keep the server in its native format or remove the unsupported security field explicitly"},
 	{CodeMcpCodexSecurityUnsupported, SeverityError, "Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed", "Use documented Codex MCP fields or remove the unsupported setting explicitly"},
 	{CodeIngestCodexLoadResourceFailed, SeverityError, "One malformed Codex resource or aggregate was skipped", "Fix the reported native file; independent valid resources were retained"},
 	{CodeIngestCodexDuplicateIdentity, SeverityError, "Duplicate Codex resource identity was suppressed without choosing a winner", "Rename one duplicate native resource"},
+	{CodeIngestCodexHookUnsupported, SeverityError, "An unsupported native Codex hook event or handler was skipped", "Use a documented Codex event with a command handler"},
+	{CodeIngestCodexMcpSecurityUnsupported, SeverityError, "Security-sensitive native Codex MCP fields cannot be represented safely", "Remove the unsupported restriction or keep the server in Codex format"},
+	{CodeIngestCodexSubagentSecurityUnsupported, SeverityError, "Authority-bearing native Codex subagent fields cannot be represented safely", "Remove the unsupported restriction or keep the subagent in Codex format"},
 	{CodeMaterializeCodexDuplicateIdentity, SeverityError, "Duplicate desired Codex aggregate identity was suppressed without choosing a winner", "Rename one duplicate selected resource"},
 	{CodeSubagentFactoryDisallowedToolsDropped, SeverityError, "Factory cannot represent disallowedTools; artifact suppressed", "Use a target that supports disallowedTools or remove the restriction explicitly"},
 	{CodeSubagentFactoryIsolationDropped, SeverityError, "Factory cannot represent isolation; artifact suppressed", "Use a target that supports isolation or remove the restriction explicitly"},
@@ -580,6 +609,11 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeDevinAggregateMalformed, SeverityError, "The destination Devin aggregate JSON could not be parsed, so that file was left exactly as found", "Fix the reported parse location by hand; a safety backup of the raw bytes is retained under the Agent Marketplace state root"},
 	{CodeMaterializeDevinAggregateShape, SeverityError, "The destination Devin aggregate has a shape this target cannot patch, so that file was left exactly as found", "The aggregate root and its hooks/mcpServers members must be JSON objects; move the conflicting value out of the way by hand"},
 	{CodeMaterializeDevinAggregateWrite, SeverityError, "The journaled Devin aggregate mutation failed, so that file was left exactly as found", "Nothing was partially written; check the reported cause and re-run sync"},
+	{CodeMaterializeCodexAggregateMalformed, SeverityError, "A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found", "Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved"},
+	{CodeMaterializeCodexAggregateUnpatchable, SeverityError, "An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved", "Rewrite the server as a standard [mcp_servers.<name>] table or edit it by hand before syncing"},
+	{CodeMaterializeDestinationOverlap, SeverityError, "Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused", "Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots"},
+	{CodeMaterializeCodexTrustReview, SeverityWarning, "Repository Codex hooks or MCP configuration changed and may require project trust review", "Review or re-approve the repository in Codex before using the changed configuration"},
+	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
 }

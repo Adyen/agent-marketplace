@@ -340,8 +340,12 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 		home = "/tmp"
 	}
 
-	roots := make(map[hcc.Target]Roots, len(targetmeta.Definitions()))
-	for _, definition := range targetmeta.Definitions() {
+	definitions := targetmeta.Definitions()
+	roots := make(map[hcc.Target]Roots, len(definitions))
+	for _, definition := range definitions {
+		if definition.PartitionedRoots {
+			continue
+		}
 		roots[hcc.Target(definition.Target)] = Roots{
 			Repo:    definition.RepoRoot,
 			Machine: filepath.Join(home, definition.UserRoot),
@@ -351,10 +355,6 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 }
 
 func MachineRoot(target hcc.Target) (string, bool) {
-	if target == hcc.Target(targetmeta.TargetCodex) {
-		home, err := os.UserHomeDir()
-		return home, err == nil
-	}
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
 }
@@ -552,10 +552,8 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// causing materialize to write to empty or relative paths.
 	for target := range m {
 		if _, ok := InstallRoots[target]; !ok {
-			// Codex is deliberately staged privately until final promotion. Its
-			// partitioned destinations are resolved by ResolveDestinations and
-			// therefore cannot have a single InstallRoots entry.
-			if target == hcc.Target(targetmeta.TargetCodex) {
+			definition, declared := targetmeta.Lookup(string(target))
+			if declared && definition.PartitionedRoots {
 				continue
 			}
 			return nil, fmt.Errorf("harness: InstallRoots missing entry for target %q present in TargetInfoMap", target)

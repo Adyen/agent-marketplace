@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -219,6 +220,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		targetHarnesses[i] = string(t)
 	}
 	slices.Sort(targetHarnesses)
+	harnessTargets, err := buildHarnessTargetRows(repoRoot, targetHarnesses)
+	if err != nil {
+		return fmt.Errorf("resolve harness target roots: %w", err)
+	}
 
 	if err := writeStatusSections(out, statusView{
 		diag:            result.Diagnostics,
@@ -233,7 +238,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		dryRunReport:    dryRunReport,
 		targetHarnesses: targetHarnesses,
 		targetSource:    result.TargetHarnessSource,
-		harnessTargets:  buildHarnessTargetRows(repoRoot, targetHarnesses),
+		harnessTargets:  harnessTargets,
 	}); err != nil {
 		return err
 	}
@@ -521,12 +526,8 @@ func buildExcludedRows(withoutExcludes, withExcludes []resolver.ResolvedArtifact
 // harnessTargetRow describes one selected harness target: what it can do and
 // where it writes.
 //
-// The section exists because the plan requires that "Help text, status, list
-// badges, conversion allowlists, and target displays include Devin". Devin is
-// the first target whose two roots differ in a way a user has to know
-// (`.devin` in the repo, `~/.config/devin` for user scope), and the first whose
-// capability set a user may reasonably doubt, so status states both rather than
-// leaving them to documentation.
+// Partitioned targets use named root summaries so status never invents a
+// primary root for a layout that has none.
 type harnessTargetRow struct {
 	Target       string
 	Capabilities string
@@ -537,11 +538,11 @@ type harnessTargetRow struct {
 // buildHarnessTargetRows renders the effective harness list from the
 // authoritative target registry. An unknown harness name is shown rather than
 // hidden: status exists to explain misconfiguration.
-func buildHarnessTargetRows(repoRoot string, harnesses []string) []harnessTargetRow {
+func buildHarnessTargetRows(repoRoot string, harnesses []string) ([]harnessTargetRow, error) {
 	if len(harnesses) == 0 {
-		return nil
+		return nil, nil
 	}
-	roots := harness.MakeInstallRoots()
+	legacyRoots := harness.MakeInstallRoots()
 	seen := make(map[string]bool, len(harnesses))
 	rows := make([]harnessTargetRow, 0, len(harnesses))
 	for _, name := range harnesses {
@@ -551,14 +552,47 @@ func buildHarnessTargetRows(repoRoot string, harnesses []string) []harnessTarget
 		}
 		seen[name] = true
 		row := harnessTargetRow{Target: name, Capabilities: targetCapabilities(name), RepoRoot: "-", MachineRoot: "-"}
-		if root, ok := roots[hcc.Target(name)]; ok {
-			row.RepoRoot = root.For(false, repoRoot)
-			row.MachineRoot = root.For(true, repoRoot)
+		if definition, ok := targetmeta.Lookup(name); ok {
+			row.Target = targetDisplayName(name)
+			if definition.PartitionedRoots {
+				repoSummary, machineSummary, err := harnessRootSummaries(hcc.Target(name), repoRoot)
+				if err != nil {
+					return nil, err
+				}
+				row.RepoRoot = repoSummary
+				row.MachineRoot = machineSummary
+			} else if root, exists := legacyRoots[hcc.Target(name)]; exists {
+				row.RepoRoot = root.For(false, repoRoot)
+				row.MachineRoot = root.For(true, repoRoot)
+			}
 		}
 		rows = append(rows, row)
 	}
 	slices.SortFunc(rows, func(a, b harnessTargetRow) int { return cmp.Compare(a.Target, b.Target) })
-	return rows
+	return rows, nil
+}
+
+func harnessRootSummaries(target hcc.Target, repoRoot string) (string, string, error) {
+	repo, err := harness.ResolveDestinations(target, false, repoRoot)
+	if err != nil {
+		return "", "", err
+	}
+	machine, err := harness.ResolveDestinations(target, true, repoRoot)
+	if err != nil {
+		return "", "", err
+	}
+	return destinationSummary(repo), destinationSummary(machine), nil
+}
+
+func destinationSummary(destinations []harness.Destination) string {
+	if len(destinations) == 1 && destinations[0].ID == "default" {
+		return destinations[0].Root
+	}
+	parts := make([]string, 0, len(destinations))
+	for _, destination := range destinations {
+		parts = append(parts, destination.ID+"="+destination.Root)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func harnessTargetRowsToCells(rows []harnessTargetRow) [][]string {
@@ -602,7 +636,11 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		}
 	}
 
-	targetHarnessStr := strings.Join(targetHarnesses, ", ")
+	displayTargets := make([]string, len(targetHarnesses))
+	for i, target := range targetHarnesses {
+		displayTargets[i] = targetDisplayName(target)
+	}
+	targetHarnessStr := strings.Join(displayTargets, ", ")
 	if targetHarnessStr == "" {
 		targetHarnessStr = "none configured"
 	}
@@ -777,10 +815,21 @@ func harnessLabel(targets []hcc.Target) string {
 	}
 	labels := make([]string, 0, len(targets))
 	for _, target := range targets {
-		labels = append(labels, string(target))
+		labels = append(labels, targetDisplayName(string(target)))
 	}
 	slices.Sort(labels)
 	return strings.Join(labels, ",")
+}
+
+func targetDisplayName(name string) string {
+	if name != string(targetmeta.TargetCodex) {
+		return name
+	}
+	definition, ok := targetmeta.Lookup(name)
+	if !ok {
+		return name
+	}
+	return definition.Label
 }
 
 func orphanedRowsToCells(rows []orphanedSymlinkRow) [][]string {

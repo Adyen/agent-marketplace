@@ -87,7 +87,7 @@ func renderDetail(m Model) string {
 			if r.IsAvailable {
 				harnessLabel = "Would target:"
 			}
-			harnessValue := strings.Join(r.Harnesses, ", ")
+			harnessValue := harnessListLabel(r.Harnesses, ", ")
 			if r.HarnessSource != "" {
 				harnessValue += " (" + r.HarnessSource + ")"
 			}

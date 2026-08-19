@@ -27,8 +27,13 @@ import (
 func TestDoctorCommandReportsDetectedHarnessAndInstallRoots(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
 
 	repoRoot := t.TempDir()
+	canonicalRepo, _ := ownership.CanonicalRoot(repoRoot)
+	canonicalHome, _ := ownership.CanonicalRoot(homeDir)
+	canonicalCodexHome, _ := ownership.CanonicalRoot(codexHome)
 	writeClaudePluginSkill(t, repoRoot, "doctor-skill")
 	withWorkingDir(t, repoRoot)
 
@@ -49,6 +54,8 @@ func TestDoctorCommandReportsDetectedHarnessAndInstallRoots(t *testing.T) {
 		filepath.Join(repoRoot, ".devin"),
 		filepath.Join(homeDir, ".config", "devin"),
 		"devin repo=",
+		"Codex repo=repo-agents=" + filepath.Join(canonicalRepo, ".agents") + ", repo-codex=" + filepath.Join(canonicalRepo, ".codex"),
+		"machine=machine-agents=" + filepath.Join(canonicalHome, ".agents") + ", machine-codex=" + canonicalCodexHome,
 		"capabilities=compile,ingest,convert,tui",
 	} {
 		if !strings.Contains(output, needle) {

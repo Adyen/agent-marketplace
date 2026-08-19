@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Read"
+      }
+    ]
+  }
+}

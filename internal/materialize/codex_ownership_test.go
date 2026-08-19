@@ -62,6 +62,53 @@ func TestCodexHooksReconcileWithDurableOwnership(t *testing.T) {
 	}
 }
 
+func TestCodexHooksReplaceReformattedOwnedEntryAsDrift(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hook := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
+	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+	if report, err := Run(context.Background(), repo, selection); err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed hook: report=%#v err=%v", report, err)
+	}
+	hooksPath := filepath.Join(repo, ".codex", "hooks.json")
+	reformatted := []byte(`{
+  "hooks": {
+    "PreToolUse": [
+      {
+        // keep this owned-entry formatting
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./managed"
+          }
+        ]
+      }
+    ]
+  }
+}
+`)
+	if err := os.WriteFile(hooksPath, reformatted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Run(context.Background(), repo, selection)
+	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("drift repair sync: report=%#v err=%v", report, err)
+	}
+	if !diag.HasCode(report.Diags, diag.CodeOwnershipEntryDrift) {
+		t.Fatalf("diagnostics = %#v, want %s", report.Diags, diag.CodeOwnershipEntryDrift)
+	}
+	after, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) == string(reformatted) || strings.Contains(string(after), "keep this owned-entry formatting") {
+		t.Fatalf("raw-byte drift was not replaced from the desired hook:\n%s", after)
+	}
+}
+
 func TestCodexMCPReconcilePreservesUnmanagedTOML(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", t.TempDir())

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -81,6 +82,50 @@ func TestDetectAncestorExcludes_WarnsWhenAncestorMaterializesExcludedSkill(t *te
 	var r resolver.Remediable
 	if !errors.As(warns[0], &r) {
 		t.Fatal("warning should satisfy resolver.Remediable")
+	}
+}
+
+func TestDetectAncestorExcludes_WarnsWhenAncestorMaterializesCodexSkill(t *testing.T) {
+	repoRoot := t.TempDir()
+	sub := filepath.Join(repoRoot, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexSkillDir := filepath.Join(repoRoot, ".agents", "skills", "codex-skill")
+	if err := os.MkdirAll(codexSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	warns := detectAncestorMaterializedExcludes(
+		sub, repoRoot,
+		[]hcc.Target{hcc.TargetCodex},
+		skillExclude("codex-skill"),
+		nil,
+	)
+	if len(warns) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warns), warns)
+	}
+	var w *AncestorMaterializedExcludeWarning
+	if !errors.As(warns[0], &w) {
+		t.Fatalf("expected AncestorMaterializedExcludeWarning, got %T", warns[0])
+	}
+	if w.Harness != hcc.TargetCodex {
+		t.Errorf("Harness = %q, want %q", w.Harness, hcc.TargetCodex)
+	}
+}
+
+func TestSkillDir_CodexDestinationResolutionErrorFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink loops are not portable on windows")
+	}
+	repoRoot := t.TempDir()
+	agentsRoot := filepath.Join(repoRoot, ".agents")
+	if err := os.Symlink(agentsRoot, agentsRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := skillDir(hcc.TargetCodex, repoRoot, "codex-skill"); got != "" {
+		t.Fatalf("skillDir() = %q, want empty path after destination resolution error", got)
 	}
 }
 

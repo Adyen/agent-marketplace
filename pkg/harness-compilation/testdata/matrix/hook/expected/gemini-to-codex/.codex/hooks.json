@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/plugins/demo/scripts/check.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

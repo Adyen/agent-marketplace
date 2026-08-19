@@ -3,7 +3,7 @@
     "BeforeTool": [
       {
         "command": "${extensionPath}/scripts/check.sh",
-        "event": "PreToolUse",
+        "matcher": "Read",
         "type": "command"
       }
     ]

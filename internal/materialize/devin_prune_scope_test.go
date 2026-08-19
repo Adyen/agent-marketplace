@@ -242,6 +242,18 @@ func TestBlockedComponentsForMapsEveryDevinKind(t *testing.T) {
 			want:     nil,
 		},
 		{
+			name:     "a codex hook writes to an aggregate file, so it blocks no component",
+			target:   hcc.TargetCodex,
+			resource: ir.NewHook("h", "Stop", "echo", "command", nil, ir.SourceRef{}),
+			want:     nil,
+		},
+		{
+			name:     "a codex mcp server writes to an aggregate file",
+			target:   hcc.TargetCodex,
+			resource: ir.NewMcpServer("m", "bin", nil, nil, nil, ir.SourceRef{}),
+			want:     nil,
+		},
+		{
 			name:     "a devin skill blocks the skills component",
 			target:   hcc.TargetDevin,
 			resource: ir.NewSkill("s", "d", "b", nil, nil, ir.SourceRef{}),

@@ -40,6 +40,22 @@ func TestTranslateSkill_NativeSKILLMd(t *testing.T) {
 	assertGoldenFile(t, "testdata/skill_native.golden", artifact.Bytes)
 }
 
+func TestCompilerDirectTranslationGuardsNativeCodexSecurity(t *testing.T) {
+	server := ir.NewMcpServerWithOptions("native", "", nil, nil, nil, ir.SourceRef{}, ir.WithMcpURL("https://example.test/mcp"))
+	server.Ext.Codex = &extpkg.Codex{BearerTokenEnvVar: "TOKEN"}
+
+	artifacts, diagnostics, err := (Compiler{}).Translate(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 0 {
+		t.Fatalf("artifacts = %d, want none for dropped native authentication", len(artifacts))
+	}
+	if !diag.HasErrors(diagnostics) || !diag.HasCode(diagnostics, diag.CodeMcpSecurityRestrictionUnsupported) {
+		t.Fatalf("diagnostics = %#v, want %s error", diagnostics, diag.CodeMcpSecurityRestrictionUnsupported)
+	}
+}
+
 func TestTranslateSkill_PreservesExplicitEmptyTriggers(t *testing.T) {
 	skill := ir.NewSkill("empty-triggers", "Skill", "body\n", []string{}, nil, ir.SourceRef{})
 	artifacts, _, err := (Compiler{}).Translate(skill)

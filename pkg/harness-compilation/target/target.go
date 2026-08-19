@@ -64,6 +64,7 @@ var definitions = []Definition{
 	// UIOrder 5 preserves the display order of the five targets that shipped
 	// before it.
 	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
+	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
 }
 
 // Definitions returns all target declarations in stable display order.
@@ -86,10 +87,6 @@ func IsValid(name string) bool {
 	_, ok := Lookup(name)
 	return ok
 }
-
-// IsPrivate reports whether name is a known implementation target that is not
-// yet exposed through discovery, conversion, or UI target lists.
-func IsPrivate(name string) bool { return Target(name) == TargetCodex }
 
 // Targets returns all target identifiers in stable display order.
 func Targets() []Target {
