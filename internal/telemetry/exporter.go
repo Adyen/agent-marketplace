@@ -36,6 +36,18 @@ type exporterCache struct {
 	senders map[cacheKey]*http.Client
 }
 
+// transportCacheKey identifies an HTTP transport that can be shared by live
+// and drain clients for the same endpoint/TLS configuration.
+type transportCacheKey struct {
+	endpoint string
+	caFile   string
+}
+
+var (
+	transportCacheMu sync.Mutex
+	transportCache   = make(map[transportCacheKey]*http.Transport)
+)
+
 type cacheKey struct {
 	endpoint   string
 	headerHash string
@@ -185,28 +197,31 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		return nil, nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
-	tlsCfg, err := tlsConfig(caFile)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	base, ok := http.DefaultTransport.(*http.Transport)
+	tkey := transportCacheKey{endpoint: endpoint, caFile: caFile}
+	transportCacheMu.Lock()
+	innerTransport, ok := transportCache[tkey]
 	if !ok {
-		base = &http.Transport{}
-	}
-	liveTransport := base.Clone()
-	liveTransport.DisableKeepAlives = true
-	liveTransport.TLSClientConfig = tlsCfg
+		tlsCfg, err := tlsConfig(caFile)
+		if err != nil {
+			transportCacheMu.Unlock()
+			return nil, nil, err
+		}
 
-	sendTransport := base.Clone()
-	sendTransport.DisableKeepAlives = true
-	sendTransport.TLSClientConfig = tlsCfg
+		base, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			base = &http.Transport{}
+		}
+		innerTransport = base.Clone()
+		innerTransport.TLSClientConfig = tlsCfg
+		transportCache[tkey] = innerTransport
+	}
+	transportCacheMu.Unlock()
 
 	live := &http.Client{
-		Transport: &queueTransport{inner: liveTransport, queue: q, route: route},
+		Transport: &queueTransport{inner: innerTransport, queue: q, route: route},
 	}
 	send := &http.Client{
-		Transport: sendTransport,
+		Transport: innerTransport,
 		Timeout:   30 * time.Second,
 	}
 

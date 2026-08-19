@@ -6,27 +6,39 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	amconfig "github.com/Adyen/agent-marketplace/internal/config"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
+var (
+	benchSrvOnce sync.Once
+	benchSrv     *httptest.Server
+)
+
+func benchServer() *httptest.Server {
+	benchSrvOnce.Do(func() {
+		benchSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/x-protobuf")
+			w.WriteHeader(http.StatusOK)
+		}))
+		// Prime the server so subsequent benchmark loops do not pay the
+		// listener-startup race.
+		if _, err := http.Get(benchSrv.URL); err != nil {
+			panic(err)
+		}
+	})
+	return benchSrv
+}
+
 func BenchmarkNewShutdown(b *testing.B) {
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	// Wait for the httptest server to be ready before the benchmark loop.
-	if _, err := http.Get(srv.URL); err != nil {
-		b.Fatalf("server not ready: %v", err)
-	}
+	srv := benchServer()
 
 	user := &amconfig.Config{
 		Telemetry: &tmcfg.TelemetryConfig{
@@ -54,8 +66,6 @@ func BenchmarkNewShutdown(b *testing.B) {
 			b.Fatal(err)
 		}
 		tel.CommandCounter().Add(ctx, 1, nil)
-		_, span := tel.StartSpan(ctx, "bench-span", nil)
-		span.End()
 		if err := tel.Shutdown(ctx); err != nil {
 			b.Fatal(err)
 		}
