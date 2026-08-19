@@ -68,6 +68,23 @@ func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, err
 	return out, digest, nil
 }
 
+// CanonicalSourceRevisionPayload returns the deterministic JSON payload for m
+// with the self-referential revision_digest field excluded, together with its
+// SHA-256 content digest. This is the form stored as a content-addressed blob.
+func CanonicalSourceRevisionPayload(m SourceRevisionManifest) ([]byte, string, error) {
+	if err := m.Validate(); err != nil {
+		return nil, "", err
+	}
+	digestOnly := m
+	digestOnly.RevisionDigest = ""
+	payload, err := canonicalRevisionPayload(digestOnly)
+	if err != nil {
+		return nil, "", err
+	}
+	digest := RevisionDigest(payload)
+	return payload, digest, nil
+}
+
 // canonicalRevisionPayload returns deterministic JSON for m.
 func canonicalRevisionPayload(m SourceRevisionManifest) ([]byte, error) {
 	cm := m

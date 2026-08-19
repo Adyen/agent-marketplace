@@ -22,6 +22,7 @@ type BuildResult struct {
 	Capabilities   []string
 	Name           string
 	Kind           string
+	License        string
 	Rejected       bool
 	RejectReason   string
 }
@@ -61,6 +62,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	base.Manifest.AnalyzerVersion = analyzerVersion(opts)
 	base.Manifest.Capabilities = caps
 	base.Manifest.Findings = ToCanonicalFindings(report.Findings)
+	base.Manifest.License = opts.Source.License
 	base.Manifest.Provenance = provenanceFromSource(opts)
 	base.Manifest.Revision = opts.Source.Ref
 	base.Manifest.SourceID = opts.Source.ID
@@ -87,6 +89,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		Artifact:       artifact,
 		Name:           artifact.Manifest.Name,
 		Kind:           artifact.Manifest.Kind,
+		License:        base.Manifest.License,
 		RawArchive:     raw,
 		ContentDigest:  base.Manifest.ContentDigest,
 		ArchiveDigest:  digest,
@@ -148,6 +151,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 			Name:             c.Name(),
 			Revision:         opts.Source.Ref,
 			ContentDigest:    artifactContentDigest,
+			License:          opts.Source.License,
 			AnalyzerVersion:  analyzerVersion(opts),
 			Capabilities:     caps,
 			Findings:         ToCanonicalFindings(report.Findings),
@@ -202,6 +206,9 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 
 	return BuildResult{
 		Artifact:       decoded,
+		Name:           c.Name(),
+		Kind:           "collection",
+		License:        artifact.Manifest.License,
 		RawArchive:     raw,
 		ContentDigest:  artifactContentDigest,
 		ArchiveDigest:  archiveDigest,
