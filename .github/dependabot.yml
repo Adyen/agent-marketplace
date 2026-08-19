@@ -6,6 +6,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    cooldown:
+      default-days: 21
     labels:
       - dependencies
       - ci
@@ -16,6 +18,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: deps
+    cooldown:
+      default-days: 21
     labels:
       - dependencies
       - go

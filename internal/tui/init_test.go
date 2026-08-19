@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // TestMain silences the first-run init modal for every test in the tui
@@ -14,6 +16,8 @@ import (
 // (below) flip testSkipInitModal off for the duration of their assertion.
 func TestMain(m *testing.M) {
 	testSkipInitModal = true
+	lipgloss.SetColorProfile(termenv.Ascii)
+	lipgloss.SetHasDarkBackground(true)
 	// The runtime allowlist is now derived from effective configuration
 	// layers. TUI tests use example.com URLs with no allowlist configured
 	// (permitting all) unless they explicitly declare one.
