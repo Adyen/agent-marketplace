@@ -697,6 +697,63 @@ func TestLockObserverReportsContentionWithoutSleeping(t *testing.T) {
 	}
 }
 
+func TestLockReleaseObserverRunsBeforeKernelUnlock(t *testing.T) {
+	t.Setenv(LockTimeoutEnvVar, "0")
+	f := newFixture(t)
+	probe := f.store(WithLockTimeout(0))
+	var probeErr error
+	holder := f.store(WithLockObserver(func(ev LockEvent) {
+		if ev.Kind != LockReleased || ev.Depth != 0 {
+			return
+		}
+		release, err := probe.Lock()
+		probeErr = err
+		if release != nil {
+			release()
+		}
+	}))
+
+	release, err := holder.Lock()
+	if err != nil {
+		t.Fatalf("holder Lock: %v", err)
+	}
+	release()
+
+	if !errors.Is(probeErr, ErrLockTimeout) {
+		t.Fatalf("probe Lock from the release observer: want ErrLockTimeout, got %v", probeErr)
+	}
+	after, err := probe.Lock()
+	if err != nil {
+		t.Fatalf("probe Lock after release: %v", err)
+	}
+	after()
+}
+
+func TestLockReleaseSerializesSameStoreAcquisition(t *testing.T) {
+	f := newFixture(t)
+	serialized := false
+	var st *Store
+	st = f.store(WithLockObserver(func(ev LockEvent) {
+		if ev.Kind != LockReleased || ev.Depth != 0 {
+			return
+		}
+		if st.acquireMu.TryLock() {
+			st.acquireMu.Unlock()
+			return
+		}
+		serialized = true
+	}))
+
+	release, err := st.Lock()
+	if err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	release()
+	if !serialized {
+		t.Fatal("a concurrent acquisition could enter while the Store was still releasing its prior session")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The lock must not become evidence of ownership
 // ---------------------------------------------------------------------------
