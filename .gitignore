@@ -6,6 +6,10 @@
 /.codex
 /.devin
 /.factory
+!/.factory/
+/.factory/*
+!/.factory/threat-model.md
+!/.factory/security-config.json
 /.gemini
 /.windsurf/
 
