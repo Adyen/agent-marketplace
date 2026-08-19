@@ -2,7 +2,7 @@
 
 ## Project: harness-compilation
 
-A Go library that compiles AI-agent configuration resources written in a single canonical source format (Claude-plugin layout) into vendor-specific harness layouts. Six conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, and **Devin CLI** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions.
+A Go library that compiles AI-agent configuration resources written in a single canonical source format (Claude-plugin layout) into vendor-specific harness layouts. Seven conversion targets — **Claude Code**, **Factory Droid**, **Cursor**, **Windsurf**, **Gemini CLI**, **Devin CLI**, and **Codex** — each register both a compiler and an ingester, so each is valid as a conversion source and a conversion destination. `target/target.go` is the authoritative registry and `ValidateTargetRegistrations()` enforces that the declared capabilities and the registered implementations agree in both directions.
 
 Whether a target is selected for a given user is consumer policy, not a library restriction.
 
@@ -17,11 +17,11 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 
 ### Goals
 
-- Deterministic, byte-stable translation across the 6 targets (golden-file tested).
+- Deterministic, byte-stable translation across the 7 targets (golden-file tested).
 - Claude → IR → Claude round-trip must be byte-stable.
 - Stable public API: `Compile`, `CompileBundle`, `Materialize`, per-resource `Load*` functions.
 - A versioned diagnostic-code catalog (`diag/codes.md`) that consumer UIs can key off.
-- Day-1 resource coverage: **Skills, Commands, Subagents, Hooks, MCP servers** (~95% of real plugins). **Rules** (coding conventions) are also supported: Factory `.factory/rules/*.md` (plain markdown), Cursor/Windsurf `.mdc` (frontmatter with globs/alwaysApply, shared via `compile/mdc`), and a no-primitive diagnostic for Claude/Gemini.
+- Day-1 resource coverage: **Skills, Commands, Subagents, Hooks, MCP servers** (~95% of real plugins). **Rules** (coding conventions) are also supported: Factory `.factory/rules/*.md` (plain markdown), Cursor/Windsurf `.mdc` (frontmatter with globs/alwaysApply, shared via `compile/mdc`), no-primitive diagnostics for Claude/Gemini, and explicit scope diagnostics for Devin/Codex.
 - Per-resource compile is canonical; bundle compile is a thin wrapper and merges fragment artifacts (e.g. multiple MCP entries → one `mcp.json`).
 
 ### Non-goals

@@ -1,16 +1,18 @@
 # agent-marketplace
 
 `agent-marketplace` is a single Go binary that distributes shared AI agent
-resources — skills, commands, subagents, and MCP servers — from **registries**
-into the native layout of whichever AI coding harness you use (Factory Droid,
-Claude Code, Cursor, Windsurf, Gemini CLI, and Devin CLI).
+resources — skills, commands, subagents, hooks, and MCP servers — from
+**registries** into the native layout of whichever AI coding harness you use
+(Factory Droid, Claude Code, Cursor, Windsurf, Gemini CLI, Devin CLI, and
+Codex).
 
 A **registry** is just a Git repository (or a local directory) that holds those
 resources. You declare which registries you want, which resources to pull from
 each, and which harnesses to target. The CLI clones the registries, compiles
 the resources for your harness, and writes the result to disk. Your config is
-the source of truth; the generated harness files are disposable and can be
-re-created at any time with a single `sync`.
+the source of truth for marketplace-managed output: standalone artifacts can be
+re-created with `sync`, while entries in shared native configuration are
+reconciled without treating the whole file as disposable.
 
 > Every resource you enable is always tied to a specific registry — identified
 > by its **URL**, **ref**, and (optionally) **path**. There is no global,
@@ -359,6 +361,64 @@ unaffected.
 
 ---
 
+## Codex
+
+Codex is an opt-in harness target. In the TUI, press `H` and tick **Codex**, or
+add it to the machine-wide target set:
+
+```yaml
+# ~/.agents/config.yaml
+apiVersion: agent-marketplace/v3
+harnesses: [factory, codex]
+```
+
+Codex has two native roots per scope. `CODEX_HOME` must be absolute when set and
+changes only the machine `.codex` root; user skills remain under `~/.agents`.
+
+| Scope | Skills and converted commands | Subagents, hooks, and MCP servers |
+|---|---|---|
+| Repository | `<repo>/.agents/skills/` | `<repo>/.codex/` |
+| Machine | `~/.agents/skills/` | `$CODEX_HOME/` or `~/.codex/` |
+
+| Resource kind | Codex output |
+|---|---|
+| Skill | `.agents/skills/<name>/` containing `SKILL.md` |
+| Command | `.agents/skills/<name>/` containing a `SKILL.md` marked `x-agent-marketplace-kind: command` |
+| Subagent | `.codex/agents/<name>.toml` |
+| Hook | `.codex/hooks.json` |
+| MCP server | `[mcp_servers.<name>]` in `.codex/config.toml` |
+
+Codex is bidirectional: `convert --from codex`, `convert --to codex`, and
+`source_harness: codex` all work. Autodetection requires a `.codex` workspace;
+`.agents/skills` alone is intentionally not claimed as Codex-specific.
+The default symlink mode links each skill/command directory to the compiled
+cache; file mode writes a regular directory tree instead. `convert --to codex`
+refuses a destination that already contains `.codex/hooks.json` or
+`.codex/config.toml`; choose a new or empty destination so conversion never
+claims or overwrites shared configuration.
+
+`hooks.json` and `config.toml` are shared with handwritten configuration. Sync
+therefore reconciles only entries proven owned in durable state under
+`$XDG_STATE_HOME/agent-marketplace` (default
+`~/.local/state/agent-marketplace`), preserves comments and unrelated entries,
+and takes a mandatory raw-byte backup before mutation. Missing or corrupt state
+fails closed: existing entries become unmanaged, collisions are refused, and
+nothing is pruned. A malformed aggregate blocks only that file.
+
+Changing repository hooks or MCP configuration may require Codex project trust
+review. A real mutation emits `materialize.codex.trust-review`; `sync --check`
+uses `materialize.codex.trust-review-pending`. Agent Marketplace never edits
+Codex trust state or adds Codex output paths to `.gitignore`.
+
+Explicit exclusions: Codex rules and `AGENTS.md` generation are out of scope,
+and the compiler never emits deprecated `.codex/prompts/*.md`. Legacy prompts
+can be ingested as commands with `ingest.codex.prompt-deprecated` so they can be
+migrated to command skills. Agent Marketplace never installs, requires, or
+probes a Codex executable; sync, check, ingestion, and conversion are purely
+layout-driven.
+
+---
+
 ## Devin
 
 Devin CLI is a harness target. Select it the same way as any other target:
@@ -368,12 +428,12 @@ Devin CLI is a harness target. Select it the same way as any other target:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v3
 harnesses: [factory, devin]
 ```
 
 Devin writes to its canonical roots — `<repo>/.devin` for repo scope and
-`~/.config/devin` for machine scope — and covers all five selectable resource
+`~/.config/devin` for machine scope — and covers all five target-materialized
 kinds:
 
 | Resource kind | Devin output |
@@ -480,6 +540,9 @@ about *where* you put it. Empirically:
   also merged, but through a different mechanism: no marker is written into
   them, and ownership comes from durable state outside the repo. See
   [Devin](#devin) above.
+- Codex's shared files (`.codex/hooks.json`, `.codex/config.toml`) use the same
+  durable ownership authority and fail-closed collision policy. See
+  [Codex](#codex) above.
 
 In short: keep hand-authored content in its own skill directory (or as an
 unmanaged `mcp.json` entry), not as loose files inside the directories
@@ -523,11 +586,11 @@ silently dropping it.
 
 ### Collections
 
-A collection is **not a resource itself** — it is a named bundle that points at
-a set of skills, commands, subagents, and/or MCP servers (possibly spanning
-multiple registries). Think of it as a curated install list: enabling a
-collection enables all of its members, and the members are still the real
-resources that get materialized.
+A collection is **not a target-materialized resource itself** — it is a named
+bundle that points at the five target-materialized kinds: skills, commands,
+subagents, hooks, and MCP servers (possibly spanning multiple registries).
+Think of it as a curated install list: enabling a collection enables all of its
+members, and the members are still the real resources that get materialized.
 
 Collections are discovered from a registry under
 `collections/<name>/COLLECTION.yaml`. You install or remove the bundle as a
@@ -567,7 +630,7 @@ from `update`, and show `local` as their cache freshness in `status`.
 
 ```
 agent-marketplace list                          Browse resources from configured registries
-agent-marketplace list --kind command           Browse one kind: skill, command, subagent, mcp, collection
+agent-marketplace list --kind command           Browse one kind: skill, command, subagent, hook, mcp, collection
 agent-marketplace list --from <url> --ref <ref>  Browse an ad-hoc registry (nothing written)
 
 agent-marketplace install <name> --from <url> --ref <ref>   Install one resource from a registry
@@ -591,13 +654,13 @@ agent-marketplace update --bump                  Discover and bump to newer refs
 agent-marketplace status                         Resources, harnesses, targets, refs, source layer, drift
 agent-marketplace convert --from <h> --to <h> --out <dir> <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
-agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin aggregate ownership recovery
+agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery
 agent-marketplace doctor --repair --yes          Adopt exact matches without prompting; never removes or replaces entries
 agent-marketplace tui                            Launch the interactive browser explicitly
 ```
 
 `--from`/`--to` on `convert` accept `claude`, `factory`, `cursor`, `windsurf`,
-`gemini`, and `devin`. `--yes` is only valid together with `--repair`.
+`gemini`, `devin`, and `codex`. `--yes` is only valid together with `--repair`.
 
 **Ad-hoc flag rules:**
 
@@ -624,9 +687,10 @@ would write. It includes:
   freshness.
 - **HARNESS TARGETS** — one row per effective harness with its `CAPABILITIES`
   (`compile`, `ingest`, `convert`, `tui`) and both roots (`REPO ROOT` and
-  `MACHINE ROOT`). This is where you can see, for example, that `devin` writes
-  to `<repo>/.devin` and `~/.config/devin`. A harness name the CLI does not
-  recognize is still listed, so a typo is visible rather than silently dropped.
+  `MACHINE ROOT`). This is where you can see, for example, Devin's single root
+  and Codex's `.agents`/`.codex` split destinations. A harness name the CLI does
+  not recognize is still listed, so a typo is visible rather than silently
+  dropped.
 - **LOCALLY EXCLUDED** — resources suppressed by `.agents/config.local.yaml`.
 - **LOCAL REGISTRIES** — registry entries defined in `.agents/config.local.yaml`.
 - **ORPHANED FILES** — generated files `sync` would prune.

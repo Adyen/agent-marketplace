@@ -1457,6 +1457,9 @@ func partitionFileCopyLinks(target hcc.Target, links []skillLink) (symlinkLinks,
 func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix string, tr TargetReport, err error, errFormat string) *Report {
 	tr.Target = key.target
 	tr.MachineScope = key.machineScope
+	if tr.RootID == "" {
+		tr.RootID = codexRootIDForPrefix(key, reportPrefix)
+	}
 	if err != nil {
 		report.Diags = append(report.Diags, diag.Diagnostic{
 			Code:     "materialize.write.error",
@@ -1480,6 +1483,27 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 	rootReport.Removed = prefixReportPaths(reportPrefix, tr.Removed)
 	report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], rootReport)
 	return report
+}
+
+func codexRootIDForPrefix(key outputKey, rel string) string {
+	if key.target != hcc.Target(targetmeta.TargetCodex) {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	suffix := ""
+	switch {
+	case rel == ".agents" || strings.HasPrefix(rel, ".agents/"):
+		suffix = "agents"
+	case rel == ".codex" || strings.HasPrefix(rel, ".codex/"):
+		suffix = "codex"
+	default:
+		return ""
+	}
+	scope := "repo"
+	if key.machineScope {
+		scope = "machine"
+	}
+	return scope + "-" + suffix
 }
 
 func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
@@ -1944,14 +1968,7 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 	}
 	components := make(map[string]bool, len(groups))
 	for installDirRel := range groups {
-		rel := installDirRel
-		// Windsurf repo-scope uses ".windsurf/skills"; strip the prefix so the
-		// component name ("skills") matches what windsurfMaterializePlans uses.
-		if strings.HasPrefix(rel, windsurfDir+"/") {
-			rel = strings.TrimPrefix(rel, windsurfDir+"/")
-		}
-		component, _, _ := strings.Cut(rel, "/")
-		components[component] = true
+		components[componentName(installDirRel)] = true
 	}
 	return components
 }

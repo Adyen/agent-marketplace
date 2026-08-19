@@ -38,6 +38,40 @@ git commit -m "Add shared infrastructure skills"
 
 Factory output is generated at `.factory/skills/<name>/SKILL.md`. Other harnesses get their own native layouts when listed in the effective `harnesses:`.
 
+## Add Codex
+
+Select Codex in the TUI harness modal (`H`) or add `codex` to the machine-wide
+target set. Existing installs and `migrate` do not add it automatically:
+
+```yaml
+# ~/.agents/config.yaml
+apiVersion: agent-marketplace/v3
+harnesses: [factory, codex]
+```
+
+Codex uses split native roots. Repo-scoped skills and converted commands go to
+`<repo>/.agents/skills/`; the other three target-materialized kinds go to
+`<repo>/.codex/agents/`, `<repo>/.codex/hooks.json`, and
+`<repo>/.codex/config.toml`. Machine-scoped skills and commands go to
+`~/.agents/skills/`; subagents, hooks, and MCP servers go to `~/.codex/` or an
+absolute `$CODEX_HOME`. `CODEX_HOME` does not move `~/.agents/skills`.
+
+Keep `.agents/skills/` and `.codex/` out of source control when they are
+generated. Codex rules, `AGENTS.md` generation, and legacy prompt output are
+explicitly excluded. A registry can still use `source_harness: codex`, and
+`convert --from codex` / `--to codex` are supported. Conversion to Codex
+requires a destination without pre-existing `.codex/hooks.json` or
+`.codex/config.toml`; use a new or empty destination so shared configuration is
+never overwritten. Sync, check, ingestion, and conversion never install,
+require, or probe a Codex executable.
+
+Repository `hooks.json` and `config.toml` changes may require Codex project
+trust review. Agent Marketplace reports that boundary but never edits trust
+state or adds Codex output paths to `.gitignore`. It preserves handwritten
+aggregate entries and records ownership outside the repo under
+`$XDG_STATE_HOME/agent-marketplace`; missing or corrupt ownership state refuses
+collisions and pruning rather than guessing.
+
 ## Registry allowlist
 
 `allowed_registries` is optional. When it is omitted, all remote registries are permitted. An explicitly empty list denies all remote registries, and a non-empty list of regex patterns permits only matching URLs. The allowlist is set by the first authority layer that declares it (org > user > repo); `config.local.yaml` cannot declare it.
@@ -80,7 +114,10 @@ registries:
 
 `migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config.
 
-Remove old `.agents/skills/` gitignore entries when they are no longer needed. Do not commit generated `.factory`, `.cursor`, `.claude`, `.gemini`, or `.windsurf` outputs unless your repo intentionally tracks harness config.
+Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
+ignore entries when they are no longer needed. Do not commit generated
+`.factory`, `.cursor`, `.claude`, `.gemini`, `.windsurf`, `.devin`, or `.codex`
+output unless your repo intentionally tracks harness configuration.
 
 ## Install by tag
 
@@ -154,6 +191,7 @@ agent-marketplace status
 agent-marketplace update
 agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
+agent-marketplace doctor --repair
 ```
 
 ## Ad-hoc registry operations (`--from`)
@@ -187,7 +225,8 @@ Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompati
 1. Load org, user, repo, and local config.
 2. Fetch registry caches under `~/.cache/agent-marketplace/`.
 3. Ingest registry content through `harness-compilation`.
-4. Resolve skills, collections, tags, and excludes.
+4. Resolve the five target-materialized kinds (skills, commands, subagents,
+   hooks, and MCP servers), plus collections, tags, and excludes.
 5. Compile each resolved resource to each configured harness.
 6. Materialize native harness files with prune-stale enabled.
 

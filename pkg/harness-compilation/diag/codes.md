@@ -119,6 +119,32 @@ comparison in non-test code.
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
 
+### Codex diagnostics are evidence-bound and fail closed on authority loss
+
+The Codex catalog entries are tied to the native schemas verified on 2026-08-19:
+[skills](https://developers.openai.com/codex/skills),
+[subagents](https://developers.openai.com/codex/subagents),
+[hooks](https://developers.openai.com/codex/hooks), and
+[MCP](https://developers.openai.com/codex/mcp), with `oauth_resource` verified
+in the [config reference](https://developers.openai.com/codex/config-file/config-reference).
+Their fixture coverage lives in
+`compile/codex/translator_test.go`, `ingest/codex/codex_test.go`, and the Codex
+cells of `testdata/matrix`.
+
+`compile.codex.field-dropped` and `ingest.codex.field-dropped` are warnings only
+for benign metadata loss. Codex-specific `*unsupported` errors and the shared
+`subagent.security-restriction-unsupported` error suppress the affected skill,
+subagent, hook entry, or MCP server when translation would lose a tool/sandbox
+restriction, executable behavior, authentication, transport, or interpolation
+semantics. They never guess an approximation and never suppress an independent
+valid resource.
+
+`materialize.codex.*` codes belong to the consumer-owned reconciliation layer:
+they preserve malformed or unpatchable shared files, refuse duplicate desired
+identities, and report repository trust review without changing Codex trust
+state. Check-only drift uses `materialize.codex.trust-review-pending`; only an
+actual repo hooks/MCP mutation uses `materialize.codex.trust-review`.
+
 ### `rule.devin.unsupported` is a scope decision, not a capability limit
 
 `rule.claude.no-primitive` and `rule.gemini.no-primitive` say what their names
@@ -264,7 +290,7 @@ fail-closed errors because they have no safe omission semantics.
 
 **The ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
-ingestion writes the harness-neutral IR that all six compilers read, so a
+ingestion writes the harness-neutral IR that all seven compilers read, so a
 rewritten restriction there propagates to targets that do enforce it. Compiling
 to Devin writes only Devin's own artifact. Same field, different blast radius.
 
@@ -508,6 +534,9 @@ key or a hook event name), the resource name, and content digests are reported.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `materialize.codex.aggregate-malformed` | A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found | Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved |
+| `materialize.codex.aggregate-unpatchable` | An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved | Rewrite the server as a standard [mcp_servers.&lt;name&gt;] table or edit it by hand before syncing |
+| `materialize.destination.overlap` | Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused | Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots |
 | `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
 | `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
