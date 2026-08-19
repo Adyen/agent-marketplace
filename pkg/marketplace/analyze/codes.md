@@ -5,8 +5,8 @@ have an entry below; `TestFindingCodes_Documented` enforces parity.
 
 | Code | Severity | Description |
 |---|---|---|
-| `marketplace.find.html-comment` | warn | HTML-style comments that may hide instructions from renderers. |
-| `marketplace.find.zero-width` | warn | Zero-width or invisible Unicode characters. |
+| `marketplace.find.html-comment` | reject | HTML-style comments that may hide instructions from renderers. |
+| `marketplace.find.zero-width` | reject | Zero-width or invisible Unicode characters. |
 | `marketplace.find.terminal-control` | reject | ANSI / terminal escape sequences. |
 | `marketplace.find.unsafe-bidi` | reject | Bidirectional override characters that could mislead review. |
 | `marketplace.find.dangerous-url` | reject | URL with dangerous scheme or target. |

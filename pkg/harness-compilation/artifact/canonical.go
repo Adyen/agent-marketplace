@@ -51,6 +51,7 @@ type CanonicalManifest struct {
 	ContentDigest    string              `json:"content_digest"`
 	ArchiveDigest    string              `json:"archive_digest"`
 	License          string              `json:"license,omitempty"`
+	AnalyzerVersion  string              `json:"analyzer_version,omitempty"`
 	Capabilities     []string            `json:"capabilities,omitempty"`
 	Findings         []CanonicalFinding  `json:"findings,omitempty"`
 	Provenance       CanonicalProvenance `json:"provenance"`
@@ -59,12 +60,15 @@ type CanonicalManifest struct {
 
 // CanonicalFinding is a single analyzer finding attached to an artifact.
 type CanonicalFinding struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message,omitempty"`
-	Line     int    `json:"line,omitempty"`
-	Column   int    `json:"column,omitempty"`
-	File     string `json:"file,omitempty"`
+	Code            string `json:"code"`
+	Severity        string `json:"severity"`
+	Message         string `json:"message,omitempty"`
+	Line            int    `json:"line,omitempty"`
+	Column          int    `json:"column,omitempty"`
+	File            string `json:"file,omitempty"`
+	PolicyOutcome   string `json:"policy_outcome,omitempty"`
+	Analyzer        string `json:"analyzer,omitempty"`
+	AnalyzerVersion string `json:"analyzer_version,omitempty"`
 }
 
 // CanonicalProvenance records where the artifact came from.
@@ -471,7 +475,12 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 	if countAssets > limits.MaxAssetFiles {
 		return fmt.Errorf("too many asset files: %d > %d", countAssets, limits.MaxAssetFiles)
 	}
+
+	totalFiles := int64(1) // payload
+	totalSize := int64(len(a.Payload))
 	for name, data := range a.Assets {
+		totalFiles++
+		totalSize += int64(len(data))
 		if err := validateArchiveMemberPath(name); err != nil {
 			return fmt.Errorf("invalid asset path: %w", err)
 		}
@@ -480,6 +489,8 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 		}
 	}
 	for name, data := range a.Licenses {
+		totalFiles++
+		totalSize += int64(len(data))
 		if err := validateArchiveMemberPath(name); err != nil {
 			return fmt.Errorf("invalid license path: %w", err)
 		}
@@ -488,13 +499,22 @@ func (a CanonicalArtifact) ValidateArchive(limits *ArchiveLimits) error {
 		}
 	}
 
+	if limits.MaxTotalFiles > 0 && totalFiles > limits.MaxTotalFiles {
+		return fmt.Errorf("total files %d exceeds max %d", totalFiles, limits.MaxTotalFiles)
+	}
+	if limits.MaxTotalBytes > 0 && totalSize > limits.MaxTotalBytes {
+		return fmt.Errorf("total archive size %d exceeds max %d", totalSize, limits.MaxTotalBytes)
+	}
+
 	return nil
 }
 
 // ArchiveLimits caps decoded artifact resources.
 type ArchiveLimits struct {
 	MaxPayloadBytes int64
+	MaxTotalBytes   int64
 	MaxAssetFiles   int64
+	MaxTotalFiles   int64
 	MaxAssetBytes   int64
 }
 
@@ -502,7 +522,9 @@ type ArchiveLimits struct {
 func DefaultArchiveLimits() *ArchiveLimits {
 	return &ArchiveLimits{
 		MaxPayloadBytes: 8 * 1024 * 1024,
+		MaxTotalBytes:   64 * 1024 * 1024,
 		MaxAssetFiles:   256,
+		MaxTotalFiles:   1024,
 		MaxAssetBytes:   2 * 1024 * 1024,
 	}
 }
