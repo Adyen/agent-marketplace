@@ -381,9 +381,10 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 type LocalConfig struct {
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
-	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
-	// from a sibling config). It is accepted but not required; when present it
-	// must match one of the supported API versions. Without this field the strict
+	// "agent-marketplace/v2" by hand (or copy it from a sibling config).
+	// It is accepted but not required; when present it must match
+	// APIVersionV2 or APIVersionV3, where v2 is canonical and v3 is
+	// accepted as a compatibility alias. Without this field the strict
 	// (KnownFields) decoder rejects any hand-added apiVersion line.
 	APIVersion  string          `yaml:"apiVersion,omitempty"`
 	Registries  []RegistryEntry `yaml:"registries,omitempty"`

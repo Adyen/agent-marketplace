@@ -281,7 +281,7 @@ registries:
   - url: `+registryRoot+`
     default: true
 `)
-	config.SetTestV3OrganizationConfigPath(t, orgCfgPath)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	// User config exists but does NOT contain the org registry.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `

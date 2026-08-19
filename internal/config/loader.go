@@ -432,33 +432,3 @@ func IsHomeDir(path string) bool {
 	}
 	return os.SameFile(pStat, hStat)
 }
-
-func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeConfigHarnessTargets(&cfg)
-
-	if err := cfg.validate(requireHarnesses, true); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-	return &cfg, nil
-}
-
-func loadLocalConfig(path string) (*LocalConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read local config %q: %w", path, err)
-	}
-	cfg, errs := loadV3LocalConfig(data)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate local config %q: %w", path, errors.Join(errs...))
-	}
-	return cfg, nil
-}
