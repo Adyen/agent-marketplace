@@ -58,20 +58,17 @@ func (e *Engine) Analyze(ctx context.Context, r ir.Resource, files FileSet, opts
 	}
 
 	var merged []Finding
-	rejected := false
 	for _, a := range list {
 		report, err := a.Analyze(ctx, r, files, opts)
 		if err != nil {
 			return Report{}, fmt.Errorf("analyzer %s: %w", a.Name(), err)
 		}
 		merged = append(merged, report.Findings...)
-		if report.Rejected {
-			rejected = true
-		}
 	}
 
-	if opts.Limits.MaxFindings > 0 && len(merged) > opts.Limits.MaxFindings {
-		merged = merged[:opts.Limits.MaxFindings]
+	merged, rejected := applyPolicy(merged, opts.Policy)
+	if opts.Limits.MaxFindings > 0 {
+		merged = truncateFindings(merged, opts.Limits.MaxFindings)
 	}
 
 	return Report{Findings: merged, Rejected: rejected}, nil

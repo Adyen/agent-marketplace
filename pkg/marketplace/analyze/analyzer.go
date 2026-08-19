@@ -3,6 +3,7 @@ package analyze
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -54,6 +55,57 @@ func applyPolicy(findings []Finding, policy Policy) ([]Finding, bool) {
 	return findings, rejected
 }
 
+// truncateFindings enforces MaxFindings while never discarding a reject
+// finding. It keeps all reject findings, then fills the remaining budget with
+// warn and info findings in their original stable order.
+func truncateFindings(findings []Finding, max int) []Finding {
+	if max <= 0 || len(findings) <= max {
+		return findings
+	}
+
+	var reject, warn, info []Finding
+	for _, f := range findings {
+		switch f.Severity {
+		case OutcomeReject:
+			reject = append(reject, f)
+		case OutcomeWarn:
+			warn = append(warn, f)
+		default:
+			info = append(info, f)
+		}
+	}
+
+	// Reject findings are never dropped, even if that exceeds MaxFindings.
+	if len(reject) >= max {
+		slog.Debug("truncated findings: kept all reject findings", "kept", len(reject), "max", max)
+		return reject
+	}
+
+	result := make([]Finding, 0, max)
+	result = append(result, reject...)
+	remaining := max - len(reject)
+
+	n := len(warn)
+	if n > remaining {
+		n = remaining
+	}
+	if n > 0 {
+		result = append(result, warn[:n]...)
+		remaining -= n
+	}
+
+	n = len(info)
+	if n > remaining {
+		n = remaining
+	}
+	if n > 0 {
+		result = append(result, info[:n]...)
+	}
+
+	slog.Debug("truncated findings", "kept", len(result), "dropped", len(findings)-len(result), "max", max)
+	return result
+}
+
 // baseAnalyze extracts textual fields from r and the supplied files, runs the
 // shared scanners and asset scanner, and applies policy outcomes. It is the
 // common analysis stage used by all per-kind analyzers.
@@ -87,11 +139,11 @@ func baseAnalyze(ctx context.Context, r ir.Resource, files FileSet, name string,
 
 	findings = append(findings, ScanAssets(files, an)...)
 
-	if opts.Limits.MaxFindings > 0 && len(findings) > opts.Limits.MaxFindings {
-		findings = findings[:opts.Limits.MaxFindings]
+	findings, rejected := applyPolicy(findings, opts.Policy)
+	if opts.Limits.MaxFindings > 0 {
+		findings = truncateFindings(findings, opts.Limits.MaxFindings)
 	}
 
-	findings, rejected := applyPolicy(findings, opts.Policy)
 	return Report{Findings: findings, Rejected: rejected}, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -321,4 +322,144 @@ func writeTarGz(t *testing.T, prepare func(tw *tar.Writer)) []byte {
 		t.Fatalf("gzip close: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestFromIRPreservesExtraAndNameWins(t *testing.T) {
+	extra := map[string]any{
+		"x-agent-marketplace-foo": "bar",
+		"nested":                  map[interface{}]interface{}{"k": "v"},
+	}
+	s := ir.NewSkill("review", "Review", "body", nil, extra, ir.SourceRef{})
+	a, err := FromIR(s)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	if got := payload["x-agent-marketplace-foo"]; got != "bar" {
+		t.Fatalf("extra key missing: got %v", got)
+	}
+	nested, ok := payload["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("nested map not normalized to map[string]any: %T", payload["nested"])
+	}
+	if nested["k"] != "v" {
+		t.Fatalf("nested value missing: got %v", nested["k"])
+	}
+	if payload["name"] != "review" {
+		t.Fatalf("name = %v, want %q", payload["name"], "review")
+	}
+
+	// Extra containing "name" should not override r.Name().
+	override := map[string]any{
+		"name":   "wrong",
+		"custom": "value",
+	}
+	s2 := ir.NewSkill("canonical-name", "Canonical", "body", nil, override, ir.SourceRef{})
+	a2, err := FromIR(s2)
+	if err != nil {
+		t.Fatalf("FromIR with name override: %v", err)
+	}
+	var payload2 map[string]any
+	if err := json.Unmarshal(a2.Payload, &payload2); err != nil {
+		t.Fatalf("unmarshal payload2: %v", err)
+	}
+	if payload2["name"] != "canonical-name" {
+		t.Fatalf("name override: got %v, want %q", payload2["name"], "canonical-name")
+	}
+	if payload2["custom"] != "value" {
+		t.Fatalf("custom extra missing: got %v", payload2["custom"])
+	}
+}
+
+func TestCanonicalArtifactEncodeRejectsNestedPaths(t *testing.T) {
+	a := CanonicalArtifact{
+		Manifest: CanonicalManifest{
+			SchemaVersion:   CanonicalArtifactSchemaV1,
+			ArtifactVersion: CanonicalArtifactSchemaV1,
+			Kind:            "skill",
+			Name:            "review",
+			Revision:        "v1",
+			ContentDigest:   ContentDigest([]byte("payload")),
+			ArchiveDigest:   "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Provenance:      CanonicalProvenance{Generator: "test"},
+		},
+		Payload: []byte("payload"),
+		Assets: map[string][]byte{
+			"nested/image.png": []byte("ok"),
+		},
+	}
+
+	if _, _, err := Encode(a); err == nil || !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("expected nested path rejection, got %v", err)
+	}
+
+	a.Assets = map[string][]byte{"image.png": []byte("ok")}
+	raw, _, err := Encode(a)
+	if err != nil {
+		t.Fatalf("Encode valid archive: %v", err)
+	}
+
+	_, _, err = Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("Decode valid archive: %v", err)
+	}
+}
+
+func TestCanonicalManifestValidateFindings(t *testing.T) {
+	validFinding := CanonicalFinding{
+		Code:          "marketplace.find.tool-grant",
+		Severity:      "warn",
+		PolicyOutcome: "warn",
+	}
+	m := CanonicalManifest{
+		SchemaVersion:   CanonicalArtifactSchemaV1,
+		ArtifactVersion: CanonicalArtifactSchemaV1,
+		Kind:            "skill",
+		Name:            "review",
+		ContentDigest:   ContentDigest([]byte("payload")),
+		ArchiveDigest:   "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		Findings:        []CanonicalFinding{validFinding},
+		Provenance:      CanonicalProvenance{Generator: "test"},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("valid manifest rejected: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		finding CanonicalFinding
+		wantErr string
+	}{
+		{
+			name:    "missing code",
+			finding: CanonicalFinding{Severity: "warn", PolicyOutcome: "warn"},
+			wantErr: "code is required",
+		},
+		{
+			name:    "invalid policy outcome",
+			finding: CanonicalFinding{Code: "x", Severity: "warn", PolicyOutcome: "block"},
+			wantErr: "policy_outcome",
+		},
+		{
+			name:    "invalid severity",
+			finding: CanonicalFinding{Code: "x", Severity: "critical", PolicyOutcome: "warn"},
+			wantErr: "severity",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := m
+			cm.Findings = []CanonicalFinding{tc.finding}
+			err := cm.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected %q error, got %v", tc.wantErr, err)
+			}
+		})
+	}
 }
