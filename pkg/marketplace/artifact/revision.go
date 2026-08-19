@@ -128,8 +128,12 @@ func VerifySourceRevisionManifest(m SourceRevisionManifest, payload []byte) erro
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			return fmt.Errorf("unmarshal provided payload: %w", err)
 		}
-		if decoded.RevisionDigest != m.RevisionDigest {
-			return errors.New("provided payload revision_digest does not match manifest")
+		canonical, err := canonicalRevisionPayload(decoded)
+		if err != nil {
+			return fmt.Errorf("canonical payload: %w", err)
+		}
+		if !bytes.Equal(canonical, payload) {
+			return errors.New("provided payload is not canonical JSON")
 		}
 	}
 

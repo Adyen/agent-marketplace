@@ -2,6 +2,9 @@ package artifact
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +90,77 @@ func TestSourceRevisionManifestRejectDuplicateResources(t *testing.T) {
 	}
 	if _, _, err := EncodeSourceRevisionManifest(m); err == nil {
 		t.Fatal("expected duplicate resource error")
+	}
+}
+
+func TestVerifySourceRevisionManifestCanonicalPayload(t *testing.T) {
+	m := SourceRevisionManifest{
+		SchemaVersion: SourceRevisionSchemaV1,
+		SourceURL:     "https://example.com/repo.git",
+		Ref:           "main",
+		Generator:     "test",
+		Resources: []RevisionResource{
+			{Kind: "skill", Name: "review", ContentDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		},
+	}
+
+	payload, _, err := EncodeSourceRevisionManifest(m)
+	if err != nil {
+		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
+	}
+
+	decoded, _, err := DecodeSourceRevisionManifest(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("DecodeSourceRevisionManifest: %v", err)
+	}
+
+	if err := VerifySourceRevisionManifest(decoded, payload); err != nil {
+		t.Fatalf("VerifySourceRevisionManifest canonical payload: %v", err)
+	}
+}
+
+func TestVerifySourceRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
+	m := SourceRevisionManifest{
+		SchemaVersion: SourceRevisionSchemaV1,
+		Generator:     "test",
+		Resources: []RevisionResource{
+			{Kind: "skill", Name: "a", ContentDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		},
+	}
+
+	canonical, digest, err := EncodeSourceRevisionManifest(m)
+	if err != nil {
+		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
+	}
+
+	// Pretty-printed JSON has the correct digest but is not canonical.
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, canonical, "", "  "); err != nil {
+		t.Fatalf("json.Indent: %v", err)
+	}
+
+	var dec SourceRevisionManifest
+	if err := json.Unmarshal(indented.Bytes(), &dec); err != nil {
+		t.Fatalf("unmarshal indented payload: %v", err)
+	}
+	if err := VerifySourceRevisionManifest(dec, indented.Bytes()); err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("expected non-canonical whitespace rejection, got %v", err)
+	}
+
+	// Reordered keys with extra whitespace, but correct digest.
+	reordered := []byte(fmt.Sprintf(`{
+  "generator" : "test",
+  "resources" : [
+    {"name" : "a", "kind" : "skill", "content_digest" : "sha256:0000000000000000000000000000000000000000000000000000000000000000", "rejected" : false}
+  ],
+  "schema_version" : "v1",
+  "revision_digest" : "%s"
+}`, digest))
+
+	if err := json.Unmarshal(reordered, &dec); err != nil {
+		t.Fatalf("unmarshal reordered payload: %v", err)
+	}
+	if err := VerifySourceRevisionManifest(dec, reordered); err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("expected non-canonical reordered keys rejection, got %v", err)
 	}
 }

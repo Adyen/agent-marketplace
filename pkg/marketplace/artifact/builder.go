@@ -20,6 +20,8 @@ type BuildResult struct {
 	RevisionDigest string
 	Findings       []analyze.Finding
 	Capabilities   []string
+	Name           string
+	Kind           string
 	Rejected       bool
 	RejectReason   string
 }
@@ -34,6 +36,11 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 
 	caps := ExtractCapabilities(r)
 
+	base, err := hccartifact.FromIR(r)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("from IR: %w", err)
+	}
+
 	engine := analyze.NewEngine()
 	report, err := engine.Analyze(ctx, r, files, opts)
 	if err != nil {
@@ -42,16 +49,13 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 
 	if report.Rejected {
 		return BuildResult{
+			Name:         base.Manifest.Name,
+			Kind:         base.Manifest.Kind,
 			Findings:     report.Findings,
 			Capabilities: caps,
 			Rejected:     true,
 			RejectReason: "policy rejected one or more findings",
 		}, nil
-	}
-
-	base, err := hccartifact.FromIR(r)
-	if err != nil {
-		return BuildResult{}, fmt.Errorf("from IR: %w", err)
 	}
 
 	base.Manifest.AnalyzerVersion = analyzerVersion(opts)
@@ -81,6 +85,8 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 
 	return BuildResult{
 		Artifact:       artifact,
+		Name:           artifact.Manifest.Name,
+		Kind:           artifact.Manifest.Kind,
 		RawArchive:     raw,
 		ContentDigest:  base.Manifest.ContentDigest,
 		ArchiveDigest:  digest,
@@ -171,9 +177,12 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 			Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
 		}
 		for _, mr := range memberResults {
-			kind := memberKind(mr)
-			name := ""
-			if mr.Artifact.Manifest.Name != "" {
+			kind := mr.Kind
+			if kind == "" {
+				kind = memberKind(mr)
+			}
+			name := mr.Name
+			if name == "" && mr.Artifact.Manifest.Name != "" {
 				name = mr.Artifact.Manifest.Name
 			}
 			revManifest.Resources = append(revManifest.Resources, RevisionResource{

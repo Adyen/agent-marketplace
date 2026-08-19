@@ -118,3 +118,80 @@ func TestBuildCollectionManifestNil(t *testing.T) {
 		t.Fatal("expected error for nil collection")
 	}
 }
+
+func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
+	ctx := context.Background()
+	opts := analyze.DefaultOptions()
+	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main"}
+
+	acceptedSkill := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
+	accepted, err := BuildResourceArtifact(ctx, acceptedSkill, nil, opts)
+	if err != nil {
+		t.Fatalf("BuildResourceArtifact accepted: %v", err)
+	}
+	if accepted.Rejected {
+		t.Fatalf("expected accepted skill, got rejected: %v", accepted.Findings)
+	}
+
+	rejectedSkill := ir.NewSkill("bad", "Bad", "<!-- hidden -->", nil, nil, ir.SourceRef{})
+	rejected, err := BuildResourceArtifact(ctx, rejectedSkill, nil, opts)
+	if err != nil {
+		t.Fatalf("BuildResourceArtifact rejected: %v", err)
+	}
+	if !rejected.Rejected {
+		t.Fatal("expected skill to be rejected")
+	}
+	if rejected.Kind != "skill" || rejected.Name != "bad" {
+		t.Fatalf("rejected result missing kind/name: got %q/%q", rejected.Kind, rejected.Name)
+	}
+
+	c := ir.NewCollection("defaults", "1.0.0", "Desc", []ir.CollectionMember{
+		{Kind: ir.KindSkill, Name: "review"},
+		{Kind: ir.KindSkill, Name: "bad"},
+	}, nil, nil, ir.SourceRef{})
+
+	result, err := BuildCollectionManifest(ctx, c, []BuildResult{accepted, rejected}, opts)
+	if err != nil {
+		t.Fatalf("BuildCollectionManifest: %v", err)
+	}
+	if result.Rejected {
+		t.Fatalf("collection rejected: %v", result.Findings)
+	}
+	if result.RevisionDigest == "" {
+		t.Fatal("expected revision digest")
+	}
+	if err := result.Artifact.ValidateArchive(nil); err != nil {
+		t.Fatalf("ValidateArchive: %v", err)
+	}
+
+	// Reconstruct the source revision manifest to verify the rejected member is
+	// represented correctly.
+	rev := SourceRevisionManifest{
+		SchemaVersion: SourceRevisionSchemaV1,
+		SourceURL:     opts.Source.RegistryURL,
+		Ref:           opts.Source.Ref,
+		Path:          opts.Source.Path,
+		Generator:     "agent-marketplace source-revision v" + analyzerVersion(opts),
+		Resources: []RevisionResource{
+			{
+				Kind:          accepted.Kind,
+				Name:          accepted.Name,
+				ContentDigest: accepted.ContentDigest,
+				ArchiveDigest: accepted.ArchiveDigest,
+				Rejected:      false,
+			},
+			{
+				Kind:     rejected.Kind,
+				Name:     rejected.Name,
+				Rejected: true,
+			},
+		},
+	}
+	_, expectedDigest, err := EncodeSourceRevisionManifest(rev)
+	if err != nil {
+		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
+	}
+	if expectedDigest != result.RevisionDigest {
+		t.Fatalf("revision digest mismatch: expected %s, got %s", expectedDigest, result.RevisionDigest)
+	}
+}

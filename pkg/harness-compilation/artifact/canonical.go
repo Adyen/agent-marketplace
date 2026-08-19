@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -269,6 +270,9 @@ func validateArchiveMemberPath(p string) error {
 			return fmt.Errorf("path traversal: %s", p)
 		}
 	}
+	if strings.Contains(p, "/") {
+		return fmt.Errorf("nested archive member path: %s", p)
+	}
 	return nil
 }
 
@@ -441,6 +445,21 @@ func (m CanonicalManifest) Validate() error {
 	if m.ArchiveDigest != "" && !isDigestFormat(m.ArchiveDigest) {
 		return fmt.Errorf("manifest archive_digest must be sha256:<64-hex>")
 	}
+	for i, f := range m.Findings {
+		if f.Code == "" {
+			return fmt.Errorf("findings[%d].code is required", i)
+		}
+		switch f.PolicyOutcome {
+		case "reject", "warn", "allow":
+		default:
+			return fmt.Errorf("findings[%d].policy_outcome %q is invalid", i, f.PolicyOutcome)
+		}
+		switch f.Severity {
+		case "reject", "warn", "info":
+		default:
+			return fmt.Errorf("findings[%d].severity %q is invalid", i, f.Severity)
+		}
+	}
 	return nil
 }
 
@@ -591,7 +610,15 @@ func irToCanonicalKind(k ir.ResourceKind) string {
 }
 
 func resourceJSON(r ir.Resource) ([]byte, error) {
-	base, err := json.Marshal(r)
+	// Marshal a copy of r with the Extra field zeroed. Extra may hold
+	// map[interface{}]interface{} values from YAML parsers, which
+	// json.Marshal cannot serialize, and should be merged manually below.
+	copyVal, err := copyResourceWithoutExtra(r)
+	if err != nil {
+		return nil, fmt.Errorf("copy resource without extra: %w", err)
+	}
+
+	base, err := json.Marshal(copyVal)
 	if err != nil {
 		return nil, fmt.Errorf("marshal resource: %w", err)
 	}
@@ -601,6 +628,16 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 		return nil, fmt.Errorf("unmarshal resource: %w", err)
 	}
 
+	extra, err := extractExtra(r)
+	if err != nil {
+		return nil, fmt.Errorf("extract resource extra: %w", err)
+	}
+	for k, v := range extra {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+
 	m["name"] = r.Name()
 
 	out, err := json.Marshal(m)
@@ -608,4 +645,107 @@ func resourceJSON(r ir.Resource) ([]byte, error) {
 		return nil, fmt.Errorf("marshal canonical payload: %w", err)
 	}
 	return out, nil
+}
+
+// copyResourceWithoutExtra returns a shallow copy of r with its Extra field
+// set to nil so json.Marshal does not attempt to serialize unknown frontmatter
+// values (which may contain map[interface{}]interface{} from YAML parsers).
+func copyResourceWithoutExtra(r ir.Resource) (any, error) {
+	if r == nil {
+		return nil, errors.New("nil resource")
+	}
+
+	v := reflect.ValueOf(r)
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, errors.New("nil resource pointer")
+	}
+
+	for v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("resource %T is not a struct", r)
+	}
+
+	cloned := reflect.New(v.Type()).Elem()
+	cloned.Set(v)
+	extra := cloned.FieldByName("Extra")
+	if extra.IsValid() && !extra.IsZero() {
+		extra.Set(reflect.Zero(extra.Type()))
+	}
+	return cloned.Addr().Interface(), nil
+}
+
+// extractExtra reads the Extra field from the concrete resource value and
+// returns a copy with nested map[interface{}]interface{} values normalized
+// to map[string]any so json.Marshal can serialize them.
+func extractExtra(r ir.Resource) (map[string]any, error) {
+	if r == nil {
+		return nil, nil
+	}
+
+	v := reflect.ValueOf(r)
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	for v.Kind() == reflect.Pointer && !v.IsNil() {
+		v = v.Elem()
+	}
+	if !v.IsValid() || v.Kind() != reflect.Struct {
+		return nil, nil
+	}
+
+	f := v.FieldByName("Extra")
+	if !f.IsValid() || f.IsNil() {
+		return nil, nil
+	}
+
+	extra, ok := f.Interface().(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("resource %T Extra field is not map[string]any", r)
+	}
+	return normalizeExtraMap(extra), nil
+}
+
+func normalizeExtraMap(extra map[string]any) map[string]any {
+	if extra == nil {
+		return nil
+	}
+	out := make(map[string]any, len(extra))
+	for k, v := range extra {
+		out[k] = normalizeExtra(v)
+	}
+	return out
+}
+
+func normalizeExtra(v any) any {
+	switch x := v.(type) {
+	case map[interface{}]interface{}:
+		m := make(map[string]any, len(x))
+		for k, v := range x {
+			ks, ok := k.(string)
+			if !ok {
+				ks = fmt.Sprintf("%v", k)
+			}
+			m[ks] = normalizeExtra(v)
+		}
+		return m
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, v := range x {
+			m[k] = normalizeExtra(v)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, v := range x {
+			out[i] = normalizeExtra(v)
+		}
+		return out
+	default:
+		return v
+	}
 }
