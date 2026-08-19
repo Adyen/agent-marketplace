@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -110,6 +111,8 @@ func cacheKeyFor(endpoint string, headers map[string]string, caFile string, allo
 	}
 }
 
+// headerKey returns an unambiguous encoding of the header map. It sorts keys
+// and emits JSON so keys or values containing delimiters cannot collide.
 func headerKey(headers map[string]string) string {
 	keys := make([]string, 0, len(headers))
 	for k := range headers {
@@ -117,16 +120,17 @@ func headerKey(headers map[string]string) string {
 	}
 	sort.Strings(keys)
 
-	var b strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteByte('|')
-		}
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(headers[k])
+	type kv struct {
+		Key   string `json:"k"`
+		Value string `json:"v"`
 	}
-	return b.String()
+	pairs := make([]kv, len(keys))
+	for i, k := range keys {
+		pairs[i] = kv{Key: k, Value: headers[k]}
+	}
+
+	b, _ := json.Marshal(pairs)
+	return string(b)
 }
 
 func resolveHeaders(sources map[string]tmcfg.HeaderSource) (map[string]string, error) {
@@ -187,13 +191,17 @@ func tlsConfig(caFile string) (*tls.Config, error) {
 
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.
-func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route string, q *Queue) (*http.Client, *http.Client, error) {
+func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route, signal string, onFailure func(error), q *Queue) (*http.Client, *http.Client, error) {
+	slog.Info("building route clients", "route", route, "signal", signal, "endpoint", endpoint)
+
 	if err := tmcfg.ValidateEndpoint(endpoint, allowInsecure); err != nil {
+		slog.Error("invalid telemetry endpoint", "endpoint", endpoint, "error", err)
 		return nil, nil, err
 	}
 
 	_, err := url.Parse(endpoint)
 	if err != nil {
+		slog.Error("failed to parse telemetry endpoint", "endpoint", endpoint, "error", err)
 		return nil, nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
@@ -204,6 +212,7 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		tlsCfg, err := tlsConfig(caFile)
 		if err != nil {
 			transportCacheMu.Unlock()
+			slog.Error("failed to build tls config", "ca_file", caFile, "error", err)
 			return nil, nil, err
 		}
 
@@ -218,42 +227,88 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 	transportCacheMu.Unlock()
 
 	live := &http.Client{
-		Transport: &queueTransport{inner: innerTransport, queue: q, route: route},
+		Transport: &queueTransport{
+			inner:     innerTransport,
+			queue:     q,
+			route:     route,
+			signal:    signal,
+			onFailure: onFailure,
+		},
 	}
 	send := &http.Client{
 		Transport: innerTransport,
 		Timeout:   30 * time.Second,
 	}
 
+	slog.Info("route clients built", "route", route, "signal", signal)
 	return live, send, nil
 }
 
+// buildSignalEndpoint normalizes an endpoint URL with the default path for the
+// given signal (metrics or traces).
+func buildSignalEndpoint(endpoint, signal string) (string, error) {
+	switch signal {
+	case queueSubdirMetrics:
+		return endpointWithDefaultPath(endpoint, "/v1/metrics")
+	case queueSubdirTraces:
+		return endpointWithDefaultPath(endpoint, "/v1/traces")
+	default:
+		return "", fmt.Errorf("unsupported queue signal %q", signal)
+	}
+}
+
 func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdkmetric.Exporter, error) {
-	ep, err := endpointWithDefaultPath(endpoint, "/v1/metrics")
+	slog.Debug("building metric exporter", "endpoint", endpoint)
+
+	ep, err := buildSignalEndpoint(endpoint, queueSubdirMetrics)
 	if err != nil {
+		slog.Error("failed to build metric endpoint", "endpoint", endpoint, "error", err)
 		return nil, err
 	}
-	return otlpmetrichttp.New(ctx,
+
+	exp, err := otlpmetrichttp.New(ctx,
 		otlpmetrichttp.WithHTTPClient(live),
 		otlpmetrichttp.WithEndpointURL(ep),
 		otlpmetrichttp.WithHeaders(headers),
 		otlpmetrichttp.WithCompression(otlpmetrichttp.NoCompression),
 		otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}),
+		otlpmetrichttp.WithTimeout(30*time.Second),
+		otlpmetrichttp.WithTemporalitySelector(sdkmetric.DefaultTemporalitySelector),
+		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
+	if err != nil {
+		slog.Error("failed to build metric exporter", "endpoint", endpoint, "error", err)
+		return nil, err
+	}
+
+	slog.Debug("metric exporter built", "endpoint", endpoint)
+	return exp, nil
 }
 
 func buildTraceExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdktrace.SpanExporter, error) {
-	ep, err := endpointWithDefaultPath(endpoint, "/v1/traces")
+	slog.Debug("building trace exporter", "endpoint", endpoint)
+
+	ep, err := buildSignalEndpoint(endpoint, queueSubdirTraces)
 	if err != nil {
+		slog.Error("failed to build trace endpoint", "endpoint", endpoint, "error", err)
 		return nil, err
 	}
-	return otlptracehttp.New(ctx,
+
+	exp, err := otlptracehttp.New(ctx,
 		otlptracehttp.WithHTTPClient(live),
 		otlptracehttp.WithEndpointURL(ep),
 		otlptracehttp.WithHeaders(headers),
 		otlptracehttp.WithCompression(otlptracehttp.NoCompression),
 		otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}),
+		otlptracehttp.WithTimeout(30*time.Second),
 	)
+	if err != nil {
+		slog.Error("failed to build trace exporter", "endpoint", endpoint, "error", err)
+		return nil, err
+	}
+
+	slog.Debug("trace exporter built", "endpoint", endpoint)
+	return exp, nil
 }
 
 func endpointWithDefaultPath(endpoint, defaultPath string) (string, error) {
@@ -271,9 +326,11 @@ func endpointWithDefaultPath(endpoint, defaultPath string) (string, error) {
 // to the inner RoundTripper. Failed requests are serialized to the durable
 // queue for later delivery.
 type queueTransport struct {
-	inner http.RoundTripper
-	queue *Queue
-	route string
+	inner     http.RoundTripper
+	queue     *Queue
+	route     string
+	signal    string
+	onFailure func(error)
 }
 
 func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -283,17 +340,18 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	ctx := req.Context()
 
+	slog.Debug("export round trip", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
+
 	var payload []byte
 	if req.Body != nil && req.Body != http.NoBody {
 		var err error
 		payload, err = io.ReadAll(req.Body)
 		if err != nil {
+			slog.Error("failed to read request body", "url_host", req.URL.Host, "error", err)
 			return nil, err
 		}
 		_ = req.Body.Close()
 	}
-
-	signal := signalFromPath(req.URL.Path)
 
 	innerReq := req.Clone(ctx)
 	innerReq.Body = io.NopCloser(bytes.NewReader(payload))
@@ -304,9 +362,25 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	resp, err := qt.inner.RoundTrip(innerReq)
 	if err != nil || (resp != nil && resp.StatusCode/100 != 2) {
+		exportErr := err
+		if exportErr == nil && resp != nil {
+			exportErr = fmt.Errorf("server returned %s", resp.Status)
+		}
+
+		slog.Error("export failed, enqueueing payload for retry",
+			"route", qt.route,
+			"signal", qt.signal,
+			"url_host", req.URL.Host,
+			"error", exportErr,
+		)
+
+		if qt.onFailure != nil && exportErr != nil {
+			qt.onFailure(exportErr)
+		}
+
 		env := Envelope{
 			Route:   qt.route,
-			Signal:  signal,
+			Signal:  qt.signal,
 			URL:     req.URL.String(),
 			Headers: copyHeaderMap(req.Header),
 			Payload: base64.StdEncoding.EncodeToString(payload),
@@ -315,8 +389,14 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		envBytes, marshalErr := json.Marshal(env)
 		if marshalErr != nil {
-			if err != nil {
-				return nil, errors.Join(err, marshalErr)
+			slog.Error("failed to marshal queued envelope",
+				"route", qt.route,
+				"signal", qt.signal,
+				"url_host", req.URL.Host,
+				"error", marshalErr,
+			)
+			if exportErr != nil {
+				return nil, errors.Join(exportErr, marshalErr)
 			}
 			return nil, marshalErr
 		}
@@ -324,33 +404,29 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// Queue the payload even if the caller context was canceled; the data
 		// still needs to be durably stored for the next attempt.
 		qctx := context.WithoutCancel(ctx)
-		if qerr := qt.queue.Push(qctx, Route{Name: qt.route, Signal: signal}, envBytes); qerr != nil {
-			if err != nil {
-				return nil, errors.Join(err, qerr)
+		if qerr := qt.queue.Push(qctx, Route{Name: qt.route, Signal: qt.signal}, envBytes); qerr != nil {
+			slog.Error("failed to enqueue export payload",
+				"route", qt.route,
+				"signal", qt.signal,
+				"url_host", req.URL.Host,
+				"error", qerr,
+			)
+			if exportErr != nil {
+				return nil, errors.Join(exportErr, qerr)
 			}
 			return nil, qerr
 		}
 
-		if err != nil {
-			return nil, err
-		}
+		slog.Debug("enqueued failed export payload", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
+
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
-		return nil, fmt.Errorf("server returned %s", resp.Status)
+		return nil, exportErr
 	}
 
+	slog.Debug("export succeeded", "route", qt.route, "signal", qt.signal, "url_host", req.URL.Host)
 	return resp, nil
-}
-
-func signalFromPath(p string) string {
-	if strings.HasSuffix(p, "/v1/metrics") {
-		return queueSubdirMetrics
-	}
-	if strings.HasSuffix(p, "/v1/traces") {
-		return queueSubdirTraces
-	}
-	return "unknown"
 }
 
 func copyHeaderMap(h http.Header) map[string][]string {

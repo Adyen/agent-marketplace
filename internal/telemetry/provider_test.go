@@ -17,6 +17,7 @@ import (
 
 	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -94,7 +95,7 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 		t.Error("expected metrics export")
 	}
 	if !gotTraces {
-		t.Error("expected trace export")
+		t.Error("expected traces export")
 	}
 }
 
@@ -165,6 +166,109 @@ func TestCounterAndHistogramDoNotLeakSDKTypes(t *testing.T) {
 	// The public wrappers expose only methods, not OpenTelemetry types.
 	_ = c
 	_ = h
+}
+
+func TestMetricAttributeAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	var mu sync.Mutex
+	var lastReq *metricspb.ExportMetricsServiceRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/v1/metrics" {
+			var req metricspb.ExportMetricsServiceRequest
+			if err := proto.Unmarshal(body, &req); err != nil {
+				t.Errorf("unmarshal metrics: %v", err)
+			}
+			mu.Lock()
+			lastReq = &req
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelBasic,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName):    "test",
+		string(tmcfg.ResourceAttrInstallationID): "must-not-appear-as-instrument-label",
+		"disallowed.attr":                        "value",
+	}
+	tel.CommandCounter().Add(context.Background(), 1, attrs)
+	tel.CommandDuration().Record(context.Background(), 100, attrs)
+
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	mu.Lock()
+	req := lastReq
+	mu.Unlock()
+
+	if req == nil {
+		t.Fatal("no metrics export received")
+	}
+	if len(req.ResourceMetrics) == 0 || len(req.ResourceMetrics[0].ScopeMetrics) == 0 {
+		t.Fatal("expected resource metrics in export request")
+	}
+
+	resourceAttrs := make(map[string]bool)
+	for _, kv := range req.ResourceMetrics[0].Resource.Attributes {
+		resourceAttrs[kv.Key] = true
+	}
+	if !resourceAttrs[string(tmcfg.ResourceAttrInstallationID)] {
+		t.Error("expected installation.id as a resource attribute")
+	}
+
+	allowed := make(map[string]struct{})
+	for _, a := range tmcfg.MetricSchemaAttributes {
+		allowed[string(a)] = struct{}{}
+	}
+
+	for _, sm := range req.ResourceMetrics[0].ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if s := m.GetSum(); s != nil {
+				for _, dp := range s.DataPoints {
+					assertInstrumentAttributes(t, dp.GetAttributes(), allowed)
+				}
+			}
+			if h := m.GetHistogram(); h != nil {
+				for _, dp := range h.DataPoints {
+					assertInstrumentAttributes(t, dp.GetAttributes(), allowed)
+				}
+			}
+		}
+	}
+}
+
+func assertInstrumentAttributes(t *testing.T, attrs []*commonpb.KeyValue, allowed map[string]struct{}) {
+	t.Helper()
+	for _, kv := range attrs {
+		if kv.Key == string(tmcfg.ResourceAttrInstallationID) {
+			t.Errorf("instrument attribute must not include %q", kv.Key)
+		}
+		if _, ok := allowed[kv.Key]; !ok {
+			t.Errorf("instrument attribute %q is not in the metric allowlist", kv.Key)
+		}
+	}
 }
 
 func TestInstallationIDPermissions(t *testing.T) {

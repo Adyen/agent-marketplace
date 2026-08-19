@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +28,7 @@ func TestQueuePushAndDrain(t *testing.T) {
 	}
 
 	var drained []string
-	drain := func(data []byte) error {
+	drain := func(_ context.Context, data []byte) error {
 		drained = append(drained, string(data))
 		return nil
 	}
@@ -126,7 +127,7 @@ func TestQueueDrainFailureRequeues(t *testing.T) {
 	}
 
 	calls := 0
-	drain := func(data []byte) error {
+	drain := func(_ context.Context, data []byte) error {
 		calls++
 		return fmt.Errorf("network down")
 	}
@@ -156,7 +157,7 @@ func TestQueueDrainConcurrent(t *testing.T) {
 	started := make(chan struct{})
 	resume := make(chan struct{})
 
-	drain := func(data []byte) error {
+	drain := func(_ context.Context, data []byte) error {
 		sent.Add(1)
 		close(started)
 		<-resume
@@ -181,5 +182,49 @@ func TestQueueDrainConcurrent(t *testing.T) {
 	}
 	if q.Count() != 0 {
 		t.Fatalf("count = %d, want 0", q.Count())
+	}
+}
+
+func TestQueueCrashRecovery(t *testing.T) {
+	dir := t.TempDir()
+
+	subdirs := []string{queueSubdirMetrics, queueSubdirTraces}
+	for _, subdir := range subdirs {
+		sub := filepath.Join(dir, subdir)
+		if err := os.MkdirAll(sub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sending := filepath.Join(sub, "crash.json.sending")
+		tmp := filepath.Join(sub, "inflight.json.tmp")
+		normal := filepath.Join(sub, "existing.json")
+		if err := os.WriteFile(sending, []byte("sending-payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tmp, []byte("tmp-payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(normal, []byte("normal-payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	q := NewQueue(dir)
+
+	if q.Count() != 4 {
+		t.Fatalf("count = %d, want 4 recovered json files (2 sending + 2 existing)", q.Count())
+	}
+
+	for _, subdir := range subdirs {
+		sub := filepath.Join(dir, subdir)
+		entries, err := os.ReadDir(sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasSuffix(name, ".sending") || strings.HasSuffix(name, ".tmp") {
+				t.Fatalf("stale file %q should have been removed or renamed", name)
+			}
+		}
 	}
 }

@@ -81,14 +81,14 @@ func TestExporterDeduplication(t *testing.T) {
 	q := NewQueue(filepath.Join(dir, "queue"))
 	cache := newExporterCache()
 
-	live, send, err := buildRouteClients("http://127.0.0.1:12345", nil, "", false, "primary", q)
+	live, send, err := buildRouteClients("http://127.0.0.1:12345", nil, "", false, "primary", queueSubdirMetrics, nil, q)
 	if err != nil {
 		t.Fatalf("build clients: %v", err)
 	}
 	_ = send
 
 	ctx := context.Background()
-	key := cacheKeyFor("http://127.0.0.1:12345", nil, "", false, "metrics")
+	key := cacheKeyFor("http://127.0.0.1:12345", nil, "", false, queueSubdirMetrics)
 
 	exp1, _, err := cache.metricExporter(ctx, key, func() (sdkmetric.Exporter, *http.Client, error) {
 		e, err := buildMetricExporter(ctx, live, "http://127.0.0.1:12345", nil)
@@ -110,9 +110,9 @@ func TestExporterDeduplication(t *testing.T) {
 		t.Fatal("metric exporter cache did not deduplicate")
 	}
 
-	diffKey := cacheKeyFor("http://127.0.0.1:99999", nil, "", false, "metrics")
+	diffKey := cacheKeyFor("http://127.0.0.1:99999", nil, "", false, queueSubdirMetrics)
 	exp3, _, err := cache.metricExporter(ctx, diffKey, func() (sdkmetric.Exporter, *http.Client, error) {
-		live2, send2, _ := buildRouteClients("http://127.0.0.1:99999", nil, "", false, "primary", q)
+		live2, send2, _ := buildRouteClients("http://127.0.0.1:99999", nil, "", false, "primary", queueSubdirMetrics, nil, q)
 		e, err := buildMetricExporter(ctx, live2, "http://127.0.0.1:99999", nil)
 		return e, send2, err
 	})
@@ -308,6 +308,45 @@ func TestInsecureHTTPForLoopback(t *testing.T) {
 	}
 }
 
+func TestOtelEndpointEnvDoesNotOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:99999")
+
+	var gotRequest atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequest.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelBasic,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	tel.CommandCounter().Add(context.Background(), 1, nil)
+
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	if !gotRequest.Load() {
+		t.Fatal("expected configured endpoint to be used despite OTEL endpoint env var")
+	}
+}
+
 func TestQueueOnExportFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -337,8 +376,8 @@ func TestQueueOnExportFailure(t *testing.T) {
 	}
 	tel.CommandCounter().Add(context.Background(), 1, nil)
 
-	if err := tel.Shutdown(context.Background()); err == nil {
-		t.Fatal("expected shutdown to report export failure")
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown should not return an error, got: %v", err)
 	}
 
 	if tel.LastDeliveryFailure() == nil {

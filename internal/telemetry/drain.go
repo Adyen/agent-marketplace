@@ -17,11 +17,12 @@ func (t *Telemetry) drain(ctx context.Context) error {
 		return nil
 	}
 
+	slog.Debug("draining queued telemetry payloads", "senders", len(t.sendClients))
 	return t.queue.Drain(ctx, t.send)
 }
 
 // send replays a queued Envelope to the route's endpoint.
-func (t *Telemetry) send(payload []byte) error {
+func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 	var env Envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return fmt.Errorf("decode queued envelope: %w", err)
@@ -41,6 +42,7 @@ func (t *Telemetry) send(payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("build replay request: %w", err)
 	}
+	req = req.WithContext(ctx)
 
 	for k, vv := range env.Headers {
 		if k == "Content-Length" || k == "Host" {
@@ -54,6 +56,7 @@ func (t *Telemetry) send(payload []byte) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		slog.Error("send queued payload failed", "url", env.URL, "route", env.Route, "error", err)
 		return fmt.Errorf("send queued payload: %w", err)
 	}
 	defer func() {
@@ -63,8 +66,10 @@ func (t *Telemetry) send(payload []byte) error {
 	}()
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		slog.Debug("queued payload delivered", "url", env.URL, "route", env.Route)
 		return nil
 	}
 
+	slog.Error("queued payload delivery rejected", "url", env.URL, "route", env.Route, "status", resp.Status)
 	return fmt.Errorf("queued send to %s failed: %s", env.URL, resp.Status)
 }

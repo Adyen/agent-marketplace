@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,11 +56,69 @@ type Queue struct {
 // NewQueue creates a durable queue rooted at root. The queue caps total disk
 // use at 5 MiB and discards items older than 7 days, evicting oldest first.
 func NewQueue(root string) *Queue {
-	_ = os.MkdirAll(root, 0o700)
-	return &Queue{
+	q := &Queue{
 		root:     root,
 		maxBytes: defaultMaxQueueBytes,
 		maxAge:   defaultMaxQueueAge,
+	}
+
+	if root == "" {
+		return q
+	}
+
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		slog.Error("failed to create queue root", "root", root, "error", err)
+		return q
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		slog.Error("failed to chmod queue root", "root", root, "error", err)
+	}
+
+	q.recoverCrash()
+	return q
+}
+
+// recoverCrash renames any stale *.sending files back to their base name and
+// removes any *.tmp files left behind by a crashed process.
+func (q *Queue) recoverCrash() {
+	slog.Info("recovering queue from previous crashes", "root", q.root)
+
+	err := filepath.Walk(q.root, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			slog.Debug("skipping unreadable queue entry during crash recovery", "path", path, "error", err)
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		base := filepath.Base(path)
+		switch {
+		case strings.HasSuffix(base, ".tmp"):
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Error("failed to remove stale tmp queue file", "path", path, "error", err)
+			} else {
+				slog.Debug("removed stale tmp queue file", "path", path)
+			}
+		case strings.HasSuffix(base, ".sending"):
+			recovered := strings.TrimSuffix(base, ".sending")
+			dest := filepath.Join(filepath.Dir(path), recovered)
+			if _, err := os.Stat(dest); err == nil {
+				if err := os.Remove(path); err != nil {
+					slog.Error("failed to remove stale sending duplicate", "path", path, "error", err)
+				}
+			} else {
+				if err := os.Rename(path, dest); err != nil {
+					slog.Error("failed to recover sending file", "path", path, "dest", dest, "error", err)
+				} else {
+					slog.Debug("recovered sending file", "path", path, "dest", dest)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		slog.Error("queue crash recovery walk failed", "root", q.root, "error", err)
 	}
 }
 
@@ -67,19 +126,28 @@ func NewQueue(root string) *Queue {
 // responsible for serializing data; Queue treats it as opaque bytes.
 func (q *Queue) Push(ctx context.Context, route Route, data []byte) error {
 	if route.Signal != queueSubdirMetrics && route.Signal != queueSubdirTraces {
+		slog.Error("unsupported queue signal", "route", route, "signal", route.Signal)
 		return fmt.Errorf("unsupported queue signal %q", route.Signal)
 	}
+
+	slog.Debug("pushing queue payload", "route", route.String(), "size", len(data))
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if err := q.evictLocked(ctx, int64(len(data))); err != nil {
+		slog.Error("queue eviction failed", "route", route.String(), "error", err)
 		return err
 	}
 
 	subdir := filepath.Join(q.root, route.Signal)
 	if err := os.MkdirAll(subdir, 0o700); err != nil {
+		slog.Error("failed to create queue subdir", "subdir", subdir, "error", err)
 		return fmt.Errorf("create queue subdir: %w", err)
+	}
+	if err := os.Chmod(subdir, 0o700); err != nil {
+		slog.Error("failed to chmod queue subdir", "subdir", subdir, "error", err)
+		return fmt.Errorf("chmod queue subdir: %w", err)
 	}
 
 	name := newQueueFilename()
@@ -87,27 +155,38 @@ func (q *Queue) Push(ctx context.Context, route Route, data []byte) error {
 	tmp := path + ".tmp"
 
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		slog.Error("failed to write queue file", "path", tmp, "error", err)
 		return fmt.Errorf("write queue file: %w", err)
 	}
 
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		slog.Error("failed to rename queue file", "tmp", tmp, "path", path, "error", err)
+		return fmt.Errorf("rename queue file: %w", err)
+	}
+
+	slog.Debug("queue payload stored", "path", path)
+	return nil
 }
 
 // Drain iterates queued items oldest-first, calls send with the raw file bytes,
 // and deletes items that send returns successfully. A per-file rename to
 // ".sending" prevents concurrent drainers from double-sending the same item.
-func (q *Queue) Drain(ctx context.Context, send func(data []byte) error) error {
+func (q *Queue) Drain(ctx context.Context, send func(ctx context.Context, data []byte) error) error {
 	q.mu.Lock()
 	files, err := q.listFilesLocked()
 	if err != nil {
 		q.mu.Unlock()
+		slog.Error("failed to list queued files", "root", q.root, "error", err)
 		return err
 	}
 	sortFiles(files)
 	q.mu.Unlock()
 
+	slog.Info("draining queue", "root", q.root, "count", len(files))
+
 	for _, f := range files {
 		if err := ctx.Err(); err != nil {
+			slog.Warn("drain context canceled", "root", q.root, "error", err)
 			return err
 		}
 
@@ -120,16 +199,18 @@ func (q *Queue) Drain(ctx context.Context, send func(data []byte) error) error {
 		}
 		data, err := os.ReadFile(sending)
 		if err != nil {
+			slog.Error("failed to read sending file", "path", sending, "error", err)
 			_ = os.Rename(sending, f.path)
 			q.mu.Unlock()
 			continue
 		}
 		q.mu.Unlock()
 
-		err = send(data)
+		err = send(ctx, data)
 
 		q.mu.Lock()
 		if err != nil {
+			slog.Error("send queued payload failed", "path", f.path, "error", err)
 			_ = os.Rename(sending, f.path)
 			q.mu.Unlock()
 			return err
@@ -138,6 +219,7 @@ func (q *Queue) Drain(ctx context.Context, send func(data []byte) error) error {
 		q.mu.Unlock()
 	}
 
+	slog.Info("queue drained", "root", q.root)
 	return nil
 }
 
@@ -204,7 +286,9 @@ func (q *Queue) evictLocked(ctx context.Context, incoming int64) error {
 
 	for _, f := range files {
 		if now.Sub(f.modTime) > q.maxAge {
-			_ = os.Remove(f.path)
+			if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) {
+				slog.Error("failed to remove aged queue file", "path", f.path, "error", err)
+			}
 			continue
 		}
 		active = append(active, f)
@@ -217,6 +301,7 @@ func (q *Queue) evictLocked(ctx context.Context, incoming int64) error {
 		oldest := active[0]
 		active = active[1:]
 		if err := os.Remove(oldest.path); err != nil && !os.IsNotExist(err) {
+			slog.Error("failed to evict queue file", "path", oldest.path, "error", err)
 			return err
 		}
 		total -= oldest.size

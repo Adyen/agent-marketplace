@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,26 +22,35 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
+const (
+	maxShutdownFlush      = 500 * time.Millisecond
+	preExportDrainTimeout = 250 * time.Millisecond
+)
+
 // Telemetry is the runtime telemetry handle. It exposes only small wrapper
 // types so callers do not depend directly on OpenTelemetry SDK types.
 type Telemetry struct {
-	state       TelemetryState
-	id          string
-	queue       *Queue
-	mp          *sdkmetric.MeterProvider
-	tp          *sdktrace.TracerProvider
-	counter     otelmetric.Int64Counter
-	hist        otelmetric.Int64Histogram
-	tracer      oteltrace.Tracer
-	sendClients map[string]*http.Client
-	logger      *slog.Logger
+	state              TelemetryState
+	id                 string
+	queue              *Queue
+	mp                 *sdkmetric.MeterProvider
+	tp                 *sdktrace.TracerProvider
+	counter            otelmetric.Int64Counter
+	hist               otelmetric.Int64Histogram
+	tracer             oteltrace.Tracer
+	sendClients        map[string]*http.Client
+	logger             *slog.Logger
+	allowedMetricAttrs map[string]struct{}
 
+	// lastFailure holds a *error so the concrete type stored in the Value is
+	// always consistent regardless of the dynamic error type.
 	lastFailure atomic.Value
 }
 
 // Counter is a thin wrapper around an OpenTelemetry int64 counter.
 type Counter struct {
-	c otelmetric.Int64Counter
+	c       otelmetric.Int64Counter
+	allowed map[string]struct{}
 }
 
 // Add records n increments with the supplied string attributes.
@@ -50,12 +58,18 @@ func (c Counter) Add(ctx context.Context, n int64, attrs map[string]string) {
 	if c.c == nil {
 		return
 	}
-	c.c.Add(ctx, n, otelmetric.WithAttributes(attrsToKeyValues(attrs)...))
+	filtered := filteredAttrsToKeyValues(attrs, c.allowed)
+	if len(filtered) == 0 {
+		c.c.Add(ctx, n)
+		return
+	}
+	c.c.Add(ctx, n, otelmetric.WithAttributes(filtered...))
 }
 
 // Histogram is a thin wrapper around an OpenTelemetry int64 histogram.
 type Histogram struct {
-	h otelmetric.Int64Histogram
+	h       otelmetric.Int64Histogram
+	allowed map[string]struct{}
 }
 
 // Record records value milliseconds with the supplied string attributes.
@@ -63,7 +77,12 @@ func (h Histogram) Record(ctx context.Context, ms int64, attrs map[string]string
 	if h.h == nil {
 		return
 	}
-	h.h.Record(ctx, ms, otelmetric.WithAttributes(attrsToKeyValues(attrs)...))
+	filtered := filteredAttrsToKeyValues(attrs, h.allowed)
+	if len(filtered) == 0 {
+		h.h.Record(ctx, ms)
+		return
+	}
+	h.h.Record(ctx, ms, otelmetric.WithAttributes(filtered...))
 }
 
 // Span is a thin wrapper around an OpenTelemetry span.
@@ -101,9 +120,20 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 	}
 
 	t := &Telemetry{
-		state:       state,
-		logger:      logger,
-		sendClients: make(map[string]*http.Client),
+		state:              state,
+		logger:             logger,
+		sendClients:        make(map[string]*http.Client),
+		allowedMetricAttrs: make(map[string]struct{}, len(tmcfg.MetricSchemaAttributes)),
+	}
+	for _, a := range tmcfg.MetricSchemaAttributes {
+		t.allowedMetricAttrs[string(a)] = struct{}{}
+	}
+
+	logger.Info("building telemetry runtime", "effective_level", state.EffectiveLevel)
+
+	if state.EffectiveLevel == tmcfg.LevelOff {
+		logger.Info("telemetry disabled; skipping installation id, queue, and provider setup")
+		return t, nil
 	}
 
 	queueRoot := queueRootFromInstallationIDPath(state.InstallationIDPath)
@@ -111,13 +141,11 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 
 	id, err := LoadInstallationID(state.InstallationIDPath)
 	if err != nil {
+		logger.Error("failed to load installation id", "path", state.InstallationIDPath, "error", err)
 		return nil, fmt.Errorf("load installation id: %w", err)
 	}
 	t.id = id
-
-	if state.EffectiveLevel == tmcfg.LevelOff {
-		return t, nil
-	}
+	logger.Debug("loaded installation id", "path", state.InstallationIDPath)
 
 	res, err := buildResource(ctx, id, state.SchemaVersion)
 	if err != nil {
@@ -133,13 +161,14 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 	if state.PrimaryEndpoint != "" {
 		primaryHeaders, err := resolveHeaders(state.PrimaryHeaders)
 		if err != nil {
+			logger.Error("failed to resolve primary telemetry headers", "error", err)
 			return nil, err
 		}
 
 		if state.EffectiveLevel == tmcfg.LevelBasic || state.EffectiveLevel == tmcfg.LevelDetailed {
-			mKey := cacheKeyFor(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "metrics")
+			mKey := cacheKeyFor(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, queueSubdirMetrics)
 			mExp, sender, err := cache.metricExporter(ctx, mKey, func() (sdkmetric.Exporter, *http.Client, error) {
-				live, send, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", t.queue)
+				live, send, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", queueSubdirMetrics, t.recordFailure, t.queue)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -147,6 +176,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 				return e, send, err
 			})
 			if err != nil {
+				logger.Error("failed to build primary metric exporter", "error", err)
 				return nil, fmt.Errorf("build primary metric exporter: %w", err)
 			}
 			primaryMetricExp = mExp
@@ -154,9 +184,9 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		}
 
 		if state.EffectiveLevel == tmcfg.LevelDetailed {
-			tKey := cacheKeyFor(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "traces")
+			tKey := cacheKeyFor(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, queueSubdirTraces)
 			tExp, _, err := cache.traceExporter(ctx, tKey, func() (sdktrace.SpanExporter, *http.Client, error) {
-				live, send, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", t.queue)
+				live, send, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", queueSubdirTraces, t.recordFailure, t.queue)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -164,6 +194,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 				return e, send, err
 			})
 			if err != nil {
+				logger.Error("failed to build primary trace exporter", "error", err)
 				return nil, fmt.Errorf("build primary trace exporter: %w", err)
 			}
 			primaryTraceExp = tExp
@@ -172,12 +203,13 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 
 	if state.CommunityReportingEnabled && !state.CommunityReportingFoldedIntoPrimary && state.CommunityEndpoint != "" {
 		if err := tmcfg.ValidateEndpoint(state.CommunityEndpoint, false); err != nil {
+			logger.Error("invalid community endpoint", "endpoint", state.CommunityEndpoint, "error", err)
 			return nil, fmt.Errorf("validate community endpoint: %w", err)
 		}
 
-		cKey := cacheKeyFor(state.CommunityEndpoint, nil, "", false, "metrics")
+		cKey := cacheKeyFor(state.CommunityEndpoint, nil, "", false, queueSubdirMetrics)
 		cExp, sender, err := cache.metricExporter(ctx, cKey, func() (sdkmetric.Exporter, *http.Client, error) {
-			live, send, err := buildRouteClients(state.CommunityEndpoint, nil, "", false, "community", t.queue)
+			live, send, err := buildRouteClients(state.CommunityEndpoint, nil, "", false, "community", queueSubdirMetrics, t.recordFailure, t.queue)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -185,10 +217,19 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 			return e, send, err
 		})
 		if err != nil {
+			logger.Error("failed to build community metric exporter", "error", err)
 			return nil, fmt.Errorf("build community metric exporter: %w", err)
 		}
 		communityMetricExp = cExp
 		t.sendClients["community"] = sender
+	}
+
+	if len(t.sendClients) > 0 && t.queue != nil {
+		preCtx, cancel := context.WithTimeout(ctx, preExportDrainTimeout)
+		if err := t.drain(preCtx); err != nil {
+			logger.Warn("pre-export drain failed, continuing", "error", err)
+		}
+		cancel()
 	}
 
 	if primaryMetricExp != nil || communityMetricExp != nil {
@@ -214,6 +255,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 			otelmetric.WithDescription("Command invocations"),
 		)
 		if err != nil {
+			logger.Error("failed to create command counter", "error", err)
 			return nil, fmt.Errorf("create command counter: %w", err)
 		}
 
@@ -224,6 +266,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 			otelmetric.WithExplicitBucketBoundaries(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
 		)
 		if err != nil {
+			logger.Error("failed to create command duration histogram", "error", err)
 			return nil, fmt.Errorf("create command duration histogram: %w", err)
 		}
 	}
@@ -240,6 +283,8 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		t.tracer = t.tp.Tracer("agent_marketplace")
 	}
 
+	logger.Info("telemetry runtime built", "effective_level", state.EffectiveLevel, "primary_endpoint", state.PrimaryEndpoint != "", "community_enabled", state.CommunityReportingEnabled)
+
 	return t, nil
 }
 
@@ -251,40 +296,45 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	var errs []error
+	t.logger.Debug("shutting down telemetry")
+	flushCtx, cancel := context.WithTimeout(ctx, maxShutdownFlush)
+	defer cancel()
 
 	if t.queue != nil {
-		if err := t.drain(ctx); err != nil {
-			errs = append(errs, err)
+		if err := t.drain(flushCtx); err != nil {
+			slog.Error("telemetry drain failed during shutdown", "error", err)
 			t.recordFailure(err)
 		}
 	}
 
 	if t.tp != nil {
-		if err := t.tp.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
+		if err := t.tp.Shutdown(flushCtx); err != nil {
+			slog.Error("telemetry trace provider shutdown failed", "error", err)
 			t.recordFailure(err)
 		}
 	}
 
 	if t.mp != nil {
-		if err := t.mp.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
+		if err := t.mp.Shutdown(flushCtx); err != nil {
+			slog.Error("telemetry metric provider shutdown failed", "error", err)
 			t.recordFailure(err)
 		}
 	}
 
-	return errors.Join(errs...)
+	t.logger.Debug("telemetry shutdown complete")
+	return nil
 }
 
 // CommandCounter returns the command invocation counter.
 func (t *Telemetry) CommandCounter() Counter {
-	return Counter{c: t.counter}
+	t.logger.Debug("returning command counter")
+	return Counter{c: t.counter, allowed: t.allowedMetricAttrs}
 }
 
 // CommandDuration returns the command duration histogram.
 func (t *Telemetry) CommandDuration() Histogram {
-	return Histogram{h: t.hist}
+	t.logger.Debug("returning command duration histogram")
+	return Histogram{h: t.hist, allowed: t.allowedMetricAttrs}
 }
 
 // StartSpan starts a new lifecycle span. Attributes are supplied as a plain
@@ -293,6 +343,8 @@ func (t *Telemetry) StartSpan(ctx context.Context, name string, attrs map[string
 	if t.tracer == nil {
 		return ctx, Span{}
 	}
+
+	t.logger.Debug("starting span", "name", name)
 
 	var opts []oteltrace.SpanStartOption
 	if len(attrs) > 0 {
@@ -314,15 +366,16 @@ func (t *Telemetry) LastDeliveryFailure() error {
 	if v == nil {
 		return nil
 	}
-	if err, ok := v.(error); ok {
-		return err
+	if p, ok := v.(*error); ok {
+		return *p
 	}
 	return nil
 }
 
 func (t *Telemetry) recordFailure(err error) {
 	if err != nil {
-		t.lastFailure.Store(err)
+		p := err
+		t.lastFailure.Store(&p)
 	}
 }
 
@@ -334,6 +387,8 @@ func queueRootFromInstallationIDPath(path string) string {
 }
 
 func buildResource(ctx context.Context, installationID, schemaVersion string) (*otelresource.Resource, error) {
+	slog.Debug("building telemetry resource", "schema_version", schemaVersion)
+
 	attrs := []otelattribute.KeyValue{
 		otelattribute.String(string(tmcfg.ResourceAttrInstallationID), installationID),
 		otelattribute.String(string(tmcfg.ResourceAttrSchemaVersion), schemaVersion),
@@ -342,7 +397,11 @@ func buildResource(ctx context.Context, installationID, schemaVersion string) (*
 		otelattribute.String(string(tmcfg.ResourceAttrArch), runtime.GOARCH),
 	}
 
-	return otelresource.New(ctx, otelresource.WithAttributes(attrs...))
+	res, err := otelresource.New(ctx, otelresource.WithAttributes(attrs...))
+	if err != nil {
+		slog.Error("failed to build telemetry resource", "error", err)
+	}
+	return res, err
 }
 
 func cliVersion() string {
@@ -365,6 +424,23 @@ func attrsToKeyValues(attrs map[string]string) []otelattribute.KeyValue {
 	out := make([]otelattribute.KeyValue, 0, len(attrs))
 	for k, v := range attrs {
 		if k == "" {
+			continue
+		}
+		out = append(out, otelattribute.String(k, v))
+	}
+	return out
+}
+
+func filteredAttrsToKeyValues(attrs map[string]string, allowed map[string]struct{}) []otelattribute.KeyValue {
+	if len(attrs) == 0 || len(allowed) == 0 {
+		return nil
+	}
+	out := make([]otelattribute.KeyValue, 0, len(attrs))
+	for k, v := range attrs {
+		if k == "" {
+			continue
+		}
+		if _, ok := allowed[k]; !ok {
 			continue
 		}
 		out = append(out, otelattribute.String(k, v))

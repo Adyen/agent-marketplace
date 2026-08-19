@@ -71,3 +71,118 @@ func BenchmarkNewShutdown(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkCounterAdd(b *testing.B) {
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+
+	srv := benchServer()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelBasic,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	ctx := context.Background()
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName): "bench",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tel.CommandCounter().Add(ctx, 1, attrs)
+	}
+}
+
+func BenchmarkHistogramRecord(b *testing.B) {
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+
+	srv := benchServer()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelBasic,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	ctx := context.Background()
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName): "bench",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tel.CommandDuration().Record(ctx, 50, attrs)
+	}
+}
+
+func BenchmarkStartSpan(b *testing.B) {
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+
+	srv := benchServer()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelDetailed,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	ctx := context.Background()
+	attrs := map[string]string{
+		"span.attr": "bench",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, span := tel.StartSpan(ctx, "bench-span", attrs)
+		span.End()
+	}
+}

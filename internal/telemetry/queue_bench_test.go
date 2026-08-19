@@ -10,7 +10,7 @@ func BenchmarkQueuePushDrain(b *testing.B) {
 	q := NewQueue(dir)
 
 	payload := []byte(`{"route":"primary","signal":"metrics","payload":"ZGF0YQ=="}`)
-	send := func(data []byte) error { return nil }
+	send := func(_ context.Context, data []byte) error { return nil }
 
 	b.ReportAllocs()
 	b.ResetTimer()
