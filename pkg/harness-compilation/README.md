@@ -1,6 +1,6 @@
 # Harness Compilation Library
 
-A Go library that converts AI-agent configuration resources from a canonical source format into vendor-specific layouts. It has six conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, and Devin CLI. Every one of them has both a compiler and an ingester, so each is valid as a `--from` source and a `--to` destination. The library never selects targets for a caller.
+A Go library that converts AI-agent configuration resources from a canonical source format into vendor-specific layouts. It has seven conversion targets: Claude Code, Factory Droid, Cursor, Windsurf, Gemini CLI, Devin CLI, and Codex. Every one of them has both a compiler and an ingester, so each is valid as a `--from` source and a `--to` destination. The library never selects targets for a caller.
 
 ## Design
 
@@ -121,6 +121,7 @@ hcc --from ./my-plugin --target cursor --out ./output --dry-run
 | Windsurf | `TargetWindsurf` | Workspace root (`artifacts live under .windsurf/`) |
 | Gemini CLI | `TargetGemini` | Extension directory (`gemini-extension.json` at root) |
 | Devin CLI | `TargetDevin` | Project `.devin/`; user `~/.config/devin/` |
+| Codex | `TargetCodex` | Partitioned: `.agents/` skills plus `.codex/` configuration; the consumer resolves scope and `CODEX_HOME` |
 
 The authoritative declaration of every target — its identity, label, both roots,
 and its compiler/ingester/conversion/UI capabilities — is
@@ -152,6 +153,31 @@ Devin-specific notes:
   `.devin/rules/<name>.md` even though `devin rules paths` does not advertise
   it. See `diag/codes.md`.
 
+Codex-specific notes:
+
+- The target emits partitioned paths from one compilation result: skills and
+  converted commands at `.agents/skills/<name>/SKILL.md`; subagents at
+  `.codex/agents/<name>.toml`; hooks at `.codex/hooks.json`; and MCP servers as
+  `[mcp_servers.<name>]` tables in `.codex/config.toml`. Commands carry
+  `x-agent-marketplace-kind: command` so the ingester restores command
+  provenance.
+- The ingester detects a `.codex` workspace and then reads sibling
+  `.agents/skills`. `.agents/skills` by itself is cross-agent and is never
+  autodetected as Codex; callers may still select `TargetCodex` explicitly.
+- Hook and MCP artifacts set `ExternalReconciliationRequired`: they are shared
+  native files, so consumers must reconcile entries rather than overwrite the
+  file. Rules and `AGENTS.md` generation are out of scope. Deprecated
+  `.codex/prompts/*.md` files are ingest-only commands and are never emitted.
+- The supported native schema was verified on 2026-08-19 against the official
+  Codex documentation for [skills](https://developers.openai.com/codex/skills),
+  [subagents](https://developers.openai.com/codex/subagents),
+  [hooks](https://developers.openai.com/codex/hooks), and
+  [MCP](https://developers.openai.com/codex/mcp), plus the
+  [config reference](https://developers.openai.com/codex/config-file/config-reference)
+  for `oauth_resource`. The exact fixture outcomes and
+  losses are pinned by the Codex compiler/ingester tests and the 7×7 matrix; see
+  [`field-matrix.md`](field-matrix.md) and [`diag/codes.md`](diag/codes.md).
+
 ### Materialize options
 
 - `WithWriteMode(WriteModeFailIfExists)` — default; errors if output files already exist
@@ -173,4 +199,4 @@ UPDATE_GOLDEN=1 go test -run TestGolden ./...
 
 ## Status
 
-v0.x — 6×6 translation matrix and core API implemented. See design doc for deferred items.
+v0.x — 7×7 translation matrix and core API implemented. See design doc for deferred items.

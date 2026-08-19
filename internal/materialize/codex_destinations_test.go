@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -37,6 +39,112 @@ func TestMaterializePlansRouteCodexAcrossNativeDestinations(t *testing.T) {
 	assertPlan(t, machine, filepath.Join(canonicalRepo, "home", ".agents", "skills"), "demo/SKILL.md")
 	assertPlan(t, machine, filepath.Join(canonicalRepo, "custom-codex", "agents"), "reviewer.toml")
 	assertPlan(t, machine, filepath.Join(canonicalRepo, "custom-codex"), "hooks.json")
+}
+
+func TestCodexMaterializePlansDoNotPruneLinkedSkills(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	canonicalRepo, err := ownership.CanonicalRoot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillsDir := filepath.Join(canonicalRepo, ".agents", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	linked := linkedComponents(map[string]*skillLinkGroup{
+		".agents/skills": {installDirRel: ".agents/skills"},
+	})
+	plans := materializePlans(targetmeta.TargetCodex, repo, nil, linked, false)
+	for _, plan := range plans {
+		if plan.outDir == skillsDir {
+			if plan.prune {
+				t.Fatal("Codex linked-skills plan prunes live skill links")
+			}
+			return
+		}
+	}
+	t.Fatalf("no Codex skills plan for %s", skillsDir)
+}
+
+func TestRunPreservesCodexSkillsWhenAnotherSkillIsSuppressed(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	resolved := func(name string, resource ir.Resource) resolver.ResolvedArtifact {
+		return resolver.ResolvedArtifact{
+			Entry:     catalog.Entry{Name: name, Resource: resource},
+			Source:    config.RepoCommitted,
+			Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
+		}
+	}
+
+	stale := resolved("stale", ir.NewSkill("stale", "stale", "Body\n", nil, nil, ir.SourceRef{}))
+	if _, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{stale}); err != nil {
+		t.Fatalf("seed Run: %v", err)
+	}
+	stalePath := filepath.Join(repo, ".agents", "skills", "stale")
+	if _, err := os.Lstat(stalePath); err != nil {
+		t.Fatalf("seed skill was not materialized: %v", err)
+	}
+
+	restricted := ir.NewSkillWithOptions("restricted", "restricted", "Body\n", nil, nil, ir.SourceRef{},
+		ir.WithSkillAllowedTools([]string{"read"}))
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{resolved("restricted", restricted)})
+	if err != nil {
+		t.Fatalf("suppressed Run: %v", err)
+	}
+	if _, ok := findDiag(report.Diags, diag.CodeSkillCodexSecurityRestrictionUnsupported); !ok {
+		t.Fatalf("missing suppressed-skill diagnostic: %v", report.Diags)
+	}
+	if _, err := os.Lstat(stalePath); err != nil {
+		t.Fatalf("suppressed Codex skill pruned the existing skills component: %v", err)
+	}
+}
+
+func TestCodexDryRunLabelsSelectedSkillAndCommandDriftWithAgentsRoot(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	selection := []resolver.ResolvedArtifact{
+		{
+			Entry:     catalog.Entry{Name: "repo-skill", Resource: ir.NewSkill("repo-skill", "skill", "Body\n", nil, nil, ir.SourceRef{})},
+			Source:    config.RepoCommitted,
+			Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
+		},
+		{
+			Entry:     catalog.Entry{Name: "repo-command", Resource: ir.NewCommand("repo-command", "command", "Body\n", nil, ir.SourceRef{})},
+			Source:    config.RepoCommitted,
+			Harnesses: []targetmeta.Target{targetmeta.TargetCodex},
+		},
+	}
+	if _, err := Run(context.Background(), repo, selection); err != nil {
+		t.Fatalf("seed Run: %v", err)
+	}
+	for _, name := range []string{"repo-skill", "repo-command"} {
+		if err := os.Remove(filepath.Join(repo, ".agents", "skills", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := Run(context.Background(), repo, selection, WithDryRun())
+	if err != nil {
+		t.Fatalf("dry Run: %v", err)
+	}
+	var written []string
+	for _, tr := range report.PerRoot {
+		if tr.RootID == "repo-agents" {
+			written = append(written, tr.Written...)
+		}
+	}
+	for _, name := range []string{"repo-skill", "repo-command"} {
+		if !slices.Contains(written, name) {
+			t.Fatalf("repo-agents Written = %v, missing %q (reports = %#v)", written, name, report.PerRoot)
+		}
+	}
 }
 
 func TestRunWritesCodexSubagentsToNativeDestination(t *testing.T) {

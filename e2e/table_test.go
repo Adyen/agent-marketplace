@@ -1,9 +1,11 @@
 package e2e_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,6 +94,7 @@ type Step struct {
 	// Filesystem assertions (run after the step's command/action).
 	FilesExist      []string
 	FilesAbsent     []string
+	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
 	FileContains    map[string]string // path -> substring
@@ -107,6 +110,70 @@ func resolvePlaceholders(tmpl string, urls map[string]string) string {
 		tmpl = strings.ReplaceAll(tmpl, "{{REG:"+name+"}}", url)
 	}
 	return tmpl
+}
+
+func pathFingerprint(root string) (string, error) {
+	h := sha256.New()
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%q\x00%s\x00%d\x00%d\x00", rel, info.Mode(), info.Size(), info.ModTime().UnixNano())
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_, _ = h.Write([]byte(target))
+		case info.Mode().IsRegular():
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			_, _ = h.Write(data)
+		}
+		_, _ = h.Write([]byte{0})
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "artifact")
+	if err := os.WriteFile(path, []byte("same bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firstTime := time.Unix(1, 0)
+	if err := os.Chtimes(path, firstTime, firstTime); err != nil {
+		t.Fatal(err)
+	}
+	before, err := pathFingerprint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("same bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secondTime := time.Unix(2, 0)
+	if err := os.Chtimes(path, secondTime, secondTime); err != nil {
+		t.Fatal(err)
+	}
+	after, err := pathFingerprint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("path fingerprint ignored a same-byte rewrite")
+	}
 }
 
 // ---------- test table ----------
@@ -3193,6 +3260,281 @@ registries:
 		},
 	},
 
+	// ===== codex =====
+	{
+		Name: "codex/repo_all_kinds_deterministic",
+		Desc: "Given repository-scoped resources of every Codex kind, When sync and check run, Then native Codex outputs are complete and deterministic",
+		Registries: []RegistryDef{
+			{Name: "codex-repo", Skills: []Skill{
+				{Name: "repo-skill", Description: "Codex repository skill"},
+			}, Commands: []Command{
+				{Name: "repo-command", Description: "Codex repository command", Command: "echo repo-command"},
+			}, Subagents: []Subagent{
+				{Name: "repo-agent", Description: "Codex repository agent"},
+			}, MCPServers: []MCPServer{
+				{Name: "zeta-server", Command: "zeta-mcp"},
+				{Name: "alpha-server", Command: "alpha-mcp"},
+			}, Files: map[string]string{
+				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo repo-hook","matcher":"Bash"}]}}`,
+			}},
+		},
+		GlobalCfg: `
+harnesses:
+  - codex
+registries: []
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:codex-repo}}
+    ref: main
+    source_harness: claude
+    skills:
+      - repo-skill
+    commands:
+      - repo-command
+    subagents:
+      - repo-agent
+    hooks:
+      - PreToolUse-command
+    mcp:
+      - zeta-server
+      - alpha-server
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/workspace/.agents/skills/repo-skill/SKILL.md",
+					"/workspace/.agents/skills/repo-command/SKILL.md",
+					"/workspace/.codex/agents/repo-agent.toml",
+					"/workspace/.codex/hooks.json",
+					"/workspace/.codex/config.toml",
+				},
+				FileContains: map[string]string{
+					"/workspace/.agents/skills/repo-command/SKILL.md": "x-agent-marketplace-kind: command",
+					"/workspace/.codex/agents/repo-agent.toml":        "name = 'repo-agent'",
+					"/workspace/.codex/hooks.json":                    "echo repo-hook",
+					"/workspace/.codex/config.toml":                   "[mcp_servers.\"zeta-server\"]\ncommand = 'zeta-mcp'\n[mcp_servers.\"alpha-server\"]\ncommand = 'alpha-mcp'",
+				}},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(0),
+				PathsUnchanged: []string{
+					"/workspace/.agents",
+					"/workspace/.agents/skills/repo-skill/SKILL.md",
+					"/workspace/.agents/skills/repo-command/SKILL.md",
+					"/workspace/.codex",
+					"/root/.local/state/agent-marketplace",
+				}},
+			{Args: []string{"sync"}, MustPass: true,
+				PathsUnchanged: []string{
+					"/workspace/.agents",
+					"/workspace/.agents/skills/repo-skill/SKILL.md",
+					"/workspace/.agents/skills/repo-command/SKILL.md",
+					"/workspace/.codex",
+				},
+				FileContains: map[string]string{
+					"/workspace/.codex/config.toml": "[mcp_servers.\"zeta-server\"]\ncommand = 'zeta-mcp'\n[mcp_servers.\"alpha-server\"]\ncommand = 'alpha-mcp'",
+				}},
+		},
+	},
+	{
+		Name: "codex/repo_shared_file_collisions_fail_closed",
+		Desc: "Given handwritten Codex hook and MCP entries, When sync finds a same-key MCP conflict, Then it preserves that value while the distinct hooks coexist",
+		Registries: []RegistryDef{
+			{Name: "codex-collisions", MCPServers: []MCPServer{
+				{Name: "collision-server", Command: "generated-mcp"},
+			}, Files: map[string]string{
+				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo generated-hook","matcher":"Bash"}]}}`,
+			}},
+		},
+		GlobalCfg: `
+harnesses:
+  - codex
+registries: []
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:codex-collisions}}
+    ref: main
+    source_harness: claude
+    hooks:
+      - PreToolUse-command
+    mcp:
+      - collision-server
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.codex/hooks.json",
+				Body: `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo handwritten-hook"}]}]}}`},
+			{Action: ActionWriteFile, Path: "/workspace/.codex/config.toml",
+				Body: "[mcp_servers.\"collision-server\"]\ncommand = 'handwritten-mcp'\n"},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"ownership.unmanaged-key"},
+				FileContains: map[string]string{
+					"/workspace/.codex/hooks.json":  "echo generated-hook",
+					"/workspace/.codex/config.toml": "command = 'handwritten-mcp'",
+				},
+				FileNotContains: map[string]string{
+					"/workspace/.codex/config.toml": "generated-mcp",
+				}},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"ownership.unmanaged-key"},
+				FileContains: map[string]string{
+					"/workspace/.codex/hooks.json":  "echo handwritten-hook",
+					"/workspace/.codex/config.toml": "command = 'handwritten-mcp'",
+				},
+				FileNotContains: map[string]string{
+					"/workspace/.codex/config.toml": "generated-mcp",
+				}},
+		},
+	},
+	{
+		Name: "codex/machine_lifecycle_multi_harness",
+		Desc: "Given machine-scoped Codex resources selected with Factory, When sync, check, prune, restore, and deinit run, Then both Codex root partitions and Factory follow the same lifecycle without check-mode mutation",
+		Registries: []RegistryDef{
+			{Name: "codex-machine", Skills: []Skill{
+				{Name: "machine-skill", Description: "Codex machine skill"},
+			}, Subagents: []Subagent{
+				{Name: "machine-agent", Description: "Codex machine agent"},
+			}, MCPServers: []MCPServer{
+				{Name: "machine-mcp", Command: "machine-mcp-bin"},
+			}, Files: map[string]string{
+				"hooks/hooks.json": `{"hooks":{"PreToolUse":[{"type":"command","command":"echo machine-hook","matcher":"Bash"}]}}`,
+			}},
+		},
+		GlobalCfg: `
+harnesses:
+  - codex
+  - factory
+registries:
+  - url: {{REG:codex-machine}}
+    ref: main
+    source_harness: claude
+    harnesses:
+      - codex
+      - factory
+    skills:
+      - machine-skill
+    subagents:
+      - machine-agent
+    hooks:
+      - PreToolUse-command
+    mcp:
+      - machine-mcp
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/root/.agents/skills/machine-skill/SKILL.md",
+					"/root/.codex/agents/machine-agent.toml",
+					"/root/.codex/hooks.json",
+					"/root/.codex/config.toml",
+					"/root/.factory/skills/machine-skill/SKILL.md",
+					"/root/.factory/droids/machine-agent.md",
+					"/root/.factory/hooks/hooks.json",
+					"/root/.factory/mcp.json",
+				},
+				FileContains: map[string]string{
+					"/root/.codex/agents/machine-agent.toml": "name = 'machine-agent'",
+					"/root/.codex/hooks.json":                "echo machine-hook",
+					"/root/.codex/config.toml":               "machine-mcp-bin",
+					"/root/.factory/droids/machine-agent.md": "name: machine-agent",
+					"/root/.factory/hooks/hooks.json":        "echo machine-hook",
+					"/root/.factory/mcp.json":                "machine-mcp-bin",
+				}},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(0),
+				PathsUnchanged: []string{
+					"/root/.agents",
+					"/root/.agents/skills/machine-skill/SKILL.md",
+					"/root/.codex",
+					"/root/.factory",
+					"/root/.factory/skills/machine-skill/SKILL.md",
+					"/root/.local/state/agent-marketplace",
+				}},
+			{Action: ActionWriteGlobalConfig, Body: `
+harnesses:
+  - codex
+  - factory
+registries: []
+`},
+			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
+				OutContains: []string{
+					"out of sync",
+					"machine-agents", "machine-skill",
+					"machine-codex", "machine-agent.toml", "hooks.json", "config.toml",
+					".factory",
+				},
+				PathsUnchanged: []string{
+					"/root/.agents",
+					"/root/.agents/skills/machine-skill/SKILL.md",
+					"/root/.codex",
+					"/root/.factory",
+					"/root/.factory/skills/machine-skill/SKILL.md",
+					"/root/.local/state/agent-marketplace",
+				}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{
+					"/root/.agents/skills/machine-skill",
+					"/root/.codex/agents/machine-agent.toml",
+					"/root/.factory/skills/machine-skill",
+					"/root/.factory/droids/machine-agent.md",
+				},
+				FileNotContains: map[string]string{
+					"/root/.codex/hooks.json":         "echo machine-hook",
+					"/root/.codex/config.toml":        "machine-mcp-bin",
+					"/root/.factory/hooks/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":         "machine-mcp-bin",
+				}},
+			{Action: ActionWriteGlobalConfig, Body: `
+harnesses:
+  - codex
+  - factory
+registries:
+  - url: {{REG:codex-machine}}
+    ref: main
+    source_harness: claude
+    harnesses:
+      - codex
+      - factory
+    skills:
+      - machine-skill
+    subagents:
+      - machine-agent
+    hooks:
+      - PreToolUse-command
+    mcp:
+      - machine-mcp
+`},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/root/.agents/skills/machine-skill/SKILL.md",
+					"/root/.codex/agents/machine-agent.toml",
+					"/root/.codex/hooks.json",
+					"/root/.codex/config.toml",
+					"/root/.factory/skills/machine-skill/SKILL.md",
+					"/root/.factory/droids/machine-agent.md",
+					"/root/.factory/hooks/hooks.json",
+					"/root/.factory/mcp.json",
+				},
+				FileContains: map[string]string{
+					"/root/.codex/hooks.json":         "echo machine-hook",
+					"/root/.codex/config.toml":        "machine-mcp-bin",
+					"/root/.factory/hooks/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":         "machine-mcp-bin",
+				}},
+			{Args: []string{"deinit"}, MustPass: true,
+				FilesAbsent: []string{
+					"/root/.agents/skills/machine-skill",
+					"/root/.codex/agents/machine-agent.toml",
+					"/root/.factory/skills/machine-skill",
+					"/root/.factory/droids/machine-agent.md",
+				},
+				FileNotContains: map[string]string{
+					"/root/.codex/hooks.json":         "echo machine-hook",
+					"/root/.codex/config.toml":        "machine-mcp-bin",
+					"/root/.factory/hooks/hooks.json": "echo machine-hook",
+					"/root/.factory/mcp.json":         "machine-mcp-bin",
+				}},
+		},
+	},
+
 	// ===== deinit command =====
 	{
 		Name: "deinit/repo_scope_removes_repo_artifacts",
@@ -3866,6 +4208,15 @@ func TestE2E(t *testing.T) {
 					env.WriteFile(step.Path, step.Body)
 				}
 
+				unchanged := make(map[string]string, len(step.PathsUnchanged))
+				for _, p := range step.PathsUnchanged {
+					fingerprint, err := pathFingerprint(env.mustResolvePath(p))
+					if err != nil {
+						t.Fatalf("step %d: snapshot path %q: %v", i, p, err)
+					}
+					unchanged[p] = fingerprint
+				}
+
 				// Run command if Args is set (resolve {{REG:...}} placeholders).
 				var r ExecResult
 				if len(step.Args) > 0 {
@@ -3874,7 +4225,6 @@ func TestE2E(t *testing.T) {
 						args[j] = resolvePlaceholders(a, urls)
 					}
 					r = env.RunAM(args...)
-
 					if step.MustPass && r.ExitCode != 0 {
 						errMsg := fmt.Sprintf("step %d: agent-marketplace %s failed (exit %d): %s",
 							i, strings.Join(step.Args, " "), r.ExitCode, r.Combined)
@@ -3926,6 +4276,24 @@ func TestE2E(t *testing.T) {
 				for _, p := range step.FilesAbsent {
 					if env.CheckFileExists(p) {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+					}
+				}
+				for p, want := range unchanged {
+					got, err := pathFingerprint(env.mustResolvePath(p))
+					if err != nil {
+						errMsg := fmt.Sprintf("step %d: unchanged path %q is not readable: %v", i, p, err)
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+						continue
+					}
+					if got != want {
+						errMsg := fmt.Sprintf("step %d: path %q changed", i, p)
 						if firstErr == "" {
 							firstErr = errMsg
 						}

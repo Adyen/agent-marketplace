@@ -78,6 +78,27 @@ func TestSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
 	}
 }
 
+func TestSyncCheckSummaryNamesCodexRootsAndArtifacts(t *testing.T) {
+	report := &materialize.Report{PerRoot: []materialize.TargetReport{
+		{RootID: "machine-agents", OutDir: "/home/.agents", Removed: []string{"skills/machine-skill"}},
+		{RootID: "machine-codex", OutDir: "/opt/codex", Removed: []string{"agents/machine-agent.toml", "hooks.json", "config.toml"}},
+	}}
+
+	var buf bytes.Buffer
+	if err := writeSyncCheckSummary(&buf, report, nil, nil); err == nil {
+		t.Fatal("drifted report must return an error")
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"machine-agents", "skills/machine-skill",
+		"machine-codex", "agents/machine-agent.toml", "hooks.json", "config.toml",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("sync --check output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // driftOnlyReport builds a report whose only drift is a file to write.
 func driftOnlyReport(t *testing.T) *materialize.Report {
 	t.Helper()

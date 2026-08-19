@@ -133,7 +133,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	// verbose output lists every affected file under each directory.
 	if report != nil && (totalWritten > 0 || totalRemoved > 0) {
 		if verbose {
-			if err := printOutputDirDetail(out, report); err != nil {
+			if err := printOutputDirDetail(out, report, false); err != nil {
 				return err
 			}
 		} else if dirs := activeOutputDirs(report); len(dirs) > 0 {
@@ -416,6 +416,9 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 		if _, err := fmt.Fprintln(out); err != nil {
 			return err
 		}
+		if err := printOutputDirDetail(out, report, true); err != nil {
+			return err
+		}
 	}
 
 	for _, d := range errorDiags {
@@ -489,8 +492,9 @@ func activeOutputDirs(report *materialize.Report) []string {
 }
 
 // printOutputDirDetail lists every written and removed file under each affected
-// output directory, used for verbose sync output.
-func printOutputDirDetail(out io.Writer, report *materialize.Report) error {
+// output directory. Check mode includes destination IDs so split-root targets
+// identify both the affected named root and artifact.
+func printOutputDirDetail(out io.Writer, report *materialize.Report, nameRoots bool) error {
 	homeDir, _ := os.UserHomeDir()
 	type entry struct {
 		written []string
@@ -503,6 +507,9 @@ func printOutputDirDetail(out io.Writer, report *materialize.Report) error {
 			continue
 		}
 		dir := abbreviateHome(tr.OutDir, homeDir)
+		if nameRoots && tr.RootID != "" {
+			dir = fmt.Sprintf("%s (%s)", tr.RootID, dir)
+		}
 		e, ok := agg[dir]
 		if !ok {
 			e = &entry{}
