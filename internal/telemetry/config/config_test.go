@@ -225,18 +225,23 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 		ResourceAttrHarnesses,
 		ResourceAttrManaged,
 		ResourceAttrOutcomeCode,
-		ResourceAttrCoarseDuration,
 		ResourceAttrInstallationID,
 	}
 	for _, attr := range want {
-		if !slices.Contains(ResourceSchemaAttributes, attr) {
-			t.Fatalf("expected %q in ResourceSchemaAttributes", attr)
+		if !slices.Contains(MetricSchemaAttributes, attr) {
+			t.Fatalf("expected %q in MetricSchemaAttributes", attr)
 		}
 	}
-	if len(ResourceSchemaAttributes) != len(want) {
-		t.Fatalf("ResourceSchemaAttributes length = %d, want %d", len(ResourceSchemaAttributes), len(want))
+	if len(MetricSchemaAttributes) != len(want) {
+		t.Fatalf("MetricSchemaAttributes length = %d, want %d", len(MetricSchemaAttributes), len(want))
 	}
-	if !reflect.DeepEqual(ResourceSchemaAttributes, want) {
-		t.Fatalf("ResourceSchemaAttributes order mismatch: got %v, want %v", ResourceSchemaAttributes, want)
+	if !reflect.DeepEqual(MetricSchemaAttributes, want) {
+		t.Fatalf("MetricSchemaAttributes order mismatch: got %v, want %v", MetricSchemaAttributes, want)
+	}
+	if CommandCounterName != MetricNamespace+".command.invocations" {
+		t.Fatalf("CommandCounterName = %q", CommandCounterName)
+	}
+	if CommandDurationName != MetricNamespace+".command.duration_ms" {
+		t.Fatalf("CommandDurationName = %q", CommandDurationName)
 	}
 }

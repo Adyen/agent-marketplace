@@ -37,13 +37,23 @@ const (
 	ResourceAttrHarnesses      ResourceAttribute = "harnesses"
 	ResourceAttrManaged        ResourceAttribute = "managed"
 	ResourceAttrOutcomeCode    ResourceAttribute = "outcome.code"
-	ResourceAttrCoarseDuration ResourceAttribute = "duration.coarse"
 	ResourceAttrInstallationID ResourceAttribute = "installation.id"
 )
 
-// ResourceSchemaAttributes is the v1 metric attribute allowlist. It contains
-// the only attributes that may be attached to basic metrics.
-var ResourceSchemaAttributes = []ResourceAttribute{
+// MetricInstrument names the v1 basic instruments.
+type MetricInstrument string
+
+const (
+	MetricNamespace                           = "agent_marketplace"
+	CommandCounterName       MetricInstrument = MetricNamespace + ".command.invocations"
+	CommandDurationName      MetricInstrument = MetricNamespace + ".command.duration_ms"
+	CoarseDurationBucketName MetricInstrument = MetricNamespace + ".command.duration_coarse_ms"
+)
+
+// MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
+// only dimensions that may be attached to the command counter and duration
+// histogram. Instrument values (not attributes) carry coarse duration.
+var MetricSchemaAttributes = []ResourceAttribute{
 	ResourceAttrSchemaVersion,
 	ResourceAttrCLIVersion,
 	ResourceAttrOSName,
@@ -52,7 +62,6 @@ var ResourceSchemaAttributes = []ResourceAttribute{
 	ResourceAttrHarnesses,
 	ResourceAttrManaged,
 	ResourceAttrOutcomeCode,
-	ResourceAttrCoarseDuration,
 	ResourceAttrInstallationID,
 }
 
@@ -137,7 +146,9 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	if _, err := NormalizeLevel(tc.Level); err != nil {
 		errs = append(errs, err)
 	}
-	if err := ValidateEndpoint(tc.Endpoint, tc.AllowInsecure); err != nil {
+	// allow_insecure is only meaningful for organization-configured private endpoints.
+	allowInsecure := tc.AllowInsecure && layer == "organization"
+	if err := ValidateEndpoint(tc.Endpoint, allowInsecure); err != nil {
 		errs = append(errs, err)
 	}
 	if err := validateRetentionPolicy(tc.RetentionPolicy); err != nil {
@@ -153,7 +164,8 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	return errs
 }
 
-// ValidateEndpoint checks that an endpoint uses a safe transport.
+// ValidateEndpoint checks that an endpoint uses a safe transport. allowInsecure
+// is honored only for organization private endpoints; loopback is always allowed.
 func ValidateEndpoint(endpoint string, allowInsecure bool) error {
 	if endpoint == "" {
 		return nil
@@ -179,7 +191,7 @@ func ValidateEndpoint(endpoint string, allowInsecure bool) error {
 		return nil
 	}
 	if isPrivateHost(host) {
-		return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true", host)
+		return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true from organization policy", host)
 	}
 	return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", endpoint)
 }
@@ -234,6 +246,17 @@ func validateCAFile(path string) error {
 	if info.IsDir() {
 		return fmt.Errorf("ca_file %q is a directory", path)
 	}
+	if err := validateFilePermission(info, "ca_file"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateFilePermission(info os.FileInfo, kind string) error {
+	perm := info.Mode().Perm()
+	if perm&0o077 != 0 {
+		return fmt.Errorf("%s %q is readable or writable by group/other (%04o); restrict permissions to owner only", kind, info.Name(), perm)
+	}
 	return nil
 }
 
@@ -265,8 +288,17 @@ func validateHeaders(headers map[string]HeaderSource) []error {
 			errs = append(errs, fmt.Errorf("telemetry header %q has an empty file source", name))
 			continue
 		}
-		if _, err := os.Stat(src.File); err != nil {
+		info, err := os.Stat(src.File)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("telemetry header %q file source %q: %w", name, src.File, err))
+			continue
+		}
+		if info.IsDir() {
+			errs = append(errs, fmt.Errorf("telemetry header %q file source %q is a directory", name, src.File))
+			continue
+		}
+		if err := validateFilePermission(info, "telemetry header"); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errs
