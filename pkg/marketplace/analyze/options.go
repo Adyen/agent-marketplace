@@ -7,6 +7,7 @@ type Source struct {
 	Path        string
 	ID          string
 	Slug        string
+	License     string
 }
 
 // Limits cap analyzer inputs so hostile archives cannot exhaust memory.
