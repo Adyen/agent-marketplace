@@ -56,7 +56,7 @@ registries:
     path: teams/security
     required: true
 `)
-	config.SetTestV3OrganizationConfigPath(t, orgCfgPath)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
 apiVersion: agent-marketplace/v2

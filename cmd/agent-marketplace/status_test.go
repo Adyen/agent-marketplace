@@ -380,7 +380,7 @@ registries:
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	writeCachedSkill(t, "https://example.com/org.git", "main", "managed-skill", []string{"ops"})
 	setCacheModTime(t, cache.RegistryCachePath("https://example.com/org.git", "main"), time.Now().Add(-2*time.Hour))

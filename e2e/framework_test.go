@@ -665,8 +665,8 @@ func (e *Env) WriteLocalConfig(content string) {
 	e.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(content))
 }
 
-// WriteOrgConfig writes the canonical v2 organization config to the managed
-// location (/etc/agent-marketplace/config.yaml in the sandbox).
+// WriteOrgConfig writes the organization config to the managed location
+// (/etc/agent-marketplace/config.yaml in the sandbox).
 func (e *Env) WriteOrgConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
@@ -679,7 +679,7 @@ func (e *Env) WriteOrgConfig(content string) {
 	e.WriteFile("/etc/agent-marketplace/config.yaml", content)
 }
 
-// WriteOrgConfigWithMode writes an explicit v3 organization config to the
+// WriteOrgConfigWithMode writes an explicit organization config to the
 // managed location (/etc/agent-marketplace/config.yaml in the sandbox) using
 // the given mode. It does not auto-inject apiVersion, harnesses, or other
 // defaults, so callers supply the exact file content and permissions.

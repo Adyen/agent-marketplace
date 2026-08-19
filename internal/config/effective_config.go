@@ -18,13 +18,12 @@ const defaultOrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
 // defaultOrganizationConfigPath.
 var testOrganizationConfigPath string
 
-// SetTestV3OrganizationConfigPath overrides the organization config path for
-// the duration of a test. The name is retained for test compatibility. It
-// panics if called outside a test binary.
+// SetTestOrganizationConfigPath overrides the organization config path
+// for the duration of a test. It panics if called outside a test binary.
 // Pass nil as the testing.TB when calling from TestMain.
-func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
+func SetTestOrganizationConfigPath(t testing.TB, path string) {
 	if !testing.Testing() {
-		panic("SetTestV3OrganizationConfigPath: not in tests")
+		panic("SetTestOrganizationConfigPath: not in tests")
 	}
 	old := testOrganizationConfigPath
 	testOrganizationConfigPath = path
@@ -39,8 +38,8 @@ func OrganizationConfigPath() string {
 	return organizationConfigPath("")
 }
 
-// organizationConfigPath returns the fixed organization config path, honoring
-// the explicit override and the test-only package-level override.
+// organizationConfigPath returns the fixed organization config path,
+// honoring the explicit override and the test-only package-level override.
 func organizationConfigPath(override string) string {
 	if override != "" {
 		return override

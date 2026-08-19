@@ -1035,7 +1035,7 @@ registries:
     skills:
       - org-skill
 `)
-	config.SetTestV3OrganizationConfigPath(t, orgCfgPath)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
