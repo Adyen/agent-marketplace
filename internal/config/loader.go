@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -764,58 +763,4 @@ func IsHomeDir(path string) bool {
 		return false
 	}
 	return os.SameFile(pStat, hStat)
-}
-
-func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	layer := "repository committed"
-	if requireHarnesses {
-		layer = "user personal"
-	}
-	return loadConfigGated(path, requireHarnesses, true, layer)
-}
-
-// loadConfigGated reads and validates a Config, with independent control over
-// whether harnesses and apiVersion are required. Local config files
-// (config.local.yaml) are loaded with requireAPIVersion=false because they use
-// the LocalConfig schema and are generated without an apiVersion field.
-func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, layer string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeConfigHarnessTargets(&cfg)
-
-	if err := cfg.validate(requireHarnesses, requireAPIVersion, layer); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-
-	return &cfg, nil
-}
-
-func loadLocalConfig(path string) (*LocalConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	var cfg LocalConfig
-	if len(bytes.TrimSpace(data)) == 0 {
-		return &cfg, nil
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeLocalConfigHarnessTargets(&cfg)
-	if err := cfg.ValidateBasic(); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-
-	return &cfg, nil
 }

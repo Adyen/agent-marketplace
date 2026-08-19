@@ -737,7 +737,7 @@ registries: []
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	repoRoot := t.TempDir()
 	writeClaudePluginSkill(t, repoRoot, "doctor-managed-skill")

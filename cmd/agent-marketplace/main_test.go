@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 	// /etc/agent-marketplace/config.yaml does not leak into test execution.
 	// Use a private temp directory so the path cannot collide with another run.
 	// Individual tests that need an org config set the test override explicitly
-	// with config.SetTestV3OrganizationConfigPath.
+	// with config.SetTestOrganizationConfigPath.
 	orgDir, err := os.MkdirTemp("", "agent-marketplace-test-org-config-*")
 	if err != nil {
 		slog.Error("failed to create isolated org config directory", "err", err)
@@ -85,7 +85,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	config.SetTestV3OrganizationConfigPath(nil, orgConfigPath)
+	config.SetTestOrganizationConfigPath(nil, orgConfigPath)
 
 	if err := os.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "false"); err != nil {
 		fail("failed to disable logging in cmd tests", err)
