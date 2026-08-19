@@ -1,0 +1,313 @@
+package telemetry
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	amconfig "github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
+)
+
+const (
+	sourceOrganization = "ORG"
+	sourceUser         = "USER"
+	sourceProject      = "PROJECT"
+)
+
+// TelemetryState is the fully resolved telemetry policy for one invocation.
+// It carries effective values, the source (authority) that provided them, the
+// primary and community routes, and the schema version contract.
+type TelemetryState struct {
+	EffectiveLevel          string
+	EffectiveLevelSource    string
+	PrimaryEndpoint         string
+	PrimaryEndpointHostname string
+	PrimaryEndpointSource   string
+
+	PrimaryHeaders       map[string]tmcfg.HeaderSource
+	PrimaryCAFile        string
+	PrimaryAllowInsecure bool
+
+	CommunityReportingEnabled           bool
+	CommunityReportingSource            string
+	CommunityReportingFoldedIntoPrimary bool
+	CommunityEndpoint                   string
+
+	RetentionPolicyURL string
+	InstallationIDPath string
+	SchemaVersion      string
+}
+
+// ResolveTelemetryConfig computes the effective telemetry state from the
+// organization and user configuration layers. projectEndpoint and
+// projectRetentionURL are release-configured defaults.
+func ResolveTelemetryConfig(organization, user *amconfig.Config, projectEndpoint, projectRetentionURL string) (TelemetryState, error) {
+	state := TelemetryState{SchemaVersion: tmcfg.SchemaVersion}
+	warnIgnoredOtelVars()
+
+	orgTC := telemetryFromConfig(organization)
+	userTC := telemetryFromConfig(user)
+
+	var err error
+	userTC, err = applyEnvOverrides(userTC, orgTC)
+	if err != nil {
+		return state, err
+	}
+
+	if err := validateForResolve(orgTC, "organization"); err != nil {
+		return state, err
+	}
+	if err := validateForResolve(userTC, "user personal"); err != nil {
+		return state, err
+	}
+
+	orgLevel := safeLevel(orgTC)
+	userLevel := safeLevel(userTC)
+	orgActive := organization != nil && organization.Telemetry != nil
+	effectiveLevel, levelSource := resolveEffectiveLevel(orgLevel, userLevel, orgActive)
+
+	primaryEndpoint, primarySource, err := resolvePrimaryEndpoint(orgTC, userTC, projectEndpoint)
+	if err != nil {
+		return state, err
+	}
+
+	retention, err := resolveRetentionPolicy(primarySource, orgTC, userTC, projectRetentionURL)
+	if err != nil {
+		return state, err
+	}
+
+	communityEnabled, communitySource, folded, err := resolveCommunityReporting(orgTC, userTC, projectEndpoint, primaryEndpoint, primarySource, effectiveLevel)
+	if err != nil {
+		return state, err
+	}
+
+	headers, caFile, allowInsecure := resolvePrimaryAuth(primarySource, orgTC, userTC)
+
+	state.EffectiveLevel = effectiveLevel
+	state.EffectiveLevelSource = levelSource
+	state.PrimaryEndpoint = primaryEndpoint
+	state.PrimaryEndpointHostname = hostnameFromURL(primaryEndpoint)
+	state.PrimaryEndpointSource = primarySource
+	state.PrimaryHeaders = headers
+	state.PrimaryCAFile = caFile
+	state.PrimaryAllowInsecure = allowInsecure
+	state.CommunityReportingEnabled = communityEnabled
+	state.CommunityReportingSource = communitySource
+	state.CommunityReportingFoldedIntoPrimary = folded
+	state.CommunityEndpoint = projectEndpoint
+	state.RetentionPolicyURL = retention
+	state.InstallationIDPath, err = installationIDPath()
+	if err != nil {
+		return state, fmt.Errorf("resolve installation id path: %w", err)
+	}
+	return state, nil
+}
+
+func telemetryFromConfig(cfg *amconfig.Config) *tmcfg.TelemetryConfig {
+	if cfg == nil || cfg.Telemetry == nil {
+		return &tmcfg.TelemetryConfig{}
+	}
+	return cfg.Telemetry
+}
+
+func safeLevel(tc *tmcfg.TelemetryConfig) string {
+	level, _ := tmcfg.NormalizeLevel(tc.Level)
+	return level
+}
+
+func validateForResolve(tc *tmcfg.TelemetryConfig, layer string) error {
+	if errs := tmcfg.Validate(tc, layer); len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func resolveEffectiveLevel(orgLevel, userLevel string, orgActive bool) (string, string) {
+	if tmcfg.LevelOrder(orgLevel) > tmcfg.LevelOrder(userLevel) {
+		return orgLevel, sourceOrganization
+	}
+	if tmcfg.LevelOrder(userLevel) > tmcfg.LevelOrder(orgLevel) {
+		return userLevel, sourceUser
+	}
+	if tmcfg.LevelOrder(orgLevel) > 0 && orgActive {
+		return orgLevel, sourceOrganization
+	}
+	return userLevel, sourceUser
+}
+
+func resolvePrimaryEndpoint(orgTC, userTC *tmcfg.TelemetryConfig, projectEndpoint string) (string, string, error) {
+	if orgTC.Endpoint != "" {
+		if err := tmcfg.ValidateEndpoint(orgTC.Endpoint, orgTC.AllowInsecure); err != nil {
+			return "", "", err
+		}
+		return orgTC.Endpoint, sourceOrganization, nil
+	}
+	if userTC.Endpoint != "" {
+		if err := tmcfg.ValidateEndpoint(userTC.Endpoint, userTC.AllowInsecure); err != nil {
+			return "", "", err
+		}
+		return userTC.Endpoint, sourceUser, nil
+	}
+	if projectEndpoint != "" {
+		if err := tmcfg.ValidateEndpoint(projectEndpoint, false); err != nil {
+			return "", "", err
+		}
+	}
+	return projectEndpoint, sourceProject, nil
+}
+
+func resolveRetentionPolicy(primarySource string, orgTC, userTC *tmcfg.TelemetryConfig, projectRetentionURL string) (string, error) {
+	switch primarySource {
+	case sourceOrganization:
+		if orgTC.RetentionPolicy == "" {
+			return "", fmt.Errorf("retention_policy is required when organization endpoint is the primary route")
+		}
+		return orgTC.RetentionPolicy, nil
+	case sourceUser:
+		if userTC.RetentionPolicy != "" {
+			return userTC.RetentionPolicy, nil
+		}
+		return projectRetentionURL, nil
+	default:
+		return projectRetentionURL, nil
+	}
+}
+
+func resolveCommunityReporting(orgTC, userTC *tmcfg.TelemetryConfig, projectEndpoint, primaryEndpoint, primarySource, effectiveLevel string) (bool, string, bool, error) {
+	enabled, source := false, ""
+	if orgTC.CommunityReporting != nil {
+		enabled = *orgTC.CommunityReporting
+		source = sourceOrganization
+	} else if userTC.CommunityReporting != nil {
+		enabled = *userTC.CommunityReporting
+		source = sourceUser
+	}
+	if !enabled {
+		return false, source, false, nil
+	}
+	if effectiveLevel == tmcfg.LevelOff {
+		return false, source, false, nil
+	}
+	if projectEndpoint == "" {
+		return false, source, false, nil
+	}
+	folded := canonicalURLEqual(primaryEndpoint, projectEndpoint)
+	return true, source, folded, nil
+}
+
+func resolvePrimaryAuth(primarySource string, orgTC, userTC *tmcfg.TelemetryConfig) (map[string]tmcfg.HeaderSource, string, bool) {
+	switch primarySource {
+	case sourceOrganization:
+		return cloneHeaders(orgTC.Headers), orgTC.CAFile, orgTC.AllowInsecure
+	case sourceUser:
+		return cloneHeaders(userTC.Headers), userTC.CAFile, userTC.AllowInsecure
+	}
+	return nil, "", false
+}
+
+func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig) (*tmcfg.TelemetryConfig, error) {
+	userTC = cloneTelemetryConfig(userTC)
+	if orgTC == nil || orgTC.Endpoint == "" {
+		if ep := os.Getenv(EnvEndpoint); ep != "" {
+			userTC.Endpoint = ep
+		}
+	}
+	if lv := os.Getenv(EnvLevel); lv != "" {
+		normalized, err := tmcfg.NormalizeLevel(lv)
+		if err != nil {
+			return nil, fmt.Errorf("environment variable %s: %w", EnvLevel, err)
+		}
+		userTC.Level = normalized
+	}
+	if orgTC == nil || orgTC.CommunityReporting == nil {
+		if v := os.Getenv(EnvCommunityReporting); v != "" {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("environment variable %s: %w", EnvCommunityReporting, err)
+			}
+			userTC.CommunityReporting = &b
+		}
+	}
+	return userTC, nil
+}
+
+func cloneTelemetryConfig(tc *tmcfg.TelemetryConfig) *tmcfg.TelemetryConfig {
+	if tc == nil {
+		return &tmcfg.TelemetryConfig{}
+	}
+	c := *tc
+	if tc.CommunityReporting != nil {
+		b := *tc.CommunityReporting
+		c.CommunityReporting = &b
+	}
+	c.Headers = cloneHeaders(tc.Headers)
+	return &c
+}
+
+func cloneHeaders(headers map[string]tmcfg.HeaderSource) map[string]tmcfg.HeaderSource {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]tmcfg.HeaderSource, len(headers))
+	for k, v := range headers {
+		out[k] = v
+	}
+	return out
+}
+
+func warnIgnoredOtelVars() {
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_INSECURE"} {
+		if os.Getenv(key) != "" {
+			slog.Debug("ignoring standard OTel environment variable for telemetry policy resolution", "var", key)
+		}
+	}
+}
+
+func canonicalURLEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ua, err := url.Parse(a)
+	if err != nil {
+		return false
+	}
+	ub, err := url.Parse(b)
+	if err != nil {
+		return false
+	}
+	if ua.Scheme != ub.Scheme {
+		return false
+	}
+	if ua.Host != ub.Host {
+		return false
+	}
+	pathA := strings.TrimSuffix(ua.Path, "/")
+	pathB := strings.TrimSuffix(ub.Path, "/")
+	return pathA == pathB
+}
+
+func hostnameFromURL(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+func installationIDPath() (string, error) {
+	root, err := ownership.StateRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, DefaultInstallationIDSubpath), nil
+}
