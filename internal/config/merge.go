@@ -24,6 +24,12 @@ func MergeLayers(layers []Layer) *Config {
 			merged.Registries = append(merged.Registries, resolved)
 		}
 
+		// Cumulative marketplace entries, stamped with Source like Registries.
+		for _, entry := range layer.Config.Marketplaces {
+			entry.Source = layer.Source
+			merged.Marketplaces = append(merged.Marketplaces, entry)
+		}
+
 		// Collections are cumulative across layers (include from all layers
 		// is unioned; exclude from higher-precedence layers overrides, but
 		// only when the layer explicitly sets excludes — nil means "no opinion"
@@ -49,12 +55,14 @@ func MergeLayers(layers []Layer) *Config {
 		if layer.Config.Materialization != nil && (layer.Source == UserPersonal || layer.Source == RepoCommitted || layer.Source == RepoPersonal) {
 			merged.Materialization = &MaterializationConfig{Mode: layer.Config.Materialization.Mode}
 		}
-		// AllowedRegistries uses first-non-nil-wins semantics so that
-		// Organization policy cannot be relaxed by higher-precedence layers.
-		// An explicit empty slice (allowed_registries: []) is non-nil and
-		// therefore "claims" the field — but only if no earlier layer did.
+		// AllowedRegistries and AllowedMarketplaces use first-non-nil-wins
+		// semantics so that Organization policy cannot be relaxed by
+		// higher-precedence layers.
 		if merged.AllowedRegistries == nil && layer.Config.AllowedRegistries != nil {
 			merged.AllowedRegistries = layer.Config.AllowedRegistries
+		}
+		if merged.AllowedMarketplaces == nil && layer.Config.AllowedMarketplaces != nil {
+			merged.AllowedMarketplaces = layer.Config.AllowedMarketplaces
 		}
 		// Backup config controls machine-scope user state, so repo-scoped
 		// config must not change it.
@@ -128,13 +136,14 @@ func MergeLayers(layers []Layer) *Config {
 // RegistryEntry.SelectorForKind fields are already populated from YAML
 // and flow through merge/resolve normally.
 func LocalConfigAsLayer(localCfg *LocalConfig) *Layer {
-	if localCfg == nil || (len(localCfg.Registries) == 0 && localCfg.Materialization == nil) {
+	if localCfg == nil || (len(localCfg.Registries) == 0 && len(localCfg.Marketplaces) == 0 && localCfg.Materialization == nil) {
 		return nil
 	}
 
 	cfg := Config{
 		APIVersion:      APIVersionV2,
 		Registries:      localCfg.Registries,
+		Marketplaces:    localCfg.Marketplaces,
 		Materialization: localCfg.Materialization,
 	}
 
