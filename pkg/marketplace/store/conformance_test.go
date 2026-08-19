@@ -2,18 +2,62 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/postgres"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/s3blob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
+	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-func openStores(t *testing.T) (*sqlite.Store, *fsblob.Store) {
+func testSchemaName(t *testing.T) string {
+	s := strings.ToLower(t.Name())
+	return regexp.MustCompile(`[^a-z0-9_]`).ReplaceAllString(s, "_")
+}
+
+func openStores(t *testing.T) (store.MetadataStore, store.BlobStore) {
 	t.Helper()
+
+	postgresDSN := os.Getenv("POSTGRES_DSN")
+	s3Endpoint := os.Getenv("S3_TEST_ENDPOINT")
+	s3Bucket := os.Getenv("S3_TEST_BUCKET")
+	s3Region := os.Getenv("S3_TEST_REGION")
+
+	if postgresDSN != "" && s3Endpoint != "" && s3Bucket != "" && s3Region != "" {
+		schema := testSchemaName(t)
+		meta := postgres.NewWithSchema(postgresDSN, schema)
+		if err := meta.Open(context.Background()); err != nil {
+			t.Fatalf("Open PostgreSQL metadata store: %v", err)
+		}
+		t.Cleanup(func() { _ = meta.Close() })
+		t.Cleanup(func() {
+			db, err := sql.Open("pgx", postgresDSN)
+			if err != nil {
+				return
+			}
+			defer func() { _ = db.Close() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, _ = db.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		})
+
+		blobs, err := s3blob.New(context.Background(), s3Bucket, s3Region, s3blob.WithEndpoint(s3Endpoint))
+		if err != nil {
+			t.Fatalf("New S3 blob store: %v", err)
+		}
+		return meta, blobs
+	}
+
 	dir := t.TempDir()
 	meta := sqlite.New(filepath.Join(dir, "marketplace.db"))
 	if err := meta.Open(context.Background()); err != nil {
