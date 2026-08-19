@@ -53,23 +53,34 @@ func renderDetail(m Model) string {
 		return ""
 	}
 
+	_, detailWidth := paneWidths(m.width)
+	contentWidth := detailWidth - 1
+	if contentWidth < 1 {
+		return ""
+	}
+
 	var b strings.Builder
 
 	label := styleDetailLabel.Render
 	value := styleDetailValue.Render
+	lineStyle := lipgloss.NewStyle().Width(contentWidth)
+	writeLine := func(line string) {
+		b.WriteString(lineStyle.Render(line))
+		b.WriteString("\n")
+	}
 
-	b.WriteString(label("Kind:     ") + value(skill.KindLabel(r.Artifact.Kind)) + "\n")
-	b.WriteString(label("Name:     ") + value(r.Artifact.Name) + "\n")
+	writeLine(label("Kind:     ") + value(skill.KindLabel(r.Artifact.Kind)))
+	writeLine(label("Name:     ") + value(r.Artifact.Name))
 
 	if !r.IsMalformed {
 		if r.Artifact.RegistryURL != "" {
-			b.WriteString(label("Registry: ") + value(r.Artifact.RegistryURL) + "\n")
+			writeLine(label("Registry: ") + value(r.Artifact.RegistryURL))
 		}
 		if r.Artifact.Ref != "" {
-			b.WriteString(label("Ref:      ") + value(r.Artifact.Ref) + "\n")
+			writeLine(label("Ref:      ") + value(r.Artifact.Ref))
 		}
 		if len(r.Artifact.Tags) > 0 {
-			b.WriteString(label("Tags:     ") + value(strings.Join(r.Artifact.Tags, ", ")) + "\n")
+			writeLine(label("Tags:     ") + value(strings.Join(r.Artifact.Tags, ", ")))
 		}
 		if len(r.Harnesses) > 0 {
 			harnessLabel := "Targets:"
@@ -80,26 +91,25 @@ func renderDetail(m Model) string {
 			if r.HarnessSource != "" {
 				harnessValue += " (" + r.HarnessSource + ")"
 			}
-			b.WriteString(label(fmt.Sprintf("%-9s", harnessLabel)) + value(harnessValue) + "\n")
+			writeLine(label(fmt.Sprintf("%-9s", harnessLabel)) + value(harnessValue))
 		}
 	}
 
-	b.WriteString(label("Status:   ") + value(r.StatusText()) + "\n")
+	writeLine(label("Status:   ") + value(r.StatusText()))
 
 	if r.Artifact.Path != "" {
-		b.WriteString(label("Source:   ") + value(r.Artifact.Path) + "\n")
+		writeLine(label("Source:   ") + value(r.Artifact.Path))
 	}
 
 	if r.Artifact.Description != "" {
 		b.WriteString("\n")
 		// Word-wrap the description
-		desc := wrapText(r.Artifact.Description, 40)
-		b.WriteString(value(desc) + "\n")
+		writeLine(value(r.Artifact.Description))
 	}
 
 	if r.IsMalformed {
 		b.WriteString("\n")
-		b.WriteString(styleGlyphBroken.Render("Error: ") + value(r.MalformedMsg) + "\n")
+		writeLine(styleGlyphBroken.Render("Error: ") + value(r.MalformedMsg))
 	}
 
 	// Hint line
@@ -109,45 +119,8 @@ func renderDetail(m Model) string {
 	if !r.IsAvailable && !r.IsMalformed {
 		hint = "space = toggle · enter = full view"
 	}
-	b.WriteString(hintStyle.Render(hint))
+	b.WriteString(lineStyle.Render(hintStyle.Render(hint)))
 
-	return b.String()
-}
-
-func wrapText(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-
-	var b strings.Builder
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		wrapped := wrapLine(line, width)
-		b.WriteString(wrapped)
-	}
-	return b.String()
-}
-
-func wrapLine(line string, width int) string {
-	if len(line) <= width {
-		return line
-	}
-
-	var b strings.Builder
-	for len(line) > width {
-		// Find the last space before width
-		spaceIdx := strings.LastIndex(line[:width], " ")
-		if spaceIdx <= 0 {
-			spaceIdx = width
-		}
-		b.WriteString(line[:spaceIdx])
-		b.WriteString("\n")
-		line = strings.TrimSpace(line[spaceIdx:])
-	}
-	b.WriteString(line)
 	return b.String()
 }
 
