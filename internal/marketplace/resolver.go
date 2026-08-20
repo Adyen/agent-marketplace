@@ -98,6 +98,13 @@ func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.Marketplace
 	return fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.SourceID, pin.Digest, pin.Revision)
 }
 
+// marketplacePinRequired derives the resolver policy for an exact pin from the
+// configuration layer that owns it. Organization pins are mandatory policy;
+// pins from writable user/repo layers remain optional and can be excluded.
+func marketplacePinRequired(source config.Source) bool {
+	return source == config.Organization
+}
+
 func (r *Resolver) cache() *Cache {
 	if r.Cache != nil {
 		return r.Cache
@@ -155,6 +162,16 @@ func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, c
 	if pin.InstalledName != "" {
 		name = pin.InstalledName
 	}
+	required := marketplacePinRequired(entry.Source)
+	slog.Debug("marketplace pin required decision",
+		"url", entry.URL,
+		"instance_id", entry.InstanceID,
+		"source_id", pin.SourceID,
+		"kind", pin.Kind,
+		"name", pin.Name,
+		"config_source", entry.Source.String(),
+		"required", required,
+	)
 
 	artifact := resolver.ResolvedArtifact{
 		Entry: catalog.Entry{
@@ -165,7 +182,7 @@ func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, c
 		RegistryPath:          pin.SourceID,
 		Ref:                   pin.Revision,
 		Source:                entry.Source,
-		Required:              false,
+		Required:              required,
 		CatalogKey:            marketplaceCatalogKey(entry, pin),
 		Harnesses:             targetSet,
 		IsMarketplace:         true,

@@ -247,6 +247,113 @@ func TestResolverInspect(t *testing.T) {
 	}
 }
 
+func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	rev := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest),
+		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
+	}
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(rev)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, tt := range []struct {
+		name     string
+		source   config.Source
+		required bool
+	}{
+		{name: "organization", source: config.Organization, required: true},
+		{name: "user", source: config.UserPersonal, required: false},
+		{name: "repo", source: config.RepoCommitted, required: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+				URL: server.URL, InstanceID: "mp", Source: tt.source,
+				Resources: []config.MarketplaceResourcePin{{
+					SourceID: "src", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest,
+				}},
+			}}}
+			resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors: %v", errs)
+			}
+			if len(resolved) != 1 {
+				t.Fatalf("resolved %d artifacts, want 1", len(resolved))
+			}
+			if resolved[0].Required != tt.required {
+				t.Fatalf("Required = %t, want %t for source %s", resolved[0].Required, tt.required, tt.source)
+			}
+			if resolved[0].Source != tt.source {
+				t.Fatalf("Source = %s, want %s", resolved[0].Source, tt.source)
+			}
+		})
+	}
+}
+
+func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
+	const instanceID = "org-marketplace"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: instanceID, Source: "source", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest),
+		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
+	}
+
+	mux := http.NewServeMux()
+	serveWellKnown(mux, instanceID)
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	merged := config.MergeLayers([]config.Layer{
+		{
+			Source: config.Organization,
+			Config: &config.Config{
+				Marketplaces: []config.MarketplaceEntry{
+					{
+						URL: server.URL, InstanceID: instanceID,
+						Resources: []config.MarketplaceResourcePin{
+							{
+								SourceID: "source", Kind: "skill", Name: "review",
+								Revision: "refs/heads/main", Digest: digest,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if len(merged.Marketplaces) != 1 {
+		t.Fatalf("merged marketplaces = %d, want one", len(merged.Marketplaces))
+	}
+	if merged.Marketplaces[0].Source != config.Organization {
+		t.Fatalf("merged Marketplace Source = %s, want Organization", merged.Marketplaces[0].Source)
+	}
+
+	resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(
+		context.Background(), merged, nil, resolver.MarketplaceResolveModeInspect,
+	)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors: %v", errs)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("resolved %d artifacts, want one", len(resolved))
+	}
+	if !resolved[0].Required {
+		t.Fatalf("resolved Marketplace artifact Required = false, want true")
+	}
+	if resolved[0].Source != config.Organization {
+		t.Fatalf("resolved Marketplace Source = %s, want Organization", resolved[0].Source)
+	}
+}
+
 func TestResolverRevoked(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
