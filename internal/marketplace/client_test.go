@@ -128,6 +128,27 @@ func TestClientSearchError(t *testing.T) {
 	}
 }
 
+func TestAPIErrorBoundsAndSanitizesTerminalContent(t *testing.T) {
+	body := append([]byte("prefix\x1b[31m\n\u202e"), []byte(strings.Repeat("x", maxAPIErrorBytes*3))...)
+	err := apiError(http.StatusBadGateway, body)
+	if err == nil {
+		t.Fatal("apiError returned nil")
+	}
+	message := err.Error()
+	if strings.ContainsAny(message, "\x00\x1b\n\r\t") {
+		t.Fatalf("API error contains raw control character: %q", message)
+	}
+	if strings.Contains(message, "\u202e") {
+		t.Fatalf("API error contains raw bidi marker: %q", message)
+	}
+	if !strings.Contains(message, `\x1b`) || !strings.Contains(message, `\n`) || !strings.Contains(message, `\u202e`) {
+		t.Fatalf("API error did not preserve escaped diagnostics: %q", message)
+	}
+	if len(message) > maxAPIErrorOutputBytes+64 {
+		t.Fatalf("API error was not bounded: %d bytes", len(message))
+	}
+}
+
 func TestClientSearchTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)

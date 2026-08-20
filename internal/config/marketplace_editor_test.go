@@ -84,8 +84,8 @@ func TestEnsureMarketplacePinPreservesInstalledName(t *testing.T) {
 		t.Fatal(err)
 	}
 	pin.InstalledName = "different-review"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example/", "instance", "public", pin); err != nil {
-		t.Fatal(err)
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example/", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "conflicting installed_name") {
+		t.Fatalf("installed_name conflict error = %v", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -97,6 +97,18 @@ func TestEnsureMarketplacePinPreservesInstalledName(t *testing.T) {
 	}
 	if got := cfg.Marketplaces[0].Resources[0].InstalledName; got != "chosen-review" {
 		t.Fatalf("installed_name = %q, want chosen-review", got)
+	}
+}
+
+func TestEnsureMarketplacePinAllowsSourceSlugRename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	pin := testMarketplacePin()
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+		t.Fatal(err)
+	}
+	pin.SourceSlug = "renamed-source"
+	if err := EnsureMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", "public", pin); err != nil {
+		t.Fatalf("source slug rename rejected: %v", err)
 	}
 }
 
@@ -288,6 +300,51 @@ marketplaces:
 				t.Fatalf("alias rejection changed config bytes")
 			}
 		})
+	}
+}
+
+func TestEnsureMarketplacePinSnapshotWaitsForWriterHoldingPathLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := []byte("apiVersion: agent-marketplace/v2\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	concurrent := []byte("apiVersion: agent-marketplace/v2\n# writer committed first\n")
+	writerReady := make(chan struct{})
+	releaseWriter := make(chan struct{})
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- withConfigPathLock(path, func() error {
+			close(writerReady)
+			<-releaseWriter
+			return os.WriteFile(path, concurrent, 0o644)
+		})
+	}()
+	<-writerReady
+
+	type result struct {
+		snapshot *FileSnapshot
+		commit   ConfigFileCommit
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		snapshot, commit, err := EnsureMarketplacePinInConfigWithSnapshotAndCommit(path, "https://market.example", "instance", "public", testMarketplacePin())
+		resultCh <- result{snapshot: snapshot, commit: commit, err: err}
+	}()
+	close(releaseWriter)
+	if err := <-writerDone; err != nil {
+		t.Fatalf("concurrent writer: %v", err)
+	}
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("ensure pin: %v", got.err)
+	}
+	if string(got.snapshot.data) != string(concurrent) {
+		t.Fatalf("snapshot = %q, want writer bytes %q", got.snapshot.data, concurrent)
+	}
+	if string(got.commit.Bytes) == string(concurrent) || !strings.Contains(string(got.commit.Bytes), "review") {
+		t.Fatalf("commit = %q, want pin based on writer bytes", got.commit.Bytes)
 	}
 }
 

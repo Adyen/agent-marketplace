@@ -114,12 +114,21 @@ func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error
 }
 
 func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) (resolver.ResolvedArtifact, error) {
+	artifact, _, err := r.resolvePinWithArtifact(ctx, client, cache, entry, pin, targetSet, mode)
+	return artifact, err
+}
+
+// resolvePinWithArtifact returns the same resolved artifact as resolvePin and
+// also retains the CanonicalArtifact decoded and verified during resolution.
+// Callers that need metadata for a prepared install must use this value rather
+// than rereading the cache, since the cache is intentionally disposable.
+func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
 	kind, err := irKind(pin.Kind)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, err
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	if err := validatePin(entry, pin); err != nil {
-		return resolver.ResolvedArtifact{}, err
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
 	acquisition := pin.Acquisition
@@ -127,19 +136,19 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 		acquisition = config.MarketplaceAcquisitionMirror
 	}
 	if acquisition != config.MarketplaceAcquisitionMirror {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("acquisition mode %q is not supported", acquisition)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("acquisition mode %q is not supported", acquisition)
 	}
 
 	if pin.Kind == "collection" {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("collection resolution is not supported yet")
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("collection resolution is not supported yet")
 	}
 
 	rev, err := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, err
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
-		return resolver.ResolvedArtifact{}, err
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
 	name := pin.Name
@@ -169,54 +178,61 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 	}
 
 	if rev.Revocation != nil {
-		return artifact, fmt.Errorf("revision is revoked")
+		return artifact, hccartifact.CanonicalArtifact{}, fmt.Errorf("revision is revoked")
 	}
 
 	if mode == resolver.MarketplaceResolveModeInspect {
 		artifact.Unresolved = true
-		return artifact, nil
+		return artifact, hccartifact.CanonicalArtifact{}, nil
 	}
 
 	archiveDigest := string(rev.ArchiveDigest)
 	raw, verified, err := cache.ReadArtifact(archiveDigest)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("read cached artifact: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
 	}
 	if !verified || raw == nil {
 		if mode == resolver.MarketplaceResolveModeCached {
-			return resolver.ResolvedArtifact{}, fmt.Errorf("artifact not in cache")
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("artifact not in cache")
 		}
 		slog.Debug("marketplace fetching artifact", "url", entry.URL, "source", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
 		raw, err = client.GetArtifact(ctx, archiveDigest)
 		if err != nil {
-			return resolver.ResolvedArtifact{}, fmt.Errorf("fetch artifact: %w", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch artifact: %w", err)
 		}
 		if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
-			return resolver.ResolvedArtifact{}, fmt.Errorf("write artifact cache: %w", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("write artifact cache: %w", err)
 		}
 		verified = false
 	}
 
 	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("decode artifact: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode artifact: %w", err)
+	}
+	// Decode only parses the archive. Validate the complete decoded artifact
+	// before any metadata can reach install consent/preview or the cache can be
+	// marked verified; this includes schema, finding severity, and policy outcome.
+	if err := ca.ValidateArchive(nil); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("validate artifact archive: %w", err)
 	}
 	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
 		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, fmt.Errorf("verify archive digest: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify archive digest: %w", err)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
 		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, fmt.Errorf("verify content digest: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify content digest: %w", err)
 	}
 	if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
 		cache.InvalidateArtifactVerified(archiveDigest)
-		return resolver.ResolvedArtifact{}, err
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 
 	resource, err := hccartifact.DecodeResource(pin.Kind, ca.Payload)
 	if err != nil {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("decode resource: %w", err)
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode resource: %w", err)
 	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
@@ -224,10 +240,10 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 
 	if !verified {
 		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
-			return resolver.ResolvedArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}
-	return artifact, nil
+	return artifact, ca, nil
 }
 
 func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
@@ -310,9 +326,6 @@ func validateArtifactManifest(entry config.MarketplaceEntry, pin config.Marketpl
 	}
 	if manifest.SourceID != pin.SourceID {
 		return fmt.Errorf("artifact manifest source ID mismatch: got %q, want %q", manifest.SourceID, pin.SourceID)
-	}
-	if pin.SourceSlug != "" && manifest.SourceSlug != pin.SourceSlug {
-		return fmt.Errorf("artifact manifest source slug mismatch: got %q, want %q", manifest.SourceSlug, pin.SourceSlug)
 	}
 	if manifest.ContentDigest != pin.Digest {
 		return fmt.Errorf("artifact manifest content digest mismatch: got %q, want %q", manifest.ContentDigest, pin.Digest)

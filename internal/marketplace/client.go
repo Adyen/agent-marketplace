@@ -18,6 +18,11 @@ import (
 
 const maxArtifactBytes = 64 * 1024 * 1024
 
+const (
+	maxAPIErrorBytes       = 4 * 1024
+	maxAPIErrorOutputBytes = 4 * 1024
+)
+
 const defaultTimeout = 30 * time.Second
 
 // Client is a thin HTTP client for the public Marketplace API.
@@ -148,7 +153,11 @@ func (c *Client) getJSON(ctx context.Context, requestURL string, dst any) error 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := readResponseBody(resp, maxArtifactBytes)
+	limit := int64(maxArtifactBytes)
+	if resp.StatusCode != http.StatusOK {
+		limit = maxAPIErrorBytes
+	}
+	body, err := readResponseBody(resp, limit)
 	if err != nil {
 		return fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
 	}
@@ -217,7 +226,11 @@ func (c *Client) getRaw(ctx context.Context, requestURL string) ([]byte, error) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := readResponseBody(resp, maxArtifactBytes)
+	limit := int64(maxArtifactBytes)
+	if resp.StatusCode != http.StatusOK {
+		limit = maxAPIErrorBytes
+	}
+	body, err := readResponseBody(resp, limit)
 	if err != nil {
 		return nil, fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
 	}
@@ -300,14 +313,24 @@ func validateSHA256Digest(digest string) error {
 }
 
 func apiError(status int, body []byte) error {
+	if len(body) > maxAPIErrorBytes {
+		body = body[:maxAPIErrorBytes]
+	}
 	var e struct {
 		Error string `json:"error"`
 	}
+	detail := ""
 	if err := json.Unmarshal(body, &e); err == nil && e.Error != "" {
-		return fmt.Errorf("marketplace error %d: %s", status, e.Error)
+		detail = e.Error
+	} else if len(body) > 0 {
+		detail = string(body)
 	}
-	if len(body) == 0 {
+	if detail == "" {
 		return fmt.Errorf("marketplace error %d", status)
 	}
-	return fmt.Errorf("marketplace error %d: %s", status, string(body))
+	quoted := QuoteTerminal(detail)
+	if len(quoted) > maxAPIErrorOutputBytes {
+		quoted = quoted[:maxAPIErrorOutputBytes-3] + "..."
+	}
+	return fmt.Errorf("marketplace error %d: %s", status, quoted)
 }
