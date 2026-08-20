@@ -83,12 +83,12 @@ func NewQueue(root string) *Queue {
 func (q *Queue) recoverCrash() {
 	slog.Info("recovering queue from previous crashes", "root", q.root)
 
-	err := filepath.Walk(q.root, func(path string, info fs.FileInfo, err error) error {
+	err := filepath.WalkDir(q.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			slog.Debug("skipping unreadable queue entry during crash recovery", "path", path, "error", err)
 			return nil
 		}
-		if info.IsDir() {
+		if entry.IsDir() {
 			return nil
 		}
 
@@ -146,8 +146,7 @@ func (q *Queue) Push(ctx context.Context, route Route, data []byte) error {
 		return fmt.Errorf("create queue subdir: %w", err)
 	}
 	if err := os.Chmod(subdir, 0o700); err != nil {
-		slog.Error("failed to chmod queue subdir", "subdir", subdir, "error", err)
-		return fmt.Errorf("chmod queue subdir: %w", err)
+		slog.Warn("failed to chmod queue subdir", "subdir", subdir, "error", err)
 	}
 
 	name := newQueueFilename()

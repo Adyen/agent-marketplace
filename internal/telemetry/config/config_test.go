@@ -194,6 +194,10 @@ func TestValidateHeaders(t *testing.T) {
 	if err := os.WriteFile(fileWithNewline, []byte("tenant-a\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	fileWithInternalNewline := filepath.Join(dir, "tenant-internal-nl")
+	if err := os.WriteFile(fileWithInternalNewline, []byte("tenant\na"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	badPerm := filepath.Join(dir, "tenant-bad")
 	if err := os.WriteFile(badPerm, []byte("tenant-b"), 0o644); err != nil {
@@ -266,9 +270,15 @@ func TestValidateHeaders(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "file value with line terminator",
+			name: "file value with trailing newline",
 			headers: map[string]HeaderSource{
 				"X-Tenant": {File: fileWithNewline},
+			},
+		},
+		{
+			name: "file value with internal newline",
+			headers: map[string]HeaderSource{
+				"X-Tenant": {File: fileWithInternalNewline},
 			},
 			wantErr: true,
 		},

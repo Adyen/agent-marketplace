@@ -25,7 +25,8 @@ func (t *Telemetry) drain(ctx context.Context) error {
 func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 	var env Envelope
 	if err := json.Unmarshal(payload, &env); err != nil {
-		return fmt.Errorf("decode queued envelope: %w", err)
+		slog.Error("discarding malformed queued envelope", "error", err)
+		return nil
 	}
 
 	client, ok := t.sendClients[env.Route]
