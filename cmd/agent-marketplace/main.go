@@ -26,6 +26,7 @@ import (
 const defaultVersion = "dev"
 
 var version = defaultVersion
+var diagnosticCapture bool
 var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
@@ -100,6 +101,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
+	rootCmd.PersistentFlags().BoolVar(&diagnosticCapture, "diagnostic", false, "Capture a reviewed diagnostic telemetry payload for this invocation")
 	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
@@ -197,7 +199,7 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	t, err := telemetry.New(ctx, state, slog.Default())
+	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithDiagnostic(diagnosticCapture))
 	if err != nil {
 		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
 		return
@@ -210,9 +212,15 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 			string(tmcfg.ResourceAttrHarnesses):   state.HarnessesString(),
 			string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(state.Managed),
 		})
+		if t.DiagnosticActive() && rootSpan != (telemetry.Span{}) {
+			t.RecordDiagnostic("diagnostic.capture.started", "diagnostic capture enabled for this invocation")
+			rootSpan.AddEvent("diagnostic.capture.started", map[string]string{
+				"message": "diagnostic capture enabled for this invocation",
+			})
+		}
 	}
 
-	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed, rootSpan))
+	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed, rootSpan, t.DiagnosticActive()))
 }
 
 func finishTelemetry(cmd *cobra.Command, execErr error) {
@@ -249,6 +257,15 @@ func finishTelemetry(cmd *cobra.Command, execErr error) {
 
 	rootSpan := telemetry.RootSpanFromContext(ctx)
 	if rootSpan != (telemetry.Span{}) {
+		if t.DiagnosticActive() {
+			for _, ev := range t.DiagnosticEvents() {
+				rootSpan.AddEvent(ev.Name, map[string]string{"message": ev.Message})
+			}
+			rootSpan.AddEvent("diagnostic.command.end", map[string]string{
+				"outcome": outcome,
+				"message": "command finished; diagnostic payload ready for review",
+			})
+		}
 		rootSpan.SetAttributes(attrs)
 		rootSpan.End()
 	}
@@ -256,11 +273,29 @@ func finishTelemetry(cmd *cobra.Command, execErr error) {
 	t.CommandCounter().Add(ctx, 1, attrs)
 	t.CommandDuration().Record(ctx, time.Since(start).Milliseconds(), attrs)
 
+	if t.DiagnosticActive() {
+		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin()), diagnosticAcceptSensitive); err != nil {
+			slog.Warn("diagnostic export failed or declined", "error", err)
+		}
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := t.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("telemetry shutdown failed", "error", err)
 	}
+}
+
+// isTerminalReader reports whether r is backed by a terminal file descriptor.
+func isTerminalReader(r io.Reader) bool {
+	type fdReader interface {
+		Fd() uintptr
+	}
+	fr, ok := r.(fdReader)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(fr.Fd())
 }
 
 func shouldSkipTelemetryInit(path string) bool {

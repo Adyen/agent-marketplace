@@ -105,7 +105,7 @@ func setupTuiTelemetry(t *testing.T, e *testSpanExporter) (context.Context, *tel
 		t.Fatalf("new telemetry: %v", err)
 	}
 
-	ctx := telemetry.NewContext(context.Background(), tel, "tui", time.Now(), "factory", false, telemetry.Span{})
+	ctx := telemetry.NewContext(context.Background(), tel, "tui", time.Now(), "factory", false, telemetry.Span{}, false)
 	return ctx, tel
 }
 

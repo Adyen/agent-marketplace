@@ -355,7 +355,7 @@ func BenchmarkRecordActionSpan(b *testing.B) {
 		_ = tel.Shutdown(context.Background())
 	}()
 
-	ctx := telemetry.NewContext(context.Background(), tel, "tui", time.Now(), "factory", false, telemetry.Span{})
+	ctx := telemetry.NewContext(context.Background(), tel, "tui", time.Now(), "factory", false, telemetry.Span{}, false)
 
 	b.ReportAllocs()
 	b.ResetTimer()

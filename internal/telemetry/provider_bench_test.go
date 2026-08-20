@@ -175,7 +175,7 @@ func BenchmarkStartSpanCommandPath(b *testing.B) {
 		_ = tel.Shutdown(context.Background())
 	}()
 
-	ctx := NewContext(context.Background(), tel, "sync", time.Now(), "factory", false, Span{})
+	ctx := NewContext(context.Background(), tel, "sync", time.Now(), "factory", false, Span{}, false)
 
 	attrs := map[string]string{
 		string(tmcfg.ResourceAttrCommandName): "sync",

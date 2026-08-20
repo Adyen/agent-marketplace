@@ -10,29 +10,31 @@ type ctxKey int
 const telemetryCtxKey ctxKey = 0
 
 type commandContext struct {
-	telemetry *Telemetry
-	start     time.Time
-	path      string
-	harnesses string
-	managed   bool
-	rootSpan  Span
+	telemetry  *Telemetry
+	start      time.Time
+	path       string
+	harnesses  string
+	managed    bool
+	rootSpan   Span
+	diagnostic bool
 }
 
 // NewContext returns a child context that carries telemetry runtime state and
 // command metadata. The metadata is used by finishTelemetry to emit a single
 // bounded command invocation metric. rootSpan is stored so finishTelemetry can
 // end the root command span before shutting down telemetry.
-func NewContext(ctx context.Context, t *Telemetry, commandPath string, start time.Time, harnesses string, managed bool, rootSpan Span) context.Context {
+func NewContext(ctx context.Context, t *Telemetry, commandPath string, start time.Time, harnesses string, managed bool, rootSpan Span, diagnostic bool) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, telemetryCtxKey, &commandContext{
-		telemetry: t,
-		start:     start,
-		path:      commandPath,
-		harnesses: harnesses,
-		managed:   managed,
-		rootSpan:  rootSpan,
+		telemetry:  t,
+		start:      start,
+		path:       commandPath,
+		harnesses:  harnesses,
+		managed:    managed,
+		rootSpan:   rootSpan,
+		diagnostic: diagnostic,
 	})
 }
 
@@ -103,4 +105,16 @@ func RootSpanFromContext(ctx context.Context) Span {
 		return v.rootSpan
 	}
 	return Span{}
+}
+
+// DiagnosticFromContext returns the diagnostic capture flag recorded in the
+// context.
+func DiagnosticFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	if v, ok := ctx.Value(telemetryCtxKey).(*commandContext); ok {
+		return v.diagnostic
+	}
+	return false
 }

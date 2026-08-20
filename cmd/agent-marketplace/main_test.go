@@ -123,6 +123,7 @@ func executeCommandContext(ctx context.Context, args ...string) (string, error) 
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
+	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
 
