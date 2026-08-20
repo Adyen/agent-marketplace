@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -271,7 +270,7 @@ func runTelemetryPreview(ctx context.Context, out io.Writer, in io.Reader, level
 	}
 
 	if level == tmcfg.LevelDiagnostic && !diagnosticAcceptSensitive {
-		if term.IsTerminal(os.Stdin.Fd()) {
+		if isTerminalReader(in) {
 			reader := bufio.NewReader(in)
 			_, _ = fmt.Fprint(out, "Diagnostic payloads may contain sensitive data. Continue? [y/N]: ")
 			reply, err := reader.ReadString('\n')

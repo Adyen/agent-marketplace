@@ -186,7 +186,12 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 		return
 	}
 
-	state, err := telemetry.LoadAndResolve(context.Background())
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	state, err := telemetry.LoadAndResolve(ctx)
 	if err != nil {
 		slog.Warn("telemetry config resolution failed; continuing without telemetry", "error", err)
 		return
@@ -195,10 +200,6 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 		return
 	}
 
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithDiagnostic(diagnosticCapture))
 	if err != nil {
 		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
