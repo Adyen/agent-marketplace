@@ -232,24 +232,27 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 	userTC = cloneTelemetryConfig(userTC)
 	if !orgActive {
 		if ep := os.Getenv(EnvEndpoint); ep != "" {
+			slog.Info("applying telemetry endpoint override from environment", "var", EnvEndpoint, "endpoint", ep)
 			userTC.Endpoint = ep
 		}
-	}
-	if lv := os.Getenv(EnvLevel); lv != "" {
-		normalized, err := tmcfg.NormalizeLevel(lv)
-		if err != nil {
-			return nil, fmt.Errorf("environment variable %s: %w", EnvLevel, err)
+		if lv := os.Getenv(EnvLevel); lv != "" {
+			normalized, err := tmcfg.NormalizeLevel(lv)
+			if err != nil {
+				return nil, fmt.Errorf("environment variable %s: %w", EnvLevel, err)
+			}
+			slog.Info("applying telemetry level override from environment", "var", EnvLevel, "level", normalized)
+			userTC.Level = normalized
 		}
-		userTC.Level = normalized
-	}
-	if !orgActive {
 		if v := os.Getenv(EnvCommunityReporting); v != "" {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
 				return nil, fmt.Errorf("environment variable %s: %w", EnvCommunityReporting, err)
 			}
+			slog.Info("applying telemetry community reporting override from environment", "var", EnvCommunityReporting, "enabled", b)
 			userTC.CommunityReporting = &b
 		}
+	} else {
+		slog.Debug("skipping telemetry environment overrides because organization policy is active")
 	}
 	return userTC, nil
 }
@@ -305,9 +308,20 @@ func canonicalURLEqual(a, b string) bool {
 	if ua.Host != ub.Host {
 		return false
 	}
-	pathA := strings.TrimSuffix(ua.Path, "/")
-	pathB := strings.TrimSuffix(ub.Path, "/")
+	pathA := canonicalMetricsPath(ua.Path)
+	pathB := canonicalMetricsPath(ub.Path)
 	return pathA == pathB
+}
+
+// canonicalMetricsPath applies the default metrics path when no path is present.
+// This matches the exporter behavior, which only appends /v1/metrics when the
+// configured endpoint has an empty path.
+func canonicalMetricsPath(p string) string {
+	p = strings.TrimSuffix(p, "/")
+	if p == "" {
+		return "/v1/metrics"
+	}
+	return p
 }
 
 func hostnameFromURL(endpoint string) string {

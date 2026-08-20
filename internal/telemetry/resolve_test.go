@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -326,12 +327,15 @@ func TestResolveCommunityDisabledWhenLevelOff(t *testing.T) {
 func TestResolveAuthAndCA(t *testing.T) {
 	setStateRoot(t)
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	tenant := filepath.Join(dir, "tenant")
 	if err := os.WriteFile(tenant, []byte("tenant-a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ca := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(ca, []byte("cert"), 0o600); err != nil {
+	if err := os.WriteFile(ca, []byte("cert\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -391,5 +395,122 @@ func TestResolveInsecurePublicEndpointErrors(t *testing.T) {
 	_, err := ResolveTelemetryConfig(nil, user, "", "")
 	if err == nil {
 		t.Fatal("expected error for insecure public endpoint")
+	}
+}
+
+func TestResolveEnvLevelGatedByOrganization(t *testing.T) {
+	setStateRoot(t)
+	t.Setenv(EnvLevel, "detailed")
+	org := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level: tmcfg.LevelBasic,
+		},
+	}
+	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic || state.EffectiveLevelSource != sourceOrganization {
+		t.Fatalf("organization level must not be overridden by env: got %q/%q", state.EffectiveLevel, state.EffectiveLevelSource)
+	}
+}
+
+func TestResolveCommunityFoldingWithDefaultMetricsPath(t *testing.T) {
+	setStateRoot(t)
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:              tmcfg.LevelBasic,
+			Endpoint:           "https://project.example.com/v1/metrics",
+			CommunityReporting: boolPtr(true),
+		},
+	}
+	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !state.CommunityReportingEnabled {
+		t.Fatal("community reporting should be enabled")
+	}
+	if !state.CommunityReportingFoldedIntoPrimary {
+		t.Fatal("community report should be folded into primary when default path is applied")
+	}
+	if state.PrimaryEndpointSource != sourceUser {
+		t.Fatalf("primary source = %q, want USER", state.PrimaryEndpointSource)
+	}
+}
+
+func TestResolveCommunityNotFoldedWithCustomPath(t *testing.T) {
+	setStateRoot(t)
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:              tmcfg.LevelBasic,
+			Endpoint:           "https://project.example.com/custom",
+			CommunityReporting: boolPtr(true),
+		},
+	}
+	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !state.CommunityReportingEnabled {
+		t.Fatal("community reporting should be enabled")
+	}
+	if state.CommunityReportingFoldedIntoPrimary {
+		t.Fatal("community report should not be folded with a custom primary path")
+	}
+}
+
+func TestResolveOrganizationPrivateHostnameEndpoint(t *testing.T) {
+	setStateRoot(t)
+
+	old := tmcfg.LookupIP
+	tmcfg.LookupIP = func(host string) ([]net.IP, error) {
+		if host == "private.example.com" {
+			return []net.IP{net.ParseIP("10.0.0.5")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	defer func() { tmcfg.LookupIP = old }()
+
+	org := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:           tmcfg.LevelBasic,
+			Endpoint:        "http://private.example.com",
+			RetentionPolicy: "https://example.com/retention",
+			AllowInsecure:   true,
+		},
+	}
+	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.PrimaryEndpoint != "http://private.example.com" || state.PrimaryEndpointSource != sourceOrganization {
+		t.Fatalf("primary route mismatch: %q/%q", state.PrimaryEndpoint, state.PrimaryEndpointSource)
+	}
+}
+
+func TestResolveOrganizationPrivateHostnamePublicIP(t *testing.T) {
+	setStateRoot(t)
+
+	old := tmcfg.LookupIP
+	tmcfg.LookupIP = func(host string) ([]net.IP, error) {
+		if host == "private.example.com" {
+			return []net.IP{net.ParseIP("203.0.113.1")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	defer func() { tmcfg.LookupIP = old }()
+
+	org := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:           tmcfg.LevelBasic,
+			Endpoint:        "http://private.example.com",
+			RetentionPolicy: "https://example.com/retention",
+			AllowInsecure:   true,
+		},
+	}
+	_, err := ResolveTelemetryConfig(org, nil, "", "")
+	if err == nil {
+		t.Fatal("expected error when private hostname resolves to a public IP")
 	}
 }
