@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -169,8 +170,7 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 }
 
 func runTelemetryDisable(out io.Writer) error {
-	state, err := loadTelemetryState()
-	if err != nil {
+	if _, err := loadTelemetryState(); err != nil {
 		return err
 	}
 
@@ -186,6 +186,12 @@ func runTelemetryDisable(out io.Writer) error {
 	_, _ = fmt.Fprintln(out, "Telemetry disabled for user preference.")
 	slog.Info("telemetry disabled for user preference")
 
+	// Re-resolve after disabling user telemetry so the org-locked message is
+	// based on the effective state, not the level before the user changed it.
+	state, err := loadTelemetryState()
+	if err != nil {
+		return err
+	}
 	if state.Managed && tmcfg.LevelOrder(state.EffectiveLevel) > 0 {
 		_, _ = fmt.Fprintf(out, "Organization policy keeps telemetry active at %q.\n", state.EffectiveLevel)
 	}
@@ -231,6 +237,7 @@ func runTelemetryStatus(out io.Writer) error {
 	_, _ = fmt.Fprintf(out, "Telemetry status\n")
 	_, _ = fmt.Fprintf(out, "  Effective level:       %s (%s)\n", state.EffectiveLevel, strings.ToLower(state.EffectiveLevelSource))
 	_, _ = fmt.Fprintf(out, "  Primary endpoint:      %s\n", primary)
+	_, _ = fmt.Fprintf(out, "  Primary headers:       %s\n", formatPrimaryHeaders(state.PrimaryHeaders))
 	_, _ = fmt.Fprintf(out, "  Retention policy:      %s\n", emptyOr(state.RetentionPolicyURL, "none"))
 	_, _ = fmt.Fprintf(out, "  Community reporting:   %s\n", community)
 	_, _ = fmt.Fprintf(out, "  Managed installation:  %v\n", state.Managed)
@@ -286,6 +293,7 @@ func runTelemetryPreview(ctx context.Context, out io.Writer, in io.Reader, level
 	_, _ = fmt.Fprintf(out, "  level:         %s\n", level)
 	_, _ = fmt.Fprintf(out, "  endpoint host: %s\n", emptyOr(state.PrimaryEndpointHostname, "none"))
 	_, _ = fmt.Fprintf(out, "  retention:     %s\n", emptyOr(state.RetentionPolicyURL, "none"))
+	_, _ = fmt.Fprintf(out, "  headers:       %s\n", formatPrimaryHeaders(state.PrimaryHeaders))
 	if level == tmcfg.LevelDiagnostic {
 		_, _ = fmt.Fprintln(out, "  warning:       Diagnostic payloads may contain sensitive data and require review before sending.")
 	}
@@ -330,22 +338,29 @@ func runTelemetryPurge(out io.Writer) error {
 }
 
 func loadTelemetryState() (telemetry.TelemetryState, error) {
-	org, orgErr := config.LoadOrganizationConfig()
-	if orgErr != nil {
-		return telemetry.TelemetryState{}, fmt.Errorf("load organization config: %w", orgErr)
-	}
+	return telemetry.LoadAndResolve(context.Background())
+}
 
-	userPath, userPathErr := config.GlobalConfigPath()
-	if userPathErr != nil {
-		return telemetry.TelemetryState{}, fmt.Errorf("resolve user config path: %w", userPathErr)
+func formatPrimaryHeaders(headers map[string]tmcfg.HeaderSource) string {
+	if len(headers) == 0 {
+		return "none"
 	}
-
-	user, userErr := config.LoadConfigFromPath(userPath)
-	if userErr != nil {
-		return telemetry.TelemetryState{}, fmt.Errorf("load user config: %w", userErr)
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
-	return telemetry.ResolveTelemetryConfig(org, user, telemetry.DefaultProjectEndpoint, telemetry.DefaultProjectRetentionURL)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		source, ref := headers[name].Source()
+		if source == "" {
+			parts = append(parts, fmt.Sprintf("%s (unset)", name))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s (%s: %s)", name, source, ref))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func lockedFields(state telemetry.TelemetryState) []string {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -25,10 +26,19 @@ type PreviewPayload struct {
 	RetentionPolicyURL string              `json:"retention_policy_url,omitempty"`
 	InstallationID     string              `json:"installation_id"`
 	ResourceAttributes map[string]any      `json:"resource_attributes"`
+	Headers            []PreviewHeader     `json:"headers,omitempty"`
 	Metrics            []PreviewMetric     `json:"metrics,omitempty"`
 	Spans              []PreviewSpan       `json:"spans,omitempty"`
 	DiagnosticEvents   []PreviewDiagnostic `json:"diagnostic_events,omitempty"`
 	SensitiveWarning   string              `json:"sensitive_data_warning,omitempty"`
+}
+
+// PreviewHeader describes a primary telemetry header's name and how its value
+// is sourced without exposing the value itself.
+type PreviewHeader struct {
+	Name      string `json:"name"`
+	Source    string `json:"source"`
+	Reference string `json:"reference"`
 }
 
 // PreviewMetric is a representative metric sample.
@@ -76,6 +86,7 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 		RetentionPolicyURL: state.RetentionPolicyURL,
 		InstallationID:     id,
 		ResourceAttributes: resourceAttributes(res),
+		Headers:            previewHeaders(state.PrimaryHeaders),
 	}
 
 	switch level {
@@ -131,7 +142,7 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 		p.SensitiveWarning = "Diagnostic payloads may contain URLs (with credentials removed), filesystem paths, and error messages. Review before sharing."
 	}
 
-	previewRoot := filepath.Join(filepath.Dir(state.InstallationIDPath), "preview")
+	previewRoot := filepath.Join(state.StateRoot(), "preview")
 	if err := os.MkdirAll(previewRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create preview directory: %w", err)
 	}
@@ -158,6 +169,19 @@ func normalizePreviewLevel(level string) string {
 	default:
 		return tmcfg.LevelBasic
 	}
+}
+
+func previewHeaders(headers map[string]tmcfg.HeaderSource) []PreviewHeader {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make([]PreviewHeader, 0, len(headers))
+	for name, src := range headers {
+		kind, ref := src.Source()
+		out = append(out, PreviewHeader{Name: name, Source: kind, Reference: ref})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func resourceAttributes(res *otelresource.Resource) map[string]any {

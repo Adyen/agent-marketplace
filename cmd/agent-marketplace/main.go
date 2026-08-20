@@ -23,7 +23,6 @@ import (
 const defaultVersion = "dev"
 
 var version = defaultVersion
-var diagnosticEnabled bool
 var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
@@ -98,7 +97,6 @@ func newRootCmd() *cobra.Command {
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
-	rootCmd.PersistentFlags().BoolVar(&diagnosticEnabled, "diagnostic", false, "Capture diagnostic telemetry for this invocation")
 	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
