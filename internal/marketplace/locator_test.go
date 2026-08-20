@@ -18,9 +18,9 @@ func TestParseMarketplaceLocator(t *testing.T) {
 			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "skill", Name: "review"},
 		},
 		{
-			name:  "alias revision",
-			input: "public:source-one/command/check@v2",
-			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "command", Name: "check", Revision: "v2"},
+			name:  "alias revision digest",
+			input: "public:source-one/command/check@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "command", Name: "check", Revision: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
 		},
 		{
 			name:  "alias digest",
@@ -38,9 +38,9 @@ func TestParseMarketplaceLocator(t *testing.T) {
 			want:  MarketplaceLocator{Marketplace: "https://market.example:443", URL: "https://market.example:443", Source: "source-one", Kind: "skill", Name: "review"},
 		},
 		{
-			name:  "browser revision",
-			input: "https://market.example/s/source-one/skill/review/revisions/v2",
-			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Source: "source-one", Kind: "skill", Name: "review", Revision: "v2"},
+			name:  "browser revision digest",
+			input: "https://market.example/s/source-one/skill/review/revisions/sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Source: "source-one", Kind: "skill", Name: "review", Revision: "sha256:2222222222222222222222222222222222222222222222222222222222222222", Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 		},
 	}
 	for _, tt := range tests {
@@ -62,6 +62,14 @@ func TestParseMarketplaceLocator(t *testing.T) {
 	}
 }
 
+func TestParseMarketplaceLocatorRejectsNamedRevisionsWithExplicitError(t *testing.T) {
+	for _, input := range []string{"public:source/skill/name@v2", "https://market.example/s/source/skill/name/revisions/main"} {
+		if _, err := ParseMarketplaceLocator(input); err == nil || !strings.Contains(err.Error(), "exact content digest (sha256:<64 lowercase hex>)") {
+			t.Fatalf("ParseMarketplaceLocator(%q) error = %v", input, err)
+		}
+	}
+}
+
 func TestParseMarketplaceLocatorRejectsUnsafeAndMalformedInput(t *testing.T) {
 	inputs := []string{
 		"public:source/unknown/name",
@@ -69,6 +77,9 @@ func TestParseMarketplaceLocatorRejectsUnsafeAndMalformedInput(t *testing.T) {
 		"public:source/skill/../name",
 		"public:source/skill/name@",
 		"public:source/skill/name@one@two",
+		"public:source/skill/name@v2",
+		"public:source/skill/name@SHA256:0000000000000000000000000000000000000000000000000000000000000000",
+		"https://market.example/s/source/skill/name/revisions/main",
 		"public:source\\evil/skill/name",
 		"https://market.example/s/source/skill/name/extra",
 		"https://market.example/s/source/skill/name?x=1",

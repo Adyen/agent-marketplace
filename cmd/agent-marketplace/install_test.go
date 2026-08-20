@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,7 +10,66 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestInstallCommandNormalizesMCPKindForMarketplace(t *testing.T) {
+	kind, ok, err := parseOptionalKind("mcp")
+	if err != nil {
+		t.Fatalf("parseOptionalKind: %v", err)
+	}
+	if !ok || kind != ir.KindMcpServer {
+		t.Fatalf("kind = %v/%v, want mcpserver/true", kind, ok)
+	}
+}
+
+func TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags(t *testing.T) {
+	for _, flag := range []string{"--as=review-copy", "--yes", "--accept-risk"} {
+		t.Run(flag, func(t *testing.T) {
+			cmd := newInstallCmd()
+			cmd.SetOut(io.Discard)
+			if err := cmd.Flags().Set("marketplace", "public"); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(flag, "=") {
+				name := strings.SplitN(flag, "=", 2)
+				if err := cmd.Flags().Set(name[0][2:], name[1]); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := cmd.Flags().Set(flag[2:], "true"); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Args(cmd, []string{"source/skill/review"}); err != nil {
+				t.Fatalf("validation rejected %s: %v", flag, err)
+			}
+		})
+	}
+}
+
+func TestInstallValidationRejectsMarketplaceSelectorCombinations(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags map[string]string
+		args  []string
+	}{
+		{name: "from", flags: map[string]string{"marketplace": "public", "from": "https://registry.example"}, args: []string{"source/skill/review"}},
+		{name: "all", flags: map[string]string{"marketplace": "public", "all": "true"}},
+		{name: "tag", flags: map[string]string{"marketplace": "public", "tag": "security"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newInstallCmd()
+			for flag, value := range tc.flags {
+				if err := cmd.Flags().Set(flag, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cmd.Args(cmd, tc.args); err == nil {
+				t.Fatal("validation unexpectedly accepted invalid Marketplace combination")
+			}
+		})
+	}
+}
 
 func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
 	if isolateCommandTest(t) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -373,12 +374,13 @@ func TestResolverValidatesArtifactManifestIdentity(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	archive := "sha256:" + strings.Repeat("b", 64)
 	entry := config.MarketplaceEntry{InstanceID: "mp"}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest}
+	pin := config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "old-source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest}
 	rev := store.ResourceRevision{ArchiveDigest: store.ArchiveDigest(archive)}
 	artifact := hccartifact.CanonicalArtifact{}
 	artifact.Manifest.Kind = "skill"
 	artifact.Manifest.Name = "review"
 	artifact.Manifest.SourceID = "src"
+	artifact.Manifest.SourceSlug = "renamed-source-slug"
 	artifact.Manifest.Revision = pin.Revision
 	artifact.Manifest.ContentDigest = digest
 	artifact.Manifest.ArchiveDigest = archive
@@ -433,4 +435,97 @@ func serveWellKnown(mux *http.ServeMux, instanceID string) {
 
 func TestResolverImplementsInterface(t *testing.T) {
 	var _ resolver.MarketplaceResolver = &Resolver{}
+}
+
+func TestResolvePinWithArtifactRetainsVerifiedArtifactWhenCacheIsTampered(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	digest := "sha256:" + strings.Repeat("a", 64)
+	skill := ir.NewSkill("review", "Review code", "Review carefully.", []string{"user"}, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(skill)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.SourceSlug = "source"
+	canonical.Manifest.Revision = digest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	rev := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
+	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: canonical.Manifest.ContentDigest}
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
+		t.Fatalf("WriteResourceRevision: %v", err)
+	}
+	artifactPath, err := cache.WriteArtifact(archiveDigest, raw)
+	if err != nil {
+		t.Fatalf("WriteArtifact: %v", err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("MarkArtifactVerified: %v", err)
+	}
+	client, err := NewClient(entry.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, got, err := (&Resolver{}).resolvePinWithArtifact(context.Background(), client, cache, entry, pin, nil, resolver.MarketplaceResolveModeCached)
+	if err != nil {
+		t.Fatalf("resolvePinWithArtifact: %v", err)
+	}
+	if got.Manifest.Name != "review" {
+		t.Fatalf("verified artifact name = %q", got.Manifest.Name)
+	}
+	if err := os.WriteFile(artifactPath, []byte("tampered"), 0o644); err != nil {
+		t.Fatalf("tamper artifact: %v", err)
+	}
+	if got.Manifest.Name != "review" || got.Manifest.ContentDigest != canonical.Manifest.ContentDigest {
+		t.Fatal("prepared artifact changed after cache tampering")
+	}
+}
+
+func TestPrepareLocatorPrefetchesMirrorArtifact(t *testing.T) {
+	skill := ir.NewSkill("review", "Review code", "Review carefully.", []string{"user"}, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(skill)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.SourceSlug = "source"
+	canonical.Manifest.Revision = "refs/heads/main"
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	rev := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "source", Acquisition: store.AcquisitionMirror})
+	})
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(rev)
+	})
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(raw) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	plan, err := (&Resolver{Cache: NewCache(t.TempDir())}).PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Alias: "public"}, MarketplaceLocator{URL: server.URL, Source: "source", Kind: "skill", Name: "review"}, nil)
+	if err != nil {
+		t.Fatalf("PrepareLocator: %v", err)
+	}
+	if plan.Pin.SourceID != "src" || plan.Pin.Digest != string(rev.ContentDigest) || plan.ArchiveDigest != string(rev.ArchiveDigest) {
+		t.Fatalf("prepared pin = %#v", plan.Pin)
+	}
+	if plan.Artifact.Manifest.Name != "review" {
+		t.Fatalf("prepared artifact manifest = %#v", plan.Artifact.Manifest)
+	}
 }

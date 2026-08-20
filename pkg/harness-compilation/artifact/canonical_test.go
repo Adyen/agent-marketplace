@@ -64,6 +64,36 @@ func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 	}
 }
 
+func TestCanonicalArtifactValidateArchiveRejectsAdversarialManifestFields(t *testing.T) {
+	base, err := FromIR(ir.NewSkill("review", "Review code", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	tests := []struct {
+		name string
+		edit func(*CanonicalArtifact)
+		want string
+	}{
+		{name: "schema", edit: func(a *CanonicalArtifact) { a.Manifest.SchemaVersion = "v99" }, want: "unsupported schema"},
+		{name: "finding severity", edit: func(a *CanonicalArtifact) {
+			a.Manifest.Findings = []CanonicalFinding{{Code: "scanner", Severity: "critical", PolicyOutcome: "warn"}}
+		}, want: "severity"},
+		{name: "policy outcome", edit: func(a *CanonicalArtifact) {
+			a.Manifest.Findings = []CanonicalFinding{{Code: "scanner", Severity: "warn", PolicyOutcome: "escalate"}}
+		}, want: "policy_outcome"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			artifact := base
+			artifact.rawArchive = nil
+			tc.edit(&artifact)
+			if err := artifact.ValidateArchive(nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateArchive error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestCanonicalArtifactDeterministic(t *testing.T) {
 	skill := ir.NewSkill("review", "Review code", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{})
 	a1, err := FromIR(skill)
