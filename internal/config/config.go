@@ -734,7 +734,7 @@ func IsMigrationRequired(err error) bool {
 // requiring that harnesses is non-empty. This should be used for global
 // (user-personal) configs where harnesses is mandatory.
 func (c Config) Validate() error {
-	return c.validate(true, true, "")
+	return c.validate(true, true, "user personal")
 }
 
 // ValidateWithoutHarnesses validates the config structurally but does not
@@ -742,7 +742,7 @@ func (c Config) Validate() error {
 // level configs where harnesses is optional (inherited from the global layer
 // during merge).
 func (c Config) ValidateWithoutHarnesses() error {
-	return c.validate(false, true, "")
+	return c.validate(false, true, "repository committed")
 }
 
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {

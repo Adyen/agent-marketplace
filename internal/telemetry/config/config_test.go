@@ -1,6 +1,7 @@
 package telemetryconfig
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,7 +66,7 @@ func TestValidateEmptyTelemetry(t *testing.T) {
 
 func TestValidateRejectsRepoAndLocalLayers(t *testing.T) {
 	tc := &TelemetryConfig{Level: LevelBasic}
-	for _, layer := range []string{"repository committed", "repository personal", "repo", "local"} {
+	for _, layer := range []string{"", "user", "repository committed", "repository personal", "repo", "local"} {
 		t.Run(layer, func(t *testing.T) {
 			errs := Validate(tc, layer)
 			if len(errs) == 0 {
@@ -76,6 +77,28 @@ func TestValidateRejectsRepoAndLocalLayers(t *testing.T) {
 }
 
 func TestValidateEndpoint(t *testing.T) {
+	old := LookupIP
+	defer func() { LookupIP = old }()
+
+	LookupIP = func(host string) ([]net.IP, error) {
+		switch host {
+		case "private.local":
+			return []net.IP{net.ParseIP("10.0.0.5")}, nil
+		case "public.local":
+			return []net.IP{net.ParseIP("203.0.113.1")}, nil
+		case "mixed.local":
+			return []net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("203.0.113.1")}, nil
+		case "unresolvable.local":
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		case "linklocal.local":
+			return []net.IP{net.ParseIP("169.254.1.1")}, nil
+		case "loopback.local":
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		default:
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+	}
+
 	tests := []struct {
 		name          string
 		endpoint      string
@@ -87,9 +110,17 @@ func TestValidateEndpoint(t *testing.T) {
 		{"http 127.0.0.1", "http://127.0.0.1:4318", false, false},
 		{"http private allowed", "http://192.168.1.1", true, false},
 		{"http private disallowed", "http://192.168.1.1", false, true},
+		{"http link local allowed", "http://169.254.1.1", true, false},
 		{"http public", "http://otel.example.com", false, true},
 		{"invalid scheme", "ftp://otel.example.com", false, true},
 		{"missing host", "https:///path", false, true},
+		{"http private hostname allowed", "http://private.local", true, false},
+		{"http private hostname public", "http://public.local", true, true},
+		{"http private hostname mixed", "http://mixed.local", true, true},
+		{"http private hostname unresolved", "http://unresolvable.local", true, true},
+		{"http link-local hostname allowed", "http://linklocal.local", true, false},
+		{"http loopback hostname allowed", "http://loopback.local", true, false},
+		{"http hostname without allow insecure", "http://private.local", false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,10 +151,44 @@ func TestValidateOrganizationRequiresRetention(t *testing.T) {
 
 func TestValidateHeaders(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	existing := filepath.Join(dir, "tenant")
 	if err := os.WriteFile(existing, []byte("tenant-a"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
+	fileWithNewline := filepath.Join(dir, "tenant-nl")
+	if err := os.WriteFile(fileWithNewline, []byte("tenant-a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	badPerm := filepath.Join(dir, "tenant-bad")
+	if err := os.WriteFile(badPerm, []byte("tenant-b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkTarget := filepath.Join(dir, "tenant-link-target")
+	if err := os.WriteFile(linkTarget, []byte("tenant-c"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(dir, "tenant-symlink")
+	if err := os.Symlink(linkTarget, symlink); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	badParent := filepath.Join(dir, "badparent", "tenant")
+	if err := os.Mkdir(filepath.Dir(badParent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badParent, []byte("tenant-d"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("EXAMPLE_OTEL_AUTHORIZATION", "token-123")
+	t.Setenv("OTEL_AUTH_WITH_NL", "token\n123")
 
 	tests := []struct {
 		name    string
@@ -163,6 +228,41 @@ func TestValidateHeaders(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "env value with line terminator",
+			headers: map[string]HeaderSource{
+				"Authorization": {Env: "OTEL_AUTH_WITH_NL"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "file value with line terminator",
+			headers: map[string]HeaderSource{
+				"X-Tenant": {File: fileWithNewline},
+			},
+			wantErr: true,
+		},
+		{
+			name: "file with bad permissions",
+			headers: map[string]HeaderSource{
+				"X-Tenant": {File: badPerm},
+			},
+			wantErr: true,
+		},
+		{
+			name: "file parent with bad permissions",
+			headers: map[string]HeaderSource{
+				"X-Tenant": {File: badParent},
+			},
+			wantErr: true,
+		},
+		{
+			name: "file symlink",
+			headers: map[string]HeaderSource{
+				"X-Tenant": {File: symlink},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,9 +281,27 @@ func TestValidateHeaders(t *testing.T) {
 
 func TestValidateCAFile(t *testing.T) {
 	dir := t.TempDir()
-	cert := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(cert, []byte("cert"), 0o600); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
+	}
+
+	cert := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(cert, []byte("cert\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	badPerm := filepath.Join(dir, "ca-bad.pem")
+	if err := os.WriteFile(badPerm, []byte("cert\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkTarget := filepath.Join(dir, "ca-link-target.pem")
+	if err := os.WriteFile(linkTarget, []byte("cert\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(dir, "ca-symlink.pem")
+	if err := os.Symlink(linkTarget, symlink); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
 	}
 
 	tests := []struct {
@@ -193,6 +311,8 @@ func TestValidateCAFile(t *testing.T) {
 		{cert, false},
 		{filepath.Join(dir, "missing"), true},
 		{dir, true},
+		{badPerm, true},
+		{symlink, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.caFile, func(t *testing.T) {
@@ -225,7 +345,6 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 		ResourceAttrHarnesses,
 		ResourceAttrManaged,
 		ResourceAttrOutcomeCode,
-		ResourceAttrInstallationID,
 	}
 	for _, attr := range want {
 		if !slices.Contains(MetricSchemaAttributes, attr) {

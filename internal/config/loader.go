@@ -459,7 +459,11 @@ func IsHomeDir(path string) bool {
 }
 
 func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	return loadConfigGated(path, requireHarnesses, true, "")
+	layer := "repository committed"
+	if requireHarnesses {
+		layer = "user personal"
+	}
+	return loadConfigGated(path, requireHarnesses, true, layer)
 }
 
 // loadConfigGated reads and validates a Config, with independent control over

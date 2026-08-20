@@ -16,6 +16,9 @@ func TestV3OrganizationAcceptsTelemetry(t *testing.T) {
 	if err := os.WriteFile(caFile, []byte("cert"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	data := []byte(fmt.Sprintf(`apiVersion: agent-marketplace/v3
 harnesses:
   - factory

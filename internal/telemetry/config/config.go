@@ -4,9 +4,11 @@ package telemetryconfig
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,15 +46,15 @@ const (
 type MetricInstrument string
 
 const (
-	MetricNamespace                           = "agent_marketplace"
-	CommandCounterName       MetricInstrument = MetricNamespace + ".command.invocations"
-	CommandDurationName      MetricInstrument = MetricNamespace + ".command.duration_ms"
-	CoarseDurationBucketName MetricInstrument = MetricNamespace + ".command.duration_coarse_ms"
+	MetricNamespace                      = "agent_marketplace"
+	CommandCounterName  MetricInstrument = MetricNamespace + ".command.invocations"
+	CommandDurationName MetricInstrument = MetricNamespace + ".command.duration_ms"
 )
 
 // MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
 // only dimensions that may be attached to the command counter and duration
-// histogram. Instrument values (not attributes) carry coarse duration.
+// histogram. ResourceAttrInstallationID is intentionally omitted; it is a
+// resource attribute, not an instrument-level label.
 var MetricSchemaAttributes = []ResourceAttribute{
 	ResourceAttrSchemaVersion,
 	ResourceAttrCLIVersion,
@@ -62,7 +64,6 @@ var MetricSchemaAttributes = []ResourceAttribute{
 	ResourceAttrHarnesses,
 	ResourceAttrManaged,
 	ResourceAttrOutcomeCode,
-	ResourceAttrInstallationID,
 }
 
 // TelemetryConfig is the machine-scope telemetry policy. It is only allowed in
@@ -133,12 +134,20 @@ func MaxLevel(a, b string) string {
 	return b
 }
 
+// LookupIP resolves a hostname to IP addresses. It defaults to net.LookupIP and
+// may be overridden in tests to avoid real DNS lookups.
+var LookupIP = net.LookupIP
+
 // Validate checks a telemetry config block against the schema and layer rules.
 func Validate(tc *TelemetryConfig, layer string) []error {
 	if tc == nil {
 		return nil
 	}
+
+	slog.Debug("validating telemetry config", "layer", layer)
+
 	if !layerAllowsTelemetry(layer) {
+		slog.Warn("telemetry is not allowed in configuration layer", "layer", layer)
 		return []error{fmt.Errorf("telemetry is not allowed in %s configuration", layer)}
 	}
 
@@ -184,21 +193,55 @@ func ValidateEndpoint(endpoint string, allowInsecure bool) error {
 	if u.Scheme == "https" {
 		return nil
 	}
+
 	if isLoopbackHost(host) {
+		slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "loopback")
 		return nil
 	}
-	if isPrivateHost(host) && allowInsecure {
-		return nil
+
+	// Literal IP address.
+	if ip := net.ParseIP(host); ip != nil {
+		if isLoopbackIP(ip) {
+			slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "loopback_ip")
+			return nil
+		}
+		if isPrivateOrLinkLocalIP(ip) {
+			if allowInsecure {
+				slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "private_ip")
+				return nil
+			}
+			slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "allow_insecure_required")
+			return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true from organization policy", host)
+		}
+		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "public_ip")
+		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", endpoint)
 	}
-	if isPrivateHost(host) {
-		return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true from organization policy", host)
+
+	// Hostname: for allow_insecure, it must resolve exclusively to
+	// private/loopback/link-local addresses.
+	if !allowInsecure {
+		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "hostname_requires_allow_insecure")
+		return fmt.Errorf("insecure HTTP for non-loopback, non-private hostname %q requires allow_insecure: true from organization policy", host)
 	}
-	return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", endpoint)
+
+	ips, err := LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "hostname_does_not_resolve", "error", err)
+		return fmt.Errorf("insecure HTTP hostname %q does not resolve to a private/loopback/link-local address", host)
+	}
+	for _, ip := range ips {
+		if !isPrivateOrLinkLocalIP(ip) {
+			slog.Warn("rejecting insecure HTTP endpoint", "host", host, "resolved_ip", ip, "reason", "public_ip")
+			return fmt.Errorf("insecure HTTP hostname %q resolves to public IP %v", host, ip)
+		}
+	}
+	slog.Info("allowing insecure HTTP endpoint for private hostname", "host", host, "ips", ips)
+	return nil
 }
 
 func layerAllowsTelemetry(layer string) bool {
 	switch layer {
-	case "", "organization", "user personal", "user":
+	case "organization", "user personal":
 		return true
 	default:
 		return false
@@ -213,9 +256,12 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func isPrivateHost(host string) bool {
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsPrivate()
+func isLoopbackIP(ip net.IP) bool {
+	return ip.IsLoopback()
+}
+
+func isPrivateOrLinkLocalIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 func validateRetentionPolicy(urlStr string) error {
@@ -239,25 +285,72 @@ func validateCAFile(path string) error {
 	if path == "" {
 		return nil
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("ca_file %q: %w", path, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("ca_file %q is a directory", path)
-	}
-	if err := validateFilePermission(info, "ca_file"); err != nil {
+	if _, err := validateSecretPath(path, "ca_file"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func validateFilePermission(info os.FileInfo, kind string) error {
+// validateSecretPath checks that path is a regular file owned by the current
+// user, with no group/other permissions, and located in a similarly owned parent
+// directory. Symlinks are rejected.
+func validateSecretPath(path, kind string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s %q: %w", kind, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s %q is a symlink", kind, path)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s %q is a directory", kind, path)
+	}
+	if err := validateFileOwnerAndPermission(info, path, kind); err != nil {
+		return nil, err
+	}
+	if err := validateParentDirectory(path, kind); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func validateFileOwnerAndPermission(info os.FileInfo, path, kind string) error {
 	perm := info.Mode().Perm()
 	if perm&0o077 != 0 {
-		return fmt.Errorf("%s %q is readable or writable by group/other (%04o); restrict permissions to owner only", kind, info.Name(), perm)
+		return fmt.Errorf("%s %q is readable or writable by group/other (%04o); restrict permissions to owner only", kind, path, perm)
+	}
+
+	uid := os.Getuid()
+	if uid < 0 {
+		// Ownership is not reliably available on this platform (e.g. Windows).
+		return nil
+	}
+	owner, ok := fileOwnerUID(info)
+	if !ok {
+		return nil
+	}
+	if owner != uid {
+		return fmt.Errorf("%s %q is owned by uid %d; expected current user uid %d", kind, path, owner, uid)
 	}
 	return nil
+}
+
+func validateParentDirectory(path, kind string) error {
+	parent := filepath.Dir(path)
+	if parent == "" || parent == path {
+		return nil
+	}
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf("%s parent directory %q: %w", kind, parent, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s parent directory %q is a symlink", kind, parent)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s parent %q is not a directory", kind, parent)
+	}
+	return validateFileOwnerAndPermission(info, parent, kind+" parent directory")
 }
 
 func validateHeaders(headers map[string]HeaderSource) []error {
@@ -281,6 +374,11 @@ func validateHeaders(headers map[string]HeaderSource) []error {
 		if src.Env != "" {
 			if strings.TrimSpace(src.Env) == "" {
 				errs = append(errs, fmt.Errorf("telemetry header %q has an empty env source", name))
+				continue
+			}
+			value := os.Getenv(src.Env)
+			if containsLineTerminator(value) {
+				errs = append(errs, fmt.Errorf("telemetry header %q env value for %q contains line terminators", name, src.Env))
 			}
 			continue
 		}
@@ -288,18 +386,29 @@ func validateHeaders(headers map[string]HeaderSource) []error {
 			errs = append(errs, fmt.Errorf("telemetry header %q has an empty file source", name))
 			continue
 		}
-		info, err := os.Stat(src.File)
+		if _, err := validateSecretPath(src.File, "telemetry header"); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		data, err := os.ReadFile(src.File)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("telemetry header %q file source %q: %w", name, src.File, err))
 			continue
 		}
-		if info.IsDir() {
-			errs = append(errs, fmt.Errorf("telemetry header %q file source %q is a directory", name, src.File))
-			continue
-		}
-		if err := validateFilePermission(info, "telemetry header"); err != nil {
-			errs = append(errs, err)
+		value := string(data)
+		if containsLineTerminator(value) {
+			errs = append(errs, fmt.Errorf("telemetry header %q file value contains line terminators", name))
 		}
 	}
 	return errs
+}
+
+func containsLineTerminator(s string) bool {
+	for _, r := range s {
+		switch r {
+		case '\u000A', '\u000B', '\u000C', '\u000D', '\u0085', '\u2028', '\u2029':
+			return true
+		}
+	}
+	return false
 }
