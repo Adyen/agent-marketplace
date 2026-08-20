@@ -201,9 +201,6 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 		case <-ctx.Done():
 			ticker.Stop()
 			wg.Wait()
-			if err := deps.MetadataStore.Close(); err != nil {
-				slog.Error("close metadata store", "err", err)
-			}
 			return ctx.Err()
 		case <-ticker.C:
 		}

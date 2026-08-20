@@ -443,17 +443,19 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 	_, err = s.q.ExecContext(ctx,
 		`INSERT INTO resource_revisions
 		 (marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		  analyzer_version, findings, license, provenance, revocation)
-		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, NULLIF($10, ''), $11)
+		  analyzer_version, findings, license, provenance, revocation, created_at)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, NULLIF($10, ''), $11, $12)
 		 ON CONFLICT (marketplace_id, source_id, kind, name, content_digest) DO UPDATE SET
 		   archive_digest = EXCLUDED.archive_digest,
 		   analyzer_version = EXCLUDED.analyzer_version,
 		   findings = EXCLUDED.findings,
 		   license = EXCLUDED.license,
 		   provenance = EXCLUDED.provenance,
-		   revocation = EXCLUDED.revocation`,
+		   revocation = EXCLUDED.revocation,
+		   created_at = EXCLUDED.created_at`,
 		rev.Coordinate.Marketplace, rev.Coordinate.Source, rev.Coordinate.Kind, rev.Coordinate.Name,
 		rev.ContentDigest, archive, rev.AnalyzerVersion, findingsJSON, rev.License, provenanceJSON, revocationJSON,
+		timeToMicro(time.Now().UTC()),
 	)
 	return err
 }
@@ -467,6 +469,67 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 		 ORDER BY content_digest`,
 		coord.Marketplace, coord.Source, coord.Kind, coord.Name,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []store.ResourceRevision
+	for rows.Next() {
+		rev, err := s.scanResourceRevision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.ResourceRevision, error) {
+	row := s.q.QueryRowContext(ctx,
+		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		        analyzer_version, findings, license, provenance, revocation
+		 FROM resource_revisions
+		 WHERE marketplace_id=$1 AND source_id=$2 AND kind=$3 AND name=$4
+		 ORDER BY created_at DESC, content_digest DESC
+		 LIMIT 1`,
+		coord.Marketplace, coord.Source, coord.Kind, coord.Name,
+	)
+	return s.scanResourceRevision(row)
+}
+
+func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.ResourceRevision, error) {
+	args := []any{string(filter.Marketplace)}
+	where := "rr.marketplace_id=$1 AND s.listed AND rr.revocation IS NULL"
+
+	if filter.Source != "" {
+		where += fmt.Sprintf(" AND (rr.source_id=$%d OR s.slug=$%d)", len(args)+1, len(args)+2)
+		args = append(args, filter.Source, filter.Source)
+	}
+	if filter.Kind != "" {
+		where += fmt.Sprintf(" AND rr.kind=$%d", len(args)+1)
+		args = append(args, filter.Kind)
+	}
+	if filter.Query != "" {
+		where += fmt.Sprintf(" AND rr.name ILIKE $%d", len(args)+1)
+		args = append(args, "%"+filter.Query+"%")
+	}
+
+	query := fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT rr.*,
+				ROW_NUMBER() OVER (PARTITION BY rr.source_id, rr.kind, rr.name ORDER BY rr.created_at DESC, rr.content_digest DESC) AS rn
+			FROM resource_revisions rr
+			JOIN sources s ON s.id = rr.source_id
+			WHERE %s
+		)
+		SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		       analyzer_version, findings, license, provenance, revocation
+		FROM ranked
+		WHERE rn = 1
+		ORDER BY source_id, kind, name`, where)
+
+	rows, err := s.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

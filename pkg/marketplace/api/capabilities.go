@@ -5,7 +5,7 @@ const (
 	APIVersionV1            = "v1"
 	ArtifactSchemaVersionV1 = "v1"
 	AcquisitionMirror       = "mirror"
-	AcquisitionIndex        = "index"
+	AcquisitionIndex        = "index-only"
 )
 
 // DefaultCapabilities returns the capability block advertised by this version
@@ -27,7 +27,7 @@ func DefaultWellKnown(instanceID, canonicalURL string) WellKnown {
 		InstanceID:   instanceID,
 		CanonicalURL: canonicalURL,
 		APIBase:      "/api/v1",
-		BrowserRoute: "/browse/{source_id}/{kind}/{name}",
+		BrowserRoute: "/s/{source}/{kind}/{name}",
 		Capabilities: DefaultCapabilities(),
 	}
 }

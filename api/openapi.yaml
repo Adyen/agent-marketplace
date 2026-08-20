@@ -35,10 +35,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/Capabilities"
 
-  /api/v1/resources:
+  /api/v1/instance:
     get:
-      operationId: listResources
-      summary: List selectable resources
+      operationId: getInstance
+      summary: Marketplace instance metadata
+      responses:
+        "200":
+          description: Marketplace instance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Marketplace"
+
+  /api/v1/search:
+    get:
+      operationId: searchResources
+      summary: Search selectable resources
       parameters:
         - in: query
           name: kind
@@ -52,24 +64,79 @@ paths:
               - mcpserver
               - collection
         - in: query
-          name: source_id
+          name: source
+          schema:
+            type: string
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated resource search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+
+  /api/v1/sources/{source}:
+    get:
+      operationId: getSource
+      summary: Get a source by slug or ID
+      parameters:
+        - in: path
+          name: source
+          required: true
           schema:
             type: string
       responses:
         "200":
-          description: Resource list
+          description: Source details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+
+  /api/v1/sources/{source}/history:
+    get:
+      operationId: getSourceHistory
+      summary: Get source revision history
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Source occurrence history
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ResourceListItem"
+                  $ref: "#/components/schemas/SourceOccurrence"
 
-  /api/v1/artifacts/{kind}/{name}:
+  /api/v1/resources/{source}/{kind}/{name}:
     get:
-      operationId: getArtifact
-      summary: Download a canonical artifact
+      operationId: getResource
+      summary: Get the latest resource revision
       parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
         - in: path
           name: kind
           required: true
@@ -81,16 +148,126 @@ paths:
               - subagent
               - hook
               - mcpserver
+              - collection
         - in: path
           name: name
           required: true
           schema:
             type: string
-        - in: query
+      responses:
+        "200":
+          description: Resource revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/resources/{source}/{kind}/{name}/revisions:
+    get:
+      operationId: listResourceRevisions
+      summary: List all resource revisions
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resource revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}:
+    get:
+      operationId: getResourceRevision
+      summary: Get a specific resource revision
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
           name: revision
           required: true
           schema:
             type: string
+      responses:
+        "200":
+          description: Resource revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/manifests/{source-revision}:
+    get:
+      operationId: getManifest
+      summary: Download a source revision manifest
+      parameters:
+        - in: path
+          name: source-revision
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Source revision manifest JSON
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/artifacts/sha256/{digest}:
+    get:
+      operationId: getArtifact
+      summary: Download a canonical artifact by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
       responses:
         "200":
           description: Canonical artifact tar.gz
@@ -99,6 +276,49 @@ paths:
               schema:
                 type: string
                 format: binary
+
+  /s/{source}/{kind}/{name}:
+    get:
+      operationId: getBrowserResource
+      summary: Stable browser route for a resource
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resource revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRevision"
+
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Liveness response
 
 components:
   schemas:
@@ -139,7 +359,7 @@ components:
           items:
             type: string
             enum:
-              - index
+              - index-only
               - mirror
         features:
           type: array
@@ -165,6 +385,106 @@ components:
               type: string
             browser_route_template:
               type: string
+
+    Marketplace:
+      type: object
+      required:
+        - id
+        - name
+        - canonical_url
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        canonical_url:
+          type: string
+          format: uri
+        instance_metadata:
+          type: object
+          additionalProperties: true
+
+    Source:
+      type: object
+      required:
+        - id
+        - slug
+        - ref
+        - origins
+        - acquisition
+        - roots
+        - listed
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        origins:
+          type: array
+          items:
+            type: string
+        ref:
+          type: string
+        roots:
+          type: array
+          items:
+            type: object
+        acquisition:
+          type: string
+          enum:
+            - index-only
+            - mirror
+        listed:
+          type: boolean
+
+    SourceOccurrence:
+      type: object
+      required:
+        - source_id
+        - ref
+        - revision_commit
+        - source_revision_manifest_digest
+        - acquisition
+        - occurred_at
+      properties:
+        source_id:
+          type: string
+        ref:
+          type: string
+        revision_commit:
+          type: string
+        source_revision_manifest_digest:
+          type: string
+        acquisition:
+          type: string
+        mirrored_artifact_digest:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+
+    SearchResult:
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
 
     ResourceListItem:
       type: object
@@ -201,3 +521,40 @@ components:
           type: object
           additionalProperties:
             type: string
+        score:
+          type: number
+          description: Server-assigned relevance score for the query.
+
+    ResourceRevision:
+      type: object
+      required:
+        - coordinate
+        - content_digest
+      properties:
+        coordinate:
+          type: object
+          properties:
+            marketplace:
+              type: string
+            source:
+              type: string
+            kind:
+              type: string
+            name:
+              type: string
+        content_digest:
+          type: string
+        archive_digest:
+          type: string
+        analyzer_version:
+          type: string
+        findings:
+          type: array
+          items:
+            type: object
+        license:
+          type: string
+        provenance:
+          type: object
+        revocation:
+          type: object

@@ -37,6 +37,7 @@ type ResourceListItem struct {
 	ContentDigest string            `json:"content_digest"`
 	Description   string            `json:"description,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+	Score         float64           `json:"score,omitempty"`
 }
 
 // ArtifactRequest is the body of `POST /api/v1/artifacts/{kind}/{name}` when
