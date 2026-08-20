@@ -17,6 +17,8 @@ import (
 )
 
 func BenchmarkDiagnosticRedaction(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
@@ -76,6 +78,8 @@ func BenchmarkDiagnosticRedaction(b *testing.B) {
 }
 
 func BenchmarkDiagnosticPayloadSerialization(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 

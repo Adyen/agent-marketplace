@@ -29,6 +29,20 @@ The following data is **never** collected at the basic level:
 - user names, hostnames, or network addresses;
 - prompts, terminal contents, or resource contents.
 
+## Detailed and diagnostic data
+
+Detailed telemetry adds lifecycle spans for commands, the TUI, and pipeline
+stages. Span names and attributes are limited to command path, harness list,
+managed flag, outcome, resource kind, action name, and result count. No
+resource names, search text, or user content are attached.
+
+Diagnostic telemetry is a per-invocation capture (`--diagnostic`) that buffers
+metrics, traces, and selected events in memory and writes a review payload
+locally before export. The CLI redacts URL credentials from every string value
+in the payload. The review payload is stored under the user's state directory
+with owner-only permissions (`0o600`) and is deleted after a successful export.
+On export failure the payload is retained for manual review.
+
 ## Retention period
 
 The community receiver stores accepted requests as JSON-lines, one file per calendar day. Data is retained for **30 days** from the date it was received. After 30 days the daily files are eligible for deletion by the operator.

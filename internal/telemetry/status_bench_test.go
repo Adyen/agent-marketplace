@@ -9,6 +9,8 @@ import (
 )
 
 func BenchmarkGetStatusInfo(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	benchDir := b.TempDir()
 	b.Setenv("HOME", benchDir)
 	b.Setenv("XDG_STATE_HOME", benchDir)

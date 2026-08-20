@@ -8,6 +8,8 @@ import (
 )
 
 func BenchmarkResolveTelemetryConfig(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	b.Setenv("XDG_STATE_HOME", b.TempDir())
 	org := &amconfig.Config{
 		Telemetry: &tmcfg.TelemetryConfig{

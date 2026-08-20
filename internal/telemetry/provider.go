@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
 	otelattribute "go.opentelemetry.io/otel/attribute"
@@ -149,12 +151,16 @@ func (s Span) TraceID() string {
 }
 
 // SetError records err as a span error and marks the span status as Error.
+// Only a stable error code is attached; the raw error message is never stored
+// in the span to avoid leaking file paths, URLs, or other user content.
 func (s Span) SetError(err error) {
 	if s.s == nil || err == nil {
 		return
 	}
-	s.s.RecordError(err)
-	s.s.SetStatus(otelcodes.Error, err.Error())
+	if coded, ok := diag.AsCodedError(err); ok && coded != nil && coded.Code != "" {
+		s.s.SetAttributes(otelattribute.String("error.code", coded.Code))
+	}
+	s.s.SetStatus(otelcodes.Error, "")
 }
 
 // New builds the telemetry runtime for the resolved TelemetryState.
