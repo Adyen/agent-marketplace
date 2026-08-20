@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -175,6 +176,73 @@ func TestCloneOrPullRejectsDangerousRef(t *testing.T) {
 	_, err = CloneOrPull("/dev/null", "main@{1.day.ago}")
 	if err == nil || !strings.Contains(err.Error(), "contains '..' or '@{'") {
 		t.Fatalf("CloneOrPull with reflog ref should be rejected; got err = %v", err)
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheRootAndPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(cacheRoot, external, cachePath string) error
+	}{
+		{
+			name: "cache root ancestor",
+			setup: func(cacheRoot, external, _ string) error {
+				return os.Symlink(external, filepath.Dir(cacheRoot))
+			},
+		},
+		{
+			name: "cache root",
+			setup: func(cacheRoot, external, _ string) error {
+				if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o755); err != nil {
+					return err
+				}
+				return os.Symlink(external, cacheRoot)
+			},
+		},
+		{
+			name: "registry hash directory",
+			setup: func(cacheRoot, external, cachePath string) error {
+				if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+					return err
+				}
+				hashDir := filepath.Dir(cachePath)
+				return os.Symlink(external, hashDir)
+			},
+		},
+		{
+			name: "registry ref directory",
+			setup: func(cacheRoot, external, cachePath string) error {
+				if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+					return err
+				}
+				return os.Symlink(external, cachePath)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			cacheRoot := CacheDir()
+			origin := filepath.Join(t.TempDir(), "origin.git")
+			cachePath := RegistryCachePath(origin, "main")
+			external := t.TempDir()
+			if err := tt.setup(cacheRoot, external, cachePath); err != nil {
+				t.Fatalf("setup symlinked cache path: %v", err)
+			}
+
+			if got, err := CloneOrPull(origin, "main"); err == nil {
+				t.Fatalf("expected symlinked cache path to be rejected, got %q", got)
+			}
+			entries, err := os.ReadDir(external)
+			if err != nil {
+				t.Fatalf("read external directory: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("registry acquisition reached external cache target: %v", entries)
+			}
+		})
 	}
 }
 
