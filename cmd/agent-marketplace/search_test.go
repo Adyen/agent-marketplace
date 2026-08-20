@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +15,16 @@ import (
 )
 
 func searchCommandServer(t *testing.T, fail bool) *httptest.Server {
+	return searchCommandServerWithInstance(t, "mp-public", fail)
+}
+
+func searchCommandServerWithInstance(t *testing.T, instanceID string, fail bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": instanceID})
+			return
+		}
 		if r.URL.Path != "/api/v1/search" {
 			http.NotFound(w, r)
 			return
@@ -127,8 +137,8 @@ func TestSearchCommandPartialFailure(t *testing.T) {
 	repoRoot := t.TempDir()
 	withWorkingDir(t, repoRoot)
 
-	good := searchCommandServer(t, false)
-	bad := searchCommandServer(t, true)
+	good := searchCommandServerWithInstance(t, "mp-good", false)
+	bad := searchCommandServerWithInstance(t, "mp-bad", true)
 	defer good.Close()
 	defer bad.Close()
 
@@ -178,6 +188,16 @@ marketplaces:
 	}
 	if !strings.Contains(err.Error(), "blocked") {
 		t.Fatalf("expected blocked error, got: %v", err)
+	}
+}
+
+func TestSearchCommandUsesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := executeCommandContext(ctx, "search", "review")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled search context, got: %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,6 +167,132 @@ func TestClientSearchBadJSON(t *testing.T) {
 	_, err = c.Search(context.Background(), SearchRequest{})
 	if err == nil || !strings.Contains(err.Error(), "decode") {
 		t.Fatalf("expected decode error, got: %v", err)
+	}
+}
+
+func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
+	for _, baseURL := range []string{
+		"http://",
+		"http://?query=value",
+		"http://example.com/path?query=value",
+		"http://example.com/path#fragment",
+		"http://user:pass@example.com",
+	} {
+		t.Run(baseURL, func(t *testing.T) {
+			if _, err := NewClient(baseURL); err == nil {
+				t.Fatalf("NewClient(%q) succeeded", baseURL)
+			}
+		})
+	}
+}
+
+func TestClientEscapesDynamicPathSegments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.EscapedPath(), "/src%2Fwith%20space/skill%2Fpart/name%2Fpart/revisions/") {
+			t.Fatalf("request path = %q, want escaped dynamic segments", r.URL.EscapedPath())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"coordinate": map[string]string{
+				"marketplace": "mp",
+				"source":      "src/with space",
+				"kind":        "skill/part",
+				"name":        "name/part",
+			},
+			"content_digest": "sha256:" + strings.Repeat("a", 64),
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetResourceRevision(context.Background(), "src/with space", "skill/part", "name/part", "sha256:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("GetResourceRevision: %v", err)
+	}
+}
+
+func TestClientRejectsInvalidArtifactDigest(t *testing.T) {
+	c, err := NewClient("https://example.com")
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	for _, digest := range []string{"", "sha256:short", "sha256:" + strings.Repeat("A", 64), "sha256:" + strings.Repeat("g", 64), "sha512:" + strings.Repeat("a", 64)} {
+		if _, err := c.GetArtifact(context.Background(), digest); err == nil {
+			t.Fatalf("GetArtifact(%q) succeeded", digest)
+		}
+	}
+}
+
+func TestClientDetectsOversizedResponse(t *testing.T) {
+	resp := &http.Response{
+		ContentLength: maxArtifactBytes + 1,
+		Body:          io.NopCloser(strings.NewReader("small")),
+	}
+	if _, err := readResponseBody(resp, maxArtifactBytes); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("readResponseBody error = %v, want oversized response error", err)
+	}
+}
+
+func TestClientRejectsCrossOriginRedirect(t *testing.T) {
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/v1/search", http.StatusFound)
+	}))
+	defer source.Close()
+
+	c, err := NewClient(source.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Search(context.Background(), SearchRequest{}); err == nil || !strings.Contains(err.Error(), "redirect origin") {
+		t.Fatalf("Search error = %v, want redirect origin error", err)
+	}
+	if targetRequests != 0 {
+		t.Fatalf("cross-origin redirect reached target %d times", targetRequests)
+	}
+}
+
+func TestClientRejectsRedirectMutationByCheckRedirect(t *testing.T) {
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/v1/search", http.StatusFound)
+	}))
+	defer source.Close()
+
+	hc := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		u := *req.URL
+		mutated, err := http.NewRequest(http.MethodGet, target.URL+u.Path, nil)
+		if err != nil {
+			return err
+		}
+		req.URL = mutated.URL
+		return nil
+	}}
+	c, err := NewClient(source.URL, WithHTTPClient(hc))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Search(context.Background(), SearchRequest{}); err == nil || !strings.Contains(err.Error(), "redirect origin") {
+		t.Fatalf("Search error = %v, want redirect origin error", err)
+	}
+	if targetRequests != 0 {
+		t.Fatalf("mutated redirect reached target %d times", targetRequests)
 	}
 }
 
