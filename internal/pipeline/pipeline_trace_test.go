@@ -94,7 +94,7 @@ func setupPipelineTelemetry(t *testing.T, e *pipelineSpanExporter) (context.Cont
 		t.Fatalf("new telemetry: %v", err)
 	}
 
-	ctx := telemetry.NewContext(context.Background(), tel, "sync", time.Now(), "factory", false, telemetry.Span{})
+	ctx := telemetry.NewContext(context.Background(), tel, "sync", time.Now(), "factory", false, telemetry.Span{}, false)
 	return ctx, tel
 }
 
