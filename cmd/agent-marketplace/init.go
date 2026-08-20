@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
 // isTerminal is swapped in tests to simulate a terminal stdin.
@@ -71,7 +73,17 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 		return err
 	}
 
-	return initializeAndReport(out, harnesses)
+	path, created, err := initializeAndReport(out, harnesses)
+	if err != nil {
+		return err
+	}
+	if created {
+		if err := promptTelemetryConsent(out, reader, path); err != nil {
+			slog.Error("init failed to record telemetry consent", "err", err)
+			return err
+		}
+	}
+	return nil
 }
 
 func initWithHarnesses(out io.Writer, harnesses []string) error {
@@ -79,26 +91,91 @@ func initWithHarnesses(out io.Writer, harnesses []string) error {
 		slog.Error("init failed to validate harnesses", "err", err)
 		return err
 	}
-	return initializeAndReport(out, harnesses)
+	_, _, err := initializeAndReport(out, harnesses)
+	return err
 }
 
-func initializeAndReport(out io.Writer, harnesses []string) error {
+func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error) {
 	path, err := config.InitializeUserPersonal(harnesses)
 	if errors.Is(err, config.ErrAlreadyInitialized) {
 		if _, err := fmt.Fprintln(out, "User personal config already initialized."); err != nil {
-			return err
+			return "", false, err
 		}
 		slog.Info("init skipped: user personal config already exists")
-		return nil
+		return path, false, nil
 	}
 	if err != nil {
 		slog.Error("init failed to create user personal config", "err", err)
-		return err
+		return "", false, err
 	}
 	if _, err := fmt.Fprintf(out, "Initialized user personal config: %s\n", path); err != nil {
-		return err
+		return "", false, err
 	}
 	slog.Info("init complete", "path", path, "harnesses", harnesses)
+	return path, true, nil
+}
+
+func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath string) error {
+	org, err := config.LoadOrganizationConfig()
+	if err != nil {
+		return fmt.Errorf("load organization config: %w", err)
+	}
+	// Only skip the consent prompt when the organization has explicitly set a
+	// telemetry level (on or off). A telemetry block that only declares an
+	// endpoint or other policy fields is not an activation decision; the user
+	// may still choose a level.
+	if org != nil && org.Telemetry != nil && org.Telemetry.Level != "" {
+		_, _ = fmt.Fprintln(out, "Telemetry is managed by your organization; no user preference is needed.")
+		return nil
+	}
+
+	var user *config.Config
+	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
+		loaded, loadErr := config.LoadConfigFromPath(configPath)
+		if loadErr != nil {
+			slog.Warn("failed to load user config for telemetry consent prompt", "path", configPath, "error", loadErr)
+		} else {
+			user = loaded
+		}
+	}
+
+	state, err := telemetry.ResolveTelemetryConfig(org, user, telemetry.DefaultProjectEndpoint, telemetry.DefaultProjectRetentionURL)
+	projectDestination := "not configured"
+	retentionPolicyURL := "not configured"
+	if err != nil {
+		slog.Warn("failed to resolve telemetry state for consent prompt", "error", err)
+	} else {
+		if state.PrimaryEndpointHostname != "" {
+			projectDestination = state.PrimaryEndpointHostname
+		}
+		if state.RetentionPolicyURL != "" {
+			retentionPolicyURL = state.RetentionPolicyURL
+		}
+	}
+
+	_, _ = fmt.Fprintln(out, "\nAgent Marketplace can send basic telemetry: CLI version, OS, architecture,")
+	_, _ = fmt.Fprintln(out, "command name (not arguments), harness types, outcome, and coarse duration.")
+	_, _ = fmt.Fprintln(out, "It does not include resource names, URLs, paths, errors, or prompts.")
+	_, _ = fmt.Fprintln(out, "The data is retained according to the published retention policy.")
+	_, _ = fmt.Fprintf(out, "Project destination: %s\n", projectDestination)
+	_, _ = fmt.Fprintf(out, "Retention policy: %s\n", retentionPolicyURL)
+	_, _ = fmt.Fprint(out, "Enable basic telemetry? [Y/n]: ")
+
+	reply, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read telemetry consent: %w", err)
+	}
+	reply = strings.TrimSpace(strings.ToLower(reply))
+
+	if reply == "" || strings.HasPrefix(reply, "y") {
+		if err := config.SetUserTelemetryLevel(configPath, tmcfg.LevelBasic); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(out, "Basic telemetry enabled.")
+		slog.Info("telemetry consent: basic enabled", "path", configPath)
+	} else {
+		slog.Info("telemetry consent: declined", "path", configPath)
+	}
 	return nil
 }
 

@@ -274,6 +274,31 @@ func TestResolveEnvOverrides(t *testing.T) {
 			wantLevel:    tmcfg.LevelOff,
 			envEndpoint:  "https://env.example.com",
 		},
+		{
+			name:         "env level applied when org endpoint locked but level unset",
+			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
+			wantEndpoint: "https://org.example.com",
+			wantSource:   sourceOrganization,
+			wantLevel:    tmcfg.LevelDetailed,
+			envLevel:     "detailed",
+		},
+		{
+			name:         "env level ignored when org level locked",
+			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic}},
+			wantEndpoint: "https://project.example.com",
+			wantSource:   sourceProject,
+			wantLevel:    tmcfg.LevelBasic,
+			envLevel:     "detailed",
+		},
+		{
+			name:          "env community ignored when org community locked",
+			org:           &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, CommunityReporting: boolPtr(false)}},
+			wantEndpoint:  "https://project.example.com",
+			wantSource:    sourceProject,
+			wantLevel:     tmcfg.LevelBasic,
+			wantCommunity: false,
+			envCommunity:  "true",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

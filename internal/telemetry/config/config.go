@@ -53,13 +53,9 @@ const (
 
 // MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
 // only dimensions that may be attached to the command counter and duration
-// histogram. ResourceAttrInstallationID is intentionally omitted; it is a
-// resource attribute, not an instrument-level label.
+// histogram. Resource attributes (including schema version, CLI version, OS,
+// arch, and installation.id) are intentionally omitted from instrument labels.
 var MetricSchemaAttributes = []ResourceAttribute{
-	ResourceAttrSchemaVersion,
-	ResourceAttrCLIVersion,
-	ResourceAttrOSName,
-	ResourceAttrArch,
 	ResourceAttrCommandName,
 	ResourceAttrHarnesses,
 	ResourceAttrManaged,
