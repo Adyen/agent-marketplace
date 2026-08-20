@@ -95,15 +95,16 @@ func gitRootFor(dir string) string {
 
 	// Slow path: obtain the per-directory lock so only one goroutine probes
 	// for this directory. Other goroutines for the same dir block here; callers
-	// for other dirs can proceed in parallel.
+	// for other dirs can proceed in parallel. Release the cache mutex before
+	// waiting so the probing goroutine can publish its result.
 	mu, ok := gitRootLocks[dir]
 	if !ok {
 		mu = &sync.Mutex{}
 		gitRootLocks[dir] = mu
 	}
-	mu.Lock()
 	gitRootMu.Unlock()
 
+	mu.Lock()
 	defer mu.Unlock()
 
 	// Double-check the cache now that we hold the per-directory lock.
