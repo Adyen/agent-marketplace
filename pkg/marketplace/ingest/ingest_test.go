@@ -111,6 +111,57 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 	}
 }
 
+func TestBuildSourceRevisionCollection(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+
+	cfg := testConfig(t, repoDir)
+	source := store.Source{
+		ID:          store.SourceID("src-test"),
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots: []store.SourceRoot{
+			{Path: ".agents", SourceHarness: "factory"},
+		},
+	}
+
+	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildSourceRevision: %v", err)
+	}
+
+	var collection *store.ResourceRevision
+	var skill *store.ResourceRevision
+	for i := range rev.Resources {
+		r := &rev.Resources[i]
+		if r.Coordinate.Kind == "collection" && r.Coordinate.Name == "defaults" {
+			collection = r
+		}
+		if r.Coordinate.Kind == "skill" && r.Coordinate.Name == "review" {
+			skill = r
+		}
+	}
+	if skill == nil {
+		t.Fatalf("expected skill/review resource revision")
+	}
+	if collection == nil {
+		t.Fatalf("expected collection/defaults resource revision")
+	}
+	if collection.ContentDigest == "" {
+		t.Fatalf("collection content digest should not be empty")
+	}
+	if collection.ArchiveDigest == "" {
+		t.Fatalf("collection archive digest should not be empty for mirror mode")
+	}
+}
+
 func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
@@ -171,6 +222,21 @@ func createIngestRepo(tb testing.TB) string {
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: Review code\nlicense: MIT\n---\nReview the code carefully.\n"), 0o644); err != nil {
 		tb.Fatalf("write skill: %v", err)
+	}
+
+	collectionDir := filepath.Join(repo, ".agents", "collections", "defaults")
+	if err := os.MkdirAll(collectionDir, 0o755); err != nil {
+		tb.Fatalf("mkdir collection: %v", err)
+	}
+	collectionYAML := `name: defaults
+version: 1.0.0
+description: Default collection
+resources:
+  - name: review
+    kind: skill
+`
+	if err := os.WriteFile(filepath.Join(collectionDir, "COLLECTION.yaml"), []byte(collectionYAML), 0o644); err != nil {
+		tb.Fatalf("write collection: %v", err)
 	}
 
 	cmds := [][]string{

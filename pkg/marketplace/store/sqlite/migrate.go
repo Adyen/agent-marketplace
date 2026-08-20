@@ -2,7 +2,7 @@ package sqlite
 
 // migrations contains the complete schema for the SQLite metadata adapter.
 // Additional migrations can be appended to this slice over time.
-var migrations = []string{migration0}
+var migrations = []string{migration0, migration1}
 
 const migration0 = `
 CREATE TABLE IF NOT EXISTS marketplaces (
@@ -106,4 +106,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency
 
 CREATE INDEX IF NOT EXISTS idx_jobs_lease
     ON jobs(status, lease_until, kind, attempt, max_attempts, created_at);
+`
+
+const migration1 = `
+ALTER TABLE sources ADD COLUMN refresh_status TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE sources ADD COLUMN refresh_error TEXT;
+ALTER TABLE sources ADD COLUMN refreshed_at INTEGER NOT NULL DEFAULT 0;
 `

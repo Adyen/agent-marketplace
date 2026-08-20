@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,7 +31,8 @@ type Deps struct {
 
 // Refresh performs a single refresh of the configured source.
 // It upserts the source record, clones the repository, builds a source revision,
-// and publishes it atomically.
+// and publishes it atomically. The source status is updated to reflect the
+// outcome of the refresh.
 func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	cfgSource, ok := sourceByID(deps.Config, string(source.ID))
 	if !ok {
@@ -65,13 +67,13 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 
 	res, err := acquire.Clone(ctx, origin, merged.Ref, creds, limits, deps.Config.Policy.Limits.CloneDuration.Duration())
 	if err != nil {
-		return fmt.Errorf("acquire source %q: %w", source.ID, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 	defer func() { _ = res.Release() }()
 
 	rev, err := ingest.BuildSourceRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
 	if err != nil {
-		return fmt.Errorf("ingest source %q: %w", source.ID, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 
 	pub := store.SourceRevisionPublication{
@@ -81,11 +83,11 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 		ExtraBlobs:      rev.ExtraBlobs,
 	}
 	if err := store.PublishSourceRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
-		return fmt.Errorf("publish source %q: %w", source.ID, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 
 	slog.Info("refreshed source", "source", source.ID, "commit", res.Commit, "resources", len(rev.Resources))
-	return nil
+	return recordRefreshSuccess(ctx, deps.MetadataStore, merged)
 }
 
 // EnsureMarketplace loads or creates the Marketplace instance record.
@@ -427,12 +429,12 @@ func mergeStoreSource(existing store.Source, cfg config.Source, defaultAcquisiti
 	}
 
 	if existing.Slug != "" && existing.Slug != cfg.Slug {
-		if !containsString(s.Aliases, existing.Slug) {
+		if !slices.Contains(s.Aliases, existing.Slug) {
 			s.Aliases = append(s.Aliases, existing.Slug)
 		}
 	}
 	for _, alias := range cfg.Aliases {
-		if !containsString(s.Aliases, alias) {
+		if !slices.Contains(s.Aliases, alias) {
 			s.Aliases = append(s.Aliases, alias)
 		}
 	}
@@ -476,18 +478,30 @@ func resolveToken(t config.TokenCredential) (string, error) {
 	return "", nil
 }
 
+func recordRefreshSuccess(ctx context.Context, s store.MetadataStore, src store.Source) error {
+	src.RefreshStatus = store.SourceRefreshStatusOK
+	src.RefreshError = ""
+	src.RefreshedAt = time.Now().UTC()
+	if err := s.PutSource(ctx, src); err != nil {
+		slog.Error("failed to record refresh success", "source", src.ID, "error", err)
+		return err
+	}
+	return nil
+}
+
+func recordRefreshFailure(ctx context.Context, s store.MetadataStore, src store.Source, err error) error {
+	src.RefreshStatus = store.SourceRefreshStatusFailed
+	src.RefreshError = err.Error()
+	src.RefreshedAt = time.Now().UTC()
+	if putErr := s.PutSource(ctx, src); putErr != nil {
+		slog.Error("failed to record refresh failure", "source", src.ID, "error", putErr)
+	}
+	return err
+}
+
 func defaultString(a, b string) string {
 	if a != "" {
 		return a
 	}
 	return b
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

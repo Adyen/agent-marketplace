@@ -50,12 +50,14 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 
 	if report.Rejected {
 		return BuildResult{
-			Name:         base.Manifest.Name,
-			Kind:         base.Manifest.Kind,
-			Findings:     report.Findings,
-			Capabilities: caps,
-			Rejected:     true,
-			RejectReason: "policy rejected one or more findings",
+			Name:          base.Manifest.Name,
+			Kind:          base.Manifest.Kind,
+			License:       opts.Source.License,
+			ContentDigest: base.Manifest.ContentDigest,
+			Findings:      report.Findings,
+			Capabilities:  caps,
+			Rejected:      true,
+			RejectReason:  "policy rejected one or more findings",
 		}, nil
 	}
 
@@ -132,6 +134,9 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	manifest.Provenance = provenanceFromSource(opts)
 	if manifest.SupportedSchemas == nil {
 		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
+	}
+	if len(memberResults) > 0 {
+		manifest = resolveCollectionManifestMembers(manifest, memberResults, opts)
 	}
 
 	payload, _, err := hccartifact.EncodeCollectionManifest(manifest)
@@ -258,6 +263,57 @@ func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, opt
 		return "", err
 	}
 	return digest, nil
+}
+
+func resolveCollectionManifestMembers(manifest hccartifact.CollectionManifest, memberResults []BuildResult, opts analyze.Options) hccartifact.CollectionManifest {
+	if len(memberResults) == 0 {
+		return manifest
+	}
+	byKey := make(map[string]BuildResult, len(memberResults))
+	for _, mr := range memberResults {
+		kind := mr.Kind
+		if kind == "" {
+			kind = memberKind(mr)
+		}
+		key := kind + "/" + mr.Name
+		byKey[key] = mr
+	}
+
+	resolved := make([]hccartifact.CollectionMemberEntry, 0, len(memberResults))
+	for i := range manifest.Members {
+		m := manifest.Members[i]
+		key := m.Kind + "/" + m.Name
+		if mr, ok := byKey[key]; ok {
+			m.SourceID = opts.Source.ID
+			m.Revision = mr.ContentDigest
+			delete(byKey, key)
+		}
+		resolved = append(resolved, m)
+	}
+
+	for _, mr := range memberResults {
+		kind := mr.Kind
+		if kind == "" {
+			kind = memberKind(mr)
+		}
+		key := kind + "/" + mr.Name
+		if _, ok := byKey[key]; !ok {
+			continue
+		}
+		resolved = append(resolved, hccartifact.CollectionMemberEntry{
+			Kind:     kind,
+			Name:     mr.Name,
+			SourceID: opts.Source.ID,
+			Revision: mr.ContentDigest,
+		})
+	}
+
+	if len(resolved) > len(manifest.Members) {
+		// Includes were expanded into the member list; drop unresolved names.
+		manifest.Includes = nil
+	}
+	manifest.Members = resolved
+	return manifest
 }
 
 func memberKind(mr BuildResult) string {

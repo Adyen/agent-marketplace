@@ -127,6 +127,20 @@ type Marketplace struct {
 	InstanceMetadata map[string]any `json:"instance_metadata,omitempty"`
 }
 
+// SourceRefreshStatus describes the health of the most recent source refresh.
+type SourceRefreshStatus string
+
+const (
+	// SourceRefreshStatusUnknown means the source has not been refreshed yet.
+	SourceRefreshStatusUnknown SourceRefreshStatus = "unknown"
+
+	// SourceRefreshStatusOK means the last refresh succeeded.
+	SourceRefreshStatusOK SourceRefreshStatus = "ok"
+
+	// SourceRefreshStatusFailed means the last refresh failed.
+	SourceRefreshStatusFailed SourceRefreshStatus = "failed"
+)
+
 // Source is an approved source lineage in a Marketplace.
 type Source struct {
 	// ID is the immutable source identifier.
@@ -166,6 +180,15 @@ type Source struct {
 	// sources keep their immutable identifiers and history but do not appear in
 	// browse or search results.
 	Listed bool `json:"listed"`
+
+	// RefreshStatus is the outcome of the most recent refresh attempt.
+	RefreshStatus SourceRefreshStatus `json:"refresh_status,omitempty"`
+
+	// RefreshError carries the error message from the last failed refresh.
+	RefreshError string `json:"refresh_error,omitempty"`
+
+	// RefreshedAt is the time the last refresh completed, successful or not.
+	RefreshedAt time.Time `json:"refreshed_at,omitempty"`
 
 	// CreatedAt is the time the source was first recorded.
 	CreatedAt time.Time `json:"created_at"`
