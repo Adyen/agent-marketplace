@@ -236,7 +236,7 @@ func TestRegistryCachePathIsDeterministic(t *testing.T) {
 	ref := "v1.2.3"
 
 	got := RegistryCachePath(url, ref)
-	want := filepath.Join(CacheDir(), HashURL(url), ref)
+	want := filepath.Join(CacheDir(), HashURL(url), cacheRefComponent(ref))
 
 	if got != want {
 		t.Fatalf("expected cache path %q, got %q", want, got)
@@ -278,6 +278,30 @@ func TestRegistryCachePathDiffersByRef(t *testing.T) {
 
 	if mainPath == tagPath {
 		t.Fatalf("expected different refs to produce different cache paths, got %q", mainPath)
+	}
+}
+
+func TestRegistryCachePathEncodesRefAsOneContainedComponent(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	url := "https://example.com/org/skills.git"
+	parent := filepath.Join(CacheDir(), HashURL(url))
+	for _, ref := range []string{"feature/security", "refs/tags/v1.2.3", "../../outside"} {
+		path := RegistryCachePath(url, ref)
+		if filepath.Dir(path) != parent {
+			t.Fatalf("RegistryCachePath(%q) parent = %q, want %q", ref, filepath.Dir(path), parent)
+		}
+		if filepath.Base(path) != cacheRefComponent(ref) {
+			t.Fatalf("RegistryCachePath(%q) component = %q, want %q", ref, filepath.Base(path), cacheRefComponent(ref))
+		}
+		rel, err := filepath.Rel(CacheDir(), path)
+		if err != nil {
+			t.Fatalf("relate cache path for ref %q: %v", ref, err)
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Fatalf("RegistryCachePath(%q) escaped cache root: %q", ref, path)
+		}
 	}
 }
 
@@ -341,6 +365,27 @@ func TestCloneOrPullClonesAndUpdatesCache(t *testing.T) {
 	assertFileContents(t, filepath.Join(cachePath, "skill.txt"), "version two\n")
 }
 
+func TestCloneOrPullSupportsRefsWithSlashes(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t)
+	runGitCommand(t, working, "checkout", "-b", "feature/security")
+	writeFile(t, filepath.Join(working, "skill.txt"), "feature version\n")
+	runGitCommand(t, working, "add", "skill.txt")
+	runGitCommand(t, working, "commit", "-m", "feature commit")
+	runGitCommand(t, working, "push", "origin", "HEAD:refs/heads/feature/security")
+
+	cachePath, err := CloneOrPull(origin, "feature/security")
+	if err != nil {
+		t.Fatalf("expected slash-containing ref to succeed: %v", err)
+	}
+	if cachePath != RegistryCachePath(origin, "feature/security") {
+		t.Fatalf("expected encoded cache path, got %q", cachePath)
+	}
+	assertFileContents(t, filepath.Join(cachePath, "skill.txt"), "feature version\n")
+}
+
 func TestCloneOrPullReturnsStaleCacheWithWarningWhenRegistryUnavailable(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -387,6 +432,44 @@ func TestCloneOrPullFailsWhenRegistryUnavailableAndNoCacheExists(t *testing.T) {
 	cachePath, err := CloneOrPull(missingRepo, "main")
 	if err == nil {
 		t.Fatalf("expected missing registry to fail without cache, got cache path %q", cachePath)
+	}
+	if _, statErr := os.Stat(cachePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed clone left cache path %q, stat error: %v", cachePath, statErr)
+	}
+	if _, statErr := os.Stat(CacheDir()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed clone left cache root %q, stat error: %v", CacheDir(), statErr)
+	}
+}
+
+func TestCloneOrPullRejectsUnsafeRefBeforeCacheMutation(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	_, err := CloneOrPull(filepath.Join(t.TempDir(), "missing.git"), "../../outside")
+	if err == nil || !strings.Contains(err.Error(), "contains '..'") {
+		t.Fatalf("expected unsafe ref to be rejected, got %v", err)
+	}
+	if _, statErr := os.Stat(CacheDir()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe ref created cache root %q, stat error: %v", CacheDir(), statErr)
+	}
+}
+
+func TestCloneOrPullRemovesCacheWhenCheckoutFails(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t)
+	writeAndPushCommit(t, working, "skill.txt", "main version\n", "initial commit")
+
+	cachePath, err := CloneOrPull(origin, "missing-ref")
+	if err == nil {
+		t.Fatalf("expected missing ref checkout to fail, got cache path %q", cachePath)
+	}
+	if _, statErr := os.Stat(cachePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed checkout left cache path %q, stat error: %v", cachePath, statErr)
+	}
+	if _, statErr := os.Stat(CacheDir()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed checkout left cache root %q, stat error: %v", CacheDir(), statErr)
 	}
 }
 

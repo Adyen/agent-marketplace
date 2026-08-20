@@ -2,6 +2,7 @@ package cache
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -99,7 +100,11 @@ func CacheDir() string {
 }
 
 func RegistryCachePath(url, ref string) string {
-	return filepath.Join(CacheDir(), HashURL(url), ref)
+	return filepath.Join(CacheDir(), HashURL(url), cacheRefComponent(ref))
+}
+
+func cacheRefComponent(ref string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(ref))
 }
 
 func HashURL(url string) string {

@@ -30,9 +30,8 @@ func CloneOrPull(url, ref string) (string, error) {
 	if strings.TrimSpace(url) == "" {
 		return "", errors.New("registry url is required")
 	}
-
-	if strings.TrimSpace(ref) == "" {
-		return "", errors.New("registry ref is required")
+	if err := validateGitRef(ref); err != nil {
+		return "", fmt.Errorf("validate registry ref: %w", err)
 	}
 
 	cachePath := RegistryCachePath(url, ref)
@@ -45,11 +44,7 @@ func CloneOrPull(url, ref string) (string, error) {
 
 	if !cacheExists {
 		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-			return "", fmt.Errorf("create cache parent for %q: %w", cachePath, err)
-		}
-
-		if err := runGit("", "clone", url, cachePath); err != nil {
+		if err := cloneAndPublish(url, ref, cachePath); err != nil {
 			return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
 		}
 	} else {
@@ -61,14 +56,101 @@ func CloneOrPull(url, ref string) (string, error) {
 			}
 			return cachePath, nil
 		}
-	}
 
-	slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-	if err := checkoutResolvedRef(cachePath, ref); err != nil {
-		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
+		slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		if err := checkoutResolvedRef(cachePath, ref); err != nil {
+			return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
+		}
 	}
 
 	return cachePath, nil
+}
+
+func validateGitRef(ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return errors.New("registry ref is required")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return errors.New("invalid git ref: option-like")
+	}
+	if strings.HasPrefix(ref, "/") || strings.HasPrefix(ref, "~") {
+		return errors.New("invalid git ref: absolute or tilde path")
+	}
+	if ref == "@" {
+		return errors.New("invalid git ref: lone '@'")
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "@{") {
+		return errors.New("invalid git ref: contains '..' or '@{'")
+	}
+	if strings.HasSuffix(ref, "/") || strings.Contains(ref, "//") {
+		return errors.New("invalid git ref: invalid slash")
+	}
+	if strings.HasSuffix(ref, ".") {
+		return errors.New("invalid git ref: invalid suffix")
+	}
+	if strings.ContainsAny(ref, " ~^:?*[\\\\") {
+		return errors.New("invalid git ref: invalid character")
+	}
+	for i := 0; i < len(ref); i++ {
+		if ref[i] < 0x20 || ref[i] == 0x7f {
+			return errors.New("invalid git ref: control character")
+		}
+	}
+	for _, component := range strings.Split(ref, "/") {
+		if strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return errors.New("invalid git ref: invalid component")
+		}
+	}
+	return nil
+}
+
+func cloneAndPublish(url, ref, cachePath string) error {
+	cacheDir := filepath.Dir(cachePath)
+	cacheRoot := CacheDir()
+	cacheRootExisted, err := dirExists(cacheRoot)
+	if err != nil {
+		return fmt.Errorf("check cache root %q: %w", cacheRoot, err)
+	}
+	cacheDirExisted, err := dirExists(cacheDir)
+	if err != nil {
+		return fmt.Errorf("check cache parent %q: %w", cacheDir, err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return fmt.Errorf("create cache parent for %q: %w", cachePath, err)
+	}
+
+	tempPath, err := os.MkdirTemp(cacheDir, "."+filepath.Base(cachePath)+".tmp-")
+	if err != nil {
+		return fmt.Errorf("create temporary cache entry for %q: %w", cachePath, err)
+	}
+	published := false
+	defer func() {
+		if published {
+			return
+		}
+		if cleanupErr := os.RemoveAll(tempPath); cleanupErr != nil {
+			slog.Warn("remove failed temporary registry cache", "path", tempPath, "error", cleanupErr)
+		}
+		if !cacheDirExisted {
+			_ = os.Remove(cacheDir)
+			if !cacheRootExisted {
+				_ = os.Remove(cacheRoot)
+			}
+		}
+	}()
+
+	if err := runGit("", "clone", url, tempPath); err != nil {
+		return err
+	}
+	if err := checkoutResolvedRef(tempPath, ref); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, cachePath); err != nil {
+		return fmt.Errorf("publish cache entry: %w", err)
+	}
+	published = true
+	slog.Debug("registry cache published", "cache_path", cachePath, "ref", ref)
+	return nil
 }
 
 func checkoutResolvedRef(repoDir, ref string) error {
