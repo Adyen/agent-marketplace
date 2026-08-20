@@ -207,6 +207,68 @@ func (s *portableState) remove(target hcc.Target, path string) {
 	delete(s.entries, portableManifestKey(target, path))
 }
 
+func validateManagedOutputPath(root, path string, includeLeaf bool) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve output root %q: %w", root, err)
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve output path %q: %w", path, err)
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	pathAbs = filepath.Clean(pathAbs)
+	if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
+		return fmt.Errorf("output path %q is outside root %q", path, root)
+	}
+
+	rootInfo, err := os.Lstat(rootAbs)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect output root %q: %w", root, err)
+	}
+	if err == nil {
+		if rootInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output root %q is a symlink", root)
+		}
+		if !rootInfo.IsDir() {
+			return fmt.Errorf("output root %q is not a directory", root)
+		}
+	}
+
+	checkPath := filepath.Dir(pathAbs)
+	if includeLeaf {
+		checkPath = pathAbs
+	}
+	rel, err := filepath.Rel(rootAbs, checkPath)
+	if err != nil {
+		return fmt.Errorf("resolve output path %q: %w", path, err)
+	}
+	if rel == "." {
+		return nil
+	}
+	current := rootAbs
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect output path component %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output path component %q is a symlink", current)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("output path component %q is not a directory", current)
+		}
+	}
+	return nil
+}
+
 // portableOutputPath returns a path below outDir only after verifying that no
 // existing parent component is a symlink. Portable manifests are committed
 // project input, so lexical validation alone is insufficient: an entry such as
@@ -225,54 +287,11 @@ func portableOutputPath(outDir, rel string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve portable output root %q: %w", outDir, err)
 	}
-	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
-	if rootErr != nil && !os.IsNotExist(rootErr) {
-		return "", fmt.Errorf("resolve portable output root %q: %w", outDir, rootErr)
+	path := filepath.Join(root, clean)
+	if err := validateManagedOutputPath(root, path, false); err != nil {
+		return "", fmt.Errorf("unsafe portable output path %q: %w", rel, err)
 	}
-	path := root
-	parts := strings.Split(clean, string(filepath.Separator))
-	for _, part := range parts[:len(parts)-1] {
-		path = filepath.Join(path, part)
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			// A missing component cannot redirect the remaining lexical path.
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("unsafe portable output path %q: parent %q is a symlink", rel, path)
-		}
-		if !info.IsDir() {
-			return "", fmt.Errorf("unsafe portable output path %q: parent %q is not a directory", rel, path)
-		}
-		// Lstat rejects symlinks directly, and EvalSymlinks verifies the
-		// resolved component remains below the resolved target root (including
-		// on platforms where an ancestor of outDir itself is a symlink).
-		if rootErr == nil {
-			resolvedParent, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return "", err
-			}
-			inside, err := portablePathWithinRoot(resolvedRoot, resolvedParent)
-			if err != nil {
-				return "", err
-			}
-			if !inside {
-				return "", fmt.Errorf("unsafe portable output path %q: parent %q resolves outside output root", rel, path)
-			}
-		}
-	}
-	return filepath.Join(root, clean), nil
-}
-
-func portablePathWithinRoot(root, path string) (bool, error) {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false, err
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel), nil
+	return path, nil
 }
 
 // validatePortableOutputDir verifies that a portable output directory and all
@@ -968,6 +987,11 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
 func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string) *Report {
+	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+		slog.Error("materialize output root rejected", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", err)
+		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate output root %s: %v", outDir, err)})
+		return report
+	}
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -993,6 +1017,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
+		if err := validateManagedOutputPath(outDir, plan.outDir, false); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate output directory %s: %v", plan.outDir, err)})
+			continue
+		}
 		if mode == config.MaterializationModeFile {
 			rel, err := filepath.Rel(outDir, plan.outDir)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -1294,6 +1322,10 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 			continue
 		}
 		dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
+		if err := validateManagedOutputPath(outDir, dir, true); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate file-copy output directory %s: %v", dir, err)})
+			continue
+		}
 		if covered[dir] || seen[dir] || !outputDirExists(dir) {
 			continue
 		}
@@ -1864,6 +1896,9 @@ func splitMergeArtifacts(artifacts []artifact.Artifact) ([]artifact.Artifact, []
 }
 
 func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+		return nil, nil, err
+	}
 	if len(artifacts) == 0 {
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
@@ -1884,6 +1919,9 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 				return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
 			}
 			destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
+			if err := validateManagedOutputPath(outDir, destPath, false); err != nil {
+				return nil, nil, err
+			}
 			if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
 				existing, readErr := os.ReadFile(destPath) // follows symlink
 				if readErr != nil && !os.IsNotExist(readErr) {
@@ -1941,6 +1979,9 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
+	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+		return report, []diag.Diagnostic{{Code: "materialize.write.error", Severity: diag.SeverityError, Message: fmt.Sprintf("validate merge output root %s: %v", outDir, err)}}
+	}
 	info, err := os.Stat(outDir)
 	if err != nil || !info.IsDir() {
 		return report, nil
@@ -1981,6 +2022,10 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
+		if pathErr := validateManagedOutputPath(outDir, path, false); pathErr != nil {
+			diags = append(diags, managedMergePruneDiag(relSlash, path, pathErr))
+			return nil
+		}
 		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
@@ -2758,6 +2803,9 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		desiredDigests[a.Path] = portableArtifactDigest(a)
 	}
 
+	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+		return report, diags, err
+	}
 	if !dryRun {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
 			return report, diags, err
@@ -2772,6 +2820,9 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	for _, path := range paths {
 		cacheTarget := desired[path]
 		linkPath := filepath.Join(outDir, filepath.FromSlash(path))
+		if err := validateManagedOutputPath(outDir, linkPath, false); err != nil {
+			return report, diags, err
+		}
 		manifestPath := filepath.ToSlash(filepath.Join(reportPrefix, path))
 		if portableDesired != nil {
 			portableDesired[manifestPath] = true
@@ -2844,7 +2895,11 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		report.Removed = stale
 		if !dryRun {
 			for _, path := range stale {
-				if err := os.RemoveAll(filepath.Join(outDir, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+				stalePath := filepath.Join(outDir, filepath.FromSlash(path))
+				if err := validateManagedOutputPath(outDir, stalePath, false); err != nil {
+					return report, diags, err
+				}
+				if err := os.RemoveAll(stalePath); err != nil && !os.IsNotExist(err) {
 					return report, diags, err
 				}
 				cleanEmptyArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)))
@@ -3358,6 +3413,13 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		linkMeta[link.name] = link
 	}
 
+	if dryRun {
+		if err := validateManagedOutputPath(skillsDir, skillsDir, true); err != nil {
+			return report, err
+		}
+	} else if err := validateManagedOutputPath(filepath.Dir(skillsDir), skillsDir, false); err != nil {
+		return report, err
+	}
 	if !dryRun {
 		if err := ensureDirectoryReplacingSymlink(skillsDir); err != nil {
 			return report, err
@@ -3366,6 +3428,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 
 	for name, targetPath := range desired {
 		linkPath := filepath.Join(skillsDir, name)
+		if err := validateManagedOutputPath(skillsDir, linkPath, false); err != nil {
+			return report, err
+		}
 		manifestPath := filepath.ToSlash(filepath.Join(reportPrefix, name))
 		if portableDesired != nil {
 			portableDesired[manifestPath] = true
@@ -3467,6 +3532,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			if dryRun {
 				continue
 			}
+			if err := validateManagedOutputPath(skillsDir, path, false); err != nil {
+				return report, err
+			}
 			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 				return report, err
 			}
@@ -3487,6 +3555,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		report.Removed = append(report.Removed, name)
 		if dryRun {
 			continue
+		}
+		if err := validateManagedOutputPath(skillsDir, path, false); err != nil {
+			return report, err
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return report, err
@@ -3525,6 +3596,9 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 		linkMeta[link.name] = link
 	}
 
+	if err := validateManagedOutputPath(dir, dir, true); err != nil {
+		return report, err
+	}
 	if !dryRun {
 		if err := ensureDirectoryReplacingSymlink(dir); err != nil {
 			return report, err
@@ -3539,6 +3613,9 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 	for _, name := range names {
 		content := desired[name]
 		filePath := filepath.Join(dir, name)
+		if err := validateManagedOutputPath(dir, filePath, false); err != nil {
+			return report, err
+		}
 		info, err := os.Lstat(filePath)
 		switch {
 		case os.IsNotExist(err):
@@ -3599,6 +3676,9 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
 func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
+	if err := validateManagedOutputPath(dir, dir, true); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -3636,6 +3716,9 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		report.Removed = append(report.Removed, name)
 		if dryRun {
 			continue
+		}
+		if err := validateManagedOutputPath(dir, path, false); err != nil {
+			return err
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
