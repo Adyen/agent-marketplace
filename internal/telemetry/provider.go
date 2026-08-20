@@ -129,7 +129,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		logger:             logger,
 		sendClients:        make(map[string]*http.Client),
 		allowedMetricAttrs: make(map[string]struct{}, len(tmcfg.MetricSchemaAttributes)),
-		failurePath:        filepath.Join(filepath.Dir(state.InstallationIDPath), "last-delivery-failure"),
+		failurePath:        filepath.Join(state.StateRoot(), "last-delivery-failure"),
 	}
 	for _, a := range tmcfg.MetricSchemaAttributes {
 		t.allowedMetricAttrs[string(a)] = struct{}{}
@@ -142,7 +142,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		return t, nil
 	}
 
-	queueRoot := queueRootFromInstallationIDPath(state.InstallationIDPath)
+	queueRoot := state.QueueRoot()
 	t.queue = NewQueue(queueRoot)
 
 	id, err := LoadInstallationID(state.InstallationIDPath)
@@ -432,13 +432,6 @@ func ReadLastDeliveryFailure(path string) (DeliveryFailure, error) {
 		return DeliveryFailure{}, err
 	}
 	return df, nil
-}
-
-func queueRootFromInstallationIDPath(path string) string {
-	if path == "" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(path), "queue")
 }
 
 func buildResource(ctx context.Context, installationID, schemaVersion string) (*otelresource.Resource, error) {
