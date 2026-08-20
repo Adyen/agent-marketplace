@@ -858,3 +858,37 @@ func TestGarbageCollectReportsOnlySuccessfulRemovals(t *testing.T) {
 		t.Fatalf("failed removal did not preserve later cache: %v", err)
 	}
 }
+
+func TestGarbageCollectPreservesMarketplaceCacheNamespace(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry_run_%t", dryRun), func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+
+			marketplacePath := filepath.Join(CacheDir(), marketplaceCacheDirName, "artifacts", "sha256-deadbeef")
+			stalePath := filepath.Join(CacheDir(), "stale")
+			if err := os.MkdirAll(marketplacePath, 0o755); err != nil {
+				t.Fatalf("mkdir marketplace cache: %v", err)
+			}
+			if err := os.MkdirAll(stalePath, 0o755); err != nil {
+				t.Fatalf("mkdir stale cache: %v", err)
+			}
+
+			result, err := GarbageCollect(dryRun)
+			if err != nil {
+				t.Fatalf("GarbageCollect: %v", err)
+			}
+			if len(result.Removed) != 1 || result.Removed[0] != stalePath {
+				t.Fatalf("removed = %v, want only stale path %q", result.Removed, stalePath)
+			}
+			if _, err := os.Stat(marketplacePath); err != nil {
+				t.Fatalf("marketplace cache should remain after dry_run=%t: %v", dryRun, err)
+			}
+			if _, err := os.Stat(stalePath); dryRun && err != nil {
+				t.Fatalf("stale cache should remain during dry-run: %v", err)
+			} else if !dryRun && !os.IsNotExist(err) {
+				t.Fatalf("stale cache should be removed after non-dry run, stat err: %v", err)
+			}
+		})
+	}
+}
