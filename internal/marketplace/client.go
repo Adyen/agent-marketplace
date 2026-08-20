@@ -12,7 +12,10 @@ import (
 	"time"
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+const maxArtifactBytes = 64 * 1024 * 1024
 
 const (
 	defaultTimeout = 30 * time.Second
@@ -166,6 +169,73 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 		return fmt.Errorf("marketplace decode %s: %w", req.URL.Redacted(), err)
 	}
 	return nil
+}
+
+// GetResourceRevision fetches a specific revision of a resource.
+func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.ResourceRevision, error) {
+	var rev store.ResourceRevision
+	path := fmt.Sprintf("%s/resources/%s/%s/%s/revisions/%s", apiBasePath, source, kind, name, revision)
+	if err := c.getJSON(ctx, path, &rev); err != nil {
+		return rev, err
+	}
+	return rev, nil
+}
+
+// GetLatestResourceRevision fetches the latest revision of a resource.
+func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.ResourceRevision, error) {
+	var rev store.ResourceRevision
+	path := fmt.Sprintf("%s/resources/%s/%s/%s", apiBasePath, source, kind, name)
+	if err := c.getJSON(ctx, path, &rev); err != nil {
+		return rev, err
+	}
+	return rev, nil
+}
+
+// GetSource fetches source metadata.
+func (c *Client) GetSource(ctx context.Context, source string) (store.Source, error) {
+	var src store.Source
+	path := fmt.Sprintf("%s/sources/%s", apiBasePath, source)
+	if err := c.getJSON(ctx, path, &src); err != nil {
+		return src, err
+	}
+	return src, nil
+}
+
+// GetArtifact downloads an artifact archive by its archive digest.
+func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte, error) {
+	if !strings.HasPrefix(archiveDigest, "sha256:") {
+		return nil, fmt.Errorf("archive digest %q is not in sha256:<hex> format", archiveDigest)
+	}
+	hex := strings.TrimPrefix(archiveDigest, "sha256:")
+	path := fmt.Sprintf("%s/artifacts/sha256/%s", apiBasePath, hex)
+	return c.getRaw(ctx, path)
+}
+
+// getRaw performs a GET and returns the response body bytes for non-JSON endpoints.
+func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("marketplace request %s: %w", u, err)
+	}
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("marketplace request %s: %w", req.URL.Redacted(), err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytes))
+	if err != nil {
+		return nil, fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiError(resp.StatusCode, body)
+	}
+	return body, nil
 }
 
 func apiError(status int, body []byte) error {
