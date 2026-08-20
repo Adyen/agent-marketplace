@@ -23,17 +23,20 @@ import (
 
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
-	RepoRoot   string
-	Args       []string // resource name args (0 or 1)
-	Tag        string   // --tag flag
-	InstallAll bool     // --all flag
-	Registry   string   // --registry filter for --all
-	Kind       ir.ResourceKind
-	HasKind    bool
-	Scope      Scope
-	FromURL    string // --from flag: ad-hoc registry URL
-	FromRef    string // --ref flag: git ref for --from
-	FromPath   string // --path flag: subdirectory for --from
+	RepoRoot      string
+	Args          []string // resource name args (0 or 1)
+	Tag           string   // --tag flag
+	InstallAll    bool     // --all flag
+	Registry      string   // --registry filter for --all
+	Kind          ir.ResourceKind
+	HasKind       bool
+	Scope         Scope
+	FromURL       string // --from flag: ad-hoc registry URL
+	FromRef       string // --ref flag: git ref for --from
+	FromPath      string // --path flag: subdirectory for --from
+	InstalledName string // --as for Marketplace installs
+	AcceptRisk    bool   // --accept-risk/--yes for Marketplace installs
+	Marketplace   string // --marketplace alias or endpoint selector
 
 	// LocalConfigDir overrides the directory where the local config
 	// (config.local.yaml) is written. Set by the Install function when
@@ -65,6 +68,7 @@ type InstallResult struct {
 	IsCollection        bool
 	CollectionLabel     string
 	RequirementWarnings []error
+	MarketplacePreview  string
 }
 
 type resourceIdentity struct {
@@ -94,6 +98,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
+	marketplaceInstallRequested := isMarketplaceInstall(opts)
 
 	// Guard: when the resolved repo root is the home directory and scope is
 	// repo (default), the project config path collapses into the global
@@ -133,6 +138,13 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// genuinely absent. A non-NotExist stat error (permission, I/O)
 			// must be surfaced instead of clobbering an existing config.
 			if _, statErr := os.Stat(cwdProjectConfig); errors.Is(statErr, os.ErrNotExist) {
+				if marketplaceInstallRequested {
+					repoRoot = filepath.Clean(cwd)
+					configPath = config.ProjectConfigPath(repoRoot)
+					opts.RepoRoot = repoRoot
+					slog.Info("install: redirecting Marketplace install to cwd without creating a config before preflight", "original_repo_root", originalRepoRoot, "cwd", filepath.Clean(cwd), "install_target", configPath)
+					break
+				}
 				if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
 					return nil, fmt.Errorf("create .agents directory: %w", err)
 				}
@@ -187,6 +199,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	})
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
+	}
+
+	if marketplaceInstallRequested {
+		return installMarketplace(ctx, opts, configPath, &ec)
 	}
 
 	// --from ad-hoc registry path: validate URL, persist entry, then

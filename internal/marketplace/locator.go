@@ -17,9 +17,9 @@ import (
 // and URL are also populated explicitly so callers do not need to infer which
 // form was used.
 //
-// A digest-looking revision is retained in Revision and Digest. This is useful
-// to callers that need to turn a locator into an exact pin, while keeping
-// parsing independent from Marketplace discovery and alias resolution.
+// An explicit content digest is retained in Revision and Digest. This is
+// useful to callers that need to turn a locator into an exact pin, while
+// keeping parsing independent from Marketplace discovery and alias resolution.
 type MarketplaceLocator struct {
 	Marketplace string
 	Alias       string
@@ -38,8 +38,8 @@ type Locator = MarketplaceLocator
 
 // ParseMarketplaceLocator parses either
 //
-//	alias:source/kind/name[@revision-or-digest]
-//	https://host/s/source/kind/name[/revisions/revision]
+//	alias:source/kind/name[@sha256:<64 lowercase hex>]
+//	https://host/s/source/kind/name[/revisions/sha256:<64 lowercase hex>]
 //
 // Alias resolution is deliberately not performed here. The returned source,
 // kind, and name are the route tokens, not decoded or otherwise rewritten
@@ -168,6 +168,12 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 	if err := validateKind(parts[2]); err != nil {
 		return MarketplaceLocator{}, err
 	}
+	revision := browserRevision(parts)
+	if revision != "" {
+		if err := validateExplicitRevision(revision); err != nil {
+			return MarketplaceLocator{}, err
+		}
+	}
 	base := *u
 	base.Path = ""
 	base.RawPath = ""
@@ -184,8 +190,8 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 		Source:      parts[1],
 		Kind:        parts[2],
 		Name:        parts[3],
-		Revision:    browserRevision(parts),
-		Digest:      digestForRevision(browserRevision(parts)),
+		Revision:    revision,
+		Digest:      digestForRevision(revision),
 	}, nil
 }
 
@@ -194,6 +200,13 @@ func browserRevision(parts []string) string {
 		return parts[5]
 	}
 	return ""
+}
+
+func validateExplicitRevision(revision string) error {
+	if digestForRevision(revision) == "" {
+		return fmt.Errorf("resource revision must be an exact content digest (sha256:<64 lowercase hex>)")
+	}
+	return nil
 }
 
 func splitNameRevision(value string) (string, string, string, error) {
@@ -207,6 +220,9 @@ func splitNameRevision(value string) (string, string, string, error) {
 			return "", "", "", fmt.Errorf("resource revision is required after @")
 		}
 		if err := validateRouteToken("resource revision", revision); err != nil {
+			return "", "", "", err
+		}
+		if err := validateExplicitRevision(revision); err != nil {
 			return "", "", "", err
 		}
 	}

@@ -158,12 +158,12 @@ func writeSearchTable(out io.Writer, results []marketplace.SearchResult) error {
 			description = firstMetadataValue(r.Metadata, "license", "tags")
 		}
 		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%.2g\t%s\n",
-			r.Marketplace,
-			r.SourceSlug,
-			r.Kind,
-			r.Name,
+			marketplace.QuoteTerminal(r.Marketplace),
+			marketplace.QuoteTerminal(r.SourceSlug),
+			marketplace.QuoteTerminal(r.Kind),
+			marketplace.QuoteTerminal(r.Name),
 			r.Score,
-			description,
+			marketplace.QuoteTerminal(description),
 		); err != nil {
 			return err
 		}

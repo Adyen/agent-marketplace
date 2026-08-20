@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"unicode"
 
@@ -18,12 +19,48 @@ import (
 // marshal a Config. Existing aliases and installed_name values are retained.
 //
 // A pin identity is (source_id, kind, name). An existing identity with a
-// different revision, digest, source_slug, or acquisition is a conflict and is
-// rejected rather than silently changing the installed resource.
+// different revision, digest, or acquisition is a conflict and is rejected
+// rather than silently changing the installed resource. SourceSlug is
+// informational and does not participate in pin content identity.
 func EnsureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
-	return withConfigPathLock(configPath, func() error {
-		return ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias, pin)
+	_, err := EnsureMarketplacePinInConfigWithCommit(configPath, marketplaceURL, instanceID, alias, pin)
+	return err
+}
+
+// EnsureMarketplacePinInConfigWithCommit applies a Marketplace pin and returns
+// the exact bytes committed by this edit. The commit is captured while the
+// same in-process path lock is held so rollback can use it as a compare-and-swap
+// guard against a concurrent writer.
+func EnsureMarketplacePinInConfigWithCommit(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) (ConfigFileCommit, error) {
+	_, commit, err := EnsureMarketplacePinInConfigWithSnapshotAndCommit(configPath, marketplaceURL, instanceID, alias, pin)
+	return commit, err
+}
+
+// EnsureMarketplacePinInConfigWithSnapshotAndCommit captures the pre-edit
+// config file, applies a Marketplace pin, and returns both the snapshot and
+// exact bytes committed by the edit. The snapshot and mutation happen while
+// holding the same per-path lock, so rollback cannot restore bytes from before
+// a writer that committed immediately before this edit.
+func EnsureMarketplacePinInConfigWithSnapshotAndCommit(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) (*FileSnapshot, ConfigFileCommit, error) {
+	var snapshot *FileSnapshot
+	var commit ConfigFileCommit
+	err := withConfigPathLock(configPath, func() error {
+		var err error
+		snapshot, err = SnapshotConfigFile(configPath)
+		if err != nil {
+			return err
+		}
+		if err := ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias, pin); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read committed config %q: %w", configPath, err)
+		}
+		commit = newConfigFileCommit(data)
+		return nil
 	})
+	return snapshot, commit, err
 }
 
 func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
@@ -419,6 +456,9 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 			setMappingValue(found, "installed_name", scalarNode(wanted.InstalledName))
 			return true, nil
 		}
+		if existing.Value != wanted.InstalledName {
+			return false, fmt.Errorf("conflicting installed_name for Marketplace resource pin %s/%s/%s: existing %q, requested %q", wanted.SourceID, wanted.Kind, wanted.Name, existing.Value, wanted.InstalledName)
+		}
 	}
 	return false, nil
 }
@@ -447,7 +487,7 @@ func sameMarketplacePinContent(a, b MarketplaceResourcePin) bool {
 		}
 		return pin.Acquisition
 	}
-	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b)
+	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b)
 }
 
 func marketplaceEntryNode(endpointURL, instanceID, alias string) *yaml.Node {

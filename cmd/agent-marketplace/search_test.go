@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -127,6 +129,37 @@ marketplaces:
 	}
 	if !strings.Contains(output, "MARKETPLACE") {
 		t.Fatalf("expected table header, got:\n%s", output)
+	}
+}
+
+func TestSearchTableQuotesAdversarialRemoteFields(t *testing.T) {
+	const hostile = "remote\x00\x1b[31m\nname\t\r\u202e"
+	results := []marketplace.SearchResult{{
+		Marketplace:      hostile,
+		ResourceListItem: mpapi.ResourceListItem{SourceSlug: hostile, Kind: hostile, Name: hostile, Description: hostile, Score: 1},
+	}}
+	var table bytes.Buffer
+	if err := writeSearchTable(&table, results); err != nil {
+		t.Fatal(err)
+	}
+	output := table.String()
+	if strings.ContainsAny(output, "\x00\x1b\r\t") {
+		t.Fatalf("table contains raw terminal controls: %q", output)
+	}
+	quoted := marketplace.QuoteTerminal(hostile)
+	if strings.Count(output, quoted) != 5 {
+		t.Fatalf("table = %q, want quoted remote fields %q five times", output, quoted)
+	}
+	if !strings.Contains(output, `\u202e`) {
+		t.Fatalf("table = %q, want escaped bidi control", output)
+	}
+
+	var encoded bytes.Buffer
+	if err := writeSearchJSON(&encoded, results, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(encoded.Bytes()) {
+		t.Fatalf("search JSON is invalid: %q", encoded.String())
 	}
 }
 
