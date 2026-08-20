@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -234,6 +235,29 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	content := string(data)
 	if strings.Contains(content, "telemetry:") {
 		t.Fatalf("expected no telemetry block when declined, got:\n%s", content)
+	}
+}
+
+func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configPath, err := config.InitializeUserPersonal([]string{"factory"})
+	if err != nil {
+		t.Fatalf("initialize config: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := promptTelemetryConsent(&out, bufio.NewReader(strings.NewReader("y")), configPath); err != nil {
+		t.Fatalf("EOF should decline consent without failing: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "telemetry:") {
+		t.Fatalf("expected EOF to leave telemetry disabled, got:\n%s", data)
 	}
 }
 

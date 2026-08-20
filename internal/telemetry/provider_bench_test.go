@@ -19,6 +19,17 @@ var (
 	benchSrv     *httptest.Server
 )
 
+// benchDiscardLogs points the package-wide slog default at io.Discard for the
+// duration of a benchmark and returns a function that restores the previous
+// logger. The telemetry functions being benchmarked log through slog.Default()
+// during setup, which otherwise interleaves with testing's benchmark output.
+func benchDiscardLogs() func() {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	old := slog.Default()
+	slog.SetDefault(discard)
+	return func() { slog.SetDefault(old) }
+}
+
 func benchServer() *httptest.Server {
 	benchSrvOnce.Do(func() {
 		benchSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,10 +59,7 @@ func BenchmarkNewShutdown(b *testing.B) {
 		},
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	oldLog := slog.Default()
-	slog.SetDefault(logger)
-	defer slog.SetDefault(oldLog)
+	defer benchDiscardLogs()()
 
 	ctx := context.Background()
 
@@ -62,7 +70,7 @@ func BenchmarkNewShutdown(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		tel, err := New(ctx, state, logger)
+		tel, err := New(ctx, state, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -74,6 +82,8 @@ func BenchmarkNewShutdown(b *testing.B) {
 }
 
 func BenchmarkCounterAdd(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
@@ -112,6 +122,8 @@ func BenchmarkCounterAdd(b *testing.B) {
 }
 
 func BenchmarkHistogramRecord(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
@@ -150,6 +162,8 @@ func BenchmarkHistogramRecord(b *testing.B) {
 }
 
 func BenchmarkStartSpanCommandPath(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 
@@ -192,6 +206,8 @@ func BenchmarkStartSpanCommandPath(b *testing.B) {
 }
 
 func BenchmarkStartSpan(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 

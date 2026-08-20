@@ -163,6 +163,10 @@ func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath stri
 
 	reply, err := reader.ReadString('\n')
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			slog.Info("telemetry consent: declined", "path", configPath, "reason", "eof")
+			return nil
+		}
 		return fmt.Errorf("read telemetry consent: %w", err)
 	}
 	reply = strings.TrimSpace(strings.ToLower(reply))

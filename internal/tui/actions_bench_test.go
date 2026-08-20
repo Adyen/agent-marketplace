@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -330,7 +331,16 @@ func benchTuiServer() *httptest.Server {
 	return benchTuiSrv
 }
 
+func benchDiscardLogs() func() {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	old := slog.Default()
+	slog.SetDefault(discard)
+	return func() { slog.SetDefault(old) }
+}
+
 func BenchmarkRecordActionSpan(b *testing.B) {
+	defer benchDiscardLogs()()
+
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", dir)
 

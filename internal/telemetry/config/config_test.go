@@ -64,6 +64,21 @@ func TestValidateEmptyTelemetry(t *testing.T) {
 	}
 }
 
+func TestValidateOffSkipsInactiveSettings(t *testing.T) {
+	tc := &TelemetryConfig{
+		Level:           " OFF ",
+		Endpoint:        "not a URL",
+		RetentionPolicy: "not a URL",
+		CAFile:          filepath.Join(t.TempDir(), "missing-ca.pem"),
+		Headers: map[string]HeaderSource{
+			"Authorization": {File: filepath.Join(t.TempDir(), "missing-header")},
+		},
+	}
+	if errs := Validate(tc, "user personal"); len(errs) > 0 {
+		t.Fatalf("expected disabled telemetry to skip inactive setting validation, got %v", errs)
+	}
+}
+
 func TestValidateRejectsRepoAndLocalLayers(t *testing.T) {
 	tc := &TelemetryConfig{Level: LevelBasic}
 	for _, layer := range []string{"", "user", "repository committed", "repository personal", "repo", "local"} {
@@ -281,7 +296,7 @@ func TestValidateHeaders(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &TelemetryConfig{Headers: tc.headers}
+			cfg := &TelemetryConfig{Level: LevelBasic, Headers: tc.headers}
 			errs := Validate(cfg, "user personal")
 			if tc.wantErr {
 				if len(errs) == 0 {
@@ -331,7 +346,7 @@ func TestValidateCAFile(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.caFile, func(t *testing.T) {
-			cfg := &TelemetryConfig{CAFile: tc.caFile}
+			cfg := &TelemetryConfig{Level: LevelBasic, CAFile: tc.caFile}
 			errs := Validate(cfg, "user personal")
 			if tc.wantErr {
 				if len(errs) == 0 {
