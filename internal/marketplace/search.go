@@ -3,6 +3,7 @@ package marketplace
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 const (
@@ -214,32 +216,53 @@ func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]sear
 	if ec.Merged != nil {
 		entries = ec.Merged.Marketplaces
 	}
+	if errs := config.ValidateMarketplaceEntries(entries); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid configured Marketplace entries: %w", errors.Join(errs...))
+	}
 
 	flag = strings.TrimSpace(flag)
+	var requestedURL string
+	if strings.HasPrefix(strings.ToLower(flag), "http://") || strings.HasPrefix(strings.ToLower(flag), "https://") {
+		var err error
+		requestedURL, err = urlutil.NormalizeEndpointURL(flag)
+		if err != nil {
+			return nil, fmt.Errorf("invalid marketplace URL %q: %w", flag, err)
+		}
+	}
+
 	switch flag {
 	case "", "all":
 		if len(entries) == 0 {
 			return nil, fmt.Errorf("no marketplaces configured; add one to your config or use --marketplace <url>")
 		}
 		endpoints := make([]searchEndpoint, 0, len(entries))
-		for _, ep := range entries {
+		for _, configured := range entries {
+			ep, err := canonicalMarketplaceEntry(configured)
+			if err != nil {
+				return nil, fmt.Errorf("invalid configured marketplace URL %q: %w", configured.URL, err)
+			}
 			endpoints = append(endpoints, searchEndpoint{MarketplaceEntry: ep, verifyInstanceID: true})
 		}
 		return endpoints, nil
 	}
 
-	// Try to match by alias or exact URL.
-	for _, ep := range entries {
-		if ep.Alias == flag || ep.URL == flag {
+	// Try to match by alias or canonical endpoint URL. Matching URLs through
+	// the shared normalizer makes scheme and trailing-slash variants identical.
+	for _, configured := range entries {
+		ep, err := canonicalMarketplaceEntry(configured)
+		if err != nil {
+			return nil, fmt.Errorf("invalid configured marketplace URL %q: %w", configured.URL, err)
+		}
+		if ep.Alias == flag || (requestedURL != "" && ep.URL == requestedURL) {
 			return []searchEndpoint{{MarketplaceEntry: ep, verifyInstanceID: true}}, nil
 		}
 	}
 
 	// Treat as an ad-hoc URL. It has no configured instance ID to verify, but
 	// still fetches the well-known document before issuing the search request.
-	if strings.HasPrefix(flag, "http://") || strings.HasPrefix(flag, "https://") {
+	if requestedURL != "" {
 		return []searchEndpoint{{
-			MarketplaceEntry: config.MarketplaceEntry{URL: flag, Alias: flag},
+			MarketplaceEntry: config.MarketplaceEntry{URL: requestedURL, Alias: requestedURL},
 		}}, nil
 	}
 
@@ -250,11 +273,10 @@ func displayName(ep config.MarketplaceEntry) string {
 	if ep.Alias != "" {
 		return ep.Alias
 	}
-	u := strings.TrimSuffix(strings.TrimSpace(ep.URL), "/")
-	if i := strings.LastIndexAny(u, "/:"); i != -1 {
-		return u[i+1:]
+	if normalized, err := urlutil.NormalizeEndpointURL(ep.URL); err == nil {
+		return normalized
 	}
-	return u
+	return strings.TrimSuffix(strings.TrimSpace(ep.URL), "/")
 }
 
 // Unwrap supports errors.Is/As over the wrapped error.
