@@ -3,6 +3,7 @@
 package telemetryconfig
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -301,6 +302,9 @@ func validateCAFile(path string) error {
 		return nil
 	}
 	if _, err := validateSecretPath(path, "ca_file"); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	return nil
@@ -402,6 +406,9 @@ func validateHeaders(headers map[string]HeaderSource) []error {
 			continue
 		}
 		if _, err := validateSecretPath(src.File, "telemetry header"); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			errs = append(errs, err)
 			continue
 		}

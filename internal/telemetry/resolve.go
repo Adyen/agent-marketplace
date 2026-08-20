@@ -148,7 +148,8 @@ func ResolveTelemetryConfig(organization, user *amconfig.Config, projectEndpoint
 
 	orgLevel := safeLevel(orgTC)
 	userLevel := safeLevel(userTC)
-	effectiveLevel, levelSource := resolveEffectiveLevel(orgLevel, userLevel, orgActive)
+	orgLevelLocked := orgActive && strings.TrimSpace(orgTC.Level) != ""
+	effectiveLevel, levelSource := resolveEffectiveLevel(orgLevel, userLevel, orgLevelLocked)
 
 	primaryEndpoint, primarySource, err := resolvePrimaryEndpoint(orgTC, userTC, projectEndpoint)
 	if err != nil {
@@ -216,14 +217,9 @@ func validateForResolve(tc *tmcfg.TelemetryConfig, layer string) error {
 	return nil
 }
 
-func resolveEffectiveLevel(orgLevel, userLevel string, orgActive bool) (string, string) {
-	if tmcfg.LevelOrder(orgLevel) > tmcfg.LevelOrder(userLevel) {
-		return orgLevel, sourceOrganization
-	}
-	if tmcfg.LevelOrder(userLevel) > tmcfg.LevelOrder(orgLevel) {
-		return userLevel, sourceUser
-	}
-	if tmcfg.LevelOrder(orgLevel) > 0 && orgActive {
+func resolveEffectiveLevel(orgLevel, userLevel string, orgLevelLocked bool) (string, string) {
+	if orgLevelLocked {
+		slog.Debug("organization telemetry level locks user level", "level", orgLevel)
 		return orgLevel, sourceOrganization
 	}
 	return userLevel, sourceUser
@@ -319,7 +315,7 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 	}
 
 	if lv := os.Getenv(EnvLevel); lv != "" {
-		if orgActive && orgTC.Level != "" {
+		if orgActive {
 			slog.Debug("skipping telemetry level env override because organization policy is active", "var", EnvLevel)
 		} else {
 			normalized, err := tmcfg.NormalizeLevel(lv)

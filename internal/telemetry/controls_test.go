@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,59 @@ func TestReadInstallationID(t *testing.T) {
 	}
 	if id != "abc123" {
 		t.Fatalf("expected abc123, got %q", id)
+	}
+}
+
+func TestLoadInstallationIDConcurrentFirstUse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "installation-id")
+
+	const callers = 32
+	start := make(chan struct{})
+	ids := make(chan string, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			<-start
+			id, err := LoadInstallationID(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- id
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(ids)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("concurrent load: %v", err)
+	}
+	var want string
+	for id := range ids {
+		if want == "" {
+			want = id
+			continue
+		}
+		if id != want {
+			t.Fatalf("concurrent loads returned different IDs: %q and %q", want, id)
+		}
+	}
+	if want == "" {
+		t.Fatal("concurrent loads returned no ID")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read installation id directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".installation-id.tmp-") {
+			t.Errorf("temporary installation id file was not cleaned up: %s", entry.Name())
+		}
 	}
 }
 
