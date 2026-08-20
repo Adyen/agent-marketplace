@@ -364,10 +364,16 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.ToggleCancel):
 		m.pane = paneList
+		recordActionSpan(m.ctx, "modal_outcome", map[string]string{
+			"outcome":       "cancelled",
+			"modal":         "toggle",
+			"resource.kind": m.modalSkill.Artifact.Kind.String(),
+		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
 		act := scopedToggleAction(m.modalSkill, scopeGlobal)
 		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
 		cmd := runScopedToggle(m.repoRoot, act)
 		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 			m.pendingExcludeAction = &act
@@ -376,6 +382,7 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ToggleProject):
 		act := scopedToggleAction(m.modalSkill, scopeProject)
 		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
 		cmd := runScopedToggle(m.repoRoot, act)
 		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 			m.pendingExcludeAction = &act
@@ -384,6 +391,7 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ToggleLocal):
 		act := scopedToggleAction(m.modalSkill, scopeLocal)
 		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
 		return m, runScopedToggle(m.repoRoot, act)
 	case key.Matches(msg, m.keys.ToggleExclude):
 		if m.modalSkill.Artifact.Source.IsMachineScope() {
@@ -393,6 +401,7 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		act := scopedToggleAction(m.modalSkill, scopeLocalExclude)
 		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
 		return m, runScopedToggle(m.repoRoot, act)
 	}
 	return m, nil

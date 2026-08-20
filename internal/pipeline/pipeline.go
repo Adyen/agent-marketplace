@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
@@ -217,6 +219,12 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	// branch in materialize.Run for callers that materialize before checking
 	// Errors.
 	result.MaterializationModes = config.DefaultMaterializationModes()
+
+	tel := telemetry.TelemetryFromContext(ctx)
+	var resolveSpan telemetry.Span
+	if tel != nil {
+		ctx, resolveSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.resolve", nil)
+	}
 	defer func() {
 		registries := 0
 		if result.MergedCfg != nil {
@@ -231,6 +239,10 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			"resolve_errors", len(result.ResolveErrors),
 			"errors", len(result.Errors),
 		)
+		if resolveSpan != (telemetry.Span{}) {
+			resolveSpan.SetAttributes(resolveResultAttrs(result, time.Since(start)))
+			resolveSpan.End()
+		}
 	}()
 
 	if ctx.Err() != nil {
@@ -238,6 +250,18 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		return result
 	}
 	var ec config.EffectiveConfig
+
+	var configLoadSpan telemetry.Span
+	if tel != nil {
+		_, configLoadSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.config_load", nil)
+	}
+	defer func() {
+		if configLoadSpan != (telemetry.Span{}) {
+			configLoadSpan.SetAttributes(configLoadAttrs(ec))
+			configLoadSpan.End()
+		}
+	}()
+
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
 		loaders := opts.Loaders
@@ -388,11 +412,16 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		"registries", len(mergedCfg.Registries),
 	)
 
+	var selectionSpan telemetry.Span
+	if tel != nil {
+		ctx, selectionSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.selection", nil)
+	}
+
 	catalogOpts := opts.CatalogOption
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
 	}
-	loadResult := catalog.LoadRegistries(mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
+	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
 	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors))
@@ -433,6 +462,10 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		}
 		errs = append(errs, resolveErr)
 	}
+	if selectionSpan != (telemetry.Span{}) {
+		selectionSpan.SetAttributes(selectionAttrs(result))
+		selectionSpan.End()
+	}
 	result.Errors = errs
 	return result
 }
@@ -443,6 +476,13 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	opts.CatalogMode = catalog.LoadModeRefresh
 	opts.Gitignore = true
 	opts.RequireTargetSet = true
+
+	tel := telemetry.TelemetryFromContext(ctx)
+	var syncSpan telemetry.Span
+	if tel != nil {
+		ctx, syncSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.sync", nil)
+	}
+
 	resolved := Resolve(ctx, opts)
 	result := SyncResult{ResolveResult: resolved}
 	defer func() {
@@ -464,6 +504,10 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"catalog_trust_errors", len(result.CatalogTrustErrors),
 			"materialize_errors", len(result.MaterializeErrors),
 		)
+		if syncSpan != (telemetry.Span{}) {
+			syncSpan.SetAttributes(syncResultAttrs(result, time.Since(start)))
+			syncSpan.End()
+		}
 	}()
 	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
 
@@ -526,21 +570,49 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			}
 			managed := CollectManagedPaths(resolved.Resolved)
 			if len(managed) > 0 {
+				var backupSpan telemetry.Span
+				if tel != nil {
+					_, backupSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.backup", map[string]string{
+						"target.count": strconv.Itoa(len(managed)),
+					})
+				}
 				slog.Debug("creating harness backups", "targets", len(managed))
 				if err := backup.Create(managed); err != nil {
+					if backupSpan != (telemetry.Span{}) {
+						backupSpan.SetAttributes(map[string]string{"error": "true"})
+						backupSpan.End()
+					}
 					result.addMaterializeError(fmt.Errorf("backup: %w", err))
 					return result
 				}
 				slog.Debug("rotating harness backups", "max_days", bCfg.MaxDays, "max_per_day", bCfg.MaxPerDay)
 				if err := backup.Rotate(bCfg); err != nil {
+					if backupSpan != (telemetry.Span{}) {
+						backupSpan.SetAttributes(map[string]string{"error": "true"})
+						backupSpan.End()
+					}
 					result.addMaterializeError(fmt.Errorf("backup rotate: %w", err))
 					return result
+				}
+				if backupSpan != (telemetry.Span{}) {
+					backupSpan.End()
 				}
 			}
 		}
 	}
 
+	var materializeSpan telemetry.Span
+	if tel != nil {
+		_, materializeSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.materialization", map[string]string{
+			"target.count":   strconv.Itoa(len(targets)),
+			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
+		})
+	}
 	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	if materializeSpan != (telemetry.Span{}) {
+		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
+		materializeSpan.End()
+	}
 	if report != nil {
 		result.Report = report
 		slog.Debug("materialization report received", "targets", len(report.PerRoot), "diagnostics", len(report.Diags))

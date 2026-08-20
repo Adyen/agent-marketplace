@@ -88,7 +88,7 @@ func newRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return tui.Run(repoRoot, homeDir)
+					return tui.Run(cmd.Context(), repoRoot, homeDir)
 				}
 			}
 
@@ -203,7 +203,16 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 		return
 	}
 
-	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed))
+	rootSpan := telemetry.Span{}
+	if state.EffectiveLevel == tmcfg.LevelDetailed {
+		ctx, rootSpan = t.StartSpan(ctx, "agent_marketplace.command", map[string]string{
+			string(tmcfg.ResourceAttrCommandName): path,
+			string(tmcfg.ResourceAttrHarnesses):   state.HarnessesString(),
+			string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(state.Managed),
+		})
+	}
+
+	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed, rootSpan))
 }
 
 func finishTelemetry(cmd *cobra.Command, execErr error) {
@@ -236,6 +245,12 @@ func finishTelemetry(cmd *cobra.Command, execErr error) {
 		string(tmcfg.ResourceAttrHarnesses):   harnesses,
 		string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(managed),
 		string(tmcfg.ResourceAttrOutcomeCode): outcome,
+	}
+
+	rootSpan := telemetry.RootSpanFromContext(ctx)
+	if rootSpan != (telemetry.Span{}) {
+		rootSpan.SetAttributes(attrs)
+		rootSpan.End()
 	}
 
 	t.CommandCounter().Add(ctx, 1, attrs)
@@ -311,7 +326,7 @@ func newRemoveCmd() *cobra.Command {
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runRemove(cmd.OutOrStdout(), name, scope, scopeSpecified, kindFilter, fromURL, fromRef, fromPath)
+			return runRemove(cmd.Context(), cmd.OutOrStdout(), name, scope, scopeSpecified, kindFilter, fromURL, fromRef, fromPath)
 		},
 	}
 
@@ -323,14 +338,14 @@ func newRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-func runRemove(out io.Writer, skillName string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath string) error {
+func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result, err := pipeline.Remove(context.Background(), pipeline.RemoveOptions{
+	result, err := pipeline.Remove(ctx, pipeline.RemoveOptions{
 		RepoRoot:       repoRoot,
 		ResourceName:   skillName,
 		Kind:           kind,

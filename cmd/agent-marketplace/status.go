@@ -93,15 +93,15 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show the current sync state for enabled skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd.OutOrStdout(), time.Now())
+			return runStatus(cmd.Context(), cmd.OutOrStdout(), time.Now())
 		},
 	}
 }
 
-func runStatus(out io.Writer, now time.Time) error {
+func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	repoRoot := config.FindRepoRoot()
 
-	result := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{
+	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
 		RepoRoot:    repoRoot,
 		CatalogMode: catalog.LoadModeInspect,
 	})
@@ -132,7 +132,7 @@ func runStatus(out io.Writer, now time.Time) error {
 	if err != nil {
 		materializeErrs = append(materializeErrs, err)
 	}
-	dryRunReport, dryRunErr := materialize.Run(context.Background(), repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	if dryRunErr != nil {
 		slog.Warn("status drift check failed", "error", dryRunErr)
 		materializeErrs = append(materializeErrs, dryRunErr)
