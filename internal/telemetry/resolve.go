@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,16 @@ type TelemetryState struct {
 	InstallationIDPath string
 	Managed            bool
 	SchemaVersion      string
+	Harnesses          []string
+}
+
+// HarnessesString returns the configured harness list as a comma-separated
+// string for use as a bounded metric attribute.
+func (s TelemetryState) HarnessesString() string {
+	if len(s.Harnesses) == 0 {
+		return ""
+	}
+	return strings.Join(s.Harnesses, ",")
 }
 
 // StateRoot returns the durable telemetry state directory (the directory
@@ -170,6 +181,7 @@ func ResolveTelemetryConfig(organization, user *amconfig.Config, projectEndpoint
 	state.CommunityEndpoint = projectEndpoint
 	state.RetentionPolicyURL = retention
 	state.Managed = orgActive
+	state.Harnesses = resolveHarnesses(organization, user)
 	state.InstallationIDPath, err = installationIDPath()
 	if err != nil {
 		return state, fmt.Errorf("resolve installation id path: %w", err)
@@ -419,4 +431,33 @@ func installationIDPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, DefaultInstallationIDSubpath), nil
+}
+
+func resolveHarnesses(organization, user *amconfig.Config) []string {
+	cfg := user
+	if cfg == nil || len(cfg.Harnesses) == 0 {
+		cfg = organization
+	}
+	if cfg == nil || len(cfg.Harnesses) == 0 {
+		return nil
+	}
+	return uniqueSortedStrings(cfg.Harnesses)
+}
+
+func uniqueSortedStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
