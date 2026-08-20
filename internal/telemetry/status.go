@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"time"
-
-	amconfig "github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // StatusInfo is a telemetry control surface snapshot. It exposes effective
@@ -31,21 +29,7 @@ type StatusInfo struct {
 func GetStatusInfo(ctx context.Context) (StatusInfo, error) {
 	var info StatusInfo
 
-	org, orgErr := amconfig.LoadOrganizationConfig()
-	if orgErr != nil {
-		return info, fmt.Errorf("load organization config: %w", orgErr)
-	}
-
-	userPath, userPathErr := amconfig.GlobalConfigPath()
-	if userPathErr != nil {
-		return info, fmt.Errorf("resolve user config path: %w", userPathErr)
-	}
-	user, userErr := amconfig.LoadConfigFromPath(userPath)
-	if userErr != nil {
-		return info, fmt.Errorf("load user config: %w", userErr)
-	}
-
-	state, err := ResolveTelemetryConfig(org, user, DefaultProjectEndpoint, DefaultProjectRetentionURL)
+	state, err := LoadAndResolve(ctx)
 	if err != nil {
 		return info, fmt.Errorf("resolve telemetry config: %w", err)
 	}
@@ -53,13 +37,13 @@ func GetStatusInfo(ctx context.Context) (StatusInfo, error) {
 
 	info.InstallationID, _ = ReadInstallationID(state.InstallationIDPath)
 
-	queueRoot := queueRootFromInstallationIDPath(state.InstallationIDPath)
+	queueRoot := state.QueueRoot()
 	q := NewQueue(queueRoot)
 	info.QueueCount = q.Count()
 	info.QueueSize = q.Size()
 	info.QueueOldestAge, info.QueueOldestAgeOK = q.OldestAge()
 
-	stateRoot := filepath.Dir(state.InstallationIDPath)
+	stateRoot := state.StateRoot()
 	info.DiagnosticCount = countDiagnosticPayloads(stateRoot)
 
 	info.LastFailure, info.LastFailureError = ReadLastDeliveryFailure(filepath.Join(stateRoot, "last-delivery-failure"))

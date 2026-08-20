@@ -62,7 +62,7 @@ func LoadInstallationID(path string) (string, error) {
 		return "", err
 	}
 
-	dir := filepath.Dir(path)
+	dir := StateRootFromInstallationIDPath(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		slog.Error("failed to create installation id directory", "path", path, "directory", dir, "error", err)
 		return "", fmt.Errorf("create installation id directory: %w", err)
@@ -101,14 +101,13 @@ func ResetInstallationID(path string) error {
 	// The installation ID lives under <state-root>/telemetry/installation-id.
 	// Queued payloads and diagnostic captures are sibling directories under the
 	// same telemetry root.
-	telemetryRoot := filepath.Dir(path)
-	queueRoot := filepath.Join(telemetryRoot, "queue")
+	queueRoot := queueRootFromInstallationIDPath(path)
 	if err := os.RemoveAll(queueRoot); err != nil {
 		slog.Error("failed to remove queued payloads", "path", queueRoot, "error", err)
 		return fmt.Errorf("remove queued payloads: %w", err)
 	}
 
-	diagRoot := filepath.Join(telemetryRoot, "diagnostic")
+	diagRoot := filepath.Join(StateRootFromInstallationIDPath(path), "diagnostic")
 	_ = os.RemoveAll(diagRoot)
 
 	slog.Info("reset installation id complete", "path", path)

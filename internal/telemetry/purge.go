@@ -16,7 +16,7 @@ func Purge(installationIDPath string) (queueCount int, diagnosticCount int, err 
 		return 0, 0, fmt.Errorf("empty installation id path")
 	}
 
-	stateRoot := filepath.Dir(installationIDPath)
+	stateRoot := StateRootFromInstallationIDPath(installationIDPath)
 
 	queueRoot := queueRootFromInstallationIDPath(installationIDPath)
 	q := NewQueue(queueRoot)
