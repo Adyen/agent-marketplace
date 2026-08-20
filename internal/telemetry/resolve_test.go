@@ -156,7 +156,7 @@ func TestResolveOrganizationMinimum(t *testing.T) {
 	}
 }
 
-func TestResolveLevelPrecedence(t *testing.T) {
+func TestResolveOrganizationLevelPolicy(t *testing.T) {
 	tests := []struct {
 		name       string
 		orgLevel   string
@@ -164,11 +164,14 @@ func TestResolveLevelPrecedence(t *testing.T) {
 		wantLevel  string
 		wantSource string
 	}{
-		{"org detailed wins over user basic", tmcfg.LevelDetailed, tmcfg.LevelBasic, tmcfg.LevelDetailed, sourceOrganization},
-		{"user detailed wins over org off", tmcfg.LevelOff, tmcfg.LevelDetailed, tmcfg.LevelDetailed, sourceUser},
-		{"org basic wins over user off", tmcfg.LevelBasic, tmcfg.LevelOff, tmcfg.LevelBasic, sourceOrganization},
-		{"user basic with org off", tmcfg.LevelOff, tmcfg.LevelBasic, tmcfg.LevelBasic, sourceUser},
-		{"tie org active", tmcfg.LevelBasic, tmcfg.LevelBasic, tmcfg.LevelBasic, sourceOrganization},
+		{"organization detailed locks user basic", tmcfg.LevelDetailed, tmcfg.LevelBasic, tmcfg.LevelDetailed, sourceOrganization},
+		{"organization off locks user detailed", tmcfg.LevelOff, tmcfg.LevelDetailed, tmcfg.LevelOff, sourceOrganization},
+		{"organization basic locks user off", tmcfg.LevelBasic, tmcfg.LevelOff, tmcfg.LevelBasic, sourceOrganization},
+		{"organization off locks user basic", tmcfg.LevelOff, tmcfg.LevelBasic, tmcfg.LevelOff, sourceOrganization},
+		{"organization basic locks user detailed", tmcfg.LevelBasic, tmcfg.LevelDetailed, tmcfg.LevelBasic, sourceOrganization},
+		{"organization detailed locks user off", tmcfg.LevelDetailed, tmcfg.LevelOff, tmcfg.LevelDetailed, sourceOrganization},
+		{"organization level omitted leaves user preference", "", tmcfg.LevelDetailed, tmcfg.LevelDetailed, sourceUser},
+		{"tie organization active", tmcfg.LevelBasic, tmcfg.LevelBasic, tmcfg.LevelBasic, sourceOrganization},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,11 +278,11 @@ func TestResolveEnvOverrides(t *testing.T) {
 			envEndpoint:  "https://env.example.com",
 		},
 		{
-			name:         "env level applied when org endpoint locked but level unset",
+			name:         "env level ignored when organization policy has no level",
 			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
 			wantEndpoint: "https://org.example.com",
 			wantSource:   sourceOrganization,
-			wantLevel:    tmcfg.LevelDetailed,
+			wantLevel:    tmcfg.LevelOff,
 			envLevel:     "detailed",
 		},
 		{

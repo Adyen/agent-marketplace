@@ -75,13 +75,68 @@ func LoadInstallationID(path string) (string, error) {
 		return "", fmt.Errorf("chmod installation id directory: %w", err)
 	}
 
-	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+	created, err := publishInstallationID(path, id)
+	if err != nil {
 		slog.Error("failed to write installation id", "path", path, "error", err)
-		return "", fmt.Errorf("write installation id: %w", err)
+		return "", err
+	}
+	if created {
+		slog.Info("generated new installation id", "path", path)
+		return id, nil
 	}
 
-	slog.Info("generated new installation id", "path", path)
-	return id, nil
+	// Another caller won the race to create the file. Never replace its ID;
+	// return the winner's value instead.
+	winner, err := ReadInstallationID(path)
+	if err != nil {
+		return "", err
+	}
+	if winner == "" {
+		return "", errors.New("installation id file exists but is empty")
+	}
+	slog.Debug("loaded installation id created by another caller", "path", path)
+	return winner, nil
+}
+
+// publishInstallationID writes a complete ID to a temporary file in the target
+// directory, then atomically publishes it without replacing an ID created by a
+// concurrent caller. A hard link provides the no-replace publication primitive;
+// both paths are in the same directory, so the final path is never visible
+// until the temporary file is fully written and closed.
+func publishInstallationID(path, id string) (bool, error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return false, fmt.Errorf("create temporary installation id file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("failed to remove temporary installation id file", "path", tmpPath, "error", err)
+		}
+	}()
+	defer func() { _ = tmp.Close() }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return false, fmt.Errorf("chmod temporary installation id file: %w", err)
+	}
+	if _, err := tmp.WriteString(id + "\n"); err != nil {
+		return false, fmt.Errorf("write temporary installation id file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return false, fmt.Errorf("sync temporary installation id file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return false, fmt.Errorf("close temporary installation id file: %w", err)
+	}
+
+	if err := os.Link(tmpPath, path); err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("publish installation id: %w", err)
+	}
+	return true, nil
 }
 
 // ResetInstallationID deletes the installation ID file at path and purges any

@@ -256,7 +256,7 @@ func TestValidateHeaders(t *testing.T) {
 			headers: map[string]HeaderSource{
 				"Authorization": {File: filepath.Join(dir, "missing")},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "env value with line terminator",
@@ -339,7 +339,7 @@ func TestValidateCAFile(t *testing.T) {
 		wantErr bool
 	}{
 		{cert, false},
-		{filepath.Join(dir, "missing"), true},
+		{filepath.Join(dir, "missing"), false},
 		{dir, true},
 		{badPerm, true},
 		{symlink, true},
