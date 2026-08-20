@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -96,10 +97,52 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 	}
 }
 
+func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing.T) {
+	entries := []MarketplaceEntry{
+		{URL: "https://one.example", InstanceID: "one", Alias: "shared"},
+		{URL: "https://two.example", InstanceID: "two", Alias: "shared"},
+		{URL: "https://three.example", InstanceID: "three", Alias: "all"},
+	}
+	errs := ValidateMarketplaceEntries(entries)
+	if len(errs) < 2 {
+		t.Fatalf("expected duplicate and reserved alias errors, got %v", errs)
+	}
+	joined := errors.Join(errs...)
+	if !strings.Contains(joined.Error(), "duplicates") {
+		t.Fatalf("duplicate alias error missing: %v", joined)
+	}
+	if !strings.Contains(joined.Error(), "reserved") {
+		t.Fatalf("reserved alias error missing: %v", joined)
+	}
+}
+
+func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *testing.T) {
+	for _, entry := range []MarketplaceEntry{
+		{URL: "http://market.example?token=secret", InstanceID: "instance"},
+		{URL: "http://user:pass@market.example", InstanceID: "instance"},
+		{URL: "http://market.example/%2funsafe", InstanceID: "instance"},
+		{URL: "http://market.example", InstanceID: " instance"},
+		{URL: "http://market.example", InstanceID: "instance/id"},
+		{URL: "http://market.example", InstanceID: "instance", Alias: "alias\n"},
+		{URL: "http://market.example", InstanceID: "instance", Resources: []MarketplaceResourcePin{{SourceID: "source", SourceSlug: "source/slug", Kind: "skill", Name: "name", Revision: "v1", Digest: testMarketplaceDigest}}},
+	} {
+		if errs := ValidateMarketplaceEntries([]MarketplaceEntry{entry}); len(errs) == 0 {
+			t.Fatalf("ValidateMarketplaceEntries accepted unsafe entry %#v", entry)
+		}
+	}
+	if errs := ValidateMarketplaceEntries([]MarketplaceEntry{{URL: "HTTPS://MARKET.example/base/", InstanceID: "instance", Alias: "public"}}); len(errs) != 0 {
+		t.Fatalf("valid endpoint rejected: %v", errs)
+	}
+}
+
 func TestValidateMarketplaceURLs(t *testing.T) {
 	entries := []MarketplaceEntry{
 		{URL: "https://market.example.com/skills"},
 		{URL: "https://evil.example.com/skills"},
+	}
+
+	if err := ValidateMarketplaceURLs([]MarketplaceEntry{{URL: "HTTPS://MARKET.example.com/"}}, []string{`^https://market\.example\.com$`}); err != nil {
+		t.Fatalf("canonical URL should match allowlist: %v", err)
 	}
 
 	err := ValidateMarketplaceURLs(entries, []string{`market\.example\.com`})
@@ -181,6 +224,14 @@ func TestMarketplaceMerge(t *testing.T) {
 	// Marketplaces accumulate.
 	if len(merged.Marketplaces) != 2 {
 		t.Fatalf("expected 2 merged marketplaces, got %d", len(merged.Marketplaces))
+	}
+}
+
+func TestLocalMarketplaceValidationCoversAllEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	writeFile(t, path, "marketplaces:\n  - url: https://one.example\n    instance_id: one\n    alias: shared\n  - url: https://two.example\n    instance_id: two\n    alias: shared\n")
+	if _, err := LoadLocalConfigFromPath(path); err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("local Marketplace alias validation error = %v", err)
 	}
 }
 

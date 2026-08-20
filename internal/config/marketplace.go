@@ -2,11 +2,11 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 // MarketplaceEntry is one configured marketplace endpoint and optional exact pins.
@@ -55,8 +55,17 @@ func validateAllowedMarketplacePatterns(patterns *[]string) []error {
 // ValidateMarketplaceEntries validates a slice of marketplace entries.
 func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
 	var errs []error
+	aliases := make(map[string]int)
 	for i, e := range entries {
 		errs = append(errs, validateMarketplaceEntry(i, e)...)
+		if e.Alias == "" {
+			continue
+		}
+		if previous, ok := aliases[e.Alias]; ok {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous))
+			continue
+		}
+		aliases[e.Alias] = i
 	}
 	return errs
 }
@@ -65,14 +74,18 @@ func validateMarketplaceEntry(i int, e MarketplaceEntry) []error {
 	var errs []error
 	if strings.TrimSpace(e.URL) == "" {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].url is required", i))
-	} else if u, err := url.Parse(e.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "") {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].url must be an http or https URL", i))
+	} else if _, err := urlutil.NormalizeEndpointURL(e.URL); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].url: %w", i, err))
 	}
-	if strings.TrimSpace(e.InstanceID) == "" {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].instance_id is required", i))
+	if err := validateMarketplaceSegment("instance_id", e.InstanceID); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].%w", i, err))
 	}
-	if strings.Contains(e.URL, "..") {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].url must not contain path traversal", i))
+	if e.Alias != "" {
+		if err := validateMarketplaceSegment("alias", e.Alias); err != nil {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].%w", i, err))
+		} else if e.Alias == "all" {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q is reserved for federated search", i, e.Alias))
+		}
 	}
 	for j, p := range e.Resources {
 		errs = append(errs, validateMarketplacePin(i, j, p)...)
@@ -82,23 +95,31 @@ func validateMarketplaceEntry(i int, e MarketplaceEntry) []error {
 
 func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []error {
 	var errs []error
-	if strings.TrimSpace(p.SourceID) == "" {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].source_id is required", entryIdx, pinIdx))
+	if err := validateMarketplaceSegment("source_id", p.SourceID); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
+	}
+	if p.SourceSlug != "" {
+		if err := validateMarketplaceSegment("source_slug", p.SourceSlug); err != nil {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
+		}
 	}
 	if !api.IsMarketplaceKind(p.Kind) {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].kind %q is not a valid marketplace kind", entryIdx, pinIdx, p.Kind))
 	}
-	if strings.TrimSpace(p.Name) == "" {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].name is required", entryIdx, pinIdx))
+	if err := validateMarketplaceSegment("name", p.Name); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
-	if strings.TrimSpace(p.Revision) == "" {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].revision is required", entryIdx, pinIdx))
+	if err := validateMarketplaceSegment("revision", p.Revision); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
 	if !contentDigestRE.MatchString(p.Digest) {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].digest must be sha256:<64-hex>", entryIdx, pinIdx))
 	}
 	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndex {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].acquisition must be %q or %q", entryIdx, pinIdx, MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndex))
+	}
+	if err := ValidateMarketplaceInstalledName(p.InstalledName); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
 	return errs
 }

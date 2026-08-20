@@ -203,6 +203,11 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 		slog.Error("marketplace allowlist rejected one or more URLs", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
+	if errs := ValidateMarketplaceEntries(merged.Marketplaces); len(errs) > 0 {
+		err := errors.Join(errs...)
+		slog.Error("effective Marketplace entries rejected", "error", err)
+		ec.Errors = append(ec.Errors, err)
+	}
 
 	if len(ec.Errors) > 0 {
 		slog.Error("effective config loaded with errors",

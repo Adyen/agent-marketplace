@@ -15,6 +15,7 @@ import (
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 // Resolver resolves Marketplace entries into resolver.ResolvedArtifact values.
@@ -45,7 +46,12 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *config.Config, targetSet []
 	cache := r.cache()
 	var out []resolver.ResolvedArtifact
 	var errs []error
-	for _, entry := range cfg.Marketplaces {
+	for _, configuredEntry := range cfg.Marketplaces {
+		entry, err := canonicalMarketplaceEntry(configuredEntry)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("marketplace %s: %w", configuredEntry.URL, err))
+			continue
+		}
 		if strings.TrimSpace(entry.InstanceID) == "" {
 			errs = append(errs, fmt.Errorf("marketplace %s: configured marketplace instance ID is required", entry.URL))
 			continue
@@ -74,6 +80,22 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *config.Config, targetSet []
 		}
 	}
 	return out, errs
+}
+
+func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
+	canonicalURL, err := urlutil.NormalizeEndpointURL(entry.URL)
+	if err != nil {
+		return config.MarketplaceEntry{}, err
+	}
+	entry.URL = canonicalURL
+	return entry, nil
+}
+
+// marketplaceCatalogKey identifies the Marketplace occurrence as well as its
+// endpoint and pin. The instance ID matters because an endpoint URL can host
+// different Marketplace instances over time or behind different deployments.
+func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
+	return fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.SourceID, pin.Digest, pin.Revision)
 }
 
 func (r *Resolver) cache() *Cache {
@@ -130,15 +152,15 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 			Kind: kind,
 			Name: name,
 		},
-		RegistryURL:           normalizeMarketplaceURL(entry.URL),
+		RegistryURL:           entry.URL,
 		RegistryPath:          pin.SourceID,
 		Ref:                   pin.Revision,
 		Source:                entry.Source,
 		Required:              false,
-		CatalogKey:            fmt.Sprintf("marketplace:%s:%s:%s:%s", entry.URL, pin.SourceID, pin.Digest, pin.Revision),
+		CatalogKey:            marketplaceCatalogKey(entry, pin),
 		Harnesses:             targetSet,
 		IsMarketplace:         true,
-		MarketplaceURL:        normalizeMarketplaceURL(entry.URL),
+		MarketplaceURL:        entry.URL,
 		MarketplaceInstanceID: entry.InstanceID,
 		MarketplaceAlias:      entry.Alias,
 		MarketplaceSourceID:   pin.SourceID,
@@ -334,8 +356,4 @@ func descriptionFromResource(r ir.Resource) string {
 		return ""
 	}
 	return ""
-}
-
-func normalizeMarketplaceURL(u string) string {
-	return strings.TrimRight(u, "/")
 }

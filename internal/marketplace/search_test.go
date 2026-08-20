@@ -65,7 +65,7 @@ func TestFederatedSearchAllConfigured(t *testing.T) {
 		},
 	}
 
-	results, endpointErrs, err := FederatedSearch(context.Background(), ec, "review", SearchOpts{})
+	results, endpointErrs, err := FederatedSearch(context.Background(), ec, "review", SearchOpts{Marketplace: "all"})
 	if err != nil {
 		t.Fatalf("FederatedSearch: %v", err)
 	}
@@ -77,6 +77,54 @@ func TestFederatedSearchAllConfigured(t *testing.T) {
 	}
 	if results[0].Name != "review" || results[1].Name != "deploy" {
 		t.Fatalf("unexpected order: %v, %v", results[0].Name, results[1].Name)
+	}
+}
+
+func TestDisplayNameUsesFullCanonicalURLWithoutAlias(t *testing.T) {
+	got := displayName(config.MarketplaceEntry{URL: "HTTPS://MARKET.example/catalog/"})
+	if got != "https://market.example/catalog" {
+		t.Fatalf("displayName = %q, want full canonical URL", got)
+	}
+}
+
+func TestResolveMarketplaceEndpointsRejectsAmbiguousAliases(t *testing.T) {
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{URL: "https://one.example", InstanceID: "one", Alias: "shared"},
+		{URL: "https://two.example", InstanceID: "two", Alias: "shared"},
+	}}}
+	if _, err := resolveMarketplaceEndpoints(ec, "shared"); err == nil || !strings.Contains(err.Error(), "duplicates") {
+		t.Fatalf("ambiguous alias error = %v", err)
+	}
+}
+
+func TestResolveMarketplaceEndpointsRejectsReservedAlias(t *testing.T) {
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://one.example", InstanceID: "one", Alias: "all",
+	}}}}
+	if _, err := resolveMarketplaceEndpoints(ec, "all"); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("reserved alias error = %v", err)
+	}
+}
+
+func TestResolveMarketplaceEndpointsCanonicalURLSelectionPreservesVerification(t *testing.T) {
+	configured := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL:        "HTTPS://MARKET.example/",
+		InstanceID: "configured-instance",
+		Alias:      "public",
+	}}}}
+
+	endpoints, err := resolveMarketplaceEndpoints(configured, "https://market.example/")
+	if err != nil {
+		t.Fatalf("resolveMarketplaceEndpoints: %v", err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("got %d endpoints, want 1", len(endpoints))
+	}
+	if endpoints[0].URL != "https://market.example" {
+		t.Fatalf("endpoint URL = %q, want canonical URL", endpoints[0].URL)
+	}
+	if !endpoints[0].verifyInstanceID || endpoints[0].InstanceID != "configured-instance" {
+		t.Fatalf("configured endpoint lost instance verification: %#v", endpoints[0])
 	}
 }
 
