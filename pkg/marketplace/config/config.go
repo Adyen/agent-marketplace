@@ -25,6 +25,7 @@ const (
 	apiVersionV1 = "agent-marketplace.io/marketplace/v1"
 
 	defaultListen             = "127.0.0.1:8080"
+	defaultOperationsListen   = "127.0.0.1:9090"
 	defaultRefreshInterval    = 30 * time.Minute
 	defaultHiddenContent      = "reject"
 	defaultAcquisitionDefault = "mirror"
@@ -87,6 +88,7 @@ type Config struct {
 	APIVersion         string      `yaml:"apiVersion"`
 	Instance           Instance    `yaml:"instance"`
 	Listen             string      `yaml:"listen"`
+	OperationsListen   string      `yaml:"operations_listen"`
 	Storage            Storage     `yaml:"storage"`
 	AcquisitionDefault string      `yaml:"acquisition_default"`
 	Refresh            Refresh     `yaml:"refresh"`
@@ -223,6 +225,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Listen == "" {
 		cfg.Listen = defaultListen
 	}
+	if cfg.OperationsListen == "" {
+		cfg.OperationsListen = defaultOperationsListen
+	}
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(defaultRefreshInterval)
 	}
@@ -277,6 +282,9 @@ func (cfg Config) Validate() error {
 	}
 	if _, _, err := net.SplitHostPort(cfg.Listen); err != nil {
 		errs = append(errs, fmt.Errorf("invalid listen address %q: %w", cfg.Listen, err))
+	}
+	if _, _, err := net.SplitHostPort(cfg.OperationsListen); err != nil {
+		errs = append(errs, fmt.Errorf("invalid operations_listen address %q: %w", cfg.OperationsListen, err))
 	}
 	errs = append(errs, cfg.Storage.Validate()...)
 	if !validAcquisition[cfg.AcquisitionDefault] {

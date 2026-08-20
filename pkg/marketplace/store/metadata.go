@@ -5,6 +5,23 @@ import (
 	"time"
 )
 
+// ResourceSearchFilter selects the latest non-revoked resource revisions for
+// Marketplace discovery endpoints.
+type ResourceSearchFilter struct {
+	// Marketplace restricts results to one Marketplace instance.
+	Marketplace MarketplaceID
+
+	// Source optionally matches a source ID or source slug.
+	Source string
+
+	// Kind optionally restricts results to one resource kind.
+	Kind string
+
+	// Query is an optional case-insensitive substring matched against the
+	// resource name.
+	Query string
+}
+
 // MetadataStore is the capability-oriented interface for Marketplace metadata.
 // Backend names and details never appear in this interface.
 type MetadataStore interface {
@@ -33,6 +50,14 @@ type MetadataStore interface {
 	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (ResourceRevision, error)
 	PutResourceRevision(ctx context.Context, rev ResourceRevision) error
 	ListResourceRevisions(ctx context.Context, coord ResourceCoordinate) ([]ResourceRevision, error)
+
+	// GetLatestResourceRevision returns the most recent revision for a coordinate,
+	// including a revoked revision if no non-revoked revision exists.
+	GetLatestResourceRevision(ctx context.Context, coord ResourceCoordinate) (ResourceRevision, error)
+
+	// SearchResourceRevisions returns the latest non-revoked revision for each
+	// listed-source coordinate, optionally filtered by source, kind, and name.
+	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]ResourceRevision, error)
 
 	// Source occurrences.
 	GetSourceOccurrence(ctx context.Context, source SourceID, commit string) (SourceOccurrence, error)
