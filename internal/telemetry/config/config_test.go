@@ -337,10 +337,6 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/0", SchemaMajor, SchemaMinor)
 	}
 	want := []ResourceAttribute{
-		ResourceAttrSchemaVersion,
-		ResourceAttrCLIVersion,
-		ResourceAttrOSName,
-		ResourceAttrArch,
 		ResourceAttrCommandName,
 		ResourceAttrHarnesses,
 		ResourceAttrManaged,

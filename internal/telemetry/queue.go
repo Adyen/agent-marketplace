@@ -342,3 +342,19 @@ func (q *Queue) Count() int {
 	}
 	return len(files)
 }
+
+// OldestAge returns the age of the oldest queued item and a boolean that is
+// false when the queue is empty.
+func (q *Queue) OldestAge() (time.Duration, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	files, err := q.listFilesLocked()
+	if err != nil || len(files) == 0 {
+		return 0, false
+	}
+
+	sortFiles(files)
+	oldest := files[0].modTime
+	return time.Since(oldest), true
+}

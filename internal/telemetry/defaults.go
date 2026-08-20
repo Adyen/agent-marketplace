@@ -2,10 +2,13 @@ package telemetry
 
 // Release-configurable defaults for the project telemetry endpoint. Core logic
 // intentionally leaves the actual values empty so release configuration can set
-// them without editing this package.
+// them via -X linker flags without editing this package.
+var (
+	DefaultProjectEndpoint     = ""
+	DefaultProjectRetentionURL = ""
+)
+
 const (
-	DefaultProjectEndpoint       = ""
-	DefaultProjectRetentionURL   = ""
 	DefaultInstallationIDSubpath = "telemetry/installation-id"
 )
 

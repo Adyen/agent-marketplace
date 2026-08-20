@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -44,6 +45,69 @@ type TelemetryState struct {
 	InstallationIDPath string
 	Managed            bool
 	SchemaVersion      string
+}
+
+// StateRoot returns the durable telemetry state directory (the directory
+// containing the installation ID file). It returns "" when the installation
+// ID path is empty.
+func (s TelemetryState) StateRoot() string {
+	if s.InstallationIDPath == "" {
+		return ""
+	}
+	return filepath.Dir(s.InstallationIDPath)
+}
+
+// QueueRoot returns the durable telemetry queue directory under StateRoot.
+// It returns "" when StateRoot is empty.
+func (s TelemetryState) QueueRoot() string {
+	root := s.StateRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "queue")
+}
+
+// StateRootFromInstallationIDPath returns the parent directory of the
+// installation ID path, or "" when the path is empty. It is a path-based
+// helper for call sites that do not have a TelemetryState value.
+func StateRootFromInstallationIDPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Dir(path)
+}
+
+// queueRootFromInstallationIDPath returns the queue directory for an
+// installation ID path. It returns "" when the path is empty.
+func queueRootFromInstallationIDPath(path string) string {
+	root := StateRootFromInstallationIDPath(path)
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "queue")
+}
+
+// LoadAndResolve loads the organization and user-personal telemetry config
+// layers and resolves the effective TelemetryState.
+func LoadAndResolve(ctx context.Context) (TelemetryState, error) {
+	slog.InfoContext(ctx, "loading and resolving telemetry config")
+
+	org, err := amconfig.LoadOrganizationConfig()
+	if err != nil {
+		return TelemetryState{}, fmt.Errorf("load organization config: %w", err)
+	}
+
+	userPath, err := amconfig.GlobalConfigPath()
+	if err != nil {
+		return TelemetryState{}, fmt.Errorf("resolve user config path: %w", err)
+	}
+
+	user, err := amconfig.LoadConfigFromPath(userPath)
+	if err != nil {
+		return TelemetryState{}, fmt.Errorf("load user config: %w", err)
+	}
+
+	return ResolveTelemetryConfig(org, user, DefaultProjectEndpoint, DefaultProjectRetentionURL)
 }
 
 // ResolveTelemetryConfig computes the effective telemetry state from the
@@ -194,15 +258,17 @@ func resolveRetentionPolicy(primarySource string, orgTC, userTC *tmcfg.Telemetry
 
 func resolveCommunityReporting(orgTC, userTC *tmcfg.TelemetryConfig, projectEndpoint, primaryEndpoint, primarySource, effectiveLevel string, orgActive bool) (bool, string, bool, error) {
 	enabled, source := false, ""
-	if orgActive {
-		// Managed: organization policy owns community_reporting. An omitted value defaults to false and is locked.
+	if orgActive && orgTC.CommunityReporting != nil {
+		// Organization policy explicitly manages community_reporting.
 		source = sourceOrganization
-		if orgTC.CommunityReporting != nil {
-			enabled = *orgTC.CommunityReporting
-		}
+		enabled = *orgTC.CommunityReporting
 	} else if userTC.CommunityReporting != nil {
 		enabled = *userTC.CommunityReporting
 		source = sourceUser
+	} else if orgActive {
+		// Organization telemetry block is active but does not specify the
+		// field; the default false is still managed by the organization.
+		source = sourceOrganization
 	}
 	if !enabled {
 		return false, source, false, nil
@@ -230,12 +296,20 @@ func resolvePrimaryAuth(primarySource string, orgTC, userTC *tmcfg.TelemetryConf
 
 func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*tmcfg.TelemetryConfig, error) {
 	userTC = cloneTelemetryConfig(userTC)
-	if !orgActive {
-		if ep := os.Getenv(EnvEndpoint); ep != "" {
+
+	if ep := os.Getenv(EnvEndpoint); ep != "" {
+		if orgActive && orgTC.Endpoint != "" {
+			slog.Debug("skipping telemetry endpoint env override because organization policy is active", "var", EnvEndpoint)
+		} else {
 			slog.Info("applying telemetry endpoint override from environment", "var", EnvEndpoint, "endpoint", ep)
 			userTC.Endpoint = ep
 		}
-		if lv := os.Getenv(EnvLevel); lv != "" {
+	}
+
+	if lv := os.Getenv(EnvLevel); lv != "" {
+		if orgActive && orgTC.Level != "" {
+			slog.Debug("skipping telemetry level env override because organization policy is active", "var", EnvLevel)
+		} else {
 			normalized, err := tmcfg.NormalizeLevel(lv)
 			if err != nil {
 				return nil, fmt.Errorf("environment variable %s: %w", EnvLevel, err)
@@ -243,7 +317,12 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 			slog.Info("applying telemetry level override from environment", "var", EnvLevel, "level", normalized)
 			userTC.Level = normalized
 		}
-		if v := os.Getenv(EnvCommunityReporting); v != "" {
+	}
+
+	if v := os.Getenv(EnvCommunityReporting); v != "" {
+		if orgActive && orgTC.CommunityReporting != nil {
+			slog.Debug("skipping telemetry community reporting env override because organization policy is active", "var", EnvCommunityReporting)
+		} else {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
 				return nil, fmt.Errorf("environment variable %s: %w", EnvCommunityReporting, err)
@@ -251,9 +330,8 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 			slog.Info("applying telemetry community reporting override from environment", "var", EnvCommunityReporting, "enabled", b)
 			userTC.CommunityReporting = &b
 		}
-	} else {
-		slog.Debug("skipping telemetry environment overrides because organization policy is active")
 	}
+
 	return userTC, nil
 }
 
