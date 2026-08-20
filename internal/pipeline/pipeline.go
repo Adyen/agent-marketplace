@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -448,6 +449,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	// Malformed resources are dropped from Entries by the ingesters, so the
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
+	mpMode := marketplaceResolveMode(opts.CatalogMode)
 	resolved, resolveErrs := resolver.Resolve(
 		loadedCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
@@ -455,6 +457,8 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		resolver.WithResources(loadResult.ResourceCatalogs),
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
+		resolver.WithMarketplaceResolver(marketplace.NewResolver()),
+		resolver.WithMarketplaceResolveMode(mpMode),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
@@ -478,6 +482,17 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	}
 	result.Errors = errs
 	return result
+}
+
+func marketplaceResolveMode(mode catalog.LoadMode) resolver.MarketplaceResolveMode {
+	switch mode {
+	case catalog.LoadModeRefresh:
+		return resolver.MarketplaceResolveModeRefresh
+	case catalog.LoadModeInspect:
+		return resolver.MarketplaceResolveModeInspect
+	default:
+		return resolver.MarketplaceResolveModeCached
+	}
 }
 
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
