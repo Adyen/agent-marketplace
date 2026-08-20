@@ -223,6 +223,10 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		return Result{}, err
 	}
 
+	stagedPath, err := stagedPathFor(m.AbsFile)
+	if err != nil {
+		return Result{}, err
+	}
 	journal := &Journal{
 		Version:       journalVersion,
 		RootKey:       s.rootKey,
@@ -232,7 +236,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		Reason:        m.Reason,
 		File:          m.Rel,
 		AbsFile:       m.AbsFile,
-		StagedPath:    stagedPathFor(m.AbsFile, generation),
+		StagedPath:    stagedPath,
 		BackupPath:    backupPath,
 		PriorDigest:   priorDigest,
 		PriorAbsent:   priorAbsent,
@@ -262,7 +266,8 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
 		mode = fi.Mode().Perm()
 	}
-	if err := writeStaged(journal.StagedPath, m.NextBytes, mode); err != nil {
+	staged, err := writeStaged(journal.StagedPath, m.NextBytes, mode)
+	if err != nil {
 		return Result{}, err
 	}
 
@@ -274,6 +279,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// "replayed OR rolled back according to the recorded phase" is honoured by
 	// treating "prepared" as not-yet-authorized-to-publish.
 	if err := s.crash(CrashAfterStagedWrite); err != nil {
+		_ = staged.Close()
 		return Result{}, err
 	}
 
@@ -281,6 +287,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// read them. With locking this should never fire; without locking it is the
 	// only thing that prevents lost updates.
 	if err := s.assertPrecondition(m); err != nil {
+		_ = staged.Close()
 		s.cleanupAfterCASFailure(journal, backupPath)
 		s.observeLock(LockEvent{Kind: LockCASConflict, Path: m.AbsFile, Err: err})
 		if errors.Is(err, ErrGenerationConflict) {
@@ -291,10 +298,15 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 
 	// STEP 4: atomically rename the patched aggregate. Invariant established:
 	// readers see either the whole old file or the whole new file, never a mix.
+	// The exclusively-created staging descriptor remains open through the
+	// rename, so the bytes being published are the bytes written through that
+	// descriptor rather than a path that was reopened after staging.
 	if err := os.Rename(journal.StagedPath, m.AbsFile); err != nil {
+		_ = staged.Close()
 		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
 	}
 	if err := fsyncDir(filepath.Dir(m.AbsFile)); err != nil {
+		_ = staged.Close()
 		return Result{}, err
 	}
 
@@ -312,7 +324,11 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// heuristic — and rolls FORWARD, committing the journal's ownership
 	// generation so state matches the bytes that are live.
 	if err := s.crash(CrashAfterAggregateRename); err != nil {
+		_ = staged.Close()
 		return Result{}, err
+	}
+	if err := staged.Close(); err != nil {
+		return Result{}, fmt.Errorf("ownership: close published staged file %s: %w", journal.StagedPath, err)
 	}
 
 	// STEP 5: journal phase "aggregate-renamed", fsynced. This is a pure
@@ -470,37 +486,6 @@ func (s *Store) ensureUnderRoot(absFile string) error {
 		return fmt.Errorf("ownership: %s is outside the canonical target root %s", absFile, s.canonicalRoot)
 	}
 	return nil
-}
-
-func stagedPathFor(absFile string, generation uint64) string {
-	return fmt.Sprintf("%s.am-staged-%d", absFile, generation)
-}
-
-// writeStaged writes and fsyncs the replacement content. It is not atomicWrite:
-// the staging file IS the temp file, and it must survive a crash under a name the
-// journal recorded so recovery can find and delete it.
-func writeStaged(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return fmt.Errorf("ownership: create staged file %s: %w", path, err)
-	}
-	// O_CREATE honours umask, so set the mode explicitly.
-	if err := f.Chmod(mode); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("ownership: chmod staged file %s: %w", path, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("ownership: write staged file %s: %w", path, err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("ownership: fsync staged file %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("ownership: close staged file %s: %w", path, err)
-	}
-	return fsyncDir(filepath.Dir(path))
 }
 
 func (s *Store) writeJournal(j *Journal) error {
