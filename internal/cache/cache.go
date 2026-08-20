@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +14,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-const compiledCacheDirName = "compiled"
+const (
+	compiledCacheDirName    = "compiled"
+	marketplaceCacheDirName = "marketplace"
+)
 
 // RegistryKey returns a stable, unique identifier for a registry entry's catalog.
 // For git registries it incorporates URL, ref, and path so that entries with
@@ -127,7 +131,8 @@ func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		if entry.Name() == compiledCacheDirName {
+		if entry.Name() == compiledCacheDirName || entry.Name() == marketplaceCacheDirName {
+			slog.Debug("cache garbage collection skipped reserved namespace", "namespace", entry.Name(), "dry_run", dryRun)
 			continue
 		}
 
