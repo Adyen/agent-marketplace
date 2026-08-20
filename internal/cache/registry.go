@@ -31,6 +31,12 @@ func redactArgs(args []string) []string {
 var refNameRE = regexp.MustCompile(`^[A-Za-z0-9._+/@-]+$`)
 
 func CloneOrPull(url, ref string) (string, error) {
+	return WithCacheMutationLock(func() (string, error) {
+		return cloneOrPull(url, ref)
+	})
+}
+
+func cloneOrPull(url, ref string) (string, error) {
 	if err := validateGitURL(url); err != nil {
 		return "", fmt.Errorf("validate registry url: %w", err)
 	}
@@ -39,7 +45,7 @@ func CloneOrPull(url, ref string) (string, error) {
 	}
 
 	cachePath := RegistryCachePath(url, ref)
-	cacheExists, err := dirExists(cachePath)
+	cacheExists, err := validateRegistryCachePath(cachePath)
 	if err != nil {
 		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
 	}
@@ -48,17 +54,36 @@ func CloneOrPull(url, ref string) (string, error) {
 
 	if !cacheExists {
 		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		if _, err := validateRegistryCachePath(filepath.Dir(cachePath)); err != nil {
+			return "", fmt.Errorf("validate cache parent for %q: %w", cachePath, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
 			return "", fmt.Errorf("create cache parent for %q: %w", cachePath, err)
+		}
+		if _, err := validateRegistryCachePath(cachePath); err != nil {
+			return "", fmt.Errorf("validate cache path before clone %q: %w", cachePath, err)
 		}
 
 		if err := runGit("", "clone", url, cachePath); err != nil {
 			return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
 		}
+		cacheExists, err = validateRegistryCachePath(cachePath)
+		if err != nil {
+			return "", fmt.Errorf("validate cloned cache path %q: %w", cachePath, err)
+		}
+		if !cacheExists {
+			return "", fmt.Errorf("clone registry %q did not create cache path %q", redactedURL, cachePath)
+		}
 	} else {
 		slog.Debug("registry cache hit; fetching", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		if _, err := validateRegistryCachePath(cachePath); err != nil {
+			return "", fmt.Errorf("validate cache path before fetch %q: %w", cachePath, err)
+		}
 		if err := runGit(cachePath, "fetch"); err != nil {
 			slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
+			if _, validateErr := validateRegistryCachePath(cachePath); validateErr != nil {
+				return "", fmt.Errorf("validate stale cache at %q: %w", cachePath, validateErr)
+			}
 			if checkoutErr := checkoutResolvedRef(cachePath, ref); checkoutErr != nil {
 				return "", fmt.Errorf("use stale cache at %q: %w", cachePath, checkoutErr)
 			}
@@ -66,6 +91,9 @@ func CloneOrPull(url, ref string) (string, error) {
 		}
 	}
 
+	if _, err := validateRegistryCachePath(cachePath); err != nil {
+		return "", fmt.Errorf("validate cache path before checkout %q: %w", cachePath, err)
+	}
 	slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
 	if err := checkoutResolvedRef(cachePath, ref); err != nil {
 		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
@@ -79,15 +107,39 @@ func checkoutResolvedRef(repoDir, ref string) error {
 	return runGit(repoDir, "checkout", ref)
 }
 
-func dirExists(path string) (bool, error) {
-	info, err := os.Stat(path)
-	if err == nil {
-		return info.IsDir(), nil
+// validateRegistryCachePath rejects symlinked cache roots, ancestors, and
+// existing paths before git or directory operations use them. The checks are
+// intentionally best-effort process-local guards, not cross-process or
+// openat-style atomic guarantees.
+func validateRegistryCachePath(path string) (bool, error) {
+	cacheRoot := CacheDir()
+	cacheBoundary := cacheRoot
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		// Validate through HOME so a symlinked HOME/.cache ancestor cannot
+		// redirect registry acquisition into an external tree.
+		cacheBoundary = homeDir
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+	if err := ValidateDirectoryAncestry(cacheBoundary, cacheRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("validate cache root %q: %w", cacheRoot, err)
 	}
-	return false, err
+	if err := ValidateDirectoryAncestry(cacheRoot, path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("cache path %q is a symlink", path)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("cache path %q is not a directory", path)
+	}
+	return true, nil
 }
 
 func runGit(repoDir string, args ...string) error {

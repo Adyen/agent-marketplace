@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 func newGCCmd() *cobra.Command {
@@ -31,23 +33,51 @@ func runGC(out io.Writer, dryRun bool) error {
 	if err != nil {
 		return err
 	}
+	if mergedCtx.OrgCfg == nil && mergedCtx.GlobalCfg == nil && mergedCtx.RepoCfg == nil && mergedCtx.LocalCfg == nil {
+		return errors.New("gc requires at least one effective configuration layer")
+	}
 
-	result, gcErr := cache.GarbageCollect(dryRun, mergedCtx.MergedCfg)
+	var registryResult cache.GCResult
+	var registryErr, marketplaceErr error
+	var marketplaceResult marketplace.GCResult
+	marketplaceCache := marketplace.DefaultCache()
+
+	if dryRun {
+		registryResult, registryErr = cache.GarbageCollect(true, mergedCtx.MergedCfg)
+		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(true, mergedCtx.MergedCfg)
+	} else {
+		if _, err := marketplaceCache.GarbageCollect(true, mergedCtx.MergedCfg); err != nil {
+			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", err)
+		} else {
+			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(false, mergedCtx.MergedCfg)
+			if marketplaceErr == nil {
+				registryResult, registryErr = cache.GarbageCollect(false, mergedCtx.MergedCfg)
+			}
+		}
+	}
 
 	action := "Removed"
 	if dryRun {
 		action = "Would remove"
 	}
 
-	for _, removed := range result.Removed {
+	for _, removed := range registryResult.Removed {
 		if _, err := fmt.Fprintf(out, "%s %s\n", action, removed); err != nil {
 			return err
 		}
 	}
-
-	if _, err := fmt.Fprintf(out, "%s %d cache entries\n", action, len(result.Removed)); err != nil {
+	if _, err := fmt.Fprintf(out, "%s %d cache entries\n", action, len(registryResult.Removed)); err != nil {
 		return err
 	}
 
-	return gcErr
+	for _, removed := range marketplaceResult.Removed {
+		if _, err := fmt.Fprintf(out, "%s %s\n", action, removed); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "%s %d marketplace artifact directories\n", action, len(marketplaceResult.Removed)); err != nil {
+		return err
+	}
+
+	return errors.Join(registryErr, marketplaceErr)
 }

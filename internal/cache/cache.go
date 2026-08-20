@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
@@ -115,16 +116,58 @@ type GCResult struct {
 	Removed []string
 }
 
-func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
-	result := GCResult{}
-	active := activeRegistryHashes(cfgs...)
+// WithCacheMutationLock serializes cache writes and garbage collection within
+// this process. It deliberately provides no cross-process coordination; callers
+// that share a cache across processes still need filesystem-level isolation.
+func WithCacheMutationLock[T any](fn func() (T, error)) (T, error) {
+	cacheMutationMu.Lock()
+	defer cacheMutationMu.Unlock()
+	return fn()
+}
 
-	entries, err := os.ReadDir(CacheDir())
-	if err != nil {
+func WithCacheMutation(fn func() error) error {
+	_, err := WithCacheMutationLock(func() (struct{}, error) {
+		return struct{}{}, fn()
+	})
+	return err
+}
+
+var cacheMutationMu sync.Mutex
+
+func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	return WithCacheMutationLock(func() (GCResult, error) {
+		return garbageCollect(dryRun, cfgs...)
+	})
+}
+
+func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	result := GCResult{}
+	defer slices.Sort(result.Removed)
+
+	if !hasEffectiveConfig(cfgs...) {
+		err := errors.New("cache garbage collection requires effective configuration")
+		slog.Warn("cache garbage collection failed closed", "reason", err)
+		return result, err
+	}
+	active := activeRegistryHashes(cfgs...)
+	cacheRoot := CacheDir()
+	cacheBoundary := cacheRoot
+	if homeDir, homeErr := os.UserHomeDir(); homeErr == nil && homeDir != "" {
+		// Validate through HOME so a symlinked home/.cache ancestor cannot
+		// redirect this process into an external tree. Stop before unrelated
+		// system ancestors such as macOS's commonly symlinked /var.
+		cacheBoundary = homeDir
+	}
+	if err := ValidateDirectoryAncestry(cacheBoundary, cacheRoot); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return result, nil
 		}
-		return result, fmt.Errorf("read cache directory %q: %w", CacheDir(), err)
+		return result, fmt.Errorf("validate cache directory %q: %w", cacheRoot, err)
+	}
+
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return result, fmt.Errorf("read cache directory %q: %w", cacheRoot, err)
 	}
 
 	for _, entry := range entries {
@@ -140,20 +183,74 @@ func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 			continue
 		}
 
-		cachePath := filepath.Join(CacheDir(), entry.Name())
-		result.Removed = append(result.Removed, cachePath)
+		cachePath := filepath.Join(cacheRoot, entry.Name())
+		if err := ValidateDirectoryAncestry(cacheRoot, cachePath); err != nil {
+			return result, fmt.Errorf("validate cache directory %q: %w", cachePath, err)
+		}
 		if dryRun {
+			result.Removed = append(result.Removed, cachePath)
 			continue
 		}
 
 		if err := os.RemoveAll(cachePath); err != nil {
 			return result, fmt.Errorf("remove cache directory %q: %w", cachePath, err)
 		}
+		result.Removed = append(result.Removed, cachePath)
 	}
 
-	slices.Sort(result.Removed)
-
 	return result, nil
+}
+
+func hasEffectiveConfig(cfgs ...*config.Config) bool {
+	for _, cfg := range cfgs {
+		if cfg != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateDirectoryAncestry rejects symlinks and non-directories from path up
+// through root, inclusive. The check is intentionally path based: it is a
+// best-effort process-local guard, not an atomic replacement for openat-style
+// filesystem operations.
+func ValidateDirectoryAncestry(root, path string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing path outside cache root")
+	}
+
+	var missingErr error
+	for current := pathAbs; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if missingErr == nil {
+				missingErr = err
+			}
+		} else {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("path %q is a symlink", current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("path %q is not a directory", current)
+			}
+		}
+		if current == rootAbs {
+			break
+		}
+	}
+	return missingErr
 }
 
 func activeRegistryHashes(cfgs ...*config.Config) map[string]struct{} {

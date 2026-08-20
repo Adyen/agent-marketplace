@@ -15,7 +15,7 @@ func TestGarbageCollectReturnsEmptyWhenCacheDirMissing(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// No ~/.cache/agent-marketplace directory exists yet.
-	res, err := GarbageCollect(false)
+	res, err := GarbageCollect(false, &config.Config{})
 	if err != nil {
 		t.Fatalf("expected no error when cache dir missing, got %v", err)
 	}
@@ -32,7 +32,7 @@ func TestGarbageCollectEmptyCacheDirReturnsNothing(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := GarbageCollect(false)
+	res, err := GarbageCollect(false, &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestGarbageCollectDryRunReportsButDoesNotDelete(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := GarbageCollect(true)
+	res, err := GarbageCollect(true, &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestGarbageCollectIgnoresFilesInCacheDir(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	res, err := GarbageCollect(false)
+	res, err := GarbageCollect(false, &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestGarbageCollectIgnoresFilesInCacheDir(t *testing.T) {
 	}
 }
 
-func TestGarbageCollectHandlesNilAndEmptyConfigs(t *testing.T) {
+func TestGarbageCollectRequiresConfigFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -146,7 +146,29 @@ func TestGarbageCollectHandlesNilAndEmptyConfigs(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	// nil config + empty config: still sweeps the orphan.
+	res, err := GarbageCollect(false)
+	if err == nil {
+		t.Fatal("expected missing effective config error")
+	}
+	if len(res.Removed) != 0 {
+		t.Fatalf("missing-config GC reported removals: %#v", res.Removed)
+	}
+	if _, statErr := os.Stat(inactivePath); statErr != nil {
+		t.Fatalf("missing-config GC mutated cache: %v", statErr)
+	}
+}
+
+func TestGarbageCollectIgnoresNilConfigWhenEffectiveConfigSupplied(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	inactiveHash := HashURL("git@example.com:orphan.git")
+	inactivePath := filepath.Join(CacheDir(), inactiveHash)
+	if err := os.MkdirAll(inactivePath, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// A nil layer is harmless when a nonnil effective config is supplied.
 	res, err := GarbageCollect(false, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -203,7 +225,7 @@ func TestGarbageCollectResultIsSorted(t *testing.T) {
 		}
 	}
 
-	res, err := GarbageCollect(true)
+	res, err := GarbageCollect(true, &config.Config{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -255,7 +277,7 @@ func TestGarbageCollectPreservesMarketplaceCacheNamespace(t *testing.T) {
 				t.Fatalf("mkdir stale cache: %v", err)
 			}
 
-			result, err := GarbageCollect(dryRun)
+			result, err := GarbageCollect(dryRun, &config.Config{})
 			if err != nil {
 				t.Fatalf("GarbageCollect: %v", err)
 			}
@@ -271,5 +293,112 @@ func TestGarbageCollectPreservesMarketplaceCacheNamespace(t *testing.T) {
 				t.Fatalf("stale cache should be removed after non-dry run, stat err: %v", err)
 			}
 		})
+	}
+}
+
+func TestGarbageCollectRejectsSymlinkedRootAndPreservesExternalTarget(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	externalRoot := t.TempDir()
+	externalPath := filepath.Join(externalRoot, "stale")
+	if err := os.MkdirAll(externalPath, 0o755); err != nil {
+		t.Fatalf("mkdir external cache: %v", err)
+	}
+	cacheRoot := CacheDir()
+	if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o755); err != nil {
+		t.Fatalf("mkdir cache parent: %v", err)
+	}
+	if err := os.Symlink(externalRoot, cacheRoot); err != nil {
+		t.Fatalf("symlink cache root: %v", err)
+	}
+
+	result, err := GarbageCollect(false, &config.Config{})
+	if err == nil {
+		t.Fatal("expected symlinked cache root error")
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("symlinked root reported removals: %v", result.Removed)
+	}
+	if _, err := os.Stat(externalPath); err != nil {
+		t.Fatalf("symlinked root touched external target: %v", err)
+	}
+}
+
+func TestGarbageCollectRejectsSymlinkedCacheAncestorAndPreservesExternalTarget(t *testing.T) {
+	homeTarget := t.TempDir()
+	homeLinkParent := t.TempDir()
+	homeLink := filepath.Join(homeLinkParent, "home")
+	t.Setenv("HOME", homeLink)
+	externalPath := filepath.Join(homeTarget, ".cache", "agent-marketplace", "stale")
+	if err := os.MkdirAll(externalPath, 0o755); err != nil {
+		t.Fatalf("mkdir external cache: %v", err)
+	}
+	if err := os.Symlink(homeTarget, homeLink); err != nil {
+		t.Fatalf("symlink home ancestor: %v", err)
+	}
+
+	result, err := GarbageCollect(false, &config.Config{})
+	if err == nil {
+		t.Fatal("expected symlinked cache ancestor error")
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("symlinked ancestor reported removals: %v", result.Removed)
+	}
+	if _, err := os.Stat(externalPath); err != nil {
+		t.Fatalf("symlinked ancestor touched external target: %v", err)
+	}
+}
+
+func TestGarbageCollectRejectsNonDirectoryCacheRoot(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	cacheRoot := CacheDir()
+	if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o755); err != nil {
+		t.Fatalf("mkdir cache parent: %v", err)
+	}
+	if err := os.WriteFile(cacheRoot, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write cache root: %v", err)
+	}
+
+	result, err := GarbageCollect(false, &config.Config{})
+	if err == nil {
+		t.Fatal("expected non-directory cache root error")
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("non-directory root reported removals: %v", result.Removed)
+	}
+	if raw, readErr := os.ReadFile(cacheRoot); readErr != nil || string(raw) != "not a directory" {
+		t.Fatalf("non-directory cache root was changed: raw=%q err=%v", raw, readErr)
+	}
+}
+
+func TestGarbageCollectReportsOnlySuccessfulRemovals(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	firstPath := filepath.Join(CacheDir(), "a-stale")
+	failedPath := filepath.Join(CacheDir(), "b-stale")
+	if err := os.MkdirAll(filepath.Join(firstPath, "main"), 0o755); err != nil {
+		t.Fatalf("mkdir first cache: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(failedPath, "main"), 0o755); err != nil {
+		t.Fatalf("mkdir failed cache: %v", err)
+	}
+	if err := os.Chmod(failedPath, 0o555); err != nil {
+		t.Fatalf("chmod failed cache: %v", err)
+	}
+	defer func() { _ = os.Chmod(failedPath, 0o755) }()
+
+	result, err := GarbageCollect(false, &config.Config{})
+	if err == nil {
+		t.Skip("filesystem permitted deletion of a read-only cache directory")
+	}
+	if len(result.Removed) != 1 || result.Removed[0] != firstPath {
+		t.Fatalf("removed = %v, want only successfully removed path %q", result.Removed, firstPath)
+	}
+	if _, err := os.Stat(firstPath); !os.IsNotExist(err) {
+		t.Fatalf("successful removal left first cache, stat err=%v", err)
+	}
+	if _, err := os.Stat(failedPath); err != nil {
+		t.Fatalf("failed removal did not preserve later cache: %v", err)
 	}
 }
