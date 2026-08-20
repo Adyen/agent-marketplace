@@ -578,6 +578,11 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 		return result
 	}
 
+	// Preserve Marketplace entries in the loaded config so downstream resolver
+	// and pipeline consumers can resolve configured Marketplace pins.
+	result.Config.Marketplaces = cfg.Marketplaces
+	result.Config.AllowedMarketplaces = cfg.AllowedMarketplaces
+
 	// Phase 1: Prepare fetch jobs from registry entries.
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)
 	result.Errors = append(result.Errors, err...)
