@@ -126,6 +126,8 @@ func executeCommandContext(ctx context.Context, args ...string) (string, error) 
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
 
-	err := cmd.Execute()
+	execCmd, err := cmd.ExecuteC()
+	finishTelemetry(execCmd, err)
+	finishRootLogging(err)
 	return output.String(), err
 }
