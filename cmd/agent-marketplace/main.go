@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
@@ -32,8 +35,10 @@ var rootLogState struct {
 
 func main() {
 	cmd := newRootCmd()
-	if err := cmd.Execute(); err != nil {
-		finishRootLogging(err)
+	execCmd, execErr := cmd.ExecuteC()
+	finishTelemetry(execCmd, execErr)
+	if execErr != nil {
+		finishRootLogging(execErr)
 		// Cobra already prints the error (SilenceErrors is false) to the
 		// command's stderr. Do NOT print it again here, or every error shows
 		// up twice. Just exit non-zero.
@@ -53,7 +58,9 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			start := time.Now()
 			initRootLogging(cmd, debug)
+			initTelemetry(cmd, start)
 			if shouldSkipTargetValidation(cmd) {
 				return nil
 			}
@@ -65,10 +72,6 @@ func newRootCmd() *cobra.Command {
 				slog.Error("initialize harness targets", "error", err)
 				return fmt.Errorf("initialize harness targets: %w", err)
 			}
-			return nil
-		},
-		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			finishRootLogging(nil)
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -170,6 +173,83 @@ func finishRootLogging(execErr error) {
 		fmt.Fprintf(os.Stderr, "warning: failed to close log file: %v\n", err)
 	}
 	rootLogState.closed = true
+}
+
+func initTelemetry(cmd *cobra.Command, start time.Time) {
+	if cmd == nil {
+		return
+	}
+	path := cmd.CommandPath()
+	if shouldSkipTelemetryInit(path) {
+		return
+	}
+
+	state, err := telemetry.LoadAndResolve(context.Background())
+	if err != nil {
+		slog.Warn("telemetry config resolution failed; continuing without telemetry", "error", err)
+		return
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic && state.EffectiveLevel != tmcfg.LevelDetailed {
+		return
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	t, err := telemetry.New(ctx, state, slog.Default())
+	if err != nil {
+		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
+		return
+	}
+
+	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed))
+}
+
+func finishTelemetry(cmd *cobra.Command, execErr error) {
+	if cmd == nil {
+		return
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	t := telemetry.TelemetryFromContext(ctx)
+	if t == nil {
+		return
+	}
+
+	path := telemetry.CommandPathFromContext(ctx)
+	if path == "" {
+		path = cmd.CommandPath()
+	}
+	start := telemetry.CommandStartFromContext(ctx)
+	harnesses := telemetry.HarnessesFromContext(ctx)
+	managed := telemetry.ManagedFromContext(ctx)
+
+	outcome := "success"
+	if execErr != nil {
+		outcome = "error"
+	}
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName): path,
+		string(tmcfg.ResourceAttrHarnesses):   harnesses,
+		string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(managed),
+		string(tmcfg.ResourceAttrOutcomeCode): outcome,
+	}
+
+	t.CommandCounter().Add(ctx, 1, attrs)
+	t.CommandDuration().Record(ctx, time.Since(start).Milliseconds(), attrs)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := t.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("telemetry shutdown failed", "error", err)
+	}
+}
+
+func shouldSkipTelemetryInit(path string) bool {
+	return path == "agent-marketplace init" || strings.HasPrefix(path, "agent-marketplace telemetry")
 }
 
 func applyLoggingConfig(opts *logging.Options, cfg *config.LoggingConfig) {
