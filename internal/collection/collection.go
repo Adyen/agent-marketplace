@@ -5,10 +5,12 @@ package collection
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"gopkg.in/yaml.v3"
 )
 
@@ -90,7 +92,16 @@ type CollectionInclude struct {
 // stamped on each discovered collection for provenance tracking.
 func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([]Collection, error) {
 	collectionsDir := filepath.Join(skillDir, "collections")
-	entries, err := os.ReadDir(collectionsDir)
+	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("stat registry root %q: %w", skillDir, err)
+	}
+	secure, err := registryfs.New(skillDir, false)
+	if err != nil {
+		return nil, fmt.Errorf("validate registry root %q: %w", skillDir, err)
+	}
+	entries, err := fs.ReadDir(secure, "collections")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -107,8 +118,16 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 			continue
 		}
 
+		relPath := filepath.ToSlash(filepath.Join("collections", entry.Name(), collectionFileName))
 		yamlPath := filepath.Join(collectionsDir, entry.Name(), collectionFileName)
-		col, err := parseCollectionFile(yamlPath)
+		data, err := fs.ReadFile(secure, relPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read collection file %q: %w", yamlPath, err)
+		}
+		col, err := parseCollectionData(yamlPath, data)
 		if err != nil {
 			return nil, err
 		}
@@ -125,15 +144,7 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 	return results, nil
 }
 
-func parseCollectionFile(path string) (*Collection, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read collection file %q: %w", path, err)
-	}
-
+func parseCollectionData(path string, data []byte) (*Collection, error) {
 	var col Collection
 	if err := yaml.Unmarshal(data, &col); err != nil {
 		return nil, fmt.Errorf("parse collection file %q: %w", path, err)

@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -281,8 +282,14 @@ func markdownBody(content string) string {
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
 func Load(dir string, sourceHarness string) (*Catalog, error) {
-	srcFS := os.DirFS(dir)
+	srcFS, err := registryfs.New(dir, false)
+	if err != nil {
+		return nil, err
+	}
 	cat, err := LoadFS(srcFS, sourceHarness)
+	if validationErr := srcFS.ValidationError(); validationErr != nil {
+		return nil, fmt.Errorf("validate registry files: %w", validationErr)
+	}
 	if err != nil {
 		return nil, err
 	}

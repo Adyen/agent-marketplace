@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
@@ -318,14 +320,18 @@ func subPathRel(path, prefix string) bool {
 // own Load call handles its internal structure. Directories without roots are
 // recursed into. Results are sorted deterministically by path.
 func scanForSubBundles(dir string) []string {
+	secure, err := registryfs.New(dir, false)
+	if err != nil {
+		return nil
+	}
 	var bundles []string
-	scanSubBundlesWalk(dir, &bundles)
+	scanSubBundlesWalk(secure, dir, ".", &bundles)
 	sort.Strings(bundles)
 	return bundles
 }
 
-func scanSubBundlesWalk(dir string, bundles *[]string) {
-	entries, err := os.ReadDir(dir)
+func scanSubBundlesWalk(src fs.FS, root, relative string, bundles *[]string) {
+	entries, err := fs.ReadDir(src, relative)
 	if err != nil {
 		return
 	}
@@ -337,11 +343,19 @@ func scanSubBundlesWalk(dir string, bundles *[]string) {
 		if _, skip := skippedScanDirs[name]; skip {
 			continue
 		}
-		subDir := filepath.Join(dir, entry.Name())
-		if hasBundleRoot(subDir) {
+		subRelative := name
+		if relative != "." {
+			subRelative = filepath.ToSlash(filepath.Join(filepath.FromSlash(relative), name))
+		}
+		subDir := filepath.Join(root, filepath.FromSlash(subRelative))
+		subFS, err := fs.Sub(src, subRelative)
+		if err != nil {
+			continue
+		}
+		if hasBundleRootFS(subFS) {
 			*bundles = append(*bundles, subDir)
 		} else {
-			scanSubBundlesWalk(subDir, bundles)
+			scanSubBundlesWalk(src, root, subRelative, bundles)
 		}
 	}
 }
@@ -388,7 +402,10 @@ var skippedScanDirs = map[string]struct{}{
 // case (dir/*/SKILL.md) so container directories with multiple skills are
 // still recognized. A root SKILL.md (single-skill directory) remains excluded.
 func hasBundleRoot(dir string) bool {
-	srcFS := os.DirFS(dir)
+	return hasBundleRootFS(os.DirFS(dir))
+}
+
+func hasBundleRootFS(srcFS fs.FS) bool {
 	_, ok := ingest.AutodetectStrict(srcFS)
 	if ok {
 		return true
@@ -716,6 +733,28 @@ func IsOverlapWarning(err error) bool {
 	return errors.As(err, &w)
 }
 
+func validateRegistrySelection(root, selected string, rejectSymlinks bool) error {
+	relative, err := filepath.Rel(root, selected)
+	if err != nil {
+		return fmt.Errorf("resolve selected registry path: %w", err)
+	}
+	if !rejectSymlinks && relative == "." {
+		return nil
+	}
+	if _, err := os.Stat(selected); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if rejectSymlinks {
+		if err := registryfs.ValidatePath(root, filepath.ToSlash(relative), true); err != nil {
+			return err
+		}
+		return registryfs.ValidateTree(selected, true)
+	}
+	return registryfs.ValidatePath(root, filepath.ToSlash(relative), false)
+}
+
 // discoverAll runs skill discovery on all loaded requests and populates the result.
 func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFunc) {
 	discoveredByKey := make(map[string]LoadedCatalog)
@@ -766,6 +805,15 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			}
 			continue
 		}
+		if !entry.IsLocal() || entry.Path != "" {
+			if err := validateRegistrySelection(basePath, skillDir, !entry.IsLocal()); err != nil {
+				result.Config.Registries = append(result.Config.Registries, entry)
+				result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): validate registry files: %w", entry.URL, entry.Ref, entry.Path, err))
+				slog.Warn("registry rejected before discovery", "url", redact.URL(entry.URL), "ref", entry.Ref, "path", entry.Path, "error", err)
+				continue
+			}
+		}
+
 		scannedDirs[skillDir] = struct{}{}
 		scannedDirKeys[skillDir] = req.catalogKey
 
