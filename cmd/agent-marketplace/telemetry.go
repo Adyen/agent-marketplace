@@ -34,6 +34,7 @@ func newTelemetryCmd() *cobra.Command {
 		newTelemetryPreviewCmd(),
 		newTelemetryResetIDCmd(),
 		newTelemetryPurgeCmd(),
+		newTelemetryReceiverCmd(),
 	)
 
 	return cmd
@@ -135,12 +136,16 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 	}
 	orgLevel := tmcfg.LevelOff
 	if org != nil && org.Telemetry != nil {
-		orgLevel, _ = tmcfg.NormalizeLevel(org.Telemetry.Level)
+		var normErr error
+		orgLevel, normErr = tmcfg.NormalizeLevel(org.Telemetry.Level)
+		if normErr != nil {
+			return fmt.Errorf("organization telemetry level %q: %w", org.Telemetry.Level, normErr)
+		}
 	}
 	if tmcfg.LevelOrder(normalized) < tmcfg.LevelOrder(orgLevel) {
 		return fmt.Errorf("organization policy requires telemetry level %q or higher", orgLevel)
 	}
-	if state.Managed && endpoint != "" && state.PrimaryEndpointSource == "ORG" {
+	if state.Managed && endpoint != "" && state.PrimaryEndpointSource == config.Organization.String() {
 		return fmt.Errorf("endpoint is locked by organization policy")
 	}
 
@@ -367,14 +372,15 @@ func formatPrimaryHeaders(headers map[string]tmcfg.HeaderSource) string {
 }
 
 func lockedFields(state telemetry.TelemetryState) []string {
+	orgSource := config.Organization.String()
 	var locked []string
-	if state.EffectiveLevelSource == "ORG" {
+	if state.EffectiveLevelSource == orgSource {
 		locked = append(locked, "level")
 	}
-	if state.PrimaryEndpointSource == "ORG" {
+	if state.PrimaryEndpointSource == orgSource {
 		locked = append(locked, "endpoint")
 	}
-	if state.CommunityReportingSource == "ORG" {
+	if state.CommunityReportingSource == orgSource {
 		locked = append(locked, "community_reporting")
 	}
 	return locked

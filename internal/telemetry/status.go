@@ -35,7 +35,11 @@ func GetStatusInfo(ctx context.Context) (StatusInfo, error) {
 	}
 	info.State = state
 
-	info.InstallationID, _ = ReadInstallationID(state.InstallationIDPath)
+	var readErr error
+	info.InstallationID, readErr = ReadInstallationID(state.InstallationIDPath)
+	if readErr != nil {
+		slog.Warn("telemetry status: failed to read installation id", "path", state.InstallationIDPath, "error", readErr)
+	}
 
 	queueRoot := state.QueueRoot()
 	q := NewQueue(queueRoot)
