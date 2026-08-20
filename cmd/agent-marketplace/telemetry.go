@@ -35,6 +35,7 @@ func newTelemetryCmd() *cobra.Command {
 		newTelemetryPreviewCmd(),
 		newTelemetryResetIDCmd(),
 		newTelemetryPurgeCmd(),
+		newTelemetryReceiverCmd(),
 	)
 
 	return cmd
