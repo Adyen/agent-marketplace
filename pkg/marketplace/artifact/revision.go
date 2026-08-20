@@ -45,13 +45,12 @@ func RevisionDigest(payload []byte) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
-// EncodeSourceRevisionManifest serializes m to canonical JSON and returns the
-// bytes together with the revision digest.
-func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, error) {
+// canonicalPayloadAndDigest returns the deterministic JSON for m with the
+// self-referential revision_digest field excluded, together with its digest.
+func canonicalPayloadAndDigest(m SourceRevisionManifest) ([]byte, string, error) {
 	if err := m.Validate(); err != nil {
 		return nil, "", err
 	}
-
 	digestOnly := m
 	digestOnly.RevisionDigest = ""
 	payload, err := canonicalRevisionPayload(digestOnly)
@@ -59,7 +58,16 @@ func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, err
 		return nil, "", err
 	}
 	digest := RevisionDigest(payload)
+	return payload, digest, nil
+}
 
+// EncodeSourceRevisionManifest serializes m to canonical JSON and returns the
+// bytes together with the revision digest.
+func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, error) {
+	_, digest, err := canonicalPayloadAndDigest(m)
+	if err != nil {
+		return nil, "", err
+	}
 	m.RevisionDigest = digest
 	out, err := canonicalRevisionPayload(m)
 	if err != nil {
@@ -72,17 +80,7 @@ func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, err
 // with the self-referential revision_digest field excluded, together with its
 // SHA-256 content digest. This is the form stored as a content-addressed blob.
 func CanonicalSourceRevisionPayload(m SourceRevisionManifest) ([]byte, string, error) {
-	if err := m.Validate(); err != nil {
-		return nil, "", err
-	}
-	digestOnly := m
-	digestOnly.RevisionDigest = ""
-	payload, err := canonicalRevisionPayload(digestOnly)
-	if err != nil {
-		return nil, "", err
-	}
-	digest := RevisionDigest(payload)
-	return payload, digest, nil
+	return canonicalPayloadAndDigest(m)
 }
 
 // canonicalRevisionPayload returns deterministic JSON for m.
