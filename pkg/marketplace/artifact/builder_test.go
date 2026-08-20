@@ -181,9 +181,11 @@ func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 				Rejected:      false,
 			},
 			{
-				Kind:     rejected.Kind,
-				Name:     rejected.Name,
-				Rejected: true,
+				Kind:          rejected.Kind,
+				Name:          rejected.Name,
+				ContentDigest: rejected.ContentDigest,
+				ArchiveDigest: rejected.ArchiveDigest,
+				Rejected:      true,
 			},
 		},
 	}

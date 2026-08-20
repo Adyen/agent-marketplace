@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,6 +65,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	}
 
 	var processedResults []processed
+	resourceResults := make(map[string]processed)
+	var collectionEntries []catalog.Entry
 	seen := make(map[string]bool)
 
 	for _, root := range source.Roots {
@@ -119,13 +122,124 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			}
 			seen[key] = true
 
-			r, err := buildResource(ctx, source, root, entry, origin, commit, dir, policy, limits, allowlist)
+			if entry.Kind == hccir.KindCollection {
+				collectionEntries = append(collectionEntries, entry)
+				continue
+			}
+
+			r, err := buildResource(ctx, source, root, entry, origin, commit, dir, policy, limits, allowlist, nil)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
 			r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
-			processedResults = append(processedResults, processed{entry: entry, result: r})
+			p := processed{entry: entry, result: r}
+			processedResults = append(processedResults, p)
+			resourceResults[key] = p
 		}
+	}
+
+	collectionByName := make(map[string]catalog.Entry, len(collectionEntries))
+	for _, e := range collectionEntries {
+		collectionByName[e.Name] = e
+	}
+
+	type resolvedCollection struct {
+		result  artifact.BuildResult
+		members []artifact.BuildResult
+	}
+	collectionCache := make(map[string]resolvedCollection)
+
+	var resolveCollection func(name string, visiting map[string]bool) (artifact.BuildResult, []artifact.BuildResult, error)
+	resolveCollection = func(name string, visiting map[string]bool) (artifact.BuildResult, []artifact.BuildResult, error) {
+		if visiting[name] {
+			return artifact.BuildResult{}, nil, fmt.Errorf("cyclic collection reference: %q", name)
+		}
+		if cached, ok := collectionCache[name]; ok {
+			return cached.result, cached.members, nil
+		}
+
+		entry, ok := collectionByName[name]
+		if !ok {
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q not found", name)
+		}
+
+		c, ok := entry.Resource.(*hccir.Collection)
+		if !ok {
+			return artifact.BuildResult{}, nil, fmt.Errorf("resource %q is not a collection", name)
+		}
+
+		visiting[name] = true
+		defer func() { delete(visiting, name) }()
+
+		root := store.SourceRoot{Path: c.SourcePath}
+
+		var members []artifact.BuildResult
+		for _, m := range c.Members {
+			memberKind := m.Kind
+			if memberKind == 0 {
+				memberKind = hccir.KindSkill
+			}
+			effectiveRegistry := m.Registry
+			if effectiveRegistry == "" {
+				effectiveRegistry = c.SourceRegistryURL
+			}
+			effectiveRef := m.Ref
+			if effectiveRef == "" {
+				effectiveRef = c.SourceRef
+			}
+			if effectiveRegistry != origin || effectiveRef != source.Ref {
+				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %q references external registry/ref which is not supported", name, m.Name)
+			}
+
+			if memberKind == hccir.KindCollection {
+				res, mems, err := resolveCollection(m.Name, visiting)
+				if err != nil {
+					return artifact.BuildResult{}, nil, err
+				}
+				members = append(members, res)
+				members = append(members, mems...)
+				continue
+			}
+
+			kind := api.FromIR(memberKind)
+			key := kind + "/" + m.Name
+			rp, ok := resourceResults[key]
+			if !ok {
+				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in source", name, kind, m.Name)
+			}
+			members = append(members, rp.result)
+		}
+
+		for _, inc := range c.Includes {
+			res, mems, err := resolveCollection(inc, visiting)
+			if err != nil {
+				return artifact.BuildResult{}, nil, err
+			}
+			_ = res
+			members = append(members, mems...)
+		}
+
+		// Clear provenance-only source fields before analysis; the analyzer's
+		// dangerous-url scanner would otherwise flag the file:// origin used for
+		// local test fixtures. The origin is already captured in opts.Source.
+		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
+		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
+		r, err := buildResource(ctx, source, root, entry, origin, commit, dir, policy, limits, allowlist, members)
+		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
+		if err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
+		}
+		r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
+		collectionCache[name] = resolvedCollection{result: r, members: members}
+		return r, members, nil
+	}
+
+	for _, entry := range collectionEntries {
+		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
+		if err != nil {
+			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
+		}
+		processedResults = append(processedResults, processed{entry: entry, result: r})
 	}
 
 	var manifest artifact.SourceRevisionManifest
@@ -213,7 +327,7 @@ func firstErrorDiagnostic(ds []diag.Diagnostic) diag.Diagnostic {
 	return diag.Diagnostic{}
 }
 
-func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit, dir string, policy analyze.Policy, limits config.Limits, allowlist []string) (artifact.BuildResult, error) {
+func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit, dir string, policy analyze.Policy, limits config.Limits, allowlist []string, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
 	opts.Source = analyze.Source{
@@ -238,7 +352,10 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 
 	switch r := entry.Resource.(type) {
 	case *hccir.Collection:
-		return artifact.BuildCollectionManifest(ctx, r, nil, opts)
+		if r.SourcePath != "" {
+			opts.Source.Path = r.SourcePath
+		}
+		return artifact.BuildCollectionManifest(ctx, r, memberResults, opts)
 	case hccir.Resource:
 		return artifact.BuildResourceArtifact(ctx, r, files, opts)
 	default:
@@ -283,25 +400,30 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error
 	return files, nil
 }
 
-func supportFilesFor(r hccir.Resource) ([]string, error) {
+func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string, err error) {
 	switch v := r.(type) {
 	case *hccir.Skill:
-		return v.SupportFiles, nil
+		return v.Extra, v.SupportFiles, nil
 	case *hccir.Command:
-		return nil, nil
+		return v.Extra, nil, nil
 	case *hccir.Subagent:
-		return nil, nil
+		return v.Extra, nil, nil
 	case *hccir.Rule:
-		return nil, nil
+		return v.Extra, nil, nil
 	case *hccir.Hook:
-		return nil, nil
+		return v.Extra, nil, nil
 	case *hccir.McpServer:
-		return nil, nil
+		return v.Extra, nil, nil
 	case *hccir.Collection:
-		return nil, nil
+		return v.Extra, nil, nil
 	default:
-		return nil, fmt.Errorf("unsupported resource type %T", r)
+		return nil, nil, fmt.Errorf("unsupported resource type %T", r)
 	}
+}
+
+func supportFilesFor(r hccir.Resource) ([]string, error) {
+	_, supportFiles, err := resourceInfo(r)
+	return supportFiles, err
 }
 
 func readBoundedFile(path string, maxBytes int64) ([]byte, error) {
@@ -336,24 +458,11 @@ func resourceLicense(r hccir.Resource, fallback string) string {
 }
 
 func resourceExtra(r hccir.Resource) map[string]any {
-	switch v := r.(type) {
-	case *hccir.Skill:
-		return v.Extra
-	case *hccir.Command:
-		return v.Extra
-	case *hccir.Subagent:
-		return v.Extra
-	case *hccir.Rule:
-		return v.Extra
-	case *hccir.Hook:
-		return v.Extra
-	case *hccir.McpServer:
-		return v.Extra
-	case *hccir.Collection:
-		return v.Extra
-	default:
+	extra, _, err := resourceInfo(r)
+	if err != nil {
 		return nil
 	}
+	return extra
 }
 
 func effectivePolicy(cfg config.Config, overrides map[string]any) analyze.Policy {
@@ -457,21 +566,20 @@ func parseDuration(v any) (time.Duration, bool) {
 
 const defaultMaxFindings = 1000
 
+func stripArchive(r *artifact.BuildResult) {
+	r.RawArchive = nil
+	r.ArchiveDigest = ""
+}
+
 func applyPolicyToResult(r artifact.BuildResult, limits config.Limits, allowlist []string, mode store.AcquisitionMode) artifact.BuildResult {
-	if mode == store.AcquisitionIndexOnly {
-		r.RawArchive = nil
-		r.ArchiveDigest = ""
-	}
 	if r.Rejected {
-		r.RawArchive = nil
-		r.ArchiveDigest = ""
+		stripArchive(&r)
 		return r
 	}
 
-	if len(allowlist) > 0 && !contains(allowlist, r.License) {
+	if len(allowlist) > 0 && !slices.Contains(allowlist, r.License) {
 		r.Rejected = true
-		r.RawArchive = nil
-		r.ArchiveDigest = ""
+		stripArchive(&r)
 		r.Findings = append(r.Findings, analyze.Finding{
 			Code:     "marketplace.policy.license-not-allowed",
 			Severity: analyze.OutcomeReject,
@@ -481,32 +589,22 @@ func applyPolicyToResult(r artifact.BuildResult, limits config.Limits, allowlist
 	}
 
 	if limits.ArtifactBytes > 0 && len(r.RawArchive) > int(limits.ArtifactBytes) {
+		artifactSize := len(r.RawArchive)
 		r.Rejected = true
-		r.RawArchive = nil
-		r.ArchiveDigest = ""
+		stripArchive(&r)
 		r.Findings = append(r.Findings, analyze.Finding{
 			Code:     "marketplace.policy.artifact-too-large",
 			Severity: analyze.OutcomeReject,
-			Message:  fmt.Sprintf("artifact size %d exceeds limit %d", len(r.RawArchive), limits.ArtifactBytes),
+			Message:  fmt.Sprintf("artifact size %d exceeds limit %d", artifactSize, limits.ArtifactBytes),
 		})
 		return r
 	}
 
 	if mode == store.AcquisitionIndexOnly {
-		r.RawArchive = nil
-		r.ArchiveDigest = ""
+		stripArchive(&r)
 	}
 
 	return r
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 func toStoreFindings(findings []analyze.Finding) []store.Finding {

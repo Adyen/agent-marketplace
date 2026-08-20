@@ -204,6 +204,10 @@ func EntriesFromCollections(cols []collection.Collection) ([]Entry, error) {
 			includes = append(includes, inc.Name)
 		}
 		irCol := ir.NewCollection(col.Name, col.Version, col.Description, members, includes, nil, ir.SourceRef{})
+		irCol.SourceRegistryURL = col.SourceRegistryURL
+		irCol.SourceRef = col.SourceRef
+		irCol.SourceCatalogKey = col.SourceCatalogKey
+		irCol.SourcePath = col.SourcePath
 
 		entries = append(entries, Entry{
 			Kind:        ir.KindCollection,

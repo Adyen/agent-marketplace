@@ -180,7 +180,8 @@ type sourceScanner interface {
 func (s *Store) GetSource(ctx context.Context, id store.SourceID) (store.Source, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
-		        license, credentials_ref, policy_overrides, listed, created_at, updated_at
+		        license, credentials_ref, policy_overrides, listed,
+		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
 		 FROM sources WHERE id=$1`,
 		id,
 	)
@@ -190,12 +191,16 @@ func (s *Store) GetSource(ctx context.Context, id store.SourceID) (store.Source,
 func (s *Store) scanSource(sc sourceScanner) (store.Source, error) {
 	var src store.Source
 	var aliasesJSON, originsJSON, rootsJSON, publisherJSON, policyJSON string
+	var refreshStatus string
+	var refreshError sql.NullString
 	var listed bool
-	var created, updated int64
+	var created, updated, refreshedAt int64
 	err := sc.Scan(
 		&src.ID, &src.Slug, &aliasesJSON, &originsJSON, &src.Ref, &rootsJSON,
 		&src.Acquisition, &publisherJSON, &src.License, &src.CredentialsRef,
-		&policyJSON, &listed, &created, &updated,
+		&policyJSON, &listed,
+		&refreshStatus, &refreshError, &refreshedAt,
+		&created, &updated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Source{}, store.ErrNotFound
@@ -204,6 +209,11 @@ func (s *Store) scanSource(sc sourceScanner) (store.Source, error) {
 		return store.Source{}, err
 	}
 	src.Listed = listed
+	src.RefreshStatus = store.SourceRefreshStatus(refreshStatus)
+	if refreshError.Valid {
+		src.RefreshError = refreshError.String
+	}
+	src.RefreshedAt = microToTime(refreshedAt)
 	src.CreatedAt = microToTime(created)
 	src.UpdatedAt = microToTime(updated)
 
@@ -235,6 +245,9 @@ func (s *Store) PutSource(ctx context.Context, src store.Source) error {
 	if err := src.Acquisition.Validate(); err != nil {
 		return err
 	}
+	if src.RefreshStatus == "" {
+		src.RefreshStatus = store.SourceRefreshStatusUnknown
+	}
 	now := time.Now().UTC()
 	if src.CreatedAt.IsZero() {
 		src.CreatedAt = now
@@ -265,8 +278,9 @@ func (s *Store) PutSource(ctx context.Context, src store.Source) error {
 	_, err = s.q.ExecContext(ctx,
 		`INSERT INTO sources
 		 (id, slug, aliases, origins, ref, roots, acquisition, publisher,
-		  license, credentials_ref, policy_overrides, listed, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		  license, credentials_ref, policy_overrides, listed,
+		  refresh_status, refresh_error, refreshed_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		 ON CONFLICT (id) DO UPDATE SET
 		   slug = EXCLUDED.slug,
 		   aliases = EXCLUDED.aliases,
@@ -279,11 +293,16 @@ func (s *Store) PutSource(ctx context.Context, src store.Source) error {
 		   credentials_ref = EXCLUDED.credentials_ref,
 		   policy_overrides = EXCLUDED.policy_overrides,
 		   listed = EXCLUDED.listed,
+		   refresh_status = EXCLUDED.refresh_status,
+		   refresh_error = EXCLUDED.refresh_error,
+		   refreshed_at = EXCLUDED.refreshed_at,
 		   created_at = EXCLUDED.created_at,
 		   updated_at = EXCLUDED.updated_at`,
 		src.ID, src.Slug, aliasesJSON, originsJSON, src.Ref, rootsJSON,
 		src.Acquisition, publisherJSON, src.License, src.CredentialsRef,
-		policyJSON, src.Listed, timeToMicro(src.CreatedAt), timeToMicro(src.UpdatedAt),
+		policyJSON, src.Listed,
+		string(src.RefreshStatus), src.RefreshError, timeToMicro(src.RefreshedAt),
+		timeToMicro(src.CreatedAt), timeToMicro(src.UpdatedAt),
 	)
 	return err
 }
@@ -291,7 +310,8 @@ func (s *Store) PutSource(ctx context.Context, src store.Source) error {
 func (s *Store) ListSources(ctx context.Context) ([]store.Source, error) {
 	rows, err := s.q.QueryContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
-		        license, credentials_ref, policy_overrides, listed, created_at, updated_at
+		        license, credentials_ref, policy_overrides, listed,
+		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
 		 FROM sources WHERE listed=true ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -312,7 +332,8 @@ func (s *Store) ListSources(ctx context.Context) ([]store.Source, error) {
 func (s *Store) GetSourceBySlug(ctx context.Context, slug string) (store.Source, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
-		        license, credentials_ref, policy_overrides, listed, created_at, updated_at
+		        license, credentials_ref, policy_overrides, listed,
+		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
 		 FROM sources
 		 WHERE slug=$1 OR EXISTS (
 		   SELECT 1 FROM jsonb_array_elements_text(aliases::jsonb) AS value WHERE value=$2

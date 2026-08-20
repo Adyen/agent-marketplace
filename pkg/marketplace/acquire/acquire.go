@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,7 +89,7 @@ func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Lim
 		defer cancel()
 	}
 
-	args := append(hardenedGitArgs(), "clone", "--", origin, dir)
+	args := append(hardenedGitArgs(), "clone", "--no-checkout", "--", origin, dir)
 	if _, err := runGit(cloneCtx, workspace.env(), "", args); err != nil {
 		return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
 	}
@@ -96,6 +97,10 @@ func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Lim
 	commit, err := cache.ResolveRemoteRef(dir, ref)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ref %q in %q: %w", ref, redactedOrigin, err)
+	}
+
+	if err := enforceTreeLimits(cloneCtx, workspace.env(), dir, commit, limits); err != nil {
+		return nil, err
 	}
 
 	checkoutArgs := append(hardenedGitArgs(), "checkout", "--force", commit)
@@ -118,9 +123,12 @@ func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Lim
 
 func hardenedGitArgs() []string {
 	return []string{
+		"-c", "core.hooksPath=/dev/null",
 		"-c", "protocol.ext.allow=never",
 		"-c", "protocol.remote.allow=never",
 		"-c", "protocol.file.allow=always",
+		"-c", "submodule.recurse=false",
+		"-c", "credential.helper=",
 	}
 }
 
@@ -130,11 +138,12 @@ func runGit(ctx context.Context, env []string, dir string, args []string) ([]byt
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		redacted := redactSecrets(string(out))
+		redacted := redact.URL(string(out))
+		redactedArgs := redact.Strings(args)
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: context cancelled", redactArgs(args))
+			return nil, fmt.Errorf("git %s: context cancelled", strings.Join(redactedArgs, " "))
 		}
-		cmdStr := strings.Join(redactArgs(args), " ")
+		cmdStr := strings.Join(redactedArgs, " ")
 		if redacted == "" {
 			return nil, fmt.Errorf("git %s: %w", cmdStr, err)
 		}
@@ -199,13 +208,17 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 				return nil, fmt.Errorf("create askpass dir: %w", err)
 			}
 		}
-		askpass, err := writeAskpass(askpassDir, cred.Token)
+		askpass, err := writeAskpass(askpassDir)
 		if err != nil {
 			return nil, err
 		}
 		env["GIT_ASKPASS"] = askpass
 		env["AGENT_MARKETPLACE_GIT_TOKEN"] = cred.Token
 	}
+
+	// Do not download LFS objects during clone/checkout; pointer files are kept
+	// as small blobs and evaluated later.
+	env["GIT_LFS_SKIP_SMUDGE"] = "1"
 
 	out := make([]string, 0, len(env))
 	for k, v := range env {
@@ -214,13 +227,12 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 	return out, nil
 }
 
-func writeAskpass(dir, token string) (string, error) {
+func writeAskpass(dir string) (string, error) {
 	path := filepath.Join(dir, "askpass"+scriptExt())
 	script := "#!/bin/sh\nprintf '%s\\n' \"$AGENT_MARKETPLACE_GIT_TOKEN\"\n"
 	if runtime.GOOS == "windows" {
 		script = "@echo off\r\necho %AGENT_MARKETPLACE_GIT_TOKEN%\r\n"
 	}
-	_ = token
 	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("write askpass script: %w", err)
@@ -235,10 +247,58 @@ func scriptExt() string {
 	return ".sh"
 }
 
+func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string, limits Limits) error {
+	args := append(hardenedGitArgs(), "ls-tree", "-r", "-l", commit)
+	out, err := runGit(ctx, env, repoDir, args)
+	if err != nil {
+		return fmt.Errorf("list tree for %q: %w", commit, err)
+	}
+
+	var total int64
+	var count int
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		meta, path, found := strings.Cut(line, "\t")
+		if !found {
+			continue
+		}
+		fields := strings.Fields(meta)
+		if len(fields) < 4 {
+			continue
+		}
+		mode, typ, sizeStr := fields[0], fields[1], fields[3]
+		if typ != "blob" {
+			// Reject submodules and other non-blob tree entries.
+			return fmt.Errorf("%w: tree contains non-blob entry %q (type %s)", ErrLimitExceeded, path, typ)
+		}
+		if mode == "120000" {
+			return fmt.Errorf("%w: tree contains symlink %q", ErrLimitExceeded, path)
+		}
+		size, err := strconv.ParseInt(sizeStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse tree size for %q: %w", path, err)
+		}
+		if limits.FileBytes > 0 && size > limits.FileBytes {
+			return fmt.Errorf("%w: tree entry %q size %d exceeds file_bytes limit %d", ErrLimitExceeded, path, size, limits.FileBytes)
+		}
+		total += size
+		count++
+		if limits.RepositoryBytes > 0 && total > limits.RepositoryBytes {
+			return fmt.Errorf("%w: tree size %d exceeds repository_bytes limit %d", ErrLimitExceeded, total, limits.RepositoryBytes)
+		}
+		if limits.FileCount > 0 && count > limits.FileCount {
+			return fmt.Errorf("%w: tree entry count %d exceeds file_count limit %d", ErrLimitExceeded, count, limits.FileCount)
+		}
+	}
+	return nil
+}
+
 func enforceLimits(dir string, limits Limits) error {
 	var total int64
 	var count int
-	maxFile := int64(0)
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -253,11 +313,17 @@ func enforceLimits(dir string, limits Limits) error {
 		if rel == ".git" {
 			return fs.SkipDir
 		}
-		if d.Type()&os.ModeSymlink != 0 {
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("%w: path escapes workspace: %q", ErrLimitExceeded, rel)
+		}
+		if d.IsDir() {
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: symlinks are not allowed: %q", ErrLimitExceeded, rel)
+		}
 		if !d.Type().IsRegular() {
-			return nil
+			return fmt.Errorf("%w: non-regular files are not allowed: %q", ErrLimitExceeded, rel)
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -265,18 +331,15 @@ func enforceLimits(dir string, limits Limits) error {
 		}
 		sz := info.Size()
 		if limits.FileBytes > 0 && sz > limits.FileBytes {
-			return fmt.Errorf("file %q size %d exceeds file_bytes limit %d", rel, sz, limits.FileBytes)
+			return fmt.Errorf("%w: file %q size %d exceeds file_bytes limit %d", ErrLimitExceeded, rel, sz, limits.FileBytes)
 		}
 		total += sz
 		count++
-		if sz > maxFile {
-			maxFile = sz
-		}
 		if limits.RepositoryBytes > 0 && total > limits.RepositoryBytes {
-			return fmt.Errorf("workspace size %d exceeds repository_bytes limit %d", total, limits.RepositoryBytes)
+			return fmt.Errorf("%w: workspace size %d exceeds repository_bytes limit %d", ErrLimitExceeded, total, limits.RepositoryBytes)
 		}
 		if limits.FileCount > 0 && count > limits.FileCount {
-			return fmt.Errorf("workspace file count %d exceeds file_count limit %d", count, limits.FileCount)
+			return fmt.Errorf("%w: workspace file count %d exceeds file_count limit %d", ErrLimitExceeded, count, limits.FileCount)
 		}
 		return nil
 	})
@@ -288,14 +351,6 @@ func enforceLimits(dir string, limits Limits) error {
 
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-func redactSecrets(s string) string {
-	return redact.URL(s)
-}
-
-func redactArgs(args []string) []string {
-	return redact.Strings(args)
 }
 
 func truncate(s string) string {

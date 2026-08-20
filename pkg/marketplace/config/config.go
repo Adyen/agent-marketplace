@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -145,11 +146,6 @@ type Limits struct {
 	IngestionDuration Duration `yaml:"ingestion_duration"`
 }
 
-func (l Limits) isZero() bool {
-	return l.RepositoryBytes == 0 && l.FileCount == 0 && l.FileBytes == 0 &&
-		l.ArtifactBytes == 0 && l.CloneDuration == 0 && l.IngestionDuration == 0
-}
-
 // Source is an approved source repository.
 type Source struct {
 	ID              string         `yaml:"id"`
@@ -239,15 +235,23 @@ func applyDefaults(cfg *Config) {
 	if cfg.Policy.LicenseAllowlist == nil {
 		cfg.Policy.LicenseAllowlist = defaultLicenseAllowlist
 	}
-	if cfg.Policy.Limits.isZero() {
-		cfg.Policy.Limits = Limits{
-			RepositoryBytes:   defaultRepositoryBytes,
-			FileCount:         defaultFileCount,
-			FileBytes:         defaultFileBytes,
-			ArtifactBytes:     defaultArtifactBytes,
-			CloneDuration:     Duration(defaultCloneDuration),
-			IngestionDuration: Duration(defaultIngestionDuration),
-		}
+	if cfg.Policy.Limits.RepositoryBytes == 0 {
+		cfg.Policy.Limits.RepositoryBytes = defaultRepositoryBytes
+	}
+	if cfg.Policy.Limits.FileCount == 0 {
+		cfg.Policy.Limits.FileCount = defaultFileCount
+	}
+	if cfg.Policy.Limits.FileBytes == 0 {
+		cfg.Policy.Limits.FileBytes = defaultFileBytes
+	}
+	if cfg.Policy.Limits.ArtifactBytes == 0 {
+		cfg.Policy.Limits.ArtifactBytes = defaultArtifactBytes
+	}
+	if cfg.Policy.Limits.CloneDuration == 0 {
+		cfg.Policy.Limits.CloneDuration = Duration(defaultCloneDuration)
+	}
+	if cfg.Policy.Limits.IngestionDuration == 0 {
+		cfg.Policy.Limits.IngestionDuration = Duration(defaultIngestionDuration)
 	}
 	for i := range cfg.Sources {
 		if cfg.Sources[i].Acquisition == "" {
@@ -407,7 +411,7 @@ func validateSource(idx int, src Source, policy Policy) []error {
 	if src.Acquisition != "" && !validAcquisition[src.Acquisition] {
 		errs = append(errs, fmt.Errorf("sources[%d].acquisition must be 'mirror' or 'index-only'", idx))
 	}
-	if src.License != "" && len(policy.LicenseAllowlist) > 0 && !contains(policy.LicenseAllowlist, src.License) {
+	if src.License != "" && len(policy.LicenseAllowlist) > 0 && !slices.Contains(policy.LicenseAllowlist, src.License) {
 		errs = append(errs, fmt.Errorf("sources[%d].license %q is not in policy.license_allowlist", idx, src.License))
 	}
 	errs = append(errs, validateCredentials(idx, src.Credentials)...)
@@ -482,13 +486,4 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-func contains(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
