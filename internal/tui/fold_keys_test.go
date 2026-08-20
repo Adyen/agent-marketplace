@@ -38,6 +38,9 @@ func keyNamed(name string) tea.KeyMsg {
 
 func newTestModel() Model {
 	m := NewModel("/repo", "/home")
+	// The model starts with unknown dimensions (below minimum) by design;
+	// interaction tests seed a supported size explicitly.
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("b", withProject, withRegistry("infra.git", "infra")),

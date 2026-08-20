@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -66,9 +68,15 @@ func scopedToggleAction(r row, s scope) toggleAction {
 }
 
 // runScopedToggle returns a Cmd that writes the toggle to the appropriate
-// config file and emits a configWrittenMsg on completion. The existing
-// configWrittenMsg handler in Update() re-loads the snapshot, which picks
-// up the new state.
+// config file and emits a single configWrittenMsg on completion, carrying
+// the started operation's ID. When the operation owns collision state
+// (enabling a colliding resource at global/project scope), the
+// competing-registry excludes are written inside the same operation: the
+// primary include and the competing excludes complete as one result, so a
+// partial follow-up can never arrive as an uncorrelated second write.
+//
+// The existing configWrittenMsg handler in Update() re-loads the snapshot,
+// which picks up the new state.
 //
 // For project/global scopes, the toggle targets the specific registry entry
 // (identified by act.registryURL) whose catalog contains the skill. This
@@ -76,173 +84,157 @@ func scopedToggleAction(r row, s scope) toggleAction {
 // list, which the resolver actually processes. Writing to the top-level
 // skills list would have no effect when the entry has its own skills list
 // (specific wins over default in attribute inheritance).
-func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
+func runScopedToggle(repoRoot string, act toggleAction, operation operationID, collision *collisionFollowUp) tea.Cmd {
 	return func() tea.Msg {
-		var err error
-		switch act.scope {
-		case scopeGlobal:
-			globalPath, pathErr := config.GlobalConfigPath()
-			if pathErr != nil {
-				err = pathErr
-				break
-			}
-			if act.enable {
-				if err := config.EnsureRegistryWithPathsInConfig(globalPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in global config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(globalPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(globalPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
-		case scopeProject:
-			projectPath := config.ProjectConfigPath(repoRoot)
-			if act.enable {
-				if err := config.EnsureRegistryWithPathsInConfig(projectPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in project config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(projectPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(projectPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
-		case scopeLocal:
-			localPath := config.LocalConfigPath(repoRoot)
-			if act.enable {
-				// Write the include scoped to the registry entry (creating a
-				// local shadow entry when the registry lives in a lower layer),
-				// mirroring the project/global scopes so local selections are
-				// registry-scoped too rather than a top-level skills.include.
-				if err := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in local config: %w", err),
-					}
-				}
-				err = config.AddResourceToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				err = config.DisableResourceWithShadowFallback(localPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
-			}
-		case scopeLocalExclude:
-			localPath := config.LocalConfigPath(repoRoot)
-			if act.enable {
-				if strings.TrimSpace(act.registryURL) == "" {
-					// No registry context (shouldn't normally happen): fall back
-					// to the top-level personal exclude.
-					err = config.AddKindExcludeToLocalConfig(repoRoot, act.kind, act.skillName)
-					break
-				}
-				// Suppress locally, registry-scoped. The exclude is written under
-				// the providing registry entry (creating a shadow entry if
-				// needed) rather than a top-level personal exclude, and any
-				// matching local include is removed so the entry never holds a
-				// contradictory include+exclude pair. Unlike toggling the local
-				// include off ([l]), the exclude is always written so the
-				// resource is suppressed even when a lower layer's default
-				// re-selects it.
-				if e := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); e != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure registry in local config: %w", e),
-					}
-				}
-				if e := config.RemoveResourceFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); e != nil {
-					err = e
-					break
-				}
-				err = config.AddKindExcludeToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
-			} else {
-				// Remove the exclude wherever it lives: the registry entry and
-				// any legacy top-level personal exclude.
-				if act.registryURL != "" {
-					if e := config.RemoveKindExcludeFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); e != nil {
-						err = e
-						break
-					}
-				}
-				err = config.RemoveKindExcludeFromLocalConfig(repoRoot, act.kind, act.skillName)
+		fail := func(err error) tea.Msg {
+			return configWrittenMsg{operation: operation, skillName: act.skillName, enabled: act.enable, err: err}
+		}
+		if err := writeScopedToggle(repoRoot, act); err != nil {
+			return fail(err)
+		}
+		if act.enable && collision != nil {
+			if err := collision.writeCompetingExcludes(repoRoot, act); err != nil {
+				return fail(err)
 			}
 		}
-		return configWrittenMsg{
-			skillName: act.skillName,
-			enabled:   act.enable,
-			err:       err,
-		}
+		return configWrittenMsg{operation: operation, skillName: act.skillName, enabled: act.enable}
 	}
 }
 
-// excludeCompetingRegistriesCmd returns a tea.Cmd that adds excludes for
-// competing registry URLs that provide the same resource name. This resolves
-// name collisions when the user toggles ON a colliding skill.
-func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction) tea.Cmd {
+// writeScopedToggle performs the config write for one toggle action.
+func writeScopedToggle(repoRoot string, act toggleAction) error {
+	switch act.scope {
+	case scopeGlobal:
+		globalPath, pathErr := config.GlobalConfigPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		if act.enable {
+			if err := config.EnsureRegistryWithPathsInConfig(globalPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
+				return fmt.Errorf("ensure registry in global config: %w", err)
+			}
+			return config.AddResourceToRegistryInConfig(globalPath, act.registryURL, act.registryPath, act.kind, act.skillName)
+		}
+		return config.DisableResourceWithShadowFallback(globalPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
+	case scopeProject:
+		projectPath := config.ProjectConfigPath(repoRoot)
+		if act.enable {
+			if err := config.EnsureRegistryWithPathsInConfig(projectPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
+				return fmt.Errorf("ensure registry in project config: %w", err)
+			}
+			return config.AddResourceToRegistryInConfig(projectPath, act.registryURL, act.registryPath, act.kind, act.skillName)
+		}
+		return config.DisableResourceWithShadowFallback(projectPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
+	case scopeLocal:
+		localPath := config.LocalConfigPath(repoRoot)
+		if act.enable {
+			// Write the include scoped to the registry entry (creating a
+			// local shadow entry when the registry lives in a lower layer),
+			// mirroring the project/global scopes so local selections are
+			// registry-scoped too rather than a top-level skills.include.
+			if err := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
+				return fmt.Errorf("ensure registry in local config: %w", err)
+			}
+			return config.AddResourceToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
+		}
+		return config.DisableResourceWithShadowFallback(localPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
+	case scopeLocalExclude:
+		localPath := config.LocalConfigPath(repoRoot)
+		if act.enable {
+			if strings.TrimSpace(act.registryURL) == "" {
+				// No registry context (shouldn't normally happen): fall back
+				// to the top-level personal exclude.
+				return config.AddKindExcludeToLocalConfig(repoRoot, act.kind, act.skillName)
+			}
+			// Suppress locally, registry-scoped. The exclude is written under
+			// the providing registry entry (creating a shadow entry if
+			// needed) rather than a top-level personal exclude, and any
+			// matching local include is removed so the entry never holds a
+			// contradictory include+exclude pair. Unlike toggling the local
+			// include off ([l]), the exclude is always written so the
+			// resource is suppressed even when a lower layer's default
+			// re-selects it.
+			if err := config.EnsureRegistryWithPathsInConfig(localPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
+				return fmt.Errorf("ensure registry in local config: %w", err)
+			}
+			if err := config.RemoveResourceFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); err != nil {
+				return err
+			}
+			return config.AddKindExcludeToRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName)
+		}
+		// Remove the exclude wherever it lives: the registry entry and
+		// any legacy top-level personal exclude.
+		if act.registryURL != "" {
+			if err := config.RemoveKindExcludeFromRegistryInConfig(localPath, act.registryURL, act.registryPath, act.kind, act.skillName); err != nil {
+				return err
+			}
+		}
+		return config.RemoveKindExcludeFromLocalConfig(repoRoot, act.kind, act.skillName)
+	}
+	return nil
+}
+
+// newCollisionFollowUp captures the operation-owned collision state for an
+// enable of a colliding resource: every competing registry providing the
+// same resource kind+name, with the ref/path identity needed to ensure the
+// entry before excluding it. Returns nil when no competing registry exists.
+// The capture runs at operation start so a reload landing mid-flight cannot
+// change the set the operation acts on.
+func newCollisionFollowUp(act toggleAction, rows []row) *collisionFollowUp {
 	competing := competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)
 	if len(competing) == 0 {
 		return nil
 	}
-	// Also collect per-competing-URL metadata (ref, path) so we can ensure
-	// the registry entry exists in the target config file before adding the
-	// exclude. Without this, the exclude write silently fails when the
-	// competing registry only exists in a different scope's config file.
-	competingMeta := make(map[string]struct{ ref, path string })
+	wanted := make(map[string]struct{}, len(competing))
+	for _, url := range competing {
+		wanted[url] = struct{}{}
+	}
+	followUp := &collisionFollowUp{competing: make([]competingRegistry, 0, len(competing))}
 	for _, r := range rows {
-		if r.Artifact.Kind != act.kind || r.Artifact.Name != act.skillName || r.RegistryURL == act.registryURL {
+		if _, ok := wanted[r.RegistryURL]; !ok {
 			continue
 		}
-		if _, dup := competingMeta[r.RegistryURL]; dup {
+		if r.Artifact.Kind != act.kind || r.Artifact.Name != act.skillName {
 			continue
 		}
-		competingMeta[r.RegistryURL] = struct{ ref, path string }{ref: r.RegistryRef, path: r.RegistryPath}
+		followUp.competing = append(followUp.competing, competingRegistry{url: r.RegistryURL, ref: r.RegistryRef, path: r.RegistryPath})
+		delete(wanted, r.RegistryURL)
 	}
+	return followUp
+}
 
-	return func() tea.Msg {
-		var configPath string
-		switch act.scope {
-		case scopeGlobal:
-			p, err := config.GlobalConfigPath()
-			if err != nil {
-				return configWrittenMsg{skillName: act.skillName, err: err}
-			}
-			configPath = p
-		case scopeProject:
-			configPath = config.ProjectConfigPath(repoRoot)
-		default:
-			return nil
-		}
-		for _, url := range competing {
-			meta, ok := competingMeta[url]
-			if ok {
-				// Ensure the competing registry entry exists in the target
-				// config file so the exclude write finds a matching entry.
-				if err := config.EnsureRegistryWithPathsInConfig(configPath, url, meta.ref, meta.path); err != nil {
-					return configWrittenMsg{
-						skillName: act.skillName,
-						enabled:   false,
-						err:       fmt.Errorf("ensure competing registry %q: %w", url, err),
-					}
-				}
-			}
-			competingPath := ""
-			if ok {
-				competingPath = meta.path
-			}
-			if err := config.AddKindExcludeToRegistryInConfig(configPath, url, competingPath, act.kind, act.skillName); err != nil {
-				return configWrittenMsg{
-					skillName: act.skillName,
-					enabled:   false,
-					err:       fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, url, err),
-				}
-			}
-		}
-		return configWrittenMsg{skillName: act.skillName, enabled: true}
+// writeCompetingExcludes adds excludes for the captured competing registries
+// in the config file of the operation's scope, resolving the name collision
+// in favor of the primary include. Competing entries are ensured first so
+// the exclude write finds a matching entry even when the competing registry
+// only exists in a different scope's config file. Only global/project scopes
+// carry collision state; other scopes are a no-op.
+func (c *collisionFollowUp) writeCompetingExcludes(repoRoot string, act toggleAction) error {
+	if c == nil || len(c.competing) == 0 {
+		return nil
 	}
+	var configPath string
+	switch act.scope {
+	case scopeGlobal:
+		p, err := config.GlobalConfigPath()
+		if err != nil {
+			return err
+		}
+		configPath = p
+	case scopeProject:
+		configPath = config.ProjectConfigPath(repoRoot)
+	default:
+		return nil
+	}
+	for _, competing := range c.competing {
+		if err := config.EnsureRegistryWithPathsInConfig(configPath, competing.url, competing.ref, competing.path); err != nil {
+			return fmt.Errorf("ensure competing registry %q: %w", competing.url, err)
+		}
+		if err := config.AddKindExcludeToRegistryInConfig(configPath, competing.url, competing.path, act.kind, act.skillName); err != nil {
+			return fmt.Errorf("exclude %s %q in competing registry %q: %w", skill.KindLabel(act.kind), act.skillName, competing.url, err)
+		}
+	}
+	return nil
 }
 
 // styleToggleModal is the bordered floating-box style for paneToggleModal.
@@ -262,7 +254,7 @@ func renderToggleModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-		Render(fmt.Sprintf(`"%s"`, r.Artifact.Name))
+		Render(fmt.Sprintf(`"%s"`, sanitizeTerminalData(r.Artifact.Name, terminalSingleLine)))
 
 	check := func(on bool) string {
 		if on {
@@ -281,11 +273,26 @@ func renderToggleModal(m Model) string {
 		return "no"
 	}
 
+	if compactTerminalLayout(m) {
+		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
+		var b strings.Builder
+		b.WriteString(title + "\n")
+		if hasCollisionError(m.diagnostics.values(), r.Artifact.Kind, r.Artifact.Name) {
+			b.WriteString("Name collision: choose one source.\n")
+		}
+		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
+		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally))
+		b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
+		b.WriteString(keyStyle.Render("[l]") + " local   " + keyStyle.Render("[e]") + " exclude\n")
+		b.WriteString(keyStyle.Render("[esc]") + " cancel")
+		return compactModalStyle(styleToggleModal, m).Render(b.String())
+	}
+
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 
-	// Check for name collision errors affecting this resource.
-	if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
+	// Check for name collision diagnostics affecting this resource.
+	if hasCollisionError(m.diagnostics.values(), r.Artifact.Kind, r.Artifact.Name) {
 		warnStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#CC7A00", Dark: "#FD971F"}).
 			Bold(true)
@@ -323,18 +330,20 @@ func renderToggleModal(m Model) string {
 	return styleToggleModal.Render(b.String())
 }
 
-// hasCollisionError returns true if any error in errs is a name collision
-// affecting the given resource kind and name.
+// hasCollisionError returns true if any error in errs is a resolver name
+// collision affecting the given resource kind and name. Detection is typed
+// (errors.As against the resolver's collision types, so wrapped errors still
+// match) rather than string matching: an untyped error whose text merely
+// contains the collision phrasing must not arm the modal warning or the
+// auto-exclude follow-up.
 func hasCollisionError(errs []error, kind ir.ResourceKind, name string) bool {
 	for _, err := range errs {
-		if err == nil {
-			continue
+		var collisionErr *resolver.NameCollisionError
+		if errors.As(err, &collisionErr) && collisionErr.Kind == kind && collisionErr.Name == name {
+			return true
 		}
-		// Pattern: <kind> "<name>" is provided by multiple registries
-		s := err.Error()
-		if strings.Contains(s, "is provided by multiple registries") &&
-			strings.Contains(s, fmt.Sprintf("%q", name)) &&
-			strings.Contains(s, skill.KindLabel(kind)) {
+		var collisionWarn *resolver.NameCollisionWarning
+		if errors.As(err, &collisionWarn) && collisionWarn.Kind == kind && collisionWarn.Name == name {
 			return true
 		}
 	}
@@ -359,6 +368,27 @@ func competingRegistryURLs(rows []row, kind ir.ResourceKind, name, ownURL string
 	return urls
 }
 
+// startToggleOperation begins the mutation operation for a toggle action.
+// When a collision warning from the current diagnostics applies to an enable
+// at global/project scope, the operation owns the competing-registry exclude
+// state so primary include + competing excludes complete as one result. A
+// second operation is start-blocked while another is still active; the modal
+// stays open so the action can be retried after completion.
+func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
+	var collision *collisionFollowUp
+	if act.enable && (act.scope == scopeGlobal || act.scope == scopeProject) &&
+		hasCollisionError(m.diagnostics.values(), m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+		collision = newCollisionFollowUp(act, m.rows)
+	}
+	id, ok := m.beginOperation(operationMutation, collision)
+	if !ok {
+		return m, operationInProgressCmd()
+	}
+	recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
+	m.pane = paneList
+	return m, runScopedToggle(m.repoRoot, act, id, collision)
+}
+
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).
 func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -371,38 +401,18 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
-		act := scopedToggleAction(m.modalSkill, scopeGlobal)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
 	case key.Matches(msg, m.keys.ToggleProject):
-		act := scopedToggleAction(m.modalSkill, scopeProject)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
 	case key.Matches(msg, m.keys.ToggleLocal):
-		act := scopedToggleAction(m.modalSkill, scopeLocal)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		return m, runScopedToggle(m.repoRoot, act)
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):
 		if m.modalSkill.Artifact.Source.IsMachineScope() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Cannot exclude org/user skill at local level — use [g] instead", duration: 2 * time.Second}
 			}
 		}
-		act := scopedToggleAction(m.modalSkill, scopeLocalExclude)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		return m, runScopedToggle(m.repoRoot, act)
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocalExclude))
 	}
 	return m, nil
 }

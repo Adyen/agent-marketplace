@@ -165,6 +165,18 @@ func TestLookupRejectsUnknownAndNonCanonicalNames(t *testing.T) {
 	}
 }
 
+func TestUIDefinitionsUseDeclaredOrderAndReturnCopies(t *testing.T) {
+	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex"}
+	if got := UINames(); !slices.Equal(got, want) {
+		t.Fatalf("UINames() = %v, want %v", got, want)
+	}
+	definitions := UIDefinitions()
+	definitions[0].Label = "mutated"
+	if UIDefinitions()[0].Label == "mutated" {
+		t.Fatal("UIDefinitions returned mutable registry storage")
+	}
+}
+
 func TestCapabilityListsMatchDefinitions(t *testing.T) {
 	var wantTargets, wantCompiler, wantIngester, wantConversion []Target
 	seenOrder := make(map[int]Target)

@@ -5,7 +5,10 @@
 // target identity and user-facing metadata free of import cycles.
 package target
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // Target identifies a harness layout used as a compilation destination or
 // source format.
@@ -70,6 +73,28 @@ var definitions = []Definition{
 // Definitions returns all target declarations in stable display order.
 func Definitions() []Definition {
 	return append([]Definition(nil), definitions...)
+}
+
+// UIDefinitions returns UI-enabled compiler targets in declared UI order.
+func UIDefinitions() []Definition {
+	ui := make([]Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.UI && definition.Compiler {
+			ui = append(ui, definition)
+		}
+	}
+	sort.SliceStable(ui, func(i, j int) bool { return ui[i].UIOrder < ui[j].UIOrder })
+	return ui
+}
+
+// UINames returns UI-enabled compiler target names in declared UI order.
+func UINames() []string {
+	definitions := UIDefinitions()
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, string(definition.Target))
+	}
+	return names
 }
 
 // Lookup returns the declaration for name, if it is a known target.

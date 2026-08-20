@@ -15,6 +15,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
+type driftAssessment uint8
+
+const (
+	driftUnknown driftAssessment = iota
+	driftReady
+	driftFailed
+)
+
 type pane int
 
 const (
@@ -93,6 +101,10 @@ func (r *row) ensureSearchable() {
 	}
 }
 
+func (r row) isOrphanOutput() bool {
+	return r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned && r.RegistryURL == "" && r.Artifact.Path == r.DriftItem.Path
+}
+
 func (r row) Glyph() string {
 	if r.IsMalformed {
 		return "[!]"
@@ -154,21 +166,30 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane             pane
-	driftReport      materialize.DriftReport
-	errs             []error
-	warnings         []error
-	syncing          bool
-	refreshing       bool
-	refreshToken     int
-	nextRefreshToken int
+	pane            pane
+	driftReport     materialize.DriftReport
+	driftAssessment driftAssessment
+	diagnostics     diagnosticStore
+	syncing         bool
+	refreshing      bool
+	requests        requestState
+
+	// rowsStale is true when the last accepted snapshot carried hard
+	// config/catalog/resolution/materialization errors. Displayed rows then
+	// describe state the tool itself flagged as broken, so they are shown
+	// for inspection only: resource mutations (the toggle modal) are
+	// refused until a snapshot without hard errors lands.
+	rowsStale bool
 
 	// Cached config state for toggle/sync
-	mergedCfg        *config.Config
-	resolved         []resolver.ResolvedArtifact
-	localExcludes    []string
-	globalHarnesses  []string
-	projectHarnesses []string
+	mergedCfg           *config.Config
+	resolved            []resolver.ResolvedArtifact
+	localExcludes       []string
+	globalHarnesses     []string
+	projectHarnesses    []string
+	userHarnesses       []string
+	targetHarnesses     []string
+	targetHarnessSource config.Source
 
 	listOffset       int // first visible flatItems index in the left pane (current tab)
 	listHeightPrefix []int
@@ -198,10 +219,12 @@ type Model struct {
 	harnessModal harnessModalState
 	initModal    initModalState
 
-	// pendingExcludeAction holds a toggleAction that needs to emit
-	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
-	// Set when enabling a colliding resource; cleared on configWrittenMsg.
-	pendingExcludeAction *toggleAction
+	// operations correlates the single in-flight mutation-class operation
+	// (resource toggle, harness save, migration, editor). The operation owns
+	// any collision follow-up state, replacing the former pendingExcludeAction
+	// singleton: competing-registry excludes are captured at start and written
+	// inside the same operation, completing as one result.
+	operations operationState
 
 	migrationPrompt migrationPrompt
 
@@ -210,6 +233,38 @@ type Model struct {
 	spinner spinner.Model
 
 	detailViewport viewport.Model
+
+	// helpViewport and errorsViewport are the scrollable viewports backing
+	// the full-screen help and diagnostics overlays. Their YOffsets persist
+	// across close/reopen and resize (clamped to the current content), so a
+	// truncated pane never silently resets what the user has or has not seen.
+	// The diagnostics acknowledgement gate reads errorsViewport.AtBottom.
+	helpViewport   viewport.Model
+	errorsViewport viewport.Model
+
+	// detailKey is the stable identity (rowKey) of the resource whose full
+	// detail view is open. Recorded when the detail pane is entered so an
+	// accepted snapshot rebuild or resize cannot silently swap or lose the
+	// resource the user is reading; leaving the pane returns to the list
+	// with that resource still selected.
+	detailKey string
+
+	// detailRenderWidth is the word-wrap width of the currently requested or
+	// accepted full-detail render. A WindowSizeMsg whose width differs while
+	// the detail pane is open schedules a generation-correlated re-render at
+	// the new width (keeping the scroll anchor) instead of displaying
+	// content wrapped for a stale width. Acceptance additionally requires the
+	// completed render's width to match the terminal width at acceptance
+	// time; a drifted completion is rejected and re-requested so this field
+	// never records a width that was never on screen.
+	detailRenderWidth int
+
+	// detailStickyBottom records, at resize time, that the detail viewport
+	// was scrolled to the bottom before the resize changed its dimensions.
+	// The width re-render that the resize schedules consumes the flag on
+	// acceptance and re-anchors to the bottom; any user scroll in between
+	// clears it.
+	detailStickyBottom bool
 
 	toast    string
 	toastExp time.Time

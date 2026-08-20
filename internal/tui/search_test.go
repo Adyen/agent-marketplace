@@ -9,6 +9,7 @@ import (
 
 func TestFilteredOutSectionsHidden(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
@@ -36,6 +37,7 @@ func TestFilteredOutSectionsHidden(t *testing.T) {
 
 func TestActiveFilterOverridesCollapsedFoldState(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -75,6 +77,7 @@ func TestActiveFilterOverridesCollapsedFoldState(t *testing.T) {
 
 func TestFilterSnapsCursorToFirstMatch(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
@@ -108,6 +111,7 @@ func TestFilterSnapsCursorToFirstMatch(t *testing.T) {
 
 func TestFilterWithNoMatchesResetsCursorToZero(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -126,6 +130,7 @@ func TestFilterWithNoMatchesResetsCursorToZero(t *testing.T) {
 
 func TestApplyFilterMatchesNameTagAndRegistryConsistently(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = buildBenchRows(50)
 
 	tests := []struct {
@@ -165,6 +170,7 @@ func TestApplyFilterMatchesNameTagAndRegistryConsistently(t *testing.T) {
 // snapshot applied, not loading.
 func searchModel() Model {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),

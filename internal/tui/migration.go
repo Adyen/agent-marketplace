@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,36 +22,32 @@ type migrationConfig struct {
 
 type migrationPrompt struct {
 	configs []migrationConfig
+	paths   config.MigratePaths
+	plan    *config.MigrationPlan
+	planErr error
 }
 
 type migrationDoneMsg struct {
-	count int
-	err   error
+	operation operationID
+	count     int
+	err       error
 }
 
 func (p migrationPrompt) hasConfigs() bool {
 	return len(p.configs) > 0
 }
 
-func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
-	candidates := []migrationConfig{
-		{label: "Project", path: config.ProjectConfigPath(repoRoot)},
-	}
+func pendingMigrationFor(repoRoot, homeDir string, organizationTargets ...[]string) migrationPrompt {
+	candidates := []migrationConfig{{label: "Project", path: config.ProjectConfigPath(repoRoot)}}
 	if homeDir != "" {
-		candidates = append(candidates, migrationConfig{
-			label: "Global",
-			path:  filepath.Join(homeDir, ".agents", "config.yaml"),
-		})
+		candidates = append(candidates, migrationConfig{label: "Global", path: filepath.Join(homeDir, ".agents", "config.yaml")})
 	}
-	localDir := config.FindLocalConfigDir()
-	if localDir != "" && localDir != repoRoot {
-		candidates = append(candidates, migrationConfig{
-			label: "Local",
-			path:  config.LocalConfigPath(localDir),
-		})
+	localDir := migrationLocalConfigDir(repoRoot)
+	if localDir != "" {
+		candidates = append(candidates, migrationConfig{label: "Local", path: config.LocalConfigPath(localDir)})
 	}
 
-	var configs []migrationConfig
+	prompt := migrationPrompt{}
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		path := filepath.Clean(candidate.path)
@@ -61,12 +58,21 @@ func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
 		if !configPathNeedsMigration(path) {
 			continue
 		}
-		configs = append(configs, migrationConfig{
-			label: candidate.label,
-			path:  path,
-		})
+		prompt.configs = append(prompt.configs, migrationConfig{label: candidate.label, path: path})
 	}
-	return migrationPrompt{configs: configs}
+	if !prompt.hasConfigs() {
+		return prompt
+	}
+	prompt.paths = migrationPathsForPrompt(prompt, repoRoot, homeDir)
+	var orgTargets []string
+	if len(organizationTargets) > 0 {
+		orgTargets = organizationTargets[0]
+	}
+	prompt.plan, prompt.planErr = config.PlanConfigMigration(prompt.paths, nil, orgTargets)
+	if errors.Is(prompt.planErr, config.ErrHarnessesRequired) {
+		prompt.plan, prompt.planErr = config.PlanConfigMigration(prompt.paths, config.DefaultHarnesses(), orgTargets)
+	}
+	return prompt
 }
 
 // configPathNeedsMigration is retained for compatibility with the migration
@@ -78,10 +84,25 @@ func configPathNeedsMigration(path string) bool {
 	return false
 }
 
-func (m Model) runMigrationCmd() tea.Cmd {
+// runMigrationCmd runs the migration plan as one ID-correlated operation.
+// External-writer protection stays with the migration engine itself:
+// ExecuteMigrationPlan verifies source digests and holds the migration locks
+// (see internal/config/migrate.go), so nothing here needs its own locking.
+func (m Model) runMigrationCmd(operation operationID) tea.Cmd {
 	return func() tea.Msg {
-		paths := migrationPathsForPrompt(m.migrationPrompt, m.repoRoot, m.homeDir)
-		result, err := config.MigrateConfigFiles(paths, config.DefaultHarnesses())
+		if m.migrationPrompt.planErr != nil {
+			return migrationDoneMsg{operation: operation, err: m.migrationPrompt.planErr}
+		}
+		plan := m.migrationPrompt.plan
+		if plan == nil {
+			paths := migrationPathsForPrompt(m.migrationPrompt, m.repoRoot, m.homeDir)
+			var err error
+			plan, err = config.PlanConfigMigration(paths, config.DefaultHarnesses(), nil)
+			if err != nil {
+				return migrationDoneMsg{operation: operation, err: err}
+			}
+		}
+		result, err := config.ExecuteMigrationPlan(plan)
 		count := 0
 		if result != nil {
 			if result.UserMigrated {
@@ -94,14 +115,21 @@ func (m Model) runMigrationCmd() tea.Cmd {
 				count++
 			}
 		}
-		return migrationDoneMsg{count: count, err: err}
+		return migrationDoneMsg{operation: operation, count: count, err: err}
 	}
 }
 
 func migrationPathsForPrompt(prompt migrationPrompt, repoRoot, homeDir string) config.MigratePaths {
-	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if prompt.paths.User != "" || prompt.paths.Repo != "" || prompt.paths.Local != "" {
+		return prompt.paths
+	}
+	userPath := ""
+	if homeDir != "" {
+		userPath = filepath.Join(homeDir, ".agents", "config.yaml")
+	}
 	repoPath := config.ProjectConfigPath(repoRoot)
-	localPath := config.LocalConfigPath(config.FindLocalConfigDir())
+	localDir := migrationLocalConfigDir(repoRoot)
+	localPath := config.LocalConfigPath(localDir)
 
 	paths := config.MigratePaths{}
 	for _, cfg := range prompt.configs {
@@ -135,6 +163,18 @@ func migrationUserPathSafe(path string) bool {
 	return v == config.APIVersionV2 || v == config.APIVersionV3
 }
 
+func migrationLocalConfigDir(repoRoot string) string {
+	localDir := config.FindLocalConfigDir()
+	if localDir == "" || repoRoot == "" {
+		return repoRoot
+	}
+	rel, err := filepath.Rel(filepath.Clean(repoRoot), filepath.Clean(localDir))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return repoRoot
+	}
+	return localDir
+}
+
 var styleMigrationModal = lipgloss.NewStyle().
 	Border(lipgloss.DoubleBorder()).
 	BorderForeground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
@@ -155,40 +195,83 @@ func renderMigrationModal(m Model) string {
 	dim := lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
 
-	defaultHarnesses := config.DefaultHarnesses()
-	harnessesFlag := strings.Join(defaultHarnesses, ",")
-	harnessesYAML := ""
-	for _, h := range defaultHarnesses {
-		harnessesYAML += fmt.Sprintf("  - %s\n", h)
+	plan := m.migrationPrompt.plan
+	if compactTerminalLayout(m) || m.height < 30 {
+		var b strings.Builder
+		b.WriteString(title + "\n")
+		if m.migrationPrompt.planErr != nil {
+			fmt.Fprintf(&b, "Plan error: %s\n", sanitizeTerminalData(m.migrationPrompt.planErr.Error(), terminalSingleLine))
+		} else if plan != nil {
+			fmt.Fprintf(&b, "Targets: %s (%s)\n", sanitizeTerminalData(strings.Join(plan.TargetHarnesses, ","), terminalSingleLine), plan.TargetSource)
+			b.WriteString("Writes:\n")
+			for _, file := range plan.Files {
+				fmt.Fprintf(&b, "  %s %s\n", migrationPlanAction(file), migrationLayerLabel(file.Layer))
+			}
+		}
+		b.WriteString(keyStyle.Render("[m]") + "/" + keyStyle.Render("[enter]") + " migrate\n")
+		b.WriteString(keyStyle.Render("[l]") + "/" + keyStyle.Render("[esc]") + " leave unchanged")
+		return compactModalStyle(styleMigrationModal, m).Render(b.String())
 	}
 
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	b.WriteString("This config has structural issues that must be fixed.\n")
-	b.WriteString("Valid agent-marketplace/v3 files are accepted as a compatibility alias.\n\n")
-	b.WriteString("Runs the in-process equivalent of:\n")
-	fmt.Fprintf(&b, "```sh\nagent-marketplace migrate --harnesses %s\n```\n\n", harnessesFlag)
-	b.WriteString("Adds or updates these top-level lines before your existing config:\n")
-	fmt.Fprintf(&b, "```yaml\napiVersion: agent-marketplace/v2\nharnesses:\n%s```\n\n", harnessesYAML)
-	b.WriteString("Existing registries, selected skills, excludes, and comments are preserved.\n\n")
-	b.WriteString("Detected pending remediation in:\n")
-	for _, cfg := range m.migrationPrompt.configs {
-		fmt.Fprintf(&b, "  • %s: %s\n", cfg.label, cfg.path)
+	b.WriteString("This configuration needs structural remediation.\n")
+	b.WriteString("agent-marketplace/v2 is canonical; v3 remains a compatibility alias.\n\n")
+	if m.migrationPrompt.planErr != nil {
+		fmt.Fprintf(&b, "Remediation plan could not be built:\n  %s\n\n", sanitizeTerminalData(m.migrationPrompt.planErr.Error(), terminalSingleLine))
+	} else if plan != nil {
+		fmt.Fprintf(&b, "Exact target set: %s\n", sanitizeTerminalData(strings.Join(plan.TargetHarnesses, ", "), terminalSingleLine))
+		fmt.Fprintf(&b, "Target source: %s\n\n", plan.TargetSource)
+		b.WriteString("Exact file writes:\n")
+		for _, file := range plan.Files {
+			fmt.Fprintf(&b, "  • %s %s: %s\n", migrationPlanAction(file), migrationLayerLabel(file.Layer), sanitizeTerminalData(file.Path, terminalSingleLine))
+		}
+		b.WriteString("\n")
+		b.WriteString("Existing comments and valid unrelated data are preserved; unsupported policy blocks the plan before writing.\n")
+		b.WriteString(dim.Render("Execution verifies every source-file digest, then locks, stages, publishes, and rolls back on commit failure."))
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString("Detected pending remediation in:\n")
+		for _, pending := range m.migrationPrompt.configs {
+			fmt.Fprintf(&b, "  • %s: %s\n", sanitizeTerminalData(pending.label, terminalSingleLine), sanitizeTerminalData(pending.path, terminalSingleLine))
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "%s", dim.Render(fmt.Sprintf("Running remediation uses the same default as `agent-marketplace migrate`: harnesses: %v.", defaultHarnesses)))
-	b.WriteString("\n\n")
-	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  run remediation\n")
+	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  run this plan\n")
 	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
 
 	return styleMigrationModal.Render(b.String())
 }
 
+func migrationPlanAction(file config.MigrationPlannedFile) string {
+	if file.Create {
+		return "create"
+	}
+	return "migrate"
+}
+
+func migrationLayerLabel(layer string) string {
+	switch layer {
+	case "user":
+		return "Global"
+	case "repo":
+		return "Project"
+	case "local":
+		return "Local"
+	default:
+		return layer
+	}
+}
+
 func (m Model) handleMigrationModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.MigrationRun):
+		id, ok := m.beginOperation(operationMigration, nil)
+		if !ok {
+			return m, operationInProgressCmd()
+		}
 		m.pane = paneList
-		return m, m.runMigrationCmd()
+		return m, m.runMigrationCmd(id)
 	case key.Matches(msg, m.keys.MigrationLeave):
 		m.pane = paneList
 		m.toast = "Config left unchanged"

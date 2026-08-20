@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -101,6 +102,97 @@ func TestDriftReportBrokenBeatsSynced(t *testing.T) {
 	for _, item := range dr.Synced {
 		if item.Name == resourceKey {
 			t.Fatalf("%q is both broken and synced", resourceKey)
+		}
+	}
+}
+
+// TestDriftReportOrphanOutputsKeepFullMultiTargetIdentity pins the orphan
+// half of the drift identity contract: each removed output is one orphan
+// item carrying its full (resource, target, scope, outDir, path) identity.
+// The same resource name removed from two targets is two orphan items, and
+// an orphan whose path-derived name matches a resolved resource is still
+// reported as its own item rather than collapsed into the resolved row's
+// identity.
+func TestDriftReportOrphanOutputsKeepFullMultiTargetIdentity(t *testing.T) {
+	resolvedKey := skill.ResourceKey(ir.KindSkill, "foo")
+	report := &Report{PerRoot: []TargetReport{
+		{Target: "claude", MachineScope: false, OutDir: "/repo/.claude", Removed: []string{"skills/foo/SKILL.md"}},
+		{Target: "factory", MachineScope: true, OutDir: "/home/.factory", Removed: []string{"skills/foo/SKILL.md"}},
+	}}
+
+	dr := DriftReportFromReport(report, []string{resolvedKey})
+	if len(dr.Orphaned) != 2 {
+		t.Fatalf("Orphaned = %+v, want one item per removed output (multi-target identity must not collapse)", dr.Orphaned)
+	}
+	byTarget := map[string]DriftItem{}
+	for _, item := range dr.Orphaned {
+		if item.Reason != DriftOrphaned {
+			t.Fatalf("orphan item has reason %v, want DriftOrphaned", item.Reason)
+		}
+		byTarget[string(item.Target)] = item
+	}
+	claude, ok := byTarget["claude"]
+	if !ok {
+		t.Fatalf("claude orphan output missing: %+v", dr.Orphaned)
+	}
+	if claude.Path != "skills/foo/SKILL.md" || claude.OutDir != "/repo/.claude" || claude.MachineScope {
+		t.Fatalf("claude orphan lost its (path, outDir, scope) identity: %+v", claude)
+	}
+	factory, ok := byTarget["factory"]
+	if !ok {
+		t.Fatalf("factory orphan output missing: %+v", dr.Orphaned)
+	}
+	if factory.Path != "skills/foo/SKILL.md" || factory.OutDir != "/home/.factory" || !factory.MachineScope {
+		t.Fatalf("factory orphan lost its (path, outDir, scope) identity: %+v", factory)
+	}
+}
+
+// TestDriftReportFromReportIsDeterministic pins ordering: two runs over the
+// same report must produce byte-identical item slices so reloads render in a
+// stable order and never flap between equivalent orderings.
+func TestDriftReportFromReportIsDeterministic(t *testing.T) {
+	report := &Report{
+		PerRoot: []TargetReport{
+			{Target: "factory", MachineScope: false, OutDir: "/repo/.factory",
+				Written: []string{"skills/beta/SKILL.md", "skills/alpha/SKILL.md"},
+				Removed: []string{"skills/stray/SKILL.md", "skills/foo/SKILL.md"}},
+			{Target: "claude", MachineScope: false, OutDir: "/repo/.claude",
+				Removed: []string{"skills/foo/SKILL.md"}},
+		},
+		Diags: []diag.Diagnostic{
+			{Code: "materialize.compile.error", Severity: diag.SeverityError, Resource: "beta"},
+			{Code: "materialize.compile.error", Severity: diag.SeverityError, Resource: "alpha"},
+		},
+	}
+	resolved := []string{
+		skill.ResourceKey(ir.KindSkill, "alpha"),
+		skill.ResourceKey(ir.KindSkill, "beta"),
+		skill.ResourceKey(ir.KindSkill, "gamma"),
+	}
+
+	first := DriftReportFromReport(report, resolved)
+	for i := 0; i < 8; i++ {
+		next := DriftReportFromReport(report, resolved)
+		if fmt.Sprintf("%+v", first) != fmt.Sprintf("%+v", next) {
+			t.Fatalf("run %d diverged:\nfirst=%+v\nnext=%+v", i, first, next)
+		}
+	}
+	// And the order is the sorted one a reader expects, not map order.
+	if len(first.Missing) != 2 || first.Missing[0].Name > first.Missing[1].Name {
+		t.Fatalf("Missing is not sorted: %+v", first.Missing)
+	}
+	if len(first.Synced) != 1 {
+		t.Fatalf("Synced = %+v, want only gamma", first.Synced)
+	}
+	if len(first.Orphaned) != 3 {
+		t.Fatalf("Orphaned = %+v, want 3 items", first.Orphaned)
+	}
+	for i := 1; i < len(first.Orphaned); i++ {
+		prev, cur := first.Orphaned[i-1], first.Orphaned[i]
+		prevKey := prev.Name + "\x00" + string(prev.Target) + "\x00" + prev.OutDir + "\x00" + prev.Path
+		curKey := cur.Name + "\x00" + string(cur.Target) + "\x00" + cur.OutDir + "\x00" + cur.Path
+		if prevKey > curKey {
+			t.Fatalf("Orphaned is not deterministically ordered: %+v", first.Orphaned)
 		}
 	}
 }

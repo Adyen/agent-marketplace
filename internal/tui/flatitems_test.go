@@ -10,6 +10,7 @@ import (
 
 func TestModelRebuildFlatItemsReflectsActiveTab(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
@@ -44,6 +45,7 @@ func TestModelRebuildFlatItemsReflectsActiveTab(t *testing.T) {
 
 func TestToggleFoldCurrentSectionTogglesFoldState(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -78,6 +80,7 @@ func TestToggleFoldCurrentSectionTogglesFoldState(t *testing.T) {
 
 func TestCollapseAllAndExpandAllAffectAllSections(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("b", withProject, withRegistry("infra.git", "infra")),
@@ -102,6 +105,7 @@ func TestCollapseAllAndExpandAllAffectAllSections(t *testing.T) {
 
 func TestFoldStateIsPerTab(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -131,6 +135,7 @@ func TestCursorSkipsFromFoldedSectionToNextVisible(t *testing.T) {
 	// With scope:global collapsed, pressing down from scope:global should
 	// land on the next visible item (scope:project or subsequent section).
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("a", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("b", withProject, withRegistry("infra.git", "infra")),
@@ -157,6 +162,7 @@ func TestCursorSkipsFromFoldedSectionToNextVisible(t *testing.T) {
 
 func TestSelectedRowReturnsUnderlyingRowForSkillItem(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -186,6 +192,7 @@ func TestSelectedRowReturnsUnderlyingRowForSkillItem(t *testing.T) {
 
 func TestSelectedRowReturnsFalseForSectionCursor(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -198,6 +205,7 @@ func TestSelectedRowReturnsFalseForSectionCursor(t *testing.T) {
 
 func TestRenderListIndentsNestedSectionsUnderParent(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
@@ -270,6 +278,7 @@ func leadingSpaces(s string) int {
 
 func TestRenderListShowsSectionHeadersAndSkillLines(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
@@ -289,6 +298,7 @@ func TestRenderListShowsSectionHeadersAndSkillLines(t *testing.T) {
 
 func TestRenderListUsesCollapsedGlyphForFoldedSections(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
@@ -326,6 +336,7 @@ func indexOf(s, sub string) int {
 // Ensure filteredRows is the source and filtering still works atop tree.
 func TestRebuildFlatItemsHonorsFilteredRows(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "audit"}}, EnabledGlobal: true, RegistryName: "security"},
 		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "extra"}}, EnabledGlobal: true, RegistryName: "security"},
@@ -348,6 +359,7 @@ func TestRebuildFlatItemsHonorsFilteredRows(t *testing.T) {
 
 func TestRenderListHidesDefaultHarnessBadge(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("audit", withProject, withHarnesses("factory", "cursor"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
@@ -361,6 +373,7 @@ func TestRenderListHidesDefaultHarnessBadge(t *testing.T) {
 
 func TestRenderListShowsRegistryOverrideHarnessBadge(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("audit", withProject, withHarnesses("codex"), withHarnessSource("registry override"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
@@ -374,6 +387,7 @@ func TestRenderListShowsRegistryOverrideHarnessBadge(t *testing.T) {
 
 func TestRenderListShowsResourceKindForEveryRow(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{
 		mkRow("audit", withGlobal, withKind(ir.KindSkill), withRegistry("resources.git", "resources")),

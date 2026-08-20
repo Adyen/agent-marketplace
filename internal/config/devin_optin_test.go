@@ -36,12 +36,16 @@ func TestDefaultHarnessListsExcludeOptInTargets(t *testing.T) {
 	//    writer cannot slip an opt-in target into a config the user never typed.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := EnsureGlobalConfig(); err != nil {
-		t.Fatalf("EnsureGlobalConfig: %v", err)
-	}
 	globalPath, err := GlobalConfigPath()
 	if err != nil {
 		t.Fatalf("GlobalConfigPath: %v", err)
+	}
+	doc, mode, err := readOrInitConfig(globalPath)
+	if err != nil {
+		t.Fatalf("readOrInitConfig: %v", err)
+	}
+	if err := writeConfigDocument(globalPath, mode, doc); err != nil {
+		t.Fatalf("write generated skeleton: %v", err)
 	}
 	data, err := os.ReadFile(globalPath)
 	if err != nil {

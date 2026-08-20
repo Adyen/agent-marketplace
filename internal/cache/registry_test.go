@@ -390,6 +390,71 @@ func TestCloneOrPullFailsWhenRegistryUnavailableAndNoCacheExists(t *testing.T) {
 	}
 }
 
+// TestCloneOrPullDetailedReportsTypedStaleCacheFallback pins the typed
+// fallback contract: when the fetch fails but a warm cache exists, the
+// caller gets the usable cache path, a typed *StaleCacheFallbackWarning
+// wrapping the fetch failure, and no error. The plain CloneOrPull keeps its
+// two-result contract and swallows the warning for legacy callers.
+func TestCloneOrPullDetailedReportsTypedStaleCacheFallback(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t)
+	writeAndPushCommit(t, working, "skill.txt", "cached version\n", "initial commit")
+
+	cachePath, warning, err := CloneOrPullDetailed(origin, "main")
+	if err != nil || warning != nil {
+		t.Fatalf("initial clone: path=%q warning=%v err=%v", cachePath, warning, err)
+	}
+
+	brokenOrigin := origin + ".offline"
+	if err := os.Rename(origin, brokenOrigin); err != nil {
+		t.Fatalf("rename origin: %v", err)
+	}
+
+	stalePath, warning, err := CloneOrPullDetailed(origin, "main")
+	if err != nil {
+		t.Fatalf("stale fallback must not be an error: %v", err)
+	}
+	if stalePath != cachePath {
+		t.Fatalf("expected stale cache path %q, got %q", cachePath, stalePath)
+	}
+	if warning == nil {
+		t.Fatal("stale fallback did not produce a typed warning")
+	}
+	if !errors.As(error(warning), &warning) {
+		t.Fatalf("warning is not a *StaleCacheFallbackWarning: %T", warning)
+	}
+	if warning.Ref != "main" || warning.URL == "" {
+		t.Fatalf("warning lost registry identity: %+v", warning)
+	}
+	if warning.Unwrap() == nil {
+		t.Fatal("warning does not wrap the underlying fetch failure")
+	}
+
+	// Legacy two-result callers keep working and observe no error.
+	legacyPath, legacyErr := CloneOrPull(origin, "main")
+	if legacyErr != nil || legacyPath != cachePath {
+		t.Fatalf("CloneOrPull fallback: path=%q err=%v", legacyPath, legacyErr)
+	}
+}
+
+// TestCloneOrPullDetailedColdCacheFailureHasNoWarning pins the complement:
+// with no warm cache the fetch failure is a hard error, not a warning.
+func TestCloneOrPullDetailedColdCacheFailureHasNoWarning(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	missingRepo := filepath.Join(t.TempDir(), "missing.git")
+	_, warning, err := CloneOrPullDetailed(missingRepo, "main")
+	if err == nil {
+		t.Fatal("expected a cold-cache fetch failure")
+	}
+	if warning != nil {
+		t.Fatalf("cold-cache failure must not produce a stale-fallback warning: %v", warning)
+	}
+}
+
 func createBareRepoWithWorkingClone(t *testing.T) (string, string) {
 	t.Helper()
 

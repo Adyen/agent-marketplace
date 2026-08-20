@@ -19,8 +19,9 @@ import (
 
 // editConfigPathMsg is emitted after the editor exits so the TUI reloads.
 type editConfigPathMsg struct {
-	path string
-	err  error
+	operation operationID
+	path      string
+	err       error
 }
 
 var styleEditConfigModal = lipgloss.NewStyle().
@@ -45,11 +46,22 @@ func renderEditConfigModal(m Model) string {
 
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
 
+	if compactTerminalLayout(m) {
+		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
+		var b strings.Builder
+		b.WriteString(title + "\n")
+		b.WriteString(keyStyle.Render("[g]") + " edit user-personal config\n")
+		b.WriteString(keyStyle.Render("[p]") + " edit project config\n")
+		b.WriteString(keyStyle.Render("[l]") + " edit local config\n")
+		b.WriteString(keyStyle.Render("[esc]") + " cancel")
+		return compactModalStyle(styleEditConfigModal, m).Render(b.String())
+	}
+
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	fmt.Fprintf(&b, "  Global:    %s\n", dimStyle.Render(globalPath))
-	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(projectPath))
-	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(localPath))
+	fmt.Fprintf(&b, "  Global:    %s\n", dimStyle.Render(sanitizeTerminalData(globalPath, terminalSingleLine)))
+	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(sanitizeTerminalData(projectPath, terminalSingleLine)))
+	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(sanitizeTerminalData(localPath, terminalSingleLine)))
 
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
 
@@ -93,15 +105,27 @@ func (m Model) handleEditConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openConfigEditor(scope, path string) (tea.Model, tea.Cmd) {
-	slog.Debug("opening config editor", "scope", scope, "path", path)
+	id, ok := m.beginOperation(operationEditor, nil)
+	if !ok {
+		return m, operationInProgressCmd()
+	}
+	slog.Debug("opening config editor", "scope", scope, "path", path, "operation_id", id)
 	m.pane = paneList
-	return m, openEditorCmd(path)
+	return m, openEditorCmd(path, id)
 }
 
 // openEditorCmd returns a tea.Cmd that suspends the TUI and launches $EDITOR
 // (or vi as fallback) with the given file path. When the editor exits, the
-// TUI resumes and reloads the snapshot.
-func openEditorCmd(path string) tea.Cmd {
+// TUI resumes and reloads the snapshot. The result carries the started
+// editor operation's ID.
+//
+// The editor runs as an editorProcess (not tea.ExecProcess): while the
+// event loop is suspended inside Exec, external SIGINT/SIGTERM would
+// otherwise be queued but unprocessable until the editor exits. The
+// editorProcess forwards such signals to the editor, waits a bounded grace
+// period, then kills and reaps it, so an interrupt during editing can
+// neither hang nor be swallowed.
+func openEditorCmd(path string, operation operationID) tea.Cmd {
 	editor := strings.TrimSpace(os.Getenv("EDITOR"))
 	if editor == "" {
 		editor = "vi"
@@ -112,12 +136,12 @@ func openEditorCmd(path string) tea.Cmd {
 
 	return func() tea.Msg {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return editConfigPathMsg{path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
+			return editConfigPathMsg{operation: operation, path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
 		}
 		c := exec.Command(parts[0], append(parts[1:], path)...)
-		return tea.ExecProcess(c, func(err error) tea.Msg {
+		return tea.Exec(newEditorProcess(c), func(err error) tea.Msg {
 			slog.Debug("config editor process exited", "editor", editor, "path", path, "err", err)
-			return editConfigPathMsg{path: path, err: err}
+			return editConfigPathMsg{operation: operation, path: path, err: err}
 		})()
 	}
 }

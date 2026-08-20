@@ -39,10 +39,19 @@ func runUpdate(ctx context.Context, out io.Writer, bump bool) error {
 	}
 
 	if bump {
-		_, err = fmt.Fprintf(out, "Updated %d registries, bumped %d refs\n", result.UpdatedRegistries, len(result.Bumps))
+		if _, err = fmt.Fprintf(out, "Updated %d registries, bumped %d refs\n", result.UpdatedRegistries, len(result.Bumps)); err != nil {
+			return err
+		}
+	} else if _, err = fmt.Fprintf(out, "Updated %d registries\n", result.UpdatedRegistries); err != nil {
 		return err
 	}
 
-	_, err = fmt.Fprintf(out, "Updated %d registries\n", result.UpdatedRegistries)
-	return err
+	// A refresh that fell back to a stale cache is a partial outcome: the run
+	// succeeded, but the materialized content may be older than the
+	// configured ref, so the fallback must be printed rather than left in the
+	// log while the summary claims a clean refresh.
+	if err := writeGroupedWarnings(out, result.StaleCaches, false); err != nil {
+		return err
+	}
+	return nil
 }

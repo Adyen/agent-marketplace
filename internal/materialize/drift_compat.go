@@ -2,9 +2,11 @@ package materialize
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -41,8 +43,12 @@ func (r DriftReason) String() string {
 // DriftItem describes a single artifact's drift status. It replaces the old
 // drift.Item type for TUI consumers.
 type DriftItem struct {
-	Name   string
-	Reason DriftReason
+	Name         string
+	Reason       DriftReason
+	Path         string
+	Target       hcc.Target
+	MachineScope bool
+	OutDir       string
 }
 
 // DriftReport holds the result of a drift check derived from a dry-run
@@ -92,7 +98,14 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	// Removed files = orphaned
 	for _, tr := range report.TargetReports() {
 		for _, r := range tr.Removed {
-			dr.Orphaned = append(dr.Orphaned, DriftItem{Name: resourceKeyForPath(r, resolvedByName), Reason: DriftOrphaned})
+			dr.Orphaned = append(dr.Orphaned, DriftItem{
+				Name:         resourceKeyForPath(r, resolvedByName),
+				Reason:       DriftOrphaned,
+				Path:         r,
+				Target:       tr.Target,
+				MachineScope: tr.MachineScope,
+				OutDir:       tr.OutDir,
+			})
 		}
 	}
 
@@ -123,7 +136,33 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 		}
 	}
 
+	// The report is consumed by UI surfaces that render items in slice order,
+	// and several derivations above iterate maps. Sort every bucket so two
+	// runs over the same report produce byte-identical orderings (stable, so
+	// report order survives inside an equal key).
+	sort.SliceStable(dr.Missing, func(i, j int) bool { return dr.Missing[i].Name < dr.Missing[j].Name })
+	sort.SliceStable(dr.Broken, func(i, j int) bool { return dr.Broken[i].Name < dr.Broken[j].Name })
+	sort.SliceStable(dr.Synced, func(i, j int) bool { return dr.Synced[i].Name < dr.Synced[j].Name })
+	sort.SliceStable(dr.Orphaned, func(i, j int) bool {
+		return driftOrphanIdentityKey(dr.Orphaned[i]) < driftOrphanIdentityKey(dr.Orphaned[j])
+	})
+
 	return dr
+}
+
+// driftOrphanIdentityKey orders orphan outputs by their full
+// (resource, target, scope, outDir, path) identity: that tuple is the only
+// identity an unclaimed output has, and it is also the key TUI row-building
+// deduplicates on, so the two can never disagree about whether two orphans
+// are "the same".
+func driftOrphanIdentityKey(item DriftItem) string {
+	return strings.Join([]string{
+		item.Name,
+		string(item.Target),
+		fmt.Sprint(item.MachineScope),
+		item.OutDir,
+		item.Path,
+	}, "\x00")
 }
 
 func resourceKeyForPath(path string, resolvedByName map[string]string) string {

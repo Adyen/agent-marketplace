@@ -963,6 +963,8 @@ registries:
       - some-skill
 `)
 
+	sentinelPath := filepath.Join(repoRoot, ".factory", "skills", "existing", "SKILL.md")
+	writeFile(t, sentinelPath, "# existing output\n")
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("sync", "--check")
@@ -976,6 +978,52 @@ registries:
 
 	if !strings.Contains(err.Error(), "no machine-wide target harness set configured") {
 		t.Fatalf("expected missing target harness set error, got %v (output %q)", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("sync --check prerequisite failure mutated .gitignore: %v", err)
+	}
+	if got, err := os.ReadFile(sentinelPath); err != nil || string(got) != "# existing output\n" {
+		t.Fatalf("sync --check prerequisite failure changed output: %q, %v", got, err)
+	}
+
+	output, err = executeCommand("sync")
+	if err == nil || !strings.Contains(err.Error(), "no machine-wide target harness set configured") {
+		t.Fatalf("expected sync prerequisite failure, got err=%v output=%q", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("sync prerequisite failure mutated .gitignore: %v", err)
+	}
+	if got, err := os.ReadFile(sentinelPath); err != nil || string(got) != "# existing output\n" {
+		t.Fatalf("sync prerequisite failure changed output: %q, %v", got, err)
+	}
+}
+
+func TestSyncAndCheckRejectInvalidConfigBeforeGitignoreOrOutputMutation(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), "# invalid target\napiVersion: agent-marketplace/v3\nharnesses: [devni]\n")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	gitignorePath := filepath.Join(repoRoot, ".gitignore")
+	originalGitignore := "# user-owned\ncustom-output/\n"
+	writeFile(t, gitignorePath, originalGitignore)
+	sentinelPath := filepath.Join(repoRoot, ".factory", "skills", "existing", "SKILL.md")
+	originalOutput := "# existing output\n"
+	writeFile(t, sentinelPath, originalOutput)
+	withWorkingDir(t, repoRoot)
+
+	for _, args := range [][]string{{"sync"}, {"sync", "--check"}} {
+		output, err := executeCommand(args...)
+		if err == nil || !strings.Contains(err.Error(), "devni") {
+			t.Fatalf("%v: expected invalid-target error, got err=%v output=%q", args, err, output)
+		}
+		if got, readErr := os.ReadFile(gitignorePath); readErr != nil || string(got) != originalGitignore {
+			t.Fatalf("%v: prerequisite failure changed .gitignore: %q, %v", args, got, readErr)
+		}
+		if got, readErr := os.ReadFile(sentinelPath); readErr != nil || string(got) != originalOutput {
+			t.Fatalf("%v: prerequisite failure changed output: %q, %v", args, got, readErr)
+		}
 	}
 }
 
@@ -1040,4 +1088,51 @@ registries:
 
 	assertFactorySkillExists(t, homeDir, "user-skill")
 	assertFactorySkillAbsent(t, homeDir, "org-skill")
+}
+
+// TestSyncCommandReportsStaleCacheFallback pins the CLI partial-outcome
+// contract for sync: when a registry fetch fails but a warm cache exists,
+// sync succeeds AND prints the typed stale-cache warning next to the summary,
+// instead of silently claiming a clean refresh from stale data.
+func TestSyncCommandReportsStaleCacheFallback(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-cache-sync.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - vm-lifecycle
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	// Warm the cache against the live registry.
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("expected initial sync to succeed: %v\n%s", err, output)
+	}
+
+	// Break the remote; the warm cache must still serve the sync.
+	if err := os.Rename(origin, origin+".offline"); err != nil {
+		t.Fatalf("rename origin: %v", err)
+	}
+
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync with a warm stale cache should succeed, not fail: %v\n%s", err, output)
+	}
+	// The second sync has nothing new to write; the summary stays clean.
+	if !strings.Contains(output, "Errors 0") {
+		t.Fatalf("expected a clean sync summary, got:\n%s", output)
+	}
+	if !strings.Contains(output, "using stale cache") || !strings.Contains(output, "stale-cache-sync.git") {
+		t.Fatalf("expected the stale-cache fallback warning naming the registry, got:\n%s", output)
+	}
+	assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
 }

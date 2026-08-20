@@ -88,7 +88,7 @@ func formatFlatItem(it flatItem) string {
 		if it.Collapsed {
 			glyph = "▶"
 		}
-		return fmt.Sprintf("%s%s %s  (%d)", indent, glyph, it.SectionTitle, it.SectionCount)
+		return fmt.Sprintf("%s%s %s  (%d)", indent, glyph, sanitizeTerminalData(it.SectionTitle, terminalSingleLine), it.SectionCount)
 	case flatArtifact:
 		indent := strings.Repeat("  ", it.Depth)
 		r := it.Row
@@ -117,7 +117,7 @@ func stylizeFlatItem(it flatItem, plain string) string {
 		if it.Collapsed {
 			glyph = "▶"
 		}
-		title := styleSectionHeader.Render(fmt.Sprintf("%s %s", glyph, it.SectionTitle))
+		title := styleSectionHeader.Render(fmt.Sprintf("%s %s", glyph, sanitizeTerminalData(it.SectionTitle, terminalSingleLine)))
 		count := styleSectionCount.Render(fmt.Sprintf("  (%d)", it.SectionCount))
 		return indent + title + count
 	case flatArtifact:
@@ -141,5 +141,5 @@ func stylizeFlatItem(it flatItem, plain string) string {
 }
 
 func resourceLabel(r row) string {
-	return skill.KindLabel(r.Artifact.Kind) + " " + r.Artifact.Name
+	return skill.KindLabel(r.Artifact.Kind) + " " + sanitizeTerminalData(r.Artifact.Name, terminalSingleLine)
 }

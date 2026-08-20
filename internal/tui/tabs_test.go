@@ -44,6 +44,7 @@ func TestSwitchTabPreservesPerTabCursor(t *testing.T) {
 		{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "gamma"}}},
 	}
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = rows
 	m.filteredRows = rows
 	m.height = 24
@@ -77,6 +78,7 @@ func TestSwitchTabPreservesPerTabCursor(t *testing.T) {
 
 func TestSwitchTabNoOpWhenSameTab(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "a"}}}}
 	m.filteredRows = m.rows
 	m.cursor = 0

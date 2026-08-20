@@ -14,8 +14,11 @@ import (
 
 func TestHarnessKeyOpensGlobalHarnessModal(t *testing.T) {
 	m := NewModel("/repo", "/home")
-	m.projectHarnesses = []string{"factory"}
+	seedTestTerminalSize(&m)
 	m.globalHarnesses = []string{"cursor"}
+	m.userHarnesses = []string{"cursor"}
+	m.targetHarnesses = []string{"cursor"}
+	m.targetHarnessSource = config.UserPersonal
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
 	m = mi.(Model)
@@ -35,13 +38,14 @@ func TestHarnessKeyOpensGlobalHarnessModal(t *testing.T) {
 
 func TestRenderHarnessModalShowsProvenanceAndActions(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneHarnessModal
-	m.projectHarnesses = []string{"factory"}
-	m.globalHarnesses = []string{"cursor"}
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.Organization
 	m.openHarnessModal()
 
 	out := renderHarnessModal(m)
-	for _, want := range []string{"Target harnesses", "Effective:", "Project:", "Global:", "Factory Droid", "Cursor", "[p]", "[g]", "[space]", "[enter]"} {
+	for _, want := range []string{"Target harnesses", "Editing:", "Effective:", "Factory Droid", "organization fallback (read-only)", "Global:", "Project:", "Cursor", "[g]", "[p]", "[space]", "[enter]"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("modal missing %q in output:\n%s", want, out)
 		}
@@ -50,6 +54,7 @@ func TestRenderHarnessModalShowsProvenanceAndActions(t *testing.T) {
 
 func TestRenderHarnessModalUsesRegistryLabelsInSummaries(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.globalHarnesses = []string{"cursor"}
 	m.projectHarnesses = []string{"codex"}
 	m.openHarnessModal()
@@ -75,9 +80,12 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	}
 
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneHarnessModal
 	m.globalHarnesses = []string{"factory"}
-	m.projectHarnesses = nil
+	m.userHarnesses = []string{"factory"}
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.UserPersonal
 	m.openHarnessModal()
 	if m.harnessModal.selected["devin"] {
 		t.Fatal("Devin must not be pre-selected: it is opt-in")
@@ -113,7 +121,11 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	}
 
 	m := NewModel("/repo", tmpHome)
+	seedTestTerminalSize(&m)
 	m.globalHarnesses = []string{"factory"}
+	m.userHarnesses = []string{"factory"}
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.UserPersonal
 	m.openHarnessModal()
 	// Walk to Devin and toggle it on without assuming it remains last.
 	for knownHarnessOptions[m.harnessModal.cursor].ID != "devin" {
@@ -149,12 +161,15 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
 	m := NewModel(repoRoot, "/home")
+	seedTestTerminalSize(&m)
 	m.projectHarnesses = []string{"factory"}
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.RepoCommitted
 	m.openHarnessModal()
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
@@ -162,28 +177,18 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("switching scope should not emit command")
 	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = mi.(Model)
-	if cmd != nil {
-		t.Fatalf("moving cursor should not emit command")
-	}
-	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = mi.(Model)
-	if cmd != nil {
-		t.Fatalf("toggling harness should not emit command")
-	}
 	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = mi.(Model)
 	if cmd == nil {
-		t.Fatalf("saving harnesses should emit command")
+		t.Fatalf("saving project harnesses should emit command")
 	}
-	msg := cmd()
-	hw, ok := msg.(harnessWrittenMsg)
-	if !ok {
-		t.Fatalf("expected harnessWrittenMsg, got %T", msg)
-	}
-	if hw.err != nil {
-		t.Fatalf("expected project harness save to succeed: %v", hw.err)
+	hw, ok := cmd().(harnessWrittenMsg)
+	if !ok || hw.err != nil {
+		t.Fatalf("project harness save failed: %#v", hw)
 	}
 	cfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
@@ -194,8 +199,35 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	}
 }
 
+func TestHarnessModalCreatesStrictV3UserOverrideFromOrganizationFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.Organization
+	m.openHarnessModal()
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("saving organization fallback did not emit a user override command")
+	}
+	msg := cmd().(harnessWrittenMsg)
+	if msg.err != nil {
+		t.Fatalf("save user override: %v", msg.err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "apiVersion: agent-marketplace/v3") || !strings.Contains(string(data), "- factory") {
+		t.Fatalf("organization fallback override was not strict user v3:\n%s", data)
+	}
+}
+
 func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.openHarnessModal()
 	m.harnessModal.selected = map[string]bool{}
 
@@ -217,7 +249,7 @@ func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	}
 }
 
-func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
+func TestHarnessModalTogglesAndSavesGlobalTargets(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	configPath := filepath.Join(tmpHome, ".agents", "config.yaml")
@@ -229,8 +261,11 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	}
 
 	m := NewModel("/repo", tmpHome)
-	m.projectHarnesses = []string{"cursor"}
+	seedTestTerminalSize(&m)
 	m.globalHarnesses = []string{"factory"}
+	m.userHarnesses = []string{"factory"}
+	m.targetHarnesses = []string{"factory"}
+	m.targetHarnessSource = config.UserPersonal
 	m.openHarnessModal()
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})

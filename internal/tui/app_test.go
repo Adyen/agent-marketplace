@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	tea "github.com/charmbracelet/bubbletea"
@@ -108,37 +110,161 @@ func TestApplyFilter(t *testing.T) {
 }
 
 func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
-	m := Model{
-		rows:         []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
-		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
-		refreshing:   true,
-		refreshToken: 1,
-		keys:         defaultKeyMap,
-		help:         newHelpModel(),
-	}
+	m := NewModel(t.TempDir(), t.TempDir())
+	seedTestTerminalSize(&m)
+	m.rows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}}
+	m.filteredRows = m.rows
+	m.refreshing = true
+	refreshGeneration := m.beginRequest(requestSnapshot)
 
 	updatedModel, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
 		t.Fatalf("expected reload key to return a command")
 	}
-
 	gotModel := updatedModel.(Model)
-	if gotModel.refreshToken != 0 {
-		t.Fatalf("expected reload to invalidate pending refresh token, got %d", gotModel.refreshToken)
+	if gotModel.requests.active(requestSnapshot) <= refreshGeneration {
+		t.Fatalf("reload did not supersede refresh generation %d", refreshGeneration)
 	}
 
-	stale := refreshLoadedMsg{
-		snapshotLoadedMsg: snapshotLoadedMsg{
-			rows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
-		},
-		refreshToken: 1,
-	}
-
+	stale := refreshLoadedMsg{snapshotLoadedMsg: snapshotLoadedMsg{
+		generation: refreshGeneration,
+		rows:       []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
+	}}
 	nextModel, _ := gotModel.Update(stale)
 	finalModel := nextModel.(Model)
-
 	if finalModel.rows[0].Artifact.Name != "new-state" {
 		t.Fatalf("expected stale refresh to be ignored, got %q", finalModel.rows[0].Artifact.Name)
+	}
+}
+
+func TestInFlightRefreshSurvivesSpaceOnSectionOrRowAndModalCancel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		interact func(t *testing.T, m Model) Model
+	}{
+		{
+			name: "section",
+			interact: func(t *testing.T, m Model) Model {
+				t.Helper()
+				for i := range m.flatItems {
+					if m.flatItems[i].Kind == flatSection {
+						m.cursor = i
+						updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+						if cmd != nil {
+							t.Fatalf("section Space emitted command")
+						}
+						return updated.(Model)
+					}
+				}
+				t.Fatal("no section row found")
+				return m
+			},
+		},
+		{
+			name: "row then modal cancel",
+			interact: func(t *testing.T, m Model) Model {
+				t.Helper()
+				for i := range m.flatItems {
+					if m.flatItems[i].Kind == flatArtifact {
+						m.cursor = i
+						opened, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+						if cmd != nil {
+							t.Fatalf("row Space emitted command")
+						}
+						m = opened.(Model)
+						if m.pane != paneToggleModal {
+							t.Fatalf("Space pane = %v, want toggle modal", m.pane)
+						}
+						cancelled, cancelCmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+						if cancelCmd != nil {
+							t.Fatalf("modal cancel emitted command")
+						}
+						return cancelled.(Model)
+					}
+				}
+				t.Fatal("no artifact row found")
+				return m
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			seedTestTerminalSize(&m)
+			m.loading = false
+			m.rows = []row{mkRow("before-refresh", withAvailable, withRegistry("registry.git", "registry"))}
+			m.filteredRows = m.rows
+			m.rebuildFlatItems()
+			m.refreshing = true
+			generation := m.beginRequest(requestSnapshot)
+
+			m = tc.interact(t, m)
+			if !m.refreshing {
+				t.Fatal("Space/cancel stopped the in-flight refresh")
+			}
+			if got := m.requests.active(requestSnapshot); got != generation {
+				t.Fatalf("Space/cancel changed snapshot generation from %d to %d", generation, got)
+			}
+
+			updated, _ := m.Update(refreshLoadedMsg{snapshotLoadedMsg: snapshotLoadedMsg{
+				generation: generation,
+				rows:       []row{mkRow("accepted-refresh", withAvailable)},
+				mergedCfg:  &config.Config{},
+			}})
+			m = updated.(Model)
+			if m.refreshing {
+				t.Fatal("accepted refresh left refreshing set")
+			}
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "accepted-refresh" {
+				t.Fatalf("in-flight refresh was not accepted: %#v", m.rows)
+			}
+		})
+	}
+}
+
+func TestOlderReloadCompletionCannotReplaceNewerSnapshotState(t *testing.T) {
+	preservedErr := errors.New("preserve operation failure")
+	m := NewModel(t.TempDir(), t.TempDir())
+	seedTestTerminalSize(&m)
+	m.loading = false
+	m.rows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "newer"}}}}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	m.cursor = len(m.flatItems) - 1
+	m.diagnostics.recordOperationFailure(operationSync, diagnosticSync, preservedErr)
+
+	first, firstCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = first.(Model)
+	if firstCmd == nil {
+		t.Fatal("first reload did not start")
+	}
+	firstGeneration := m.requests.active(requestSnapshot)
+	if firstGeneration == 0 {
+		t.Fatal("first reload did not create snapshot generation")
+	}
+	second, secondCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = second.(Model)
+	if secondCmd == nil {
+		t.Fatal("second reload did not start")
+	}
+	if got := m.requests.active(requestSnapshot); got <= firstGeneration {
+		t.Fatalf("second reload generation = %d, want greater than %d", got, firstGeneration)
+	}
+	cursor, pane := m.cursor, m.pane
+	stale := snapshotLoadedMsg{
+		generation: firstGeneration,
+		rows:       []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale"}}}},
+		diagnostics: []tuiDiagnostic{
+			snapshotDiagnostic(diagnosticError, diagnosticConfig, errors.New("stale error")),
+		},
+	}
+	updated, _ := m.Update(stale)
+	m = updated.(Model)
+	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "newer" || m.cursor != cursor || m.pane != pane {
+		t.Fatalf("stale reload changed current state: rows=%v cursor=%d pane=%v", m.rows, m.cursor, m.pane)
+	}
+	errs := m.diagnostics.bySeverity(diagnosticError)
+	if len(errs) != 1 || !errors.Is(errs[0].err, preservedErr) {
+		t.Fatalf("stale reload changed diagnostics: %v", errs)
 	}
 }
 
@@ -166,9 +292,10 @@ func TestViewFitsTerminalWithLongContent(t *testing.T) {
 
 func TestDownKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.width = 50
-	m.height = 8
+	m.height = 12
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 5), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -195,8 +322,10 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 		mkRow("omega", withGlobal),
 	}
 	m := NewModel(t.TempDir(), t.TempDir())
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 9})
-	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{rows: rows})
+	seedTestTerminalSize(&m)
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	m = resized.(Model)
+	loaded, _ := m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: rows})
 	m = loaded.(Model)
 	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
 		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View()))
@@ -217,9 +346,10 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 
 func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.width = 100
-	m.height = 8
+	m.height = 12
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 4), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -228,7 +358,7 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m.cursor = 2
 	m.clampListOffset()
 
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	out := updated.(Model).View()
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
@@ -250,6 +380,7 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewModel(t.TempDir(), t.TempDir())
+			seedTestTerminalSize(&m)
 			m.loading = false
 			m.filterActive = tc.filterActive
 			if tc.filterActive {
@@ -265,8 +396,8 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
-			if tc.height >= 2 && !strings.Contains(out, "~ in sync") {
-				t.Fatalf("View() omitted the persistent footer from a %d-line terminal: %q", tc.height, out)
+			if !strings.Contains(out, "q") || (tc.height > 1 && !strings.Contains(out, "Resize required")) {
+				t.Fatalf("View() omitted below-minimum resize/quit guidance from a %dx%d terminal: %q", tc.width, tc.height, out)
 			}
 		})
 	}
@@ -274,6 +405,7 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 
 func TestInitialModalFitsTerminal(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.pane = paneInitModal
 

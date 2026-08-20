@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -574,11 +575,31 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 		return err
 	}
 
+	kind := repoLayer
+	if isGlobalConfigPath(configPath) {
+		kind = userLayer
+	}
+	if data, readErr := os.ReadFile(configPath); readErr == nil {
+		if err := requireSingleYAMLDocument(data, fmt.Sprintf("%s config %q", kind.name(), configPath)); err != nil {
+			return err
+		}
+		var errs []error
+		if kind == userLayer {
+			_, errs = loadStrictUserV3Config(data, false)
+		} else {
+			_, errs = loadV3Config(data, kind, false)
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("validate existing %s config %q: %w", kind.name(), configPath, errors.Join(errs...))
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("read config %q: %w", configPath, readErr)
+	}
+
 	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
 	}
-
 	root, err := ensureDocumentMapping(doc)
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
@@ -590,6 +611,19 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	}
 
 	setSequenceValues(sequence, harnesses)
+	staged, err := encodeMigrationDocument(doc)
+	if err != nil {
+		return fmt.Errorf("encode staged config %q: %w", configPath, err)
+	}
+	var stagedErrs []error
+	if kind == userLayer {
+		_, stagedErrs = loadStrictUserV3Config(staged, true)
+	} else {
+		_, stagedErrs = loadV3Config(staged, kind, false)
+	}
+	if len(stagedErrs) > 0 {
+		return fmt.Errorf("validate staged %s config %q: %w", kind.name(), configPath, errors.Join(stagedErrs...))
+	}
 	return writeConfigDocument(configPath, mode, doc)
 }
 

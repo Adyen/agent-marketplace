@@ -20,6 +20,10 @@ func TestExcludeAllScopedByPathNotJustURL(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
+	// The machine-wide target harness set comes from the user-personal
+	// config; sync never fabricates one.
+	env.WriteGlobalConfig(``)
+
 	pm := Skill{Name: "competitor-analysis", Description: "PM market research skill"}
 	oncall := Skill{Name: "oncall-runbook", Description: "Dev oncall skill"}
 

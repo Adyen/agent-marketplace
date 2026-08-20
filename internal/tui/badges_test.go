@@ -84,6 +84,7 @@ func TestOriginBadgeLocalOnlyExcludedIsLocal(t *testing.T) {
 
 func TestRenderListShowsOriginBadgeOnSkillRows(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("code-review", withProject, withLocal, withRegistry("t.git", "t"))}
 	m.filteredRows = m.rows
@@ -97,6 +98,7 @@ func TestRenderListShowsOriginBadgeOnSkillRows(t *testing.T) {
 
 func TestRenderListSkipsBadgeForAvailableSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.rows = []row{mkRow("deploy", withAvailable, withRegistry("t.git", "t"))}
 	m.filteredRows = m.rows

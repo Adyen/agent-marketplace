@@ -16,6 +16,10 @@ func TestSyncFromSubdirExcludeShadowedByAncestor(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
+	// The machine-wide target harness set comes from the user-personal
+	// config; sync never fabricates one.
+	env.WriteGlobalConfig(``)
+
 	regURL := env.CreateBareRepo("ancestor-shadow-reg", SkillsOnly(
 		Skill{Name: "keep-skill", Description: "Skill to keep"},
 		Skill{Name: "target-skill", Description: "Skill the subdir tries to exclude"},

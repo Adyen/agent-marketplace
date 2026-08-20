@@ -137,7 +137,9 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 		}
 		return &cfg, nil
 	}
-
+	if err := requireSingleYAMLDocument(data, kind.name()+" config"); err != nil {
+		return nil, []error{err}
+	}
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
 		return nil, []error{fmt.Errorf("parse config: %w", err)}
@@ -186,6 +188,22 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 	return &cfg, nil
 }
 
+// loadStrictUserV3Config applies the complete user-personal v3 mutation
+// contract. General loaders retain v2 compatibility, but a mutation that
+// promises strict v3 must reject other schema versions before touching bytes.
+// Logging is validated explicitly when harnesses are optional because the
+// shared Config validator ties its logging check to the user-target gate.
+func loadStrictUserV3Config(data []byte, requireHarnesses bool) (*Config, []error) {
+	if version := PeekAPIVersion(data); version != APIVersionV3 {
+		return nil, []error{fmt.Errorf("apiVersion must be %q, got %q", APIVersionV3, version)}
+	}
+	cfg, errs := loadV3Config(data, userLayer, requireHarnesses)
+	if cfg != nil && !requireHarnesses {
+		errs = append(errs, validateLogging(cfg.Logging)...)
+	}
+	return cfg, errs
+}
+
 // loadV3LocalConfig loads a strict repository personal config from raw YAML.
 // It validates the YAML node against the repository personal allowlist and
 // then runs structural validation.
@@ -193,7 +211,9 @@ func loadV3LocalConfig(data []byte) (*LocalConfig, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return &LocalConfig{}, nil
 	}
-
+	if err := requireSingleYAMLDocument(data, "repository personal config"); err != nil {
+		return nil, []error{err}
+	}
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
 		return nil, []error{fmt.Errorf("parse config: %w", err)}

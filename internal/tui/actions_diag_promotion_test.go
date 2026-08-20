@@ -5,8 +5,28 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
+
+// promoteReportErrors was the TUI-local promotion the bespoke update path
+// used. The update path now runs pipeline.Sync, whose MaterializeErrors are
+// promoted the same way; this test-local composition keeps the TUI-side pin
+// honest by asserting over exactly the two pipeline primitives the sync
+// result is built from.
+func promoteReportErrors(report *materialize.Report) []error {
+	if report == nil {
+		return nil
+	}
+	var errs []error
+	for _, d := range report.Diags {
+		if !d.IsError() {
+			continue
+		}
+		errs = append(errs, pipeline.PromoteDiagnostic(d))
+	}
+	return pipeline.DedupIssues(errs)
+}
 
 func toolUnknownDiag(resource string) diag.Diagnostic {
 	return diag.Diagnostic{

@@ -73,6 +73,7 @@ func TestCenterOverlayCentersWithinBox(t *testing.T) {
 
 func TestModalViewCompositesOnTopOfBaseLayout(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.loading = false
 	m.width = 80
 	m.height = 24

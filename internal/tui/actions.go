@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -23,8 +23,10 @@ import (
 )
 
 type snapshotLoadedMsg struct {
+	generation           requestGeneration
 	rows                 []row
 	driftReport          materialize.DriftReport
+	driftAssessment      driftAssessment
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
@@ -32,16 +34,16 @@ type snapshotLoadedMsg struct {
 	localExcludes        []string
 	globalHarnesses      []string
 	projectHarnesses     []string
-	errs                 []error
-	warnings             []error
+	userHarnesses        []string
+	targetHarnesses      []string
+	targetHarnessSource  config.Source
+	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
 	pendingMigration     migrationPrompt
 }
 
-type reloadMsg snapshotLoadedMsg
 type refreshLoadedMsg struct {
 	snapshotLoadedMsg
-	refreshToken int
 }
 
 type toastMsg struct {
@@ -59,7 +61,17 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 	})
 }
 
+// operationInProgressCmd surfaces the start-block of a second mutation-class
+// operation while another is still active. The blocked action stays where it
+// is (modal open) so it can be retried once the active operation completes.
+func operationInProgressCmd() tea.Cmd {
+	return func() tea.Msg {
+		return toastMsg{text: "another operation is in progress", duration: 2 * time.Second}
+	}
+}
+
 type configWrittenMsg struct {
+	operation operationID
 	skillName string
 	enabled   bool
 	err       error
@@ -69,15 +81,34 @@ type syncDoneMsg struct {
 	err error
 }
 
+const (
+	updateStageRefresh         = "refresh"
+	updateStageMaterialization = "materialization"
+	updateStageReload          = "state reload"
+)
+
 type updateDoneMsg struct {
-	err error
+	snapshot snapshotLoadedMsg
+	stage    string
+	// staleCaches carries the typed stale-cache fallback warnings observed
+	// while registries were refreshed. Non-empty means the update completed
+	// from stale data: a partial outcome that must never be reported with
+	// the clean-refresh success copy.
+	staleCaches []error
+	err         error
 }
 
-// detailContentMsg carries the glamour-rendered SKILL.md content for the
+// detailContentMsg carries the glamour-rendered source content for the
 // full-screen detail view. Produced by loadDetailContent (async tea.Cmd)
-// and consumed in Update to populate the viewport.
+// and consumed in Update to populate the viewport. width records the
+// word-wrap width the content was rendered at so a resize can detect a
+// stale-width render; keepScroll distinguishes a width re-render (keep the
+// scroll anchor) from a fresh open (reset to the top).
 type detailContentMsg struct {
-	content string
+	generation requestGeneration
+	content    string
+	width      int
+	keepScroll bool
 }
 
 type catalogLoadMode int
@@ -94,24 +125,41 @@ var (
 	loadLocalConfig  = config.LoadLocalConfig
 	cloneOrPull      = cache.CloneOrPull
 	discoverCatalog  = catalog.Discover
+	runMaterialize   = materialize.Run
 )
 
-func loadSnapshot(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+func loadSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot := readSnapshotWithContext(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot.generation = generation
+		return snapshot
 	}
 }
 
-func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, refreshToken int) tea.Cmd {
+func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return refreshLoadedMsg{
-			snapshotLoadedMsg: readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh),
-			refreshToken:      refreshToken,
-		}
+		snapshot := readSnapshotWithContext(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snapshot.generation = generation
+		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
 }
 
-func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+func readSnapshot(repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	return readSnapshotWithContext(context.Background(), repoRoot, homeDir, mode)
+}
+
+func readSnapshotWithContext(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) (result snapshotLoadedMsg) {
+	started := time.Now()
+	slog.Debug("tui snapshot started", "mode", mode)
+	defer func() {
+		slog.Debug("tui snapshot finished",
+			"mode", mode,
+			"duration_ms", time.Since(started).Milliseconds(),
+			"rows", len(result.rows),
+			"diagnostics", len(result.diagnostics),
+			"drift_assessment", result.driftAssessment,
+		)
+	}()
 	var catalogOverlapWarnings []error
 	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
 		RepoRoot:    repoRoot,
@@ -131,9 +179,30 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	// v2 is canonical and v3 is a compatibility alias; schema versions do not
 	// trigger a migration prompt in the TUI.
 	pendingMigration := pendingMigrationFor(repoRoot, homeDir)
+	snapshotConfig := resolvedResult.MergedCfg
+	if len(resolvedResult.CatalogErrors) == 0 && resolvedResult.LoadedCfg != nil {
+		snapshotConfig = resolvedResult.LoadedCfg
+	}
+	globalHarnesses := configHarnesses(resolvedResult.GlobalCfg)
+	baseSnapshot := snapshotLoadedMsg{
+		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
+		resolved:             resolvedResult.Resolved,
+		mergedCfg:            snapshotConfig,
+		materializationModes: resolvedResult.MaterializationModes,
+		localExcludes:        localExcludes(resolvedResult.LocalCfg),
+		globalHarnesses:      globalHarnesses,
+		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
+		userHarnesses:        globalHarnesses,
+		targetHarnesses:      targetsToHarnesses(resolvedResult.TargetHarnesses),
+		targetHarnessSource:  resolvedResult.TargetHarnessSource,
+		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
+		pendingMigration:     pendingMigration,
+	}
 
 	if len(resolvedResult.ConfigErrors) > 0 {
-		return snapshotLoadedMsg{errs: resolvedResult.ConfigErrors}
+		baseSnapshot.diagnostics = appendSnapshotDiagnostics(nil, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+		baseSnapshot.diagnostics = appendSnapshotDiagnostics(baseSnapshot.diagnostics, diagnosticError, diagnosticConfig, resolvedResult.ConfigErrors...)
+		return baseSnapshot
 	}
 	if len(resolvedResult.CatalogErrors) > 0 {
 		// Separate overlap warnings from hard errors.
@@ -147,10 +216,12 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			}
 		}
 		if len(hardErrs) > 0 {
-			return snapshotLoadedMsg{errs: hardErrs, warnings: overlapWarnings, pendingMigration: pendingMigration}
+			baseSnapshot.diagnostics = appendSnapshotDiagnostics(baseSnapshot.diagnostics, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+			baseSnapshot.diagnostics = appendSnapshotDiagnostics(baseSnapshot.diagnostics, diagnosticError, diagnosticCatalog, hardErrs...)
+			baseSnapshot.diagnostics = appendSnapshotDiagnostics(baseSnapshot.diagnostics, diagnosticWarning, diagnosticCatalog, overlapWarnings...)
+			return baseSnapshot
 		}
-		// No hard errors; carry overlap warnings forward to the final warnings.
-		// Store them in a temp var since `warnings` is declared below.
+		// No hard errors; carry overlap warnings into the accepted snapshot diagnostics.
 		catalogOverlapWarnings = overlapWarnings
 	}
 
@@ -159,54 +230,84 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	for _, r := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(r.Kind, r.Name))
 	}
-	dryRunReport, _ := materialize.Run(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
-
-	rows := buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-
-	var errs []error
-	var warnings []error
-
-	// Surface overlap warnings from catalog loading.
-	warnings = append(warnings, catalogOverlapWarnings...)
-
-	// Surface malformed skills as warnings in the errors overlay so the
-	// user can see them when pressing 'e' without scrolling to the bottom
-	// of the scope tree.
-	for _, m := range resolvedResult.CatalogLoad.Malformed {
-		warnings = append(warnings, fmt.Errorf("malformed skill %q (%s): %w", m.DirName, m.Path, m.Error))
+	driftState := driftReady
+	if dryRunReport == nil || dryRunErr != nil {
+		driftState = driftFailed
+	}
+	// Any hard resolution error (required selection not found, unresolved or
+	// malformed collection, incompatible organization requirement) means the
+	// resolved set is incomplete, so a dry-run verdict over it is not a
+	// trustworthy drift signal: drift is failed, never "in sync".
+	for _, err := range resolvedResult.ResolveErrors {
+		if !isSoftResolutionIssue(err) {
+			driftState = driftFailed
+			break
+		}
 	}
 
+	rows := buildRows(snapshotConfig, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+
+	var diagnostics []tuiDiagnostic
+	diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+	diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, catalogOverlapWarnings...)
+	for _, malformed := range resolvedResult.CatalogLoad.Malformed {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed skill %q (%s): %w", malformed.DirName, malformed.Path, malformed.Error))
+	}
 	for _, err := range resolvedResult.ResolveErrors {
-		if resolver.IsSoftSelectedNotFound(err) {
-			warnings = append(warnings, err)
+		if isSoftResolutionIssue(err) {
+			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticResolution, err)
 			continue
 		}
-		if resolver.IsNameCollision(err) {
-			warnings = append(warnings, err)
-			continue
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, err)
+	}
+	if dryRunReport != nil {
+		for _, diagnostic := range dryRunReport.Diags {
+			severity := diagnosticWarning
+			if diagnostic.IsError() {
+				severity = diagnosticError
+				driftState = driftFailed
+			}
+			diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
 		}
-		if resolver.IsWarning(err) {
-			continue
-		}
-		errs = append(errs, err)
+	}
+	if dryRunErr != nil {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticMaterialization, dryRunErr)
+	}
+	if driftState == driftFailed {
+		slog.Error("tui drift assessment failed", "returned_error", dryRunErr != nil, "diagnostic_errors", len(diagnosticErrors(diagnostics)))
 	}
 
 	return snapshotLoadedMsg{
 		rows:                 rows,
 		driftReport:          driftReport,
+		driftAssessment:      driftState,
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
 		resolved:             resolvedResult.Resolved,
-		mergedCfg:            resolvedResult.LoadedCfg,
+		mergedCfg:            snapshotConfig,
 		materializationModes: resolvedResult.MaterializationModes,
 		localExcludes:        localExcludes(resolvedResult.LocalCfg),
-		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
+		globalHarnesses:      globalHarnesses,
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
-		errs:                 errs,
-		warnings:             warnings,
+		userHarnesses:        globalHarnesses,
+		targetHarnesses:      targetsToHarnesses(resolvedResult.TargetHarnesses),
+		targetHarnessSource:  resolvedResult.TargetHarnessSource,
+		diagnostics:          diagnostics,
 		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 		pendingMigration:     pendingMigration,
 	}
+}
+
+// isSoftResolutionIssue reports whether a resolver error is advisory for the
+// TUI: soft selected-not-found/selected-malformed, name collisions, and the
+// resolver's warning family. Everything else (required selections that are
+// missing or malformed, unresolved collections, incompatible organization
+// requirements) is hard: it fails the drift assessment and is reported as an
+// error diagnostic. This predicate is the single place that classification
+// lives so the drift gate and the diagnostic severities cannot drift apart.
+func isSoftResolutionIssue(err error) bool {
+	return resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err) || resolver.IsNameCollision(err) || resolver.IsWarning(err)
 }
 
 func configHarnesses(cfg *config.Config) []string {
@@ -457,21 +558,23 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	// Missing and broken drift attach to the resolved row for the resource.
+	// Orphaned output deliberately does NOT: an orphan is unclaimed output
+	// whose only identity is (resource, target, scope, outDir, path), so
+	// keying it by resource name would both mis-mark a resolved row whose
+	// resource merely shares the name and hide the output's own identity.
+	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken))
 	for _, item := range driftReport.Missing {
 		driftByName[item.Name] = item
 	}
 	for _, item := range driftReport.Broken {
 		driftByName[item.Name] = item
 	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
 
 	// seen is keyed by (kind, name, catalogKey) so same-name skills from
 	// different registries each get their own row.
 	seen := make(map[string]struct{}, len(resolved)+totalCatalogEntries+totalMalformed)
-	rows := make([]row, 0, len(resolved)+totalCatalogEntries+totalMalformed)
+	rows := make([]row, 0, len(resolved)+totalCatalogEntries+totalMalformed+len(driftReport.Orphaned))
 
 	// Add resolved skills first
 	for _, s := range resolved {
@@ -484,7 +587,8 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 
 		var driftItem *materialize.DriftItem
 		if item, hasDrift := driftByName[key]; hasDrift {
-			driftItem = &item
+			driftItem = new(materialize.DriftItem)
+			*driftItem = item
 		}
 
 		_, enabledGlobal := globalEnabled[key][s.CatalogKey]
@@ -608,7 +712,41 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
+	// Every orphan output gets its own row, keyed by its full
+	// (resource, target, scope, outDir, path) identity: an orphan is output
+	// no resolved artifact claims, so it can never be "represented" by a
+	// resolved or catalog row that merely shares its resource name, and two
+	// orphans collapse only when every identity field agrees.
+	seenOrphans := make(map[string]struct{}, len(driftReport.Orphaned))
+	for _, orphan := range driftReport.Orphaned {
+		identity := orphan.Name +
+			"\x00" + string(orphan.Target) +
+			"\x00" + fmt.Sprint(orphan.MachineScope) +
+			"\x00" + orphan.OutDir +
+			"\x00" + orphan.Path
+		if _, dup := seenOrphans[identity]; dup {
+			continue
+		}
+		seenOrphans[identity] = struct{}{}
+		kind, name := orphanResourceIdentity(orphan.Name)
+		orphanCopy := orphan
+		rows = append(rows, row{
+			Artifact:  resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: kind, Name: name, Path: orphan.Path}},
+			DriftItem: &orphanCopy,
+		})
+	}
+
 	return rows
+}
+
+func orphanResourceIdentity(key string) (ir.ResourceKind, string) {
+	kindName, name, found := strings.Cut(key, "\x00")
+	if found {
+		if kind, ok := skill.ParseKind(kindName); ok {
+			return kind, name
+		}
+	}
+	return ir.KindSkill, key
 }
 
 // registryDisplayName derives a short label from a registry URL.
@@ -711,29 +849,76 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
-// ReadSkillMarkdown reads the SKILL.md content for a given resolved skill path.
-func ReadSkillMarkdown(path string) (string, error) {
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read resource source: %w", err)
-		}
-		return string(data), nil
+// loadDetailContent reads (bounded) and glamour-renders a resource's source
+// at the given viewport width in a background goroutine so the TUI can
+// transition to the detail pane immediately without blocking on file I/O or
+// markdown rendering. keepScroll marks width-change re-renders: on acceptance
+// the viewport keeps its scroll anchor instead of resetting to the top.
+func loadDetailContent(r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+	return func() tea.Msg {
+		return detailContentMsg{generation: generation, content: renderDetailFullContent(r, width), width: width, keepScroll: keepScroll}
 	}
-	mdPath := filepath.Join(path, "SKILL.md")
-	data, err := os.ReadFile(mdPath)
-	if err != nil {
-		return "", fmt.Errorf("read SKILL.md: %w", err)
-	}
-	return string(data), nil
 }
 
-// loadDetailContent reads and glamour-renders a skill's SKILL.md in a
-// background goroutine so the TUI can transition to the detail pane
-// immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row) tea.Cmd {
-	return func() tea.Msg {
-		return detailContentMsg{content: renderDetailFullContent(r)}
+// cloneOrPullDetailed mirrors cache.CloneOrPullDetailed behind a package var
+// so tests can swap the fetch behavior AND its stale-fallback reporting. The
+// TUI update path consumes the typed warning; readSnapshot and sync keep the
+// plain two-result seam.
+var cloneOrPullDetailed = cache.CloneOrPullDetailed
+
+// tuiPipelineOptions builds the pipeline options shared by the TUI's sync
+// and update operations so both run the identical authoritative behavior:
+// strict config loaders, the catalog fetch/discovery seams, and
+// pipeline.Sync's refresh/gitignore/target-set semantics. A nil cloneFn
+// falls back to the package's plain fetch seam.
+func tuiPipelineOptions(repoRoot string, cloneFn catalog.CloneOrPullFunc) pipeline.ResolveOptions {
+	if cloneFn == nil {
+		cloneFn = cloneOrPull
+	}
+	return pipeline.ResolveOptions{
+		RepoRoot: repoRoot,
+		Loaders: pipeline.Loaders{
+			Org:    loadOrgConfig,
+			Global: loadGlobalConfig,
+			Repo:   loadRepoConfig,
+			Local:  loadLocalConfig,
+		},
+		CatalogOption: []catalog.LoadOption{
+			catalog.WithCloneOrPull(cloneFn),
+			catalog.WithDiscoverFunc(discoverCatalog),
+		},
+	}
+}
+
+// staleCacheCollector records the typed stale-cache fallbacks observed by
+// the update's fetch seam. catalog runs fetches concurrently, so the
+// collector is mutex-guarded; warnings keep first-observed order.
+type staleCacheCollector struct {
+	mu       sync.Mutex
+	warnings []error
+}
+
+func (c *staleCacheCollector) add(warning *cache.StaleCacheFallbackWarning) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.warnings = append(c.warnings, warning)
+}
+
+func (c *staleCacheCollector) all() []error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]error(nil), c.warnings...)
+}
+
+// wrap adapts the detailed fetch seam to catalog.CloneOrPullFunc, collecting
+// stale-cache fallbacks as they happen.
+func (c *staleCacheCollector) wrap() catalog.CloneOrPullFunc {
+	return func(url, ref string) (string, error) {
+		path, warning, err := cloneOrPullDetailed(url, ref)
+		if warning != nil {
+			c.add(warning)
+		}
+		return path, err
 	}
 }
 
@@ -742,81 +927,96 @@ func loadDetailContent(r row) tea.Cmd {
 // avoid real I/O when inspecting command composition in assertions.
 var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
-		result := pipeline.Sync(ctx, pipeline.ResolveOptions{
-			RepoRoot: repoRoot,
-			Loaders: pipeline.Loaders{
-				Org:    loadOrgConfig,
-				Global: loadGlobalConfig,
-				Repo:   loadRepoConfig,
-				Local:  loadLocalConfig,
-			},
-			CatalogOption: []catalog.LoadOption{
-				catalog.WithCloneOrPull(cloneOrPull),
-				catalog.WithDiscoverFunc(discoverCatalog),
-			},
-		})
+		started := time.Now()
+		slog.Info("tui sync started")
+		result := pipeline.Sync(ctx, tuiPipelineOptions(repoRoot, nil))
+		slog.Info("tui sync finished", "success", len(result.Errors) == 0, "error_count", len(result.Errors), "duration_ms", time.Since(started).Milliseconds())
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
 	}
 }
 
-// runUpdateCmd reloads catalogs (clone/pull), materializes refreshed resources, and reloads state.
-func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+// runUpdateCmd refreshes pinned registries and materializes them through the
+// same authoritative pipeline the CLI sync and update commands run. After
+// success or partial failure it produces the authoritative post-operation
+// snapshot from disk, so the applied state reflects what the update actually
+// did rather than what it intended.
+//
+// It is a package-level var so tests can stub the operation when driving
+// key-level state-machine transitions.
+var runUpdateCmd = func(ctx context.Context, repoRoot, homeDir string, generations ...requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snap := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
-		if snap.mergedCfg == nil && len(snap.errs) > 0 {
-			return updateDoneMsg{err: errors.Join(snap.errs...)}
+		started := time.Now()
+		var generation requestGeneration
+		if len(generations) > 0 {
+			generation = generations[0]
 		}
-		report, err := materialize.Run(ctx, repoRoot, snap.resolved, materialize.WithMaterializationModes(snap.materializationModes))
-		var errs []error
-		errs = append(errs, snap.errs...)
-		errs = append(errs, promoteReportErrors(report)...)
-		if err != nil {
-			errs = append(errs, err)
+		slog.Info("tui update started", "generation", generation)
+		result := updateDoneMsg{}
+		defer func() {
+			slog.Info("tui update finished",
+				"generation", generation,
+				"stage", result.stage,
+				"success", result.err == nil && len(result.staleCaches) == 0,
+				"partial", len(result.staleCaches) > 0,
+				"duration_ms", time.Since(started).Milliseconds())
+		}()
+
+		stale := &staleCacheCollector{}
+		syncResult := pipeline.Sync(ctx, tuiPipelineOptions(repoRoot, stale.wrap()))
+
+		// The authoritative post-operation snapshot reflects whatever the
+		// update left on disk. The sync run's warnings are carried into it
+		// with the same category mapping readSnapshot derives, so the
+		// accepted replacement deduplicates on stable identity rather than
+		// doubling entries.
+		current := readSnapshotWithContext(ctx, repoRoot, homeDir, catalogLoadCached)
+		current.generation = generation
+		for _, warning := range syncResult.Warnings {
+			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, pipelineWarningCategory(warning), warning)
 		}
-		if len(errs) > 0 {
-			return updateDoneMsg{err: errors.Join(errs...)}
+		result.staleCaches = stale.all()
+		for _, warning := range result.staleCaches {
+			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticCatalog, warning)
 		}
-		// Preserve warning-level diagnostics so the TUI can display them and
-		// tests can observe that a warning-only update really did emit a warning.
-		if report != nil {
-			for _, d := range report.Diags {
-				if !d.IsError() {
-					snap.warnings = append(snap.warnings, pipeline.PromoteDiagnostic(d))
-				}
+		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
+		result.snapshot = current
+
+		switch {
+		case len(syncResult.CatalogTrustErrors) > 0:
+			// Everything in the catalog-trust bucket predates
+			// materialization: config, catalog, and resolution failures are
+			// refresh-stage failures for update copy.
+			result.stage = updateStageRefresh
+			result.err = fmt.Errorf("update %s failed: %w", updateStageRefresh, errors.Join(pipeline.DedupIssues(syncResult.CatalogTrustErrors)...))
+		case len(syncResult.MaterializeErrors) > 0:
+			result.stage = updateStageMaterialization
+			result.err = fmt.Errorf("update %s failed: %w", updateStageMaterialization, errors.Join(pipeline.DedupIssues(syncResult.MaterializeErrors)...))
+		default:
+			result.stage = updateStageMaterialization
+			if errs := diagnosticErrors(current.diagnostics); len(errs) > 0 {
+				result.stage = updateStageReload
+				result.err = fmt.Errorf("update state reload failed after materialization: %w", errors.Join(errs...))
 			}
 		}
-		return reloadMsg(snap)
+		return result
 	}
 }
 
-// promoteReportErrors turns a materialization report's ERROR diagnostics into
-// error values, through the same promotion `sync` uses, and collapses repeats
-// the same way.
-//
-// Two bugs used to live in the four lines this replaces (bead
-// agent-marketplace-oc2r, adversarial review):
-//
-//   - It flattened the diagnostic with fmt.Errorf("%s: %s", d.Code, d.Message),
-//     which is exactly the anonymous, resource-less, hint-less line the bead
-//     removed from `sync`. `update` still showed three byte-identical lines for
-//     three different failing skills, and deduplicated nothing.
-//   - It selected diagnostics with `d.Severity >= diag.SeverityError`.
-//     diag.Severity is an iota with SeverityError = 0, so that predicate is
-//     `>= 0`: every warning and every info was promoted to an error and failed
-//     the update. A `rule.devin.unsupported` warning — which AGENTS.md says
-//     must never fail a run — failed the TUI's update.
-func promoteReportErrors(report *materialize.Report) []error {
-	if report == nil {
-		return nil
+// pipelineWarningCategory attributes a sync-run warning to the same
+// diagnostic category readSnapshot derives for the same underlying issue, so
+// carrying it into the post-operation snapshot deduplicates on stable
+// identity instead of producing a second copy.
+func pipelineWarningCategory(err error) diagnosticCategory {
+	switch {
+	case catalog.IsOverlapWarning(err):
+		return diagnosticCatalog
+	case isSoftResolutionIssue(err):
+		return diagnosticResolution
+	case pipeline.IsDiagIssue(err):
+		return diagnosticMaterialization
+	default:
+		return diagnosticConfig
 	}
-	var errs []error
-	for _, d := range report.Diags {
-		if !d.IsError() {
-			continue
-		}
-		errs = append(errs, pipeline.PromoteDiagnostic(d))
-	}
-	return pipeline.DedupIssues(errs)
 }
 
 // collectionNameFromVia extracts the collection name from a Via annotation.

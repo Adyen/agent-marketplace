@@ -44,38 +44,22 @@ func entryResourcesForKind(entry RegistryEntry, kind ir.ResourceKind) []string {
 }
 
 // readOrInitConfig reads and parses the YAML at configPath. If the file does
-// not exist, returns a document pre-populated with apiVersion. When the path
-// is the global config (~/.agents/config.yaml), the skeleton includes
-// harnesses: [factory, windsurf] (the default for global configs); for project
-// or local configs, harnesses is omitted until explicitly configured. The
-// returned mode is the existing file's perms, or
-// defaultConfigMode for a new file.
+// not exist, Config-schema files (user-personal and repository committed) are
+// born as minimal agent-marketplace/v3 documents. The skeleton deliberately
+// omits harnesses: implicit install/remove edits must not fabricate an override
+// that masks an organization fallback. Repository-personal files use the
+// LocalConfig schema and therefore omit both apiVersion and harnesses. The
+// returned mode is the existing file's permissions, or defaultConfigMode for a
+// new file.
 func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			var content []*yaml.Node
-			// Local config files use the LocalConfig schema which does not
-			// have apiVersion or harnesses. Only write apiVersion for
-			// Config-type files (global, repo, org).
 			if !isLocalConfigPath(configPath) {
 				content = append(content,
 					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
-				)
-			}
-			// Include harnesses only for the global config path, where
-			// the default target set is useful. Project/local configs omit harnesses
-			// until the user explicitly selects project targets.
-			if isGlobalConfigPath(configPath) {
-				harnesses := DefaultHarnesses()
-				seqContent := make([]*yaml.Node, 0, len(harnesses))
-				for _, h := range harnesses {
-					seqContent = append(seqContent, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: h})
-				}
-				content = append(content,
-					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
-					&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: seqContent},
+					&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV3},
 				)
 			}
 			doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
@@ -101,9 +85,8 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 }
 
 // isGlobalConfigPath reports whether configPath refers to the global
-// (user-personal) config file at ~/.agents/config.yaml. This determines
-// whether a skeleton config should include the default harnesses (global
-// configs include them; project/local configs wait for explicit selection).
+// (user-personal) config file at ~/.agents/config.yaml. Mutation boundaries use
+// it to apply the user-layer validation and authority rules.
 func isGlobalConfigPath(configPath string) bool {
 	gp, err := GlobalConfigPath()
 	if err != nil {
@@ -117,59 +100,6 @@ func isGlobalConfigPath(configPath string) bool {
 // which does not have apiVersion or harnesses fields.
 func isLocalConfigPath(configPath string) bool {
 	return strings.HasSuffix(filepath.Clean(configPath), "config.local.yaml")
-}
-
-// EnsureGlobalConfig creates the user-level config skeleton at
-// ~/.agents/config.yaml if it does not already exist. The skeleton carries
-// only the required global fields (apiVersion, harnesses); logging is left
-// out so the file stays clean, and the logging runtime falls back to its
-// code defaults unless the user opts in with an explicit logging block. See
-// docs/logging.md for the override keys.
-func EnsureGlobalConfig() error {
-	configPath, err := GlobalConfigPath()
-	if err != nil {
-		return err
-	}
-	doc, mode, err := readOrInitConfig(configPath)
-	if err != nil {
-		return err
-	}
-
-	var data []byte
-	if !isEmptyConfigDocument(doc) {
-		var encoded bytes.Buffer
-		encoder := yaml.NewEncoder(&encoded)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(doc); err != nil {
-			return fmt.Errorf("encode config %q: %w", configPath, err)
-		}
-		if err := encoder.Close(); err != nil {
-			return fmt.Errorf("close yaml encoder for %q: %w", configPath, err)
-		}
-		data = encoded.Bytes()
-	}
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("create config directory for %q: %w", configPath, err)
-	}
-
-	// Exclusively create the file so concurrent runs cannot clobber a config
-	// another process is writing. If it already exists, this is a no-op.
-	f, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil
-		}
-		return fmt.Errorf("create config %q: %w", configPath, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write config %q: %w", configPath, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close config %q: %w", configPath, err)
-	}
-	return nil
 }
 
 func parseConfigDocument(configPath string, data []byte) (*yaml.Node, error) {
@@ -200,8 +130,8 @@ func parseConfigDocument(configPath string, data []byte) (*yaml.Node, error) {
 }
 
 // countExtraYAMLDocuments reports how many YAML documents follow the first one
-// in data. A trailing "---" with nothing after it decodes to no document and
-// therefore does not count.
+// in data. An explicit trailing "---" starts an empty document and counts: an
+// automated rewrite must reject that stream rather than silently erase it.
 func countExtraYAMLDocuments(data []byte) (int, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	count := 0
@@ -220,6 +150,17 @@ func countExtraYAMLDocuments(data []byte) (int, error) {
 		return 0, nil
 	}
 	return count - 1, nil
+}
+
+func requireSingleYAMLDocument(data []byte, description string) error {
+	extra, err := countExtraYAMLDocuments(data)
+	if err != nil {
+		return err
+	}
+	if extra > 0 {
+		return fmt.Errorf("%s contains %d trailing YAML document(s); exactly one document is supported", description, extra)
+	}
+	return nil
 }
 
 func ensureDocumentMapping(doc *yaml.Node) (*yaml.Node, error) {

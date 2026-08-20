@@ -34,6 +34,11 @@ type UpdateOptions struct {
 type UpdateResult struct {
 	UpdatedRegistries int
 	Bumps             []RefBump
+	// StaleCaches carries the typed stale-cache fallback warnings observed
+	// while registries were refreshed. Non-empty means the update completed
+	// from stale data: a partial outcome the caller must surface rather than
+	// report with the clean-refresh success copy.
+	StaleCaches []error
 }
 
 // Update refreshes pinned registries and syncs enabled skills.
@@ -67,6 +72,12 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		updatedRegistries = len(ec.Merged.Registries)
 	}
 
+	// Both fetch stages (bump-stage tag discovery and the sync-stage catalog
+	// refresh) feed one collector so the reported partial outcome covers every
+	// registry the update actually refreshed from a stale cache.
+	stale := &cache.StaleCacheCollector{}
+	fetch := stale.Wrap(cache.CloneOrPullDetailed)
+
 	var bumps []RefBump
 	if opts.Bump {
 		repoCfg := ec.Repo.Config
@@ -79,7 +90,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			}
 			configPath := config.ProjectConfigPath(repoRoot)
 			var err error
-			bumps, err = bumpRepoRegistryRefs(ctx, configPath, repoCfg)
+			bumps, err = bumpRepoRegistryRefs(ctx, configPath, repoCfg, fetch)
 			if err != nil {
 				return nil, err
 			}
@@ -88,15 +99,26 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
-	if err := silentSync(ctx, repoRoot); err != nil {
+	// The sync stage reports its own stale-cache fallbacks in Warnings
+	// (pipeline.Resolve installs the observing fetch seam); fold them into the
+	// same typed list so the outcome covers both stages exactly once.
+	syncWarnings, err := silentSyncCollect(ctx, repoRoot)
+	if err != nil {
 		return nil, err
 	}
+	for _, warning := range syncWarnings {
+		var staleWarning *cache.StaleCacheFallbackWarning
+		if errors.As(warning, &staleWarning) {
+			stale.Add(staleWarning)
+		}
+	}
 
-	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps))
-	return &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}, nil
+	staleCaches := DedupIssues(stale.Warnings())
+	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "stale_caches", len(staleCaches))
+	return &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps, StaleCaches: staleCaches}, nil
 }
 
-func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config) (bumps []RefBump, retErr error) {
+func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, cloneOrPull func(url, ref string) (string, error)) (bumps []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
 		return nil, nil
 	}
@@ -121,7 +143,7 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 			continue
 		}
 
-		cachePath, err := cache.CloneOrPull(entry.URL, entry.Ref)
+		cachePath, err := cloneOrPull(entry.URL, entry.Ref)
 		if err != nil {
 			return nil, err
 		}

@@ -544,6 +544,14 @@ func swapCloneOrPull(fn func(url, ref string) (string, error)) func() {
 	}
 }
 
+func swapCloneOrPullDetailed(fn func(url, ref string) (string, *cache.StaleCacheFallbackWarning, error)) func() {
+	prev := cloneOrPullDetailed
+	cloneOrPullDetailed = fn
+	return func() {
+		cloneOrPullDetailed = prev
+	}
+}
+
 func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.MalformedSkill, error)) func() {
 	prev := discoverCatalog
 	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
@@ -559,6 +567,40 @@ func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.Malform
 	}
 	return func() {
 		discoverCatalog = prev
+	}
+}
+
+func TestReadSnapshotCarriesOrganizationTargetFallbackProvenance(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) {
+		return &config.Config{APIVersion: config.APIVersionV3, Harnesses: []string{"factory"}}, nil
+	})
+	defer restoreOrg()
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return nil, nil })
+	defer restoreGlobal()
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
+	defer restoreRepo()
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	defer restoreLocal()
+
+	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	if snap.targetHarnessSource != config.Organization || len(snap.targetHarnesses) != 1 || snap.targetHarnesses[0] != "factory" {
+		t.Fatalf("target fallback = %v from %v, want [factory] from organization", snap.targetHarnesses, snap.targetHarnessSource)
+	}
+	if len(snap.userHarnesses) != 0 {
+		t.Fatalf("organization fallback populated writable user targets: %v", snap.userHarnesses)
+	}
+	m := NewModel(repoRoot, homeDir)
+	seedTestTerminalSize(&m)
+	m.targetHarnesses = snap.targetHarnesses
+	m.targetHarnessSource = snap.targetHarnessSource
+	m.openHarnessModal()
+	out := renderHarnessModal(m)
+	for _, want := range []string{"factory", "organization fallback (read-only)", "saving creates a user override"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("organization target provenance missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -613,9 +655,9 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
-	if len(snap.errs) > 0 {
-		t.Fatalf("snapshot errors: %v", snap.errs)
+	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	if len(diagnosticErrors(snap.diagnostics)) > 0 {
+		t.Fatalf("snapshot errors: %v", diagnosticErrors(snap.diagnostics))
 	}
 	if len(snap.resolved) != 1 {
 		t.Fatalf("resolved %d skills, want 1", len(snap.resolved))
@@ -706,9 +748,9 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
-	if len(snap.errs) > 0 {
-		t.Fatalf("snapshot errors: %v", snap.errs)
+	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	if len(diagnosticErrors(snap.diagnostics)) > 0 {
+		t.Fatalf("snapshot errors: %v", diagnosticErrors(snap.diagnostics))
 	}
 
 	byResource := make(map[string]row, len(snap.rows))
@@ -784,8 +826,12 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	defer restoreLocal()
 
 	msg := runUpdateCmd(context.Background(), repoRoot, homeDir)()
-	if _, ok := msg.(reloadMsg); !ok {
-		t.Fatalf("runUpdateCmd returned %T, want reloadMsg", msg)
+	done, ok := msg.(updateDoneMsg)
+	if !ok {
+		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("update failed: %v", done.err)
 	}
 	if _, err := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "refresh-me")); err != nil {
 		t.Fatalf("expected TUI update to materialize refresh-me in ~/.factory: %v", err)

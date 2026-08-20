@@ -11,10 +11,13 @@ want to override a default.
 - **Code defaults are the baseline.** The shared `Default*` constants in
   `internal/config/config.go` are the single source of truth for the logging
   runtime (`internal/logging`).
-- **Config is opt-in override, not boilerplate.** `agent-marketplace sync`
-  creates `~/.agents/config.yaml` with only the required global fields
-  (`apiVersion`, `harnesses`). It does **not** seed a `logging:` block, so the
-  file stays clean. Add a `logging:` block yourself to change a default.
+- **Config is opt-in override, not boilerplate.** A `~/.agents/config.yaml`
+  created implicitly by an install/remove/exclude edit carries only
+  `apiVersion: agent-marketplace/v3` plus the fields the operation writes —
+  no `harnesses:` list (the organization fallback must survive implicit
+  creation; pick targets explicitly via `migrate`, `init`, or the TUI harness
+  modal) and no `logging:` block, so the file stays clean. Add a `logging:`
+  block yourself to change a default.
 - **Env vars win for one-off runs.** Environment variables override both the
   config file and the code defaults, which is convenient for debugging without
   editing any file.

@@ -68,6 +68,7 @@ func BenchmarkApplyFilter(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
+			seedTestTerminalSize(&m)
 			m.rows = append([]row(nil), rows...)
 			m.filter = c.filter
 			b.ReportAllocs()
@@ -101,6 +102,7 @@ func BenchmarkApplyFilterColdAndWarm(b *testing.B) {
 		b.Run(c.name, func(b *testing.B) {
 			rows := buildBenchRows(c.n)
 			m := NewModel("/repo", "/home")
+			seedTestTerminalSize(&m)
 			m.rows = append([]row(nil), rows...)
 
 			if c.preWarm {

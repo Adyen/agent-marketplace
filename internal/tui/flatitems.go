@@ -129,6 +129,80 @@ func (m *Model) expandAllSections() {
 	st.foldedSections = make(map[string]bool)
 }
 
+// rowKey is the stable identity of a list row across snapshot rebuilds:
+// catalog rows key on kind/name/registry coordinates plus the source path,
+// orphaned output on its drift identity. Never user-visible; the NUL
+// separator cannot collide with untrusted field content because those
+// fields are sanitized before display, not before identity use.
+func rowKey(r row) string {
+	if r.isOrphanOutput() && r.DriftItem != nil {
+		return "orphan\x00" + r.DriftItem.Path + "\x00" + string(r.DriftItem.Target) + "\x00" + r.DriftItem.OutDir
+	}
+	malformed := "0"
+	if r.IsMalformed {
+		malformed = "1"
+	}
+	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + r.RegistryURL + "\x00" + r.RegistryPath + "\x00" + r.Artifact.Path + "\x00" + malformed
+}
+
+// flatItemKey is the stable identity of one flat list entry: a section
+// header keys on its section path, a resource row on its rowKey.
+func flatItemKey(it flatItem) string {
+	if it.Kind == flatSection {
+		return "S\x00" + it.SectionPath
+	}
+	return "R\x00" + rowKey(it.Row)
+}
+
+// selectionKey captures the stable identity of the item under the cursor so
+// a snapshot rebuild can restore the selection to the same resource or
+// section instead of the same numeric index. Empty when the cursor is out
+// of range or there is nothing to preserve.
+func (m Model) selectionKey() string {
+	if m.cursor < 0 || m.cursor >= len(m.flatItems) {
+		return ""
+	}
+	return flatItemKey(m.flatItems[m.cursor])
+}
+
+// restoreSelectionKey moves the cursor back to the entry with the captured
+// identity after a rebuild. Returns false when the identity no longer
+// exists; the caller then falls back to numeric clamping.
+func (m *Model) restoreSelectionKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, it := range m.flatItems {
+		if flatItemKey(it) == key {
+			m.cursor = i
+			m.clampListOffset()
+			return true
+		}
+	}
+	return false
+}
+
+// selectionKeyForRebuild captures the identity that must survive an
+// accepted snapshot rebuild: while the detail pane is open that is the open
+// resource (the list cursor is frozen behind it), otherwise the item under
+// the cursor.
+func (m Model) selectionKeyForRebuild() string {
+	if m.pane == paneDetail && m.detailKey != "" {
+		return m.detailKey
+	}
+	return m.selectionKey()
+}
+
+// restoreSelectionAfterRebuild re-anchors the cursor to the captured
+// identity after recomputeView. An active filter keeps its snap-to-first
+// match behavior; identity restore applies only to the unfiltered view.
+func (m *Model) restoreSelectionAfterRebuild(key string) {
+	if m.filter != "" {
+		return
+	}
+	m.restoreSelectionKey(key)
+}
+
 // recomputeView is called after any input change (rows/filter/fold/tab). It
 // reapplies the filter, rebuilds the flat item list, and adjusts the cursor.
 // When a filter is active, the cursor snaps to the first matching skill so

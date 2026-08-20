@@ -34,6 +34,7 @@ func TestRenderDetailMatchesHoveredSkillAcrossSectionHeaders(t *testing.T) {
 	// Placing the cursor on index 5 (skill "deploy") must render details
 	// for "deploy", not filteredRows[5] (which is out of range).
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 		mkRow("deploy", withProject, withRegistry("infra.git", "infra")),
@@ -68,6 +69,7 @@ func TestRenderDetailMatchesHoveredSkillAcrossSectionHeaders(t *testing.T) {
 
 func TestRenderDetailShowsPlaceholderWhenCursorOnSectionHeader(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -89,6 +91,7 @@ func TestRenderDetailShowsPlaceholderWhenCursorOnSectionHeader(t *testing.T) {
 
 func TestRenderDetailShowsResourceKindAndName(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("worker-generic", withGlobal, withKind(ir.KindSubagent), withRegistry("agents.git", "agents")),
 	}
@@ -114,6 +117,7 @@ func TestRenderDetailShowsResourceKindAndName(t *testing.T) {
 
 func TestRenderDetailFullShowsPlaceholderWhenCursorOnSectionHeader(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -185,6 +189,7 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 	}
 
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{{
 		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "myskill", Path: skillDir}},
 		EnabledGlobal: true,
@@ -224,10 +229,65 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 
 	out := renderDetailFullContent(row{
 		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-	})
+	}, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)
+	}
+}
+
+func TestDelayedDetailCompletionCannotReplaceNewerSelection(t *testing.T) {
+	dir := t.TempDir()
+	paths := map[string]string{}
+	for _, name := range []string{"alpha", "beta"} {
+		path := filepath.Join(dir, name+".md")
+		if err := os.WriteFile(path, []byte("# "+name+" detail\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths[name] = path
+	}
+	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
+	m.rows = []row{
+		mkRow("alpha", withGlobal),
+		mkRow("beta", withGlobal),
+	}
+	m.rows[0].Artifact.Path = paths["alpha"]
+	m.rows[1].Artifact.Path = paths["beta"]
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	selectName := func(name string) {
+		for i, item := range m.flatItems {
+			if item.Kind == flatArtifact && item.Row.Artifact.Name == name {
+				m.cursor = i
+				return
+			}
+		}
+		t.Fatalf("resource %q not found", name)
+	}
+
+	selectName("alpha")
+	updated, alphaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if alphaCmd == nil {
+		t.Fatal("opening alpha did not start detail load")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = updated.(Model)
+	selectName("beta")
+	updated, betaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if betaCmd == nil {
+		t.Fatal("opening beta did not start detail load")
+	}
+
+	updated, _ = m.Update(betaCmd())
+	m = updated.(Model)
+	updated, _ = m.Update(alphaCmd())
+	m = updated.(Model)
+	content := ansi.Strip(m.detailViewport.View())
+	if !strings.Contains(content, "beta detail") || strings.Contains(content, "alpha detail") {
+		t.Fatalf("delayed alpha completion replaced beta detail:\n%s", content)
 	}
 }
 
@@ -235,6 +295,7 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 
 func TestDetailViewportScrollsDownWithJ(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -276,6 +337,7 @@ func TestDetailViewportScrollsDownWithJ(t *testing.T) {
 
 func TestDetailViewportScrollsUpWithK(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -317,6 +379,7 @@ func TestDetailViewportScrollsUpWithK(t *testing.T) {
 
 func TestDetailViewportPageDownAndEnd(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -357,6 +420,7 @@ func TestDetailViewportPageDownAndEnd(t *testing.T) {
 
 func TestDetailViewportHomeJumpsToTop(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -392,6 +456,7 @@ func TestDetailViewportHomeJumpsToTop(t *testing.T) {
 
 func TestDetailViewportEscReturnsToList(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -425,6 +490,7 @@ func TestDetailViewportEscReturnsToList(t *testing.T) {
 
 func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),
 	}
@@ -451,13 +517,14 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	if m2.detailViewport.Width != 120 {
 		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width)
 	}
-	if m2.detailViewport.Height != 40 {
-		t.Fatalf("viewport height should be 40 after resize, got %d", m2.detailViewport.Height)
+	if m2.detailViewport.Height != 39 {
+		t.Fatalf("viewport height should reserve one recovery row after resize, got %d", m2.detailViewport.Height)
 	}
 }
 
 func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withProject, withHarnesses("codex"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -478,6 +545,7 @@ func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 
 func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{mkRow("audit", withAvailable, withHarnesses("factory"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -498,6 +566,7 @@ func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 
 func TestRenderDetailShowsPathForMalformedSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{
 		mkRow("broken-skill", withMalformed("parse yaml: bad frontmatter")),
 	}

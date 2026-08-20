@@ -128,6 +128,21 @@ func TestDetectInstalledHarnessesInHome(t *testing.T) {
 	}
 }
 
+func TestDetectInstalledHarnessesInHomeIncludesDevinRoot(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".config", "devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := harness.DetectInstalled(home)
+	if err != nil {
+		t.Fatalf("DetectInstalled error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "devin" {
+		t.Fatalf("detected harnesses = %v, want [devin]", got)
+	}
+}
+
 func TestInitializeUserPersonalAtPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

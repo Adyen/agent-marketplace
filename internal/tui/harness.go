@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -34,20 +33,16 @@ type harnessModalState struct {
 }
 
 type harnessWrittenMsg struct {
+	operation  operationID
 	scopeLabel string
 	err        error
 }
 
 var knownHarnessOptions = func() []harnessOption {
-	definitions := targetmeta.Definitions()
-	sort.SliceStable(definitions, func(i, j int) bool {
-		return definitions[i].UIOrder < definitions[j].UIOrder
-	})
+	definitions := targetmeta.UIDefinitions()
 	options := make([]harnessOption, 0, len(definitions))
 	for _, definition := range definitions {
-		if definition.UI {
-			options = append(options, harnessOption{ID: string(definition.Target), Label: definition.Label})
-		}
+		options = append(options, harnessOption{ID: string(definition.Target), Label: definition.Label})
 	}
 	return options
 }()
@@ -64,6 +59,9 @@ func (m *Model) openHarnessModal() {
 	m.harnessModal = harnessModalState{
 		scope:    harnessScopeGlobal,
 		selected: harnessSelection(m.globalHarnesses),
+	}
+	if len(m.globalHarnesses) == 0 && len(m.projectHarnesses) == 0 {
+		m.harnessModal.selected = harnessSelection(m.targetHarnesses)
 	}
 }
 
@@ -120,10 +118,20 @@ func (m *Model) setHarnessScope(scope harnessScope) {
 	m.harnessModal.selected = harnessSelection(m.projectHarnesses)
 }
 
+func effectiveHarnesses(m Model) []string {
+	if len(m.projectHarnesses) > 0 {
+		return m.projectHarnesses
+	}
+	if len(m.globalHarnesses) > 0 {
+		return m.globalHarnesses
+	}
+	return m.targetHarnesses
+}
+
 func renderHarnessModal(m Model) string {
 	modal := m.harnessModal
 	if modal.selected == nil {
-		modal.selected = harnessSelection(m.globalHarnesses)
+		modal.selected = harnessSelection(m.targetHarnesses)
 	}
 
 	title := lipgloss.NewStyle().
@@ -134,14 +142,38 @@ func renderHarnessModal(m Model) string {
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#5C8A1E", Dark: "#A6E22E"})
 	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
+	compact := compactTerminalLayout(m)
+	modalStyle := compactModalStyle(styleHarnessModal, m)
+	optionStart, optionEnd := 0, len(knownHarnessOptions)
 	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	fmt.Fprintf(&b, "  Editing:   %s\n", activeStyle.Render(modal.scope.label()))
-	fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m), ", "))
-	fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses, ", "))
-	fmt.Fprintf(&b, "  Project:   %s\n\n", harnessListLabel(m.projectHarnesses, ", "))
+	if compact {
+		// At the supported 50x12 minimum, seven targets no longer fit beside
+		// metadata and required actions. Keep a cursor-following target window
+		// while reserving rows for every save/cancel/scope action.
+		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
+		visibleOptions := max(1, contentRows-4) // title, summary, scope keys, action keys
+		optionStart, optionEnd = harnessOptionWindow(len(knownHarnessOptions), modal.cursor, visibleOptions)
+		b.WriteString(title + "\n")
+		fmt.Fprintf(&b, "%s · %s · %s\n",
+			activeStyle.Render(modal.scope.label()),
+			harnessListLabel(effectiveHarnesses(m), ", "),
+			activeStyle.Render(compactHarnessSourceLabel(m.targetHarnessSource)),
+		)
+	} else {
+		b.WriteString(title + "\n\n")
+		fmt.Fprintf(&b, "  Editing:   %s\n", activeStyle.Render(modal.scope.label()))
+		fmt.Fprintf(&b, "  Effective: %s\n", harnessListLabel(effectiveHarnesses(m), ", "))
+		fmt.Fprintf(&b, "  Source:    %s\n", activeStyle.Render(targetHarnessSourceLabel(m.targetHarnessSource)))
+		fmt.Fprintf(&b, "  Global:    %s\n", harnessListLabel(m.globalHarnesses, ", "))
+		fmt.Fprintf(&b, "  Project:   %s\n", harnessListLabel(m.projectHarnesses, ", "))
+		if m.targetHarnessSource == config.Organization && len(m.globalHarnesses) == 0 && len(m.projectHarnesses) == 0 {
+			b.WriteString("  Organization fallback is read-only; saving creates a user override in global scope.\n")
+		}
+		b.WriteString("\n")
+	}
 
-	for i, opt := range knownHarnessOptions {
+	for i := optionStart; i < optionEnd; i++ {
+		opt := knownHarnessOptions[i]
 		cursor := "  "
 		if i == modal.cursor {
 			cursor = cursorStyle.Render("> ")
@@ -154,19 +186,53 @@ func renderHarnessModal(m Model) string {
 	}
 
 	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 {
+	if len(unknown) > 0 && !compact {
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", strings.Join(unknown, ", "))
+		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
 
-	b.WriteString("\n")
-	b.WriteString("  " + keyStyle.Render("[g]") + " global  ")
-	b.WriteString(keyStyle.Render("[p]") + " project  ")
+	if !compact {
+		b.WriteString("\n  ")
+	}
+	b.WriteString(keyStyle.Render("[g]") + " global  ")
+	b.WriteString(keyStyle.Render("[p]") + " project\n")
+	if !compact {
+		b.WriteString("  ")
+	}
 	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
 	b.WriteString(keyStyle.Render("[enter]") + " save  ")
 	b.WriteString(keyStyle.Render("[esc]") + " cancel")
 
-	return styleHarnessModal.Render(b.String())
+	return modalStyle.Render(b.String())
+}
+
+func harnessOptionWindow(total, cursor, limit int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	limit = min(max(1, limit), total)
+	cursor = min(max(0, cursor), total-1)
+	start := 0
+	if cursor >= limit {
+		start = cursor - limit + 1
+	}
+	if start+limit > total {
+		start = total - limit
+	}
+	return start, start + limit
+}
+
+func compactHarnessSourceLabel(source config.Source) string {
+	switch source {
+	case config.RepoCommitted:
+		return "project"
+	case config.UserPersonal:
+		return "user-personal"
+	case config.Organization:
+		return "org fallback"
+	default:
+		return "not configured"
+	}
 }
 
 func unknownSelectedHarnesses(selected map[string]bool) []string {
@@ -180,11 +246,17 @@ func unknownSelectedHarnesses(selected map[string]bool) []string {
 	return unknown
 }
 
-func effectiveHarnesses(m Model) []string {
-	if len(m.projectHarnesses) > 0 {
-		return m.projectHarnesses
+func targetHarnessSourceLabel(source config.Source) string {
+	switch source {
+	case config.RepoCommitted:
+		return "project"
+	case config.UserPersonal:
+		return "user-personal"
+	case config.Organization:
+		return "organization fallback (read-only)"
+	default:
+		return "not configured"
 	}
-	return m.globalHarnesses
 }
 
 func harnessListLabel(harnesses []string, separator string) string {
@@ -195,10 +267,10 @@ func harnessListLabel(harnesses []string, separator string) string {
 	for i, id := range harnesses {
 		definition, ok := targetmeta.Lookup(id)
 		if !ok {
-			labels[i] = id
+			labels[i] = sanitizeTerminalData(id, terminalSingleLine)
 			continue
 		}
-		labels[i] = definition.Label
+		labels[i] = sanitizeTerminalData(definition.Label, terminalSingleLine)
 	}
 	return strings.Join(labels, separator)
 }
@@ -238,25 +310,25 @@ func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
 		}
+		id, ok := m.beginOperation(operationTargets, nil)
+		if !ok {
+			return m, operationInProgressCmd()
+		}
 		scope := m.harnessModal.scope
 		m.pane = paneList
-		return m, runHarnessSaveCmd(m.repoRoot, scope, harnesses)
+		return m, runHarnessSaveCmd(m.repoRoot, scope, harnesses, id)
 	}
 	return m, nil
 }
 
-func runHarnessSaveCmd(repoRoot string, scope harnessScope, harnesses []string) tea.Cmd {
+func runHarnessSaveCmd(repoRoot string, scope harnessScope, harnesses []string, operation operationID) tea.Cmd {
 	return func() tea.Msg {
-		var path string
 		var err error
 		if scope == harnessScopeGlobal {
-			path, err = config.GlobalConfigPath()
+			_, err = config.PersistUserPersonalHarnesses(harnesses)
 		} else {
-			path = config.ProjectConfigPath(repoRoot)
+			err = config.SetHarnessesInConfig(config.ProjectConfigPath(repoRoot), harnesses)
 		}
-		if err == nil {
-			err = config.SetHarnessesInConfig(path, harnesses)
-		}
-		return harnessWrittenMsg{scopeLabel: scope.label(), err: err}
+		return harnessWrittenMsg{operation: operation, scopeLabel: scope.label(), err: err}
 	}
 }

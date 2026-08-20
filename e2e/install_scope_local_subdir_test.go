@@ -91,6 +91,13 @@ func TestInstallScopeRepoFromSubdir(t *testing.T) {
 
 	// Skeleton .agents/config.yaml should be created in the subdir.
 	env.AssertFileExists("/workspace/subdir/.agents/config.yaml")
+	// The skeleton is born into the current schema and carries no harnesses
+	// list: repo configs are forbidden from declaring one (the target harness
+	// set is machine-wide).
+	env.AssertFileContains("/workspace/subdir/.agents/config.yaml", "apiVersion: agent-marketplace/v3")
+	if skeleton := env.ReadFile("/workspace/subdir/.agents/config.yaml"); strings.Contains(skeleton, "harnesses:") {
+		t.Fatalf("subdir skeleton must not declare harnesses (the target harness set is machine-wide), got:\n%s", skeleton)
+	}
 	// Repo config keeps relative paths (committed, portable).
 	env.AssertFileContains("/workspace/subdir/.agents/config.yaml", "./registry")
 
@@ -148,6 +155,10 @@ func TestSyncFromSubdirInheritsParentConfig(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
+	// The machine-wide target harness set comes from the user-personal
+	// config; sync never fabricates one.
+	env.WriteGlobalConfig(``)
+
 	// Create two registries: one for the parent, one for the subdir.
 	parentRegURL := env.CreateBareRepo("parent-reg", SkillsOnly(
 		Skill{Name: "parent-skill", Description: "Skill from parent config"},
@@ -194,6 +205,10 @@ registries:
 func TestSyncFromSubdirLocalExcludeParent(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
+
+	// The machine-wide target harness set comes from the user-personal
+	// config; sync never fabricates one.
+	env.WriteGlobalConfig(``)
 
 	// Create a registry with two skills.
 	regURL := env.CreateBareRepo("exclude-reg", SkillsOnly(

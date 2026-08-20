@@ -205,6 +205,7 @@ func BenchmarkRecomputeView(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
+			seedTestTerminalSize(&m)
 			m.rows = append([]row(nil), rows...)
 			m.activeTab = c.tab
 			m.filter = c.filter
@@ -236,6 +237,7 @@ func BenchmarkRenderListVisibleRows(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			m := NewModel("/repo", "/home")
+			seedTestTerminalSize(&m)
 			m.width = c.width
 			m.height = c.height + 3
 			m.loading = false
@@ -249,6 +251,48 @@ func BenchmarkRenderListVisibleRows(b *testing.B) {
 				_ = renderList(m, c.height)
 			}
 		})
+	}
+}
+
+// BenchmarkStartToggleOperationCollision measures the toggle-modal keystroke
+// path when a collision warning attaches operation-owned follow-up state:
+// the diagnostics scan plus the competing-registry capture over the row set.
+func BenchmarkStartToggleOperationCollision(b *testing.B) {
+	rows := buildBenchRows(500)
+	for i := 0; i < 5; i++ {
+		rows = append(rows, row{
+			Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "smith", Kind: ir.KindSkill}},
+			RegistryURL:  fmt.Sprintf("git@example.com:competing-%d.git", i),
+			RegistryRef:  "main",
+			RegistryPath: "skills",
+		})
+	}
+
+	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
+	m.loading = false
+	m.rows = append([]row(nil), rows...)
+	m.modalSkill = row{
+		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "smith", Kind: ir.KindSkill}},
+		RegistryURL:  "git@example.com:selected.git",
+		RegistryRef:  "main",
+		RegistryPath: "skills",
+	}
+	m.diagnostics.replaceSnapshot([]tuiDiagnostic{
+		snapshotDiagnostic(diagnosticWarning, diagnosticResolution, fmt.Errorf(`skill "smith" is provided by multiple registries: git@example.com:selected.git, git@example.com:competing-0.git`)),
+	})
+
+	act := scopedToggleAction(m.modalSkill, scopeProject)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Reset the active operation so each iteration starts fresh; the
+		// produced command is not invoked (it would write config files).
+		m.operations.active = nil
+		_, cmd := m.startToggleOperation(act)
+		if cmd == nil {
+			b.Fatal("toggle operation did not emit a command")
+		}
 	}
 }
 
@@ -280,6 +324,7 @@ func BenchmarkRenderBaseScreen(b *testing.B) {
 	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"
 	r.Artifact.Description = "long description content that wraps in the detail pane"
 	m := modelWithSelectedRow(b, r)
+	m.driftAssessment = driftReady
 	m.width = 80
 	m.height = 24
 
@@ -306,6 +351,7 @@ func BenchmarkRenderDetail(b *testing.B) {
 
 func benchmarkClampModel() Model {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.width = 50
 	m.height = 28
 	m.flatItems = make([]flatItem, 500)

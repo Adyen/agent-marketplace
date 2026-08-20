@@ -9,6 +9,62 @@ import (
 	"testing"
 )
 
+func TestLoadEffectiveAcceptsUnversionedLocalAndRejectsUnversionedUserAndRepo(t *testing.T) {
+	t.Run("unversioned local-only schema remains valid", func(t *testing.T) {
+		root := t.TempDir()
+		localPath := filepath.Join(root, ".agents", "config.local.yaml")
+		original := []byte("# local-only\nskills:\n  include: [audit]\n")
+		mustMkdirAll(t, filepath.Dir(localPath))
+		mustWriteFile(t, localPath, original)
+		ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+			RepoRoot:         root,
+			LocalConfigDir:   root,
+			OrganizationPath: filepath.Join(root, "missing-org.yaml"),
+			GlobalPath:       filepath.Join(root, "missing-user.yaml"),
+			RepoPath:         filepath.Join(root, "missing-repo.yaml"),
+			LocalPath:        localPath,
+		})
+		if len(ec.Errors) != 0 {
+			t.Fatalf("unversioned local config errors: %v", ec.Errors)
+		}
+		if ec.Local == nil || !equalStrings(ec.Local.Skills.Include, []string{"audit"}) {
+			t.Fatalf("unversioned local config = %+v", ec.Local)
+		}
+		if got, err := os.ReadFile(localPath); err != nil || string(got) != string(original) {
+			t.Fatalf("loading local config changed bytes: %q, %v", got, err)
+		}
+	})
+
+	for _, layer := range []string{"user", "repo"} {
+		t.Run("unversioned "+layer+" is rejected", func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, layer+".yaml")
+			original := []byte("# v1\nregistries: []\n")
+			mustWriteFile(t, path, original)
+			opts := LoadEffectiveOptions{
+				RepoRoot:         root,
+				LocalConfigDir:   root,
+				OrganizationPath: filepath.Join(root, "missing-org.yaml"),
+				GlobalPath:       filepath.Join(root, "missing-user.yaml"),
+				RepoPath:         filepath.Join(root, "missing-repo.yaml"),
+				LocalPath:        filepath.Join(root, "missing-local.yaml"),
+			}
+			if layer == "user" {
+				opts.GlobalPath = path
+			} else {
+				opts.RepoPath = path
+			}
+			ec := LoadEffective(context.Background(), opts)
+			if len(ec.Errors) == 0 || !strings.Contains(ec.Errors[0].Error(), "apiVersion") {
+				t.Fatalf("unversioned %s errors = %v", layer, ec.Errors)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != string(original) {
+				t.Fatalf("loading rejected %s config changed bytes: %q, %v", layer, got, err)
+			}
+		})
+	}
+}
+
 func TestLoadEffectiveReturnsOrganizationProvenance(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")

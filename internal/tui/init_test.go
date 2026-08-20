@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -40,8 +41,25 @@ func TestNewModelShowsInitWhenGlobalConfigMissing(t *testing.T) {
 	home := t.TempDir()
 
 	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
 	if m.pane != paneInitModal {
 		t.Fatalf("expected paneInitModal when ~/.agents/config.yaml is missing, got %v", m.pane)
+	}
+}
+
+func TestNewModelSkipsInitWhenOrganizationTargetsAreEffective(t *testing.T) {
+	withInitEnabled(t)
+	home := t.TempDir()
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v3\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatalf("write organization config: %v", err)
+	}
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
+	if m.pane == paneInitModal {
+		t.Fatal("init should not appear when organization targets are the effective fallback")
 	}
 }
 
@@ -56,6 +74,7 @@ func TestNewModelSkipsInitWhenGlobalConfigExists(t *testing.T) {
 	}
 
 	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
 	if m.pane == paneInitModal {
 		t.Fatalf("init should not appear when config exists")
 	}
@@ -64,6 +83,7 @@ func TestNewModelSkipsInitWhenGlobalConfigExists(t *testing.T) {
 func TestNewModelSkipsInitWhenHomeDirMissing(t *testing.T) {
 	withInitEnabled(t)
 	m := NewModel("/repo", "/nonexistent-agent-marketplace-test-home")
+	seedTestTerminalSize(&m)
 	if m.pane == paneInitModal {
 		t.Fatalf("init should not appear when homeDir itself is missing")
 	}
@@ -72,6 +92,7 @@ func TestNewModelSkipsInitWhenHomeDirMissing(t *testing.T) {
 func TestNewModelSkipsInitWhenHomeDirEmpty(t *testing.T) {
 	withInitEnabled(t)
 	m := NewModel("/repo", "")
+	seedTestTerminalSize(&m)
 	if m.pane == paneInitModal {
 		t.Fatalf("init should not appear when homeDir is empty")
 	}
@@ -79,6 +100,7 @@ func TestNewModelSkipsInitWhenHomeDirEmpty(t *testing.T) {
 
 func TestInitModalDismissesOnEsc(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneInitModal
 
 	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -96,6 +118,7 @@ func TestInitModalTogglesAndSavesHarnesses(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
 	m.pane = paneInitModal
 	m.initModal = initModalState{selected: map[string]bool{"factory": true}}
 
@@ -128,11 +151,114 @@ func TestInitModalTogglesAndSavesHarnesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected v2 config, got:\n%s", content)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v3") {
+		t.Fatalf("expected v3 config, got:\n%s", content)
 	}
 	if !strings.Contains(content, "factory") || !strings.Contains(content, "claude") {
 		t.Fatalf("expected factory and claude harnesses, got:\n%s", content)
+	}
+	if strings.Contains(content, "devin") {
+		t.Fatalf("init added Devin without detection or selection:\n%s", content)
+	}
+}
+
+func TestInitModalSavesDetectedDevinToUserV3Config(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state, err := newInitModalState(home)
+	if err != nil {
+		t.Fatalf("newInitModalState: %v", err)
+	}
+	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
+	m.pane = paneInitModal
+	m.initModal = state
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("saving detected Devin should emit a command")
+	}
+	msg := cmd().(harnessWrittenMsg)
+	if msg.err != nil {
+		t.Fatalf("save detected Devin: %v", msg.err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v3") || !strings.Contains(content, "- devin") {
+		t.Fatalf("detected Devin was not saved to strict user v3 config:\n%s", content)
+	}
+}
+
+func TestSuccessfulFirstRunSaveReloadsPersistedUserState(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	t.Setenv("HOME", home)
+	m := NewModel(repo, home)
+	seedTestTerminalSize(&m)
+	id, ok := m.beginOperation(operationTargets, nil)
+	if !ok {
+		t.Fatal("targets operation did not start")
+	}
+
+	_, cmd := m.Update(harnessWrittenMsg{operation: id, scopeLabel: "user-personal"})
+	if cmd == nil {
+		t.Fatal("successful first-run save did not schedule reload")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("successful first-run save returned %T, want tea.BatchMsg", cmd())
+	}
+	foundSnapshot := false
+	for _, batchCmd := range batch {
+		if _, ok := batchCmd().(snapshotLoadedMsg); ok {
+			foundSnapshot = true
+			break
+		}
+	}
+	if !foundSnapshot {
+		t.Fatal("successful first-run save did not reload a persisted snapshot")
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("first-run flow created or touched repository config: %v", err)
+	}
+}
+
+func TestFirstRunSaveUpdatesExistingV3AndMigratesV2(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "v3 without harnesses", content: "# preserve\napiVersion: agent-marketplace/v3\nregistries: []\n"},
+		{name: "v2", content: "# preserve\napiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			path := filepath.Join(home, ".agents", "config.yaml")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			msg := runInitSaveCmd([]string{"cursor"}, 1)().(harnessWrittenMsg)
+			if msg.err != nil {
+				t.Fatalf("first-run save: %v", msg.err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "agent-marketplace/v3") || !strings.Contains(string(data), "cursor") || !strings.Contains(string(data), "# preserve") {
+				t.Fatalf("persisted first-run state:\n%s", data)
+			}
+		})
 	}
 }
 
@@ -141,6 +267,7 @@ func TestInitModalRejectsEmptySelection(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	m := NewModel("/repo", home)
+	seedTestTerminalSize(&m)
 	m.pane = paneInitModal
 	m.initModal = initModalState{selected: map[string]bool{}}
 
@@ -157,6 +284,7 @@ func TestInitModalRejectsEmptySelection(t *testing.T) {
 
 func TestRenderInitModalIncludesHints(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneInitModal
 
 	out := renderInitModal(m)
@@ -211,6 +339,21 @@ func TestNewInitModalStatePreselectsResolvedCodexHome(t *testing.T) {
 	}
 }
 
+func TestNewInitModalStatePreselectsDevinInstallation(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".config", "devin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := newInitModalState(home)
+	if err != nil {
+		t.Fatalf("newInitModalState failed: %v", err)
+	}
+	if !state.selected["devin"] {
+		t.Fatalf("expected detected Devin root to be pre-selected, got %v", state.selected)
+	}
+}
+
 func TestNewInitModalStateIsEmptyWithNoDetections(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", "")
@@ -229,6 +372,7 @@ func TestNewInitModalStateIsEmptyWithNoDetections(t *testing.T) {
 
 func TestRenderInitModalShowsNoDetectionMessage(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneInitModal
 	m.initModal = initModalState{selected: map[string]bool{}}
 

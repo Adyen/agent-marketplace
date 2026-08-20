@@ -60,7 +60,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace doctor` — show local harness/root diagnostics and non-blocking Devin CLI compatibility guidance
 - `agent-marketplace doctor --repair` — preview or interactively repair Devin and Codex shared-aggregate ownership state
 - `agent-marketplace doctor --repair --yes` — adopt exact current desired matches without prompting; destructive orphan removal and conflict replacement still require interactive confirmation
-- `agent-marketplace tui` — launch interactive browser (default on bare TTY invocation); `H` opens the harness modal
+- `agent-marketplace tui` — launch interactive browser (default on bare TTY invocation); `H` opens the harness modal. Normative QA behavior is in [`docs/tui-product-contract.md`](./docs/tui-product-contract.md)
 
 ## Tech Stack
 
@@ -148,10 +148,12 @@ decisions, and error paths.
 - **Defaults live in code.** The `Default*` constants in
   `internal/config/config.go` are the single source of truth for the logging
   runtime (`internal/logging`). Keep them there.
-- **Do not seed a `logging:` block into the generated config skeleton.** The
-  skeleton carries only required global fields (`apiVersion`, `harnesses`);
-  logging is opt-in override only. Users override via `~/.agents/config.yaml`
-  (`logging:`) or `AGENT_MARKETPLACE_*` env vars. Precedence is
+- **Do not seed a `logging:` block into generated configs.** A config created
+  implicitly (an editor-path `~/.agents/config.yaml` or repo
+  `.agents/config.yaml`) carries only `apiVersion: agent-marketplace/v3` and
+  the fields the operation actually writes; logging is opt-in override only.
+  Users override via `~/.agents/config.yaml` (`logging:`) or
+  `AGENT_MARKETPLACE_*` env vars. Precedence is
   **env var > config file > code default**.
 - Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
 

@@ -60,6 +60,7 @@ const (
 	bucketProject
 	bucketLocal
 	bucketAvailable
+	bucketOrphan
 	bucketMalformed
 )
 
@@ -73,6 +74,8 @@ func (b scopeBucket) path() string {
 		return "scope:local"
 	case bucketAvailable:
 		return "scope:available"
+	case bucketOrphan:
+		return "scope:orphaned"
 	case bucketMalformed:
 		return "scope:malformed"
 	}
@@ -89,6 +92,8 @@ func (b scopeBucket) title() string {
 		return "Local"
 	case bucketAvailable:
 		return "Available"
+	case bucketOrphan:
+		return "Orphaned output"
 	case bucketMalformed:
 		return "Malformed"
 	}
@@ -96,12 +101,15 @@ func (b scopeBucket) title() string {
 }
 
 // classifyScope picks the most-specific scope for a row.
-// Precedence: Malformed > Local(excluded) > Local(enabled) > Project > Global > Available.
+// Precedence: Malformed > Orphaned > Local(excluded) > Local(enabled) > Project > Global > Available.
 // Locally-excluded skills go to Local regardless of project enablement — they
 // should not be duplicated under Project.
 func classifyScope(r row) scopeBucket {
 	if r.IsMalformed {
 		return bucketMalformed
+	}
+	if r.isOrphanOutput() {
+		return bucketOrphan
 	}
 	if r.ExcludedLocally {
 		return bucketLocal
@@ -126,7 +134,7 @@ func buildScopeTree(rows []row, foldState map[string]bool) []flatItem {
 		buckets[b] = append(buckets[b], r)
 	}
 
-	order := []scopeBucket{bucketGlobal, bucketProject, bucketLocal, bucketAvailable, bucketMalformed}
+	order := []scopeBucket{bucketGlobal, bucketProject, bucketLocal, bucketAvailable, bucketOrphan, bucketMalformed}
 	var out []flatItem
 
 	for _, b := range order {

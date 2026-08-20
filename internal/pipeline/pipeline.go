@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -323,6 +324,8 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	result.RepoCfg = ec.Repo.Config
 	result.LocalCfg = ec.Local
 	result.Managed = ec.Managed
+	result.MergedCfg = ec.Merged
+	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
 
 	config.LogManagedDiagnostics(ec.Diagnostics)
 
@@ -334,20 +337,11 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		slog.Error("effective config error", "error", err)
 	}
 
-	if opts.Gitignore {
-		gitignoreDir := opts.LocalConfigDir
-		if gitignoreDir == "" {
-			gitignoreDir = opts.RepoRoot
-		}
-		EnsureLocalConfigGitignored(gitignoreDir)
-	}
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
 		return result
 	}
-
-	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
@@ -408,6 +402,13 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		return result
 	}
 	result.MaterializationModes = materializationModes
+	if opts.Gitignore {
+		gitignoreDir := opts.LocalConfigDir
+		if gitignoreDir == "" {
+			gitignoreDir = opts.RepoRoot
+		}
+		EnsureLocalConfigGitignored(gitignoreDir)
+	}
 	slog.Debug("config layers merged",
 		"org", result.OrgCfg != nil,
 		"user", result.GlobalCfg != nil,
@@ -421,14 +422,22 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		ctx, selectionSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.selection", nil)
 	}
 
-	catalogOpts := opts.CatalogOption
+	// Fetch through a stale-cache-observing seam so a registry that fell back
+	// to a warm cache after a failed fetch is reported as a warning rather
+	// than vanishing into the log. The collector is installed first so a
+	// caller-supplied clone/pull option still wins.
+	stale := &cache.StaleCacheCollector{}
+	catalogOpts := make([]catalog.LoadOption, 0, len(opts.CatalogOption)+2)
+	catalogOpts = append(catalogOpts, catalog.WithCloneOrPull(stale.Wrap(cache.CloneOrPullDetailed)))
+	catalogOpts = append(catalogOpts, opts.CatalogOption...)
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
 	}
 	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
+	result.Warnings = append(result.Warnings, stale.Warnings()...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
-	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors))
+	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors), "stale_caches", len(stale.Warnings()))
 	// Overlap warnings are soft; don't add them to the hard error list.
 	var errs []error
 	for _, err := range loadResult.Errors {

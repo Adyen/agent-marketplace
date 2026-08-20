@@ -136,7 +136,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
 					return nil, fmt.Errorf("create .agents directory: %w", err)
 				}
-				skeleton := config.Config{APIVersion: config.APIVersionV2}
+				skeleton := config.Config{APIVersion: config.APIVersionV3}
 				data, err := yaml.Marshal(&skeleton)
 				if err != nil {
 					return nil, fmt.Errorf("marshal skeleton config: %w", err)
@@ -204,9 +204,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			return nil, fmt.Errorf("create .agents directory: %w", err)
 		}
 		skeleton := config.Config{
-			APIVersion: config.APIVersionV2,
+			APIVersion: config.APIVersionV3,
 			// Harnesses intentionally omitted: project configs inherit
-			// from the org/global layer during merge (per AGENTS.md).
+			// from the org/global layer during merge (per AGENTS.md), and
+			// generated configs are born into the current v3 schema.
 		}
 		data, err := yaml.Marshal(&skeleton)
 		if err != nil {

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -35,29 +37,40 @@ func NewModel(repoRoot, homeDir string) Model {
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
 	m := Model{
-		repoRoot:       repoRoot,
-		homeDir:        homeDir,
-		width:          80,
-		height:         24,
-		loading:        true,
-		activeTab:      tabScope,
-		tabStates:      newTabStates(),
-		spinner:        sp,
+		repoRoot:  repoRoot,
+		homeDir:   homeDir,
+		loading:   true,
+		activeTab: tabScope,
+		tabStates: newTabStates(),
+		spinner:   sp,
+		// width and height stay zero (unknown) until the real terminal size
+		// arrives via seedTerminalSize or the first WindowSizeMsg: an
+		// unknown size renders the bounded below-minimum state instead of a
+		// full frame guessed at the wrong dimensions.
 		searchInput:    si,
 		detailViewport: viewport.New(80, 24),
+		helpViewport:   viewport.New(80, 24),
+		errorsViewport: viewport.New(80, 24),
 		keys:           defaultKeyMap,
 		help:           newHelpModel(),
 	}
-	if !testSkipInitModal && shouldShowInitModal(homeDir) {
-		slog.Info("init modal opened", "home_dir", homeDir)
-		initModal, err := newInitModalState(homeDir)
-		if err != nil {
-			slog.Error("failed to detect installed harnesses", "error", err)
-			initModal = initModalState{selected: map[string]bool{}}
+	if !testSkipInitModal {
+		showInit, initErr := shouldShowInitModal(repoRoot, homeDir)
+		if initErr != nil {
+			slog.Error("failed to resolve first-run target configuration", "error", initErr)
 		}
-		m.initModal = initModal
-		m.pane = paneInitModal
+		if showInit {
+			slog.Info("init modal opened", "home_dir", homeDir)
+			initModal, err := newInitModalState(homeDir)
+			if err != nil {
+				slog.Error("failed to detect installed harnesses", "error", err)
+				initModal = initModalState{selected: map[string]bool{}}
+			}
+			m.initModal = initModal
+			m.pane = paneInitModal
+		}
 	}
+	m.beginRequest(requestSnapshot)
 	return m
 }
 
@@ -66,19 +79,26 @@ func NewModel(repoRoot, homeDir string) Model {
 // code never touches it; see init_test.go's TestMain for the setter.
 var testSkipInitModal bool
 
-// shouldShowInitModal returns true when the home directory exists but the
-// user personal config file does not. We require the home directory itself to
-// be present so test sandboxes with synthetic paths don't accidentally trigger
-// the first-run dialog.
-func shouldShowInitModal(homeDir string) bool {
+// shouldShowInitModal reports whether the current project has no effective
+// target set. Project targets take precedence, followed by user-personal and
+// organization targets. The home directory must be present so synthetic paths
+// do not trigger first-run initialization.
+func shouldShowInitModal(repoRoot, homeDir string) (bool, error) {
 	if homeDir == "" {
-		return false
+		return false, nil
 	}
 	if info, err := os.Stat(homeDir); err != nil || !info.IsDir() {
-		return false
+		return false, nil
 	}
-	_, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml"))
-	return os.IsNotExist(err)
+	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{
+		RepoRoot:       repoRoot,
+		LocalConfigDir: repoRoot,
+		GlobalPath:     filepath.Join(homeDir, ".agents", "config.yaml"),
+	})
+	if len(ec.Errors) > 0 {
+		return false, errors.Join(ec.Errors...)
+	}
+	return len(ec.TargetHarnesses) == 0, nil
 }
 
 // saveTabState captures the current cursor/offset/filter into the active
@@ -127,21 +147,60 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
 }
 
+// Update funnels every message through update and then resynchronizes the
+// help/diagnostics overlay viewports, so any message that changed the
+// terminal size, the active pane, or the diagnostic store leaves the overlay
+// content and dimensions current before the next key press or frame.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Sticky-bottom anchors are sampled BEFORE the message is handled and
+	// only while the corresponding pane is already active: a viewport that
+	// was at the bottom stays anchored to the bottom across content growth
+	// and resizes, while a freshly (re)opened pane keeps its persisted
+	// offset instead of jumping.
+	helpStickyBottom := m.pane == paneHelp && m.helpViewport.AtBottom()
+	errorsStickyBottom := m.pane == paneErrors && m.errorsViewport.AtBottom()
+	updated, cmd := m.update(msg)
+	if updatedModel, ok := updated.(Model); ok {
+		updatedModel.syncOverlayViewports(helpStickyBottom, errorsStickyBottom)
+		return updatedModel, cmd
+	}
+	return updated, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		oldWidth, oldHeight := m.width, m.height
+		wasBelowMinimum := m.belowMinimumTerminal()
+		// Sample the detail bottom anchor against the OLD dimensions and
+		// content before the resize mutates them; the re-render scheduled
+		// below consumes it on acceptance.
+		detailAtBottom := m.pane == paneDetail && m.detailViewport.AtBottom()
 		m.width = msg.Width
 		m.height = msg.Height
-		m.detailViewport.Width = msg.Width
-		m.detailViewport.Height = msg.Height
-		m.clampListOffset()
+		belowMinimum := m.belowMinimumTerminal()
+		if !belowMinimum {
+			m.detailViewport.Width = msg.Width
+			m.detailViewport.Height = max(1, msg.Height-1)
+			m.clampListOffset()
+		}
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
-		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
+		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight, "below_minimum", belowMinimum, "recovered", wasBelowMinimum && !belowMinimum)
+		// While the detail pane is open, a width change invalidates the
+		// rendered wrap: schedule a generation-correlated re-render at the
+		// actual new width, keeping the scroll anchor.
+		if !belowMinimum && m.pane == paneDetail && msg.Width != m.detailRenderWidth {
+			renderedWidth := m.detailRenderWidth
+			if rerender := m.rerenderDetailAtWidth(msg.Width); rerender != nil {
+				m.detailStickyBottom = detailAtBottom
+				slog.Debug("tui detail re-render scheduled for width change", "rendered_width", renderedWidth, "width", msg.Width, "sticky_bottom", detailAtBottom)
+				return m, rerender
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -158,96 +217,106 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.pane == paneDetail {
+		// Below the supported minimum, all user input is suspended except
+		// the hard-quit keys (handled in handleKey); the mouse is gated too.
+		if m.belowMinimumTerminal() {
+			return m, nil
+		}
+		switch m.pane {
+		case paneDetail:
 			var cmd tea.Cmd
 			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
+		case paneHelp:
+			var cmd tea.Cmd
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+			return m, cmd
+		case paneErrors:
+			var cmd tea.Cmd
+			m.errorsViewport, cmd = m.errorsViewport.Update(msg)
 			return m, cmd
 		}
 		return m, nil
 
 	case snapshotLoadedMsg:
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
+			return m, nil
+		}
 		m.loading = false
+		// Every accepted snapshot re-derives mutation safety: hard errors
+		// make the displayed rows inspection-only until a clean snapshot.
+		m.rowsStale = len(diagnosticErrors(msg.diagnostics)) > 0
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
-			m.warnings = msg.warnings
+			m.driftAssessment = msg.driftAssessment
+			m.diagnostics.replaceSnapshot(msg.diagnostics)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
-			m.warnings = msg.warnings
+		if msg.mergedCfg == nil && len(diagnosticErrors(msg.diagnostics)) > 0 {
+			m.driftAssessment = msg.driftAssessment
+			m.diagnostics.replaceSnapshot(msg.diagnostics)
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
+		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
+		m.driftAssessment = msg.driftAssessment
+		m.diagnostics.replaceSnapshot(msg.diagnostics)
 		m.mergedCfg = msg.mergedCfg
 		m.resolved = msg.resolved
 		m.localExcludes = msg.localExcludes
 		m.globalHarnesses = msg.globalHarnesses
 		m.projectHarnesses = msg.projectHarnesses
+		m.userHarnesses = msg.userHarnesses
+		m.targetHarnesses = msg.targetHarnesses
+		m.targetHarnessSource = msg.targetHarnessSource
 		m.recomputeView()
+		m.restoreSelectionAfterRebuild(selection)
 		if msg.refreshAfterLoad {
 			m.refreshing = true
-			m.nextRefreshToken++
-			m.refreshToken = m.nextRefreshToken
-			return m, tea.Batch(refreshSnapshot(m.ctx, m.repoRoot, m.homeDir, m.refreshToken), m.spinner.Tick)
+			generation := m.beginRequest(requestSnapshot)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 		}
 		m.refreshing = false
-		m.refreshToken = 0
 		return m, nil
 
 	case refreshLoadedMsg:
-		if msg.refreshToken != m.refreshToken {
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		m.rowsStale = len(diagnosticErrors(msg.diagnostics)) > 0
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
+			m.driftAssessment = msg.driftAssessment
+			m.diagnostics.replaceSnapshot(msg.diagnostics)
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
+		if msg.mergedCfg == nil && len(diagnosticErrors(msg.diagnostics)) > 0 {
+			m.driftAssessment = msg.driftAssessment
+			m.diagnostics.replaceSnapshot(msg.diagnostics)
 			return m, nil
 		}
+		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
-		m.errs = msg.errs
+		m.driftAssessment = msg.driftAssessment
+		m.diagnostics.replaceSnapshot(msg.diagnostics)
 		m.mergedCfg = msg.mergedCfg
 		m.resolved = msg.resolved
 		m.localExcludes = msg.localExcludes
 		m.globalHarnesses = msg.globalHarnesses
 		m.projectHarnesses = msg.projectHarnesses
+		m.userHarnesses = msg.userHarnesses
+		m.targetHarnesses = msg.targetHarnesses
+		m.targetHarnessSource = msg.targetHarnessSource
 		m.recomputeView()
+		m.restoreSelectionAfterRebuild(selection)
 		return m, nil
-
-	case reloadMsg:
-		m.loading = false
-		m.syncing = false
-		m.refreshing = false
-		m.refreshToken = 0
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
-		m.toast = "Reloaded"
-		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, toastExpiryCmd(2 * time.Second)
 
 	case toastMsg:
 		m.toast = msg.text
@@ -264,19 +333,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case configWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
+		generation := m.beginRequest(requestSnapshot)
+		reload := loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
-			m.pendingExcludeAction = nil
+			// Retain only this operation's diagnostic and schedule the
+			// authoritative reload so the rows reflect whatever the failed
+			// mutation actually left on disk.
+			m.diagnostics.recordOperationAttemptFailure(operationMutation, diagnosticMutation, uint64(msg.operation), msg.err)
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("config write failed", "resource", msg.skillName, "enabled", msg.enabled, "err", msg.err)
+			slog.Error("tui config mutation failed", "resource", msg.skillName, "enabled", msg.enabled, "operation_id", msg.operation)
 			action := "remove"
 			if msg.enabled {
 				action = "install"
 			}
 			recordControlledErrorSpan(m.ctx, action, msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
+			return m, tea.Batch(reload, toastExpiryCmd(5*time.Second))
 		}
+		m.diagnostics.recordOperationAttemptSuccess(operationMutation, uint64(msg.operation))
 		action := "Enabled"
 		if !msg.enabled {
 			action = "Disabled"
@@ -284,47 +362,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
-		// If a collision-aware enable was pending, emit the exclude
-		// command now that the primary toggle has succeeded.
-		if msg.enabled && m.pendingExcludeAction != nil {
-			act := *m.pendingExcludeAction
-			m.pendingExcludeAction = nil
-			exclCmd := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act)
-			// Re-load snapshot to reflect the config change, then
-			// the exclude cmd runs concurrently.
-			return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), exclCmd, toastExpiryCmd(2*time.Second))
-		}
-		m.pendingExcludeAction = nil
-		// Re-load snapshot to reflect the config change
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		// Re-load snapshot to reflect the config change.
+		return m, tea.Batch(reload, toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
+		generation := m.beginRequest(requestSnapshot)
+		reload := loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.diagnostics.recordOperationAttemptFailure(operationTargets, diagnosticMutation, uint64(msg.operation), msg.err)
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
+			slog.Error("tui target configuration mutation failed", "scope", msg.scopeLabel, "operation_id", msg.operation)
 			recordControlledErrorSpan(m.ctx, "harness", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
+			return m, tea.Batch(reload, toastExpiryCmd(5*time.Second))
 		}
+		m.diagnostics.recordOperationAttemptSuccess(operationTargets, uint64(msg.operation))
 		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(reload, toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
 		m.syncing = false
 		m.refreshing = false
-		m.refreshToken = 0
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.diagnostics.recordOperationFailure(operationSync, diagnosticSync, msg.err)
 			m.toast = fmt.Sprintf("sync error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("sync failed", "err", msg.err)
+			slog.Error("tui sync result failed")
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
+			m.diagnostics.recordOperationSuccess(operationSync)
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -333,63 +405,163 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tea.Batch kills the program before the sync goroutine finishes.
 		if m.quitAfterSync {
 			m.quitAfterSync = false
-			slog.Debug("sync complete, quitting as requested", "err", msg.err)
+			slog.Debug("sync complete, quitting as requested", "success", msg.err == nil)
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
 		}
 		// Re-load to pick up on-disk changes
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(5*time.Second))
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(5*time.Second))
 
 	case updateDoneMsg:
 		m.syncing = false
-		// Clear quitAfterSync so a stale flag from a previous sync+quit
-		// confirm doesn't cause a later unrelated sync to quit.
-		m.quitAfterSync = false
-		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
-			m.toast = fmt.Sprintf("update error: %v", msg.err)
-			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("update failed", "err", msg.err)
-			recordControlledErrorSpan(m.ctx, "update", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
-		} else {
-			m.toast = "Update complete"
-			m.toastExp = time.Now().Add(2 * time.Second)
+		accepted := msg.snapshot.generation != 0 && m.acceptsRequest(requestSnapshot, msg.snapshot.generation)
+		toastDuration := 2 * time.Second
+		if accepted {
+			if msg.snapshot.mergedCfg == nil && len(diagnosticErrors(msg.snapshot.diagnostics)) > 0 {
+				// Mirror the plain reload path: with no merged config the
+				// previous rows are kept for inspection (stale: inspection
+				// only), while the new drift assessment and diagnostics land.
+				m.driftAssessment = msg.snapshot.driftAssessment
+				m.diagnostics.replaceSnapshot(msg.snapshot.diagnostics)
+				m.rowsStale = true
+			} else {
+				selection := m.selectionKeyForRebuild()
+				m.rows = msg.snapshot.rows
+				m.driftReport = msg.snapshot.driftReport
+				m.driftAssessment = msg.snapshot.driftAssessment
+				m.diagnostics.replaceSnapshot(msg.snapshot.diagnostics)
+				m.rowsStale = len(diagnosticErrors(msg.snapshot.diagnostics)) > 0
+				m.mergedCfg = msg.snapshot.mergedCfg
+				m.resolved = msg.snapshot.resolved
+				m.localExcludes = msg.snapshot.localExcludes
+				m.globalHarnesses = msg.snapshot.globalHarnesses
+				m.projectHarnesses = msg.snapshot.projectHarnesses
+				m.userHarnesses = msg.snapshot.userHarnesses
+				m.targetHarnesses = msg.snapshot.targetHarnesses
+				m.targetHarnessSource = msg.snapshot.targetHarnessSource
+				m.recomputeView()
+				m.restoreSelectionAfterRebuild(selection)
+			}
+			switch {
+			case msg.err != nil:
+				m.diagnostics.recordOperationFailure(operationUpdate, diagnosticUpdate, msg.err)
+				m.toast = msg.err.Error()
+				m.toastExp = time.Now().Add(5 * time.Second)
+				toastDuration = 5 * time.Second
+				slog.Error("tui update failed", "stage", msg.stage)
+				recordControlledErrorSpan(m.ctx, "update", msg.err)
+			case len(msg.staleCaches) > 0:
+				// Partial outcome: the refresh fell back to stale caches.
+				// The mutation completed, superseding earlier update
+				// failures, but the full-success copy is never emitted.
+				m.diagnostics.recordOperationSuccess(operationUpdate)
+				m.toast = fmt.Sprintf("Update complete with warnings: %d registry fetch(es) failed, used stale cache", len(msg.staleCaches))
+				m.toastExp = time.Now().Add(5 * time.Second)
+				toastDuration = 5 * time.Second
+			default:
+				m.diagnostics.recordOperationSuccess(operationUpdate)
+				m.toast = "Update refresh and materialization complete"
+				m.toastExp = time.Now().Add(2 * time.Second)
+			}
 		}
-		return m, toastExpiryCmd(2 * time.Second)
+		if m.quitAfterSync {
+			// The user confirmed sync+quit while the update was in flight.
+			// The confirmed sync could not run concurrently, so it is
+			// queued now — and the program quits on the SYNC result, never
+			// on the update result.
+			m.syncing = true
+			slog.Debug("update complete, running confirmed sync before quitting", "update_error", msg.err != nil)
+			return m, tea.Batch(runSyncCmd(ctxOrBackground(m.ctx), m.repoRoot), m.spinner.Tick)
+		}
+		if !accepted {
+			// A stale update completion can neither clear errors nor claim
+			// success, and its snapshot is not applied. The update may
+			// still have mutated on-disk state, so schedule a current
+			// snapshot: the current generation captures the truth.
+			generation := m.beginRequest(requestSnapshot)
+			slog.Debug("stale update completion rejected; scheduled current snapshot",
+				"stale_generation", msg.snapshot.generation, "generation", generation)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		}
+		return m, toastExpiryCmd(toastDuration)
 
 	case migrationDoneMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
+		generation := m.beginRequest(requestSnapshot)
+		reload := loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.diagnostics.recordOperationAttemptFailure(operationMigration, diagnosticMigration, uint64(msg.operation), msg.err)
 			m.toast = fmt.Sprintf("migration error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("migration failed", "count", msg.count, "err", msg.err)
+			slog.Error("tui migration failed", "files_migrated", msg.count, "operation_id", msg.operation)
 			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
+			return m, tea.Batch(reload, toastExpiryCmd(5*time.Second))
 		}
+		m.diagnostics.recordOperationAttemptSuccess(operationMigration, uint64(msg.operation))
 		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(reload, toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
+		generation := m.beginRequest(requestSnapshot)
+		reload := loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.diagnostics.recordOperationAttemptFailure(operationEditor, diagnosticEditor, uint64(msg.operation), msg.err)
 			m.toast = fmt.Sprintf("editor error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
-			slog.Error("config editor result handled", "path", msg.path, "reload", false, "err", msg.err)
+			slog.Error("tui config editor failed", "reload", true, "operation_id", msg.operation)
 			recordControlledErrorSpan(m.ctx, "edit_config", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
+			return m, tea.Batch(reload, toastExpiryCmd(5*time.Second))
 		}
-		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		m.diagnostics.recordOperationAttemptSuccess(operationEditor, uint64(msg.operation))
+		slog.Debug("tui config editor completed", "reload", true, "operation_id", msg.operation)
+		return m, reload
 
 	case detailContentMsg:
-		// The background glamour render completed; fill the viewport.
-		if m.pane == paneDetail {
-			m.detailViewport.SetContent(msg.content)
-			m.detailViewport.GotoTop()
+		if m.pane != paneDetail || !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
 		}
+		if msg.width != m.width {
+			// The render was requested at a width the terminal no longer
+			// has, but the intervening resize began no superseding
+			// generation (a below-minimum dip, or the anchored row losing
+			// its content path). Applying it would wrap content at a width
+			// the viewport does not have and would move detailRenderWidth
+			// off the on-screen width, suppressing the next resize's
+			// re-render. Reject it and re-render at the current width;
+			// when no re-render can be scheduled the previous content stays
+			// and the viewport keeps clipping to the frame.
+			slog.Debug("tui detail render rejected: width drifted after request",
+				"rendered_width", msg.width, "width", m.width, "generation", msg.generation)
+			return m, m.rerenderDetailAtWidth(m.width)
+		}
+		m.detailRenderWidth = msg.width
+		if msg.keepScroll {
+			// Width re-render of the resource already being read: keep the
+			// scroll anchor (same line offset, clamped; sticky bottom when
+			// the reader was at the bottom at resize or acceptance time)
+			// instead of jumping to the top.
+			stickyBottom := m.detailStickyBottom
+			m.detailStickyBottom = false
+			wasAtBottom := m.detailViewport.AtBottom()
+			m.detailViewport.SetContent(msg.content)
+			if stickyBottom || wasAtBottom {
+				m.detailViewport.GotoBottom()
+			}
+			return m, nil
+		}
+		m.detailStickyBottom = false
+		m.detailViewport.SetContent(msg.content)
+		m.detailViewport.GotoTop()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -427,6 +599,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	if m.belowMinimumTerminal() {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 
 	// Overlays take priority
 	switch m.pane {
@@ -435,17 +613,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		return m.scrollHelpOverlay(msg)
 
 	case paneDetail:
 		return m.handleDetailKey(msg)
 
 	case paneErrors:
 		if key.Matches(msg, m.keys.Clear) || key.Matches(msg, m.keys.Errors) {
+			// Acknowledgement requires that every operation diagnostic
+			// could have been seen: closing a truncated pane (not yet
+			// scrolled to the bottom) only closes it. See
+			// docs/tui-product-contract.md.
+			if m.errorsAcknowledgeable() {
+				m.diagnostics.acknowledgeOperations()
+			} else {
+				slog.Info("tui diagnostics pane closed without acknowledgement: operation diagnostics not fully visible")
+			}
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		return m.scrollErrorsOverlay(msg)
 
 	case paneConfirm:
 		return m.handleConfirmKey(msg)
@@ -540,7 +727,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Errors):
-		if len(m.errs) > 0 || len(m.warnings) > 0 {
+		if len(m.diagnostics.snapshot)+len(m.diagnostics.operations) > 0 {
 			m.pane = paneErrors
 		}
 		return m, nil
@@ -561,9 +748,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if r, ok := m.selectedRow(); ok {
+			if r.isOrphanOutput() {
+				return m, nil
+			}
+			generation := m.beginRequest(requestDetail)
 			m.enterDetailPane()
 			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			return m, loadDetailContent(r)
+			return m, loadDetailContent(r, generation, m.width, false)
 		}
 		return m, nil
 
@@ -586,8 +777,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Reload):
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case key.Matches(msg, m.keys.Tab1):
 		m.switchTab(tabScope)
@@ -620,8 +811,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		m.refreshing = false
-		m.refreshToken = 0
 		// Space on a section header: toggle fold.
 		if _, ok := m.selectedSectionPath(); ok {
 			m.toggleFoldAtCursor()
@@ -635,8 +824,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		if r.IsMalformed {
+		if r.IsMalformed || r.isOrphanOutput() {
 			return m, nil
+		}
+		if m.rowsStale {
+			// The last accepted snapshot carried hard errors: these rows
+			// describe state the tool itself flagged as broken. Mutating
+			// config from them would act on stale truth.
+			return m, func() tea.Msg {
+				return toastMsg{text: "resources cannot be changed while errors are unresolved (press e to view)", duration: 3 * time.Second}
+			}
 		}
 		if r.Artifact.Required {
 			return m, func() tea.Msg {
@@ -651,14 +848,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		if m.driftReport.InSync() {
+		if m.driftAssessment == driftReady && m.driftReport.InSync() {
 			recordActionSpan(m.ctx, "sync", map[string]string{"skipped": "in_sync"})
 			return m, func() tea.Msg {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		// No snapshot generation is allocated here: sync schedules no
+		// snapshot work, and the syncDoneMsg handler allocates the
+		// authoritative post-sync reload generation itself. (A discarded
+		// generation would be a phantom: nothing could ever carry it.)
 		m.syncing = true
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
@@ -668,10 +868,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		generation := m.beginRequest(requestSnapshot)
 		m.syncing = true
 		recordActionSpan(m.ctx, "update", nil)
-		return m, tea.Batch(runUpdateCmd(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+		return m, tea.Batch(runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -699,7 +899,11 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// paste, and character input.
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
-		m.filter = m.searchInput.Value()
+		value := sanitizeTerminalData(m.searchInput.Value(), terminalSingleLine)
+		if value != m.searchInput.Value() {
+			m.searchInput.SetValue(value)
+		}
+		m.filter = value
 		m.recomputeView()
 		return m, cmd
 	}
@@ -709,18 +913,23 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
+		m.detailKey = ""
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
 		m.detailViewport.GotoTop()
+		m.detailStickyBottom = false
 		return m, nil
 
 	case key.Matches(msg, m.keys.Bottom):
 		m.detailViewport.GotoBottom()
+		m.detailStickyBottom = false
 		return m, nil
 	}
 	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
 	// wheel) to the viewport, which handles scroll offset and clamping.
+	// A user scroll supersedes a pending sticky-bottom anchor.
+	m.detailStickyBottom = false
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
@@ -733,15 +942,49 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) enterDetailPane() {
 	m.pane = paneDetail
 
-	// Compute full-screen viewport dimensions (no header/footer in detail
-	// overlay — the viewport fills the terminal).
+	// Record the stable identity of the resource being opened so snapshot
+	// rebuilds and resizes keep the detail pane anchored to it.
+	if r, ok := m.selectedRow(); ok {
+		m.detailKey = rowKey(r)
+	} else {
+		m.detailKey = ""
+	}
+
+	// Compute viewport dimensions while reserving one line for detail recovery keys.
 	m.detailViewport.Width = m.width
-	m.detailViewport.Height = m.height
+	m.detailViewport.Height = max(1, m.height-1)
+	m.detailRenderWidth = m.width
+	m.detailStickyBottom = false
 
 	// Show a placeholder immediately; the real content arrives via
 	// detailContentMsg.
 	m.detailViewport.SetContent("Loading…")
 	m.detailViewport.GotoTop()
+}
+
+// rerenderDetailAtWidth schedules a generation-correlated re-render of the
+// open detail resource at a new viewport width, keeping the scroll anchor.
+// It returns nil when no detail resource is anchored or the row is gone
+// (e.g. after a rebuild removed it): the stale-width content then remains
+// until the user reopens the detail, which is safe because the viewport
+// still clips to the frame.
+func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
+	if m.detailKey == "" {
+		return nil
+	}
+	for _, r := range m.rows {
+		if rowKey(r) == m.detailKey {
+			if r.Artifact.Path == "" {
+				return nil
+			}
+			// detailRenderWidth keeps recording the ACCEPTED width; the
+			// request is correlated by its generation, and a later resize
+			// compares against the width actually on screen.
+			generation := m.beginRequest(requestDetail)
+			return loadDetailContent(r, generation, width, true)
+		}
+	}
+	return nil
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -779,16 +1022,28 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	// Full-screen overlays.
+	if m.belowMinimumTerminal() {
+		return renderResizeRequired(m)
+	}
+
+	// Full-screen overlays. Both render into their persistent scroll
+	// viewports: the content is wrapped at the frame width, the offset is
+	// kept across frames, and the footer carries the visible scroll keys.
 	switch m.pane {
 	case paneHelp:
-		return renderHelp(m)
+		m.helpViewport.Width = m.width
+		m.helpViewport.Height = max(1, m.height-1)
+		m.helpViewport.SetContent(renderHelp(m))
+		return fitTerminalWithFooter(m.helpViewport.View(), helpPaneFooter(), m.width, m.height)
 	case paneErrors:
-		return renderErrors(m)
+		m.errorsViewport.Width = m.width
+		m.errorsViewport.Height = max(1, m.height-1)
+		m.errorsViewport.SetContent(renderErrors(m))
+		return fitTerminalWithFooter(m.errorsViewport.View(), errorsPaneFooter(m), m.width, m.height)
 	case paneConfirm:
-		return renderConfirm(m)
+		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneDetail:
-		return m.detailViewport.View()
+		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ scroll · Ctrl+C quit", m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()
@@ -811,7 +1066,7 @@ func (m Model) View() string {
 	if modal == "" {
 		return base
 	}
-	return fitTerminal(centerOverlay(base, modal, m.width, m.height), m.width, m.height)
+	return fitTerminalRows(centerOverlay(base, modal, m.width, m.height), m.width, m.height)
 }
 
 // renderBaseScreen renders the standard header + tabs + two-pane layout +
@@ -899,7 +1154,7 @@ func paneWidths(totalWidth int) (listWidth, detailWidth int) {
 }
 
 func renderHeader(m Model) string {
-	repoName := filepathBase(m.repoRoot)
+	repoName := sanitizeTerminalData(filepathBase(m.repoRoot), terminalSingleLine)
 	title := styleHeader.Render(fmt.Sprintf(" agent-marketplace — %s ", repoName))
 	return title
 }
@@ -993,41 +1248,60 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string) error {
-	// Initialise the glamour renderer while we still own the terminal
-	// (before tea.WithAltScreen swaps to the alt buffer).  WithAutoStyle
-	// sends an OSC 11 query to detect dark/light background; inside
-	// alt-screen the response is swallowed, causing a 5 s timeout.
+	// Select terminal styling from the process environment only and seed the
+	// lipgloss background cache before anything renders. Active OSC probes can
+	// race Bubble Tea's terminal takeover and stall startup.
+	applyTerminalBackground()
 	initRenderer()
 
-	m := NewModel(repoRoot, homeDir)
-	m.ctx = ctxOrBackground(ctx)
-
-	tel := telemetry.TelemetryFromContext(m.ctx)
+	model := NewModel(repoRoot, homeDir)
+	model.ctx = ctxOrBackground(ctx)
+	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {
-		m.ctx, m.sessionSpan = tel.StartSpan(m.ctx, "agent_marketplace.tui.session", nil)
+		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
+	defer model.sessionSpan.End()
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	finalModel, err := p.Run()
+	// Seed the real terminal size when it can be determined up front, so the
+	// first frame renders at the true size instead of flashing an unknown-size
+	// recovery frame until the initial WindowSizeMsg arrives.
+	seedTerminalSize(&model, os.Stdout)
 
-	m.sessionSpan.End()
+	// While the TUI owns the alternate screen, stderr is the live terminal:
+	// route logs to the managed file only. The inner terminal guard restores
+	// the screen before this deferred logger restoration runs.
+	restoreLogs := logging.BeginTerminalSession()
+	defer restoreLogs()
 
-	// An interrupt (e.g. external SIGINT) is a legitimate exit path,
-	// not an error worth reporting to the user.
-	if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {
-		slog.Debug("tui exited via interrupt", "err", err)
+	return runTUIModel(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+}
+
+func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
+	return runWithTerminalGuard(defaultTerminalIO(), func() (tea.Model, error) {
+		return tea.NewProgram(model, options...).Run()
+	})
+}
+
+func finishTUIRun(finalModel tea.Model, err error) error {
+	if errors.Is(err, tea.ErrInterrupted) {
+		slog.Debug("tui exited via interrupt")
 		return nil
 	}
 	if err != nil {
-		slog.Error("tui exited with error", "err", err)
-		return err
+		slog.Error("tui exited with error", "interrupted", false)
+		// The caller prints this on the restored terminal (after the
+		// guard has left the alternate screen); escape untrusted bytes
+		// while keeping the error identity for errors.Is/As.
+		return sanitizeReturnedError(err)
 	}
 	// Surface sync errors from the sync+quit flow so failed syncs don't
 	// exit cleanly. The error was already shown as a toast in the TUI;
-	// propagating it lets the caller (cobra) print it to stderr.
+	// propagating it lets the caller (cobra) print it to stderr. Its text
+	// may embed untrusted registry paths/URLs, so it crosses the terminal
+	// boundary sanitized.
 	if fm, ok := finalModel.(Model); ok && fm.syncQuitErr != nil {
-		slog.Error("tui sync+quit reported sync error", "err", fm.syncQuitErr)
-		return fm.syncQuitErr
+		slog.Error("tui sync+quit reported sync error")
+		return sanitizeReturnedError(fm.syncQuitErr)
 	}
 	return nil
 }

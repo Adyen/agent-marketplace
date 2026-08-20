@@ -237,26 +237,44 @@ func isWithinRoot(path, root string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
-// DefaultHarnesses returns the default target harness list used when
-// creating skeleton configs or migrating v1 configs.
+// DefaultHarnesses returns the default target harness list used by explicit
+// user-facing flows that must produce a target selection. Implicitly created
+// editor configs deliberately omit this list so organization fallback remains
+// authoritative until the user chooses targets.
 func DefaultHarnesses() []string {
 	return []string{"factory", "windsurf"}
 }
 
-// loadV3OrV2Config reads a Config from path using the strict layer-aware
-// loader. v2 is the canonical schema and v3 is accepted as a compatibility
-// alias; neither version is rewritten while loading.
+// loadV3OrV2Config dispatches strict layer-aware validation for v3 while
+// retaining the legacy v2 structural reader. V2 still receives value,
+// apiVersion, telemetry-authority, and logging validation, but fields that need
+// layer remapping are left for the transactional migration boundary.
 func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-
-	cfg, errs := loadV3Config(data, kind, requireHarnesses)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	if err := requireSingleYAMLDocument(data, fmt.Sprintf("config %q", path)); err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
-	return cfg, nil
+
+	if PeekAPIVersion(data) == APIVersionV3 {
+		cfg, errs := loadV3Config(data, kind, requireHarnesses)
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+		}
+		return cfg, nil
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	normalizeConfigHarnessTargets(&cfg)
+	if err := cfg.validate(requireHarnesses, true, kind.name()); err != nil {
+		return nil, fmt.Errorf("validate config %q: %w", path, err)
+	}
+	return &cfg, nil
 }
 
 func LoadGlobalConfig() (*Config, error) {
@@ -452,6 +470,9 @@ func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, laye
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
+	if err := requireSingleYAMLDocument(data, fmt.Sprintf("config %q", path)); err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
@@ -474,6 +495,9 @@ func loadLocalConfig(path string) (*LocalConfig, error) {
 	var cfg LocalConfig
 	if len(bytes.TrimSpace(data)) == 0 {
 		return &cfg, nil
+	}
+	if err := requireSingleYAMLDocument(data, fmt.Sprintf("config %q", path)); err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)

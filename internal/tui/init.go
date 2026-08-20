@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -48,13 +47,23 @@ func renderInitModal(m Model) string {
 	cursorStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
+	compact := compactTerminalLayout(m)
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n\n")
-	b.WriteString("Select the harnesses agent-marketplace should materialize into.\n")
-	if modal.detected {
-		b.WriteString("Detected installation roots are pre-selected.\n\n")
+	if compact {
+		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n")
+		if modal.detected {
+			b.WriteString("Detected roots are pre-selected.\n")
+		} else {
+			b.WriteString("No installation roots detected.\n")
+		}
 	} else {
-		b.WriteString("No harness installation roots were detected.\n\n")
+		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n\n")
+		b.WriteString("Select the harnesses agent-marketplace should materialize into.\n")
+		if modal.detected {
+			b.WriteString("Detected installation roots are pre-selected.\n\n")
+		} else {
+			b.WriteString("No harness installation roots were detected.\n\n")
+		}
 	}
 
 	for i, opt := range knownHarnessOptions {
@@ -70,17 +79,19 @@ func renderInitModal(m Model) string {
 	}
 
 	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 {
+	if len(unknown) > 0 && !compact {
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", strings.Join(unknown, ", "))
+		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
 
-	b.WriteString("\n")
-	b.WriteString("  " + keyStyle.Render("[space]") + " toggle  ")
+	if !compact {
+		b.WriteString("\n  ")
+	}
+	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
 	b.WriteString(keyStyle.Render("[enter]") + " save  ")
 	b.WriteString(keyStyle.Render("[esc]") + " cancel")
 
-	return styleHarnessModal.Render(b.String())
+	return compactModalStyle(styleHarnessModal, m).Render(b.String())
 }
 
 func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -115,20 +126,19 @@ func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
 		}
+		id, ok := m.beginOperation(operationTargets, nil)
+		if !ok {
+			return m, operationInProgressCmd()
+		}
 		m.pane = paneList
-		return m, runInitSaveCmd(harnesses)
+		return m, runInitSaveCmd(harnesses, id)
 	}
 	return m, nil
 }
 
-func runInitSaveCmd(harnesses []string) tea.Cmd {
+func runInitSaveCmd(harnesses []string, operation operationID) tea.Cmd {
 	return func() tea.Msg {
-		_, err := config.InitializeUserPersonal(harnesses)
-		// The TUI treats an already-initialized file as a no-op with a
-		// success toast so repeated opens are harmless.
-		if errors.Is(err, config.ErrAlreadyInitialized) {
-			err = nil
-		}
-		return harnessWrittenMsg{scopeLabel: "user", err: err}
+		_, err := config.PersistUserPersonalHarnesses(harnesses)
+		return harnessWrittenMsg{operation: operation, scopeLabel: "user", err: err}
 	}
 }

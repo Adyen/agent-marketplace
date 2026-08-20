@@ -21,6 +21,8 @@ Top-level target harnesses follow project-first precedence: `RepoCommitted`
 then `UserPersonal`, then `OrgMandatory`. A registry entry's `harnesses:`
 list narrows the effective target list for that entry.
 
+The TUI behavior, ownership, approval, minimum-terminal, diagnostic, interrupt, and rendering-safety requirements are normative in [TUI Product Contract](./tui-product-contract.md).
+
 ## Registry allowlist
 
 `allowed_registries` is a first-authority setting: the first layer in precedence order that declares it (org, then user, then repo) fixes the allowlist for the whole effective config. Lower layers cannot broaden or override it, and `config.local.yaml` is not allowed to declare `allowed_registries`.

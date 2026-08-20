@@ -2,15 +2,20 @@ package e2e_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 )
 
-// TestSyncCreatesGlobalConfigSkeleton verifies that running sync without an
-// existing ~/.agents/config.yaml creates the global config skeleton with the
-// required global fields (apiVersion, harnesses) and no logging block, so the
-// file stays clean while the logging runtime relies on code defaults.
-func TestSyncCreatesGlobalConfigSkeleton(t *testing.T) {
+// TestSyncWithOrgFallbackDoesNotCreateUserConfig verifies the fallback
+// contract: when the machine-wide target harness set comes solely from the
+// organization layer (/etc/agent-marketplace/config.yaml), sync succeeds and
+// materializes through the org-declared harnesses WITHOUT creating
+// ~/.agents/config.yaml. The user-personal layer is authoritative only once
+// the user writes it — a sync-created skeleton carrying default harnesses
+// would silently win over the organization fallback on every later run.
+// The declarative case config/cli_backend_target_product_contract pins the
+// same absence; this standalone test adds the exact sync output and the
+// repeat-run idempotence of the no-create behavior.
+func TestSyncWithOrgFallbackDoesNotCreateUserConfig(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
@@ -18,9 +23,8 @@ func TestSyncCreatesGlobalConfigSkeleton(t *testing.T) {
 		Skill{Name: "skeleton-skill", Description: "Skill for skeleton test"},
 	))
 
-	// Org config provides a default registry (team-style).
-	// No user config exists; sync should create a minimal skeleton without a
-	// logging block.
+	// Org config provides the target harness set and a default registry.
+	// No user config exists; sync must not create one.
 	env.WriteOrgConfig(fmt.Sprintf(`
 apiVersion: agent-marketplace/v3
 harnesses:
@@ -36,28 +40,22 @@ registries:
 		t.Fatalf("sync should succeed, but exited %d\noutput:\n%s", r.ExitCode, r.Combined)
 	}
 	t.Logf("first sync output:\n%s", r.Combined)
+	env.AssertOutputContains(r, "Installed 1, Removed 0, Malformed 0, Errors 0")
 
-	// The global config should have been created by EnsureGlobalConfig.
-	env.AssertFileExists("/root/.agents/config.yaml")
-	env.AssertFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2")
-	env.AssertFileContains("/root/.agents/config.yaml", "harnesses:")
-	// Logging is intentionally omitted from the skeleton; the runtime uses
-	// code defaults unless the user opts in with an explicit logging block.
-	if skeleton := env.ReadFile("/root/.agents/config.yaml"); strings.Contains(skeleton, "logging:") {
-		t.Fatalf("skeleton must not contain a logging block, got:\n%s", skeleton)
-	}
+	// The org fallback must not be frozen into a user-personal skeleton:
+	// no ~/.agents/config.yaml may appear.
+	env.AssertFileAbsent("/root/.agents/config.yaml")
 
-	// Verify the skill actually materialized to machine scope.
+	// The skill materializes to machine scope through the org-declared
+	// factory harness.
 	env.AssertFileExists("/root/.factory/skills/skeleton-skill/SKILL.md")
 
-	// Re-running sync should leave the existing skeleton untouched.
-	before := env.ReadFile("/root/.agents/config.yaml")
+	// Re-running sync keeps the no-create behavior (no lazy creation on a
+	// warm cache either).
 	r2 := env.RunAM("sync")
 	if r2.ExitCode != 0 {
 		t.Fatalf("second sync should succeed, but exited %d\noutput:\n%s", r2.ExitCode, r2.Combined)
 	}
-	after := env.ReadFile("/root/.agents/config.yaml")
-	if strings.TrimSpace(before) != strings.TrimSpace(after) {
-		t.Fatalf("second sync should not modify global skeleton\nbefore:\n%s\nafter:\n%s", before, after)
-	}
+	env.AssertFileAbsent("/root/.agents/config.yaml")
+	env.AssertFileExists("/root/.factory/skills/skeleton-skill/SKILL.md")
 }

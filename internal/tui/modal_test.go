@@ -13,12 +13,14 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
 // helperFlatCursorOnSkill returns a model with cursor on a known skill row.
 func helperFlatCursorOnSkill(t *testing.T, r row) Model {
 	t.Helper()
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.rows = []row{r}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
@@ -73,6 +75,7 @@ func TestSpaceOnRequiredSkillShowsToastNotModal(t *testing.T) {
 func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 	r := mkRow("audit", withGlobal, withProject, withExcluded, withRegistry("s.git", "s"))
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = r
 
@@ -98,6 +101,7 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 	// Not enabled globally: g should schedule an Add.
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withProject)
 
@@ -113,6 +117,7 @@ func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 
 func TestModalPkeyTogglesProject(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
@@ -128,6 +133,7 @@ func TestModalPkeyTogglesProject(t *testing.T) {
 
 func TestModalLkeyTogglesLocal(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
@@ -143,6 +149,7 @@ func TestModalLkeyTogglesLocal(t *testing.T) {
 
 func TestModalEkeyTogglesLocalExclude(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
@@ -161,6 +168,7 @@ func TestRenderToggleModalDisablesLocalExcludeForMachineScopeSkill(t *testing.T)
 	r.Artifact.Source = config.UserPersonal
 
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = r
 
@@ -172,6 +180,7 @@ func TestRenderToggleModalDisablesLocalExcludeForMachineScopeSkill(t *testing.T)
 
 func TestModalEkeyShowsToastForMachineScopeSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withGlobal)
 	m.modalSkill.Artifact.Source = config.UserPersonal
@@ -199,6 +208,7 @@ func TestModalEkeyShowsToastForMachineScopeSkill(t *testing.T) {
 
 func TestModalEscCancelsWithoutWrite(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit")
 
@@ -285,7 +295,7 @@ registries:
 		registryPath: "skills",
 	}
 
-	cmd := runScopedToggle(repoRoot, act)
+	cmd := runScopedToggle(repoRoot, act, 1, nil)
 	msg := cmd()
 	cw, ok := msg.(configWrittenMsg)
 	if !ok {
@@ -296,6 +306,9 @@ registries:
 	}
 	if !cw.enabled {
 		t.Fatalf("expected enabled=true")
+	}
+	if cw.operation != 1 {
+		t.Fatalf("result did not carry the started operation id, got %d", cw.operation)
 	}
 
 	// Verify the project config now has the global registry entry.
@@ -352,7 +365,7 @@ func TestRunScopedToggleLocalScopeWritesRegistryScoped(t *testing.T) {
 		registryPath: "skills",
 	}
 
-	cmd := runScopedToggle(repoRoot, act)
+	cmd := runScopedToggle(repoRoot, act, 1, nil)
 	msg := cmd()
 	cw, ok := msg.(configWrittenMsg)
 	if !ok {
@@ -422,7 +435,7 @@ func TestRunScopedToggleLocalExcludeIsRegistryScoped(t *testing.T) {
 		enable:      true,
 		registryURL: "./plugins/terminals",
 	}
-	msg := runScopedToggle(repoRoot, act)()
+	msg := runScopedToggle(repoRoot, act, 1, nil)()
 	if cw, ok := msg.(configWrittenMsg); !ok || cw.err != nil {
 		t.Fatalf("expected successful configWrittenMsg, got %#v", msg)
 	}
@@ -450,7 +463,7 @@ func TestRunScopedToggleLocalExcludeIsRegistryScoped(t *testing.T) {
 
 func TestHasCollisionErrorDetectsCollision(t *testing.T) {
 	errs := []error{
-		fmt.Errorf(`skill "smith" is provided by multiple registries: global.git, project.git`),
+		&resolver.NameCollisionError{Kind: ir.KindSkill, Name: "smith", Sources: []string{"global.git", "project.git"}},
 	}
 	if !hasCollisionError(errs, ir.KindSkill, "smith") {
 		t.Fatalf("expected collision to be detected for smith")
@@ -499,11 +512,16 @@ func TestCompetingRegistryURLsFindsOtherSources(t *testing.T) {
 func TestRenderToggleModalShowsCollisionWarning(t *testing.T) {
 	r := mkRow("smith", withAvailable, withRegistry("global.git", "global"))
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = r
-	m.errs = []error{
-		fmt.Errorf(`skill "smith" is provided by multiple registries: global.git, project.git`),
-	}
+	m.diagnostics.replaceSnapshot([]tuiDiagnostic{
+		snapshotDiagnostic(diagnosticWarning, diagnosticResolution, &resolver.NameCollisionError{
+			Kind:    ir.KindSkill,
+			Name:    "smith",
+			Sources: []string{"global.git", "project.git"},
+		}),
+	})
 
 	out := renderToggleModal(m)
 	if !contains(out, "Name collision") {
@@ -511,15 +529,203 @@ func TestRenderToggleModalShowsCollisionWarning(t *testing.T) {
 	}
 }
 
-func TestRenderToggleModalNoCollisionWarningWithoutError(t *testing.T) {
+// TestHasCollisionErrorIsTyped pins typed collision detection: only resolver
+// collision types for the exact kind+name qualify. An untyped error whose
+// text merely contains the collision phrasing (e.g. a user-authored message
+// or a promoted materialize diagnostic) must not arm the modal warning or the
+// auto-exclude follow-up, and neither may a collision for a different
+// resource or kind.
+func TestHasCollisionErrorIsTyped(t *testing.T) {
+	lookAlike := fmt.Errorf(`skill "smith" is provided by multiple registries: global.git, project.git`)
+	if hasCollisionError([]error{lookAlike}, ir.KindSkill, "smith") {
+		t.Fatal("untyped look-alike error must not count as a collision")
+	}
+
+	wrapped := fmt.Errorf("sync: %w", &resolver.NameCollisionError{
+		Kind:    ir.KindSkill,
+		Name:    "smith",
+		Sources: []string{"global.git", "project.git"},
+	})
+	if !hasCollisionError([]error{wrapped}, ir.KindSkill, "smith") {
+		t.Fatal("wrapped resolver.NameCollisionError for the same kind+name must count as a collision")
+	}
+
+	otherName := &resolver.NameCollisionError{Kind: ir.KindSkill, Name: "jones", Sources: []string{"a", "b"}}
+	if hasCollisionError([]error{otherName}, ir.KindSkill, "smith") {
+		t.Fatal("collision for a different resource must not count")
+	}
+
+	otherKind := &resolver.NameCollisionError{Kind: ir.KindCommand, Name: "smith", Sources: []string{"a", "b"}}
+	if hasCollisionError([]error{otherKind}, ir.KindSkill, "smith") {
+		t.Fatal("collision for a different kind must not count")
+	}
+
+	softWarning := &resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "smith", Winner: "global.git", RunnersUp: []string{"project.git"}}
+	if !hasCollisionError([]error{softWarning}, ir.KindSkill, "smith") {
+		t.Fatal("resolver.NameCollisionWarning for the same kind+name must count as a collision")
+	}
+}
+
+func TestRenderToggleModalNoCollisionWarningWithoutDiagnostic(t *testing.T) {
 	r := mkRow("smith", withAvailable, withRegistry("global.git", "global"))
 	m := NewModel("/repo", "/home")
+	seedTestTerminalSize(&m)
 	m.pane = paneToggleModal
 	m.modalSkill = r
-	// No errors — no collision warning.
+	// No diagnostics — no collision warning.
 
 	out := renderToggleModal(m)
 	if contains(out, "Name collision") {
-		t.Fatalf("did not expect collision warning without error, got:\n%s", out)
+		t.Fatalf("did not expect collision warning without diagnostic, got:\n%s", out)
+	}
+}
+
+func TestReadSnapshotCollisionWarningDrivesModalAndAutoExclude(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	registriesRoot := t.TempDir()
+	registryA := filepath.Join(registriesRoot, "registry-a")
+	registryB := filepath.Join(registriesRoot, "registry-b")
+	for _, registry := range []string{registryA, registryB} {
+		skillDir := filepath.Join(registry, "smith")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: smith\ndescription: Smith\n---\n# Smith\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	projectPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectConfig := fmt.Sprintf(`apiVersion: agent-marketplace/v3
+registries:
+  - url: %q
+    skills: [smith]
+  - url: %q
+    skills: [smith]
+`, registryA, registryB)
+	if err := os.WriteFile(projectPath, []byte(projectConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v3\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreDiscover := swapDiscoverSkills(func(dir string) ([]catalog.Entry, []skill.MalformedSkill, error) {
+		return []catalog.Entry{{Name: "smith", Kind: ir.KindSkill, Path: filepath.Join(dir, "smith")}}, nil, nil
+	})
+	defer restoreDiscover()
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
+	defer restoreOrg()
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return config.LoadConfigFromPath(userPath) })
+	defer restoreGlobal()
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return config.LoadConfigFromPath(projectPath) })
+	defer restoreRepo()
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	defer restoreLocal()
+
+	snapshot := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	foundCollisionWarning := false
+	for _, diagnostic := range snapshot.diagnostics {
+		if resolver.IsNameCollision(diagnostic.err) {
+			foundCollisionWarning = true
+			if diagnostic.severity != diagnosticWarning {
+				t.Fatalf("readSnapshot collision severity = %v, want warning", diagnostic.severity)
+			}
+		}
+	}
+	if !foundCollisionWarning {
+		t.Fatalf("readSnapshot diagnostics omitted collision warning: %#v", snapshot.diagnostics)
+	}
+
+	m := NewModel(repoRoot, homeDir)
+	seedTestTerminalSize(&m)
+	snapshot.generation = m.requests.active(requestSnapshot)
+	updated, _ := m.Update(snapshot)
+	m = updated.(Model)
+	foundRow := false
+	for i := range m.flatItems {
+		item := m.flatItems[i]
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "smith" && item.Row.RegistryURL == registryB {
+			if !item.Row.IsAvailable {
+				t.Fatalf("registry-b row should be the available collision runner-up: %#v", item.Row)
+			}
+			m.cursor = i
+			foundRow = true
+			break
+		}
+	}
+	if !foundRow {
+		t.Fatalf("snapshot did not produce registry-b smith row: %#v", m.rows)
+	}
+
+	opened, openCmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if openCmd != nil {
+		t.Fatal("opening collision modal emitted command")
+	}
+	m = opened.(Model)
+	if !contains(renderToggleModal(m), "Name collision") {
+		t.Fatalf("readSnapshot collision warning was not visible in modal:\n%s", renderToggleModal(m))
+	}
+
+	acted, operationCmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = acted.(Model)
+	if operationCmd == nil {
+		t.Fatal("collision selection did not emit the toggle operation")
+	}
+	active := m.operations.active
+	if active == nil || active.kind != operationMutation {
+		t.Fatalf("collision selection did not start a mutation operation: %#v", active)
+	}
+	if active.collision == nil || len(active.collision.competing) != 1 || active.collision.competing[0].url != registryA {
+		t.Fatalf("operation-owned collision state = %#v, want competing registry-a", active.collision)
+	}
+
+	// Primary include and the competing exclude complete as one result.
+	result, ok := operationCmd().(configWrittenMsg)
+	if !ok || result.err != nil || !result.enabled {
+		t.Fatalf("collision toggle result = %#v", result)
+	}
+	if result.operation != active.id {
+		t.Fatalf("collision toggle result operation = %d, want %d", result.operation, active.id)
+	}
+
+	completed, reloadCmd := m.Update(result)
+	m = completed.(Model)
+	if reloadCmd == nil {
+		t.Fatal("successful collision toggle omitted the authoritative reload")
+	}
+	if m.operations.active != nil {
+		t.Fatalf("operation still active after its single result: %#v", m.operations.active)
+	}
+
+	cfg, err := config.LoadConfigFromPath(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var competing, selected *config.RegistryEntry
+	for i := range cfg.Registries {
+		switch cfg.Registries[i].URL {
+		case registryA:
+			competing = &cfg.Registries[i]
+		case registryB:
+			selected = &cfg.Registries[i]
+		}
+	}
+	if competing == nil || !containsString(competing.Skills.Exclude, "smith") {
+		t.Fatalf("competing registry was not auto-excluded: %#v", competing)
+	}
+	if selected == nil || !containsString(selected.Skills.Include, "smith") || containsString(selected.Skills.Exclude, "smith") {
+		t.Fatalf("selected registry was not preserved as the source: %#v", selected)
 	}
 }

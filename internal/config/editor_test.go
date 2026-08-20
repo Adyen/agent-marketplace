@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -963,7 +965,7 @@ func TestSetHarnessesInConfigReplacesHarnessesAndPreservesComments(t *testing.T)
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`# user config
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v3
 harnesses:
   - factory # current default
 registries:
@@ -975,9 +977,13 @@ registries:
 		t.Fatalf("SetHarnessesInConfig: %v", err)
 	}
 
-	cfg, err := loadProjectConfig(t, configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf("read config: %v", err)
+	}
+	cfg, errs := loadV3Config(data, userLayer, true)
+	if len(errs) > 0 {
+		t.Fatalf("load config: %v", errors.Join(errs...))
 	}
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"cursor", "factory"}) {
 		t.Fatalf("expected harnesses to be replaced and deduplicated, got %#v", cfg.Harnesses)
@@ -1030,9 +1036,13 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 		if err := SetHarnessesInConfig(configPath, []string{" cursor ", "factory", "cursor"}); err != nil {
 			t.Fatalf("SetHarnessesInConfig: %v", err)
 		}
-		cfg, err := loadConfig(configPath, false)
+		data, err := os.ReadFile(configPath)
 		if err != nil {
-			t.Fatalf("load config: %v", err)
+			t.Fatalf("read config: %v", err)
+		}
+		cfg, errs := loadV3Config(data, userLayer, true)
+		if len(errs) > 0 {
+			t.Fatalf("load config: %v", errors.Join(errs...))
 		}
 		if !equalStrings(cfg.Harnesses, []string{"cursor", "factory"}) {
 			t.Fatalf("harnesses = %v, want [cursor factory]", cfg.Harnesses)
@@ -1053,6 +1063,27 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps existing bytes after unknown target", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		configPath, err := GlobalConfigPath()
+		if err != nil {
+			t.Fatalf("GlobalConfigPath: %v", err)
+		}
+		mustMkdirAll(t, filepath.Dir(configPath))
+		original := []byte("# retain me\napiVersion: agent-marketplace/v3\nharnesses: [factory]\n")
+		mustWriteFile(t, configPath, original)
+		if err := SetHarnessesInConfig(configPath, []string{"devni"}); err == nil {
+			t.Fatal("expected unknown harness to be rejected before writing")
+		}
+		after, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("read config after rejected mutation: %v", err)
+		}
+		if !bytes.Equal(after, original) {
+			t.Fatalf("unknown target rewrote config:\nbefore: %q\nafter:  %q", original, after)
+		}
+	})
+
 	t.Run("allows a project config", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		repoPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
@@ -1065,6 +1096,64 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 		}
 		if !equalStrings(cfg.Harnesses, []string{"factory"}) {
 			t.Fatalf("harnesses = %v, want [factory]", cfg.Harnesses)
+		}
+	})
+}
+
+func TestSetHarnessesInConfigValidatesExistingAndStagedV3ByteIdentically(t *testing.T) {
+	tests := []struct {
+		name                   string
+		original               []byte
+		wantExistingValidation bool
+	}{
+		{name: "v1", original: []byte("# v1\nharnesses: [factory]\n")},
+		{name: "v2", original: []byte("# v2\napiVersion: agent-marketplace/v2\nharnesses: [factory]\n")},
+		{name: "invalid v3", original: []byte("# invalid\napiVersion: agent-marketplace/v3\nunknown: true\n"), wantExistingValidation: true},
+		{name: "invalid user logging", original: []byte("# invalid policy\napiVersion: agent-marketplace/v3\nharnesses: [factory]\nlogging:\n  level: verbose\n"), wantExistingValidation: true},
+		{name: "multiple documents", original: []byte("apiVersion: agent-marketplace/v3\nharnesses: [factory]\n---\napiVersion: agent-marketplace/v3\nharnesses: [cursor]\n")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			path := filepath.Join(homeDir, ".agents", "config.yaml")
+			mustMkdirAll(t, filepath.Dir(path))
+			mustWriteFile(t, path, tt.original)
+
+			err := SetHarnessesInConfig(path, []string{"cursor"})
+			if err == nil {
+				t.Fatal("expected invalid existing config to be rejected")
+			}
+			if tt.wantExistingValidation && !strings.Contains(err.Error(), "validate existing user personal config") {
+				t.Fatalf("existing strict v3 validation was deferred until staging: %v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, tt.original) {
+				t.Fatalf("rejected mutation changed bytes:\nbefore: %q\nafter:  %q", tt.original, after)
+			}
+		})
+	}
+
+	t.Run("new file is minimal strict v3", func(t *testing.T) {
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		path := filepath.Join(homeDir, ".agents", "config.yaml")
+		if err := SetHarnessesInConfig(path, []string{"cursor"}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, errs := loadV3Config(data, userLayer, true)
+		if len(errs) > 0 {
+			t.Fatalf("created config is not strict v3: %v", errors.Join(errs...))
+		}
+		if !equalStrings(cfg.Harnesses, []string{"cursor"}) || len(cfg.Registries) != 0 {
+			t.Fatalf("created config was not minimal requested state: %+v", cfg)
 		}
 	})
 }
@@ -1385,13 +1474,13 @@ registries:
 			t.Fatalf("DisableResourceWithShadowFallback: %v", err)
 		}
 		// Project-level configs don't require harnesses; they inherit from
-		// the org/global layer during merge.
-		cfg, err := loadProjectConfig(t, configPath)
+		// the org/global layer during merge. Generated configs are v3.
+		cfg, err := LoadConfigFromPath(configPath)
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		if cfg.APIVersion != APIVersionV2 {
-			t.Fatalf("expected apiVersion %q, got %q", APIVersionV2, cfg.APIVersion)
+		if cfg.APIVersion != APIVersionV3 {
+			t.Fatalf("expected apiVersion %q, got %q", APIVersionV3, cfg.APIVersion)
 		}
 		if len(cfg.Registries) != 1 {
 			t.Fatalf("expected 1 registry (shadow), got %d", len(cfg.Registries))
@@ -2273,52 +2362,6 @@ registries:
 	})
 }
 
-func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-
-	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	if err := EnsureGlobalConfig(); err != nil {
-		t.Fatalf("EnsureGlobalConfig: %v", err)
-	}
-
-	if _, err := os.Stat(globalPath); err != nil {
-		t.Fatalf("expected global config to be created: %v", err)
-	}
-
-	data, err := os.ReadFile(globalPath)
-	if err != nil {
-		t.Fatalf("read global config: %v", err)
-	}
-	content := string(data)
-	for _, needle := range []string{
-		"apiVersion: agent-marketplace/v2",
-		"harnesses:",
-	} {
-		if !strings.Contains(content, needle) {
-			t.Fatalf("expected skeleton to contain %q, got:\n%s", needle, content)
-		}
-	}
-	// Logging is intentionally omitted from the skeleton; the runtime falls
-	// back to code defaults unless the user opts in.
-	if strings.Contains(content, "logging:") {
-		t.Fatalf("skeleton must not contain a logging block, got:\n%s", content)
-	}
-
-	// Second call should be a no-op and not error.
-	if err := EnsureGlobalConfig(); err != nil {
-		t.Fatalf("EnsureGlobalConfig second call: %v", err)
-	}
-
-	info, err := os.Stat(globalPath)
-	if err != nil {
-		t.Fatalf("stat global config after second call: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Fatal("expected global config to remain non-empty")
-	}
-}
-
 func TestReadOrInitConfigSkeletonOmitsHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".agents", "config.yaml")
@@ -2342,20 +2385,27 @@ func TestReadOrInitConfigSkeletonOmitsHarnesses(t *testing.T) {
 		}
 	}
 
-	// Verify apiVersion is present.
+	// Verify apiVersion is present and already v3: generated repo configs are
+	// born into the current schema instead of needing a later migrate run.
 	found := false
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "apiVersion" && root.Content[i+1].Value == APIVersionV2 {
+		if root.Content[i].Value == "apiVersion" && root.Content[i+1].Value == APIVersionV3 {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("skeleton config must contain apiVersion %q", APIVersionV2)
+		t.Fatalf("skeleton config must contain apiVersion %q", APIVersionV3)
 	}
 }
 
-func TestReadOrInitConfigGlobalSkeletonIncludesHarnesses(t *testing.T) {
+// TestReadOrInitConfigGlobalSkeletonOmitsHarnesses pins the user-personal
+// skeleton the editor paths create when ~/.agents/config.yaml is missing:
+// apiVersion v3 and NO harnesses key. A generated harness list would take
+// over the machine-wide target set and silently override the organization
+// fallback; users pick targets explicitly via migrate, init, or the TUI
+// harness modal instead.
+func TestReadOrInitConfigGlobalSkeletonOmitsHarnesses(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -2368,24 +2418,13 @@ func TestReadOrInitConfigGlobalSkeletonIncludesHarnesses(t *testing.T) {
 		t.Fatalf("expected default mode, got %v", mode)
 	}
 
-	// Verify the skeleton DOES contain a harnesses key for global configs.
 	root := doc.Content[0]
-	harnessesNode := findMappingValue(root, "harnesses")
-	if harnessesNode == nil {
-		t.Fatalf("global skeleton config must contain harnesses key; global configs require harnesses")
+	if harnessesNode := findMappingValue(root, "harnesses"); harnessesNode != nil {
+		t.Fatalf("global skeleton config must not contain a harnesses key; the organization fallback must survive implicit creation")
 	}
-	if harnessesNode.Kind != yaml.SequenceNode {
-		t.Fatalf("expected harnesses to be a sequence, got kind %d", harnessesNode.Kind)
-	}
-	values := sequenceValues(harnessesNode)
-	expected := DefaultHarnesses()
-	if len(values) != len(expected) {
-		t.Fatalf("expected global skeleton harnesses %v (from org config), got %v", expected, values)
-	}
-	for i := range values {
-		if values[i] != expected[i] {
-			t.Fatalf("expected global skeleton harnesses %v (from org config), got %v", expected, values)
-		}
+	apiNode := findMappingValue(root, "apiVersion")
+	if apiNode == nil || apiNode.Value != APIVersionV3 {
+		t.Fatalf("global skeleton config must declare apiVersion %q, got %v", APIVersionV3, apiNode)
 	}
 
 	// The skeleton must NOT include a logging block; the logging runtime uses

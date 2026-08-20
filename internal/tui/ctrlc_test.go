@@ -57,7 +57,7 @@ func TestCtrlCQuitsFromDetailPane(t *testing.T) {
 func TestCtrlCQuitsFromErrorsPane(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneErrors
-	m.errs = []error{errors.New("test error")}
+	m.diagnostics.recordOperationFailure(operationSync, diagnosticSync, errors.New("test error"))
 
 	_, cmd := m.Update(ctrlCKey())
 	if cmd == nil {
@@ -188,18 +188,15 @@ func TestCtrlCQuitsFromHarnessModal(t *testing.T) {
 	}
 }
 
-func TestRunReturnsNilOnInterrupt(t *testing.T) {
-	// Verify that Run() treats tea.ErrInterrupted as a clean exit,
-	// not an error worth reporting to the user.
-	if !errors.Is(tea.ErrInterrupted, tea.ErrInterrupted) {
-		t.Fatalf("tea.ErrInterrupted should match itself via errors.Is")
+func TestFinishTUIRunTreatsOnlyInterruptAsClean(t *testing.T) {
+	if err := finishTUIRun(nil, errors.Join(tea.ErrProgramKilled, tea.ErrInterrupted)); err != nil {
+		t.Fatalf("interrupt should be a clean hard exit: %v", err)
 	}
-}
-
-func TestRunReturnsNilOnProgramKilled(t *testing.T) {
-	// Verify that Run() treats tea.ErrProgramKilled as a clean exit,
-	// not an error worth reporting to the user.
-	if !errors.Is(tea.ErrProgramKilled, tea.ErrProgramKilled) {
-		t.Fatalf("tea.ErrProgramKilled should match itself via errors.Is")
+	if err := finishTUIRun(nil, tea.ErrProgramKilled); !errors.Is(err, tea.ErrProgramKilled) {
+		t.Fatalf("program kill error was swallowed: %v", err)
+	}
+	returned := errors.New("renderer failed")
+	if err := finishTUIRun(nil, returned); !errors.Is(err, returned) {
+		t.Fatalf("returned process error was swallowed: %v", err)
 	}
 }

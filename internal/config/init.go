@@ -62,7 +62,87 @@ func InitializeUserPersonal(harnesses []string) (string, error) {
 	return InitializeUserPersonalAtPath(path, harnesses)
 }
 
-// InitializeUserPersonalAtPath is the testable core of InitializeUserPersonal.
+// PersistUserPersonalHarnesses resolves the authoritative user config path and
+// persists a strict-v3 target selection. Unlike the legacy explicit init API,
+// this mutation boundary upgrades a valid v2 file before editing it.
+func PersistUserPersonalHarnesses(harnesses []string) (string, error) {
+	path, err := GlobalConfigPath()
+	if err != nil {
+		return "", err
+	}
+	return PersistUserPersonalHarnessesAtPath(path, harnesses)
+}
+
+// PersistUserPersonalHarnessesAtPath makes the requested target set durable
+// without treating mere file existence as success. Missing configs are created
+// as minimal v3, valid v3 configs are edited in place, and valid v2 configs are
+// migrated transactionally before the requested set is verified. Invalid, v1,
+// and multi-document inputs are rejected before any write.
+func PersistUserPersonalHarnessesAtPath(path string, harnesses []string) (string, error) {
+	harnesses = normalizedUniqueValues(harnesses)
+	if len(harnesses) == 0 {
+		return "", fmt.Errorf("harnesses list must not be empty")
+	}
+	if err := ValidateHarnessIDs(harnesses); err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := SetHarnessesInConfig(path, harnesses); err != nil {
+			return "", err
+		}
+	case err != nil:
+		return "", fmt.Errorf("read user personal config %q: %w", path, err)
+	default:
+		if err := requireSingleYAMLDocument(data, fmt.Sprintf("user personal config %q", path)); err != nil {
+			return "", err
+		}
+		switch PeekAPIVersion(data) {
+		case APIVersionV3:
+			if _, errs := loadStrictUserV3Config(data, false); len(errs) > 0 {
+				return "", fmt.Errorf("validate user personal config %q: %w", path, errors.Join(errs...))
+			}
+			if err := SetHarnessesInConfig(path, harnesses); err != nil {
+				return "", err
+			}
+		case APIVersionV2:
+			var existing Config
+			if err := yaml.Unmarshal(data, &existing); err != nil {
+				return "", fmt.Errorf("parse user personal config %q: %w", path, err)
+			}
+			normalizeConfigHarnessTargets(&existing)
+			var validationErrs []error
+			if err := existing.validate(false, true, userLayer.name()); err != nil {
+				validationErrs = append(validationErrs, err)
+			}
+			validationErrs = append(validationErrs, validateLogging(existing.Logging)...)
+			if err := errors.Join(validationErrs...); err != nil {
+				return "", fmt.Errorf("validate user personal config %q: %w", path, err)
+			}
+			if _, err := MigrateConfigFiles(MigratePaths{User: path}, harnesses); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("user personal config %q is v1 or has no supported apiVersion; run migration with explicit remediation before saving targets", path)
+		}
+	}
+
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("verify user personal config %q: %w", path, err)
+	}
+	cfg, errs := loadStrictUserV3Config(persisted, true)
+	if len(errs) > 0 {
+		return "", fmt.Errorf("verify user personal config %q: %w", path, errors.Join(errs...))
+	}
+	if !stringSlicesEqual(cfg.Harnesses, harnesses) {
+		return "", fmt.Errorf("requested harnesses were not persisted in %q: requested %v, found %v", path, harnesses, cfg.Harnesses)
+	}
+	return path, nil
+}
+
 func InitializeUserPersonalAtPath(path string, harnesses []string) (string, error) {
 	if len(harnesses) == 0 {
 		return "", fmt.Errorf("harnesses list must not be empty")

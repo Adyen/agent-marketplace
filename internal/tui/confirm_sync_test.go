@@ -62,6 +62,29 @@ func anyCmdProducesQuitMsg(cmd tea.Cmd) bool {
 	return ok
 }
 
+func TestQDuringActiveSyncWaitsWhenUserChoosesSyncAndQuit(t *testing.T) {
+	m := newTestModel()
+	m.syncing = true
+	m.driftAssessment = driftReady
+	m.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Name: "active", Reason: materialize.DriftMissing}}}
+
+	updated, cmd := m.Update(keyPress('q'))
+	m = updated.(Model)
+	if cmd != nil || m.pane != paneConfirm {
+		t.Fatalf("q during active sync did not open confirmation: pane=%v cmd=%v", m.pane, cmd)
+	}
+	updated, cmd = m.Update(keyPress('y'))
+	m = updated.(Model)
+	if cmd != nil || !m.quitAfterSync || !m.syncing {
+		t.Fatalf("sync+quit did not wait for active work: syncing=%t quitAfterSync=%t cmd=%v", m.syncing, m.quitAfterSync, cmd)
+	}
+	updated, cmd = m.Update(syncDoneMsg{})
+	m = updated.(Model)
+	if !cmdProducesQuitMsg(cmd) || m.syncing {
+		t.Fatalf("completed active sync did not quit cleanly: syncing=%t cmd=%v", m.syncing, cmd)
+	}
+}
+
 func TestConfirmYesStartsSyncWithoutImmediateQuit(t *testing.T) {
 	origRunSyncCmd := runSyncCmd
 	runSyncCmd = noopSyncCmd
@@ -220,22 +243,31 @@ func TestSyncDoneMsgWithErrorStoresSyncQuitErr(t *testing.T) {
 	}
 }
 
-func TestUpdateDoneMsgClearsQuitAfterSync(t *testing.T) {
+// TestUpdateDoneMsgHonorsQuitAfterSyncByQueueingSync replaces the old
+// "updateDoneMsg clears quitAfterSync" pin: quitAfterSync set while an
+// update is in flight is not stale — it is the confirmed sync+quit intent,
+// so the update completion must queue the sync and keep the intent alive
+// until the sync result arrives.
+func TestUpdateDoneMsgHonorsQuitAfterSyncByQueueingSync(t *testing.T) {
+	origSyncCmd := runSyncCmd
+	runSyncCmd = noopSyncCmd
+	defer func() { runSyncCmd = origSyncCmd }()
+
 	m := newTestModel()
 	m.syncing = true
-	m.quitAfterSync = true // stale from a previous sync+quit confirm
+	m.quitAfterSync = true // confirmed while the update was in flight
 
 	updated, cmd := m.Update(updateDoneMsg{err: nil})
 	got := updated.(Model)
 
-	if got.syncing {
-		t.Fatalf("updateDoneMsg should clear syncing")
+	if !got.syncing {
+		t.Fatalf("updateDoneMsg should keep syncing while the queued sync runs")
 	}
-	if got.quitAfterSync {
-		t.Fatalf("updateDoneMsg should clear stale quitAfterSync to prevent later unrelated quit")
+	if !got.quitAfterSync {
+		t.Fatalf("updateDoneMsg should keep quitAfterSync until the sync result")
 	}
-	if cmdProducesQuitMsg(cmd) {
-		t.Fatalf("updateDoneMsg should NOT emit tea.Quit")
+	if anyCmdProducesQuitMsg(cmd) {
+		t.Fatalf("updateDoneMsg should NOT emit tea.Quit — the confirmed sync decides the exit")
 	}
 }
 

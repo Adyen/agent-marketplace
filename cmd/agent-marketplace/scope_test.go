@@ -72,6 +72,78 @@ registries:
 	)
 }
 
+// TestInstallScopeUserWithOrgFallbackCreatesV3ConfigWithoutHarnesses pins the
+// first-run creation contract for install --scope user: when
+// ~/.agents/config.yaml is missing and the machine-wide target set comes from
+// the organization layer, the install creates the user-personal config as
+// minimal agent-marketplace/v3 WITHOUT a harnesses list — a generated list
+// would become authoritative and silently override the organization fallback
+// on every later run.
+func TestInstallScopeUserWithOrgFallbackCreatesV3ConfigWithoutHarnesses(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "org-install-skills.git")
+	writeSkill(t, working, "org-adopted-skill", "Org adopted skill", []string{"org"})
+	commitAndPushAll(t, working, "Add org skills")
+
+	// The organization layer owns the registry and the machine-wide target
+	// harness set. No user-personal config exists.
+	orgPath := filepath.Join(t.TempDir(), "org-config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      include:
+        - org-adopted-skill
+`)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--scope", "user", "org-adopted-skill")
+	if err != nil {
+		t.Fatalf("expected install --scope user to succeed: %v\n%s", err, output)
+	}
+
+	// The install created the missing user config to hold the selection. It
+	// must be strict v3 and must NOT pin a harnesses list.
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	data, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatalf("install --scope user did not create %q: %v", globalPath, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion: "+config.APIVersionV3) {
+		t.Fatalf("created user config must be %s, got:\n%s", config.APIVersionV3, content)
+	}
+	if strings.Contains(content, "harnesses:") {
+		t.Fatalf("created user config must not pin harnesses (the organization fallback must survive), got:\n%s", content)
+	}
+
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load created user config: %v", err)
+	}
+	if globalCfg == nil || len(globalCfg.Registries) != 1 {
+		t.Fatalf("expected the registry entry in the created user config, got %#v", globalCfg)
+	}
+	if !containsStr(globalCfg.Registries[0].Skills.Include, "org-adopted-skill") {
+		t.Fatalf("expected org-adopted-skill in the user config include, got %#v", globalCfg.Registries[0])
+	}
+
+	// The organization fallback still drives materialization: the skill landed
+	// at machine scope through the org-declared factory harness.
+	assertFactorySkillExists(t, homeDir, "org-adopted-skill")
+}
+
 // ---------------------------------------------------------------------------
 // install --scope local
 // ---------------------------------------------------------------------------
@@ -380,6 +452,139 @@ registries:
 }
 
 // ---------------------------------------------------------------------------
+// install --scope repo: skeleton creation is strict v3 and carries no
+// harnesses (the machine-wide target set stays with the user/org layers)
+// ---------------------------------------------------------------------------
+
+// TestInstallScopeRepoCreatesV3SkeletonWithoutHarnesses pins the first-run
+// repo-config creation contract for install: when no .agents/config.yaml
+// exists, install --scope repo creates a skeleton that is born into the
+// current schema (agent-marketplace/v3) and does NOT declare a top-level
+// harnesses list — top-level harnesses in a repo config are forbidden
+// because the target harness set is machine-wide.
+func TestInstallScopeRepoCreatesV3SkeletonWithoutHarnesses(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "skeleton-skills.git")
+	writeSkill(t, working, "skeleton-skill", "Skeleton skill", []string{"skeleton"})
+	commitAndPushAll(t, working, "Add skeleton skill")
+
+	// The user-personal config provides the registry and the machine-wide
+	// target set; the repo has NO config yet.
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--scope", "repo", "skeleton-skill")
+	if err != nil {
+		t.Fatalf("expected install --scope repo to succeed: %v\n%s", err, output)
+	}
+
+	repoConfigPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	data, err := os.ReadFile(repoConfigPath)
+	if err != nil {
+		t.Fatalf("install --scope repo did not create %q: %v", repoConfigPath, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion: "+config.APIVersionV3) {
+		t.Fatalf("created repo skeleton must be %s, got:\n%s", config.APIVersionV3, content)
+	}
+	if strings.Contains(content, "harnesses:") {
+		t.Fatalf("created repo skeleton must not declare harnesses (the target harness set is machine-wide), got:\n%s", content)
+	}
+
+	repoCfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("load created repo config: %v", err)
+	}
+	if repoCfg == nil || repoCfg.APIVersion != config.APIVersionV3 {
+		t.Fatalf("created repo config apiVersion = %+v, want %s", repoCfg, config.APIVersionV3)
+	}
+	if len(repoCfg.Registries) != 1 || !containsStr(repoCfg.Registries[0].Skills.Include, "skeleton-skill") {
+		t.Fatalf("expected shadow registry entry with skeleton-skill include, got %#v", repoCfg)
+	}
+
+	assertFactorySkillExists(t, repoRoot, "skeleton-skill")
+}
+
+// TestInstallScopeRepoFromSubdirCreatesV3SkeletonWithoutHarnesses pins the
+// monorepo-subdirectory skeleton: when install --scope repo runs from a
+// subdirectory with no .agents/config.yaml, the CLI seeds a new project root
+// in the cwd instead of writing to an ancestor config. The seeded skeleton
+// must be strict v3 with no harnesses list.
+func TestInstallScopeRepoFromSubdirCreatesV3SkeletonWithoutHarnesses(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "subdir-skills.git")
+	writeSkill(t, working, "subdir-skill", "Subdir skill", []string{"subdir"})
+	commitAndPushAll(t, working, "Add subdir skill")
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+
+	monorepo := filepath.Join(t.TempDir(), "monorepo")
+	if err := os.MkdirAll(monorepo, 0o755); err != nil {
+		t.Fatalf("mkdir monorepo: %v", err)
+	}
+	runGit(t, "", "init", "--initial-branch=main", monorepo)
+	subdir := filepath.Join(monorepo, "payments")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	withWorkingDir(t, subdir)
+
+	output, err := executeCommand("install", "--scope", "repo", "subdir-skill")
+	if err != nil {
+		t.Fatalf("expected install --scope repo from subdir to succeed: %v\n%s", err, output)
+	}
+
+	// The skeleton lands in the cwd, which becomes the new project root; the
+	// parent monorepo stays config-free.
+	subdirConfigPath := filepath.Join(subdir, ".agents", "config.yaml")
+	data, err := os.ReadFile(subdirConfigPath)
+	if err != nil {
+		t.Fatalf("install did not create the subdir skeleton %q: %v", subdirConfigPath, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion: "+config.APIVersionV3) {
+		t.Fatalf("subdir skeleton must be %s, got:\n%s", config.APIVersionV3, content)
+	}
+	if strings.Contains(content, "harnesses:") {
+		t.Fatalf("subdir skeleton must not declare harnesses, got:\n%s", content)
+	}
+	if _, err := os.Stat(filepath.Join(monorepo, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("parent monorepo config must not be created, stat err=%v", err)
+	}
+
+	repoCfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("load created subdir repo config: %v", err)
+	}
+	if repoCfg == nil || repoCfg.APIVersion != config.APIVersionV3 {
+		t.Fatalf("subdir repo config apiVersion = %+v, want %s", repoCfg, config.APIVersionV3)
+	}
+	if len(repoCfg.Registries) != 1 || !containsStr(repoCfg.Registries[0].Skills.Include, "subdir-skill") {
+		t.Fatalf("expected shadow registry entry with subdir-skill include, got %#v", repoCfg)
+	}
+
+	// The subdir is the new project root, so repo-scope output materializes there.
+	assertFactorySkillExists(t, subdir, "subdir-skill")
+}
+
+// ---------------------------------------------------------------------------
 // remove: required skill → error
 // ---------------------------------------------------------------------------
 
@@ -472,6 +677,95 @@ registries: []
 	if !strings.Contains(filepath.ToSlash(output), ".agents/config.yaml") {
 		t.Fatalf("expected config path in output, got: %q", output)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// remove --scope user with a missing user config: the created file is strict
+// v3 and carries no harnesses, so the organization fallback keeps applying
+// ---------------------------------------------------------------------------
+
+// TestRemoveScopeUserWithOrgFallbackCreatesV3ConfigWithoutHarnesses pins the
+// first-run creation contract for the remove/exclude user-scope path: when
+// ~/.agents/config.yaml is missing and the machine-wide target set comes from
+// the organization layer, removing an org-provided resource creates the
+// user-personal config as minimal agent-marketplace/v3 WITHOUT a harnesses
+// list. Injecting the code-default harnesses here would make the user layer
+// authoritative and silently override the organization fallback.
+func TestRemoveScopeUserWithOrgFallbackCreatesV3ConfigWithoutHarnesses(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "org-skills.git")
+	writeSkill(t, working, "keep-skill", "Keep skill", []string{"keep"})
+	writeSkill(t, working, "drop-skill", "Drop skill", []string{"drop"})
+	commitAndPushAll(t, working, "Add org skills")
+
+	// The organization layer owns the registry, the selection, and the
+	// machine-wide target harness set. No user-personal config exists.
+	orgPath := filepath.Join(t.TempDir(), "org-config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      include:
+        - keep-skill
+        - drop-skill
+`)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync failed: %v", err)
+	}
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if _, err := os.Stat(globalPath); !os.IsNotExist(err) {
+		t.Fatalf("sync must not create the user config under organization fallback, stat err=%v", err)
+	}
+	assertFactorySkillExists(t, homeDir, "keep-skill")
+	assertFactorySkillExists(t, homeDir, "drop-skill")
+
+	output, err := executeCommand("remove", "--scope", "user", "drop-skill")
+	if err != nil {
+		t.Fatalf("expected remove --scope user to succeed: %v\n%s", err, output)
+	}
+
+	// The remove created the missing user config to hold the exclude. It must
+	// be strict v3 and must NOT pin a harnesses list...
+	data, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatalf("remove --scope user did not create %q: %v", globalPath, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "apiVersion: "+config.APIVersionV3) {
+		t.Fatalf("created user config must be %s, got:\n%s", config.APIVersionV3, content)
+	}
+	if strings.Contains(content, "harnesses:") {
+		t.Fatalf("created user config must not pin harnesses (the organization fallback must survive), got:\n%s", content)
+	}
+
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load created user config: %v", err)
+	}
+	if globalCfg == nil || len(globalCfg.Registries) != 1 {
+		t.Fatalf("expected the shadow registry entry in the created user config, got %#v", globalCfg)
+	}
+	if !containsStr(globalCfg.Registries[0].Skills.Exclude, "drop-skill") {
+		t.Fatalf("expected drop-skill in the shadow entry exclude, got %#v", globalCfg.Registries[0])
+	}
+
+	// ...and the organization fallback still drives materialization: the
+	// exclude took effect through the org-declared factory harness.
+	assertFactorySkillExists(t, homeDir, "keep-skill")
+	assertFactorySkillAbsent(t, homeDir, "drop-skill")
 }
 
 // ---------------------------------------------------------------------------

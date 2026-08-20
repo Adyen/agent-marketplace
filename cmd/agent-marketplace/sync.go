@@ -52,10 +52,6 @@ func newSyncCmd() *cobra.Command {
 }
 
 func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool) error {
-	if err := config.EnsureGlobalConfig(); err != nil {
-		slog.Warn("failed to create global config skeleton", "error", err)
-	}
-
 	repoRoot := config.FindRepoRoot()
 	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup}
 	localDir := config.FindLocalConfigDir()
@@ -316,6 +312,9 @@ func runSyncCheck(ctx context.Context, out io.Writer) error {
 		resolveOpts.LocalConfigDir = localDir
 	}
 	resolvedResult := pipeline.Resolve(ctx, resolveOpts)
+	if len(resolvedResult.Errors) > 0 {
+		return writeSyncCheckSummary(out, &materialize.Report{}, buildErrorRows(resolvedResult.Errors), resolvedResult.Errors)
+	}
 
 	// Use materialize in dry-run mode to check for drift.
 	matRoot := localDir

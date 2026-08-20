@@ -102,8 +102,9 @@ func MergeLayers(layers []Layer) *Config {
 	}
 
 	// Backfill Harnesses on entries that don't have their own, using the
-	// merged top-level Harnesses. This ensures that org/team entries (which
-	// don't define harnesses) inherit the value from the user/repo layer.
+	// merged top-level Harnesses. This legacy merge behavior is retained for
+	// callers that do not provide a separate machine-wide target set. The v3
+	// effective loader strips machine target fields before invoking MergeLayers.
 	if len(merged.Harnesses) > 0 {
 		for i := range merged.Registries {
 			if merged.Registries[i].Harnesses == nil {

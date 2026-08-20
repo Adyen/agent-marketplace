@@ -17,14 +17,15 @@ import (
 
 // TestCase defines a single E2E test scenario declaratively.
 type TestCase struct {
-	Name       string        // subtest name (e.g. "collision/same_name_different_registries")
-	Desc       string        // Given/When/Then description of the test scenario
-	Registries []RegistryDef // bare repos to seed inside the container
-	GlobalCfg  string        // ~/.agents/config.yaml content ({{REG:name}} placeholders resolved); always written (empty → auto-injected defaults)
-	RepoCfg    string        // .agents/config.yaml content; omitted if empty
-	LocalCfg   string        // .agents/config.local.yaml content; omitted if empty
-	OrgCfg     string        // /etc/agent-marketplace/config.yaml content; omitted if empty
-	Steps      []Step        // sequence of actions and assertions
+	Name          string        // subtest name (e.g. "collision/same_name_different_registries")
+	Desc          string        // Given/When/Then description of the test scenario
+	Registries    []RegistryDef // bare repos to seed inside the container
+	GlobalCfg     string        // ~/.agents/config.yaml content ({{REG:name}} placeholders resolved); empty auto-injects defaults unless OmitGlobalCfg is true
+	OmitGlobalCfg bool          // leave ~/.agents/config.yaml absent so organization fallback or first-run behavior can be exercised
+	RepoCfg       string        // .agents/config.yaml content; omitted if empty
+	LocalCfg      string        // .agents/config.local.yaml content; omitted if empty
+	OrgCfg        string        // /etc/agent-marketplace/config.yaml content; omitted if empty
+	Steps         []Step        // sequence of actions and assertions
 }
 
 // RegistryDef describes a bare git repo to create inside the container.
@@ -99,6 +100,7 @@ type Step struct {
 	RegularFiles    []string          // paths that must exist and not be symbolic links
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
+	FileEquals      map[string]string // path -> exact content
 }
 
 // ---------- placeholder resolution ----------
@@ -821,6 +823,133 @@ registries:
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/root/.factory/skills/compliance-check/SKILL.md"}},
+		},
+	},
+	{
+		Name: "config/cli_backend_target_product_contract",
+		Desc: "Given organization fallback and a later user override, When the declarative CLI/backend flow migrates, syncs, and rejects an invalid target, Then target placement, old-target cleanup, and exact no-rewrite behavior hold; this is not a real TUI test",
+		Registries: []RegistryDef{
+			{Name: "target-contract", Skills: []Skill{{Name: "contract-skill", Description: "Target contract fixture"}}},
+		},
+		OmitGlobalCfg: true,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+`,
+		RepoCfg: `
+apiVersion: agent-marketplace/v2
+# preserve target contract comment
+registries:
+  - url: {{REG:target-contract}}
+    ref: main
+    skills:
+      include:
+        - contract-skill
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:  []string{"/workspace/.factory/skills/contract-skill/SKILL.md"},
+				FilesAbsent: []string{"/root/.agents/config.yaml"}},
+			{Args: []string{"migrate"}, MustPass: true,
+				FilesAbsent: []string{"/root/.agents/config.yaml"},
+				FileContains: map[string]string{
+					"/workspace/.agents/config.yaml": "# preserve target contract comment",
+				}},
+			{Args: []string{"status"}, MustPass: true,
+				OutContains: []string{"TARGET HARNESS SET", "factory", "ORG"}},
+			{Action: ActionWriteRepoConfig, Body: `
+apiVersion: agent-marketplace/v2
+harnesses:
+  - cursor
+# preserve target contract comment
+registries:
+  - url: {{REG:target-contract}}
+    ref: main
+    skills:
+      include:
+        - contract-skill
+`},
+			{Args: []string{"migrate"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.agents/config.yaml":      "- cursor",
+					"/workspace/.agents/config.yaml": "# preserve target contract comment",
+				},
+				FileNotContains: map[string]string{
+					"/root/.agents/config.yaml":      "devin",
+					"/workspace/.agents/config.yaml": "harnesses:",
+				}},
+			{Args: []string{"status"}, MustPass: true,
+				OutContains: []string{"TARGET HARNESS SET", "cursor", "USER"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:  []string{"/workspace/.cursor/skills/contract-skill/SKILL.md"},
+				FilesAbsent: []string{"/workspace/.factory/skills/contract-skill/SKILL.md"}},
+			{Action: ActionWriteGlobalConfig, Body: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - devni
+`},
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"devni", "supported compiler harnesses"},
+				FilesExist:  []string{"/workspace/.cursor/skills/contract-skill/SKILL.md"},
+				FilesAbsent: []string{"/workspace/.factory/skills/contract-skill/SKILL.md"},
+				FileEquals: map[string]string{
+					"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v3\nharnesses:\n  - devni",
+				}},
+		},
+	},
+	{
+		Name: "config/user_scope_edits_create_v3_without_harnesses",
+		Desc: "Given organization fallback and no user config, When install/remove --scope user create the user-personal config, Then the file is v3 without a harnesses list so the org fallback keeps applying",
+		Registries: []RegistryDef{
+			{Name: "user-scope-reg", Skills: []Skill{
+				{Name: "adopted-skill", Description: "Installed at user scope"},
+				{Name: "dropped-skill", Description: "Excluded at user scope"},
+			}},
+		},
+		OmitGlobalCfg: true,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+registries:
+  - url: {{REG:user-scope-reg}}
+    ref: main
+    skills:
+      include:
+        - adopted-skill
+        - dropped-skill
+`,
+		Steps: []Step{
+			// install --scope user creates the missing user config as v3
+			// with no harnesses key (the org fallback must survive).
+			{Args: []string{"install", "--scope", "user", "adopted-skill"}, MustPass: true,
+				FilesExist: []string{
+					"/root/.agents/config.yaml",
+					"/root/.factory/skills/adopted-skill/SKILL.md",
+				},
+				FileContains: map[string]string{
+					"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v3",
+				},
+				FileNotContains: map[string]string{
+					"/root/.agents/config.yaml": "harnesses:",
+				}},
+			// remove --scope user edits the same v3 file in place: the
+			// exclude lands, the schema stays v3, no harness list appears,
+			// and the org-declared factory target keeps applying.
+			{Args: []string{"remove", "--scope", "user", "dropped-skill"}, MustPass: true,
+				FilesExist: []string{"/root/.factory/skills/adopted-skill/SKILL.md"},
+				FilesAbsent: []string{"/root/.factory/skills/dropped-skill"},
+				FileContains: map[string]string{
+					"/root/.agents/config.yaml": "apiVersion: agent-marketplace/v3",
+				},
+				FileNotContains: map[string]string{
+					"/root/.agents/config.yaml": "harnesses:",
+				}},
+			// status still reports the organization fallback as the target
+			// source — the created user file did not take over.
+			{Args: []string{"status"}, MustPass: true,
+				OutContains: []string{"TARGET HARNESS SET", "factory", "ORG"}},
 		},
 	},
 	{
@@ -4179,9 +4308,9 @@ func TestE2E(t *testing.T) {
 			}
 
 			// Write initial config layers (placeholders resolved).
-			// Global config is always written — even an empty value triggers
-			// auto-injection of apiVersion, harnesses, and allowed_registries.
-			env.WriteGlobalConfig(resolvePlaceholders(tc.GlobalCfg, urls))
+			if !tc.OmitGlobalCfg {
+				env.WriteGlobalConfig(resolvePlaceholders(tc.GlobalCfg, urls))
+			}
 			if tc.RepoCfg != "" {
 				env.WriteRepoConfig(resolvePlaceholders(tc.RepoCfg, urls))
 			}
@@ -4330,6 +4459,16 @@ func TestE2E(t *testing.T) {
 				for p, substr := range step.FileNotContains {
 					if env.CheckFileContains(p, substr) {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly contains %q", i, p, substr)
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+					}
+				}
+				for p, expected := range step.FileEquals {
+					expected = resolvePlaceholders(expected, urls)
+					if actual := env.ReadFile(p); actual != expected {
+						errMsg := fmt.Sprintf("step %d: file %q changed; got %q want %q", i, p, actual, expected)
 						if firstErr == "" {
 							firstErr = errMsg
 						}

@@ -333,3 +333,53 @@ func createAndPushTag(t *testing.T, repoDir, tag string) {
 	runGit(t, repoDir, "tag", tag)
 	runGit(t, repoDir, "push", "origin", tag)
 }
+
+// TestUpdateCommandReportsStaleCacheFallback pins the CLI partial-outcome
+// contract: when the registry fetch fails but a warm cache exists, update
+// succeeds AND prints the stale-cache warning next to the summary, instead of
+// a bare "Updated N registries" that would claim a clean refresh from stale
+// data.
+func TestUpdateCommandReportsStaleCacheFallback(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-cache-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle v1", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skills v1")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      include:
+        - vm-lifecycle
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	// Warm the cache against the live registry.
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("expected initial sync to succeed: %v\n%s", err, output)
+	}
+
+	// Break the remote; the warm cache must still serve the update.
+	if err := os.Rename(origin, origin+".offline"); err != nil {
+		t.Fatalf("rename origin: %v", err)
+	}
+
+	output, err := executeCommand("update")
+	if err != nil {
+		t.Fatalf("update with a warm stale cache should complete partially, not fail: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Updated 1 registries") {
+		t.Fatalf("expected the update summary, got:\n%s", output)
+	}
+	if !strings.Contains(output, "using stale cache") || !strings.Contains(output, "stale-cache-skills.git") {
+		t.Fatalf("expected the stale-cache fallback warning naming the registry, got:\n%s", output)
+	}
+
+	// The stale cache content is still materialized.
+	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "skills", "vm-lifecycle"))
+}

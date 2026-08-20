@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -114,6 +115,14 @@ func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
 // to remove. Exporting the promotion is what makes the invariant enforceable
 // instead of aspirational.
 func PromoteDiagnostic(d diag.Diagnostic) error { return newDiagIssue(d) }
+
+// IsDiagIssue reports whether err is a promoted materialize diagnostic. The
+// TUI uses it to attribute sync warnings to the materialization category
+// instead of guessing by message shape.
+func IsDiagIssue(err error) bool {
+	var issue *diagIssue
+	return errors.As(err, &issue)
+}
 
 // DedupIssues drops later occurrences of the same underlying problem while
 // preserving order. Errors that expose DedupKey() are collapsed on that

@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandPreservesValidV2UserAndRepo(t *testing.T) {
+func TestMigrateCommandV2ToV3UserAndRepo(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -57,11 +57,11 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated repo config to load: %v", err)
 	}
-	if repoCfg.APIVersion != config.APIVersionV2 {
-		t.Fatalf("expected repo apiVersion v2, got %q", repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV3 {
+		t.Fatalf("expected repo apiVersion v3, got %q", repoCfg.APIVersion)
 	}
-	if !equalStrings(repoCfg.Harnesses, []string{"factory"}) {
-		t.Fatalf("expected repo harnesses to be preserved, got %v", repoCfg.Harnesses)
+	if len(repoCfg.Harnesses) != 0 {
+		t.Fatalf("expected repo config to have no harnesses, got %v", repoCfg.Harnesses)
 	}
 	if !equalStrings(repoCfg.Tags, []string{"k8s"}) {
 		t.Fatalf("expected tags preserved, got %v", repoCfg.Tags)
@@ -79,8 +79,8 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated global config to load: %v", err)
 	}
-	if globalCfg.APIVersion != config.APIVersionV2 {
-		t.Fatalf("expected global apiVersion v2, got %q", globalCfg.APIVersion)
+	if globalCfg.APIVersion != config.APIVersionV3 {
+		t.Fatalf("expected global apiVersion v3, got %q", globalCfg.APIVersion)
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected global harnesses [factory], got %v", globalCfg.Harnesses)
@@ -178,6 +178,44 @@ func TestMigrateCommandRejectsV1(t *testing.T) {
 	}
 	if !strings.Contains(string(globalData), "agent-marketplace/v2") {
 		t.Fatalf("expected global file to remain unmodified")
+	}
+}
+
+func TestMigrateCommandPreservesOrganizationTargetFallback(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v3\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	repoRoot := t.TempDir()
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoPath, []byte("# preserve\napiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"migrate"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("organization fallback created user override: %v", err)
+	}
+	data, err := os.ReadFile(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "agent-marketplace/v3") || !strings.Contains(string(data), "# preserve") {
+		t.Fatalf("repo migration output:\n%s", data)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 func TestEditConfigKeyOpensModal(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneList
 
 	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
@@ -27,6 +28,7 @@ func TestEditConfigKeyOpensModal(t *testing.T) {
 func TestEditConfigModalCancelReturnsToList(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneEditConfigModal
 
 	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -50,6 +52,7 @@ func TestEditConfigModalScopeLaunchesEditor(t *testing.T) {
 			repoDir, homeDir := t.TempDir(), t.TempDir()
 			t.Setenv("HOME", homeDir)
 			m := NewModel(repoDir, homeDir)
+			seedTestTerminalSize(&m)
 			m.pane = paneEditConfigModal
 
 			mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tc.key}})
@@ -73,6 +76,7 @@ func TestEditConfigModalScopeLaunchesEditor(t *testing.T) {
 func TestRenderEditConfigModalContainsAllScopes(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneEditConfigModal
 
 	out := renderEditConfigModal(m)
@@ -86,9 +90,14 @@ func TestRenderEditConfigModalContainsAllScopes(t *testing.T) {
 func TestEditConfigMsgReloadsSnapshot(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneList
+	id, ok := m.beginOperation(operationEditor, nil)
+	if !ok {
+		t.Fatal("editor operation did not start")
+	}
 
-	mi, cmd := m.Update(editConfigPathMsg{path: "/repo/.agents/config.yaml"})
+	mi, cmd := m.Update(editConfigPathMsg{operation: id, path: "/repo/.agents/config.yaml"})
 	m = mi.(Model)
 
 	if cmd == nil {
@@ -99,30 +108,37 @@ func TestEditConfigMsgReloadsSnapshot(t *testing.T) {
 func TestEditConfigMsgErrorIsRecorded(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneList
 	priorErr := errors.New("prior")
 	editorErr := errors.New("boom")
-	m.errs = []error{priorErr}
+	m.diagnostics.recordOperationFailure(operationSync, diagnosticSync, priorErr)
+	id, ok := m.beginOperation(operationEditor, nil)
+	if !ok {
+		t.Fatal("editor operation did not start")
+	}
 
-	mi, cmd := m.Update(editConfigPathMsg{path: "/repo/.agents/config.yaml", err: editorErr})
+	mi, cmd := m.Update(editConfigPathMsg{operation: id, path: "/repo/.agents/config.yaml", err: editorErr})
 	m = mi.(Model)
 
-	// The command is a delayed toast expiry timer; do not invoke it here.
+	// The command batches an authoritative reload with a delayed toast
+	// expiry timer; do not invoke it here.
 	if cmd == nil {
-		t.Fatal("expected toast expiry command")
+		t.Fatal("expected reload + toast expiry command")
 	}
 	if !strings.Contains(m.toast, editorErr.Error()) {
 		t.Fatalf("expected error toast, got %q", m.toast)
 	}
-	if len(m.errs) != 2 || !errors.Is(m.errs[0], priorErr) || !errors.Is(m.errs[1], editorErr) {
-		t.Fatalf("expected editor error to be appended, got %v", m.errs)
+	diagnostics := m.diagnostics.bySeverity(diagnosticError)
+	if len(diagnostics) != 2 || !errors.Is(diagnostics[0].err, priorErr) || !errors.Is(diagnostics[1].err, editorErr) {
+		t.Fatalf("expected editor error to be appended, got %v", diagnostics)
 	}
 }
 
 func TestOpenEditorCmdUsesEditor(t *testing.T) {
 	t.Setenv("EDITOR", "cat")
 
-	cmd := openEditorCmd("/some/path")
+	cmd := openEditorCmd("/some/path", 1)
 	if cmd == nil {
 		t.Fatal("expected a non-nil cmd")
 	}
@@ -131,7 +147,7 @@ func TestOpenEditorCmdUsesEditor(t *testing.T) {
 func TestOpenEditorCmdFallsBackToVi(t *testing.T) {
 	t.Setenv("EDITOR", "")
 
-	cmd := openEditorCmd("/some/path")
+	cmd := openEditorCmd("/some/path", 1)
 	if cmd == nil {
 		t.Fatal("expected a non-nil cmd")
 	}
@@ -141,7 +157,7 @@ func TestOpenEditorCmdCreatesConfigDirectory(t *testing.T) {
 	t.Setenv("EDITOR", "cat")
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 
-	msg := openEditorCmd(path)()
+	msg := openEditorCmd(path, 1)()
 
 	if _, ok := msg.(editConfigPathMsg); ok {
 		t.Fatalf("expected editor command, got %T", msg)
@@ -159,7 +175,7 @@ func TestOpenEditorCmdReportsDirectoryCreationError(t *testing.T) {
 	}
 	path := filepath.Join(parent, "config.yaml")
 
-	msg := openEditorCmd(path)()
+	msg := openEditorCmd(path, 7)()
 
 	result, ok := msg.(editConfigPathMsg)
 	if !ok {
@@ -167,6 +183,9 @@ func TestOpenEditorCmdReportsDirectoryCreationError(t *testing.T) {
 	}
 	if result.path != path || result.err == nil {
 		t.Fatalf("expected directory error for %q, got path=%q err=%v", path, result.path, result.err)
+	}
+	if result.operation != 7 {
+		t.Fatalf("editor result did not carry the started operation id, got %d", result.operation)
 	}
 }
 

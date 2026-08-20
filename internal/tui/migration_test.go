@@ -1,11 +1,9 @@
 package tui
 
 import (
-	"context"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,7 +37,10 @@ func TestSnapshotV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
+	seedTestTerminalSize(&m)
+	snapshot := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snapshot.generation = m.requests.active(requestSnapshot)
+	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
 	if m.pane != paneList {
@@ -73,7 +74,10 @@ func TestSnapshotV1ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
+	seedTestTerminalSize(&m)
+	snapshot := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snapshot.generation = m.requests.active(requestSnapshot)
+	mi, _ := m.Update(snapshot)
 	m = mi.(Model)
 
 	if m.pane == paneMigrationModal {
@@ -94,6 +98,7 @@ func TestMigrationModalLeaveKeepsConfigUnchanged(t *testing.T) {
 	}
 
 	m := NewModel(repoRoot, t.TempDir())
+	seedTestTerminalSize(&m)
 	m.pane = paneMigrationModal
 	m.migrationPrompt = pendingMigrationFor(repoRoot, "")
 
@@ -131,6 +136,7 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	writeV2Config(t, configPath)
 
 	m := NewModel(repoRoot, homeDir)
+	seedTestTerminalSize(&m)
 	m.pane = paneMigrationModal
 	m.migrationPrompt = pendingMigrationFor(repoRoot, homeDir)
 
@@ -175,23 +181,39 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	}
 }
 
-func TestRenderMigrationModalIncludesActions(t *testing.T) {
-	defaultHarnesses := config.DefaultHarnesses()
-	harnessesFlag := strings.Join(defaultHarnesses, ",")
-	harnessesList := fmt.Sprintf("%v", defaultHarnesses)
+func TestRenderMigrationModalIncludesExactPlan(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [cursor]\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	m := NewModel("/repo", "/home")
+	m := NewModel(repoRoot, homeDir)
+	seedTestTerminalSize(&m)
+	m.height = 40
 	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
+	m.migrationPrompt = migrationPrompt{
+		configs: []migrationConfig{{label: "Project", path: repoPath}},
+		plan: &config.MigrationPlan{
+			TargetHarnesses: []string{"cursor"},
+			TargetSource:    config.MigrationTargetRepo,
+			Files:           []config.MigrationPlannedFile{{Layer: "repo", Path: repoPath}},
+		},
+	}
 
 	out := renderMigrationModal(m)
 	for _, want := range []string{
 		"Config remediation required",
-		"Project",
-		"agent-marketplace migrate --harnesses " + harnessesFlag,
-		"apiVersion: agent-marketplace/v2",
-		"Existing registries, selected skills, excludes, and comments are preserved",
-		"harnesses: " + harnessesList,
+		"agent-marketplace/v2 is canonical",
+		"Exact target set: cursor",
+		"Target source: repository",
+		"migrate Project",
+		repoPath,
+		"source-file digest",
 		"[m]",
 		"[l]",
 		"leave config unchanged",
@@ -200,11 +222,74 @@ func TestRenderMigrationModalIncludesActions(t *testing.T) {
 			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
 		}
 	}
-	for _, h := range defaultHarnesses {
-		want := "  - " + h
-		if !contains(out, want) {
-			t.Fatalf("migration modal missing %q in output:\n%s", want, out)
+	for _, unwanted := range []string{"factory, windsurf", "Fallback targets", "generic defaults"} {
+		if contains(out, unwanted) {
+			t.Fatalf("migration modal contains generic plan text %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+func TestCatalogFailureSnapshotPreservesEffectiveConfigAndTargets(t *testing.T) {
+	induced := errors.New("catalog unavailable")
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) {
+		return &config.Config{
+			APIVersion: config.APIVersionV3,
+			Harnesses:  []string{"factory"},
+			Registries: []config.RegistryEntry{{URL: "https://example.com/org.git", Ref: "main", Default: true}},
+		}, nil
+	})
+	defer restoreOrg()
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return nil, nil })
+	defer restoreGlobal()
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
+	defer restoreRepo()
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	defer restoreLocal()
+	restoreClone := swapCloneOrPull(func(string, string) (string, error) { return "", induced })
+	defer restoreClone()
+
+	snapshot := readSnapshot(t.TempDir(), t.TempDir(), catalogLoadCached)
+	if snapshot.targetHarnessSource != config.Organization || len(snapshot.targetHarnesses) != 1 || snapshot.targetHarnesses[0] != "factory" {
+		t.Fatalf("catalog failure target state = %v from %v", snapshot.targetHarnesses, snapshot.targetHarnessSource)
+	}
+	if snapshot.mergedCfg == nil || len(snapshot.mergedCfg.Registries) != 1 {
+		t.Fatalf("catalog failure lost effective config: %+v", snapshot.mergedCfg)
+	}
+	if len(diagnosticErrors(snapshot.diagnostics)) == 0 {
+		t.Fatal("catalog failure was not reported")
+	}
+}
+
+func TestCompactMigrationPreviewShowsExactPlan(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [cursor]\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(repoRoot, homeDir)
+	seedTestTerminalSize(&m)
+	m.width = 50
+	m.height = 12
+	m.migrationPrompt = migrationPrompt{
+		configs: []migrationConfig{{label: "Project", path: repoPath}},
+		plan: &config.MigrationPlan{
+			TargetHarnesses: []string{"cursor"},
+			TargetSource:    config.MigrationTargetRepo,
+			Files:           []config.MigrationPlannedFile{{Layer: "repo", Path: repoPath}},
+		},
+	}
+	out := renderMigrationModal(m)
+	for _, want := range []string{"Targets: cursor (repository)", "migrate Project"} {
+		if !contains(out, want) {
+			t.Fatalf("compact preview missing %q:\n%s", want, out)
+		}
+	}
+	if contains(out, "Fallback targets") || contains(out, "factory,windsurf") {
+		t.Fatalf("compact preview showed generic defaults:\n%s", out)
 	}
 }
 
