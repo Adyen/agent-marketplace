@@ -1187,6 +1187,7 @@ func (c LocalConfig) ValidateBasic() error {
 	}
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)
+	errs = append(errs, ValidateMarketplaceEntries(c.Marketplaces)...)
 	errs = append(errs, validateMaterialization(c.Materialization)...)
 
 	if len(errs) == 0 {

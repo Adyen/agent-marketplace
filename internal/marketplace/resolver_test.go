@@ -18,6 +18,28 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+func TestCanonicalMarketplaceEntryNormalizesIdentityURL(t *testing.T) {
+	entry, err := canonicalMarketplaceEntry(config.MarketplaceEntry{URL: "HTTPS://MARKET.example/"})
+	if err != nil {
+		t.Fatalf("canonicalMarketplaceEntry: %v", err)
+	}
+	if entry.URL != "https://market.example" {
+		t.Fatalf("canonical URL = %q, want https://market.example", entry.URL)
+	}
+}
+
+func TestMarketplaceCatalogKeyIncludesInstanceID(t *testing.T) {
+	pin := config.MarketplaceResourcePin{SourceID: "source", Digest: "sha256:digest", Revision: "v1"}
+	first := marketplaceCatalogKey(config.MarketplaceEntry{URL: "https://market.example", InstanceID: "instance-one"}, pin)
+	second := marketplaceCatalogKey(config.MarketplaceEntry{URL: "https://market.example", InstanceID: "instance-two"}, pin)
+	if first == second {
+		t.Fatalf("catalog keys collided across Marketplace instances: %q", first)
+	}
+	if !strings.Contains(first, ":instance-one:") {
+		t.Fatalf("catalog key %q does not include instance ID", first)
+	}
+}
+
 func TestResolverMirrorRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
@@ -83,7 +105,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	cfg := &config.Config{
 		Marketplaces: []config.MarketplaceEntry{
 			{
-				URL:        server.URL,
+				URL:        strings.ToUpper(server.URL) + "/",
 				InstanceID: "mp",
 				Alias:      "test",
 				Resources: []config.MarketplaceResourcePin{
@@ -120,14 +142,19 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	if art.Resource == nil {
 		t.Fatalf("expected Resource to be populated")
 	}
-	if art.MarketplaceURL != server.URL {
-		t.Fatalf("marketplace URL = %q, want %q", art.MarketplaceURL, server.URL)
+	if art.MarketplaceURL != server.URL || art.RegistryURL != server.URL {
+		t.Fatalf("marketplace identity URLs = %q, %q, want %q", art.MarketplaceURL, art.RegistryURL, server.URL)
+	}
+	if strings.Contains(art.CatalogKey, strings.ToUpper(server.URL)) || !strings.Contains(art.CatalogKey, server.URL) {
+		t.Fatalf("catalog key = %q, want canonical endpoint", art.CatalogKey)
 	}
 	if art.Path != cache.ArtifactPath(archiveDigest) {
 		t.Fatalf("artifact path = %q, want archive-digest cache path %q", art.Path, cache.ArtifactPath(archiveDigest))
 	}
 
-	// Resolve again in cached mode should only verify endpoint identity.
+	// An equivalent lowercase, slashless configuration must reuse the same
+	// canonical metadata cache key while still verifying the instance.
+	cfg.Marketplaces[0].URL = server.URL
 	before := requestCount
 	resolved2, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCached)
 	if len(errs) > 0 {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 // MarketplaceURLBlockedError is returned by ValidateMarketplaceURLs when one
@@ -41,13 +43,16 @@ func ValidateMarketplaceURLs(entries []MarketplaceEntry, patterns []string) erro
 
 	var blocked []string
 	for _, entry := range entries {
-		url := strings.TrimSpace(entry.URL)
-		if url == "" {
+		rawURL := strings.TrimSpace(entry.URL)
+		if rawURL == "" {
 			continue
 		}
-		normalized := normalizeMarketplaceURL(url)
+		normalized, err := urlutil.NormalizeEndpointURL(rawURL)
+		if err != nil {
+			return fmt.Errorf("invalid marketplace URL %q: %w", rawURL, err)
+		}
 		if !matchesAny(normalized, compiled) {
-			blocked = append(blocked, url)
+			blocked = append(blocked, rawURL)
 		}
 	}
 
@@ -55,20 +60,4 @@ func ValidateMarketplaceURLs(entries []MarketplaceEntry, patterns []string) erro
 		return nil
 	}
 	return &MarketplaceURLBlockedError{BlockedURLs: blocked, AllowedPatterns: patterns}
-}
-
-// normalizeMarketplaceURL reduces a marketplace URL to host/path form so a
-// policy can be written without scheme prefixes.
-func normalizeMarketplaceURL(u string) string {
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(u, prefix) {
-			u = strings.TrimPrefix(u, prefix)
-			break
-		}
-	}
-	u = strings.TrimRight(u, "/")
-	if !strings.Contains(u, "/") {
-		u += "/"
-	}
-	return u
 }

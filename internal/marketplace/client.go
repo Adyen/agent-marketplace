@@ -13,6 +13,7 @@ import (
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 const maxArtifactBytes = 64 * 1024 * 1024
@@ -59,21 +60,14 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("marketplace base URL is required")
 	}
 
-	u, err := url.Parse(baseURL)
+	normalized, err := urlutil.NormalizeEndpointURL(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid marketplace base URL %q: %w", baseURL, err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, fmt.Errorf("marketplace base URL %q must use http or https", baseURL)
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("invalid marketplace base URL %q: %w", baseURL, err)
 	}
-	if u.Host == "" || u.Hostname() == "" {
-		return nil, fmt.Errorf("marketplace base URL %q must include a valid HTTP host", baseURL)
-	}
-	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return nil, fmt.Errorf("marketplace base URL %q must not include query, fragment, or userinfo", baseURL)
-	}
-	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = strings.TrimSuffix(u.RawPath, "/")
 
 	c := &Client{
 		baseURL:    u,
