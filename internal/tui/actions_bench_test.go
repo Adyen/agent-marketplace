@@ -1,15 +1,23 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -304,4 +312,54 @@ func benchmarkClampModel() Model {
 		m.flatItems[i] = flatItem{Kind: flatSection, SectionTitle: fmt.Sprintf("long-section-title-%03d-with-wrapped-content", i)}
 	}
 	return m
+}
+
+var benchTuiSrvOnce sync.Once
+var benchTuiSrv *httptest.Server
+
+func benchTuiServer() *httptest.Server {
+	benchTuiSrvOnce.Do(func() {
+		benchTuiSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		if _, err := http.Get(benchTuiSrv.URL); err != nil {
+			panic(err)
+		}
+	})
+	return benchTuiSrv
+}
+
+func BenchmarkRecordActionSpan(b *testing.B) {
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+
+	srv := benchTuiServer()
+	user := &config.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelDetailed,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := telemetry.ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := telemetry.New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	ctx := telemetry.NewContext(context.Background(), tel, "tui", time.Now(), "factory", false, telemetry.Span{})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		recordActionSpan(ctx, "tui.action.sync", map[string]string{"resource.kind": "skill"})
+	}
 }

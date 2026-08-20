@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -64,7 +65,19 @@ type RemoveResult struct {
 // Remove removes a resource from the appropriate config layer and re-syncs.
 // It handles collection detection, scope inference, scope boundary validation,
 // per-scope config editing, and --from ad-hoc registry removal.
-func Remove(ctx context.Context, opts RemoveOptions) (*RemoveResult, error) {
+func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
+	tel := telemetry.TelemetryFromContext(ctx)
+	var removeSpan telemetry.Span
+	if tel != nil {
+		ctx, removeSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.remove", removeOptionAttrs(opts))
+	}
+	defer func() {
+		if removeSpan != (telemetry.Span{}) {
+			removeSpan.SetAttributes(removeResultAttrs(result, retErr))
+			removeSpan.End()
+		}
+	}()
+
 	// --from ad-hoc registry path.
 	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {
 		return removeFromAdHoc(ctx, opts, fromURL)
