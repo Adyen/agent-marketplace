@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
 )
@@ -48,6 +49,10 @@ func (s Source) IsMachineScope() bool { return s == Organization || s == UserPer
 func (s Source) IsWritable() bool {
 	return s == UserPersonal || s == RepoCommitted || s == RepoPersonal
 }
+
+// CanConfigureTelemetry reports whether this source may contain telemetry
+// policy. Only organization and user-personal layers are machine-scoped.
+func (s Source) CanConfigureTelemetry() bool { return s == Organization || s == UserPersonal }
 
 // String returns a short human-readable label used in status output.
 func (s Source) String() string {
@@ -322,6 +327,10 @@ type Config struct {
 	// distinction through YAML marshal/unmarshal round-trips (omitempty
 	// on []string loses the distinction).
 	AllowedRegistries *[]string `yaml:"allowed_registries,omitempty"`
+
+	// Telemetry is the machine-scope telemetry policy. It is only allowed in
+	// the organization and user-personal configuration layers.
+	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource
@@ -725,7 +734,7 @@ func IsMigrationRequired(err error) bool {
 // requiring that harnesses is non-empty. This should be used for global
 // (user-personal) configs where harnesses is mandatory.
 func (c Config) Validate() error {
-	return c.validate(true, true)
+	return c.validate(true, true, "")
 }
 
 // ValidateWithoutHarnesses validates the config structurally but does not
@@ -733,10 +742,10 @@ func (c Config) Validate() error {
 // level configs where harnesses is optional (inherited from the global layer
 // during merge).
 func (c Config) ValidateWithoutHarnesses() error {
-	return c.validate(false, true)
+	return c.validate(false, true, "")
 }
 
-func (c Config) validate(requireHarnesses, requireAPIVersion bool) error {
+func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
 	// v2/v3 schema gating: apiVersion must be present when required and, if
@@ -766,6 +775,8 @@ func (c Config) validate(requireHarnesses, requireAPIVersion bool) error {
 	if requireHarnesses {
 		errs = append(errs, validateLogging(c.Logging)...)
 	}
+
+	errs = append(errs, validateTelemetry(c, layer)...)
 
 	if len(errs) == 0 {
 		return nil
@@ -884,6 +895,13 @@ func validateLogging(logging *LoggingConfig) []error {
 		errs = append(errs, fmt.Errorf("logging.max_age_days must be non-negative, got %d", *logging.MaxAgeDays))
 	}
 	return errs
+}
+
+func validateTelemetry(c Config, layer string) []error {
+	if c.Telemetry == nil {
+		return nil
+	}
+	return telemetryconfig.Validate(c.Telemetry, layer)
 }
 
 // backupConfig is the internal representation used before crossing into the
