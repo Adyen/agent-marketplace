@@ -31,7 +31,7 @@ func TestServeRejectsUnsupportedRole(t *testing.T) {
 	}
 
 	cmd := newServeCmd()
-	cmd.SetArgs([]string{"--config", path, "--role", "api"})
+	cmd.SetArgs([]string{"--config", path, "--role", "invalid"})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 

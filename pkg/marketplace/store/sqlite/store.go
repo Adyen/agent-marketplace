@@ -497,10 +497,11 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 	_, err = s.q.ExecContext(ctx,
 		`INSERT OR REPLACE INTO resource_revisions
 		 (marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		  analyzer_version, findings, license, provenance, revocation)
-		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?)`,
+		  analyzer_version, findings, license, provenance, revocation, created_at)
+		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)`,
 		rev.Coordinate.Marketplace, rev.Coordinate.Source, rev.Coordinate.Kind, rev.Coordinate.Name,
 		rev.ContentDigest, archive, rev.AnalyzerVersion, findingsJSON, rev.License, provenanceJSON, revocationJSON,
+		timeToMicro(time.Now().UTC()),
 	)
 	return err
 }
@@ -563,4 +564,65 @@ func (s *Store) scanResourceRevisionFromRows(rows *sql.Rows) (store.ResourceRevi
 		}
 	}
 	return rev, nil
+}
+
+func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.ResourceRevision, error) {
+	row := s.q.QueryRowContext(ctx,
+		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		        analyzer_version, findings, license, provenance, revocation
+		 FROM resource_revisions
+		 WHERE marketplace_id=? AND source_id=? AND kind=? AND name=?
+		 ORDER BY created_at DESC, content_digest DESC
+		 LIMIT 1`,
+		coord.Marketplace, coord.Source, coord.Kind, coord.Name,
+	)
+	return s.scanResourceRevision(row)
+}
+
+func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.ResourceRevision, error) {
+	args := []any{string(filter.Marketplace)}
+	where := "rr.marketplace_id=? AND s.listed=1 AND rr.revocation IS NULL"
+
+	if filter.Source != "" {
+		where += " AND (rr.source_id=? OR s.slug=?)"
+		args = append(args, filter.Source, filter.Source)
+	}
+	if filter.Kind != "" {
+		where += " AND rr.kind=?"
+		args = append(args, filter.Kind)
+	}
+	if filter.Query != "" {
+		where += " AND rr.name LIKE ?"
+		args = append(args, "%"+filter.Query+"%")
+	}
+
+	query := fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT rr.*,
+				ROW_NUMBER() OVER (PARTITION BY rr.source_id, rr.kind, rr.name ORDER BY rr.created_at DESC, rr.content_digest DESC) AS rn
+			FROM resource_revisions rr
+			JOIN sources s ON s.id = rr.source_id
+			WHERE %s
+		)
+		SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		       analyzer_version, findings, license, provenance, revocation
+		FROM ranked
+		WHERE rn = 1
+		ORDER BY source_id, kind, name`, where)
+
+	rows, err := s.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []store.ResourceRevision
+	for rows.Next() {
+		rev, err := s.scanResourceRevisionFromRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
 }

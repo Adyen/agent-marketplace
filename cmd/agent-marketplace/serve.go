@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
 )
@@ -19,19 +21,19 @@ func newServeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the Marketplace server worker",
+		Short: "Run the Marketplace server",
 		Long: `serve loads the Marketplace operator configuration, opens the configured
-metadata and blob stores, and runs the indexing worker. Only the worker role is
-supported in this release.`,
+metadata and blob stores, and runs the requested server role(s). Supported roles
+are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slog.Info("serve starting", "role", role, "config", cfgPath)
 			if cfgPath == "" {
 				slog.Error("serve failed", "reason", "--config is required")
 				return fmt.Errorf("--config is required")
 			}
-			if role != "worker" {
+			if role != "worker" && role != "api" && role != "all" {
 				slog.Error("serve failed", "reason", "unsupported role", "role", role)
-				return fmt.Errorf("role %q is not supported; use --role worker", role)
+				return fmt.Errorf("role %q is not supported; use --role worker|api|all", role)
 			}
 
 			cfg, err := mpconfig.LoadConfig(cfgPath)
@@ -58,10 +60,41 @@ supported in this release.`,
 				return fmt.Errorf("ensure marketplace: %w", err)
 			}
 
-			slog.Info("serve running", "marketplace", cfg.Instance.ID, "sources", len(cfg.Sources))
-			if err := worker.Run(ctx, deps, cfg); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("serve failed", "reason", "worker run", "error", err)
-				return fmt.Errorf("worker run: %w", err)
+			slog.Info("serve running", "marketplace", cfg.Instance.ID, "role", role, "sources", len(cfg.Sources))
+
+			var wg sync.WaitGroup
+			errCh := make(chan error, 2)
+
+			if role == "worker" || role == "all" {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := worker.Run(ctx, deps, cfg); err != nil && !errors.Is(err, context.Canceled) {
+						slog.Error("worker stopped", "error", err)
+						errCh <- fmt.Errorf("worker run: %w", err)
+					}
+				}()
+			}
+
+			if role == "api" || role == "all" {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					server := mpapi.NewServer(cfg, meta, blobs)
+					if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+						slog.Error("api server stopped", "error", err)
+						errCh <- fmt.Errorf("api server: %w", err)
+					}
+				}()
+			}
+
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				if err != nil {
+					slog.Error("serve stopped with error", "marketplace", cfg.Instance.ID, "error", err)
+					return err
+				}
 			}
 			slog.Info("serve stopped", "marketplace", cfg.Instance.ID)
 			return nil
@@ -69,7 +102,7 @@ supported in this release.`,
 	}
 
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Path to the Marketplace operator config file")
-	cmd.Flags().StringVar(&role, "role", "worker", "Server role (worker)")
+	cmd.Flags().StringVar(&role, "role", "all", "Server role (worker|api|all)")
 	_ = cmd.MarkFlagRequired("config")
 
 	cmd.AddCommand(newServeReindexCmd())
