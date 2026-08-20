@@ -17,14 +17,11 @@ import (
 
 const maxArtifactBytes = 64 * 1024 * 1024
 
-const (
-	defaultTimeout = 30 * time.Second
-	apiBasePath    = "/api/v1"
-)
+const defaultTimeout = 30 * time.Second
 
 // Client is a thin HTTP client for the public Marketplace API.
 type Client struct {
-	baseURL    string
+	baseURL    *url.URL
 	httpClient *http.Client
 	userAgent  string
 }
@@ -69,10 +66,17 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, fmt.Errorf("marketplace base URL %q must use http or https", baseURL)
 	}
+	if u.Host == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("marketplace base URL %q must include a valid HTTP host", baseURL)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return nil, fmt.Errorf("marketplace base URL %q must not include query, fragment, or userinfo", baseURL)
+	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
+	u.RawPath = strings.TrimSuffix(u.RawPath, "/")
 
 	c := &Client{
-		baseURL:    u.String(),
+		baseURL:    u,
 		httpClient: &http.Client{Timeout: defaultTimeout},
 		userAgent:  "agent-marketplace",
 	}
@@ -105,7 +109,7 @@ type SearchResponse struct {
 // URL to its API base and capabilities.
 func (c *Client) WellKnown(ctx context.Context) (mpapi.WellKnown, error) {
 	var wk mpapi.WellKnown
-	if err := c.getJSON(ctx, "/.well-known/agent-marketplace.json", &wk); err != nil {
+	if err := c.getJSON(ctx, c.requestURL([]string{".well-known", "agent-marketplace.json"}, nil), &wk); err != nil {
 		return wk, err
 	}
 	return wk, nil
@@ -129,38 +133,31 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResponse,
 		q.Set("offset", strconv.Itoa(req.Offset))
 	}
 
-	path := apiBasePath + "/search"
-	if query := q.Encode(); query != "" {
-		path += "?" + query
-	}
-
-	if err := c.getJSON(ctx, path, &sr); err != nil {
+	if err := c.getJSON(ctx, c.requestURL([]string{"api", "v1", "search"}, q), &sr); err != nil {
 		return sr, err
 	}
 	return sr, nil
 }
 
-func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
-	u := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+func (c *Client) getJSON(ctx context.Context, requestURL string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return fmt.Errorf("marketplace request %s: %w", u, err)
+		return fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return fmt.Errorf("marketplace request %s: %w", req.URL.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp, maxArtifactBytes)
 	if err != nil {
 		return fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return apiError(resp.StatusCode, body)
 	}
@@ -174,8 +171,8 @@ func (c *Client) getJSON(ctx context.Context, path string, dst any) error {
 // GetResourceRevision fetches a specific revision of a resource.
 func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
-	path := fmt.Sprintf("%s/resources/%s/%s/%s/revisions/%s", apiBasePath, source, kind, name, revision)
-	if err := c.getJSON(ctx, path, &rev); err != nil {
+	segments := []string{"api", "v1", "resources", source, kind, name, "revisions", revision}
+	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
 	return rev, nil
@@ -184,8 +181,8 @@ func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, re
 // GetLatestResourceRevision fetches the latest revision of a resource.
 func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
-	path := fmt.Sprintf("%s/resources/%s/%s/%s", apiBasePath, source, kind, name)
-	if err := c.getJSON(ctx, path, &rev); err != nil {
+	segments := []string{"api", "v1", "resources", source, kind, name}
+	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
 	return rev, nil
@@ -194,8 +191,7 @@ func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, na
 // GetSource fetches source metadata.
 func (c *Client) GetSource(ctx context.Context, source string) (store.Source, error) {
 	var src store.Source
-	path := fmt.Sprintf("%s/sources/%s", apiBasePath, source)
-	if err := c.getJSON(ctx, path, &src); err != nil {
+	if err := c.getJSON(ctx, c.requestURL([]string{"api", "v1", "sources", source}, nil), &src); err != nil {
 		return src, err
 	}
 	return src, nil
@@ -203,32 +199,31 @@ func (c *Client) GetSource(ctx context.Context, source string) (store.Source, er
 
 // GetArtifact downloads an artifact archive by its archive digest.
 func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte, error) {
-	if !strings.HasPrefix(archiveDigest, "sha256:") {
-		return nil, fmt.Errorf("archive digest %q is not in sha256:<hex> format", archiveDigest)
+	if err := validateSHA256Digest(archiveDigest); err != nil {
+		return nil, fmt.Errorf("archive digest %q: %w", archiveDigest, err)
 	}
-	hex := strings.TrimPrefix(archiveDigest, "sha256:")
-	path := fmt.Sprintf("%s/artifacts/sha256/%s", apiBasePath, hex)
+	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
+	path := c.requestURL([]string{"api", "v1", "artifacts", "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
 }
 
 // getRaw performs a GET and returns the response body bytes for non-JSON endpoints.
-func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
-	u := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+func (c *Client) getRaw(ctx context.Context, requestURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("marketplace request %s: %w", u, err)
+		return nil, fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("marketplace request %s: %w", req.URL.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytes))
+	body, err := readResponseBody(resp, maxArtifactBytes)
 	if err != nil {
 		return nil, fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
 	}
@@ -236,6 +231,78 @@ func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
 		return nil, apiError(resp.StatusCode, body)
 	}
 	return body, nil
+}
+
+func (c *Client) requestURL(segments []string, query url.Values) string {
+	u := *c.baseURL
+	escapedPath := strings.TrimSuffix(c.baseURL.EscapedPath(), "/")
+	for _, segment := range segments {
+		escapedPath += "/" + url.PathEscape(segment)
+	}
+	path, _ := url.PathUnescape(escapedPath)
+	u.Path = path
+	u.RawPath = escapedPath
+	u.RawQuery = query.Encode()
+	u.Fragment = ""
+	return u.String()
+}
+
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	hc := *c.httpClient
+	originalURL := *req.URL
+	userCheckRedirect := hc.CheckRedirect
+	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if err := validateRedirectTarget(&originalURL, next); err != nil {
+			return err
+		}
+		if userCheckRedirect != nil {
+			if err := userCheckRedirect(next, via); err != nil {
+				return err
+			}
+		}
+		return validateRedirectTarget(&originalURL, next)
+	}
+	return hc.Do(req)
+}
+
+func validateRedirectTarget(original *url.URL, next *http.Request) error {
+	if next == nil || next.URL == nil {
+		return fmt.Errorf("redirect target is missing")
+	}
+	if next.URL.User != nil || !sameOrigin(original, next.URL) {
+		return fmt.Errorf("redirect origin is not allowed: %s", next.URL.Redacted())
+	}
+	return nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func readResponseBody(resp *http.Response, limit int64) ([]byte, error) {
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+	return body, nil
+}
+
+func validateSHA256Digest(digest string) error {
+	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+		return fmt.Errorf("must be sha256:<64 lower-case hex>")
+	}
+	for _, c := range digest[len("sha256:"):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return fmt.Errorf("must be sha256:<64 lower-case hex>")
+		}
+	}
+	return nil
 }
 
 func apiError(status int, body []byte) error {

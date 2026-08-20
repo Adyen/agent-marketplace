@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -4201,6 +4202,43 @@ func TestResolveTargetHarnesses(t *testing.T) {
 			t.Fatalf("expected member harnesses %v, got %v", want, names["member-skill"].Harnesses)
 		}
 	})
+}
+
+type contextCapturingMarketplaceResolver struct {
+	got context.Context
+}
+
+func (r *contextCapturingMarketplaceResolver) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Target, _ MarketplaceResolveMode) ([]ResolvedArtifact, []error) {
+	r.got = ctx
+	return nil, []error{ctx.Err()}
+}
+
+func TestResolvePassesCallerContextToMarketplaceResolver(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	mpResolver := &contextCapturingMarketplaceResolver{}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	cfg := &config.Config{
+		Marketplaces: []config.MarketplaceEntry{{
+			URL:        "https://marketplace.example",
+			InstanceID: "mp",
+			Resources: []config.MarketplaceResourcePin{{
+				SourceID: "src",
+				Kind:     "skill",
+				Name:     "review",
+				Revision: digest,
+				Digest:   digest,
+			}},
+		}},
+	}
+
+	_, errs := Resolve(cfg, nil, nil, WithContext(ctx), WithMarketplaceResolver(mpResolver))
+	if mpResolver.got != ctx {
+		t.Fatalf("Marketplace resolver context = %v, want caller context", mpResolver.got)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
+		t.Fatalf("Resolve errors = %v, want context cancellation", errs)
+	}
 }
 
 // harnessesEqual reports whether two harness target slices are equal, including

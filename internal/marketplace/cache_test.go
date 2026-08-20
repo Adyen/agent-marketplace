@@ -47,6 +47,20 @@ func TestCacheArtifactRoundTrip(t *testing.T) {
 	if string(raw) != string(data) {
 		t.Fatalf("artifact data mismatch after verify")
 	}
+
+	if _, err := c.WriteArtifact(digest, []byte("replacement")); err != nil {
+		t.Fatalf("WriteArtifact replacement: %v", err)
+	}
+	raw, verified, err = c.ReadArtifact(digest)
+	if err != nil {
+		t.Fatalf("ReadArtifact after replacement: %v", err)
+	}
+	if verified {
+		t.Fatalf("replacement artifact must not retain stale verification marker")
+	}
+	if string(raw) != "replacement" {
+		t.Fatalf("replacement artifact = %q", raw)
+	}
 }
 
 func TestCacheArtifactMissing(t *testing.T) {
@@ -100,6 +114,20 @@ func TestCacheCollectionManifestRoundTrip(t *testing.T) {
 	}
 	if !verified {
 		t.Fatalf("collection should be verified after marker")
+	}
+
+	if _, err := c.WriteCollectionManifest(digest, []byte(`{"members":["review"],"version":"1"}`)); err != nil {
+		t.Fatalf("WriteCollectionManifest replacement: %v", err)
+	}
+	raw, verified, err = c.ReadCollectionManifest(digest)
+	if err != nil {
+		t.Fatalf("ReadCollectionManifest after replacement: %v", err)
+	}
+	if verified {
+		t.Fatalf("replacement collection must not retain stale verification marker")
+	}
+	if string(raw) != `{"members":["review"],"version":"1"}` {
+		t.Fatalf("replacement collection = %q", raw)
 	}
 }
 

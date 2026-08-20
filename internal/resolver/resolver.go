@@ -83,6 +83,7 @@ func (w *UnmetRequirementWarning) Remediation() string {
 
 // resolveOptions holds optional parameters for Resolve.
 type resolveOptions struct {
+	context             context.Context
 	resources           map[string]map[string]ir.Resource
 	malformed           map[string][]skill.MalformedSkill
 	targetHarnesses     []hcc.Target
@@ -111,6 +112,14 @@ const (
 // registry resources.
 type MarketplaceResolver interface {
 	Resolve(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode) ([]ResolvedArtifact, []error)
+}
+
+// WithContext supplies the caller context to Marketplace resolution. It keeps
+// the historical Resolve signature compatible for non-Marketplace callers.
+func WithContext(ctx context.Context) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.context = ctx
+	}
 }
 
 // WithMarketplaceResolver injects a Marketplace resolver.
@@ -747,6 +756,9 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	for _, opt := range opts {
 		opt(&ro)
 	}
+	if ro.context == nil {
+		ro.context = context.Background()
+	}
 
 	if cfg == nil || (len(cfg.Registries) == 0 && (ro.marketplaceResolver == nil || len(cfg.Marketplaces) == 0)) {
 		slog.Debug("resolver skipped", "reason", "no_registries_or_marketplaces")
@@ -792,7 +804,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// Phase 1b: Add Marketplace pins to the occurrence map.
 	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
 		nextOrder := maxOccurrenceOrder(occurrencesByName)
-		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, nextOrder)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, nextOrder)
 		errs = append(errs, mpErrs...)
 		for sel, occs := range mpOccurrences {
 			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
@@ -848,8 +860,8 @@ func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrenc
 	return max
 }
 
-func buildMarketplaceOccurrences(mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
-	artifacts, errs := mpResolver.Resolve(context.Background(), cfg, targetSet, mode)
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+	artifacts, errs := mpResolver.Resolve(ctx, cfg, targetSet, mode)
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
 		sel := resourceSelection{kind: a.Kind, name: a.Name}

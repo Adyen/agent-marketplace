@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -51,6 +52,11 @@ type EndpointError struct {
 	Err         error
 }
 
+type searchEndpoint struct {
+	config.MarketplaceEntry
+	verifyInstanceID bool
+}
+
 func (e EndpointError) Error() string {
 	return fmt.Sprintf("%s (%s): %v", e.Marketplace, e.URL, e.Err)
 }
@@ -67,7 +73,11 @@ func FederatedSearch(ctx context.Context, ec config.EffectiveConfig, query strin
 		return nil, nil, fmt.Errorf("no marketplaces configured")
 	}
 
-	if err := config.ValidateMarketplaceURLs(endpoints, ec.AllowedMarketplaces); err != nil {
+	validationEntries := make([]config.MarketplaceEntry, 0, len(endpoints))
+	for _, ep := range endpoints {
+		validationEntries = append(validationEntries, ep.MarketplaceEntry)
+	}
+	if err := config.ValidateMarketplaceURLs(validationEntries, ec.AllowedMarketplaces); err != nil {
 		return nil, nil, err
 	}
 
@@ -84,18 +94,25 @@ func FederatedSearch(ctx context.Context, ec config.EffectiveConfig, query strin
 
 	for _, ep := range endpoints {
 		wg.Add(1)
-		go func(ep config.MarketplaceEntry) {
+		go func(ep searchEndpoint) {
 			defer wg.Done()
 
-			semaphore <- struct{}{}
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-semaphore }()
+			if ctx.Err() != nil {
+				return
+			}
 
-			r, err := searchOne(ctx, ep, query, opts, timeout)
+			r, err := searchOne(ctx, ep.MarketplaceEntry, ep.verifyInstanceID, query, opts, timeout)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				endpointErrs = append(endpointErrs, EndpointError{
-					Marketplace: displayName(ep),
+					Marketplace: displayName(ep.MarketplaceEntry),
 					URL:         ep.URL,
 					Err:         err,
 				})
@@ -140,13 +157,28 @@ func FederatedSearch(ctx context.Context, ec config.EffectiveConfig, query strin
 	return results, endpointErrs, nil
 }
 
-func searchOne(ctx context.Context, ep config.MarketplaceEntry, query string, opts SearchOpts, timeout time.Duration) ([]SearchResult, error) {
+func searchOne(ctx context.Context, ep config.MarketplaceEntry, verifyInstanceID bool, query string, opts SearchOpts, timeout time.Duration) ([]SearchResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	c, err := NewClient(ep.URL, WithUserAgent(opts.UserAgent))
 	if err != nil {
 		return nil, err
+	}
+
+	wellKnown, err := c.WellKnown(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("well-known document: %w", err)
+	}
+	if verifyInstanceID {
+		if strings.TrimSpace(ep.InstanceID) == "" {
+			return nil, fmt.Errorf("configured marketplace instance ID is required")
+		}
+		if wellKnown.InstanceID != ep.InstanceID {
+			slog.Warn("marketplace search endpoint instance ID mismatch", "url", ep.URL, "endpoint_instance_id", wellKnown.InstanceID, "configured_instance_id", ep.InstanceID)
+			return nil, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, ep.InstanceID)
+		}
+		slog.Debug("marketplace search endpoint instance ID verified", "url", ep.URL, "instance_id", ep.InstanceID)
 	}
 
 	// Ask each server for enough results to cover the requested offset + limit.
@@ -177,7 +209,7 @@ func searchOne(ctx context.Context, ep config.MarketplaceEntry, query string, op
 	return results, nil
 }
 
-func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]config.MarketplaceEntry, error) {
+func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]searchEndpoint, error) {
 	var entries []config.MarketplaceEntry
 	if ec.Merged != nil {
 		entries = ec.Merged.Marketplaces
@@ -189,22 +221,25 @@ func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]conf
 		if len(entries) == 0 {
 			return nil, fmt.Errorf("no marketplaces configured; add one to your config or use --marketplace <url>")
 		}
-		return append([]config.MarketplaceEntry(nil), entries...), nil
+		endpoints := make([]searchEndpoint, 0, len(entries))
+		for _, ep := range entries {
+			endpoints = append(endpoints, searchEndpoint{MarketplaceEntry: ep, verifyInstanceID: true})
+		}
+		return endpoints, nil
 	}
 
 	// Try to match by alias or exact URL.
 	for _, ep := range entries {
 		if ep.Alias == flag || ep.URL == flag {
-			return []config.MarketplaceEntry{ep}, nil
+			return []searchEndpoint{{MarketplaceEntry: ep, verifyInstanceID: true}}, nil
 		}
 	}
 
-	// Treat as an ad-hoc URL.
+	// Treat as an ad-hoc URL. It has no configured instance ID to verify, but
+	// still fetches the well-known document before issuing the search request.
 	if strings.HasPrefix(flag, "http://") || strings.HasPrefix(flag, "https://") {
-		return []config.MarketplaceEntry{{
-			URL:        flag,
-			InstanceID: "ad-hoc",
-			Alias:      flag,
+		return []searchEndpoint{{
+			MarketplaceEntry: config.MarketplaceEntry{URL: flag, Alias: flag},
 		}}, nil
 	}
 

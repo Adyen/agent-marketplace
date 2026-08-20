@@ -456,6 +456,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		result.LocalCfg,
 		resolver.WithResources(loadResult.ResourceCatalogs),
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
+		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
 		resolver.WithMarketplaceResolver(marketplace.NewResolver()),
 		resolver.WithMarketplaceResolveMode(mpMode),

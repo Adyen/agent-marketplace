@@ -29,7 +29,7 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search resources across configured Marketplace endpoints",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSearch(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, marketplaceFlag, kindFilter, output, limit, offset)
+			return runSearchContext(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args, marketplaceFlag, kindFilter, output, limit, offset)
 		},
 	}
 
@@ -42,10 +42,10 @@ func newSearchCmd() *cobra.Command {
 	return cmd
 }
 
-func runSearch(out io.Writer, errOut io.Writer, args []string, marketplaceFlag, kindFilter, output string, limit, offset int) error {
+func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args []string, marketplaceFlag, kindFilter, output string, limit, offset int) error {
 	query := strings.Join(args, " ")
 
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{})
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
 		slog.Warn("config warning during search", "warning", w)
@@ -72,7 +72,7 @@ func runSearch(out io.Writer, errOut io.Writer, args []string, marketplaceFlag, 
 		return fmt.Errorf("invalid offset %d", offset)
 	}
 
-	results, endpointErrs, err := marketplace.FederatedSearch(context.Background(), ec, query, marketplace.SearchOpts{
+	results, endpointErrs, err := marketplace.FederatedSearch(ctx, ec, query, marketplace.SearchOpts{
 		Marketplace: marketplaceFlag,
 		Kind:        mpapi.FromIR(kind),
 		Limit:       limit,
