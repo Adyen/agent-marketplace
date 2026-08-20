@@ -348,7 +348,7 @@ func endpointWithDefaultPath(endpoint, defaultPath string) (string, error) {
 }
 
 // queueTransport intercepts OTLP/HTTP requests. Successful requests pass through
-// to the inner RoundTripper. Failed requests are serialized to the durable
+// to the inner RoundTripper. Transient failures are serialized to the durable
 // queue for later delivery.
 type queueTransport struct {
 	inner     http.RoundTripper
@@ -356,6 +356,19 @@ type queueTransport struct {
 	route     string
 	signal    string
 	onFailure func(error)
+}
+
+func shouldQueueExport(err error, resp *http.Response) bool {
+	if err != nil {
+		return true
+	}
+	if resp == nil {
+		return false
+	}
+
+	return resp.StatusCode == http.StatusRequestTimeout ||
+		resp.StatusCode == http.StatusTooManyRequests ||
+		resp.StatusCode >= http.StatusInternalServerError
 }
 
 func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -369,13 +382,14 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	var payload []byte
 	if req.Body != nil && req.Body != http.NoBody {
+		defer func() { _ = req.Body.Close() }()
+
 		var err error
 		payload, err = io.ReadAll(req.Body)
 		if err != nil {
 			slog.Error("failed to read request body", "url_host", req.URL.Host, "error", err)
 			return nil, err
 		}
-		_ = req.Body.Close()
 	}
 
 	innerReq := req.Clone(ctx)
@@ -392,16 +406,29 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			exportErr = fmt.Errorf("server returned %s", resp.Status)
 		}
 
+		if qt.onFailure != nil && exportErr != nil {
+			qt.onFailure(exportErr)
+		}
+
+		if !shouldQueueExport(err, resp) {
+			slog.Error("export failed, not enqueueing permanent failure",
+				"route", qt.route,
+				"signal", qt.signal,
+				"url_host", req.URL.Host,
+				"error", exportErr,
+			)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			return nil, exportErr
+		}
+
 		slog.Error("export failed, enqueueing payload for retry",
 			"route", qt.route,
 			"signal", qt.signal,
 			"url_host", req.URL.Host,
 			"error", exportErr,
 		)
-
-		if qt.onFailure != nil && exportErr != nil {
-			qt.onFailure(exportErr)
-		}
 
 		env := Envelope{
 			Route:   qt.route,

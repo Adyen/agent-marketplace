@@ -417,7 +417,7 @@ func validateHeaders(headers map[string]HeaderSource) []error {
 			errs = append(errs, fmt.Errorf("telemetry header %q file source %q: %w", name, src.File, err))
 			continue
 		}
-		value := string(data)
+		value := strings.TrimSpace(string(data))
 		if containsLineTerminator(value) {
 			errs = append(errs, fmt.Errorf("telemetry header %q file value contains line terminators", name))
 		}

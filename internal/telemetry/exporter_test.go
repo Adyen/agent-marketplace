@@ -3,6 +3,8 @@ package telemetry
 import (
 	"context"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -75,28 +78,32 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}
 }
 
-func TestEndpointValidationDefersDNSUntilDelivery(t *testing.T) {
+func TestRouteClientsDeferDNSUntilDelivery(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
-
+	var lookupCalled atomic.Bool
 	old := tmcfg.LookupIP
-	tmcfg.LookupIP = func(host string) ([]net.IP, error) {
-		return nil, &net.DNSError{Err: "network is unreachable", Name: host}
+	tmcfg.LookupIP = func(string) ([]net.IP, error) {
+		lookupCalled.Store(true)
+		return nil, errors.New("offline")
 	}
 	defer func() { tmcfg.LookupIP = old }()
 
 	q := NewQueue(filepath.Join(dir, "queue"))
-	_, send, err := buildRouteClients("http://private.example.com", nil, "", true, "primary", queueSubdirMetrics, nil, q)
-	if err != nil {
-		t.Fatalf("building clients should defer DNS failure: %v", err)
+	if _, _, err := buildRouteClients("http://private.example.com", nil, "", true, "primary", queueSubdirMetrics, nil, q); err != nil {
+		t.Fatalf("build route clients: %v", err)
+	}
+	if !lookupCalled.Load() {
+		t.Fatal("building route clients should perform best-effort DNS validation")
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "http://private.example.com/v1/metrics", nil)
-	if err != nil {
-		t.Fatal(err)
+	lookupCalled.Store(false)
+	transport := &endpointValidationTransport{inner: http.DefaultTransport, allowInsecure: true}
+	_, err := transport.RoundTrip(httptest.NewRequest(http.MethodPost, "http://private.example.com/v1/metrics", strings.NewReader("payload")))
+	if err == nil {
+		t.Fatal("delivery should fail when private hostname cannot be resolved")
 	}
-	if _, err := send.Do(req); err == nil {
-		t.Fatal("delivery should reject an unresolved insecure hostname")
+	if !lookupCalled.Load() {
+		t.Fatal("delivery did not perform deferred DNS validation")
 	}
 }
 
@@ -415,6 +422,99 @@ func TestQueueOnExportFailure(t *testing.T) {
 	if q.Count() < 1 {
 		t.Fatalf("expected queued payloads, got %d", q.Count())
 	}
+}
+
+func TestQueueTransportClosesRequestBodyWhenReadFails(t *testing.T) {
+	body := &trackingReadCloser{Reader: failingReader{}}
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/v1/metrics", nil)
+	req.Body = body
+
+	_, err := (&queueTransport{}).RoundTrip(req)
+	if err == nil {
+		t.Fatal("expected request body read failure")
+	}
+	if !body.closed.Load() {
+		t.Fatal("request body was not closed after read failure")
+	}
+}
+
+func TestQueueTransportClassifiesHTTPFailures(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		roundTripErr error
+		wantQueued   bool
+	}{
+		{name: "network error", roundTripErr: errors.New("connection reset"), wantQueued: true},
+		{name: "request timeout", status: http.StatusRequestTimeout, wantQueued: true},
+		{name: "too many requests", status: http.StatusTooManyRequests, wantQueued: true},
+		{name: "internal server error", status: http.StatusInternalServerError, wantQueued: true},
+		{name: "bad gateway", status: http.StatusBadGateway, wantQueued: true},
+		{name: "bad request", status: http.StatusBadRequest, wantQueued: false},
+		{name: "forbidden", status: http.StatusForbidden, wantQueued: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue(t.TempDir())
+			var body *trackingReadCloser
+			transport := queueTransport{
+				inner: exporterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if tt.roundTripErr != nil {
+						return nil, tt.roundTripErr
+					}
+					body = &trackingReadCloser{Reader: strings.NewReader("")}
+					return &http.Response{
+						StatusCode: tt.status,
+						Status:     fmt.Sprintf("%d test", tt.status),
+						Body:       body,
+						Request:    req,
+					}, nil
+				}),
+				queue:  q,
+				route:  "primary",
+				signal: queueSubdirMetrics,
+			}
+
+			_, err := transport.RoundTrip(httptest.NewRequest(http.MethodPost, "http://example.test/v1/metrics", strings.NewReader("payload")))
+			if err == nil {
+				t.Fatal("expected export failure")
+			}
+
+			wantCount := 0
+			if tt.wantQueued {
+				wantCount = 1
+			}
+			if got := q.Count(); got != wantCount {
+				t.Fatalf("queue count = %d, want %d", got, wantCount)
+			}
+			if body != nil && !body.closed.Load() {
+				t.Fatal("response body was not closed")
+			}
+		})
+	}
+}
+
+type exporterRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f exporterRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failure")
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+func (b *trackingReadCloser) Close() error {
+	b.closed.Store(true)
+	return nil
 }
 
 func writeServerCert(t *testing.T, dir string, srv *httptest.Server) string {

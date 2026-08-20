@@ -2,7 +2,11 @@ package telemetry
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +53,63 @@ func TestQueuePushAndDrain(t *testing.T) {
 
 	if q.Count() != 0 {
 		t.Fatalf("count after drain = %d, want 0", q.Count())
+	}
+}
+
+func TestDrainDiscardsMalformedPayloadAndContinues(t *testing.T) {
+	var delivered atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		delivered.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	q := NewQueue(dir)
+	subdir := filepath.Join(dir, queueSubdirMetrics)
+	if err := os.MkdirAll(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	valid, err := json.Marshal(Envelope{
+		Route:   "primary",
+		Signal:  queueSubdirMetrics,
+		URL:     server.URL,
+		Payload: base64.StdEncoding.EncodeToString([]byte("payload")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []struct {
+		name string
+		data []byte
+		when time.Time
+	}{
+		{name: "001.json", data: []byte("not json"), when: time.Unix(1, 0)},
+		{name: "002.json", data: valid, when: time.Unix(2, 0)},
+	}
+	for _, file := range files {
+		path := filepath.Join(subdir, file.name)
+		if err := os.WriteFile(path, file.data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, file.when, file.when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tel := &Telemetry{
+		queue:       q,
+		sendClients: map[string]*http.Client{"primary": http.DefaultClient},
+	}
+	if err := tel.drain(context.Background()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if got := delivered.Load(); got != 1 {
+		t.Fatalf("delivered requests = %d, want 1", got)
+	}
+	if got := q.Count(); got != 0 {
+		t.Fatalf("count after drain = %d, want 0", got)
 	}
 }
 

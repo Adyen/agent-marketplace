@@ -71,8 +71,7 @@ func LoadInstallationID(path string) (string, error) {
 	// Harden permissions even if the directory already existed with looser
 	// permissions created by an earlier run.
 	if err := os.Chmod(dir, 0o700); err != nil {
-		slog.Error("failed to chmod installation id directory", "path", path, "directory", dir, "error", err)
-		return "", fmt.Errorf("chmod installation id directory: %w", err)
+		slog.Warn("failed to chmod installation id directory", "path", path, "directory", dir, "error", err)
 	}
 
 	created, err := publishInstallationID(path, id)

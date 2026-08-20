@@ -293,10 +293,10 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 
 	if len(t.sendClients) > 0 && t.queue != nil {
 		preCtx, cancel := context.WithTimeout(ctx, preExportDrainTimeout)
+		defer cancel()
 		if err := t.drain(preCtx); err != nil {
 			logger.Warn("pre-export drain failed, continuing", "error", err)
 		}
-		cancel()
 	}
 
 	if primaryMetricExp != nil || communityMetricExp != nil {
