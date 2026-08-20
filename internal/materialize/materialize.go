@@ -528,6 +528,11 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 	blocked := make(blockedOutputs)
 
 	for _, s := range resolved {
+		if s.Unresolved {
+			// Metadata-only status rows do not materialize and should not
+			// claim output keys.
+			continue
+		}
 		targets := s.Harnesses
 		if targets == nil {
 			targets = []hcc.Target{hcc.TargetClaude}

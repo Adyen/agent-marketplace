@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,18 @@ type ResolvedArtifact struct {
 	// per-entry harnesses if set. Nil means "no harnesses configured"
 	// (v1-style config); empty slice means "explicitly opted out".
 	Harnesses []hcc.Target
+
+	// Marketplace-specific fields.
+	IsMarketplace         bool
+	MarketplaceURL        string
+	MarketplaceInstanceID string
+	MarketplaceAlias      string
+	MarketplaceSourceID   string
+	InstalledName         string // overrides Name for materialization while preserving canonical digest
+	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
+	Revoked               bool   // true when the resolved revision is revoked
+	UpdateAvailable       bool   // true when a newer revision exists (status/update)
+	Stale                 bool   // true when the source refresh is stale/unavailable
 }
 
 type UnmetRequirementWarning struct {
@@ -70,13 +83,49 @@ func (w *UnmetRequirementWarning) Remediation() string {
 
 // resolveOptions holds optional parameters for Resolve.
 type resolveOptions struct {
-	resources       map[string]map[string]ir.Resource
-	malformed       map[string][]skill.MalformedSkill
-	targetHarnesses []hcc.Target
+	resources           map[string]map[string]ir.Resource
+	malformed           map[string][]skill.MalformedSkill
+	targetHarnesses     []hcc.Target
+	marketplaceResolver MarketplaceResolver
+	marketplaceMode     MarketplaceResolveMode
 }
 
 // ResolveOption configures optional behavior for Resolve.
 type ResolveOption func(*resolveOptions)
+
+// MarketplaceResolveMode controls how much network work the Marketplace resolver
+// performs.
+type MarketplaceResolveMode int
+
+const (
+	// MarketplaceResolveModeRefresh fetches artifacts when they are missing from cache.
+	MarketplaceResolveModeRefresh MarketplaceResolveMode = iota
+	// MarketplaceResolveModeCached uses only cached artifacts and metadata.
+	MarketplaceResolveModeCached
+	// MarketplaceResolveModeInspect fetches metadata only and leaves Resource nil.
+	MarketplaceResolveModeInspect
+)
+
+// MarketplaceResolver resolves configured Marketplace pins into ResolvedArtifact
+// values that participate in the same deduplication/collision pipeline as
+// registry resources.
+type MarketplaceResolver interface {
+	Resolve(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode) ([]ResolvedArtifact, []error)
+}
+
+// WithMarketplaceResolver injects a Marketplace resolver.
+func WithMarketplaceResolver(r MarketplaceResolver) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceResolver = r
+	}
+}
+
+// WithMarketplaceResolveMode sets the Marketplace resolve mode.
+func WithMarketplaceResolveMode(m MarketplaceResolveMode) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceMode = m
+	}
+}
 
 // WithResources provides IR resources keyed by catalog key and
 // resource-keyed name. When a catalog entry has a nil Resource (legacy
@@ -699,8 +748,8 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		opt(&ro)
 	}
 
-	if cfg == nil || len(cfg.Registries) == 0 {
-		slog.Debug("resolver skipped", "reason", "no_registries")
+	if cfg == nil || (len(cfg.Registries) == 0 && (ro.marketplaceResolver == nil || len(cfg.Marketplaces) == 0)) {
+		slog.Debug("resolver skipped", "reason", "no_registries_or_marketplaces")
 		return []ResolvedArtifact{}, nil
 	}
 
@@ -740,6 +789,17 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
+	// Phase 1b: Add Marketplace pins to the occurrence map.
+	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
+		nextOrder := maxOccurrenceOrder(occurrencesByName)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, nextOrder)
+		errs = append(errs, mpErrs...)
+		for sel, occs := range mpOccurrences {
+			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
+		}
+		slog.Debug("resolver marketplace occurrences built", "marketplaces", len(cfg.Marketplaces), "errors", len(mpErrs))
+	}
+
 	// Phase 2: Pick winners (deduplicate, detect collisions).
 	winners, pickErrs := pickWinners(occurrencesByName)
 	errs = append(errs, pickErrs...)
@@ -774,6 +834,38 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
+}
+
+func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrence) int {
+	max := 0
+	for _, occs := range occurrencesByName {
+		for _, occ := range occs {
+			if occ.order >= max {
+				max = occ.order + 1
+			}
+		}
+	}
+	return max
+}
+
+func buildMarketplaceOccurrences(mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+	artifacts, errs := mpResolver.Resolve(context.Background(), cfg, targetSet, mode)
+	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
+	for i, a := range artifacts {
+		sel := resourceSelection{kind: a.Kind, name: a.Name}
+		source := a.MarketplaceURL
+		if a.MarketplaceSourceID != "" {
+			source = fmt.Sprintf("marketplace:%s:%s", a.MarketplaceURL, a.MarketplaceSourceID)
+		}
+		occ := skillOccurrence{
+			resolved: a,
+			source:   source,
+			url:      a.MarketplaceURL,
+			order:    startOrder + i,
+		}
+		occurrencesByName[sel] = append(occurrencesByName[sel], occ)
+	}
+	return occurrencesByName, errs
 }
 
 func validateRequirements(resolved []ResolvedArtifact) []error {
@@ -3221,6 +3313,9 @@ func hasMultiRegistryCollision(occurrences []skillOccurrence) bool {
 func logicalRegistryKey(occ skillOccurrence) string {
 	if occ.resolved.IsLocal() {
 		return occ.resolved.CatalogKey
+	}
+	if occ.resolved.IsMarketplace {
+		return normalizedRegistryURL(occ.resolved.MarketplaceURL) + "\x00" + strings.TrimSpace(occ.resolved.MarketplaceSourceID) + "\x00" + strings.TrimSpace(occ.resolved.Ref)
 	}
 	return normalizedRegistryURL(occ.url) + "\x00" + strings.TrimSpace(occ.resolved.Ref)
 }
