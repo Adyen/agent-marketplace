@@ -51,6 +51,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":               true,
 		"backup":             true,
 		"logging":            true,
+		"telemetry":          true,
 	},
 	userLayer: {
 		"apiVersion":         true,
@@ -66,6 +67,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":               true,
 		"backup":             true,
 		"logging":            true,
+		"telemetry":          true,
 	},
 	repoLayer: {
 		"apiVersion":         true,
@@ -147,7 +149,7 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 	// with stray whitespace is trimmed rather than reported as unknown.
 	normalizeConfigHarnessTargets(&cfg)
 
-	if err := cfg.validate(requireHarnesses, false); err != nil {
+	if err := cfg.validate(requireHarnesses, false, kind.name()); err != nil {
 		return nil, []error{fmt.Errorf("validate %s config: %w", kind.name(), err)}
 	}
 
