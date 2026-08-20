@@ -105,9 +105,11 @@ func (c *cardinality) saveLocked() error {
 		return fmt.Errorf("marshal cardinality budget file: %w", err)
 	}
 	if err := os.WriteFile(tmp, data, recordFilePerm); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("write cardinality budget file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("rename cardinality budget file: %w", err)
 	}
 	return nil

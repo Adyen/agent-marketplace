@@ -65,6 +65,33 @@ agent-marketplace telemetry receiver --listen localhost:4318 --storage-dir /var/
 
 The receiver logs the listen address, dashboard URL, and storage directory on startup. Press Ctrl-C to trigger a graceful shutdown.
 
+## Diagnostic capture
+
+Users can capture a reviewed diagnostic payload for a single invocation:
+
+```bash
+agent-marketplace --diagnostic --diagnostic-accept-sensitive-data list
+```
+
+The CLI writes the payload to
+`$XDG_STATE_HOME/agent-marketplace/diagnostic/payload-<trace-id>.json` and
+exports it only after confirmation. The payload contains redacted metrics,
+traces, and selected events with URL credentials removed. A failed export does
+not queue the payload for normal delivery.
+
+## Troubleshooting
+
+- `agent-marketplace telemetry status` shows effective level, endpoint,
+  installation ID, pending records, retained diagnostic payloads, and the last
+  delivery failure.
+- Pending records indicate queued exports that will be drained on the next
+  telemetry-enabled command.
+- `agent-marketplace telemetry purge` removes queued records and retained
+  diagnostic payloads.
+- `agent-marketplace telemetry reset-id` rotates the installation ID and purges
+  queued payloads.
+- Run with `--debug` to see telemetry setup, queue drain, and export logs.
+
 ## Release build flags
 
 Use the provided target or script to inject endpoint defaults without editing source files:
