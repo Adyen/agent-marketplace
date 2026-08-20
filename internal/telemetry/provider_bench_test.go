@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	amconfig "github.com/Adyen/agent-marketplace/internal/config"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -145,6 +146,48 @@ func BenchmarkHistogramRecord(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tel.CommandDuration().Record(ctx, 50, attrs)
+	}
+}
+
+func BenchmarkStartSpanCommandPath(b *testing.B) {
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+
+	srv := benchServer()
+
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelDetailed,
+			Endpoint: srv.URL,
+		},
+	}
+
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	ctx := NewContext(context.Background(), tel, "sync", time.Now(), "factory", false, Span{})
+
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName): "sync",
+		"command.harnesses":                   "factory",
+		"command.managed":                     "false",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, span := tel.StartSpan(ctx, "agent_marketplace.command", attrs)
+		span.End()
 	}
 }
 

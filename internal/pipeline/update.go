@@ -12,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
 var dottedVersionRefPattern = regexp.MustCompile(`^(.*?)(\d+)$`)
@@ -37,7 +38,19 @@ type UpdateResult struct {
 
 // Update refreshes pinned registries and syncs enabled skills.
 // When bump is true, it also bumps repo registry refs to newer matching tags.
-func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
+func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retErr error) {
+	tel := telemetry.TelemetryFromContext(ctx)
+	var updateSpan telemetry.Span
+	if tel != nil {
+		ctx, updateSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.update", updateOptionAttrs(opts))
+	}
+	defer func() {
+		if updateSpan != (telemetry.Span{}) {
+			updateSpan.SetAttributes(updateResultAttrs(result, retErr))
+			updateSpan.End()
+		}
+	}()
+
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 
@@ -66,7 +79,7 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 			}
 			configPath := config.ProjectConfigPath(repoRoot)
 			var err error
-			bumps, err = bumpRepoRegistryRefs(configPath, repoCfg)
+			bumps, err = bumpRepoRegistryRefs(ctx, configPath, repoCfg)
 			if err != nil {
 				return nil, err
 			}
@@ -83,12 +96,24 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	return &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}, nil
 }
 
-func bumpRepoRegistryRefs(configPath string, repoCfg *config.Config) ([]RefBump, error) {
+func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config) (bumps []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
 		return nil, nil
 	}
 
-	bumps := make([]RefBump, 0)
+	tel := telemetry.TelemetryFromContext(ctx)
+	var bumpSpan telemetry.Span
+	if tel != nil {
+		_, bumpSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.update_refs", updateRefsAttrs(repoCfg))
+	}
+	defer func() {
+		if bumpSpan != (telemetry.Span{}) {
+			bumpSpan.SetAttributes(updateRefsResultAttrs(bumps, retErr))
+			bumpSpan.End()
+		}
+	}()
+
+	bumps = make([]RefBump, 0)
 	planned := make(map[string]string)
 
 	for _, entry := range repoCfg.Registries {

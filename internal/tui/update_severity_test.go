@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,7 @@ registries:
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(repoRoot, homeDir)()
+	msg := runUpdateCmd(context.Background(), repoRoot, homeDir)()
 	if done, ok := msg.(updateDoneMsg); ok {
 		t.Fatalf("runUpdateCmd failed on warning-only diagnostics: %v", done.err)
 	}

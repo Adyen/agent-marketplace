@@ -72,7 +72,7 @@ func newInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runInstall(cmd.OutOrStdout(), args, tag, installAll, registry, scope, kindFilter, fromURL, fromRef, fromPath)
+			return runInstall(cmd.Context(), cmd.OutOrStdout(), args, tag, installAll, registry, scope, kindFilter, fromURL, fromRef, fromPath)
 		},
 	}
 
@@ -88,14 +88,14 @@ func newInstallCmd() *cobra.Command {
 	return cmd
 }
 
-func runInstall(out io.Writer, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, kindFilter, fromURL, fromRef, fromPath string) error {
+func runInstall(ctx context.Context, out io.Writer, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, kindFilter, fromURL, fromRef, fromPath string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result, err := pipeline.Install(context.Background(), pipeline.InstallOptions{
+	result, err := pipeline.Install(ctx, pipeline.InstallOptions{
 		RepoRoot:   repoRoot,
 		Args:       args,
 		Tag:        tag,

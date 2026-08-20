@@ -349,6 +349,9 @@ func (t *Telemetry) StartSpan(ctx context.Context, name string, attrs map[string
 	if t.tracer == nil {
 		return ctx, Span{}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	t.logger.Debug("starting span", "name", name)
 
