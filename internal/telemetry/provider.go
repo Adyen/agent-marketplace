@@ -50,6 +50,25 @@ type Telemetry struct {
 	// lastFailure holds a *error so the concrete type stored in the Value is
 	// always consistent regardless of the dynamic error type.
 	lastFailure atomic.Value
+
+	// diagnostic fields are populated when New is called with WithDiagnostic
+	// and the effective telemetry level is detailed.
+	diagnostic             bool
+	diagnosticManualReader *sdkmetric.ManualReader
+	diagnosticSpanExporter *diagnosticSpanExporter
+	diagnosticEvents       []DiagnosticEvent
+	diagnosticMu           sync.Mutex
+}
+
+// NewOption configures Telemetry construction.
+type NewOption func(*Telemetry)
+
+// WithDiagnostic enables per-invocation diagnostic capture when the resolved
+// telemetry level already allows detailed signals.
+func WithDiagnostic(enabled bool) NewOption {
+	return func(t *Telemetry) {
+		t.diagnostic = enabled
+	}
 }
 
 // Counter is a thin wrapper around an OpenTelemetry int64 counter.
@@ -109,6 +128,26 @@ func (s Span) SetAttributes(attrs map[string]string) {
 	}
 }
 
+// AddEvent adds a named event with the supplied string attributes to the span.
+func (s Span) AddEvent(name string, attrs map[string]string) {
+	if s.s == nil {
+		return
+	}
+	var opts []oteltrace.EventOption
+	if len(attrs) > 0 {
+		opts = append(opts, oteltrace.WithAttributes(attrsToKeyValues(attrs)...))
+	}
+	s.s.AddEvent(name, opts...)
+}
+
+// TraceID returns the span's trace ID, or an empty string when the span is nil.
+func (s Span) TraceID() string {
+	if s.s == nil {
+		return ""
+	}
+	return s.s.SpanContext().TraceID().String()
+}
+
 // SetError records err as a span error and marks the span status as Error.
 func (s Span) SetError(err error) {
 	if s.s == nil || err == nil {
@@ -119,7 +158,7 @@ func (s Span) SetError(err error) {
 }
 
 // New builds the telemetry runtime for the resolved TelemetryState.
-func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telemetry, error) {
+func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ...NewOption) (*Telemetry, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -135,7 +174,15 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 		t.allowedMetricAttrs[string(a)] = struct{}{}
 	}
 
-	logger.Info("building telemetry runtime", "effective_level", state.EffectiveLevel)
+	for _, opt := range opts {
+		opt(t)
+	}
+	if t.diagnostic && state.EffectiveLevel != tmcfg.LevelDetailed {
+		logger.Warn("diagnostic capture requires detailed telemetry; disabling diagnostic capture")
+		t.diagnostic = false
+	}
+
+	logger.Info("building telemetry runtime", "effective_level", state.EffectiveLevel, "diagnostic", t.diagnostic)
 
 	if state.EffectiveLevel == tmcfg.LevelOff {
 		logger.Info("telemetry disabled; skipping installation id, queue, and provider setup")
@@ -156,6 +203,14 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger) (*Telem
 	res, err := buildResource(ctx, id, state.SchemaVersion)
 	if err != nil {
 		logger.Warn("partial resource built for telemetry", "error", err)
+	}
+
+	if t.diagnostic && state.EffectiveLevel == tmcfg.LevelDetailed {
+		logger.Info("building diagnostic telemetry runtime")
+		if err := t.setupDiagnostic(ctx, res); err != nil {
+			return nil, fmt.Errorf("setup diagnostic telemetry: %w", err)
+		}
+		return t, nil
 	}
 
 	cache := newExporterCache()
@@ -362,6 +417,40 @@ func (t *Telemetry) StartSpan(ctx context.Context, name string, attrs map[string
 
 	ctx, sp := t.tracer.Start(ctx, name, opts...)
 	return ctx, Span{s: sp}
+}
+
+// RecordDiagnostic appends a narrow diagnostic event to the payload. The event
+// is redacted before serialization. Safe to call when diagnostic is inactive.
+func (t *Telemetry) RecordDiagnostic(name, message string) {
+	if t == nil {
+		return
+	}
+	t.diagnosticMu.Lock()
+	defer t.diagnosticMu.Unlock()
+	t.diagnosticEvents = append(t.diagnosticEvents, DiagnosticEvent{Name: name, Message: message})
+}
+
+// DiagnosticActive reports whether this runtime is capturing a diagnostic
+// payload for review before export.
+func (t *Telemetry) DiagnosticActive() bool {
+	if t == nil {
+		return false
+	}
+	return t.diagnostic
+}
+
+// DiagnosticEvents returns a copy of the captured diagnostic events. The
+// events are redacted before serialization. Safe to call when diagnostic is
+// inactive.
+func (t *Telemetry) DiagnosticEvents() []DiagnosticEvent {
+	if t == nil {
+		return nil
+	}
+	t.diagnosticMu.Lock()
+	defer t.diagnosticMu.Unlock()
+	out := make([]DiagnosticEvent, len(t.diagnosticEvents))
+	copy(out, t.diagnosticEvents)
+	return out
 }
 
 // InstallationID returns the durable installation ID for this runtime.

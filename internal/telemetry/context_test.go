@@ -41,7 +41,7 @@ func TestNewContextCarriesRootSpan(t *testing.T) {
 	t.Cleanup(func() { _ = tel.Shutdown(context.Background()) })
 
 	_, rootSpan := tel.StartSpan(context.Background(), "test-root", nil)
-	ctx := NewContext(context.Background(), nil, "test", time.Now(), "factory", false, rootSpan)
+	ctx := NewContext(context.Background(), nil, "test", time.Now(), "factory", false, rootSpan, false)
 
 	got := RootSpanFromContext(ctx)
 	if got == (Span{}) {

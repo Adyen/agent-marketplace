@@ -146,6 +146,8 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 		p.SensitiveWarning = "Diagnostic payloads may contain URLs (with credentials removed), filesystem paths, and error messages. Review before sharing."
 	}
 
+	sanitizePreviewPayload(&p)
+
 	previewRoot := filepath.Join(state.StateRoot(), "preview")
 	if err := os.MkdirAll(previewRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create preview directory: %w", err)
