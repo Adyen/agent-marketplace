@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -16,6 +17,10 @@ import (
 func searchServer(tb testing.TB, name string, fail bool, items ...mpapi.ResourceListItem) *httptest.Server {
 	tb.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-" + name})
+			return
+		}
 		if r.URL.Path != "/api/v1/search" {
 			http.NotFound(w, r)
 			return
@@ -120,6 +125,106 @@ func TestFederatedSearchAdHocURL(t *testing.T) {
 	}
 }
 
+func TestFederatedSearchCancellationWhileSlotsAreBusy(t *testing.T) {
+	searchStarted := make(chan struct{}, MaxSearchConcurrency+1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-cancel"})
+		case "/api/v1/search":
+			searchStarted <- struct{}{}
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	marketplaces := make([]config.MarketplaceEntry, MaxSearchConcurrency+1)
+	for i := range marketplaces {
+		marketplaces[i] = config.MarketplaceEntry{
+			URL:        server.URL,
+			InstanceID: "mp-cancel",
+			Alias:      fmt.Sprintf("cancel-%d", i),
+		}
+	}
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: marketplaces}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	var results []SearchResult
+	var endpointErrs []EndpointError
+	var err error
+	go func() {
+		results, endpointErrs, err = FederatedSearch(ctx, ec, "review", SearchOpts{})
+		close(done)
+	}()
+
+	for i := 0; i < MaxSearchConcurrency; i++ {
+		select {
+		case <-searchStarted:
+		case <-time.After(time.Second):
+			t.Fatal("FederatedSearch did not fill all search slots")
+		}
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("FederatedSearch did not return after context cancellation")
+	}
+	if err != nil {
+		t.Fatalf("FederatedSearch: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no results after cancellation, got %d", len(results))
+	}
+	if len(endpointErrs) != MaxSearchConcurrency {
+		t.Fatalf("expected errors from busy endpoints only, got %d errors", len(endpointErrs))
+	}
+}
+
+func TestFederatedSearchInstanceIDMismatch(t *testing.T) {
+	var searchRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-actual"})
+		case "/api/v1/search":
+			searchRequests++
+			_ = json.NewEncoder(w).Encode(SearchResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ec := config.EffectiveConfig{
+		Merged: &config.Config{
+			Marketplaces: []config.MarketplaceEntry{
+				{URL: server.URL, InstanceID: "mp-configured", Alias: "mismatch"},
+			},
+		},
+	}
+
+	results, endpointErrs, err := FederatedSearch(context.Background(), ec, "review", SearchOpts{})
+	if err != nil {
+		t.Fatalf("FederatedSearch: %v", err)
+	}
+	if len(results) != 0 || len(endpointErrs) != 1 {
+		t.Fatalf("expected mismatch endpoint error and no results, got results=%d errors=%d", len(results), len(endpointErrs))
+	}
+	if !strings.Contains(endpointErrs[0].Err.Error(), "instance ID mismatch") {
+		t.Fatalf("expected instance ID mismatch, got: %v", endpointErrs[0].Err)
+	}
+	if searchRequests != 0 {
+		t.Fatalf("expected no search requests, got %d", searchRequests)
+	}
+}
+
 func TestFederatedSearchAllowlistBlock(t *testing.T) {
 	alpha := searchServer(t, "alpha", false)
 	defer alpha.Close()
@@ -198,7 +303,7 @@ func TestFederatedSearchLimitOffset(t *testing.T) {
 	ec := config.EffectiveConfig{
 		Merged: &config.Config{
 			Marketplaces: []config.MarketplaceEntry{
-				{URL: server.URL, InstanceID: "mp", Alias: "single"},
+				{URL: server.URL, InstanceID: "mp-single", Alias: "single"},
 			},
 		},
 	}
@@ -226,7 +331,7 @@ func BenchmarkFederatedSearch(b *testing.B) {
 	ec := config.EffectiveConfig{
 		Merged: &config.Config{
 			Marketplaces: []config.MarketplaceEntry{
-				{URL: server.URL, InstanceID: "mp", Alias: "bench"},
+				{URL: server.URL, InstanceID: "mp-bench", Alias: "bench"},
 			},
 		},
 	}

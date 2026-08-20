@@ -39,7 +39,7 @@ func (c *Cache) WriteArtifact(digest string, raw []byte) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir artifact cache %q: %w", p, err)
 	}
-	if err := os.WriteFile(p, raw, 0o644); err != nil {
+	if err := writeAtomic(p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
 		return "", fmt.Errorf("write artifact cache %q: %w", p, err)
 	}
 	return p, nil
@@ -67,6 +67,11 @@ func (c *Cache) MarkArtifactVerified(digest string) error {
 	return writeMarker(p)
 }
 
+// InvalidateArtifactVerified removes the verification marker for an artifact.
+func (c *Cache) InvalidateArtifactVerified(digest string) {
+	_ = os.Remove(verifiedMarkerPath(filepath.Dir(c.ArtifactPath(digest))))
+}
+
 // CollectionManifestPath returns the path for a collection manifest given its digest.
 func (c *Cache) CollectionManifestPath(digest string) string {
 	return filepath.Join(c.root, "collections", safeDigest(digest), "manifest.json")
@@ -78,7 +83,7 @@ func (c *Cache) WriteCollectionManifest(digest string, raw []byte) (string, erro
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir collection cache %q: %w", p, err)
 	}
-	if err := os.WriteFile(p, raw, 0o644); err != nil {
+	if err := writeAtomic(p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
 		return "", fmt.Errorf("write collection cache %q: %w", p, err)
 	}
 	return p, nil
@@ -129,7 +134,7 @@ func (c *Cache) WriteResourceRevision(baseURL, sourceID, kind, name, revision st
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir metadata cache %q: %w", p, err)
 	}
-	if err := os.WriteFile(p, raw, 0o644); err != nil {
+	if err := writeAtomic(p, raw, 0o644, ""); err != nil {
 		return "", fmt.Errorf("write metadata cache %q: %w", p, err)
 	}
 	return p, nil
@@ -168,8 +173,42 @@ func writeMarker(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return fmt.Errorf("mkdir verified marker %q: %w", p, err)
 	}
-	if err := os.WriteFile(p, []byte("verified"), 0o644); err != nil {
+	if err := writeAtomic(p, []byte("verified"), 0o644, ""); err != nil {
 		return fmt.Errorf("write verified marker %q: %w", p, err)
+	}
+	return nil
+}
+
+func writeAtomic(path string, raw []byte, mode os.FileMode, invalidateMarker string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if invalidateMarker != "" {
+		if err := os.Remove(invalidateMarker); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
 	}
 	return nil
 }

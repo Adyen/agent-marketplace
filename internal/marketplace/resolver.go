@@ -46,9 +46,22 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *config.Config, targetSet []
 	var out []resolver.ResolvedArtifact
 	var errs []error
 	for _, entry := range cfg.Marketplaces {
+		if strings.TrimSpace(entry.InstanceID) == "" {
+			errs = append(errs, fmt.Errorf("marketplace %s: configured marketplace instance ID is required", entry.URL))
+			continue
+		}
 		client, err := r.clientForEntry(entry)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("marketplace %s: %w", entry.URL, err))
+			continue
+		}
+		wellKnown, err := client.WellKnown(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("marketplace %s well-known document: %w", entry.URL, err))
+			continue
+		}
+		if wellKnown.InstanceID != entry.InstanceID {
+			errs = append(errs, fmt.Errorf("marketplace %s instance ID mismatch: endpoint %q, configured %q", entry.URL, wellKnown.InstanceID, entry.InstanceID))
 			continue
 		}
 		for _, pin := range entry.Resources {
@@ -83,6 +96,9 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 	if err != nil {
 		return resolver.ResolvedArtifact{}, err
 	}
+	if err := validatePin(entry, pin); err != nil {
+		return resolver.ResolvedArtifact{}, err
+	}
 
 	acquisition := pin.Acquisition
 	if acquisition == "" {
@@ -98,6 +114,9 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 
 	rev, err := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
 	if err != nil {
+		return resolver.ResolvedArtifact{}, err
+	}
+	if err := validateResourceRevision(entry, pin, rev); err != nil {
 		return resolver.ResolvedArtifact{}, err
 	}
 
@@ -136,7 +155,8 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 		return artifact, nil
 	}
 
-	raw, verified, err := cache.ReadArtifact(pin.Digest)
+	archiveDigest := string(rev.ArchiveDigest)
+	raw, verified, err := cache.ReadArtifact(archiveDigest)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, fmt.Errorf("read cached artifact: %w", err)
 	}
@@ -145,11 +165,11 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 			return resolver.ResolvedArtifact{}, fmt.Errorf("artifact not in cache")
 		}
 		slog.Debug("marketplace fetching artifact", "url", entry.URL, "source", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "archive_digest", rev.ArchiveDigest)
-		raw, err = client.GetArtifact(ctx, string(rev.ArchiveDigest))
+		raw, err = client.GetArtifact(ctx, archiveDigest)
 		if err != nil {
 			return resolver.ResolvedArtifact{}, fmt.Errorf("fetch artifact: %w", err)
 		}
-		if _, err := cache.WriteArtifact(pin.Digest, raw); err != nil {
+		if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
 			return resolver.ResolvedArtifact{}, fmt.Errorf("write artifact cache: %w", err)
 		}
 		verified = false
@@ -160,16 +180,16 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 		return resolver.ResolvedArtifact{}, fmt.Errorf("decode artifact: %w", err)
 	}
 	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, fmt.Errorf("verify archive digest: %w", err)
 	}
 	if err := ca.VerifyContentDigest(); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, fmt.Errorf("verify content digest: %w", err)
 	}
-	if ca.Manifest.ContentDigest != pin.Digest {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("content digest mismatch: cache %q, pin %q", ca.Manifest.ContentDigest, pin.Digest)
-	}
-	if ca.Manifest.ArchiveDigest != string(rev.ArchiveDigest) {
-		return resolver.ResolvedArtifact{}, fmt.Errorf("archive digest mismatch: cache %q, revision %q", ca.Manifest.ArchiveDigest, rev.ArchiveDigest)
+	if err := validateArtifactManifest(entry, pin, rev, ca); err != nil {
+		cache.InvalidateArtifactVerified(archiveDigest)
+		return resolver.ResolvedArtifact{}, err
 	}
 
 	resource, err := hccartifact.DecodeResource(pin.Kind, ca.Payload)
@@ -178,10 +198,10 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
-	artifact.Path = cache.ArtifactPath(pin.Digest)
+	artifact.Path = cache.ArtifactPath(archiveDigest)
 
 	if !verified {
-		if err := cache.MarkArtifactVerified(pin.Digest); err != nil {
+		if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
 			return resolver.ResolvedArtifact{}, fmt.Errorf("mark artifact verified: %w", err)
 		}
 	}
@@ -189,24 +209,99 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 }
 
 func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
-	rev, ok, err := cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Revision)
-	if err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("read cached revision: %w", err)
+	if mode != resolver.MarketplaceResolveModeRefresh {
+		rev, ok, err := cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+		if err != nil {
+			return store.ResourceRevision{}, fmt.Errorf("read cached revision: %w", err)
+		}
+		if ok {
+			return rev, nil
+		}
+		if mode == resolver.MarketplaceResolveModeCached {
+			return store.ResourceRevision{}, fmt.Errorf("resource revision not in cache")
+		}
 	}
-	if ok {
-		return rev, nil
-	}
-	if mode == resolver.MarketplaceResolveModeCached {
-		return store.ResourceRevision{}, fmt.Errorf("resource revision not in cache")
-	}
-	rev, err = client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Revision)
+
+	rev, err := client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 	if err != nil {
 		return store.ResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
-	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Revision, rev); err != nil {
+	if err := validateResourceRevision(entry, pin, rev); err != nil {
+		return store.ResourceRevision{}, err
+	}
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
 		return store.ResourceRevision{}, fmt.Errorf("write revision cache: %w", err)
 	}
 	return rev, nil
+}
+
+func validatePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
+	if strings.TrimSpace(entry.InstanceID) == "" {
+		return fmt.Errorf("configured marketplace instance ID is required")
+	}
+	if strings.TrimSpace(pin.SourceID) == "" || strings.TrimSpace(pin.Kind) == "" || strings.TrimSpace(pin.Name) == "" {
+		return fmt.Errorf("resource pin coordinate is incomplete")
+	}
+	if strings.TrimSpace(pin.Revision) == "" {
+		return fmt.Errorf("resource pin revision is required")
+	}
+	if err := validateSHA256Digest(pin.Digest); err != nil {
+		return fmt.Errorf("content digest %q: %w", pin.Digest, err)
+	}
+	return nil
+}
+
+func validateResourceRevision(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision) error {
+	want := store.ResourceCoordinate{
+		Marketplace: store.MarketplaceID(entry.InstanceID),
+		Source:      store.SourceID(pin.SourceID),
+		Kind:        pin.Kind,
+		Name:        pin.Name,
+	}
+	if rev.Coordinate != want {
+		return fmt.Errorf("resource coordinate mismatch: got %q, want %q", rev.Coordinate, want)
+	}
+	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
+		return fmt.Errorf("revision content digest %q: %w", rev.ContentDigest, err)
+	}
+	if rev.ContentDigest != store.RevisionDigest(pin.Digest) {
+		return fmt.Errorf("revision content digest mismatch: metadata %q, pin %q", rev.ContentDigest, pin.Digest)
+	}
+	if rev.ArchiveDigest != "" {
+		if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
+			return fmt.Errorf("revision archive digest %q: %w", rev.ArchiveDigest, err)
+		}
+	}
+	if rev.Revocation == nil && rev.ArchiveDigest == "" {
+		return fmt.Errorf("revision archive digest is required")
+	}
+	return nil
+}
+
+func validateArtifactManifest(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision, artifact hccartifact.CanonicalArtifact) error {
+	manifest := artifact.Manifest
+	if manifest.Kind != pin.Kind {
+		return fmt.Errorf("artifact manifest kind mismatch: got %q, want %q", manifest.Kind, pin.Kind)
+	}
+	if manifest.Name != pin.Name {
+		return fmt.Errorf("artifact manifest name mismatch: got %q, want %q", manifest.Name, pin.Name)
+	}
+	if manifest.SourceID != pin.SourceID {
+		return fmt.Errorf("artifact manifest source ID mismatch: got %q, want %q", manifest.SourceID, pin.SourceID)
+	}
+	if pin.SourceSlug != "" && manifest.SourceSlug != pin.SourceSlug {
+		return fmt.Errorf("artifact manifest source slug mismatch: got %q, want %q", manifest.SourceSlug, pin.SourceSlug)
+	}
+	if manifest.ContentDigest != pin.Digest {
+		return fmt.Errorf("artifact manifest content digest mismatch: got %q, want %q", manifest.ContentDigest, pin.Digest)
+	}
+	if manifest.ArchiveDigest != string(rev.ArchiveDigest) {
+		return fmt.Errorf("artifact manifest archive digest mismatch: got %q, want %q", manifest.ArchiveDigest, rev.ArchiveDigest)
+	}
+	if entry.InstanceID == "" {
+		return fmt.Errorf("configured marketplace instance ID is required")
+	}
+	return nil
 }
 
 func irKind(kind string) (ir.ResourceKind, error) {
