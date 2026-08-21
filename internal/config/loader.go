@@ -272,6 +272,9 @@ func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Conf
 		}
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
 	}
+	if errs := validateRegistryAuthority(cfg.Registries, kind); len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	}
 	return &cfg, nil
 }
 
@@ -342,6 +345,9 @@ func LoadConfigFromPath(path string) (*Config, error) {
 				return nil, nil
 			}
 			return nil, err
+		}
+		if errs := validateRegistryAuthority(cfg.Registries, localLayer); len(errs) > 0 {
+			return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
 		}
 
 		slog.Debug("config loaded", "path", path, "registries", len(cfg.Registries))
@@ -505,6 +511,9 @@ func loadLocalConfig(path string) (*LocalConfig, error) {
 	normalizeLocalConfigHarnessTargets(&cfg)
 	if err := cfg.ValidateBasic(); err != nil {
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
+	}
+	if errs := validateRegistryAuthority(cfg.Registries, localLayer); len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
 	}
 
 	return &cfg, nil

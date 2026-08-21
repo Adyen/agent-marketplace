@@ -300,6 +300,9 @@ func loadEffectiveUser(override string) LayerResult {
 		}
 		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
 	}
+	if errs := validateRegistryAuthority(cfg.Registries, userLayer); len(errs) > 0 {
+		return LayerResult{Source: UserPersonal, Path: path, Errors: errs}
+	}
 	var errs []error
 	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
 		errs = append(errs, logErrs...)
@@ -335,6 +338,9 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 	cfg, err := loadConfigGated(path, false, true)
 	if err != nil {
 		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
+	}
+	if errs := validateRegistryAuthority(cfg.Registries, repoLayer); len(errs) > 0 {
+		return LayerResult{Source: RepoCommitted, Path: path, Errors: errs}
 	}
 	if cfg != nil && len(cfg.Harnesses) > 0 {
 		err := fmt.Errorf("repository committed config cannot declare top-level harnesses; the target harness set is machine-wide")

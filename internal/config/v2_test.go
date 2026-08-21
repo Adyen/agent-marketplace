@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -325,6 +326,46 @@ skills:
 	}
 	if cfg.APIVersion != "agent-marketplace/v2" {
 		t.Fatalf("expected apiVersion %q, got %q", "agent-marketplace/v2", cfg.APIVersion)
+	}
+}
+
+func TestLoadV2NonOrganizationRejectsRequiredRegistry(t *testing.T) {
+	data := []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - url: git@example.com:repo.git
+    ref: main
+    required: true
+`)
+
+	for _, kind := range []layerKind{userLayer, repoLayer} {
+		t.Run(kind.name(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			mustWriteFile(t, path, data)
+			_, err := loadV3OrV2Config(path, kind, false)
+			if err == nil {
+				t.Fatalf("expected required registry to be rejected in %s config", kind.name())
+			}
+			if !strings.Contains(err.Error(), "only allowed in organization configuration") {
+				t.Fatalf("expected authority error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadLocalConfigRejectsRequiredRegistry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte(`registries:
+  - url: git@example.com:repo.git
+    ref: main
+    required: true
+`))
+
+	_, err := loadLocalConfig(path)
+	if err == nil {
+		t.Fatal("expected required registry to be rejected in repository personal config")
+	}
+	if !strings.Contains(err.Error(), "only allowed in organization configuration") {
+		t.Fatalf("expected authority error, got %v", err)
 	}
 }
 

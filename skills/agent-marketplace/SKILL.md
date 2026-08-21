@@ -193,7 +193,7 @@ tags:
 - **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
 - **Local registries** can use `/absolute`, `~/home-relative`, or `./relative` paths with no `ref`. Relative paths must remain inside the directory containing the local config.
 
-### Global config: `~/.agents/config.yaml`
+### Organization config: `/etc/agent-marketplace/config.yaml`
 
 ```yaml
 apiVersion: agent-marketplace/v3
@@ -202,14 +202,25 @@ registries:
   - url: git@gitlab.example.com:example-org/example-security-skills.git
     ref: main
     required: true
+```
 
+Only the externally managed organization layer may set `required: true`.
+Required resources always materialize and cannot be excluded.
+
+### Global config: `~/.agents/config.yaml`
+
+```yaml
+apiVersion: agent-marketplace/v3
+harnesses: [factory]
+registries:
   - url: git@gitlab.example.com:example-org/example-shared-skills.git
     ref: main
     default: true
 ```
 
-- **`required: true`** resources always materialize and cannot be excluded.
-- **`default: true`** resources auto-select but can be excluded by higher-precedence config.
+`default: true` resources auto-select safe resource kinds but can be excluded by
+higher-precedence config. Hooks and MCP servers require explicit per-kind
+includes.
 
 ### Local config: `.agents/config.local.yaml`
 

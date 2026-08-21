@@ -710,7 +710,11 @@ skills:
 				{Name: "security-audit", Description: "Mandatory security audit", Tags: []string{"security"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: ``,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: {{REG:required-registry}}
     ref: main
@@ -1021,7 +1025,11 @@ registries:
 				{Name: "mandatory-skill"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: ``,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: {{REG:required-reg}}
     ref: main
@@ -1959,8 +1967,28 @@ registries:
 		},
 	},
 	{
-		Name: "mcp/remove_default_true_adds_exclude",
-		Desc: "Given default:true auto-selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
+		Name: "mcp/default_true_requires_explicit_selection",
+		Desc: "Given default:true MCP servers without an explicit include, When sync is run, Then no MCP server is materialized",
+		Registries: []RegistryDef{
+			{Name: "mcp-default-selection", MCPServers: []MCPServer{
+				{Name: "implicit-mcp", Command: "node", Args: []string{"implicit.js"}},
+			}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-default-selection}}
+    ref: main
+    default: true
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent:    []string{"/root/.factory/mcp.json"},
+				OutNotContains: []string{"implicit-mcp"}},
+		},
+	},
+	{
+		Name: "mcp/remove_explicit_selection_adds_exclude",
+		Desc: "Given explicitly selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
 		Registries: []RegistryDef{
 			{Name: "mcp-default-rm", MCPServers: []MCPServer{
 				{Name: "keep-mcp", Command: "npx", Args: []string{"-y", "@keep/mcp"}},
@@ -1972,6 +2000,8 @@ registries:
   - url: {{REG:mcp-default-rm}}
     ref: main
     default: true
+    mcp:
+      include: [keep-mcp, drop-mcp]
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2259,7 +2289,11 @@ registries:
 				{Name: "security-scan", Description: "Mandatory security scan", Command: "scan --deep", Tags: []string{"security"}},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: ``,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: {{REG:cmd-required}}
     ref: main
@@ -2565,7 +2599,11 @@ registries:
 				{Name: "mandatory-cmd", Description: "Mandatory", Command: "echo mandatory"},
 			}},
 		},
-		GlobalCfg: `
+		GlobalCfg: ``,
+		OrgCfg: `
+apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: {{REG:cmd-required-rm}}
     ref: main

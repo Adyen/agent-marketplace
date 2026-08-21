@@ -1,6 +1,6 @@
 # Selection & Precedence Reference
 
-This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All resource kinds (skills, commands, subagents, hooks, MCP servers) follow the same rules.
+This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All resource kinds (skills, commands, subagents, hooks, MCP servers) follow the same rules, except that non-required hooks and MCP servers require explicit name selection because they can execute commands or start processes.
 
 ## Schema requirement
 
@@ -17,6 +17,10 @@ Effective merge order (low → high):
 
 Higher layers override lower layers where applicable.
 
+`required: true` is accepted only in the externally managed organization
+configuration. User, committed repository, and repository-personal configs are
+rejected if they try to claim required authority.
+
 ## Registry allowlist
 
 `allowed_registries` is a first-authority setting: the first layer in precedence order that declares it (org, then user, then repo) fixes the allowlist for the whole effective config. Lower layers cannot broaden or override it, and `config.local.yaml` is not allowed to declare `allowed_registries`.
@@ -32,9 +36,13 @@ For each registry entry, selection works per resource kind:
 - top-level `skills/commands/subagents/hooks/mcp/tags/exclude` in that config are defaults for entries that do not set their own values
 - if entry sets its own kind-specific list (e.g. `skills`), entry values replace (not merge with) top-level defaults for that entry and kind
 - selected names = union of:
-  - auto-select all when `(required || default) && no kind-specific selections && tags == nil`
+  - auto-select all safe kinds for non-required entries when `(required || default) && no kind-specific selections && tags == nil`
   - explicit per-kind selections (`skills`, `commands`, `subagents`, `hooks`, `mcp`)
-  - resources matching `tags`
+  - resources matching `tags` for safe kinds on non-required entries
+- non-required hooks and MCP servers are not selected by `default` or `tags`; they
+  require an explicit name in their per-kind `include` list
+- `required: true` is trusted organization policy and retains all-resource
+  selection, including hooks and MCP servers
 - then per-kind `exclude` removes from selected names, except when `required: true` (required is immune)
 - per-kind `exclude_all: true` removes ALL resources of that kind from the entry's selection (except when `required: true`)
 

@@ -397,6 +397,11 @@ func boolMappingValue(mapping *yaml.Node, key string) bool {
 // required:true, with no tags, no non-empty include on ANY kind, and no
 // exclude_all that would drop this kind.
 //
+// Non-required hooks and MCP servers are never auto-selected or tag-selected
+// because they can execute commands or start processes. Re-enabling either kind
+// therefore always needs an explicit include; required organization policy is
+// trusted and retains broad selection.
+//
 // When this holds, a resource is already selected implicitly, so re-enabling
 // it must NOT add an explicit include: doing so flips the entry into
 // explicit-selection mode and silently deselects everything else. Callers only
@@ -412,6 +417,9 @@ func entryNodeAutoSelectsKind(entryNode *yaml.Node, kind ir.ResourceKind) bool {
 		return false
 	}
 	required := boolMappingValue(entryNode, "required")
+	if !required && KindRequiresExplicitSelection(kind) {
+		return false
+	}
 	if !required && !boolMappingValue(entryNode, "default") {
 		return false
 	}

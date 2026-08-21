@@ -126,7 +126,6 @@ harnesses:
 registries:
   - url: git@example.com:security.git
     ref: main
-    required: true
     skills:
       include:
         - no-curl-bash
@@ -147,11 +146,10 @@ tags:
 		APIVersion: APIVersionV2,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{{
-			URL:      "git@example.com:security.git",
-			Ref:      "main",
-			Skills:   KindSelector{Include: []string{"no-curl-bash"}, Exclude: []string{"legacy-security"}},
-			Tags:     []string{"security"},
-			Required: true,
+			URL:    "git@example.com:security.git",
+			Ref:    "main",
+			Skills: KindSelector{Include: []string{"no-curl-bash"}, Exclude: []string{"legacy-security"}},
+			Tags:   []string{"security"},
 		}},
 		Tags: []string{"security"},
 	}
@@ -417,7 +415,6 @@ harnesses:
 registries:
   - url: git@example.com:infra.git
     ref: v1.0.0
-    required: true
     skills:
       - vm-lifecycle
 `))
@@ -431,10 +428,9 @@ registries:
 		APIVersion: APIVersionV2,
 		Harnesses:  []string{"factory"},
 		Registries: []RegistryEntry{{
-			URL:      "git@example.com:infra.git",
-			Ref:      "v1.0.0",
-			Required: true,
-			Skills:   KindSelector{Include: []string{"vm-lifecycle"}},
+			URL:    "git@example.com:infra.git",
+			Ref:    "v1.0.0",
+			Skills: KindSelector{Include: []string{"vm-lifecycle"}},
 		}},
 	}
 	if !reflect.DeepEqual(cfg, want) {

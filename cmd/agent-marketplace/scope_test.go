@@ -391,8 +391,11 @@ func TestRemoveRequiredSkillFails(t *testing.T) {
 	writeSkill(t, working, "no-curl-bash", "No curl bash", []string{"security"})
 	commitAndPushAll(t, working, "Add skills")
 
-	// Global config marks registry as required.
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+	// The externally managed organization config marks the registry as required.
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: `+origin+`
     ref: main
@@ -400,6 +403,8 @@ registries:
     skills:
       - no-curl-bash
 `)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries: []

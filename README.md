@@ -254,27 +254,36 @@ skills:
 ### Machine-wide opt-in with `required` and `default`
 
 A registry entry in a machine-wide layer can mark its resources as automatically
-selected:
+selected. Only the externally managed organization layer may use `required`:
 
 ```yaml
-# ~/.agents/config.yaml  (or /etc/agent-marketplace/config.yaml for the organization layer)
+# /etc/agent-marketplace/config.yaml (organization layer)
+apiVersion: agent-marketplace/v3
 registries:
   - url: git@gitlab.example.com:example-org/security-skills.git
     ref: main
     required: true     # always materialized; CANNOT be excluded at any layer
+```
 
+```yaml
+# ~/.agents/config.yaml (user-personal layer)
+registries:
   - url: git@gitlab.example.com:example-org/shared-skills.git
     ref: main
     default: true      # auto-selected, but a higher layer can opt out
 ```
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
-  This is how org-wide security standards are enforced.
-- **`default: true`** — every resource is selected automatically, but any
+  Only the externally managed organization config may set this trusted policy;
+  user, repository, and repository-personal configs are rejected if they try.
+  This policy can select every resource kind, including hooks and MCP servers.
+- **`default: true`** — safe resource kinds are selected automatically, but any
   higher-precedence layer (e.g. your repo-personal file) can exclude individual
-  ones.
+  ones. Hooks and MCP servers are never selected by this broad default.
 - **Neither** — resources are only selected when explicitly listed in an
-  `include` or matched by `tags`.
+  `include` or matched by `tags`; non-required hooks and MCP servers require an
+  explicit per-kind `include` even when a registry has `default: true` or
+  matching tags.
 
 ### Personal config (without touching the repo config)
 

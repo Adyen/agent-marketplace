@@ -94,8 +94,8 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 }
 
 // registryEntryAllowed is the set of keys permitted on every registry entry.
-// required and default are validated separately because they are forbidden
-// only in the repository personal layer.
+// required and default are validated separately because their availability is
+// restricted by configuration layer authority.
 var registryEntryAllowed = map[string]bool{
 	"url":            true,
 	"ref":            true,
@@ -228,8 +228,8 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 }
 
 // validateV3RegistryEntryNode validates one registry entry mapping. It checks
-// that every key is allowed for the layer and that required/default are not
-// used in repository personal configs.
+// that every key is allowed for the layer and applies layer authority rules for
+// required/default.
 func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 	var errs []error
 	for i := 0; i < len(node.Content); i += 2 {
@@ -244,11 +244,27 @@ func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 			continue
 		}
 
-		if kind == localLayer && (key == "required" || key == "default") {
+		if key == "required" && kind != organizationLayer {
+			errs = append(errs, fmt.Errorf("forbidden registry entry field %q in %s configuration; only organization policy may set required", key, kind.name()))
+		}
+		if key == "default" && kind == localLayer {
 			errs = append(errs, fmt.Errorf("forbidden registry entry field %q in repository personal configuration", key))
 		}
 	}
 
+	return errs
+}
+
+// validateRegistryAuthority applies the layer restriction that cannot be
+// enforced by the v2 decoder. Required registries are organization policy;
+// repository and user-controlled layers must not claim that authority.
+func validateRegistryAuthority(registries []RegistryEntry, kind layerKind) []error {
+	var errs []error
+	for i, entry := range registries {
+		if entry.Required && kind != organizationLayer {
+			errs = append(errs, fmt.Errorf("registries[%d].required is only allowed in organization configuration", i))
+		}
+	}
 	return errs
 }
 

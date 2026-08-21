@@ -32,7 +32,6 @@ func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
 registries:
   - url: `+securityOrigin+`
     ref: main
-    required: true
     skills:
       - no-curl-bash
 `)
@@ -63,8 +62,8 @@ registries:
 		"example-infra-skills|skill|firewall-rule-lifecycle|network,security|available",
 		"example-infra-skills|skill|k8s-app-onboarding|k8s,helm|available",
 		"example-infra-skills|skill|vm-lifecycle|openstack,puppet|enabled",
-		"example-security-skills|skill|no-curl-bash|security|required (org)",
-		"example-security-skills|skill|shell-hardening|security|required (org)",
+		"example-security-skills|skill|no-curl-bash|security|enabled",
+		"example-security-skills|skill|shell-hardening|security|available",
 	}
 	sort.Strings(wantRows)
 
@@ -82,17 +81,15 @@ func TestListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing
 	writeSkill(t, working, "efficient-go", "Efficient Go", []string{"go"})
 	commitAndPushAll(t, working, "Add skills")
 
-	// Global config references the bare repo and marks the registry as
-	// required. Repo config references the same upstream with a specific
-	// skill selection. Both entries should collapse into a single row per
-	// skill; required status wins.
+	// Global config references the bare repo. Repo config references the same
+	// upstream with a specific skill selection. Both entries should collapse
+	// into a single row per skill.
 	// Note: local bare git repos must use the .git suffix convention;
 	// without it, IsLocal() treats the path as a plain directory.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
 registries:
   - url: `+origin+`
     ref: main
-    required: true
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -114,8 +111,8 @@ registries:
 	_, rows := parseTable(t, output)
 	sort.Strings(rows)
 	wantRows := []string{
-		"awesome-ai|skill|brainstorming|planning|required (org)",
-		"awesome-ai|skill|efficient-go|go|required (org)",
+		"awesome-ai|skill|brainstorming|planning|available",
+		"awesome-ai|skill|efficient-go|go|enabled",
 	}
 	sort.Strings(wantRows)
 

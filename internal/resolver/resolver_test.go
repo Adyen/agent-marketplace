@@ -2712,11 +2712,11 @@ func TestResolveMcpServerTagSelection(t *testing.T) {
 	for _, a := range got {
 		names[a.Name] = true
 	}
-	if !names["prometheus-mcp"] {
-		t.Fatal("expected monitoring-tagged MCP server to be selected")
+	if names["prometheus-mcp"] {
+		t.Fatal("tag matching must not select MCP servers without an explicit include")
 	}
 	if names["slack-mcp"] {
-		t.Fatal("expected comms-tagged MCP server to NOT be selected by monitoring tag")
+		t.Fatal("tag matching must not select MCP servers without an explicit include")
 	}
 }
 
@@ -2780,7 +2780,7 @@ func TestResolveMcpServerCrossKindNoCollision(t *testing.T) {
 	}
 }
 
-func TestResolveMcpServerDefaultAutoSelects(t *testing.T) {
+func TestResolveMcpServerDefaultRequiresExplicitSelection(t *testing.T) {
 	cfg := &config.Config{
 		Registries: []config.RegistryEntry{{
 			URL:     "git@example.com:team.git",
@@ -2802,12 +2802,58 @@ func TestResolveMcpServerDefaultAutoSelects(t *testing.T) {
 		t.Fatalf("expected no errors, got %v", errs)
 	}
 
-	names := make(map[string]bool)
 	for _, a := range got {
-		names[a.Name] = true
+		if a.Kind == ir.KindMcpServer {
+			t.Fatalf("default:true must not auto-select MCP server %q", a.Name)
+		}
 	}
-	if !names["auto-mcp"] {
-		t.Fatal("expected default:true to auto-select MCP server")
+}
+
+func TestResolveBroadSelectionSkipsHooksAndMCP(t *testing.T) {
+	entries := []catalog.Entry{
+		{Kind: ir.KindSkill, Name: "skill-a"},
+		{Kind: ir.KindCommand, Name: "command-a"},
+		{Kind: ir.KindSubagent, Name: "subagent-a"},
+		{Kind: ir.KindHook, Name: "hook-a"},
+		{Kind: ir.KindMcpServer, Name: "mcp-a"},
+	}
+
+	for _, policy := range []struct {
+		name     string
+		required bool
+	}{
+		{name: "default", required: false},
+		{name: "required", required: true},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{{
+				URL:      "git@example.com:team.git",
+				Ref:      "main",
+				Default:  !policy.required,
+				Required: policy.required,
+			}}}
+			setCatalogKeys(cfg)
+			got, errs := Resolve(cfg, map[string][]catalog.Entry{
+				ck("git@example.com:team.git", "main"): entries,
+			}, nil)
+			if len(errs) != 0 {
+				t.Fatalf("expected no errors, got %v", errs)
+			}
+			want := 3
+			if policy.required {
+				want = len(entries)
+			}
+			if len(got) != want {
+				t.Fatalf("expected %d resources from broad selection, got %#v", want, got)
+			}
+			if !policy.required {
+				for _, resource := range got {
+					if config.KindRequiresExplicitSelection(resource.Kind) {
+						t.Fatalf("broad selection unexpectedly included %s:%s", resource.Kind, resource.Name)
+					}
+				}
+			}
+		})
 	}
 }
 

@@ -1198,6 +1198,52 @@ registries:
 	}
 }
 
+func TestAddExecutableResourcesToDefaultRegistryWritesExplicitIncludes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind ir.ResourceKind
+		key  func(RegistryEntry) KindSelector
+	}{
+		{name: "hook", kind: ir.KindHook, key: func(entry RegistryEntry) KindSelector { return entry.Hooks }},
+		{name: "mcp", kind: ir.KindMcpServer, key: func(entry RegistryEntry) KindSelector { return entry.MCP }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+			mustMkdirAll(t, filepath.Dir(configPath))
+			mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - url: git@example.com:infra.git
+    ref: main
+    default: true
+    hooks:
+      exclude: [hook-a]
+    mcp:
+      exclude: [mcp-a]
+`))
+
+			name := "hook-a"
+			if tc.kind == ir.KindMcpServer {
+				name = "mcp-a"
+			}
+			if err := AddResourceToRegistryInConfig(configPath, "git@example.com:infra.git", "", tc.kind, name); err != nil {
+				t.Fatalf("AddResourceToRegistryInConfig: %v", err)
+			}
+
+			cfg, err := loadProjectConfig(t, configPath)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			selector := tc.key(cfg.Registries[0])
+			if !stringSliceContains(selector.Include, name) {
+				t.Fatalf("expected explicit include for %q, got %#v", name, selector.Include)
+			}
+			if stringSliceContains(selector.Exclude, name) {
+				t.Fatalf("expected stale exclude for %q to be removed, got %#v", name, selector.Exclude)
+			}
+		})
+	}
+}
+
 func TestDisableSkillInRegistryPolicyMatrix(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1225,15 +1271,6 @@ func TestDisableSkillInRegistryPolicyMatrix(t *testing.T) {
 			name: "tags_adds_exclude",
 			registryYAML: `    tags:
       - security
-    skills:
-      include:
-        - smith
-`,
-			wantInExclude: true,
-		},
-		{
-			name: "required_true_adds_exclude",
-			registryYAML: `    required: true
     skills:
       include:
         - smith
@@ -1983,35 +2020,6 @@ registries:
 		entry := cfg.Registries[0]
 		if !entry.Default {
 			t.Fatalf("expected default:true to be preserved")
-		}
-		if len(entry.Skills.Include) != 0 {
-			t.Fatalf("expected NO explicit include on auto-select entry, got %#v", entry.Skills.Include)
-		}
-	})
-
-	// required:true entries also auto-select everything, so the same rule holds.
-	t.Run("required_entry_reinstall_only_drops_exclude", func(t *testing.T) {
-		configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-		mustMkdirAll(t, filepath.Dir(configPath))
-		mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra
-    ref: main
-    required: true
-    skills:
-      exclude:
-        - cohort-analysis
-`))
-		if err := AddResourceToExactRegistryEntry(configPath, "git@example.com:infra", "", ir.KindSkill, "cohort-analysis"); err != nil {
-			t.Fatalf("AddResourceToExactRegistryEntry: %v", err)
-		}
-		cfg, err := loadProjectConfig(t, configPath)
-		if err != nil {
-			t.Fatalf("load: %v", err)
-		}
-		entry := cfg.Registries[0]
-		if !entry.Required {
-			t.Fatalf("expected required:true to be preserved")
 		}
 		if len(entry.Skills.Include) != 0 {
 			t.Fatalf("expected NO explicit include on auto-select entry, got %#v", entry.Skills.Include)

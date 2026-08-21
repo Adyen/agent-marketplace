@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // TestSyncPruneStaleKeepsMalformedSelectionWhenAnotherRegistryLacksIt is the
@@ -290,8 +292,10 @@ func TestSyncRequiredRegistryMalformedSelectionFailsTheRun(t *testing.T) {
 	writeFile(t, filepath.Join(working, "skills", "broken-skill", "SKILL.md"), brokenSkillFrontmatter("broken-skill"))
 	commitAndPushAll(t, working, "Add valid and malformed skills")
 
-	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: `+origin+`
     ref: main
@@ -299,6 +303,11 @@ registries:
     skills:
       - valid-skill
       - broken-skill
+`)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []
 `)
 
 	withWorkingDir(t, repoRoot)

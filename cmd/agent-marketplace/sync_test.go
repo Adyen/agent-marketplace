@@ -755,16 +755,22 @@ func TestSyncPruneStaleDoesNotPruneRequiredResources(t *testing.T) {
 	writeSkill(t, working, "existing-skill", "Existing", []string{"ops"})
 	commitAndPushAll(t, working, "Add existing skill")
 
-	repoRoot := filepath.Join(t.TempDir(), "repo")
-	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
 	// required:true registry selecting a skill that doesn't exist.
-	writeConfig(t, configPath, `
+	writeConfig(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
 registries:
   - url: `+origin+`
     ref: main
     required: true
     skills:
       - mandatory-skill
+`)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []
 `)
 
 	withWorkingDir(t, repoRoot)

@@ -88,6 +88,14 @@ var AllKinds = []ir.ResourceKind{
 	ir.KindCollection,
 }
 
+// KindRequiresExplicitSelection reports whether a resource kind must be named
+// explicitly in a selector for non-required registries. Hooks and MCP servers
+// can execute commands or start processes, while required organization policy
+// is trusted and may still select them broadly.
+func KindRequiresExplicitSelection(kind ir.ResourceKind) bool {
+	return kind == ir.KindHook || kind == ir.KindMcpServer
+}
+
 // CollectionRef is a legacy type kept for backward compatibility with test
 // code. New code should use the Collections KindSelector field instead.
 // Deprecated: use Config.Collections (KindSelector) directly.
@@ -440,9 +448,10 @@ type RegistryEntry struct {
 	Ref      string `yaml:"ref"`
 	Path     string `yaml:"path,omitempty"`
 	Required bool   `yaml:"required,omitempty"`
-	// Default, when true, causes all skills in this registry to be selected
-	// automatically (same as Required for selection). Unlike Required, skills
-	// from a Default registry CAN be excluded at a higher-precedence layer.
+	// Default, when true, causes safe resource kinds in this registry to be
+	// selected automatically. Hooks and MCP servers require explicit per-kind
+	// includes unless the registry is required organization policy. Unlike
+	// Required, default resources CAN be excluded at a higher-precedence layer.
 	Default bool `yaml:"default,omitempty"`
 	// ExcludeAll, when true, propagates ExcludeAll=true to all per-kind
 	// selectors during merge resolution. This is sugar for setting

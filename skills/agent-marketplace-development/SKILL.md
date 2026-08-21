@@ -173,13 +173,14 @@ Preserve these invariants:
 
 These are load-bearing. Every PR must preserve them.
 
-### Three-layer precedence (most → least specific)
+### Configuration-layer precedence (most → least specific)
 
 1. `.agents/config.local.yaml` (gitignored personal overrides; only
    kind-specific resource lists and `exclude` are meaningful).
 2. `.agents/config.yaml` (committed repo config).
-3. `~/.agents/config.yaml` (IT-managed global; `required: true`
-   registries are org-mandatory).
+3. `~/.agents/config.yaml` (user-personal machine-wide defaults).
+4. `/etc/agent-marketplace/config.yaml` (externally managed organization
+   policy; only this layer may set `required: true`).
 
 ### Attribute inheritance: specific wins over default
 
@@ -208,7 +209,7 @@ commands, subagents, hooks, and MCP servers stay aligned.
 
 ### Required registries ignore local excludes
 
-`required: true` global registries sync all their resources to the
+`required: true` organization registries sync all their resources to the
 configured machine-scope harness roots regardless of repo/local config.
 The resolver enforces this; never add a bypass.
 

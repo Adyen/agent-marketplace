@@ -2229,12 +2229,20 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 
-	// required:true or default:true with no explicit selection → include everything.
+	// required:true or default:true with no explicit selection → include every
+	// resource that is safe to select broadly. Non-required hooks and MCP servers
+	// always need an explicit per-kind include because they can execute commands
+	// or start processes. Required registries are the trusted organization
+	// policy and retain their all-resource behavior.
 	autoSelectAll := (entry.Required || entry.Default) && !hasExplicitSelection(entry)
 	if autoSelectAll {
 		for _, candidate := range catalog {
 			name := strings.TrimSpace(candidate.Name)
 			if name == "" {
+				continue
+			}
+			if !entry.Required && config.KindRequiresExplicitSelection(candidate.Kind) {
+				slog.Debug("broad resource selection skipped", "kind", candidate.Kind.String(), "name", name, "reason", "explicit_selection_required")
 				continue
 			}
 			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
@@ -2256,6 +2264,10 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 		}
 
 		if config.HasMatchingTag(candidate.Tags, entry.Tags) {
+			if !entry.Required && config.KindRequiresExplicitSelection(candidate.Kind) {
+				slog.Debug("tag resource selection skipped", "kind", candidate.Kind.String(), "name", name, "reason", "explicit_selection_required")
+				continue
+			}
 			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
 		}
 	}

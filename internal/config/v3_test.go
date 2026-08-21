@@ -38,6 +38,31 @@ registries: []
 	}
 }
 
+func TestV3OnlyOrganizationMaySetRequired(t *testing.T) {
+	data := []byte(`apiVersion: agent-marketplace/v3
+registries:
+  - url: git@example.com:repo.git
+    ref: main
+    required: true
+`)
+
+	for _, kind := range []layerKind{userLayer, repoLayer} {
+		t.Run(kind.name(), func(t *testing.T) {
+			_, errs := loadV3Config(data, kind, false)
+			if len(errs) == 0 {
+				t.Fatalf("expected required registry to be rejected in %s config", kind.name())
+			}
+			if !strings.Contains(errorsJoin(errs), "only organization policy may set required") {
+				t.Fatalf("expected authority error, got: %v", errs)
+			}
+		})
+	}
+
+	if cfg, errs := loadV3Config(data, organizationLayer, false); len(errs) != 0 || cfg == nil || !cfg.Registries[0].Required {
+		t.Fatalf("expected organization required registry to load, cfg=%#v errs=%v", cfg, errs)
+	}
+}
+
 func TestV3RepoRejectsHarnessesAndBackup(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v3
 harnesses:
