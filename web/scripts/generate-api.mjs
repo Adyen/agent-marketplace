@@ -1,123 +1,46 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import openapiTS, { astToString, COMMENT_HEADER } from 'openapi-typescript'
 
-const webRoot = new URL('../', import.meta.url).pathname
+const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const openapiPath = resolve(webRoot, '..', 'api', 'openapi.yaml')
-const contractPath = resolve(webRoot, 'app', 'types', 'marketplace.ts')
-const requiredPaths = [
-  '/.well-known/agent-marketplace.json:',
-  '/api/v1/capabilities:',
-  '/api/v1/instance:',
-  '/api/v1/search:',
-  '/api/v1/sources/{source}:',
-  '/api/v1/sources/{source}/history:',
-  '/api/v1/resources/{source}/{kind}/{name}:',
-  '/api/v1/resources/{source}/{kind}/{name}/revisions:',
-  '/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}:',
-  '/api/v1/manifests/{source-revision}:',
-  '/api/v1/artifacts/sha256/{digest}:',
-  '/s/{source}/{kind}/{name}:',
-  '/healthz:',
-]
-const requiredKinds = ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection']
-const requiredResponseFields = {
-  Capabilities: ['api_versions', 'artifact_schema_versions', 'resource_kinds', 'acquisition_modes', 'features'],
-  WellKnown: ['instance_id', 'canonical_url', 'api_base', 'browser_route_template'],
-  SearchResult: ['items', 'total', 'offset', 'limit'],
-  ResourceListItem: ['source_id', 'kind', 'name', 'revision', 'content_digest'],
-  ResourceRevision: ['coordinate', 'content_digest'],
-  Source: ['id', 'slug', 'origins', 'ref', 'roots', 'acquisition', 'listed'],
-  SourceOccurrence: ['source_id', 'ref', 'source_revision_manifest_digest', 'acquisition', 'occurred_at'],
-}
-const requiredFieldAlternatives = {
-  SourceOccurrence: [['commit', 'revision_commit']],
-}
-const expectedGenerator = 'openapi-typescript@7.9.1'
+const outputPath = resolve(webRoot, 'app', 'generated', 'api.d.ts')
+const check = process.argv.includes('--check')
 
-const openapi = (await readFile(openapiPath, 'utf8')).replaceAll('\r\n', '\n')
-const contract = (await readFile(contractPath, 'utf8')).replaceAll('\r\n', '\n')
-const missingServer = openapi.includes('  - url: /') ? [] : ['servers.url=/']
-const missingPaths = requiredPaths.filter(path => !openapi.includes(path))
-const missingKinds = requiredKinds.filter(kind => {
-  const yamlKind = openapi.split('\n').some(line => line.trim() === `- ${kind}`)
-  const frontendKind = contract.includes(`'${kind}'`) || contract.includes(`"${kind}"`)
-  return !yamlKind || !frontendKind
-})
-const missingResponseFields = Object.entries(requiredResponseFields).flatMap(([schema, fields]) => {
-  const openapiRequired = requiredFieldsInSchema(openapi, schema)
-  const frontendRequired = requiredFieldsInInterface(contract, schema)
-  return fields
-    .filter(field => !openapiRequired.has(field) || !frontendRequired.has(field))
-    .map(field => `${schema}.${field}`)
-})
-const missingFieldAlternatives = Object.entries(requiredFieldAlternatives).flatMap(([schema, alternatives]) => {
-  const openapiAlternatives = requiredAlternativesInSchema(openapi, schema)
-  return alternatives
-    .filter(fields => !fields.every(field => openapiAlternatives.some(candidate => candidate.includes(field))))
-    .map(fields => `${schema}.oneOf(${fields.join('|')})`)
-})
+const generated = `${COMMENT_HEADER}${astToString(await openapiTS(pathToFileURL(openapiPath), {
+  alphabetize: true,
+}))}`
 
-if (missingServer.length || missingPaths.length || missingKinds.length || missingResponseFields.length || missingFieldAlternatives.length) {
-  console.error('OpenAPI contract drift detected.')
-  if (missingServer.length) console.error(`Missing server composition guard: ${missingServer.join(', ')}`)
-  if (missingPaths.length) console.error(`Missing API paths: ${missingPaths.join(', ')}`)
-  if (missingKinds.length) console.error(`Missing resource kinds: ${missingKinds.join(', ')}`)
-  if (missingResponseFields.length) console.error(`Missing required response fields: ${missingResponseFields.join(', ')}`)
-  if (missingFieldAlternatives.length) console.error(`Missing compatible response fields: ${missingFieldAlternatives.join(', ')}`)
-  process.exit(1)
-}
-
-if (process.argv.includes('--check')) {
-  console.log('OpenAPI structural contract check passed: server composition, paths, resource kinds, compatibility fields, and frontend-required response fields are aligned.')
+if (!check) {
+  await mkdir(dirname(outputPath), { recursive: true })
+  await writeFile(outputPath, generated, 'utf8')
+  console.log(`Generated ${outputPath}`)
   process.exit(0)
 }
 
-// This command intentionally does not generate types. Keep the hand-authored contract until
-// the approved generator can be installed without bypassing pnpm's supply-chain policy.
-console.error([
-  'OpenAPI TypeScript generation preflight failed.',
-  `The web contract remains hand-authored at ${contractPath}; no types were generated.`,
-  `A real pinned generator, ${expectedGenerator}, cannot currently be installed under the active pnpm policy.`,
-  'The attempted install did not change pnpm security settings:',
-  'CI=true pnpm install --frozen-lockfile',
-  'pnpm rejected the existing lockfile before the generator could be added:',
-  'MINIMUM_RELEASE_AGE_VIOLATION (minimumReleaseAge=30240) and TRUST_DOWNGRADE (semver@6.3.1).',
-  'Do not bypass these checks or lower minimumReleaseAge. Add the exact generator only after the lockfile passes the configured policy.',
-].join('\n'))
-process.exit(1)
-
-function requiredFieldsInSchema(document, schema) {
-  const lines = sectionFor(document, `    ${schema}:`).split('\n')
-  const requiredIndex = lines.findIndex(line => line.trim() === 'required:')
-  if (requiredIndex === -1) return new Set()
-
-  const fields = []
-  for (const line of lines.slice(requiredIndex + 1)) {
-    const match = line.match(/^\s+- ([^\s#]+)\s*$/)
-    if (!match) break
-    fields.push(match[1])
+const temporaryDirectory = await mkdtemp(resolve(tmpdir(), 'agent-marketplace-openapi-'))
+const temporaryPath = resolve(temporaryDirectory, 'api.d.ts')
+try {
+  await writeFile(temporaryPath, generated, 'utf8')
+  const [committed, temporary] = await Promise.all([
+    readFile(outputPath),
+    readFile(temporaryPath),
+  ])
+  if (!committed.equals(temporary)) {
+    console.error(`OpenAPI generated type drift detected in ${outputPath}. Run pnpm api:generate and commit the result.`)
+    process.exitCode = 1
+  } else {
+    console.log('OpenAPI generated types are up to date.')
   }
-  return new Set(fields)
-}
-
-function requiredFieldsInInterface(document, interfaceName) {
-  const start = document.indexOf(`export interface ${interfaceName} `)
-  if (start === -1) return new Set()
-  const end = document.indexOf('\n}', start)
-  const section = document.slice(start, end === -1 ? document.length : end)
-  return new Set([...section.matchAll(/^\s{2}([A-Za-z_][A-Za-z0-9_]*):/gm)].map(([, field]) => field))
-}
-
-function requiredAlternativesInSchema(document, schema) {
-  const section = sectionFor(document, `    ${schema}:`)
-  if (!/^\s{6}(?:oneOf|anyOf):/m.test(section)) return []
-  return [...section.matchAll(/required:\s*\n\s+- ([A-Za-z_][A-Za-z0-9_]*)/g)].map(([, field]) => [field])
-}
-
-function sectionFor(document, heading) {
-  const lines = document.split('\n')
-  const start = lines.indexOf(heading)
-  if (start === -1) return ''
-  const end = lines.findIndex((line, index) => index > start && /^\s{4}[A-Za-z][A-Za-z0-9]*:$/.test(line))
-  return lines.slice(start, end === -1 ? lines.length : end).join('\n')
+} catch (error) {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+    console.error(`Missing generated OpenAPI types at ${outputPath}. Run pnpm api:generate and commit the result.`)
+    process.exitCode = 1
+  } else {
+    throw error
+  }
+} finally {
+  await rm(temporaryDirectory, { recursive: true, force: true })
 }

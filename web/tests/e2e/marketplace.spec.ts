@@ -28,13 +28,31 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('heading', { name: /Discover tools for your next agent workflow/ })).toBeVisible()
 
     await page.getByLabel('Search resources').fill('secure')
-    await page.getByLabel('Source').fill('team-tools')
+    await page.getByRole('textbox', { name: 'Source', exact: true }).fill('team-tools')
     await page.getByRole('button', { name: 'Search' }).click()
 
     await expect(page).toHaveURL(/q=secure/)
     await expect(page).toHaveURL(/source=team-tools/)
     await expect(page.getByRole('heading', { name: '1 resources' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'secure-review', exact: true })).toBeVisible()
+  })
+
+  test('filters by kind and omits the all-kinds sentinel from the URL', async ({ page }) => {
+    const response = await page.goto('/')
+    expect(response?.status()).toBe(200)
+    await expect(page.locator('#search-kind')).toHaveText('All resource kinds')
+
+    await page.locator('#search-kind').click()
+    await page.getByRole('option', { name: 'Command', exact: true }).click()
+    await page.getByRole('button', { name: 'Search' }).click()
+    await expect(page).toHaveURL(/kind=command/)
+    await expect(page.getByRole('heading', { name: '1 resources' })).toBeVisible()
+
+    await page.locator('#search-kind').click()
+    await page.getByRole('option', { name: 'All resource kinds', exact: true }).click()
+    await page.getByRole('button', { name: 'Search' }).click()
+    await expect(page).not.toHaveURL(/[?&]kind=/)
+    await expect(page.getByRole('heading', { name: '2 resources' })).toBeVisible()
   })
 
   test('renders hostile text as text and preserves safe resource links', async ({ page }) => {
@@ -106,13 +124,15 @@ test.describe('Marketplace browser discovery', () => {
     relativePage.on('request', request => {
       if (request.url().includes('/api/v1/search')) sameOriginRequests.push(request.url())
     })
-    await relativePage.goto(relativeAppURL)
     await relativePage.route('**/api/v1/search**', route => route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(searchResult()),
     }))
-    await relativePage.getByRole('button', { name: 'Try again' }).click()
+    await relativePage.goto(relativeAppURL)
+    await expect(relativePage.getByRole('heading', { name: '2 resources' })).toBeVisible()
+    await relativePage.getByLabel('Search resources').fill('secure')
+    await relativePage.getByRole('button', { name: 'Search' }).click()
     await expect(relativePage.getByRole('heading', { name: '1 resources' })).toBeVisible()
     expect(sameOriginRequests.some(url => {
       const requestURL = new URL(url)

@@ -1,0 +1,2 @@
+overrides:
+  "semver@^6.0.0": "7.7.3"

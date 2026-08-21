@@ -17,8 +17,8 @@ export function normalizeApiBase(rawBase: string | undefined): string {
     try {
       const url = new URL(value)
       if (url.username || url.password || url.search || url.hash || !url.hostname) return ''
-      url.pathname = trimTrailingSlashes(url.pathname)
-      return `${url.origin}${url.pathname}`
+      const pathname = trimTrailingSlashes(url.pathname)
+      return `${url.origin}${pathname}`
     } catch {
       return ''
     }

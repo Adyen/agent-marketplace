@@ -374,7 +374,7 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: API contract drift
         run: pnpm run api:drift
@@ -385,8 +385,11 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # @playwright/test is blocked by the active pnpm supply-chain policy. Keep
-      # browser E2E local and treat it as a release gate pending an approved dependency.
+      - name: Browser E2E release gate
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ vars.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }}
+          AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}
+        run: pnpm run test:e2e
 
   release:
     name: Release
