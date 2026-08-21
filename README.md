@@ -591,6 +591,8 @@ agent-marketplace update                         Pull the latest commit for each
 agent-marketplace update --bump                  Discover and bump to newer refs
 agent-marketplace status                         Resources, harnesses, targets, refs, source layer, drift
 agent-marketplace convert --from <h> --to <h> --out <dir> <path>   One-shot layout conversion
+agent-marketplace convert ... --sync                Also prune output files a previous convert --sync wrote
+agent-marketplace convert ... --sync --replace-unmanaged   Authorize replacing and pruning output it cannot prove it wrote
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
 agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin aggregate ownership recovery
 agent-marketplace doctor --repair --yes          Adopt exact matches without prompting; never removes or replaces entries
@@ -598,7 +600,21 @@ agent-marketplace tui                            Launch the interactive browser 
 ```
 
 `--from`/`--to` on `convert` accept `claude`, `factory`, `cursor`, `windsurf`,
-`gemini`, and `devin`. `--yes` is only valid together with `--repair`.
+`gemini`, and `devin`. `--yes` is only valid together with `--repair`, and
+`--replace-unmanaged` is only valid together with `--sync`.
+
+**`convert --sync` prunes only what it can prove it wrote.** Ownership of each
+output file is recorded in durable state under
+`$XDG_STATE_HOME/agent-marketplace/convert` (never inside the output tree), so a
+later sync removes exactly the files an earlier sync materialized and whose bytes
+are unchanged. Anything else — a handwritten file at the output root, a
+hand-authored resource nested beside generated ones, a generated file the user
+has since edited, or any file at all when the record is missing or corrupt — is
+preserved and reported as `convert.sync.preserved-unmanaged`. If a converted
+resource would land on an existing file with different, unowned content, the run
+is refused before anything is written
+(`convert.sync.unmanaged-collision`). `--replace-unmanaged` is the explicit
+authorization that replaces and prunes such files.
 
 **Ad-hoc flag rules:**
 

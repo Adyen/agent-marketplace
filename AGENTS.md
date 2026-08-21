@@ -36,6 +36,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Devin aggregate updates are serialized per canonical root by advisory `flock(2)`, with compare-and-swap as a degraded-filesystem backstop | Two real processes cannot patch the same Devin aggregate concurrently; `flock` is owned by the open file description so it survives crashes without stale-lock heuristics, and `Store.Apply` refuses with `ownership.generation-conflict` rather than corrupting when advisory locking is unavailable |
 | `doctor --repair` never removes or overwrites an entry without interactive confirmation | Adoption is byte-neutral and safe to batch with `--yes`; deleting a user-visible entry, or replacing its value, is not — so both need per-entry consent plus a fresh backup |
 | `doctor --repair` offers three classes: adopt an exact match, remove an evidence-backed orphan, or replace an unmanaged entry whose key matches but whose value differs | A collision needs only key equality, adoption needs value equality, and orphan nomination needs evidence only a completed mutation produces — so such an entry was reported by every sync and repairable by nothing |
+| `convert --sync` prunes by recorded ownership, never by directory scan, and refuses unowned collisions | A stale-file scan cannot tell the output of a deleted resource apart from a handwritten file, so scan-driven pruning deletes unrelated work; the record proves what a previous sync wrote, and `--replace-unmanaged` is the only way to authorize destroying anything else |
 
 ## CLI Commands
 
@@ -55,6 +56,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace status` — show resources, harnesses, targets, refs, cache freshness, source layer, drift, errors. Includes a `HARNESS TARGETS` table with capabilities and repo/machine roots
 - `agent-marketplace migrate --harnesses <targets>` — rewrite v2 config to v3 schema (v1 configs are rejected). Migration never adds `devin`
 - `agent-marketplace convert --from <harness> --to <harness> --out <dir> <path>` — one-shot layout conversion; `claude`, `factory`, `cursor`, `windsurf`, `gemini`, and `devin` are valid in both directions
+- `agent-marketplace convert ... --sync` — reconcile the output directory: prune only the files a previous `convert --sync` recorded and whose bytes are unchanged; preserve everything else (`convert.sync.preserved-unmanaged`) and refuse to replace an unowned colliding file (`convert.sync.unmanaged-collision`)
+- `agent-marketplace convert ... --sync --replace-unmanaged` — authorize destructive replacement and pruning of output files ownership cannot account for; only valid with `--sync`
 - `agent-marketplace doctor` — show local harness/root diagnostics and non-blocking Devin CLI compatibility guidance
 - `agent-marketplace doctor --repair` — preview or interactively repair Devin shared-aggregate ownership state
 - `agent-marketplace doctor --repair --yes` — adopt exact current desired matches without prompting; destructive orphan removal and conflict replacement still require interactive confirmation
@@ -65,7 +68,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - **Language:** Go (static binary, no runtime deps)
 - **Distribution:** package managers and GitHub releases
 - **Cache:** `~/.cache/agent-marketplace/<registry-hash>/<ref>/` — disposable; deleting it has no effect on aggregate ownership
-- **Durable state:** `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`) — journaled aggregate-ownership records and mandatory safety backups (`internal/ownership`)
+- **Durable state:** `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`) — journaled aggregate-ownership records and mandatory safety backups (`internal/ownership`), plus one `convert/<root-key>.json` record per `convert --sync` output root (`internal/convertsync`)
 - **Materialization:** `harness-compilation` for multi-harness compilation (Factory, Claude, Cursor, Windsurf, Gemini, and Devin). All six are bidirectional compile/ingest/convert targets; the authoritative registry is `pkg/harness-compilation/target`
 
 ## Known Gaps
@@ -173,6 +176,7 @@ agent-marketplace/
 │   ├── harness/       ← install roots, per-target aggregate files and capabilities
 │   ├── devincli/      ← non-blocking Devin CLI version detection for doctor
 │   ├── collection/    ← collection discovery and expansion
+│   ├── convertsync/   ← durable ownership of `convert --sync` output files
 │   ├── tui/           ← Bubble Tea interactive UI
 │   └── cache/         ← registry clone/pull cache management
 ├── cmd/agent-marketplace/  ← Cobra CLI subcommands
