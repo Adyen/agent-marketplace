@@ -43,7 +43,9 @@ func TestMaterializePlansRouteCodexAcrossNativeDestinations(t *testing.T) {
 
 func TestCodexMaterializePlansDoNotPruneLinkedSkills(t *testing.T) {
 	repo := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	canonicalRepo, err := ownership.CanonicalRoot(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +72,9 @@ func TestCodexMaterializePlansDoNotPruneLinkedSkills(t *testing.T) {
 
 func TestRunPreservesCodexSkillsWhenAnotherSkillIsSuppressed(t *testing.T) {
 	repo := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
 	resolved := func(name string, resource ir.Resource) resolver.ResolvedArtifact {
@@ -106,7 +110,9 @@ func TestRunPreservesCodexSkillsWhenAnotherSkillIsSuppressed(t *testing.T) {
 
 func TestCodexDryRunLabelsSelectedSkillAndCommandDriftWithAgentsRoot(t *testing.T) {
 	repo := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
 	selection := []resolver.ResolvedArtifact{
