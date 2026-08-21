@@ -63,6 +63,147 @@ func EnsureMarketplacePinInConfigWithSnapshotAndCommit(configPath, marketplaceUR
 	return snapshot, commit, err
 }
 
+// UpdateMarketplacePinInConfig replaces an existing Marketplace mirror pin only
+// when its complete value still matches expected. The endpoint and resource
+// identity are the lookup key; expected is the compare-and-swap value.
+func UpdateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string, expected, replacement MarketplaceResourcePin) error {
+	_, _, err := UpdateMarketplacePinInConfigWithSnapshotAndCommit(configPath, marketplaceURL, instanceID, expected, replacement)
+	return err
+}
+
+// UpdateMarketplacePinInConfigWithSnapshotAndCommit performs an AST-based
+// compare-and-swap update and returns the byte snapshot and commit token needed
+// for a guarded rollback. It never creates an entry or a pin.
+func UpdateMarketplacePinInConfigWithSnapshotAndCommit(configPath, marketplaceURL, instanceID string, expected, replacement MarketplaceResourcePin) (*FileSnapshot, ConfigFileCommit, error) {
+	var snapshot *FileSnapshot
+	var commit ConfigFileCommit
+	err := withConfigPathLock(configPath, func() error {
+		var err error
+		snapshot, err = SnapshotConfigFile(configPath)
+		if err != nil {
+			return err
+		}
+		if err := updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID, expected, replacement); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read committed config %q: %w", configPath, err)
+		}
+		commit = newConfigFileCommit(data)
+		return nil
+	})
+	return snapshot, commit, err
+}
+
+func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string, expected, replacement MarketplaceResourcePin) error {
+	canonicalURL, err := NormalizeMarketplaceURL(marketplaceURL)
+	if err != nil {
+		return err
+	}
+	if err := validateMarketplaceSegment("marketplace instance_id", instanceID); err != nil {
+		return err
+	}
+	if err := ValidateMarketplaceResourcePin(expected); err != nil {
+		return fmt.Errorf("expected Marketplace pin: %w", err)
+	}
+	if err := ValidateMarketplaceResourcePin(replacement); err != nil {
+		return fmt.Errorf("replacement Marketplace pin: %w", err)
+	}
+	if !sameMarketplacePinIdentity(expected, replacement) {
+		return fmt.Errorf("marketplace pin identity cannot change during update")
+	}
+
+	doc, mode, err := readOrInitConfig(configPath)
+	if err != nil {
+		return err
+	}
+	if err := rejectMarketplaceYAMLAliases(doc); err != nil {
+		return fmt.Errorf("update config %q: %w", configPath, err)
+	}
+	root, err := ensureDocumentMapping(doc)
+	if err != nil {
+		return fmt.Errorf("update config %q: %w", configPath, err)
+	}
+	marketplaces := findMappingValue(root, "marketplaces")
+	if marketplaces == nil || marketplaces.Kind != yaml.SequenceNode {
+		return fmt.Errorf("update config %q: marketplaces must be a sequence", configPath)
+	}
+	entries, err := decodeMarketplaceEntries(marketplaces)
+	if err != nil {
+		return fmt.Errorf("update config %q: %w", configPath, err)
+	}
+	var entryNode *yaml.Node
+	for _, candidate := range entries {
+		if candidate.canonicalURL != canonicalURL || candidate.entry.InstanceID != instanceID {
+			continue
+		}
+		if entryNode != nil {
+			return fmt.Errorf("config %q contains duplicate Marketplace entry identity for URL %q and instance_id %q", configPath, canonicalURL, instanceID)
+		}
+		entryNode = candidate.node
+	}
+	if entryNode == nil {
+		return fmt.Errorf("marketplace entry %q/%q not found in config %q", canonicalURL, instanceID, configPath)
+	}
+	resources := findMappingValue(entryNode, "resources")
+	if resources == nil || resources.Kind != yaml.SequenceNode {
+		return fmt.Errorf("marketplace entry %q/%q has no resources", canonicalURL, instanceID)
+	}
+	var pinNode *yaml.Node
+	for _, node := range resources.Content {
+		got, err := decodeMarketplacePin(node)
+		if err != nil {
+			return err
+		}
+		if !sameMarketplacePinIdentity(got, expected) {
+			continue
+		}
+		if pinNode != nil {
+			return fmt.Errorf("config %q contains duplicate Marketplace resource pin identity %s/%s/%s", configPath, expected.SourceID, expected.Kind, expected.Name)
+		}
+		pinNode = node
+		if !sameMarketplacePinCASValue(got, expected) {
+			return fmt.Errorf("marketplace pin compare-and-swap conflict for %s/%s/%s", expected.SourceID, expected.Kind, expected.Name)
+		}
+	}
+	if pinNode == nil {
+		return fmt.Errorf("marketplace pin %s/%s/%s not found in config %q", expected.SourceID, expected.Kind, expected.Name, configPath)
+	}
+	if sameMarketplacePinCASValue(expected, replacement) {
+		return nil
+	}
+	replaceMarketplacePinNode(pinNode, replacement)
+	if err := writeConfigDocument(configPath, mode, doc); err != nil {
+		return err
+	}
+	slog.Debug("marketplace pin updated", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID, "source_id", replacement.SourceID, "kind", replacement.Kind, "name", replacement.Name, "revision", replacement.Revision)
+	return nil
+}
+
+func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
+	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.InstalledName == b.InstalledName
+}
+
+func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
+	setMappingValue(node, "source_id", scalarNode(pin.SourceID))
+	if pin.SourceSlug == "" {
+		removeMappingKeyByName(node, "source_slug")
+	} else {
+		setMappingValue(node, "source_slug", scalarNode(pin.SourceSlug))
+	}
+	setMappingValue(node, "kind", scalarNode(pin.Kind))
+	setMappingValue(node, "name", scalarNode(pin.Name))
+	setMappingValue(node, "revision", scalarNode(pin.Revision))
+	setMappingValue(node, "digest", scalarNode(pin.Digest))
+	setMappingValue(node, "acquisition", scalarNode(pin.Acquisition))
+	if pin.InstalledName == "" {
+		removeMappingKeyByName(node, "installed_name")
+	} else {
+		setMappingValue(node, "installed_name", scalarNode(pin.InstalledName))
+	}
+}
+
 func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
 	canonicalURL, err := NormalizeMarketplaceURL(marketplaceURL)
 	if err != nil {

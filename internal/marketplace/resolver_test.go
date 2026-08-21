@@ -595,6 +595,71 @@ func TestResolvePinWithArtifactRetainsVerifiedArtifactWhenCacheIsTampered(t *tes
 	}
 }
 
+func TestLatestRevisionUsesSourceSlugRoute(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "resolved-source-slug", Acquisition: store.AcquisitionMirror})
+	})
+	mux.HandleFunc("/api/v1/resources/resolved-source-slug/skill/review", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	source, latest, err := (&Resolver{}).LatestRevision(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, config.MarketplaceResourcePin{
+		SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "review", Revision: "old", Digest: contentDigest,
+	})
+	if err != nil {
+		t.Fatalf("LatestRevision: %v", err)
+	}
+	if source.ID != "src" || latest.ContentDigest != revision.ContentDigest {
+		t.Fatalf("LatestRevision result = %#v/%#v", source, latest)
+	}
+}
+
+func TestPrepareLocatorRejectsExactRevisionDigestMismatch(t *testing.T) {
+	requestedDigest := "sha256:" + strings.Repeat("a", 64)
+	responseDigest := "sha256:" + strings.Repeat("b", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(responseDigest),
+		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64)),
+	}
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "source-slug", Acquisition: store.AcquisitionMirror})
+	})
+	mux.HandleFunc("/api/v1/resources/source-slug/skill/review/revisions/"+requestedDigest, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(revision)
+	})
+	artifactRequested := false
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
+		artifactRequested = true
+		http.Error(w, "artifact must not be fetched", http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	_, err := (&Resolver{Cache: NewCache(t.TempDir())}).PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{
+		Source: "source-slug", Kind: "skill", Name: "review", Revision: requestedDigest, Digest: requestedDigest,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "exact revision content digest mismatch") {
+		t.Fatalf("PrepareLocator error = %v, want exact digest mismatch", err)
+	}
+	if artifactRequested {
+		t.Fatal("PrepareLocator fetched an artifact after exact digest mismatch")
+	}
+}
+
 func TestPrepareLocatorPrefetchesMirrorArtifact(t *testing.T) {
 	skill := ir.NewSkill("review", "Review code", "Review carefully.", []string{"user"}, nil, ir.SourceRef{})
 	canonical, err := hccartifact.FromIR(skill)
