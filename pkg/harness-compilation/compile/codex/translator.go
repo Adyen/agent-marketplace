@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 type Compiler struct{}
@@ -69,7 +70,14 @@ func skill(s *ir.Skill, command bool) ([]artifact.Artifact, []diag.Diagnostic, e
 	if s.ArgumentHint != "" || s.Model != "" || s.Triggers != nil || s.Subagent != "" || s.Agent != "" {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex skill output omitted benign activation or execution metadata without a documented equivalent"))
 	}
-	return []artifact.Artifact{{Path: ".agents/skills/" + s.Name() + "/SKILL.md", Bytes: []byte(header + s.Body)}}, diagnostics, nil
+	path, err := codexResourcePath(ir.KindSkill, s.Name())
+	if command {
+		path, err = codexResourcePath(ir.KindCommand, s.Name())
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return []artifact.Artifact{{Path: path, Bytes: []byte(header + s.Body)}}, diagnostics, nil
 }
 
 func command(c *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -95,7 +103,11 @@ func subagent(s *ir.Subagent) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if len(s.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted unmodeled extension fields"))
 	}
-	return []artifact.Artifact{{Path: ".codex/agents/" + s.Name() + ".toml", Bytes: []byte(b.String())}}, diagnostics, nil
+	path, err := codexResourcePath(ir.KindSubagent, s.Name())
+	if err != nil {
+		return nil, nil, err
+	}
+	return []artifact.Artifact{{Path: path, Bytes: []byte(b.String())}}, diagnostics, nil
 }
 
 func hook(h *ir.Hook) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -116,7 +128,11 @@ func hook(h *ir.Hook) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if h.Timeout != nil || h.Prompt != "" || len(h.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "Codex hook output omitted fields without a documented command-handler equivalent"))
 	}
-	return []artifact.Artifact{{Path: ".codex/hooks.json", Bytes: raw, Fragment: true, FragmentKey: "hooks", FragmentOrderKey: h.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true, DedupeFragmentEntries: true}}, diagnostics, nil
+	path, err := codexAggregatePath(ir.KindHook)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []artifact.Artifact{{Path: path, Bytes: raw, Fragment: true, FragmentKey: "hooks", FragmentOrderKey: h.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true, DedupeFragmentEntries: true}}, diagnostics, nil
 }
 
 func mcp(m *ir.McpServer) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -142,7 +158,27 @@ func mcp(m *ir.McpServer) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	if len(m.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, m.Name(), m.Source, "Codex MCP output omitted unmodeled extension fields"))
 	}
-	return []artifact.Artifact{{Path: ".codex/config.toml", Bytes: raw, Fragment: true, FragmentKey: "mcp_servers", FragmentOrderKey: m.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true}}, diagnostics, nil
+	path, err := codexAggregatePath(ir.KindMcpServer)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []artifact.Artifact{{Path: path, Bytes: raw, Fragment: true, FragmentKey: "mcp_servers", FragmentOrderKey: m.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true}}, diagnostics, nil
+}
+
+func codexResourcePath(kind ir.ResourceKind, name string) (string, error) {
+	path, ok := targetmeta.NativeResourcePath(targetmeta.TargetCodex, kind, name)
+	if !ok {
+		return "", fmt.Errorf("codex: native path for %s is not registered", kind)
+	}
+	return path, nil
+}
+
+func codexAggregatePath(kind ir.ResourceKind) (string, error) {
+	path, ok := targetmeta.NativeAggregatePath(targetmeta.TargetCodex, kind)
+	if !ok {
+		return "", fmt.Errorf("codex: native aggregate path for %s is not registered", kind)
+	}
+	return path, nil
 }
 
 type mcpConfig struct {

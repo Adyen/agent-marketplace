@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 const kindKey = "x-agent-marketplace-kind"
@@ -29,8 +30,20 @@ func init() { ingest.Register(ingester{}) }
 func (ingester) Source() ingest.Harness { return ingest.HarnessCodex }
 
 func (ingester) Detect(src fs.FS) bool {
-	info, err := fs.Stat(src, ".codex")
-	return err == nil && info.IsDir()
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	if !ok {
+		return false
+	}
+	for _, partition := range layout.Partitions {
+		if !partition.InstallationEvidence {
+			continue
+		}
+		info, err := fs.Stat(src, partition.Prefix)
+		if err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func (i ingester) LoadBundle(src fs.FS) (*ingest.Bundle, error) { return load(src) }
@@ -58,12 +71,16 @@ func load(src fs.FS) (*ingest.Bundle, error) {
 }
 
 func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
-	entries, err := fs.ReadDir(src, ".agents/skills")
+	root, err := codexResourceRoot(ir.KindSkill)
+	if err != nil {
+		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
+	}
+	entries, err := fs.ReadDir(src, root)
 	if err != nil {
 		if isMissing(err) {
 			return nil, nil
 		}
-		return nil, []diag.Diagnostic{loadFailure(".agents/skills", err)}
+		return nil, []diag.Diagnostic{loadFailure(root, err)}
 	}
 	var resources []ir.Resource
 	var diagnostics []diag.Diagnostic
@@ -71,9 +88,14 @@ func loadSkills(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
 		if !entry.IsDir() {
 			continue
 		}
-		skill, err := bundle.LoadSkill(src, path.Join(".agents/skills", entry.Name()))
+		skillFile, err := codexResourceFile(ir.KindSkill, entry.Name())
 		if err != nil {
-			diagnostics = append(diagnostics, loadFailure(path.Join(".agents/skills", entry.Name(), "SKILL.md"), err))
+			diagnostics = append(diagnostics, loadFailure("codex layout", err))
+			continue
+		}
+		skill, err := bundle.LoadSkill(src, path.Dir(skillFile))
+		if err != nil {
+			diagnostics = append(diagnostics, loadFailure(skillFile, err))
 			continue
 		}
 		if marker, ok := skill.Extra[kindKey]; ok && marker == "command" {
@@ -96,9 +118,13 @@ type subagentDocument struct {
 }
 
 func loadSubagents(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
-	files, err := filesWithSuffix(src, ".codex/agents", ".toml")
+	root, err := codexResourceRoot(ir.KindSubagent)
 	if err != nil {
-		return nil, []diag.Diagnostic{loadFailure(".codex/agents", err)}
+		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
+	}
+	files, err := filesWithSuffix(src, root, ".toml")
+	if err != nil {
+		return nil, []diag.Diagnostic{loadFailure(root, err)}
 	}
 	resources := make([]ir.Resource, 0, len(files))
 	var diagnostics []diag.Diagnostic
@@ -139,7 +165,10 @@ type hookHandler struct {
 }
 
 func loadHooks(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
-	const file = ".codex/hooks.json"
+	file, err := codexAggregateFile(ir.KindHook)
+	if err != nil {
+		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
+	}
 	raw, err := fs.ReadFile(src, file)
 	if isMissing(err) {
 		return nil, nil
@@ -183,7 +212,10 @@ type mcpDocument struct {
 }
 
 func loadMCP(src fs.FS) ([]ir.Resource, []diag.Diagnostic) {
-	const file = ".codex/config.toml"
+	file, err := codexAggregateFile(ir.KindMcpServer)
+	if err != nil {
+		return nil, []diag.Diagnostic{loadFailure("codex layout", err)}
+	}
 	raw, err := fs.ReadFile(src, file)
 	if isMissing(err) {
 		return nil, nil
@@ -257,6 +289,30 @@ func filesWithSuffix(src fs.FS, dir, suffix string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+func codexResourceRoot(kind ir.ResourceKind) (string, error) {
+	root, ok := targetmeta.NativeResourceRoot(targetmeta.TargetCodex, kind)
+	if !ok {
+		return "", fmt.Errorf("native resource root for %s is not registered", kind)
+	}
+	return root, nil
+}
+
+func codexResourceFile(kind ir.ResourceKind, name string) (string, error) {
+	file, ok := targetmeta.NativeResourcePath(targetmeta.TargetCodex, kind, name)
+	if !ok {
+		return "", fmt.Errorf("native resource path for %s is not registered", kind)
+	}
+	return file, nil
+}
+
+func codexAggregateFile(kind ir.ResourceKind) (string, error) {
+	file, ok := targetmeta.NativeAggregatePath(targetmeta.TargetCodex, kind)
+	if !ok {
+		return "", fmt.Errorf("native aggregate path for %s is not registered", kind)
+	}
+	return file, nil
 }
 
 func isMissing(err error) bool { return errors.Is(err, fs.ErrNotExist) }
