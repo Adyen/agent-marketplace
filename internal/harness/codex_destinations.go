@@ -104,19 +104,14 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 	}
 	info := TargetInfo{
 		PlanStrategy:                  PlanSubtree,
-		ResourceDirs:                  make(map[ir.ResourceKind]string),
 		SkillDirKinds:                 make(map[ir.ResourceKind]bool),
 		OwnershipReconciledAggregates: true,
 	}
 	for _, partition := range layout.Partitions {
 		info.Components = append(info.Components, partition.Prefix)
 		for kind, pattern := range partition.ResourcePaths {
-			switch kind {
-			case ir.KindSkill:
+			if kind == ir.KindSkill {
 				info.SkillPathPattern = path.Join(partition.Prefix, pattern)
-			case ir.KindCommand:
-			default:
-				info.ResourceDirs[kind] = path.Join(partition.Prefix, path.Dir(pattern))
 			}
 		}
 		for kind, directory := range partition.SkillDirKinds {
