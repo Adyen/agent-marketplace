@@ -1,8 +1,12 @@
 name: agent-marketplace-postgres
 
+x-marketplace-build-args: &marketplace-build-args
+  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-alpine3.22}
+  ALPINE_RUNTIME_IMAGE: ${ALPINE_RUNTIME_IMAGE:-alpine:3.22.1}
+
 services:
   postgres:
-    image: postgres:17.5-alpine
+    image: ${POSTGRES_IMAGE:-postgres:17.5-alpine}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-marketplace}
       POSTGRES_USER: ${POSTGRES_USER:-marketplace}
@@ -24,6 +28,7 @@ services:
       dockerfile: Dockerfile.marketplace
       target: api
       args:
+        <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
     command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "api"]
     volumes:
@@ -56,6 +61,7 @@ services:
       dockerfile: Dockerfile.marketplace
       target: worker
       args:
+        <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
     command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "worker"]
     volumes:
@@ -78,6 +84,8 @@ services:
     build:
       context: ../../../web
       dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
     environment:
       NUXT_PUBLIC_API_BASE: /
       NUXT_API_BASE_INTERNAL: http://api:8080
@@ -96,7 +104,7 @@ services:
         condition: service_healthy
 
   proxy:
-    image: nginx:1.27-alpine
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
     ports:
       - "${MARKETPLACE_HTTP_PORT:-8080}:8080"
     volumes:

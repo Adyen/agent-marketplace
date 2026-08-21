@@ -5,11 +5,22 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 GO := go
 CMD := ./cmd/agent-marketplace
 
+# Public container defaults. Override these generic variables in the environment
+# when builds must use a registry mirror.
+GO_BUILD_IMAGE ?= golang:1.26.6-alpine3.22
+ALPINE_RUNTIME_IMAGE ?= alpine:3.22.1
+NODE_IMAGE ?= node:24-alpine
+POSTGRES_IMAGE ?= postgres:17.5-alpine
+NGINX_IMAGE ?= nginx:1.27-alpine
+MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
+WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
+export GO_BUILD_IMAGE ALPINE_RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE
+
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -58,6 +69,20 @@ lint-common:
 version:
 	@echo $(VERSION)
 
+container: container-marketplace container-web
+
+container-marketplace:
+	docker build \
+		--build-arg GO_BUILD_IMAGE="$(GO_BUILD_IMAGE)" \
+		--build-arg ALPINE_RUNTIME_IMAGE="$(ALPINE_RUNTIME_IMAGE)" \
+		--build-arg VERSION="$(VERSION)" \
+		-t "$(MARKETPLACE_CONTAINER_IMAGE)" -f Dockerfile.marketplace .
+
+container-web:
+	docker build \
+		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
+		-t "$(WEB_CONTAINER_IMAGE)" web
+
 secrets-check:
 	@test -n "$$(git check-ignore --no-index deploy/compose/postgres-s3/.env 2>/dev/null)" || { echo "ERROR: deploy .env files must be ignored"; exit 1; }
 	@test -z "$$(git ls-files | awk '/^deploy\/.*\/\.env$$/ {print}')" || { echo "ERROR: tracked deploy .env file"; exit 1; }
@@ -70,8 +95,20 @@ container-check: secrets-check
 	@test -s Dockerfile.marketplace
 	@test -s .dockerignore
 	@test -s web/Dockerfile
-	@awk '/FROM .*golang:1.26.6-alpine3.22 AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM alpine:3.22.1 AS api/{api=1} /FROM alpine:3.22.1 AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
-	@awk '/USER node/{user=1} /HEALTHCHECK/{health=1} END {if (!user || !health) exit 1}' web/Dockerfile
+	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER node/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
+	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg ALPINE_RUNTIME_IMAGE=' Makefile)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 1
+	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.22$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx) exit 1}' Makefile
+	@if git grep -nEI '(ARG[[:space:]]+[A-Z_]*IMAGE|^[A-Z_]*IMAGE=|image:).*([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
+		echo "ERROR: tracked container image configuration contains a registry hostname; use an environment override instead"; exit 1; \
+	fi
 	@test "$$(grep -Fc -- 'wget -q -O - -T 5' Dockerfile.marketplace)" -eq 1
 	@test "$$(grep -Fh -- 'wget' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | grep -Fc -- '"-q", "-O", "-", "-T", "5"')" -eq 2
 	@test -z "$$(grep -nE -- '--(tries|quiet|output-document)' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml)"
@@ -85,11 +122,17 @@ compose-config:
 	else \
 		secret_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-dsn; \
 		password_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-password; \
-		trap 'rm -f "$$secret_file" "$$password_file"' EXIT; \
+		sqlite_config=$$(mktemp); \
+		postgres_config=$$(mktemp); \
+		trap 'rm -f "$$secret_file" "$$password_file" "$$sqlite_config" "$$postgres_config"' EXIT; \
 		printf '%s\n' 'postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable' > "$$secret_file"; \
 		printf '%s\n' 'validation-only' > "$$password_file"; \
 		docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml config --quiet && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config > "$$sqlite_config" && \
+		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml config > "$$postgres_config" && \
+		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.dsn-file.yaml config --quiet && \
 		POSTGRES_PASSWORD=validation-only MARKETPLACE_POSTGRES_DSN=postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable AWS_ACCESS_KEY_ID=validation-only AWS_SECRET_ACCESS_KEY=validation-only docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.development.yaml config --quiet; \
 	fi
