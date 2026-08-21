@@ -1,0 +1,523 @@
+package marketplace
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
+type PinState string
+
+const (
+	PinStateCurrent         PinState = "current"
+	PinStateCached          PinState = "cached"
+	PinStateMissing         PinState = "missing"
+	PinStateRevoked         PinState = "revoked"
+	PinStateUnavailable     PinState = "unavailable"
+	PinStateStale           PinState = "stale"
+	PinStateUpdateAvailable PinState = "update-available"
+)
+
+type CacheState string
+
+const (
+	CacheStateNotApplicable      CacheState = "not-applicable"
+	CacheStateMissing            CacheState = "missing"
+	CacheStateMetadataOnly       CacheState = "metadata-only"
+	CacheStateArtifactUnverified CacheState = "artifact-unverified"
+	CacheStateArtifactVerified   CacheState = "artifact-verified"
+	CacheStateStale              CacheState = "stale"
+	CacheStateError              CacheState = "error"
+)
+
+type AcquisitionMode string
+
+const (
+	AcquisitionMirror AcquisitionMode = config.MarketplaceAcquisitionMirror
+	AcquisitionIndex  AcquisitionMode = config.MarketplaceAcquisitionIndex
+)
+
+type PinStatus struct {
+	Alias            string
+	URL              string
+	InstanceID       string
+	SourceID         string
+	SourceSlug       string
+	Kind             string
+	Name             string
+	InstalledName    string
+	Revision         string
+	ContentDigest    string
+	ArchiveDigest    string
+	Acquisition      AcquisitionMode
+	Source           config.Source
+	Required         bool
+	State            PinState
+	Cache            CacheState
+	MetadataCached   bool
+	ArtifactPresent  bool
+	ArtifactVerified bool
+	EndpointQueried  bool
+	LatestQueried    bool
+	UpdateAvailable  bool
+	Detail           string
+}
+
+type Inspection struct {
+	Pins      []PinStatus
+	Artifacts []resolver.ResolvedArtifact
+	Err       error
+}
+
+// PinStatusError promotes an unhealthy required Marketplace pin to a pipeline
+// error while leaving the complete PinStatus available to status rendering.
+type PinStatusError struct {
+	Pin PinStatus
+}
+
+func (e *PinStatusError) Error() string {
+	sourceID := QuoteTerminal(e.Pin.SourceID)
+	kind := QuoteTerminal(e.Pin.Kind)
+	name := QuoteTerminal(e.Pin.Name)
+	state := QuoteTerminal(string(e.Pin.State))
+	if e.Pin.Detail == "" {
+		return fmt.Sprintf("required Marketplace pin %s/%s/%s is %s", sourceID, kind, name, state)
+	}
+	return fmt.Sprintf("required Marketplace pin %s/%s/%s is %s: %s", sourceID, kind, name, state, QuoteTerminal(e.Pin.Detail))
+}
+
+func (i Inspection) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Target, _ resolver.MarketplaceResolveMode) ([]resolver.ResolvedArtifact, []error) {
+	if i.Err != nil {
+		return nil, []error{i.Err}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, []error{err}
+	}
+
+	var errs []error
+	for _, pin := range i.Pins {
+		if pin.Required && pinStatusUnhealthy(pin) {
+			errs = append(errs, &PinStatusError{Pin: pin})
+		}
+	}
+
+	// Inspection artifacts are intentionally metadata-only. Do not let them
+	// enter winner selection, collision reporting, requirement validation, or
+	// materialization. Keep this filter defensive for callers that construct an
+	// Inspection with a mix of metadata and fully materializable artifacts.
+	artifacts := make([]resolver.ResolvedArtifact, 0, len(i.Artifacts))
+	for _, artifact := range i.Artifacts {
+		if artifact.Unresolved || artifact.Revoked || artifact.Kind == ir.KindCollection || artifact.Resource == nil {
+			continue
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts, errs
+}
+
+func pinStatusUnhealthy(pin PinStatus) bool {
+	return pin.Cache == CacheStateError || pin.State == PinStateRevoked || pin.State == PinStateMissing || pin.State == PinStateUnavailable
+}
+
+func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) Inspection {
+	if cfg == nil || len(cfg.Marketplaces) == 0 {
+		return Inspection{}
+	}
+
+	start := time.Now()
+	slog.Debug("marketplace status inspection started", "marketplaces", len(cfg.Marketplaces), "mode", marketplaceResolveModeName(mode))
+	cache := r.cache()
+	var inspection Inspection
+	for _, configuredEntry := range cfg.Marketplaces {
+		entry, entryErr := canonicalMarketplaceEntry(configuredEntry)
+		if entryErr != nil {
+			for _, pin := range configuredEntry.Resources {
+				status, artifact, ok := newPinStatus(configuredEntry, pin, targetSet)
+				if !ok {
+					continue
+				}
+				status.State = PinStateUnavailable
+				status.Detail = entryErr.Error()
+				inspection.Pins = append(inspection.Pins, status)
+				inspection.Artifacts = append(inspection.Artifacts, artifact)
+			}
+			continue
+		}
+
+		client, clientErr := r.clientForEntry(entry)
+		if clientErr != nil {
+			slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", clientErr)
+			inspection.appendUnavailable(cache, entry, targetSet, clientErr)
+			continue
+		}
+
+		endpointErr := error(nil)
+		if err := ctx.Err(); err != nil {
+			endpointErr = err
+		} else {
+			wellKnown, err := client.WellKnown(ctx)
+			if err != nil {
+				endpointErr = err
+			} else if wellKnown.InstanceID != entry.InstanceID {
+				endpointErr = fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, entry.InstanceID)
+			}
+		}
+		if endpointErr != nil {
+			slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", endpointErr)
+			inspection.appendUnavailable(cache, entry, targetSet, endpointErr)
+			continue
+		}
+
+		for _, pin := range entry.Resources {
+			status, artifact, ok := newPinStatus(entry, pin, targetSet)
+			if !ok {
+				continue
+			}
+			if status.State == PinStateUnavailable && status.Detail != "" {
+				inspection.Pins = append(inspection.Pins, status)
+				inspection.Artifacts = append(inspection.Artifacts, artifact)
+				logPinDecision(status)
+				continue
+			}
+			cached, metadataCached, cacheErr := readCachedPin(cache, entry, pin)
+			status.MetadataCached = metadataCached
+			if cacheErr != nil {
+				status.Cache = CacheStateError
+				status.State = PinStateUnavailable
+				status.Detail = cacheErr.Error()
+			} else {
+				populateCacheFacts(&status, cache, entry, pin, cached)
+			}
+
+			if mode == resolver.MarketplaceResolveModeCached {
+				applyCachedState(&status, cached, metadataCached, cacheErr)
+				inspection.Pins = append(inspection.Pins, status)
+				inspection.Artifacts = append(inspection.Artifacts, artifact)
+				logPinDecision(status)
+				continue
+			}
+
+			if err := ctx.Err(); err != nil {
+				status.State = PinStateUnavailable
+				appendPinDetail(&status, err.Error())
+			} else {
+				status.EndpointQueried = true
+				remote, err := client.GetResourceRevision(ctx, marketplaceAPISource(pin), pin.Kind, pin.Name, pin.Digest)
+				if err != nil {
+					applyRemoteError(&status, cached, metadataCached, cacheErr, err)
+				} else if err := validateResourceRevision(entry, pin, remote); err != nil {
+					status.State = PinStateUnavailable
+					appendPinDetail(&status, err.Error())
+				} else {
+					applyRevision(&status, remote)
+					status.ArtifactPresent = false
+					status.ArtifactVerified = false
+					if cacheErr == nil {
+						populateCacheFacts(&status, cache, entry, pin, remote)
+					}
+					artifact.Revoked = remote.Revocation != nil
+					if remote.Revocation != nil {
+						status.State = PinStateRevoked
+					} else if status.Cache != CacheStateError {
+						status.State = PinStateCurrent
+					} else {
+						status.State = PinStateUnavailable
+					}
+					queryLatestRevision(ctx, client, entry, pin, &status)
+				}
+			}
+			inspection.Pins = append(inspection.Pins, status)
+			inspection.Artifacts = append(inspection.Artifacts, artifact)
+			logPinDecision(status)
+		}
+	}
+
+	slices.SortFunc(inspection.Pins, comparePinStatus)
+	slices.SortFunc(inspection.Artifacts, func(a, b resolver.ResolvedArtifact) int {
+		if c := strings.Compare(a.Kind.String(), b.Kind.String()); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return strings.Compare(a.RegistryURL, b.RegistryURL)
+	})
+	inspection.Err = ctx.Err()
+	slog.Debug("marketplace status inspection completed", "pins", len(inspection.Pins), "duration_ms", time.Since(start).Milliseconds())
+	return inspection
+}
+
+func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEntry, targetSet []hcc.Target, err error) {
+	for _, pin := range entry.Resources {
+		status, artifact, ok := newPinStatus(entry, pin, targetSet)
+		if !ok {
+			continue
+		}
+		if status.State == PinStateUnavailable && status.Detail != "" {
+			appendPinDetail(&status, err.Error())
+			i.Pins = append(i.Pins, status)
+			i.Artifacts = append(i.Artifacts, artifact)
+			logPinDecision(status)
+			continue
+		}
+		cached, metadataCached, cacheErr := readCachedPin(cache, entry, pin)
+		status.MetadataCached = metadataCached
+		if cacheErr != nil {
+			status.Cache = CacheStateError
+			status.State = PinStateUnavailable
+			status.Detail = cacheErr.Error()
+		} else {
+			populateCacheFacts(&status, cache, entry, pin, cached)
+		}
+		if cacheErr == nil && cached.Revocation != nil {
+			applyRevision(&status, cached)
+			artifact.Revoked = true
+			status.State = PinStateRevoked
+		} else {
+			status.State = PinStateUnavailable
+		}
+		appendPinDetail(&status, err.Error())
+		i.Pins = append(i.Pins, status)
+		i.Artifacts = append(i.Artifacts, artifact)
+		logPinDecision(status)
+	}
+}
+
+func newPinStatus(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target) (PinStatus, resolver.ResolvedArtifact, bool) {
+	kind, kindErr := irKind(pin.Kind)
+	acquisition := AcquisitionMode(pin.Acquisition)
+	if acquisition == "" {
+		acquisition = AcquisitionMirror
+	}
+	required := marketplacePinRequired(entry.Source)
+	name := pin.Name
+	if pin.InstalledName != "" {
+		name = pin.InstalledName
+	}
+	status := PinStatus{
+		Alias: entry.Alias, URL: entry.URL, InstanceID: entry.InstanceID,
+		SourceID: pin.SourceID, SourceSlug: pin.SourceSlug, Kind: pin.Kind,
+		Name: pin.Name, InstalledName: pin.InstalledName, Revision: pin.Revision,
+		ContentDigest: pin.Digest, Acquisition: acquisition, Source: entry.Source,
+		Required: required,
+	}
+	if kindErr != nil {
+		status.State = PinStateUnavailable
+		status.Detail = kindErr.Error()
+	}
+	artifact := resolver.ResolvedArtifact{
+		Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
+		RegistryPath: pin.SourceID, Ref: pin.Revision, Source: entry.Source,
+		Required: required, CatalogKey: marketplaceCatalogKey(entry, pin),
+		Harnesses: targetSet, IsMarketplace: true, MarketplaceURL: entry.URL,
+		MarketplaceInstanceID: entry.InstanceID, MarketplaceAlias: entry.Alias,
+		MarketplaceSourceID: pin.SourceID, InstalledName: pin.InstalledName,
+		Unresolved: true,
+	}
+	return status, artifact, true
+}
+
+func readCachedPin(cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.ResourceRevision, bool, error) {
+	if cache == nil {
+		return store.ResourceRevision{}, false, errors.New("marketplace cache is unavailable")
+	}
+	return cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+}
+
+func populateCacheFacts(status *PinStatus, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision) {
+	// A cache read/decode error is a fact in its own right. Never replace it
+	// with a missing or metadata-only classification, nor let a later successful
+	// artifact read make malformed metadata appear healthy.
+	if status.Cache == CacheStateError {
+		return
+	}
+	if status.Acquisition == AcquisitionIndex {
+		status.Cache = CacheStateNotApplicable
+	} else if !status.MetadataCached {
+		status.Cache = CacheStateMissing
+	}
+	if rev.ArchiveDigest == "" {
+		if status.MetadataCached && status.Acquisition == AcquisitionMirror {
+			status.Cache = CacheStateMetadataOnly
+		}
+		return
+	}
+	status.ArchiveDigest = string(rev.ArchiveDigest)
+	if cache == nil {
+		status.Cache = CacheStateError
+		return
+	}
+	raw, verified, err := cache.ReadArtifact(string(rev.ArchiveDigest))
+	if err != nil {
+		status.Cache = CacheStateError
+		status.Detail = err.Error()
+		return
+	}
+	status.ArtifactPresent = raw != nil
+	status.ArtifactVerified = verified
+	if verified {
+		status.Cache = CacheStateArtifactVerified
+	} else if raw != nil {
+		status.Cache = CacheStateArtifactUnverified
+	} else if status.Acquisition == AcquisitionMirror {
+		status.Cache = CacheStateMissing
+	}
+	if status.MetadataCached && cacheIsStale(cache.MetadataPath(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)) {
+		status.Cache = CacheStateStale
+	}
+}
+
+func applyCachedState(status *PinStatus, rev store.ResourceRevision, metadataCached bool, cacheErr error) {
+	if cacheErr != nil || status.Cache == CacheStateError {
+		status.State = PinStateUnavailable
+		return
+	}
+	if !metadataCached {
+		status.State = PinStateMissing
+		return
+	}
+	applyRevision(status, rev)
+	if rev.Revocation != nil {
+		status.State = PinStateRevoked
+	} else if status.Cache == CacheStateStale {
+		status.State = PinStateStale
+	} else if status.Acquisition == AcquisitionIndex || status.ArtifactVerified {
+		status.State = PinStateCached
+	} else {
+		status.State = PinStateMissing
+	}
+}
+
+func applyRevision(status *PinStatus, rev store.ResourceRevision) {
+	status.ContentDigest = string(rev.ContentDigest)
+	status.ArchiveDigest = string(rev.ArchiveDigest)
+}
+
+func applyRemoteError(status *PinStatus, cached store.ResourceRevision, metadataCached bool, cacheErr error, err error) {
+	if cacheErr == nil && metadataCached && cached.Revocation != nil {
+		applyRevision(status, cached)
+		status.State = PinStateRevoked
+		appendPinDetail(status, err.Error())
+		return
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+		status.State = PinStateMissing
+		appendPinDetail(status, err.Error())
+		return
+	}
+	status.State = PinStateUnavailable
+	appendPinDetail(status, err.Error())
+}
+
+func marketplaceAPISource(pin config.MarketplaceResourcePin) string {
+	if pin.SourceSlug != "" {
+		return pin.SourceSlug
+	}
+	return pin.SourceID
+}
+
+func queryLatestRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status *PinStatus) {
+	if err := ctx.Err(); err != nil {
+		appendPinDetail(status, err.Error())
+		return
+	}
+	latest, err := client.GetLatestResourceRevision(ctx, marketplaceAPISource(pin), pin.Kind, pin.Name)
+	if err != nil {
+		// Latest is observational. An exact pin that was successfully queried
+		// keeps its state, and LatestQueried remains false when this probe fails.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			appendPinDetail(status, err.Error())
+		}
+		return
+	}
+	if err := validateLatestResourceRevision(entry, pin, latest); err != nil {
+		return
+	}
+	status.LatestQueried = true
+	if latest.Revocation != nil {
+		appendPinDetail(status, "latest revision is revoked")
+		return
+	}
+	status.UpdateAvailable = latest.ContentDigest != store.RevisionDigest(pin.Digest)
+	if status.UpdateAvailable && status.State == PinStateCurrent {
+		status.State = PinStateUpdateAvailable
+	}
+}
+
+func validateLatestResourceRevision(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision) error {
+	want := store.ResourceCoordinate{
+		Marketplace: store.MarketplaceID(entry.InstanceID),
+		Source:      store.SourceID(pin.SourceID),
+		Kind:        pin.Kind,
+		Name:        pin.Name,
+	}
+	if rev.Coordinate != want {
+		return fmt.Errorf("latest resource coordinate mismatch: got %q, want %q", rev.Coordinate, want)
+	}
+	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
+		return fmt.Errorf("latest revision content digest %q: %w", rev.ContentDigest, err)
+	}
+	if rev.ArchiveDigest != "" {
+		if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
+			return fmt.Errorf("latest revision archive digest %q: %w", rev.ArchiveDigest, err)
+		}
+	} else if rev.Revocation == nil && pin.Kind != "collection" {
+		return errors.New("latest revision archive digest is required")
+	}
+	return nil
+}
+
+func appendPinDetail(status *PinStatus, detail string) {
+	if detail == "" || strings.Contains(status.Detail, detail) {
+		return
+	}
+	if status.Detail == "" {
+		status.Detail = detail
+		return
+	}
+	status.Detail += "; " + detail
+}
+
+func cacheIsStale(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && time.Since(info.ModTime()) > 24*time.Hour
+}
+
+func comparePinStatus(a, b PinStatus) int {
+	for _, pair := range [][2]string{{a.Kind, b.Kind}, {a.Name, b.Name}, {a.URL, b.URL}, {a.SourceID, b.SourceID}, {a.Revision, b.Revision}} {
+		if c := strings.Compare(pair[0], pair[1]); c != 0 {
+			return c
+		}
+	}
+	return strings.Compare(a.ContentDigest, b.ContentDigest)
+}
+
+func marketplaceResolveModeName(mode resolver.MarketplaceResolveMode) string {
+	switch mode {
+	case resolver.MarketplaceResolveModeRefresh:
+		return "refresh"
+	case resolver.MarketplaceResolveModeCached:
+		return "cached"
+	case resolver.MarketplaceResolveModeInspect:
+		return "inspect"
+	default:
+		return "unknown"
+	}
+}
+
+func logPinDecision(status PinStatus) {
+	slog.Debug("marketplace status pin decision", "url", status.URL, "source_id", status.SourceID, "kind", status.Kind, "name", status.Name, "state", status.State, "cache", status.Cache, "endpoint_queried", status.EndpointQueried, "latest_queried", status.LatestQueried, "required", status.Required)
+}

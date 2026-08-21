@@ -25,6 +25,18 @@ const (
 
 const defaultTimeout = 30 * time.Second
 
+type APIError struct {
+	StatusCode int
+	Detail     string
+}
+
+func (e *APIError) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("marketplace error %d", e.StatusCode)
+	}
+	return fmt.Sprintf("marketplace error %d: %s", e.StatusCode, e.Detail)
+}
+
 // Client is a thin HTTP client for the public Marketplace API.
 type Client struct {
 	baseURL    *url.URL
@@ -325,12 +337,9 @@ func apiError(status int, body []byte) error {
 	} else if len(body) > 0 {
 		detail = string(body)
 	}
-	if detail == "" {
-		return fmt.Errorf("marketplace error %d", status)
-	}
 	quoted := QuoteTerminal(detail)
 	if len(quoted) > maxAPIErrorOutputBytes {
 		quoted = quoted[:maxAPIErrorOutputBytes-3] + "..."
 	}
-	return fmt.Errorf("marketplace error %d: %s", status, quoted)
+	return &APIError{StatusCode: status, Detail: quoted}
 }
