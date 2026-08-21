@@ -1,11 +1,13 @@
 package harness
 
 import (
+	"path"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -41,6 +43,42 @@ func TestResolveDestinationsUsesRegisteredProvider(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ResolveDestinations() = %#v, want %#v", got, want)
+	}
+}
+
+func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	if !ok {
+		t.Fatal("Codex native layout is not registered")
+	}
+	for _, partition := range layout.Partitions {
+		got := codexTargetInfo(partition)
+		if !reflect.DeepEqual(got.Components, partition.Components) {
+			t.Errorf("partition %q components = %v, want %v", partition.ID, got.Components, partition.Components)
+		}
+		wantResourceDirs := make(map[ir.ResourceKind]string)
+		for kind, pattern := range partition.ResourcePaths {
+			if kind != ir.KindSkill && kind != ir.KindCommand {
+				wantResourceDirs[kind] = path.Dir(pattern)
+			}
+		}
+		if len(wantResourceDirs) == 0 {
+			wantResourceDirs = nil
+		}
+		if !reflect.DeepEqual(got.ResourceDirs, wantResourceDirs) {
+			t.Errorf("partition %q resource dirs = %v, want %v", partition.ID, got.ResourceDirs, wantResourceDirs)
+		}
+		wantSkillPath := partition.ResourcePaths[ir.KindSkill]
+		if got.SkillPathPattern != wantSkillPath || !reflect.DeepEqual(got.SkillDirKinds, partition.SkillDirKinds) {
+			t.Errorf("partition %q skill layout = %q/%v, want %q/%v", partition.ID, got.SkillPathPattern, got.SkillDirKinds, wantSkillPath, partition.SkillDirKinds)
+		}
+		wantAggregates := make([]string, 0, len(partition.Aggregates))
+		for _, aggregate := range partition.Aggregates {
+			wantAggregates = append(wantAggregates, aggregate.Path)
+		}
+		if gotAggregates := got.AggregateFilesForScope(false); !reflect.DeepEqual(gotAggregates, wantAggregates) {
+			t.Errorf("partition %q aggregates = %v, want %v", partition.ID, gotAggregates, wantAggregates)
+		}
 	}
 }
 

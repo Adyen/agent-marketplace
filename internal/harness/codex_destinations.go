@@ -3,7 +3,9 @@ package harness
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -15,57 +17,71 @@ var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
 }
 
 func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination, error) {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	if !ok {
+		return nil, fmt.Errorf("Codex native layout is not registered")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
-	agentsRoot := filepath.Join(repoRoot, ".agents")
-	codexRoot := filepath.Join(repoRoot, ".codex")
-	agentsID, codexID := "repo-agents", "repo-codex"
+
+	scope := "repo-"
+	base := repoRoot
 	if machineScope {
-		agentsRoot = filepath.Join(home, ".agents")
-		codexRoot = os.Getenv("CODEX_HOME")
-		if codexRoot == "" {
-			codexRoot = filepath.Join(home, ".codex")
-		} else if !filepath.IsAbs(codexRoot) {
-			return nil, fmt.Errorf("CODEX_HOME must be absolute")
+		scope = "machine-"
+		base = home
+	}
+	destinations := make([]Destination, 0, len(layout.Partitions))
+	for _, partition := range layout.Partitions {
+		root := filepath.Join(base, partition.Prefix)
+		if machineScope && partition.MachineRootEnv != "" {
+			if configured := os.Getenv(partition.MachineRootEnv); configured != "" {
+				if !filepath.IsAbs(configured) {
+					return nil, fmt.Errorf("%s must be absolute", partition.MachineRootEnv)
+				}
+				root = configured
+			}
 		}
-		agentsID, codexID = "machine-agents", "machine-codex"
+		root, err = canonicalRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		destinations = append(destinations, Destination{
+			ID:     scope + partition.ID,
+			Root:   root,
+			Prefix: partition.Prefix,
+			Info:   codexTargetInfo(partition),
+		})
 	}
-	agentsRoot, err = canonicalRoot(agentsRoot)
-	if err != nil {
-		return nil, err
-	}
-	codexRoot, err = canonicalRoot(codexRoot)
-	if err != nil {
-		return nil, err
-	}
-	return []Destination{
-		{ID: agentsID, Root: agentsRoot, Prefix: ".agents", Info: codexAgentsTargetInfo()},
-		{ID: codexID, Root: codexRoot, Prefix: ".codex", Info: codexConfigTargetInfo()},
-	}, nil
+	return destinations, nil
 }
 
-// These values describe Agent Marketplace planning and ownership policy. The
-// Codex compiler remains authoritative for the native paths it emits.
-func codexAgentsTargetInfo() TargetInfo {
+func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
+	aggregates := make([]string, 0, len(partition.Aggregates))
+	for _, aggregate := range partition.Aggregates {
+		aggregates = append(aggregates, aggregate.Path)
+	}
+	var resourceDirs map[ir.ResourceKind]string
+	for kind, pattern := range partition.ResourcePaths {
+		if kind == ir.KindSkill || kind == ir.KindCommand {
+			continue
+		}
+		if resourceDirs == nil {
+			resourceDirs = make(map[ir.ResourceKind]string)
+		}
+		resourceDirs[kind] = path.Dir(pattern)
+	}
 	return TargetInfo{
-		Components:       []string{"skills"},
+		Components:       partition.Components,
 		PlanStrategy:     PlanSubtree,
-		SkillPathPattern: "skills/%s/SKILL.md",
-		SkillDirKinds:    map[ir.ResourceKind]bool{ir.KindCommand: true},
-	}
-}
-
-func codexConfigTargetInfo() TargetInfo {
-	return TargetInfo{
-		Components:   []string{"agents"},
-		PlanStrategy: PlanSubtree,
-		ResourceDirs: map[ir.ResourceKind]string{ir.KindSubagent: "agents"},
+		ResourceDirs:     resourceDirs,
+		SkillPathPattern: partition.ResourcePaths[ir.KindSkill],
+		SkillDirKinds:    partition.SkillDirKinds,
 		AggregateFiles: AggregateFileSet{
-			Project: []string{"hooks.json", "config.toml"},
-			User:    []string{"hooks.json", "config.toml"},
+			Project: slices.Clone(aggregates),
+			User:    aggregates,
 		},
-		OwnershipReconciledAggregates: true,
+		OwnershipReconciledAggregates: len(aggregates) > 0,
 	}
 }
