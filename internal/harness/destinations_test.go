@@ -2,6 +2,7 @@ package harness
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -16,6 +17,30 @@ func TestResolveDestinationsExistingTargetUsesSingleRoot(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "default" || got[0].Root != filepath.Join(repo, ".factory") || got[0].Prefix != "" {
 		t.Fatalf("ResolveDestinations(factory) = %#v", got)
+	}
+}
+
+func TestResolveDestinationsUsesRegisteredProvider(t *testing.T) {
+	target := hcc.Target("partitioned-test")
+	repo := t.TempDir()
+	want := []Destination{{ID: "repo-test", Root: t.TempDir(), Prefix: ".test"}}
+	resolvedLayoutProviders[target] = func(machineScope bool, repoRoot string) ([]Destination, error) {
+		if machineScope {
+			t.Fatal("provider received machine scope")
+		}
+		if repoRoot != repo {
+			t.Fatalf("provider repo root = %q, want %q", repoRoot, repo)
+		}
+		return want, nil
+	}
+	t.Cleanup(func() { delete(resolvedLayoutProviders, target) })
+
+	got, err := ResolveDestinations(target, false, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ResolveDestinations() = %#v, want %#v", got, want)
 	}
 }
 
