@@ -23,6 +23,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -74,19 +75,20 @@ type requirementRow struct {
 }
 
 type statusView struct {
-	diag            config.ManagedInstallationDiagnostics
-	warnings        []error
-	statusRows      []statusRow
-	locallyExcluded []excludedRow
-	localRegistries []localRegistryRow
-	orphaned        []orphanedSymlinkRow
-	collisions      []collisionRow
-	requirements    []requirementRow
-	errorRows       []errorRow
-	dryRunReport    *materialize.Report
-	targetHarnesses []string
-	targetSource    config.Source
-	harnessTargets  []harnessTargetRow
+	diag                config.ManagedInstallationDiagnostics
+	warnings            []error
+	statusRows          []statusRow
+	locallyExcluded     []excludedRow
+	localRegistries     []localRegistryRow
+	orphaned            []orphanedSymlinkRow
+	collisions          []collisionRow
+	requirements        []requirementRow
+	errorRows           []errorRow
+	dryRunReport        *materialize.Report
+	targetHarnesses     []string
+	targetSource        config.Source
+	harnessTargets      []harnessTargetRow
+	marketplaceStatuses []marketplace.PinStatus
 }
 
 func newStatusCmd() *cobra.Command {
@@ -94,12 +96,12 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show the current sync state for enabled skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd.Context(), cmd.OutOrStdout(), time.Now())
+			return runStatusContext(cmd.Context(), cmd.OutOrStdout(), time.Now())
 		},
 	}
 }
 
-func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
+func runStatusContext(ctx context.Context, out io.Writer, now time.Time) error {
 	repoRoot := config.FindRepoRoot()
 
 	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
@@ -163,10 +165,16 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				MCP:         config.KindSelector{Include: localCfg.MCP.Include},
 				Collections: config.KindSelector{Include: localCfg.Collections.Include},
 			}
-			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude,
+			secondResolveOpts := []resolver.ResolveOption{
+				resolver.WithContext(ctx),
 				resolver.WithResources(result.CatalogLoad.ResourceCatalogs),
 				resolver.WithMalformed(catalog.MalformedByKey(result.CatalogLoad.Catalogs)),
-				resolver.WithTargetHarnesses(result.TargetHarnesses))
+				resolver.WithTargetHarnesses(result.TargetHarnesses),
+			}
+			if result.MarketplaceInspection != nil {
+				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
+			}
+			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
 				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) {
 					secondResolveRealErrs = append(secondResolveRealErrs, e)
@@ -226,19 +234,20 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 
 	if err := writeStatusSections(out, statusView{
-		diag:            result.Diagnostics,
-		warnings:        result.Warnings,
-		statusRows:      statusRows,
-		locallyExcluded: locallyExcluded,
-		localRegistries: localRegistries,
-		orphaned:        orphaned,
-		collisions:      collisionRows,
-		requirements:    requirementRows,
-		errorRows:       errorRows,
-		dryRunReport:    dryRunReport,
-		targetHarnesses: targetHarnesses,
-		targetSource:    result.TargetHarnessSource,
-		harnessTargets:  harnessTargets,
+		diag:                result.Diagnostics,
+		warnings:            result.Warnings,
+		statusRows:          statusRows,
+		locallyExcluded:     locallyExcluded,
+		localRegistries:     localRegistries,
+		orphaned:            orphaned,
+		collisions:          collisionRows,
+		requirements:        requirementRows,
+		errorRows:           errorRows,
+		dryRunReport:        dryRunReport,
+		targetHarnesses:     targetHarnesses,
+		targetSource:        result.TargetHarnessSource,
+		harnessTargets:      buildHarnessTargetRows(repoRoot, targetHarnesses),
+		marketplaceStatuses: result.MarketplaceStatuses,
 	}); err != nil {
 		return err
 	}
@@ -617,6 +626,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource
 	harnessTargets := view.harnessTargets
+	marketplaceStatuses := view.marketplaceStatuses
 
 	if diag.Managed() {
 		if _, err := fmt.Fprintln(out, "MANAGED INSTALLATION"); err != nil {
@@ -658,6 +668,12 @@ func writeStatusSections(out io.Writer, view statusView) error {
 
 	if err := writeStatusTable(out, "SYNCED RESOURCES", []string{"KIND", "NAME", "HARNESS", "SOURCE", "VIA", "TARGET", "REGISTRY", "REF", "CACHE"}, statusRowsToCells(statusRows)); err != nil {
 		return err
+	}
+
+	if len(marketplaceStatuses) > 0 {
+		if err := writeStatusTable(out, "MARKETPLACE PINS", marketplaceStatusHeaders(), marketplaceStatusRowsToCells(marketplaceStatuses)); err != nil {
+			return err
+		}
 	}
 
 	if len(harnessTargets) > 0 {

@@ -327,7 +327,7 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 			return fmt.Errorf("revision archive digest %q: %w", rev.ArchiveDigest, err)
 		}
 	}
-	if rev.Revocation == nil && rev.ArchiveDigest == "" {
+	if rev.Revocation == nil && rev.ArchiveDigest == "" && pin.Kind != "collection" {
 		return fmt.Errorf("revision archive digest is required")
 	}
 	return nil
@@ -368,6 +368,8 @@ func irKind(kind string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcpserver":
 		return ir.KindMcpServer, nil
+	case "collection":
+		return ir.KindCollection, nil
 	}
 	return 0, fmt.Errorf("unsupported resource kind %q", kind)
 }
