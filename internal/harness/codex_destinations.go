@@ -100,7 +100,7 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 func codexVirtualTargetInfo() (TargetInfo, error) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
 	if !ok {
-		return TargetInfo{}, fmt.Errorf("Codex native layout is not registered")
+		return TargetInfo{}, fmt.Errorf("codex native layout is not registered")
 	}
 	info := TargetInfo{
 		PlanStrategy:                  PlanSubtree,
@@ -121,6 +121,7 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 			info.AggregateFiles.Project = append(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Path))
 		}
 	}
+	slices.Sort(info.AggregateFiles.Project)
 	info.AggregateFiles.User = slices.Clone(info.AggregateFiles.Project)
 	return info, nil
 }
