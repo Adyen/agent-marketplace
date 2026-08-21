@@ -108,7 +108,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("ensure storage directory: %w", err)
 	}
 	if err := s.budget.Load(); err != nil {
-		cfg.Logger.Warn("failed to load cardinality budget file", "error", err)
+		return nil, fmt.Errorf("load cardinality budget: %w", err)
 	}
 
 	return s, nil
