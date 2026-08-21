@@ -492,6 +492,44 @@ func TestLocalConfigAsLayer_NilInputReturnsNil(t *testing.T) {
 	}
 }
 
+// A top-level collections include names no registry, so it must not land on the
+// entries: an entry's list is the record of which provider was vouched for to
+// enable the bundle's hooks and MCP servers. Every other kind still inherits.
+func TestMergeDoesNotInheritTopLevelCollectionsOntoEntries(t *testing.T) {
+	global := &Config{
+		APIVersion:  APIVersionV2,
+		Harnesses:   []string{"factory"},
+		Skills:      KindSelector{Include: []string{"global-skill"}},
+		Collections: KindSelector{Include: []string{"dev-bundle"}, Exclude: []string{"legacy-bundle"}},
+		Registries: []RegistryEntry{
+			{URL: "git@example.com:a.git", Ref: "main"},
+			{URL: "git@example.com:b.git", Ref: "main", Collections: KindSelector{Include: []string{"own-bundle"}}},
+		},
+	}
+
+	got := MergeLayers([]Layer{{Source: UserPersonal, Config: global}})
+
+	if len(got.Registries[0].Collections.Include) != 0 {
+		t.Fatalf("entry must not inherit a top-level collection name, got %v", got.Registries[0].Collections.Include)
+	}
+	if !equalStrings(got.Registries[1].Collections.Include, []string{"own-bundle"}) {
+		t.Fatalf("expected the entry's own collection name to survive, got %v", got.Registries[1].Collections.Include)
+	}
+	// Excludes are not a trust record, so they still inherit: a top-level
+	// exclude has to keep taking members away from every entry.
+	if !equalStrings(got.Registries[0].Collections.Exclude, []string{"legacy-bundle"}) {
+		t.Fatalf("expected inherited collection excludes, got %v", got.Registries[0].Collections.Exclude)
+	}
+	if !equalStrings(got.Registries[0].Skills.Include, []string{"global-skill"}) {
+		t.Fatalf("expected other kinds to keep inheriting, got %v", got.Registries[0].Skills.Include)
+	}
+	// The name still has to reach the resolver, which selects (but does not
+	// trust) collections named at the top level.
+	if !equalStrings(got.Collections.Include, []string{"dev-bundle"}) {
+		t.Fatalf("expected the merged top-level selector to keep the name, got %v", got.Collections.Include)
+	}
+}
+
 func TestLocalConfigAsLayer_EmptyRegistriesReturnsNil(t *testing.T) {
 	localCfg := &LocalConfig{Registries: []RegistryEntry{}}
 	got := LocalConfigAsLayer(localCfg)

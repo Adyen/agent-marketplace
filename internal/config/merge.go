@@ -170,8 +170,20 @@ func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 	}
 	// Resolve per-kind selectors with top-level inheritance (entry-specific wins).
 	for _, kind := range AllKinds {
-		if ptr := resolved.SelectorForKindPtr(kind); ptr != nil {
-			*ptr = resolveInheritedSelector(cfg.SelectorForKind(kind), entry.SelectorForKind(kind))
+		ptr := resolved.SelectorForKindPtr(kind)
+		if ptr == nil {
+			continue
+		}
+		*ptr = resolveInheritedSelector(cfg.SelectorForKind(kind), entry.SelectorForKind(kind))
+		if KindIncludeGrantsTrust(kind) {
+			// An entry's collections include is the record of which provider was
+			// vouched for, so it must say what the config attached to THIS
+			// registry: inheriting a top-level name would make every entry in
+			// the layer look individually vouched for, and one name would
+			// enable the hooks of any registry that publishes a bundle under
+			// it. Selection is unaffected — the resolver propagates top-level
+			// collection names to every entry itself, after reading trust.
+			ptr.Include = resolveInheritedList(nil, entry.SelectorForKind(kind).Include)
 		}
 	}
 	// Propagate entry-level ExcludeAll sugar to all per-kind selectors.

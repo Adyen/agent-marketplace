@@ -296,16 +296,20 @@ selection. Every implicit route is closed:
   these two kinds, a `hooks:`/`mcp:` include does **not** turn `default: true`
   off for the kinds it does not mention, so the registry's skills keep coming.
 - A **collection** carries them only when the collection itself was selected by
-  name (`collections: include: [...]`, which is what
+  name **on the registry entry that provides it** (`registries: - url: ...`
+  `collections: include: [...]`, which is what
   `agent-marketplace install <collection>` writes) or comes from a `required`
-  organization registry. A collection reached only by `default: true` or a tag
-  expands its other members, withholds the executables, and reports each one
-  with the command that enables it.
-  - The name has to identify the registry you trusted. A `collections: include:`
-    on a registry entry vouches for that registry's collection only; a top-level
-    one vouches only while a single configured registry publishes the name. If a
-    second registry publishes a collection of the same name, both fail closed and
-    the warning names the competing locations.
+  organization registry. A collection reached only by `default: true`, a tag, or
+  a top-level name expands its other members, withholds the executables, and
+  reports each one with the command that enables it.
+  - The name has to identify the registry you trusted. A top-level
+    `collections: include:` names no registry, so it still selects the collection
+    and expands its skills but enables none of its executables — not even when
+    only one configured registry publishes the name, because that set changes
+    whenever a repository adds an entry. Move the name onto the entry you meant.
+  - Trust stops at an `includes:` boundary. When a collection you vouched for
+    includes a collection published by a *different* registry, that registry
+    needs its own `collections: include:` before its hooks and MCP servers run.
 - `agent-marketplace install --all` (no `--kind`) and
   `agent-marketplace install --from <url>` without a resource name install a
   broad selection, so they list discovered hooks and MCP servers as *not

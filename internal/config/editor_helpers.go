@@ -390,6 +390,21 @@ func boolMappingValue(mapping *yaml.Node, key string) bool {
 	return b
 }
 
+// entryNodeIncludeIsRedundant reports whether an explicit include for kind
+// would add nothing to this entry, in which case writing one would only flip the
+// entry into explicit-selection mode and silently deselect everything else.
+//
+// An include that grants trust is never redundant: broad selection reaches the
+// kind but does not vouch for it, so the name has to be written for the resolver
+// to read the decision — which is why the resolver also stops reading it as a
+// narrowing.
+func entryNodeIncludeIsRedundant(entryNode *yaml.Node, kind ir.ResourceKind) bool {
+	if KindIncludeGrantsTrust(kind) {
+		return false
+	}
+	return entryNodeAutoSelectsKind(entryNode, kind)
+}
+
 // entryNodeAutoSelectsKind reports whether a registry entry node would
 // auto-select resources of the given kind without an explicit include — the
 // same trigger the resolver uses for autoSelectAll (see
@@ -444,11 +459,11 @@ func entryNodeAutoSelectsKind(entryNode *yaml.Node, kind ir.ResourceKind) bool {
 		}
 		// A non-empty include on ANY kind puts the entry into
 		// explicit-selection mode, disabling auto-select-all — except an
-		// include for a kind that auto-selection never reaches anyway, which
-		// the resolver also ignores for this decision (see
-		// resolver.hasExplicitSelection). Diverging here would make the editor
-		// write an explicit include the resolver reads as "and nothing else".
-		if !required && KindRequiresExplicitSelection(k) {
+		// include the resolver also ignores for this decision (see
+		// KindIncludeNarrowsBroadSelection and resolver.hasExplicitSelection).
+		// Diverging here would make the editor write an explicit include the
+		// resolver reads as "and nothing else".
+		if !KindIncludeNarrowsBroadSelection(k, required) {
 			continue
 		}
 		if _, incNode := findEntrySequence(kindMapping, "include"); incNode != nil && len(incNode.Content) > 0 {

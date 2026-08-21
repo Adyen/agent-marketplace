@@ -1641,6 +1641,103 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// writeCollectionRegistry creates a local registry with one skill and one
+// collection selecting it.
+func writeCollectionRegistry(t *testing.T, skillName, collectionName string) string {
+	t.Helper()
+	regDir := t.TempDir()
+	skillDir := filepath.Join(regDir, "skills", skillName)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: "+skillName+"\ndescription: A skill\n---\n\n# "+skillName+"\n")
+	colDir := filepath.Join(regDir, "collections", collectionName)
+	if err := os.MkdirAll(colDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(colDir, "COLLECTION.yaml"), "name: "+collectionName+"\nversion: \"1.0\"\nskills:\n  - name: "+skillName+"\n")
+	return regDir
+}
+
+// The returned Config is rebuilt from the loaded entries, so the top-level
+// collection selector has to be copied across: entries deliberately do not
+// inherit it, and it is the resolver's only record that a collection was
+// selected without naming a registry.
+func TestLoadRegistriesCarriesTopLevelCollections(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	regDir := writeCollectionRegistry(t, "safe-skill", "dev-bundle")
+
+	cfg := &config.Config{
+		Collections: config.KindSelector{Include: []string{"dev-bundle"}, Exclude: []string{"legacy-bundle"}},
+		Registries: []config.RegistryEntry{
+			{URL: regDir, Source: config.RepoCommitted, SourceHarness: "factory"},
+		},
+	}
+
+	result := LoadRegistries(cfg, "", LoadModeRefresh, WithCloneOrPull(func(string, string) (string, error) { return regDir, nil }))
+	if len(result.Errors) > 0 {
+		t.Fatalf("LoadRegistries returned errors: %v", result.Errors)
+	}
+	if got := result.Config.Collections.Include; len(got) != 1 || got[0] != "dev-bundle" {
+		t.Fatalf("expected the top-level collection include to be carried, got %#v", got)
+	}
+	if got := result.Config.Collections.Exclude; len(got) != 1 || got[0] != "legacy-bundle" {
+		t.Fatalf("expected the top-level collection exclude to be carried, got %#v", got)
+	}
+	for _, e := range result.Config.Registries {
+		if len(e.Collections.Include) != 0 {
+			t.Fatalf("loading must not attach the top-level name to an entry, got %#v", e.Collections.Include)
+		}
+	}
+}
+
+// Two registries publishing the same collection name are two collections.
+// Collapsing them by name hid the ambiguity from callers that act on a name —
+// installing a collection vouches for the hooks and MCP servers it carries — so
+// `install <name>` silently picked whichever registry loaded first.
+func TestLoadRegistriesKeepsSameNamedCollectionsFromDifferentRegistries(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	first := writeCollectionRegistry(t, "first-skill", "dev-bundle")
+	second := writeCollectionRegistry(t, "second-skill", "dev-bundle")
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: first, Source: config.RepoCommitted, SourceHarness: "factory"},
+			{URL: second, Source: config.RepoCommitted, SourceHarness: "factory"},
+		},
+	}
+
+	result := LoadRegistries(cfg, "", LoadModeRefresh, WithCloneOrPull(func(url, ref string) (string, error) { return url, nil }))
+	if len(result.Errors) > 0 {
+		t.Fatalf("LoadRegistries returned errors: %v", result.Errors)
+	}
+
+	keys := make(map[string]struct{})
+	for _, c := range result.Collections {
+		if c.Name != "dev-bundle" {
+			continue
+		}
+		keys[c.SourceCatalogKey] = struct{}{}
+	}
+	if len(keys) != 2 {
+		t.Fatalf("expected dev-bundle from 2 distinct registries, got %d: %#v", len(keys), result.Collections)
+	}
+
+	// Within one registry the name is still deduplicated: a collection found at
+	// both the registry root and the skill subdirectory is one collection.
+	for key, cat := range result.Catalogs {
+		seen := 0
+		for _, c := range cat.Collections {
+			if c.Name == "dev-bundle" {
+				seen++
+			}
+		}
+		if seen > 1 {
+			t.Fatalf("catalog %q lists dev-bundle %d times, want at most once", key, seen)
+		}
+	}
+}
+
 func BenchmarkLoadRegistries_BundleRootDiscover(b *testing.B) {
 	regDir := b.TempDir()
 	bundleDir := filepath.Join(regDir, ".factory")

@@ -80,28 +80,34 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 ## Collection precedence
 
 - A collection expands its hook and MCP server members only when the collection
-  itself was selected deliberately: named in a `collections: include:` list (at
-  the top level or on the entry — `agent-marketplace install <collection>` writes
-  this), or provided by a `required: true` organization registry. A collection
-  reached only through `default: true` or a tag match expands its other members,
+  itself was selected deliberately **on the registry entry that provides it** —
+  `registries: - url: ...  collections: include: [dev-tools]`, which is what
+  `agent-marketplace install <collection>` writes — or when it is provided by a
+  `required: true` organization registry. A collection reached only through
+  `default: true`, a tag match, or a top-level name expands its other members,
   withholds each executable member with a warning naming the command that enables
-  it, and does not fail the sync. Trust is inherited down an `includes:` chain:
-  naming the outer collection accepts what it composes, and an include can only
-  widen trust when the nested collection is itself deliberately selected.
-  A member pinned to a `required: true` registry is already broadly selected by
-  that policy, so it expands regardless of how the collection was reached.
+  it, and does not fail the sync. A member pinned to a `required: true` registry
+  is already broadly selected by that policy, so it expands regardless of how the
+  collection was reached.
 - That trust is keyed by **(provider, collection name)**, never by name alone. A
   collection name is not a globally unique identifier: any configured registry may
   publish a bundle called `dev-tools`, so `collections: include: [dev-tools]` on
-  one registry entry vouches only for *that* registry's `dev-tools`. The same
-  applies to an `includes:` chain — a nested name matching some other registry's
-  collection widens nothing.
-  - A **top-level** `collections: include:` names no registry, so it vouches for a
-    provider only while exactly one configured registry publishes that name. Once a
-    second registry answers to it, no layer says which was meant: trust fails
-    closed and the withholding warning names the competing locations instead of
-    asking for a selection that already exists. Move the name onto the registry
-    entry you meant to resolve it.
+  one registry entry vouches only for *that* registry's `dev-tools`.
+  - A **top-level** `collections: include:` names no registry, so it selects the
+    collection — the skills and other non-executable members still expand — but
+    vouches for nothing, not even when a single configured registry publishes that
+    name. Which registries happen to be configured is not a statement about which
+    one was trusted, and the set changes when a repository adds an entry. Move the
+    name onto the registry entry you meant to enable its executables; the
+    withholding warning says so and names the publishing locations.
+- Trust does not cross an `includes:` boundary. A nested `includes:` entry is a
+  bare name resolved against whatever registry publishes it, preferring the
+  including collection's own registry; when the name is answered by a *different*
+  registry, that registry needs its own provider-scoped selection before the
+  included collection's hooks and MCP servers are enabled. Otherwise a collection
+  the user vouched for could hand a name to a registry they did not. The included
+  collection's other members still expand, and the warning names the inner
+  collection to select.
 - Collections expand into synthetic registry entries before resolution.
 - Removing a collection member writes a per-kind `exclude` in the active scope (collection stays installed).
 - If a resource is both direct-selected and collection-provided, direct selection takes precedence for conflict handling and `Via` annotation.

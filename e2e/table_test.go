@@ -2018,7 +2018,7 @@ registries:
 	},
 	{
 		Name: "mcp/named_collection_enables_mcp",
-		Desc: "Given the same collection named in collections.include, When sync is run, Then the MCP server materializes",
+		Desc: "Given the same collection named on the registry entry that provides it, When sync is run, Then the MCP server materializes",
 		Registries: []RegistryDef{
 			{Name: "mcp-collection-named",
 				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
@@ -2037,9 +2037,8 @@ resources:
 registries:
   - url: {{REG:mcp-collection-named}}
     ref: main
-collections:
-  include:
-    - dev
+    collections:
+      include: [dev]
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
@@ -2047,6 +2046,123 @@ collections:
 				FileContains: map[string]string{
 					"/root/.factory/mcp.json": "bundled-mcp",
 				}},
+		},
+	},
+	{
+		Name: "mcp/top_level_collection_name_withholds_mcp",
+		Desc: "Given the collection named only in a top-level collections.include, When sync is run, Then the collection still expands its skill but its MCP server is withheld and the fix names the registry entry",
+		Registries: []RegistryDef{
+			{Name: "mcp-collection-toplevel",
+				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
+				MCPServers: []MCPServer{{Name: "bundled-mcp", Command: "node", Args: []string{"bundled.js"}}},
+				Files: map[string]string{
+					"collections/dev/COLLECTION.yaml": `name: dev
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`,
+				}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-collection-toplevel}}
+    ref: main
+collections:
+  include:
+    - dev
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:  []string{"/root/.factory/skills/safe-skill/SKILL.md"},
+				FilesAbsent: []string{"/root/.factory/mcp.json"},
+				OutContains: []string{"bundled-mcp", "which names no registry", "onto the registry entry you meant"}},
+		},
+	},
+	{
+		Name: "mcp/included_collection_does_not_inherit_trust_across_providers",
+		Desc: "Given a trusted collection whose includes: names a collection published by another registry, When sync is run, Then the included collection's skill materializes but its MCP server is withheld because trust does not cross the provider boundary",
+		Registries: []RegistryDef{
+			{Name: "mcp-include-outer",
+				Skills: []Skill{{Name: "outer-skill", Description: "Outer skill"}},
+				Files: map[string]string{
+					"collections/outer/COLLECTION.yaml": `name: outer
+version: "1.0"
+resources:
+  - name: outer-skill
+includes:
+  - name: inner
+`,
+				}},
+			{Name: "mcp-include-inner",
+				Skills:     []Skill{{Name: "inner-skill", Description: "Inner skill"}},
+				MCPServers: []MCPServer{{Name: "inner-mcp", Command: "node", Args: []string{"inner.js"}}},
+				Files: map[string]string{
+					"collections/inner/COLLECTION.yaml": `name: inner
+version: "1.0"
+resources:
+  - name: inner-skill
+  - name: inner-mcp
+    kind: mcp
+`,
+				}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-include-outer}}
+    ref: main
+    collections:
+      include: [outer]
+  - url: {{REG:mcp-include-inner}}
+    ref: main
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/root/.factory/skills/outer-skill/SKILL.md",
+					"/root/.factory/skills/inner-skill/SKILL.md",
+				},
+				FilesAbsent: []string{"/root/.factory/mcp.json"},
+				OutContains: []string{"inner-mcp", "does not cross a provider boundary", "collections: include: [inner]"}},
+		},
+	},
+	{
+		Name: "collection/install_writes_provider_scoped_include",
+		Desc: "Given two registries and a collection published by one of them, When the collection is installed by name, Then the include is written onto the providing entry and the collection's MCP server materializes",
+		Registries: []RegistryDef{
+			{Name: "mcp-collection-install",
+				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
+				MCPServers: []MCPServer{{Name: "bundled-mcp", Command: "node", Args: []string{"bundled.js"}}},
+				Files: map[string]string{
+					"collections/dev/COLLECTION.yaml": `name: dev
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`,
+				}},
+			{Name: "mcp-collection-install-other",
+				Skills: []Skill{{Name: "other-skill", Description: "Other skill"}}},
+		},
+		RepoCfg: `
+registries:
+  - url: {{REG:mcp-collection-install}}
+    ref: main
+  - url: {{REG:mcp-collection-install-other}}
+    ref: main
+`,
+		Steps: []Step{
+			{Args: []string{"install", "dev"}, MustPass: true,
+				FilesExist: []string{"/workspace/.factory/skills/safe-skill/SKILL.md"},
+				FileContains: map[string]string{
+					// Indented, so it sits on the providing registry entry
+					// rather than at the top level where it names no provider.
+					"/workspace/.agents/config.yaml": "    collections:",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true,
+				FileContains: map[string]string{"/workspace/.factory/mcp.json": "bundled-mcp"}},
 		},
 	},
 	{

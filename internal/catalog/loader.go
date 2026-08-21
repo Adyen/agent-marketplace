@@ -556,6 +556,15 @@ func LoadRegistries(cfg *config.Config, repoRoot string, mode LoadMode, opts ...
 	if cfg == nil {
 		return result
 	}
+	// The returned Config is rebuilt from the loaded registry entries (a
+	// sub-bundle adds entries the input never had), so the top-level collection
+	// selector has to be carried across explicitly: it is the resolver's only
+	// record that a collection was named without naming a registry, and the
+	// resolver reads it both to select collections from whichever registry
+	// provides them and to tell that denial apart from a collection nobody
+	// mentioned. Registry entries deliberately do NOT inherit it — see
+	// config.KindIncludeGrantsTrust.
+	result.Config.Collections = cfg.Collections
 
 	// Phase 1: Prepare fetch jobs from registry entries.
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)
@@ -1017,20 +1026,29 @@ func findEntryPath(requests []loadRequest, key string) string {
 	return ""
 }
 
-// appendUniqueCollections appends items from extra to base, skipping any
-// whose Name already appears in base. This prevents duplicates when a
-// collection exists at both the registry root and the skill subdirectory.
+// appendUniqueCollections appends items from extra to base, skipping any whose
+// name already appears in base for the same source registry. This prevents
+// duplicates when a collection exists at both the registry root and the skill
+// subdirectory. Two registries publishing the same collection name are kept as
+// distinct collections: callers that act on a collection name — installing it
+// vouches for the hooks and MCP servers it carries — have to see that the name
+// is ambiguous instead of silently getting whichever registry loaded first.
 func appendUniqueCollections(base, extra []collection.Collection) []collection.Collection {
 	if len(extra) == 0 {
 		return base
 	}
-	seen := make(map[string]struct{}, len(base))
+	type collectionKey struct {
+		name       string
+		catalogKey string
+	}
+	seen := make(map[collectionKey]struct{}, len(base))
 	for _, c := range base {
-		seen[c.Name] = struct{}{}
+		seen[collectionKey{c.Name, c.SourceCatalogKey}] = struct{}{}
 	}
 	for _, c := range extra {
-		if _, ok := seen[c.Name]; !ok {
-			seen[c.Name] = struct{}{}
+		key := collectionKey{c.Name, c.SourceCatalogKey}
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
 			base = append(base, c)
 		}
 	}

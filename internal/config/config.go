@@ -96,6 +96,34 @@ func KindRequiresExplicitSelection(kind ir.ResourceKind) bool {
 	return kind == ir.KindHook || kind == ir.KindMcpServer
 }
 
+// KindIncludeGrantsTrust reports whether an include for kind records a decision
+// the entry cannot express any other way, and not merely a selection.
+//
+// A collections include is such a record: it is what vouches for the bundle's
+// hook and MCP server members, which no broad selection may enable. So it must
+// be written even when the entry already selects collections implicitly, and it
+// must not be read as narrowing the kinds it says nothing about — otherwise
+// naming one bundle would silently deselect every skill the registry provides.
+func KindIncludeGrantsTrust(kind ir.ResourceKind) bool {
+	return kind == ir.KindCollection
+}
+
+// KindIncludeNarrowsBroadSelection reports whether a non-empty include list for
+// kind puts a registry entry into explicit-selection mode, i.e. means "these
+// instead of everything" rather than "these as well".
+//
+// An include narrows only when broad selection could have reached the kind
+// anyway. For a non-required entry, a hooks/mcp include is the only way to name
+// an executable at all, and a collections include is a trust record, so neither
+// can be read as a narrowing of the other kinds. A required organization
+// registry does select every kind broadly, so there every include narrows.
+func KindIncludeNarrowsBroadSelection(kind ir.ResourceKind, required bool) bool {
+	if required {
+		return true
+	}
+	return !KindRequiresExplicitSelection(kind) && !KindIncludeGrantsTrust(kind)
+}
+
 // CollectionRef is a legacy type kept for backward compatibility with test
 // code. New code should use the Collections KindSelector field instead.
 // Deprecated: use Config.Collections (KindSelector) directly.

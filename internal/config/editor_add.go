@@ -377,16 +377,27 @@ func clearEntrySelectionsForExcludeAll(entryNode *yaml.Node) bool {
 	return changed
 }
 
-// AddCollectionToConfig adds a collection name to the collections.include
-// sequence in the config file at configPath. Idempotent: if the name already
-// exists the file is left unchanged. Creates the file and parent directories
-// if they do not exist.
-func AddCollectionToConfig(configPath, name string) error {
+// AddCollectionToProvidingRegistry names a collection on the registry entry that
+// publishes it, creating the entry in configPath when the registry is only
+// declared at a lower layer. Idempotent.
+//
+// The name is written on the entry, never at the top level: naming a collection
+// is what vouches for the hook and MCP server members it carries, and that vouch
+// is keyed by (provider, name). A top-level name says which bundle to expand but
+// not whose, so it enables no executables — see docs/PRECEDENCE.md.
+func AddCollectionToProvidingRegistry(configPath, registryURL, ref, registryPath, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("collection name is required")
 	}
-	return AddResourcesToConfig(configPath, ir.KindCollection, []string{name})
+	registryURL = strings.TrimSpace(registryURL)
+	if registryURL == "" {
+		return fmt.Errorf("collection %q: providing registry url is required to name it on an entry", name)
+	}
+	if err := EnsureRegistryWithPathsInConfig(configPath, registryURL, ref, registryPath); err != nil {
+		return fmt.Errorf("ensure registry %s in config %q: %w", registryURL, configPath, err)
+	}
+	return AddResourceToExactRegistryEntry(configPath, registryURL, registryPath, ir.KindCollection, name)
 }
 
 func addValuesToTopLevelSequence(configPath, key string, values []string) error {
@@ -536,7 +547,7 @@ func addValuesToRegistrySubSequence(configPath, registryURL, registryPath, topKe
 	// entry that already auto-selects this kind, or its default:true /
 	// required:true selection would be silently disabled. The caller drops any
 	// stale exclude separately.
-	if kind, ok := skill.ParseKind(topKey); ok && subKey == "include" && entryNodeAutoSelectsKind(entryNode, kind) {
+	if kind, ok := skill.ParseKind(topKey); ok && subKey == "include" && entryNodeIncludeIsRedundant(entryNode, kind) {
 		return nil
 	}
 
@@ -690,7 +701,7 @@ func addValuesToExactRegistryEntry(configPath, registryURL, registryPath string,
 	// explicit-selection mode and silently deselect everything else, so skip
 	// the include write — the caller drops any stale exclude separately.
 	// (Guarded to include-writes; exclude writes proceed.)
-	if subKey == "include" && entryNodeAutoSelectsKind(matchingEntry, kind) {
+	if subKey == "include" && entryNodeIncludeIsRedundant(matchingEntry, kind) {
 		return nil
 	}
 

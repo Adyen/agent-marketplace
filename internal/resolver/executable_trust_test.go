@@ -130,23 +130,6 @@ func TestNamedCollectionEnablesExecutables(t *testing.T) {
 		assertBundleFullyEnabled(t, resolved, errs)
 	})
 
-	t.Run("top_level_selector", func(t *testing.T) {
-		col := executableBundle("dev-bundle")
-		cfg := &config.Config{
-			Collections: ks("dev-bundle"),
-			Registries: []config.RegistryEntry{{
-				URL:    trustRegistry,
-				Ref:    "main",
-				Source: config.RepoCommitted,
-			}},
-		}
-		setCatalogKeys(cfg)
-		resolved, errs := Resolve(cfg, map[string][]catalog.Entry{
-			cfg.Registries[0].CatalogKey: bundleCatalog(col),
-		}, nil)
-		assertBundleFullyEnabled(t, resolved, errs)
-	})
-
 	t.Run("required_organization_registry", func(t *testing.T) {
 		col := executableBundle("dev-bundle")
 		cfg := &config.Config{Registries: []config.RegistryEntry{{
@@ -268,51 +251,68 @@ func TestCollectionTrustIsKeyedByProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("top_level_name_answered_by_two_registries_fails_closed", func(t *testing.T) {
-		cfg := &config.Config{
-			Collections: ks("dev-bundle"),
-			Registries: []config.RegistryEntry{
-				{URL: trustRegistry, Ref: "main", Source: config.UserPersonal},
-				{URL: "git@example.com:untrusted.git", Ref: "main", Source: config.RepoCommitted},
-			},
-		}
-		setCatalogKeys(cfg)
-		resolved, errs := Resolve(cfg, map[string][]catalog.Entry{
-			cfg.Registries[0].CatalogKey: bundleCatalog(newTrustCollection("dev-bundle", []ir.CollectionMember{
-				{Kind: ir.KindSkill, Name: "safe-skill"},
-			})),
-			cfg.Registries[1].CatalogKey: bundleCatalog(executableBundle("dev-bundle")),
-		}, nil)
-
-		if _, ok := resolvedKeys(resolved)["hook:bundled-hook"]; ok {
-			t.Fatalf("a top-level name two registries answer to must not vouch for either, got %#v", resolved)
-		}
-
-		var ambiguous *ExecutableCollectionMemberWarning
-		for _, err := range errs {
-			var withheld *ExecutableCollectionMemberWarning
-			if errors.As(err, &withheld) && len(withheld.AmbiguousProviders) > 0 {
-				ambiguous = withheld
-				break
+	// A top-level `collections: include:` names no registry, so it cannot say
+	// whose executables were accepted. It selects the collection (skills expand)
+	// and vouches for nothing — including when only one configured registry
+	// publishes the name, because which registries happen to be configured is
+	// not a statement the user made about which one they trusted. The exploit
+	// this closes: a personal config carrying a legacy top-level name, and a
+	// repository that adds the only registry publishing a bundle under it.
+	for _, publishers := range []string{"sole_publisher", "two_publishers"} {
+		t.Run("top_level_name_never_vouches_"+publishers, func(t *testing.T) {
+			cfg := &config.Config{
+				Collections: ks("dev-bundle"),
+				Registries: []config.RegistryEntry{
+					{URL: "git@example.com:untrusted.git", Ref: "main", Source: config.RepoCommitted},
+					{URL: trustRegistry, Ref: "main", Source: config.UserPersonal},
+				},
 			}
-		}
-		if ambiguous == nil {
-			t.Fatalf("expected the withholding to report the ambiguity, got %v", errs)
-		}
-		if len(ambiguous.AmbiguousProviders) != 2 {
-			t.Fatalf("expected both providers to be named, got %v", ambiguous.AmbiguousProviders)
-		}
-		// The user did name the collection, so telling them to name it would be
-		// advice they already took.
-		if strings.Contains(ambiguous.Remediation(), "select the collection by name") {
-			t.Fatalf("remediation must address the ambiguity, got %q", ambiguous.Remediation())
-		}
-		for _, want := range []string{"untrusted", "registry entry you meant"} {
-			if !strings.Contains(ambiguous.Error()+ambiguous.Remediation(), want) {
-				t.Fatalf("expected %q in %q / %q", want, ambiguous.Error(), ambiguous.Remediation())
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: bundleCatalog(executableBundle("dev-bundle")),
+				cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "unrelated", Path: "/cache/skills/unrelated"}},
 			}
-		}
-	})
+			if publishers == "two_publishers" {
+				catalogs[cfg.Registries[1].CatalogKey] = bundleCatalog(newTrustCollection("dev-bundle", []ir.CollectionMember{
+					{Kind: ir.KindSkill, Name: "safe-skill"},
+				}))
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+
+			byKey := resolvedKeys(resolved)
+			for _, key := range []string{"hook:bundled-hook", "mcpserver:bundled-mcp"} {
+				if _, ok := byKey[key]; ok {
+					t.Fatalf("a top-level name must not vouch for any provider, got %#v", byKey)
+				}
+			}
+			// Selection still works: the named bundle expands its safe members.
+			if _, ok := byKey["skill:safe-skill"]; !ok {
+				t.Fatalf("expected the named collection to still expand its skills, got %#v", byKey)
+			}
+
+			var reported *ExecutableCollectionMemberWarning
+			for _, err := range errs {
+				var withheld *ExecutableCollectionMemberWarning
+				if errors.As(err, &withheld) && len(withheld.TopLevelProviders) > 0 {
+					reported = withheld
+					break
+				}
+			}
+			if reported == nil {
+				t.Fatalf("expected the withholding to report the top-level name, got %v", errs)
+			}
+			// The user did name the collection, so telling them to name it would
+			// be advice they already took; the missing piece is the provider.
+			if strings.Contains(reported.Remediation(), "select the collection by name on the registry entry") {
+				t.Fatalf("remediation must address the missing provider, got %q", reported.Remediation())
+			}
+			for _, want := range []string{"untrusted", "onto the registry entry you meant"} {
+				if !strings.Contains(reported.Error()+reported.Remediation(), want) {
+					t.Fatalf("expected %q in %q / %q", want, reported.Error(), reported.Remediation())
+				}
+			}
+		})
+	}
 
 	t.Run("nested_include_by_bare_name_does_not_widen_trust", func(t *testing.T) {
 		inner := newTrustCollection("inner", []ir.CollectionMember{{Kind: ir.KindHook, Name: "bundled-hook"}})
@@ -340,6 +340,153 @@ func TestCollectionTrustIsKeyedByProvider(t *testing.T) {
 			t.Fatalf("expected exactly one withholding warning, got %v (all errors: %v)", names, errs)
 		}
 	})
+}
+
+// An `includes:` entry is a bare name, so whoever answers it decides what the
+// include delivers. The including collection's own provider answers first:
+// otherwise a registry that publishes a same-named bundle could substitute its
+// content — and its hooks — for the one the author meant, under trust the user
+// granted to somebody else.
+func TestNestedIncludeBindsToIncludingProvider(t *testing.T) {
+	// Catalog keys are set by hand so the hijacker sorts first: the binding used
+	// to be "lowest catalog key wins", which is what this pins against.
+	const (
+		hijackerKey  = "aaa-hijacker"
+		includingKey = "zzz-including"
+	)
+	outer := newTrustCollection("outer", nil, "inner")
+	ownInner := newTrustCollection("inner", []ir.CollectionMember{{Kind: ir.KindHook, Name: "own-hook"}})
+	hijackInner := newTrustCollection("inner", []ir.CollectionMember{{Kind: ir.KindHook, Name: "evil-hook"}})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:hijacker.git", Ref: "main", Default: true, Source: config.RepoCommitted, CatalogKey: hijackerKey},
+		{URL: trustRegistry, Ref: "main", Collections: ks("outer"), Source: config.UserPersonal, CatalogKey: includingKey},
+	}}
+	resolved, errs := Resolve(cfg, map[string][]catalog.Entry{
+		hijackerKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: hijackInner},
+			{Kind: ir.KindHook, Name: "evil-hook", Path: "/cache/hijacker/hooks/evil-hook"},
+		},
+		includingKey: {
+			{Kind: ir.KindCollection, Name: "outer", Resource: outer},
+			{Kind: ir.KindCollection, Name: "inner", Resource: ownInner},
+			{Kind: ir.KindHook, Name: "own-hook", Path: "/cache/team/hooks/own-hook"},
+		},
+	}, nil)
+
+	byKey := resolvedKeys(resolved)
+	if _, ok := byKey["hook:evil-hook"]; ok {
+		t.Fatalf("another registry's same-named collection answered the include, got %#v", byKey)
+	}
+	if _, ok := byKey["hook:own-hook"]; !ok {
+		t.Fatalf("expected the including provider's own nested hook to be enabled, got %#v (errors: %v)", byKey, errs)
+	}
+}
+
+// Trust never crosses a provider boundary: naming a collection accepts what its
+// own registry composes into it, not whatever a registry the author does not
+// control publishes under a name they referenced.
+func TestCrossProviderIncludeDoesNotInheritTrust(t *testing.T) {
+	newCfg := func(sharedProviderNamesIt bool) (*config.Config, map[string][]catalog.Entry) {
+		outer := newTrustCollection("outer", nil, "shared")
+		shared := newTrustCollection("shared", []ir.CollectionMember{
+			{Kind: ir.KindSkill, Name: "shared-skill"},
+			{Kind: ir.KindHook, Name: "shared-hook"},
+		})
+		sharedEntry := config.RegistryEntry{URL: "git@example.com:shared.git", Ref: "main", Source: config.RepoCommitted}
+		if sharedProviderNamesIt {
+			sharedEntry.Collections = ks("shared")
+		}
+		cfg := &config.Config{Registries: []config.RegistryEntry{
+			{URL: trustRegistry, Ref: "main", Collections: ks("outer"), Source: config.UserPersonal},
+			sharedEntry,
+		}}
+		setCatalogKeys(cfg)
+		return cfg, map[string][]catalog.Entry{
+			cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+			cfg.Registries[1].CatalogKey: {
+				{Kind: ir.KindCollection, Name: "shared", Resource: shared},
+				{Kind: ir.KindSkill, Name: "shared-skill", Path: "/cache/shared/skills/shared-skill"},
+				{Kind: ir.KindHook, Name: "shared-hook", Path: "/cache/shared/hooks/shared-hook"},
+			},
+		}
+	}
+
+	t.Run("withheld_and_explained", func(t *testing.T) {
+		cfg, catalogs := newCfg(false)
+		resolved, errs := Resolve(cfg, catalogs, nil)
+
+		byKey := resolvedKeys(resolved)
+		if _, ok := byKey["hook:shared-hook"]; ok {
+			t.Fatalf("a cross-provider include must not inherit trust, got %#v", byKey)
+		}
+		// Composition still works for everything that cannot execute.
+		if _, ok := byKey["skill:shared-skill"]; !ok {
+			t.Fatalf("expected the included collection's skill to still expand, got %#v (errors: %v)", byKey, errs)
+		}
+
+		var reported *ExecutableCollectionMemberWarning
+		for _, err := range errs {
+			var withheld *ExecutableCollectionMemberWarning
+			if errors.As(err, &withheld) && withheld.Name == "shared-hook" {
+				reported = withheld
+				break
+			}
+		}
+		if reported == nil {
+			t.Fatalf("expected the withholding to be reported, got %v", errs)
+		}
+		if reported.IncludedFrom == "" {
+			t.Fatalf("expected the warning to name the including provider, got %#v", reported)
+		}
+		if !strings.Contains(reported.Error(), "does not cross a provider boundary") {
+			t.Fatalf("message must explain why nothing was inherited, got %q", reported.Error())
+		}
+		// The remediation has to point at the collection that carries the hook,
+		// not at the outer one the user already named.
+		if !strings.Contains(reported.Remediation(), "[shared]") {
+			t.Fatalf("remediation must name the included collection, got %q", reported.Remediation())
+		}
+		if !strings.Contains(reported.Error(), "shared.git") || !strings.Contains(reported.Remediation(), "shared.git") {
+			t.Fatalf("expected the publishing registry to be named, got %q / %q", reported.Error(), reported.Remediation())
+		}
+	})
+
+	t.Run("enabled_by_its_own_provider_scoped_selection", func(t *testing.T) {
+		cfg, catalogs := newCfg(true)
+		resolved, errs := Resolve(cfg, catalogs, nil)
+
+		if names := withheldNames(errs); len(names) != 0 {
+			t.Fatalf("naming the included collection on its own provider enables it, got withheld %v", names)
+		}
+		if _, ok := resolvedKeys(resolved)["hook:shared-hook"]; !ok {
+			t.Fatalf("expected the nested hook to be enabled, got %#v", resolved)
+		}
+	})
+}
+
+// Installing a collection writes a per-entry `collections: include:`, which is a
+// trust record rather than a narrowing: it must not silently deselect every skill
+// the registry provides, or users are pushed back to the routes this rule closes.
+func TestCollectionIncludeKeepsBroadSelection(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:         trustRegistry,
+		Ref:         "main",
+		Default:     true,
+		Collections: ks("dev-bundle"),
+		Source:      config.RepoCommitted,
+	}}}
+	setCatalogKeys(cfg)
+	resolved, errs := Resolve(cfg, map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: append(bundleCatalog(executableBundle("dev-bundle")),
+			catalog.Entry{Kind: ir.KindSkill, Name: "other-skill", Path: "/cache/skills/other-skill"}),
+	}, nil)
+
+	byKey := resolvedKeys(resolved)
+	if _, ok := byKey["skill:other-skill"]; !ok {
+		t.Fatalf("naming a collection must not switch off the entry's broad selection, got %#v", byKey)
+	}
+	assertBundleFullyEnabled(t, resolved, errs)
 }
 
 func TestCollectionMemberPinnedToRequiredRegistryEnablesExecutable(t *testing.T) {
@@ -548,7 +695,7 @@ func TestWithheldExecutableWarningIsActionable(t *testing.T) {
 		}
 	}
 	remediation := warning.Remediation()
-	for _, want := range []string{"collections: include", "mcp: include", "install --kind mcp bundled-mcp"} {
+	for _, want := range []string{"collections: include: [dev-bundle]", "mcp: include", "install --kind mcp bundled-mcp"} {
 		if !strings.Contains(remediation, want) {
 			t.Fatalf("remediation %q missing %q", remediation, want)
 		}

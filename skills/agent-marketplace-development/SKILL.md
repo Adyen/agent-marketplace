@@ -216,10 +216,11 @@ The resolver enforces this; never add a bypass.
 ### Executable resources need a deliberate selection
 
 Hooks and MCP servers are only enabled by a name (`hooks`/`mcp` include, or a
-collection named in `collections: include:`) or by `required: true` organization
-policy. Broad selection — `default: true`, `tags:`, `install --all` without
-`--kind`, `install --from` without a name, and a collection reached by any of
-those — must never enable them. When code has to withhold one, it reports it
+collection named in a registry entry's `collections: include:`) or by
+`required: true` organization policy. Broad selection — `default: true`, `tags:`,
+`install --all` without `--kind`, `install --from` without a name, a top-level
+`collections: include:`, and a collection reached by any of those — must never
+enable them. When code has to withhold one, it reports it
 (`resolver.ExecutableCollectionMemberWarning`,
 `pipeline.InstallResult.Withheld`); dropping it silently is the bug this rule
 exists to prevent. Never add a bypass, and never let a new code path enable an
@@ -227,11 +228,20 @@ executable kind without a selection that names it.
 
 Two consequences are easy to get wrong:
 
-- **Trust is keyed by (provider, collection name).** `resolver.collectionTrust`
-  is built from the config *before* `propagateTopLevelCollections` runs, because
-  propagation deliberately copies top-level collection names onto every registry
-  entry. Never key trust on a bare name, and keep the top-level case failing
-  closed when more than one configured registry publishes the name.
+- **Trust is keyed by (provider, collection name), and only an entry grants it.**
+  `resolver.collectionTrust` is built from the config *before*
+  `propagateTopLevelCollections` runs, because propagation deliberately copies
+  top-level collection names onto every registry entry for *selection*. A
+  top-level name grants nothing, however many registries publish it, so
+  `config.MergeLayers` must not inherit it onto entries either (see
+  `config.KindIncludeGrantsTrust`) and `catalog.LoadRegistries` has to carry the
+  top-level selector into the config it returns for selection to keep working.
+  Never key trust on a bare name.
+- **Trust does not cross an `includes:` boundary.** `selectIncludedCollection`
+  binds a nested name to the including collection's own registry first; when
+  another registry answers the name, the artifact is re-attributed to that
+  publisher and trust is re-evaluated for it (never inherited), so a collection
+  the user vouched for cannot hand a name to a registry they did not.
 - **Explicitness is per kind for hooks and MCP servers.** An include for a kind
   broad selection never reaches must not disable `default: true` for the other
   kinds (`resolver.hasExplicitSelection`), and the editor's

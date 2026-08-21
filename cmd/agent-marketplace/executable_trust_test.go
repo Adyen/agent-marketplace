@@ -144,6 +144,178 @@ func TestInstallFromBundleWithExecutableKindWritesExplicitIncludes(t *testing.T)
 	}
 }
 
+// writeExecutableCollectionRegistry creates a registry publishing one skill, one
+// MCP server, and a collection that carries both.
+func writeExecutableCollectionRegistry(t *testing.T, name, collectionName string) string {
+	t.Helper()
+	origin, working := createBareRepoWithWorkingClone(t, name)
+	writeSkill(t, working, "safe-skill", "Safe skill", nil)
+	writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"bundled-mcp":{"command":"npx","args":["-y","@bundled/mcp"]}}}`)
+	writeCollection(t, working, collectionName, `
+name: `+collectionName+`
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`)
+	commitAndPushAll(t, working, "Add a collection carrying an MCP server")
+	return origin
+}
+
+// Installing a collection is the deliberate act that vouches for the hooks and
+// MCP servers it carries, and that vouch names one registry. The selection is
+// therefore written onto the providing registry entry: a top-level name says
+// which bundle to expand but not whose, so it enables no executables.
+func TestInstallCollectionWritesProviderScopedInclude(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin := writeExecutableCollectionRegistry(t, "collection-trust.git", "dev-bundle")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "dev-bundle")
+	if err != nil {
+		t.Fatalf("expected install dev-bundle to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+	if len(cfg.Collections.Include) != 0 {
+		t.Fatalf("a top-level collection name vouches for no provider, so none must be written: %#v", cfg.Collections.Include)
+	}
+	if got := cfg.Registries[0].Collections.Include; len(got) != 1 || got[0] != "dev-bundle" {
+		t.Fatalf("expected the collection to be named on the providing entry, got %#v", got)
+	}
+
+	assertFactorySkillExists(t, repoRoot, "safe-skill")
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "mcp.json"))
+	if err != nil {
+		t.Fatalf("expected the installed collection's MCP server to be materialized: %v", err)
+	}
+	if !strings.Contains(string(data), "bundled-mcp") {
+		t.Fatalf("expected bundled-mcp in .factory/mcp.json, got:\n%s", data)
+	}
+	if out, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("expected the installed collection to be in sync: %v\n%s", err, out)
+	}
+}
+
+// A legacy top-level `collections: include:` still selects the collection — its
+// skills expand — but names no registry, so it cannot say whose executables were
+// accepted. The exploit this closes: a personal config carrying such a name, and
+// a repository that adds the registry publishing a bundle under it.
+func TestTopLevelCollectionIncludeWithholdsExecutables(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin := writeExecutableCollectionRegistry(t, "collection-toplevel.git", "dev-bundle")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+collections:
+  include:
+    - dev-bundle
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("withholding must not fail the sync: %v\n%s", err, output)
+	}
+
+	assertFactorySkillExists(t, repoRoot, "safe-skill")
+	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "mcp.json")); err == nil {
+		t.Fatal("a top-level collection name must not enable the bundle's MCP server")
+	}
+	for _, want := range []string{"bundled-mcp", "was not enabled", "onto the registry entry you meant"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q in sync output:\n%s", want, output)
+		}
+	}
+}
+
+// Which registry a collection name refers to may not be guessed when installing
+// it also enables the executables it carries.
+func TestInstallCollectionRefusesAmbiguousPublisher(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	first := writeExecutableCollectionRegistry(t, "collection-ambiguous-a.git", "dev-bundle")
+	second := writeExecutableCollectionRegistry(t, "collection-ambiguous-b.git", "dev-bundle")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+first+`
+    ref: main
+  - url: `+second+`
+    ref: main
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "dev-bundle")
+	if err == nil {
+		t.Fatalf("expected the ambiguous collection install to be refused, got:\n%s", output)
+	}
+	for _, want := range []string{"published by 2 configured registries", "--from"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error, got: %v", want, err)
+		}
+	}
+}
+
+// install --all does not enable executables, but what discovery found out about
+// them must still be reported: a name two registries answer to is the ambiguity
+// a later 'install --kind' has to resolve, and it used to be dropped along with
+// the names themselves.
+func TestInstallAllReportsExecutableCollision(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	makeRegistry := func(name, skillName string) string {
+		origin, working := createBareRepoWithWorkingClone(t, name)
+		writeSkill(t, working, skillName, "Skill "+skillName, nil)
+		writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"shared-mcp":{"command":"npx","args":["-y","@shared/mcp"]}}}`)
+		commitAndPushAll(t, working, "Add a skill and a shared MCP server name")
+		return origin
+	}
+	first := makeRegistry("collision-a.git", "skill-a")
+	second := makeRegistry("collision-b.git", "skill-b")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+first+`
+    ref: main
+  - url: `+second+`
+    ref: main
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--all")
+	if err == nil {
+		t.Fatalf("expected the executable collision to be surfaced, got:\n%s", output)
+	}
+	for _, want := range []string{"shared-mcp", "multiple registries"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error, got: %v", want, err)
+		}
+	}
+}
+
 func TestReportWithheldResourcesNamesAnInstallCommand(t *testing.T) {
 	var out bytes.Buffer
 	err := reportWithheldResources(&out, []pipeline.WithheldResource{

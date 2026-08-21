@@ -230,12 +230,14 @@ They execute commands, so nothing implicit enables them:
   `agent-marketplace install --kind hook <name>` / `--kind mcp <name>`; doing so
   does not switch off `default: true` for the other kinds, so the registry's
   skills keep being selected;
-- a collection carries them only when the collection is named in
-  `collections: include:` (what `install <collection>` writes) or comes from a
-  `required` organization registry — a collection reached only by `default: true`
-  or a tag reports each executable member as withheld instead. The name must
-  identify one provider: an entry-level include vouches for that registry only,
-  and a top-level one only while a single configured registry publishes the name;
+- a collection carries them only when the collection is named in a
+  `collections: include:` **on the registry entry that provides it** (what
+  `install <collection>` writes) or comes from a `required` organization registry
+  — a collection reached only by `default: true`, a tag, or a top-level
+  `collections: include:` still expands its skills but reports each executable
+  member as withheld. A top-level name names no registry, so it vouches for none,
+  and trust does not cross an `includes:` boundary into another registry's
+  collection;
 - `install --all` and `install --from <url>` without a resource name write a broad
   selection, so they list discovered hooks and MCP servers as *not installed*;
   adding `--kind hook` / `--kind mcp` installs them by writing the explicit

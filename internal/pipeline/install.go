@@ -295,8 +295,17 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 					// "everything" must not mean "and start running things".
 					// The names are reported so the user can ask for them with
 					// --kind, which is the deliberate act that enables them.
-					if err == nil {
+					switch {
+					case err == nil:
 						withheld = append(withheld, withheldResources(k, names)...)
+					case isNoResourcesError(err):
+					default:
+						// Withholding a kind is not a reason to swallow what the
+						// discovery found out about it: a name two registries
+						// answer to is exactly the ambiguity a later
+						// 'install --kind' has to resolve, and dropping it here
+						// would leave the executables unreported as well.
+						return nil, fmt.Errorf("cannot determine which %s resources this registry set provides: %w", skill.KindLabel(k), err)
 					}
 					continue
 				}
@@ -336,12 +345,14 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 		arg := strings.TrimSpace(opts.Args[0])
 		// Detect collection install.
-		if col := collection.Find(discoveredCollections, arg); col != nil {
+		if col, err := findCollectionToInstall(discoveredCollections, arg, ""); err != nil {
+			return nil, err
+		} else if col != nil {
 			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
 			}
-			if err := config.AddCollectionToConfig(configPath, col.Name); err != nil {
+			if err := config.AddCollectionToProvidingRegistry(configPath, col.SourceRegistryURL, col.SourceRef, col.SourcePath, col.Name); err != nil {
 				return nil, err
 			}
 			requirementWarnings, err := syncAfterInstall(ctx, repoRoot, collectionResources, silentSyncOptsForInstall(opts)...)
@@ -447,6 +458,53 @@ func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity
 		resources = append(resources, resourceIdentity{kind: kind, name: strings.TrimSpace(name)})
 	}
 	return resources
+}
+
+// findCollectionToInstall resolves a collection name to the single publisher the
+// install is about, or nil when no discovered collection carries the name.
+//
+// Installing a collection vouches for the hooks and MCP servers it carries, and
+// that vouch names one registry, so the publisher may not be guessed: when two
+// configured registries publish the name, the install refuses and asks which one
+// with --from. When catalogKey is set (an ad-hoc --from install), the registry is
+// already named and only its collections are candidates.
+func findCollectionToInstall(available []collection.Collection, name, catalogKey string) (*collection.Collection, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, nil
+	}
+	var matches []*collection.Collection
+	for i := range available {
+		col := &available[i]
+		if strings.TrimSpace(col.Name) != name {
+			continue
+		}
+		if catalogKey != "" && col.SourceCatalogKey != catalogKey {
+			continue
+		}
+		matches = append(matches, col)
+	}
+	switch len(matches) {
+	case 0:
+		return nil, nil
+	case 1:
+		return matches[0], nil
+	}
+	locations := make([]string, 0, len(matches))
+	for _, col := range matches {
+		location := col.SourceRegistryURL
+		if col.SourcePath != "" {
+			location += " (" + col.SourcePath + ")"
+		}
+		locations = append(locations, location)
+	}
+	slices.Sort(locations)
+	locations = slices.Compact(locations)
+	if len(locations) == 1 {
+		return matches[0], nil
+	}
+	return nil, fmt.Errorf("collection %q is published by %d configured registries (%s); rerun with --from <url> to say which one to install, since installing a collection also enables the hooks and MCP servers it carries",
+		name, len(locations), strings.Join(locations, ", "))
 }
 
 func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry) ([]resourceIdentity, error) {
@@ -879,13 +937,16 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if len(opts.Args) > 0 {
 		resourceName := strings.TrimSpace(opts.Args[0])
 
-		// Check collections.
-		if col := collection.Find(discoveredCollections, resourceName); col != nil {
+		// Check collections. `--from` names the registry, so a collection of
+		// that name published elsewhere is not the one being installed.
+		if col, err := findCollectionToInstall(discoveredCollections, resourceName, catalogKey); err != nil {
+			return nil, err
+		} else if col != nil {
 			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
 			}
-			if err := config.AddCollectionToConfig(configPath, col.Name); err != nil {
+			if err := config.AddCollectionToProvidingRegistry(configPath, col.SourceRegistryURL, col.SourceRef, col.SourcePath, col.Name); err != nil {
 				return nil, err
 			}
 			requirementWarnings, err := syncAfterInstall(ctx, repoRoot, collectionResources, silentSyncOptsForInstall(opts)...)
