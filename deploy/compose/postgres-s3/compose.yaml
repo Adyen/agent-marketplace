@@ -1,0 +1,128 @@
+name: agent-marketplace-postgres
+
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-marketplace}
+      POSTGRES_USER: ${POSTGRES_USER:-marketplace}
+      POSTGRES_PASSWORD_FILE: /run/secrets/marketplace-postgres-password
+    secrets:
+      - marketplace_postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile.marketplace
+      target: api
+      args:
+        VERSION: ${MARKETPLACE_VERSION:-dev}
+    command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "api"]
+    volumes:
+      - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
+    secrets:
+      - marketplace_postgres_dsn
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8080"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "-T", "5", "http://127.0.0.1:9090/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile.marketplace
+      target: worker
+      args:
+        VERSION: ${MARKETPLACE_VERSION:-dev}
+    command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "worker"]
+    volumes:
+      - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
+    secrets:
+      - marketplace_postgres_dsn
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../../../web
+      dockerfile: Dockerfile
+    environment:
+      NUXT_PUBLIC_API_BASE: /
+      NUXT_API_BASE_INTERNAL: http://api:8080
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "3000"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "${MARKETPLACE_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../shared/proxy-headers.conf:/etc/nginx/proxy-headers.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+
+secrets:
+  marketplace_postgres_password:
+    file: ./secrets/marketplace-postgres-password
+  marketplace_postgres_dsn:
+    file: ./secrets/marketplace-postgres-dsn

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,83 @@ func newTestStore(t *testing.T) *sqlite.Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestMigrationsAreRerunnable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marketplace.db")
+	for i := 0; i < 3; i++ {
+		s := sqlite.New(path)
+		if err := s.Open(context.Background()); err != nil {
+			t.Fatalf("Open %d: %v", i, err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close %d: %v", i, err)
+		}
+	}
+}
+
+func TestMigrationsSerializeConcurrentStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marketplace.db")
+	const count = 6
+	stores := make([]*sqlite.Store, count)
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := range stores {
+		stores[i] = sqlite.New(path)
+		wg.Add(1)
+		go func(s *sqlite.Store) {
+			defer wg.Done()
+			errs <- s.Open(context.Background())
+		}(stores[i])
+	}
+	wg.Wait()
+	for i := 0; i < count; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Open %d: %v", i, err)
+		}
+	}
+	// The stores remain usable after concurrent migration startup. Exercise a
+	// transaction through one handle and read it through another handle before
+	// reopening the database.
+	ctx := context.Background()
+	if err := stores[0].WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		return tx.PutMarketplace(txCtx, store.Marketplace{ID: "after-startup", Name: "Concurrent", CanonicalURL: "https://example.com"})
+	}); err != nil {
+		t.Fatalf("transaction after concurrent startup: %v", err)
+	}
+	if _, err := stores[1].GetMarketplace(ctx, "after-startup"); err != nil {
+		t.Fatalf("CRUD after concurrent startup: %v", err)
+	}
+	for _, s := range stores {
+		_ = s.Close()
+	}
+
+	reopened := sqlite.New(path)
+	if err := reopened.Open(ctx); err != nil {
+		t.Fatalf("reopen after concurrent startup: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	if _, err := reopened.GetMarketplace(ctx, "after-startup"); err != nil {
+		t.Fatalf("CRUD after reopen: %v", err)
+	}
+}
+
+func TestInMemoryCRUDAndTransaction(t *testing.T) {
+	ctx := context.Background()
+	s := sqlite.New(":memory:")
+	if err := s.Open(ctx); err != nil {
+		t.Fatalf("Open in-memory: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if err := s.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		return tx.PutMarketplace(txCtx, store.Marketplace{ID: "memory", Name: "In memory", CanonicalURL: "https://example.com"})
+	}); err != nil {
+		t.Fatalf("in-memory transaction: %v", err)
+	}
+	if _, err := s.GetMarketplace(ctx, "memory"); err != nil {
+		t.Fatalf("in-memory CRUD after transaction: %v", err)
+	}
 }
 
 func TestMarketplaceCRUD(t *testing.T) {
@@ -185,11 +263,23 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 		t.Fatalf("LatestSourceOccurrence returned %q, want %q", latest.Commit, occ.Commit)
 	}
 
-	// Re-publishing the exact immutable observation is idempotent, but a
-	// conflicting observation for the same source/commit must not overwrite it.
-	if err := s.PutSourceOccurrence(ctx, occ); err != nil {
-		t.Fatalf("PutSourceOccurrence identical: %v", err)
+	// A refresh computes a new observation time, but the timestamp is assigned
+	// only on first publication and must not make the immutable observation
+	// conflict.
+	retry := occ
+	retry.OccurredAt = occ.OccurredAt.Add(time.Minute)
+	if err := s.PutSourceOccurrence(ctx, retry); err != nil {
+		t.Fatalf("PutSourceOccurrence refresh retry: %v", err)
 	}
+	got, err = s.GetSourceOccurrence(ctx, occ.SourceID, occ.Commit)
+	if err != nil {
+		t.Fatalf("GetSourceOccurrence after refresh retry: %v", err)
+	}
+	if got.OccurredAt.UnixMicro() != occ.OccurredAt.UnixMicro() {
+		t.Fatalf("refresh retry changed occurred_at to %v, want %v", got.OccurredAt, occ.OccurredAt)
+	}
+
+	// A conflicting observation for the same source/commit must not overwrite it.
 	changed := occ
 	changed.Ref = "release"
 	if err := s.PutSourceOccurrence(ctx, changed); !errors.Is(err, store.ErrConflict) {
@@ -201,6 +291,53 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 	}
 	if got.Ref != occ.Ref {
 		t.Fatalf("conflicting write changed ref to %q, want %q", got.Ref, occ.Ref)
+	}
+}
+
+func TestSourceOccurrenceConcurrentDuplicates(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	base := store.SourceOccurrence{
+		SourceID:                     store.SourceID("src-concurrent"),
+		Ref:                          "main",
+		Commit:                       "concurrent-commit",
+		SourceRevisionManifestDigest: store.RevisionDigest("sha256:manifest-concurrent"),
+		Acquisition:                  store.AcquisitionMirror,
+		MirroredArtifactDigest:       store.ArchiveDigest("sha256:artifact-concurrent"),
+	}
+
+	const publishers = 16
+	errs := make(chan error, publishers)
+	var wg sync.WaitGroup
+	wg.Add(publishers)
+	for i := 0; i < publishers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			occ := base
+			occ.OccurredAt = time.Now().UTC().Add(time.Duration(i) * time.Second)
+			errs <- s.PutSourceOccurrence(ctx, occ)
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent duplicate publication: %v", err)
+		}
+	}
+
+	history, err := s.SourceHistory(ctx, base.SourceID)
+	if err != nil {
+		t.Fatalf("SourceHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("SourceHistory returned %d occurrences, want 1", len(history))
+	}
+	if !history[0].Equal(base) {
+		t.Fatalf("stored occurrence = %+v, want immutable fields %+v", history[0], base)
+	}
+	if history[0].OccurredAt.IsZero() {
+		t.Fatal("stored occurrence has zero occurred_at")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func TestOpenErrorDoesNotLeakURLCredentials(t *testing.T) {
+	const secret = "postgres://marketplace:startup-secret@%zz"
+	s := postgres.New(secret)
+	err := s.Open(context.Background())
+	if err == nil {
+		t.Fatal("Open unexpectedly succeeded")
+	}
+	if strings.Contains(err.Error(), "startup-secret") {
+		t.Fatalf("Open error leaked DSN credential: %v", err)
+	}
+}
 
 func testDSN(t *testing.T) string {
 	t.Helper()
@@ -56,6 +69,48 @@ func newTestStore(t *testing.T) (*postgres.Store, string) {
 	t.Cleanup(func() { dropSchema(t, dsn, schema) })
 	t.Cleanup(func() { _ = s.Close() })
 	return s, schema
+}
+
+func TestMigrationsAreRerunnable(t *testing.T) {
+	dsn := testDSN(t)
+	schema := testSchema(t)
+	for i := 0; i < 2; i++ {
+		s := postgres.NewWithSchema(dsn, schema)
+		if err := s.Open(context.Background()); err != nil {
+			t.Fatalf("Open %d: %v", i, err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close %d: %v", i, err)
+		}
+	}
+	dropSchema(t, dsn, schema)
+}
+
+func TestMigrationsSerializeConcurrentStartup(t *testing.T) {
+	dsn := testDSN(t)
+	schema := testSchema(t)
+	const count = 4
+	stores := make([]*postgres.Store, count)
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for i := range stores {
+		stores[i] = postgres.NewWithSchema(dsn, schema)
+		wg.Add(1)
+		go func(s *postgres.Store) {
+			defer wg.Done()
+			errs <- s.Open(context.Background())
+		}(stores[i])
+	}
+	wg.Wait()
+	for i := 0; i < count; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Open %d: %v", i, err)
+		}
+	}
+	for _, s := range stores {
+		_ = s.Close()
+	}
+	dropSchema(t, dsn, schema)
 }
 
 func TestMarketplaceCRUD(t *testing.T) {

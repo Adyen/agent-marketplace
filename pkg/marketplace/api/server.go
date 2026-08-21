@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -64,6 +65,10 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
 	publicMux.HandleFunc("/s/", s.methodGet(s.handleBrowser))
 	publicMux.HandleFunc("/healthz", s.methodGet(s.handleHealthz))
+	// Keep operations endpoints private even when a caller reaches the public
+	// listener directly; the operations listener remains the only route.
+	publicMux.HandleFunc("/readyz", s.handlePublicOperationsNotFound)
+	publicMux.HandleFunc("/metrics", s.handlePublicOperationsNotFound)
 
 	opsMux := http.NewServeMux()
 	opsMux.HandleFunc("/readyz", s.methodGet(s.handleReadyz))
@@ -174,6 +179,9 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
+	// Marketplace rows may predate public URL validation. Sanitize at the
+	// response boundary so legacy canonical URLs cannot leak credentials.
+	mp.CanonicalURL = publicurl.Sanitize(mp.CanonicalURL)
 	writeJSON(w, http.StatusOK, mp)
 }
 
@@ -286,8 +294,9 @@ func (s *Server) handleSourceDetail(w http.ResponseWriter, r *http.Request, slug
 		writeError(w, http.StatusInternalServerError, "failed to load source")
 		return
 	}
-	src.CredentialsRef = ""
-	writeJSON(w, http.StatusOK, src)
+	// Convert through the public DTO: the store model contains credentials and
+	// refresh diagnostics that must never cross the API boundary.
+	writeJSON(w, http.StatusOK, sourceDTO(src))
 }
 
 func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slugOrID string) {
@@ -484,6 +493,10 @@ func (s *Server) handleBrowser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handlePublicOperationsNotFound(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusNotFound, "not found")
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {

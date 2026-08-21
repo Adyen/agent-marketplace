@@ -1,5 +1,7 @@
 package api
 
+import "github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
+
 // Marketplace API and artifact schema version constants.
 const (
 	APIVersionV1            = "v1"
@@ -25,7 +27,7 @@ func DefaultCapabilities() Capabilities {
 func DefaultWellKnown(instanceID, canonicalURL string) WellKnown {
 	return WellKnown{
 		InstanceID:   instanceID,
-		CanonicalURL: canonicalURL,
+		CanonicalURL: publicurl.Sanitize(canonicalURL),
 		APIBase:      "/api/v1",
 		BrowserRoute: "/s/{source}/{kind}/{name}",
 		Capabilities: DefaultCapabilities(),

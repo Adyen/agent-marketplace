@@ -75,6 +75,22 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	}
 }
 
+func TestOpenAPISourceSchemaIsPublicMetadataOnly(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	source := schemas["Source"].(map[string]any)
+	if source["additionalProperties"] != false {
+		t.Fatalf("Source schema must reject undeclared private fields: %#v", source["additionalProperties"])
+	}
+	properties := source["properties"].(map[string]any)
+	for _, privateField := range []string{"credentials_ref", "refresh_status", "refresh_error", "refreshed_at", "policy_overrides"} {
+		if _, ok := properties[privateField]; ok {
+			t.Errorf("Source schema exposes private field %q", privateField)
+		}
+	}
+}
+
 func TestOpenAPIUsesOriginServerAndCompatibleOccurrenceCommitFields(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	servers, ok := doc["servers"].([]any)
@@ -107,6 +123,29 @@ func TestOpenAPIUsesOriginServerAndCompatibleOccurrenceCommitFields(t *testing.T
 	}
 	if !seen["commit"] || !seen["revision_commit"] {
 		t.Fatalf("SourceOccurrence.anyOf required fields = %#v, want commit and revision_commit", seen)
+	}
+}
+
+func TestOpenAPIPublicURLSchemasDescribeSanitizedValues(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	for _, schemaName := range []string{"WellKnown", "Marketplace"} {
+		schema := schemas[schemaName].(map[string]any)
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok {
+			allOf := schema["allOf"].([]any)
+			properties = allOf[1].(map[string]any)["properties"].(map[string]any)
+		}
+		canonical := properties["canonical_url"].(map[string]any)
+		if canonical["format"] != "uri" || canonical["description"] == nil {
+			t.Errorf("%s canonical_url is not documented as a sanitized URI: %#v", schemaName, canonical)
+		}
+	}
+	publisher := schemas["Publisher"].(map[string]any)
+	publisherURL := publisher["properties"].(map[string]any)["url"].(map[string]any)
+	if publisherURL["format"] != "uri" || publisherURL["description"] == nil {
+		t.Errorf("Publisher.url is not documented as a sanitized URI: %#v", publisherURL)
 	}
 }
 

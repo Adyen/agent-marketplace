@@ -408,6 +408,7 @@ components:
             canonical_url:
               type: string
               format: uri
+              description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
             api_base:
               type: string
             browser_route_template:
@@ -427,12 +428,15 @@ components:
         canonical_url:
           type: string
           format: uri
+          description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
         instance_metadata:
           type: object
           additionalProperties: true
 
     Source:
       type: object
+      additionalProperties: false
+      description: Public source metadata. Origins are sanitized to remove URL userinfo, fragments, and credential/signature-like query values; credentials, policy internals, and refresh diagnostics are never returned.
       required:
         - id
         - slug
@@ -452,6 +456,7 @@ components:
             type: string
         origins:
           type: array
+          description: Current and historical origins with URL userinfo removed and credential/signature-like query values redacted.
           items:
             type: string
         ref:
@@ -484,11 +489,14 @@ components:
 
     Publisher:
       type: object
+      description: Public publisher metadata; unsafe legacy URLs are omitted.
       properties:
         name:
           type: string
         url:
           type: string
+          format: uri
+          description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
 
     SourceOccurrence:
       type: object

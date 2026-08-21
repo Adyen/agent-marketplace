@@ -12,6 +12,10 @@
 /.gemini
 /.windsurf/
 
+# Deployment credentials are local-only. Keep checked-in *.example files visible.
+/deploy/**/.env*
+!/deploy/**/.env.example
+
 # Dev artifacts
 .DS_Store
 /dist/
