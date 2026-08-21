@@ -184,6 +184,37 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 	if latest.Commit != occ.Commit {
 		t.Fatalf("LatestSourceOccurrence returned %q, want %q", latest.Commit, occ.Commit)
 	}
+
+	// Re-publishing the exact immutable observation is idempotent, but a
+	// conflicting observation for the same source/commit must not overwrite it.
+	if err := s.PutSourceOccurrence(ctx, occ); err != nil {
+		t.Fatalf("PutSourceOccurrence identical: %v", err)
+	}
+	changed := occ
+	changed.Ref = "release"
+	if err := s.PutSourceOccurrence(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("PutSourceOccurrence conflicting error = %v, want ErrConflict", err)
+	}
+	got, err = s.GetSourceOccurrence(ctx, occ.SourceID, occ.Commit)
+	if err != nil {
+		t.Fatalf("GetSourceOccurrence after conflict: %v", err)
+	}
+	if got.Ref != occ.Ref {
+		t.Fatalf("conflicting write changed ref to %q, want %q", got.Ref, occ.Ref)
+	}
+}
+
+func TestSourceHistoryEmptyIsNonNil(t *testing.T) {
+	history, err := newTestStore(t).SourceHistory(context.Background(), store.SourceID("missing-source"))
+	if err != nil {
+		t.Fatalf("SourceHistory: %v", err)
+	}
+	if history == nil {
+		t.Fatal("SourceHistory returned nil, want empty non-nil slice")
+	}
+	if len(history) != 0 {
+		t.Fatalf("SourceHistory returned %d entries, want 0", len(history))
+	}
 }
 
 func TestCollectionAndRevocationCRUD(t *testing.T) {

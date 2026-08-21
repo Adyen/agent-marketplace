@@ -308,6 +308,19 @@ type SourceOccurrence struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+// Equal reports whether two source occurrences have the same immutable fields.
+// Timestamps are compared at microsecond precision, matching SQL adapter
+// storage precision.
+func (o SourceOccurrence) Equal(other SourceOccurrence) bool {
+	return o.SourceID == other.SourceID &&
+		o.Ref == other.Ref &&
+		o.Commit == other.Commit &&
+		o.SourceRevisionManifestDigest == other.SourceRevisionManifestDigest &&
+		o.Acquisition == other.Acquisition &&
+		o.MirroredArtifactDigest == other.MirroredArtifactDigest &&
+		o.OccurredAt.UnixMicro() == other.OccurredAt.UnixMicro()
+}
+
 // CollectionRevision is an immutable manifest of exact member coordinates.
 type CollectionRevision struct {
 	// ID is the collection revision identifier.
