@@ -19,7 +19,7 @@ var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
 func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination, error) {
 	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
 	if !ok {
-		return nil, fmt.Errorf("Codex native layout is not registered")
+		return nil, fmt.Errorf("codex native layout is not registered")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -63,6 +63,7 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 	for _, aggregate := range partition.Aggregates {
 		aggregates = append(aggregates, aggregate.Path)
 	}
+	slices.Sort(aggregates)
 	var resourceDirs map[ir.ResourceKind]string
 	for kind, pattern := range partition.ResourcePaths {
 		if kind == ir.KindSkill || kind == ir.KindCommand {

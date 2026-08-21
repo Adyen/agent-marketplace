@@ -4,6 +4,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -76,6 +77,7 @@ func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 		for _, aggregate := range partition.Aggregates {
 			wantAggregates = append(wantAggregates, aggregate.Path)
 		}
+		slices.Sort(wantAggregates)
 		if gotAggregates := got.AggregateFilesForScope(false); !reflect.DeepEqual(gotAggregates, wantAggregates) {
 			t.Errorf("partition %q aggregates = %v, want %v", partition.ID, gotAggregates, wantAggregates)
 		}
