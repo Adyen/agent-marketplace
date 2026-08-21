@@ -211,7 +211,7 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 	if res == nil && len(spans) > 0 {
 		res = spans[0].Resource()
 	}
-	redactedRes := redactResource(ctx, res)
+	redactedRes := redactResource(res)
 
 	rmRedacted := redactResourceMetrics(ctx, &rm)
 	rmRedacted.Resource = redactedRes
@@ -485,17 +485,11 @@ func attributeSetToMap(s otelattribute.Set) map[string]string {
 
 // redactResource builds a new Resource with URL credentials removed from string
 // attribute values.
-func redactResource(ctx context.Context, res *otelresource.Resource) *otelresource.Resource {
+func redactResource(res *otelresource.Resource) *otelresource.Resource {
 	if res == nil {
 		return nil
 	}
-	r, err := otelresource.New(ctx, otelresource.WithAttributes(redactKeyValues(res.Attributes())...))
-	if err != nil {
-		// resource construction should not fail, but return the original on
-		// the off chance that redaction produces an invalid combination.
-		return res
-	}
-	return r
+	return otelresource.NewSchemaless(redactKeyValues(res.Attributes())...)
 }
 
 // redactResourceMetrics returns a deep copy of rm with URL credentials removed
@@ -505,7 +499,7 @@ func redactResourceMetrics(ctx context.Context, rm *metricdata.ResourceMetrics) 
 		return nil
 	}
 	out := &metricdata.ResourceMetrics{
-		Resource:     redactResource(ctx, rm.Resource),
+		Resource:     redactResource(rm.Resource),
 		ScopeMetrics: make([]metricdata.ScopeMetrics, 0, len(rm.ScopeMetrics)),
 	}
 	for _, sm := range rm.ScopeMetrics {
@@ -691,21 +685,23 @@ func exportDiagnosticPayload(ctx context.Context, state TelemetryState, rm *metr
 	}
 	if send == nil {
 		send = &http.Client{Timeout: diagnosticExportTimeout}
-	} else {
-		send.Timeout = diagnosticExportTimeout
 	}
 
 	exportCtx, cancel := context.WithTimeout(ctx, diagnosticExportTimeout)
 	defer cancel()
 
+	capture.mu.Lock()
+	metric, trace := capture.metric, capture.trace
+	capture.mu.Unlock()
+
 	var exportErrs []error
-	if capture.metric != nil {
-		if err := sendCapturedRequest(exportCtx, send, capture.metric); err != nil {
+	if metric != nil {
+		if err := sendCapturedRequest(exportCtx, send, metric); err != nil {
 			exportErrs = append(exportErrs, err)
 		}
 	}
-	if capture.trace != nil {
-		if err := sendCapturedRequest(exportCtx, send, capture.trace); err != nil {
+	if trace != nil {
+		if err := sendCapturedRequest(exportCtx, send, trace); err != nil {
 			exportErrs = append(exportErrs, err)
 		}
 	}
