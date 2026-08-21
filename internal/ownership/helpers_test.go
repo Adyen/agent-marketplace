@@ -3,6 +3,7 @@ package ownership
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,6 +26,7 @@ type fixture struct {
 	stateRoot  string
 	rel        string
 	absFile    string
+	clockMu    sync.Mutex
 	clock      time.Time
 }
 
@@ -59,8 +61,12 @@ func (f *fixture) store(opts ...Option) *Store {
 }
 
 // nextClock advances a deterministic clock so successive backups get distinct,
-// lexically ordered names without depending on wall-clock resolution.
+// lexically ordered names without depending on wall-clock resolution. It is
+// mutex-guarded because concurrency tests hand the same fixture to several
+// stores, and two stores must not read the same instant.
 func (f *fixture) nextClock() time.Time {
+	f.clockMu.Lock()
+	defer f.clockMu.Unlock()
 	f.clock = f.clock.Add(time.Second)
 	return f.clock
 }

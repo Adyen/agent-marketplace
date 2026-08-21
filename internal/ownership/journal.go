@@ -280,13 +280,15 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// identity check can detect a pathname replacement before rename.
 	// Invariant established: the patched bytes are durable, so the rename in step
 	// 4 cannot produce a truncated aggregate.
-	mode := os.FileMode(0o644)
-	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
-		mode = fi.Mode().Perm()
-	}
-	staged, err := staging.write(m.NextBytes, mode)
+	staged, err := staging.write(m.NextBytes, staging.aggregateMode(filepath.Base(m.AbsFile)))
 	if err != nil {
-		return Result{}, err
+		// The staging directory was created exclusively a few lines above and
+		// nothing outside this package has a reason to hold anything in it, so
+		// tearing it down here discards no evidence — unlike recovery, which is
+		// resolving a directory some earlier process left behind and therefore
+		// insists on the recorded digest before it unlinks anything.
+		cleanupErr := staging.remove("")
+		return Result{}, errors.Join(err, cleanupErr)
 	}
 
 	// CRASH POINT 4 (after-staged-write): journal says prepared and a complete
@@ -314,19 +316,14 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		return Result{}, err
 	}
 
-	// STEP 4: verify the private staging pathname still names the exclusively
-	// created descriptor, then atomically rename the patched aggregate. The
-	// private directory prevents external writers from changing that pathname;
-	// the identity check fails closed if a replacement is nevertheless observed.
-	if err := verifyStagedFile(staged, journal.StagedPath); err != nil {
-		_ = staged.Close()
-		return Result{}, err
-	}
-	if err := s.crash(CrashAfterStagedVerified); err != nil {
-		_ = staged.Close()
-		return Result{}, err
-	}
-	if err := staging.publish(staged, filepath.Base(m.AbsFile)); err != nil {
+	// STEP 4: publish the patched aggregate through the opened staging root. The
+	// publication boundary re-verifies the staged descriptor immediately before
+	// the rename and confirms the destination immediately after it, so a
+	// generation whose staging entry was replaced is refused rather than
+	// published.
+	if err := staging.publish(staged, filepath.Base(m.AbsFile), func() error {
+		return s.crash(CrashBeforeAggregateRename)
+	}); err != nil {
 		_ = staged.Close()
 		return Result{}, err
 	}
@@ -551,10 +548,23 @@ func (s *Store) ReadJournal() (*Journal, error) {
 	if j.RootKey != s.rootKey || j.CanonicalRoot != s.canonicalRoot {
 		return nil, coded(diag.CodeOwnershipStateRootMismatch, s.JournalFile(), ErrStateRootMismatch)
 	}
+	// Recovery writes to, and unlinks next to, AbsFile. Confining it here means
+	// no recovery path has to re-derive that authorization, in either journal
+	// version.
+	if !filepath.IsAbs(j.AbsFile) {
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
+			fmt.Errorf("%w: journal aggregate path %q must be absolute", ErrStateCorrupt, j.AbsFile))
+	}
+	if err := s.ensureUnderRoot(j.AbsFile); err != nil {
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
+			fmt.Errorf("%w: journal aggregate path is unsafe: %v", ErrStateCorrupt, err))
+	}
 	if j.Version == journalVersion {
 		if err := validateStagingPaths(&j); err != nil {
 			return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), err)
 		}
+	} else if err := validateLegacyStagingPath(&j); err != nil {
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), err)
 	}
 	normalizeHookEntries(j.NextRecord)
 	return &j, nil
@@ -723,7 +733,7 @@ func (s *Store) abandon(j *Journal) ([]RecoveryOutcome, error) {
 
 func (s *Store) removeStaged(j *Journal) error {
 	if j.Version == legacyJournalVersion {
-		return removeLegacyStaged(j)
+		return s.removeLegacyStaged(j)
 	}
 	staging, err := newStagingTransaction(s.canonicalRoot, j.AbsFile, j.StagingDir, j.StagedPath)
 	if err != nil {
@@ -733,11 +743,22 @@ func (s *Store) removeStaged(j *Journal) error {
 	return staging.remove(j.NextDigest)
 }
 
-func removeLegacyStaged(j *Journal) error {
+// removeLegacyStaged discards the staged file of a version-1 journal, which kept
+// it as a sibling of the aggregate instead of inside a private directory. The
+// pathname is pinned by [validateLegacyStagingPath], but the unlink still runs
+// through an open parent descriptor: a version-1 residue is by definition old,
+// and its directory has had unbounded time to acquire a planted entry.
+func (s *Store) removeLegacyStaged(j *Journal) error {
 	if j.StagedPath == "" {
 		return nil
 	}
-	info, err := os.Lstat(j.StagedPath)
+	parent, err := openAggregateParent(s.canonicalRoot, j.AbsFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	name := filepath.Base(j.StagedPath)
+	info, err := parent.Lstat(name)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -747,15 +768,15 @@ func removeLegacyStaged(j *Journal) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("ownership: legacy staged path %s is not a regular file", j.StagedPath)
 	}
-	data, err := os.ReadFile(j.StagedPath)
+	data, err := parent.ReadFile(name)
 	if err != nil {
 		return fmt.Errorf("ownership: read legacy staged file %s: %w", j.StagedPath, err)
 	}
 	if j.NextDigest != "" && Digest(data) != j.NextDigest {
 		return fmt.Errorf("ownership: legacy staged file %s changed before cleanup", j.StagedPath)
 	}
-	if err := os.Remove(j.StagedPath); err != nil && !os.IsNotExist(err) {
+	if err := parent.Remove(name); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ownership: remove legacy staged file %s: %w", j.StagedPath, err)
 	}
-	return nil
+	return syncRootDirectory(parent)
 }

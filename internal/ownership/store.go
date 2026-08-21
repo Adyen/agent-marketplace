@@ -30,9 +30,12 @@ const (
 	// CrashAfterStagedWrite: the patched bytes are durable in the staging file
 	// but the live aggregate is untouched.
 	CrashAfterStagedWrite CrashPoint = "after-staged-write"
-	// CrashAfterStagedVerified: the staging object passed its identity check,
-	// immediately before publication.
-	CrashAfterStagedVerified CrashPoint = "after-staged-verified"
+	// CrashBeforeAggregateRename: the patched bytes are durable and the
+	// compare-and-swap precondition has held, so publication is the next thing
+	// that would happen. The staged identity is re-verified AFTER this point, so
+	// a test that mutates the staging entry here is exercising the check that
+	// guards the rename rather than one that already ran.
+	CrashBeforeAggregateRename CrashPoint = "before-aggregate-rename"
 	// CrashAfterAggregateRename: the live aggregate is the patched content, but
 	// the journal still says "prepared" and state still records the old
 	// generation.

@@ -151,6 +151,28 @@
 // entry classified as Unmanaged or OwnedDrifted, both of which preserve user
 // bytes.
 //
+// # Staging
+//
+// The replacement bytes never occupy a pathname an outsider can predict or
+// pre-create. Each generation stages into a fresh 0700 directory named
+// <aggregate>.am-staged-<32 hex chars> beside the aggregate, and the staged file
+// inside it is created O_CREATE|O_EXCL through an [os.Root] opened on the
+// aggregate's canonical parent. A root confines the path but still follows links
+// that stay inside it, so O_EXCL — not the root — is what refuses a planted
+// final component. The descriptor stays open until publication and the staged
+// identity is re-verified through it immediately before the rename, so a staging
+// entry replaced while the process was descheduled is refused instead of
+// published: the aggregate is never momentarily an attacker-chosen file or
+// symlink, which is a stronger promise than any post-publication rollback can
+// make. Permissions are inherited only from a regular aggregate, never from
+// whatever a symlink at that name resolves to.
+//
+// Version-1 journals staged as a sibling file rather than in a private
+// directory. Recovery still deletes such a residue, so [Store.ReadJournal] pins
+// the version-1 pathname to <aggregate>.am-staged-<generation> and confines
+// AbsFile to the canonical root in both versions; otherwise a journal naming
+// any other path would make recovery an arbitrary-unlink primitive.
+//
 // A DRY RUN takes no session and no lock at all: it performs no mutation, and
 // acquiring would create locks/ under the state root, which [Open]'s side-effect-free
 // contract forbids. Bead agent-marketplace-wrp8 owns this recipe; the full
