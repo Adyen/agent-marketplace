@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,6 +294,162 @@ func TestConvertSyncPreservesSymlinkedOutputEntry(t *testing.T) {
 	assertFileContains(t, outside, "outside the output tree")
 	if !strings.Contains(output, "Removed 0") {
 		t.Fatalf("expected no removals, got:\n%s", output)
+	}
+}
+
+// Given a run that could not prune because the conversion was partial, when a
+// later clean run reconciles the same output, then the ownership the partial run
+// inherited is still there and the stale file is pruned.
+//
+// The partial run writes a record too. If that record described only what the
+// partial run itself materialized, the previous run's output would become
+// unmanaged permanently: pruning it would never again be authorized, and the
+// conversion's own file would start reading as an unmanaged collision.
+func TestConvertSyncPartialRunKeepsOwnershipItCouldNotPrune(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill", "going-away")
+	stale := filepath.Join(outDir, "skills", "going-away", "SKILL.md")
+
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("expected first convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	// A subagent carrying a restriction Factory cannot represent is an error
+	// diagnostic, which makes the result partial and suppresses pruning.
+	restricted := filepath.Join(srcDir, "agents", "restricted.md")
+	writeFile(t, restricted, "---\nname: restricted\ndescription: Restricted agent\nmodel: sonnet\nisolation: worktree\n---\n\nBody\n")
+	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "going-away")); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err == nil {
+		t.Fatalf("expected a partial conversion to fail the run, got:\n%s", output)
+	}
+	if !strings.Contains(output, "pruning was skipped because the conversion was partial") {
+		t.Fatalf("expected the partial run to report suppressed pruning, got:\n%s", output)
+	}
+	assertFileExists(t, stale)
+
+	if err := os.Remove(restricted); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(outDir, "keep-me.md")
+	writeFile(t, unrelated, "handwritten\n")
+
+	output, err = executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected the clean follow-up convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	assertFileAbsent(t, stale)
+	assertFileContains(t, unrelated, "handwritten")
+	if !strings.Contains(output, "Removed 1") {
+		t.Fatalf("expected the clean run to prune the file the partial run could not, got:\n%s", output)
+	}
+}
+
+// Given an output file whose bytes cannot be read, when convert --sync runs,
+// then the file is unmanaged and preserved, and --replace-unmanaged can still
+// take it over instead of the run failing outright.
+func TestConvertSyncTreatsUnreadableOutputAsUnmanaged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not deny reads")
+	}
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill")
+
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("expected first convert --sync to succeed: %v\n%s", err, output)
+	}
+	opaque := filepath.Join(outDir, "docs", "opaque.md")
+	writeFile(t, opaque, "unreadable content\n")
+	if err := os.Chmod(opaque, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(opaque, 0o600) })
+	if _, err := os.ReadFile(opaque); err == nil {
+		t.Skip("the filesystem does not deny reads on a 0000 file")
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected convert --sync to succeed with an unreadable output file: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "docs/opaque.md") || !strings.Contains(output, "convert.sync.preserved-unmanaged") {
+		t.Fatalf("expected the unreadable file to be reported as preserved, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Removed 0") {
+		t.Fatalf("expected no removals, got:\n%s", output)
+	}
+	if _, err := os.Lstat(opaque); err != nil {
+		t.Fatalf("expected the unreadable file to survive: %v", err)
+	}
+
+	output, err = executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--replace-unmanaged", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected --replace-unmanaged to proceed over an unreadable file: %v\n%s", err, output)
+	}
+	assertFileAbsent(t, opaque)
+	if !strings.Contains(output, "Removed 1") {
+		t.Fatalf("expected the authorized run to prune the unreadable file, got:\n%s", output)
+	}
+}
+
+// Given output recorded for one target harness, when convert --sync runs for a
+// different target into the same directory, then the record does not authorize
+// anything: the other target's output is unmanaged and preserved.
+func TestConvertSyncDoesNotPruneAnotherTargetsRecordedOutput(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill", "going-away")
+
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("expected the factory convert --sync to succeed: %v\n%s", err, output)
+	}
+	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "going-away")); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "gemini", "--sync", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected the gemini convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	for _, rel := range []string{"skills/demo-skill/SKILL.md", "skills/going-away/SKILL.md"} {
+		assertFileExists(t, filepath.Join(outDir, filepath.FromSlash(rel)))
+		if !strings.Contains(output, rel) {
+			t.Fatalf("expected %q to be reported as preserved, got:\n%s", rel, output)
+		}
+	}
+	if !strings.Contains(output, "Removed 0") {
+		t.Fatalf("expected a record for another target to authorize no pruning, got:\n%s", output)
+	}
+}
+
+// Given more preserved files than a message should list, when convert --sync
+// reports them, then the listing is bounded and the remainder is summarized.
+func TestConvertSyncBoundsThePreservedFileListing(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill")
+	const unrelatedFiles = convertSyncPathListLimit + 3
+	for i := 0; i < unrelatedFiles; i++ {
+		writeFile(t, filepath.Join(outDir, "docs", fmt.Sprintf("note-%02d.md", i)), "handwritten\n")
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	if got := strings.Count(output, "preserved "); got != convertSyncPathListLimit+1 {
+		t.Fatalf("preserved report lines = %d, want %d (%d paths plus one summary), got:\n%s",
+			got, convertSyncPathListLimit+1, convertSyncPathListLimit, output)
+	}
+	if want := fmt.Sprintf("preserved %d more file(s)", unrelatedFiles-convertSyncPathListLimit); !strings.Contains(output, want) {
+		t.Fatalf("expected %q in the report, got:\n%s", want, output)
+	}
+	for i := 0; i < unrelatedFiles; i++ {
+		assertFileContains(t, filepath.Join(outDir, "docs", fmt.Sprintf("note-%02d.md", i)), "handwritten")
 	}
 }
 

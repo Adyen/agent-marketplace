@@ -154,7 +154,7 @@ func runConvertOverwrite(out io.Writer, result *hcc.Result, srcHarness hcc.Harne
 //
 // --replace-unmanaged is the explicit authorization that lifts both rules.
 func runConvertSync(out io.Writer, result *hcc.Result, srcHarness hcc.Harness, to, outDir string, dryRun, replaceUnmanaged bool) error {
-	record := loadConvertRecord(outDir)
+	record := loadConvertRecord(outDir, to)
 	decision, err := planConvertSync(result, outDir, record, replaceUnmanaged)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func runConvertSync(out io.Writer, result *hcc.Result, srcHarness hcc.Harness, t
 
 	warnings := []string(nil)
 	if !dryRun {
-		if err := recordConvertOutput(outDir, to, report); err != nil {
+		if err := recordConvertOutput(outDir, to, report, record); err != nil {
 			// The conversion already landed and failing to record it is not
 			// destructive: an unrecorded file is unmanaged, so the next sync
 			// preserves it. Report it, because pruning silently stops working.
@@ -222,15 +222,19 @@ type convertSyncDecision struct {
 	pruneSuppressed bool
 }
 
-// loadConvertRecord reads the durable ownership record, degrading to a record
-// that owns nothing. Absent state is the normal first run and is only worth a
-// debug line; state that existed and is now unusable is warned about.
-func loadConvertRecord(outDir string) convertsync.Record {
-	record, err := convertsync.Load(outDir)
+// loadConvertRecord reads the durable ownership record for this output root and
+// target, degrading to a record that owns nothing. Absent state is the normal
+// first run and is only worth a debug line; state that existed and cannot be
+// used is warned about.
+func loadConvertRecord(outDir, target string) convertsync.Record {
+	record, err := convertsync.Load(outDir, target)
 	switch {
 	case err == nil:
 	case errors.Is(err, convertsync.ErrRecordMissing):
 		slog.Debug("no convert ownership record for output root; existing output is unmanaged", "out_dir", outDir)
+	case errors.Is(err, convertsync.ErrRecordOtherTarget):
+		slog.Warn("convert ownership record was written for another target harness; existing output is unmanaged",
+			"out_dir", outDir, "target", target, "err", err)
 	default:
 		slog.Warn("convert ownership record unusable; existing output is unmanaged", "out_dir", outDir, "err", err)
 	}
@@ -309,7 +313,14 @@ func convertOutputStatus(outDir, rel string, record convertsync.Record) (convert
 	}
 	current, err := os.ReadFile(abs)
 	if err != nil {
-		return convertsync.StatusUnmanaged, true, fmt.Errorf("convert: read output file %q: %w", rel, err)
+		// Ownership is proved by comparing bytes, so bytes that cannot be read
+		// prove nothing: the file is unmanaged and therefore preserved. Failing
+		// the run instead would let one unreadable file block every sync into
+		// the directory, including the --replace-unmanaged run documented as the
+		// way to take such a file over.
+		slog.Warn("could not read an output file to check its ownership; treating it as unmanaged",
+			"out_dir", outDir, "path", rel, "err", err)
+		return convertsync.StatusUnmanaged, true, nil
 	}
 	return record.Classify(rel, current), true, nil
 }
@@ -408,7 +419,11 @@ func removeEmptyConvertDirs(outDir, relDir string) {
 // bytes now on disk rather than the artifact bytes: a merged aggregate is
 // written from a combination of existing and generated content, and what the
 // next run must compare against is what is actually there.
-func recordConvertOutput(outDir, target string, report *hcc.WriteReport) error {
+//
+// prior is the record this run started from. Entries it still holds that this
+// run neither rewrote nor removed are carried over, so ownership survives a run
+// that could not reconcile them (see carryOverPriorOwnership).
+func recordConvertOutput(outDir, target string, report *hcc.WriteReport, prior convertsync.Record) error {
 	// report.Skipped holds destinations that already contained exactly the bytes
 	// this run would have written. Recording them adopts them, which is
 	// byte-neutral: a later prune of such a file removes content identical to
@@ -418,21 +433,59 @@ func recordConvertOutput(outDir, target string, report *hcc.WriteReport) error {
 	paths = append(paths, report.Skipped...)
 
 	files := make([]convertsync.OwnedFile, 0, len(paths))
+	materialized := make(map[string]struct{}, len(paths))
 	for _, rel := range paths {
 		abs, err := resolveConvertOutputPath(outDir, rel)
 		if err != nil {
 			return err
 		}
+		rel = filepath.ToSlash(rel)
+		materialized[rel] = struct{}{}
 		current, err := os.ReadFile(abs)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return fmt.Errorf("read materialized output %q: %w", rel, err)
+			// Recording nothing at all would drop ownership of every other file
+			// this run wrote, so one unreadable output costs only its own entry:
+			// it stays unmanaged, which preserves it and refuses to replace it.
+			slog.Warn("could not read a materialized output file to record it; leaving it unmanaged",
+				"out_dir", outDir, "path", rel, "err", err)
+			continue
 		}
-		files = append(files, convertsync.OwnedFile{Path: filepath.ToSlash(rel), Digest: convertsync.DigestOf(current)})
+		files = append(files, convertsync.OwnedFile{Path: rel, Digest: convertsync.DigestOf(current)})
 	}
+	files = append(files, carryOverPriorOwnership(outDir, prior, materialized)...)
 	return convertsync.Save(outDir, target, files)
+}
+
+// carryOverPriorOwnership returns the prior record entries that are still on
+// disk with exactly their recorded bytes and that this run did not materialize.
+//
+// Without this, a run that cannot prune forgets what it owns. A partial result
+// suppresses pruning bundle-wide (harnesscompile.WriteReport.PruneSuppressed)
+// and contributes no artifacts for the failing resource, so replacing the record
+// with only what this run wrote would make the previous run's output unmanaged
+// forever: the next clean run could no longer prune it, and would refuse to
+// rewrite its own file as an unmanaged collision. Re-verifying the digest keeps
+// the carry-over evidence-based — a file that was pruned is gone, and a file the
+// user edited no longer matches, so neither is carried.
+func carryOverPriorOwnership(outDir string, prior convertsync.Record, materialized map[string]struct{}) []convertsync.OwnedFile {
+	carried := make([]convertsync.OwnedFile, 0, len(prior.Files))
+	for _, f := range prior.Files {
+		if _, rewritten := materialized[f.Path]; rewritten {
+			continue
+		}
+		status, exists, err := convertOutputStatus(outDir, f.Path, prior)
+		if err != nil || !exists || status != convertsync.StatusOwned {
+			continue
+		}
+		carried = append(carried, f)
+	}
+	if len(carried) > 0 {
+		slog.Debug("carried prior convert output ownership forward", "out_dir", outDir, "files", len(carried))
+	}
+	return carried
 }
 
 // convertReport is everything the command prints about one conversion.
@@ -457,8 +510,20 @@ func reportConvert(out io.Writer, r convertReport) error {
 		len(r.report.Written), len(r.report.Skipped), r.removed, len(r.result.Diagnostics)); err != nil {
 		return err
 	}
-	for _, rel := range r.preserved {
+	// A sync into a directory full of unrelated work can preserve thousands of
+	// paths; the count is the actionable part, so the listing is bounded exactly
+	// like the refusal message.
+	named := r.preserved
+	if len(named) > convertSyncPathListLimit {
+		named = named[:convertSyncPathListLimit]
+	}
+	for _, rel := range named {
 		if _, err := fmt.Fprintf(out, "preserved %s (%s)\n", rel, convertSyncPreservedCode); err != nil {
+			return err
+		}
+	}
+	if overflow := len(r.preserved) - len(named); overflow > 0 {
+		if _, err := fmt.Fprintf(out, "preserved %d more file(s) (%s)\n", overflow, convertSyncPreservedCode); err != nil {
 			return err
 		}
 	}

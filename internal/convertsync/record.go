@@ -16,8 +16,9 @@
 //
 // Every failure answers "not ours". A missing record ([ErrRecordMissing]), an
 // unreadable or malformed record, a record written for a different output root,
-// or a recorded path that escapes the output root ([ErrRecordCorrupt]) all yield
-// the zero [Record], which classifies every path as [StatusUnmanaged]. The worst
+// a recorded path that escapes the output root ([ErrRecordCorrupt]), or a record
+// written for a different target harness ([ErrRecordOtherTarget]) all yield the
+// zero [Record], which classifies every path as [StatusUnmanaged]. The worst
 // outcome is then a stale generated file the user can delete, never a deleted
 // file the user wrote.
 //
@@ -68,6 +69,12 @@ var ErrRecordMissing = errors.New("convertsync: no durable convert ownership rec
 
 // ErrRecordCorrupt is returned when a record exists but cannot be trusted.
 var ErrRecordCorrupt = errors.New("convertsync: durable convert ownership record is unusable")
+
+// ErrRecordOtherTarget is returned when a well-formed record for this output
+// root describes a different target harness. It is a distinct condition from
+// corruption: the state is intact, it just does not describe the layout this
+// run produces, so it cannot authorize deleting anything.
+var ErrRecordOtherTarget = errors.New("convertsync: convert ownership record was written for another target harness")
 
 // Status is the ownership verdict for one path inside the output root.
 type Status int
@@ -183,13 +190,18 @@ func recordLocation(outRoot string) (recordFile, canonicalRoot string, err error
 	return filepath.Join(stateRoot, recordDirName, ownership.RootKey(canonical)+".json"), canonical, nil
 }
 
-// Load reads the durable record for outRoot.
+// Load reads the durable record outRoot holds for target.
+//
+// target is required: ownership of an output path is ownership of the bytes ONE
+// harness layout produced there, so a record written for a different target
+// cannot authorize deleting or replacing anything in this run
+// ([ErrRecordOtherTarget]).
 //
 // It always returns a usable Record: on any error the zero value, which owns
 // nothing. The error is advisory and exists so callers can distinguish a normal
 // first run ([ErrRecordMissing]) from state that was there and is now unusable
-// ([ErrRecordCorrupt]) when reporting.
-func Load(outRoot string) (Record, error) {
+// ([ErrRecordCorrupt]) or describes another target ([ErrRecordOtherTarget]).
+func Load(outRoot, target string) (Record, error) {
 	recordFile, canonical, err := recordLocation(outRoot)
 	if err != nil {
 		return Record{}, err
@@ -212,6 +224,11 @@ func Load(outRoot string) (Record, error) {
 			"record", recordFile, "out_root", canonical, "err", err)
 		return Record{}, err
 	}
+	if record.Target != target {
+		slog.Warn("convert ownership record describes another target; treating all output as unmanaged",
+			"record", recordFile, "out_root", canonical, "recorded_target", record.Target, "target", target)
+		return Record{}, fmt.Errorf("%w: record describes %q, not %q", ErrRecordOtherTarget, record.Target, target)
+	}
 	record.index = make(map[string]string, len(record.Files))
 	for _, f := range record.Files {
 		record.index[f.Path] = f.Digest
@@ -231,6 +248,11 @@ func validateRecord(record Record, canonicalRoot string) error {
 	}
 	if record.RootKey != ownership.RootKey(canonicalRoot) {
 		return fmt.Errorf("%w: record key does not derive from %q", ErrRecordCorrupt, canonicalRoot)
+	}
+	// Ownership is per target layout, so a record that names no target cannot be
+	// matched against one and is refused rather than accepted for any target.
+	if strings.TrimSpace(record.Target) == "" {
+		return fmt.Errorf("%w: record names no target harness", ErrRecordCorrupt)
 	}
 	seen := make(map[string]struct{}, len(record.Files))
 	for _, f := range record.Files {
@@ -280,13 +302,18 @@ func validateRelPath(p string) error {
 	return nil
 }
 
-// Save replaces outRoot's record with files.
+// Save replaces outRoot's record for target with files.
 //
 // It is called only after a successful materialization, so the record always
 // describes bytes that actually reached disk. Replacement rather than merge is
-// deliberate: a file the current run no longer produces is not ours to prune on
-// the next run either, since the run that would have pruned it already ran.
+// deliberate: this package cannot tell which recorded files a run already
+// reconciled, so the caller — which knows what it wrote and what it pruned —
+// passes the complete set that is still owned, including any prior entry it
+// carried over because it could not prune it (see the convert command).
 func Save(outRoot, target string, files []OwnedFile) error {
+	if strings.TrimSpace(target) == "" {
+		return errors.New("convertsync: refusing to record output without a target harness")
+	}
 	recordFile, canonical, err := recordLocation(outRoot)
 	if err != nil {
 		return err

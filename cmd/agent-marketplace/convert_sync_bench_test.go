@@ -30,7 +30,7 @@ func BenchmarkPlanConvertSync(b *testing.B) {
 			if err != nil {
 				b.Fatalf("materialize: %v", err)
 			}
-			if err := recordConvertOutput(outDir, "factory", report); err != nil {
+			if err := recordConvertOutput(outDir, "factory", report, convertsync.Record{}); err != nil {
 				b.Fatalf("record: %v", err)
 			}
 			// Half the candidates are owned and half are unrelated, so both the
@@ -44,7 +44,7 @@ func BenchmarkPlanConvertSync(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			record := loadConvertRecord(outDir)
+			record := loadConvertRecord(outDir, "factory")
 
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -58,6 +58,54 @@ func BenchmarkPlanConvertSync(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkRecordConvertOutput measures the post-write bookkeeping: digesting
+// every file this run materialized plus re-verifying the prior entries the run
+// could not reconcile and therefore carries forward.
+func BenchmarkRecordConvertOutput(b *testing.B) {
+	b.Setenv("XDG_STATE_HOME", filepath.Join(b.TempDir(), "state"))
+	const skills = 128
+	srcDir := b.TempDir()
+	outDir := filepath.Join(b.TempDir(), "out")
+	benchWriteClaudePlugin(b, srcDir, skills)
+
+	result, err := hcc.Convert(os.DirFS(srcDir), hcc.Harness("claude"), hcc.Harness("factory"), hcc.WithPluginRoot(srcDir))
+	if err != nil {
+		b.Fatalf("convert: %v", err)
+	}
+	report, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite))
+	if err != nil {
+		b.Fatalf("materialize: %v", err)
+	}
+
+	// The prior record also owns files this run does not produce, so every
+	// benchmark iteration pays the carry-over re-verification too.
+	prior := make([]convertsync.OwnedFile, 0, skills)
+	for i := 0; i < skills; i++ {
+		rel := fmt.Sprintf("legacy/output-%d.md", i)
+		body := []byte(fmt.Sprintf("legacy %d\n", i))
+		path := filepath.Join(outDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		prior = append(prior, convertsync.OwnedFile{Path: rel, Digest: convertsync.DigestOf(body)})
+	}
+	if err := convertsync.Save(outDir, "factory", prior); err != nil {
+		b.Fatalf("save: %v", err)
+	}
+	priorRecord := loadConvertRecord(outDir, "factory")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := recordConvertOutput(outDir, "factory", report, priorRecord); err != nil {
+			b.Fatalf("record: %v", err)
+		}
 	}
 }
 
@@ -80,7 +128,7 @@ func BenchmarkConvertRecordLoad(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := convertsync.Load(outDir); err != nil {
+		if _, err := convertsync.Load(outDir, "factory"); err != nil {
 			b.Fatalf("load: %v", err)
 		}
 	}

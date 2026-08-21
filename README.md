@@ -609,12 +609,20 @@ output file is recorded in durable state under
 later sync removes exactly the files an earlier sync materialized and whose bytes
 are unchanged. Anything else — a handwritten file at the output root, a
 hand-authored resource nested beside generated ones, a generated file the user
-has since edited, or any file at all when the record is missing or corrupt — is
-preserved and reported as `convert.sync.preserved-unmanaged`. If a converted
-resource would land on an existing file with different, unowned content, the run
-is refused before anything is written
-(`convert.sync.unmanaged-collision`). `--replace-unmanaged` is the explicit
-authorization that replaces and prunes such files.
+has since edited, a file whose bytes cannot be read, or any file at all when the
+record is missing, corrupt, or was written for a different `--to` target — is
+preserved and reported as `convert.sync.preserved-unmanaged` (the listing is
+capped; the remainder is summarized). If a converted resource would land on an
+existing file with different, unowned content, the run is refused before anything
+is written (`convert.sync.unmanaged-collision`). `--replace-unmanaged` is the
+explicit authorization that replaces and prunes such files, and it proceeds even
+over output whose bytes cannot be read.
+
+A run that cannot prune keeps what it owns. A partial conversion suppresses
+pruning entirely, so its record carries forward every earlier entry still on disk
+with unchanged bytes; the next clean run can therefore still prune what the
+partial one had to leave behind, instead of treating its own earlier output as
+unmanaged forever.
 
 **Ad-hoc flag rules:**
 
