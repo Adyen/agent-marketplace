@@ -111,6 +111,9 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	if ec.Merged != nil {
 		updatedRegistries = len(ec.Merged.Registries)
 	}
+	if updatedRegistries > 0 && len(ec.TargetHarnesses) == 0 {
+		return nil, &TargetHarnessSetMissingError{}
+	}
 	plans, err := planMarketplaceUpdates(ctx, opts, &ec)
 	if err != nil {
 		slog.Error("update aborted while preparing Marketplace pins", "error", err)
