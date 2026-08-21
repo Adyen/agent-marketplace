@@ -426,6 +426,199 @@ func TestConvertSyncDoesNotPruneAnotherTargetsRecordedOutput(t *testing.T) {
 	}
 }
 
+// Given two targets converted into the same output directory in turn, when each
+// syncs again, then each still owns and prunes its own output and leaves the
+// other target's output alone.
+//
+// A record keyed only by output root makes whichever target syncs last erase the
+// other's record, so alternating targets permanently lose the ability to prune
+// their own stale output.
+func TestConvertSyncAlternatingTargetsKeepTheirOwnOwnership(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill", "going-away")
+	factoryStale := filepath.Join(outDir, "skills", "going-away", "SKILL.md")
+	geminiOutput := []string{
+		filepath.Join(outDir, ".gemini", "skills", "demo-skill", "SKILL.md"),
+		filepath.Join(outDir, ".gemini", "skills", "going-away", "SKILL.md"),
+	}
+
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("expected the first factory convert --sync to succeed: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "gemini", "--sync", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("expected the gemini convert --sync to succeed: %v\n%s", err, output)
+	}
+	for _, path := range geminiOutput {
+		assertFileExists(t, path)
+	}
+	assertFileExists(t, factoryStale)
+
+	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "going-away")); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected the second factory convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	assertFileAbsent(t, factoryStale)
+	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
+	if !strings.Contains(output, "Removed 1") {
+		t.Fatalf("expected factory to still prune its own stale output after a gemini sync, got:\n%s", output)
+	}
+	for _, path := range geminiOutput {
+		assertFileExists(t, path)
+	}
+
+	// Both records coexist, one per target, for the same output root.
+	stateDir := filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-marketplace", "convert")
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatalf("read state dir: %v", err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("convert records = %v, want one per target harness", names)
+	}
+}
+
+// Given both an unowned colliding destination and unowned stale files, when
+// convert --sync refuses, then it describes the complete bounded scope of what
+// --replace-unmanaged would destroy before the user reaches for that flag.
+func TestConvertSyncRefusalDescribesTheFullOverrideScope(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill")
+	collision := filepath.Join(outDir, "skills", "demo-skill", "SKILL.md")
+	writeFile(t, collision, "handwritten skill that must survive\n")
+	const unrelatedFiles = convertSyncPathListLimit + 2
+	for i := 0; i < unrelatedFiles; i++ {
+		writeFile(t, filepath.Join(outDir, "docs", fmt.Sprintf("note-%02d.md", i)), "handwritten\n")
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err == nil {
+		t.Fatalf("expected convert --sync to refuse an unowned collision, got:\n%s", output)
+	}
+
+	wants := []string{
+		convertSyncCollisionCode,
+		fmt.Sprintf("would destroy %d output file(s)", unrelatedFiles+1),
+		"replace 1 unowned file(s)",
+		"replace skills/demo-skill/SKILL.md",
+		fmt.Sprintf("delete %d unowned file(s)", unrelatedFiles),
+		fmt.Sprintf("delete %d more file(s)", unrelatedFiles-convertSyncPathListLimit),
+		fmt.Sprintf("authorize destroying all %d unowned file(s)", unrelatedFiles+1),
+	}
+	for _, want := range wants {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected the refusal to state %q, got:\n%s", want, output)
+		}
+	}
+
+	// Describing the scope must not perform any of it.
+	assertFileContains(t, collision, "handwritten skill that must survive")
+	for i := 0; i < unrelatedFiles; i++ {
+		assertFileContains(t, filepath.Join(outDir, "docs", fmt.Sprintf("note-%02d.md", i)), "handwritten")
+	}
+}
+
+// Given explicit authorization, when convert --sync destroys unowned output,
+// then it states the same scope before doing any of it.
+func TestConvertSyncAuthorizedRunStatesItsScopeBeforeDestroying(t *testing.T) {
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill")
+	collision := filepath.Join(outDir, "skills", "demo-skill", "SKILL.md")
+	writeFile(t, collision, "handwritten skill\n")
+	unrelated := filepath.Join(outDir, "docs", "unrelated.md")
+	writeFile(t, unrelated, "unrelated\n")
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--replace-unmanaged", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected authorized convert --sync to succeed: %v\n%s", err, output)
+	}
+
+	for _, want := range []string{
+		convertSyncAuthorizedCode,
+		"destroying 2 output file(s)",
+		"replace skills/demo-skill/SKILL.md",
+		"delete docs/unrelated.md",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected the authorized run to state %q, got:\n%s", want, output)
+		}
+	}
+	scope := strings.Index(output, convertSyncAuthorizedCode)
+	summary := strings.Index(output, "Converted ")
+	if scope < 0 || summary < 0 || scope > summary {
+		t.Fatalf("expected the destructive scope before the conversion summary, got:\n%s", output)
+	}
+	assertFileContains(t, collision, "Demo skill")
+	assertFileAbsent(t, unrelated)
+}
+
+// Given an unreadable file at a destination the conversion must write, when
+// convert --sync runs, then the run is refused with the documented collision
+// rather than failing inside the write, and --replace-unmanaged replaces it.
+//
+// Ownership is proved by comparing bytes, and so is the compilation library's
+// decision to write, so a destination it cannot read fails the whole
+// materialization — planning included — unless this command settles it first.
+func TestConvertSyncSettlesAnUnreadableDestination(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not deny reads")
+	}
+	isolatedConvertState(t)
+	srcDir, outDir := convertSyncFixture(t, "demo-skill")
+	destination := filepath.Join(outDir, "skills", "demo-skill", "SKILL.md")
+	writeFile(t, destination, "handwritten and unreadable\n")
+	if err := os.Chmod(destination, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(destination, 0o600) })
+	if _, err := os.ReadFile(destination); err == nil {
+		t.Skip("the filesystem does not deny reads on a 0000 file")
+	}
+
+	output, err := executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--out", outDir, srcDir)
+	if err == nil {
+		t.Fatalf("expected convert --sync to refuse an unreadable destination, got:\n%s", output)
+	}
+	for _, want := range []string{convertSyncCollisionCode, "cannot be read", "replace skills/demo-skill/SKILL.md", "--replace-unmanaged"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected the refusal to state %q, got:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "plan sync") {
+		t.Fatalf("expected a scoped refusal rather than a failure inside planning, got:\n%s", output)
+	}
+
+	// A dry run cannot clear the destination, and no plan can be produced while
+	// it exists, so it reports instead of previewing a reconciliation it cannot
+	// compute — and still changes nothing.
+	output, err = executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--replace-unmanaged", "--dry-run", "--out", outDir, srcDir)
+	if err == nil {
+		t.Fatalf("expected --dry-run over an unreadable destination to report it cannot preview, got:\n%s", output)
+	}
+	if !strings.Contains(output, convertSyncUnreplaceableCode) {
+		t.Fatalf("expected the dry run to name the blocking condition, got:\n%s", output)
+	}
+	if _, err := os.Lstat(destination); err != nil {
+		t.Fatalf("expected the dry run to leave the unreadable destination alone: %v", err)
+	}
+
+	output, err = executeCommand("convert", "--from", "claude", "--to", "factory", "--sync", "--replace-unmanaged", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("expected authorized convert --sync to replace an unreadable destination: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, convertSyncAuthorizedCode) {
+		t.Fatalf("expected the authorized run to state its scope, got:\n%s", output)
+	}
+	assertFileContains(t, destination, "Demo skill")
+}
+
 // Given more preserved files than a message should list, when convert --sync
 // reports them, then the listing is bounded and the remainder is summarized.
 func TestConvertSyncBoundsThePreservedFileListing(t *testing.T) {

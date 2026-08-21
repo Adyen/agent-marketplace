@@ -81,7 +81,7 @@ func TestLoadRefusesCorruptRecordAndOwnsNothing(t *testing.T) {
 	if err := Save(outRoot, "factory", []OwnedFile{{Path: "skills/demo/SKILL.md", Digest: DigestOf(body)}}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	path, err := RecordPath(outRoot)
+	path, err := RecordPath(outRoot, "factory")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestLoadRefusesRecordWrittenForAnotherRoot(t *testing.T) {
 	if err := Save(outRoot, "factory", []OwnedFile{{Path: "a.md", Digest: DigestOf(body)}}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	path, err := RecordPath(outRoot)
+	path, err := RecordPath(outRoot, "factory")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestLoadRefusesRecordWithEscapingPath(t *testing.T) {
 	if err := Save(outRoot, "factory", []OwnedFile{{Path: "a.md", Digest: DigestOf(body)}}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	path, err := RecordPath(outRoot)
+	path, err := RecordPath(outRoot, "factory")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestLoadRefusesRecordWithEscapingPath(t *testing.T) {
 	}
 }
 
-func TestLoadRefusesRecordWrittenForAnotherTarget(t *testing.T) {
+func TestLoadDoesNotSeeAnotherTargetsRecord(t *testing.T) {
 	isolatedState(t)
 	outRoot := t.TempDir()
 
@@ -175,8 +175,8 @@ func TestLoadRefusesRecordWrittenForAnotherTarget(t *testing.T) {
 	}
 
 	record, err := Load(outRoot, "gemini")
-	if !errors.Is(err, ErrRecordOtherTarget) {
-		t.Fatalf("Load() error = %v, want ErrRecordOtherTarget", err)
+	if !errors.Is(err, ErrRecordMissing) {
+		t.Fatalf("Load(gemini) error = %v, want ErrRecordMissing", err)
 	}
 	if got := record.Classify("skills/demo/SKILL.md", body); got != StatusUnmanaged {
 		t.Fatalf("Classify() = %v, want StatusUnmanaged for another target's record", got)
@@ -199,7 +199,7 @@ func TestLoadRefusesRecordWithoutATarget(t *testing.T) {
 	if err := Save(outRoot, "factory", []OwnedFile{{Path: "a.md", Digest: DigestOf(body)}}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	path, err := RecordPath(outRoot)
+	path, err := RecordPath(outRoot, "factory")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,11 +215,181 @@ func TestLoadRefusesRecordWithoutATarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// An empty recorded target is refused even when the caller asks for one,
-	// so it can never be adopted by whichever target reads it first.
-	if _, err := Load(outRoot, ""); !errors.Is(err, ErrRecordCorrupt) {
+	// A record naming no target is refused rather than adopted by the target that
+	// happens to read it, even though its file name says which target wrote it:
+	// the name is a lossy key, and only the body is evidence.
+	if _, err := Load(outRoot, "factory"); !errors.Is(err, ErrRecordCorrupt) {
 		t.Fatalf("Load() error = %v, want ErrRecordCorrupt for a record with no target", err)
 	}
+}
+
+func TestLoadWithoutATargetRefusesBeforeReadingState(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	if _, err := Load(outRoot, ""); !errors.Is(err, ErrTargetUnusable) {
+		t.Fatalf("Load() error = %v, want ErrTargetUnusable", err)
+	}
+}
+
+// Two targets converted into the same output directory must each keep their own
+// record: a single record per root means whichever ran last erases the other's
+// evidence, so neither can prune its own output again.
+func TestSaveKeepsOneRecordPerTargetForTheSameRoot(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	factoryBody := []byte("factory generated\n")
+	geminiBody := []byte("gemini generated\n")
+	if err := Save(outRoot, "factory", []OwnedFile{{Path: "skills/demo/SKILL.md", Digest: DigestOf(factoryBody)}}); err != nil {
+		t.Fatalf("Save(factory) error = %v", err)
+	}
+	if err := Save(outRoot, "gemini", []OwnedFile{{Path: ".gemini/skills/demo/SKILL.md", Digest: DigestOf(geminiBody)}}); err != nil {
+		t.Fatalf("Save(gemini) error = %v", err)
+	}
+
+	factory, err := Load(outRoot, "factory")
+	if err != nil {
+		t.Fatalf("Load(factory) error = %v", err)
+	}
+	if got := factory.Classify("skills/demo/SKILL.md", factoryBody); got != StatusOwned {
+		t.Fatalf("Classify(factory output) = %v, want StatusOwned after a gemini sync into the same root", got)
+	}
+	if got := factory.Classify(".gemini/skills/demo/SKILL.md", geminiBody); got != StatusUnmanaged {
+		t.Fatalf("Classify(gemini output) = %v, want StatusUnmanaged under the factory record", got)
+	}
+
+	gemini, err := Load(outRoot, "gemini")
+	if err != nil {
+		t.Fatalf("Load(gemini) error = %v", err)
+	}
+	if got := gemini.Classify(".gemini/skills/demo/SKILL.md", geminiBody); got != StatusOwned {
+		t.Fatalf("Classify(gemini output) = %v, want StatusOwned", got)
+	}
+	if got := gemini.Classify("skills/demo/SKILL.md", factoryBody); got != StatusUnmanaged {
+		t.Fatalf("Classify(factory output) = %v, want StatusUnmanaged under the gemini record", got)
+	}
+}
+
+// A record written before records carried the target in their name is still
+// evidence for the target it names, so it is adopted once and then rewritten
+// under its target key.
+func TestLoadAdoptsAndSaveRetiresAPreTargetKeyedRecord(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	body := []byte("generated\n")
+	legacyPath := writeLegacyRecord(t, outRoot, "factory", OwnedFile{Path: "a.md", Digest: DigestOf(body)})
+
+	adopted, err := Load(outRoot, "factory")
+	if err != nil {
+		t.Fatalf("Load() error = %v, want the legacy record to be adopted", err)
+	}
+	if got := adopted.Classify("a.md", body); got != StatusOwned {
+		t.Fatalf("Classify() = %v, want StatusOwned from the legacy record", got)
+	}
+
+	if err := Save(outRoot, "factory", adopted.Files); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("stat legacy record after migration = %v, want it removed", err)
+	}
+	migrated, err := Load(outRoot, "factory")
+	if err != nil {
+		t.Fatalf("Load() after migration error = %v", err)
+	}
+	if got := migrated.Classify("a.md", body); got != StatusOwned {
+		t.Fatalf("Classify() = %v, want StatusOwned from the migrated record", got)
+	}
+}
+
+// A pre-target-keyed record names exactly one target. Another target must not
+// inherit it, and must not destroy it either: it is that target's only evidence
+// of what it owns.
+func TestLegacyRecordAuthorizesOnlyItsOwnTarget(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	body := []byte("generated\n")
+	legacyPath := writeLegacyRecord(t, outRoot, "factory", OwnedFile{Path: "a.md", Digest: DigestOf(body)})
+
+	record, err := Load(outRoot, "gemini")
+	if !errors.Is(err, ErrRecordOtherTarget) {
+		t.Fatalf("Load(gemini) error = %v, want ErrRecordOtherTarget", err)
+	}
+	if got := record.Classify("a.md", body); got != StatusUnmanaged {
+		t.Fatalf("Classify() = %v, want StatusUnmanaged", got)
+	}
+
+	if err := Save(outRoot, "gemini", []OwnedFile{{Path: "b.md", Digest: DigestOf(body)}}); err != nil {
+		t.Fatalf("Save(gemini) error = %v", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("stat legacy record after an unrelated target's save = %v, want it preserved", err)
+	}
+	factory, err := Load(outRoot, "factory")
+	if err != nil {
+		t.Fatalf("Load(factory) error = %v", err)
+	}
+	if got := factory.Classify("a.md", body); got != StatusOwned {
+		t.Fatalf("Classify() = %v, want the legacy record still usable by its own target", got)
+	}
+}
+
+func TestTargetSpellingDoesNotSplitTheRecord(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	body := []byte("generated\n")
+	if err := Save(outRoot, " Factory ", []OwnedFile{{Path: "a.md", Digest: DigestOf(body)}}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	record, err := Load(outRoot, "factory")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := record.Classify("a.md", body); got != StatusOwned {
+		t.Fatalf("Classify() = %v, want StatusOwned across equivalent target spellings", got)
+	}
+}
+
+func TestUnusableTargetNamesAreRefused(t *testing.T) {
+	isolatedState(t)
+	outRoot := t.TempDir()
+
+	// A target name becomes part of the record's file name, and that file decides
+	// which paths may be deleted, so a name that could redirect it is refused
+	// outright instead of sanitized into one that might collide.
+	for _, target := range []string{"", "   ", "../factory", "fact/ory", "fact.ory", strings.Repeat("f", 65)} {
+		if err := Save(outRoot, target, []OwnedFile{{Path: "a.md", Digest: DigestOf(nil)}}); !errors.Is(err, ErrTargetUnusable) {
+			t.Fatalf("Save(%q) error = %v, want ErrTargetUnusable", target, err)
+		}
+		if _, err := Load(outRoot, target); !errors.Is(err, ErrTargetUnusable) {
+			t.Fatalf("Load(%q) error = %v, want ErrTargetUnusable", target, err)
+		}
+	}
+}
+
+// writeLegacyRecord writes a valid record at the pre-target-keyed location by
+// relocating a freshly saved one, and returns its path.
+func writeLegacyRecord(t *testing.T, outRoot, target string, files ...OwnedFile) string {
+	t.Helper()
+	if err := Save(outRoot, target, files); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	current, err := RecordPath(outRoot, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := LegacyRecordPath(outRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(current, legacy); err != nil {
+		t.Fatal(err)
+	}
+	return legacy
 }
 
 func TestSaveRefusesRecordingWithoutATarget(t *testing.T) {

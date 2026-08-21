@@ -49,15 +49,47 @@ func BenchmarkPlanConvertSync(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				decision, err := planConvertSync(result, outDir, record, false)
+				decision, err := planConvertSync(result, outDir, record)
 				if err != nil {
 					b.Fatalf("plan: %v", err)
 				}
-				if len(decision.preserved) != size {
-					b.Fatalf("preserved = %d, want %d", len(decision.preserved), size)
+				if len(decision.preserved()) != size {
+					b.Fatalf("preserved = %d, want %d", len(decision.preserved()), size)
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkOpaqueConvertDestinations measures the pre-plan readability probe
+// convert --sync runs over every artifact destination. It exists to keep that
+// probe a per-destination open rather than a second full read of the output tree:
+// the plan already reads and digests the destinations it classifies.
+func BenchmarkOpaqueConvertDestinations(b *testing.B) {
+	const skills = 128
+	b.Setenv("XDG_STATE_HOME", filepath.Join(b.TempDir(), "state"))
+	srcDir := b.TempDir()
+	outDir := filepath.Join(b.TempDir(), "out")
+	benchWriteClaudePlugin(b, srcDir, skills)
+
+	result, err := hcc.Convert(os.DirFS(srcDir), hcc.Harness("claude"), hcc.Harness("factory"), hcc.WithPluginRoot(srcDir))
+	if err != nil {
+		b.Fatalf("convert: %v", err)
+	}
+	if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
+		b.Fatalf("materialize: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		opaque, err := opaqueConvertDestinations(result, outDir)
+		if err != nil {
+			b.Fatalf("scan: %v", err)
+		}
+		if len(opaque) != 0 {
+			b.Fatalf("opaque = %d, want 0 for readable destinations", len(opaque))
+		}
 	}
 }
 

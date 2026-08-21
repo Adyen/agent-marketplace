@@ -605,24 +605,49 @@ agent-marketplace tui                            Launch the interactive browser 
 
 **`convert --sync` prunes only what it can prove it wrote.** Ownership of each
 output file is recorded in durable state under
-`$XDG_STATE_HOME/agent-marketplace/convert` (never inside the output tree), so a
-later sync removes exactly the files an earlier sync materialized and whose bytes
-are unchanged. Anything else — a handwritten file at the output root, a
-hand-authored resource nested beside generated ones, a generated file the user
-has since edited, a file whose bytes cannot be read, or any file at all when the
-record is missing, corrupt, or was written for a different `--to` target — is
-preserved and reported as `convert.sync.preserved-unmanaged` (the listing is
-capped; the remainder is summarized). If a converted resource would land on an
-existing file with different, unowned content, the run is refused before anything
-is written (`convert.sync.unmanaged-collision`). `--replace-unmanaged` is the
-explicit authorization that replaces and prunes such files, and it proceeds even
-over output whose bytes cannot be read.
+`$XDG_STATE_HOME/agent-marketplace/convert`, one record per output root **and**
+`--to` target (never inside the output tree), so a later sync removes exactly the
+files an earlier sync of that same target materialized and whose bytes are
+unchanged. Two harnesses can therefore be converted into one directory without
+either forgetting its own output. Anything else — a handwritten file at the
+output root, a hand-authored resource nested beside generated ones, a generated
+file the user has since edited, or any file at all when that target's record is
+missing or corrupt — is preserved and reported as
+`convert.sync.preserved-unmanaged` (the listing is capped; the remainder is
+summarized). If a converted resource would land on an existing file with
+different, unowned content, the run is refused before anything is written
+(`convert.sync.unmanaged-collision`).
+
+**A refusal states the whole scope of the override it suggests.** Before exiting,
+the run lists every unowned file `--replace-unmanaged` would replace *and* every
+unowned file it would delete, with the totals, so the flag cannot look narrower
+than it is. Running with `--replace-unmanaged` prints the same scope
+(`convert.sync.replace-unmanaged-authorized`) before it destroys anything, and
+`--dry-run` prints it without touching a file.
+
+**A file whose bytes cannot be read behaves differently in each role**, because
+ownership is proved by comparing bytes:
+
+- As a **prune candidate** it is unmanaged, so it is preserved by default and
+  deleted under `--replace-unmanaged` — deleting needs no read.
+- As a **destination** a converted resource must be written to, it stops the
+  conversion from comparing or replacing it. The default run is refused with
+  `convert.sync.unmanaged-collision` (naming the file, not failing deep inside
+  the write), `--replace-unmanaged` removes it and writes the converted file in
+  its place, and `--dry-run --replace-unmanaged` reports
+  `convert.sync.destination-unreplaceable` because no plan can be computed while
+  such a file is there. Anything at a destination that is not a regular file — a
+  symlink, a directory — is treated the same way.
 
 A run that cannot prune keeps what it owns. A partial conversion suppresses
 pruning entirely, so its record carries forward every earlier entry still on disk
 with unchanged bytes; the next clean run can therefore still prune what the
 partial one had to leave behind, instead of treating its own earlier output as
 unmanaged forever.
+
+A record written by an older version, keyed by output root alone, is still read
+for the target it names and is rewritten under its target key by that target's
+next successful sync. It never authorizes anything for another target.
 
 **Ad-hoc flag rules:**
 

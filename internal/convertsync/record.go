@@ -16,9 +16,10 @@
 //
 // Every failure answers "not ours". A missing record ([ErrRecordMissing]), an
 // unreadable or malformed record, a record written for a different output root,
-// a recorded path that escapes the output root ([ErrRecordCorrupt]), or a record
-// written for a different target harness ([ErrRecordOtherTarget]) all yield the
-// zero [Record], which classifies every path as [StatusUnmanaged]. The worst
+// a recorded path that escapes the output root ([ErrRecordCorrupt]), a record
+// written for a different target harness ([ErrRecordOtherTarget]), or a target
+// name that cannot key a record at all ([ErrTargetUnusable]) all yield the zero
+// [Record], which classifies every path as [StatusUnmanaged]. The worst
 // outcome is then a stale generated file the user can delete, never a deleted
 // file the user wrote.
 //
@@ -29,12 +30,22 @@
 // # Where state lives
 //
 // Records live under the Agent Marketplace XDG state root, one file per
-// canonical output root, keyed exactly like the aggregate-ownership records in
-// internal/ownership (same canonicalization, same key derivation, separate
-// directory). They are deliberately NOT written into the output tree: a marker
-// inside the converted output would be indistinguishable from a file any other
-// tool could write, and would itself become output that has to be materialized,
-// pruned, and committed.
+// canonical output root AND target harness, keyed by the same canonicalization
+// and key derivation as the aggregate-ownership records in internal/ownership
+// (separate directory). They are deliberately NOT written into the output tree:
+// a marker inside the converted output would be indistinguishable from a file
+// any other tool could write, and would itself become output that has to be
+// materialized, pruned, and committed.
+//
+// The target belongs in the key, not only in the record body. Converting two
+// harnesses into one directory is legitimate — the layouts occupy different
+// paths — and a single record per root means whichever target syncs last
+// overwrites the other's record, so alternating targets each permanently forget
+// output they still own and can no longer prune it.
+//
+// A pre-target-keyed record (one file per root, no target in the name) is still
+// read, but only for the target it names, and only until that target's next
+// successful [Save] rewrites it under its target key.
 package convertsync
 
 import (
@@ -56,6 +67,10 @@ import (
 // recordVersion is the on-disk schema version. An unknown version is CORRUPT
 // rather than upgradable-by-guess: reading it as "owns nothing" costs a stale
 // file, misreading it could delete a user's file.
+//
+// Adding the target to the record's file name did not bump it: the schema is
+// unchanged, and a pre-target-keyed file still describes its own target's output
+// correctly, so invalidating it would forget ownership that is still true.
 const recordVersion = 1
 
 // recordDirName is the state-root subdirectory holding convert output records.
@@ -75,6 +90,27 @@ var ErrRecordCorrupt = errors.New("convertsync: durable convert ownership record
 // corruption: the state is intact, it just does not describe the layout this
 // run produces, so it cannot authorize deleting anything.
 var ErrRecordOtherTarget = errors.New("convertsync: convert ownership record was written for another target harness")
+
+// ErrTargetUnusable is returned when a target harness name cannot key a record.
+var ErrTargetUnusable = errors.New("convertsync: target harness cannot key a convert ownership record")
+
+// targetNamePattern is the shape a target harness name must have before it can
+// key a record file. The name becomes part of a file name, and that file decides
+// which output paths may be deleted, so anything that could change the path it
+// resolves to — a separator, a traversal segment, the dot that separates the
+// root key from the target — is refused outright rather than sanitized into a
+// name that could collide with another target's key.
+var targetNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// normalizeTarget folds a target name to the single spelling that keys its
+// record, so "Factory" and "factory" cannot own two competing records.
+func normalizeTarget(target string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(target))
+	if !targetNamePattern.MatchString(normalized) {
+		return "", fmt.Errorf("%w: %q", ErrTargetUnusable, target)
+	}
+	return normalized, nil
+}
 
 // Status is the ownership verdict for one path inside the output root.
 type Status int
@@ -171,23 +207,57 @@ func (r Record) recordedDigest(rel string) (string, bool) {
 	return "", false
 }
 
-// RecordPath returns the state file that holds outRoot's record. It creates
-// nothing: callers can use it to inspect or delete state.
-func RecordPath(outRoot string) (string, error) {
-	path, _, err := recordLocation(outRoot)
-	return path, err
+// RecordPath returns the state file that holds outRoot's record for target. It
+// creates nothing: callers can use it to inspect or delete state.
+func RecordPath(outRoot, target string) (string, error) {
+	loc, err := recordLocation(outRoot, target)
+	return loc.path, err
 }
 
-func recordLocation(outRoot string) (recordFile, canonicalRoot string, err error) {
+// LegacyRecordPath returns the pre-target-keyed state file for outRoot: one
+// record per output root, with no target in its name. It exists only so the
+// migration path can be inspected and tested; nothing writes there any more.
+func LegacyRecordPath(outRoot string) (string, error) {
+	// Any valid target yields the same legacy path, which is exactly the
+	// ambiguity that made per-target keying necessary.
+	loc, err := recordLocation(outRoot, "factory")
+	return loc.legacy, err
+}
+
+// recordFiles is where one output root's state lives for one target.
+type recordFiles struct {
+	// path is the target-keyed record this run reads and writes.
+	path string
+	// legacy is the pre-target-keyed record, read only when path is absent and
+	// only when it names this same target.
+	legacy string
+	// canonicalRoot is the single spelling of the output root that keys both.
+	canonicalRoot string
+	// target is the normalized target name stored in and matched against records.
+	target string
+}
+
+func recordLocation(outRoot, target string) (recordFiles, error) {
+	normalizedTarget, err := normalizeTarget(target)
+	if err != nil {
+		return recordFiles{}, err
+	}
 	canonical, err := ownership.CanonicalRoot(outRoot)
 	if err != nil {
-		return "", "", fmt.Errorf("convertsync: %w", err)
+		return recordFiles{}, fmt.Errorf("convertsync: %w", err)
 	}
 	stateRoot, err := ownership.StateRoot()
 	if err != nil {
-		return "", "", fmt.Errorf("convertsync: %w", err)
+		return recordFiles{}, fmt.Errorf("convertsync: %w", err)
 	}
-	return filepath.Join(stateRoot, recordDirName, ownership.RootKey(canonical)+".json"), canonical, nil
+	dir := filepath.Join(stateRoot, recordDirName)
+	key := ownership.RootKey(canonical)
+	return recordFiles{
+		path:          filepath.Join(dir, key+"."+normalizedTarget+".json"),
+		legacy:        filepath.Join(dir, key+".json"),
+		canonicalRoot: canonical,
+		target:        normalizedTarget,
+	}, nil
 }
 
 // Load reads the durable record outRoot holds for target.
@@ -202,32 +272,64 @@ func recordLocation(outRoot string) (recordFile, canonicalRoot string, err error
 // first run ([ErrRecordMissing]) from state that was there and is now unusable
 // ([ErrRecordCorrupt]) or describes another target ([ErrRecordOtherTarget]).
 func Load(outRoot, target string) (Record, error) {
-	recordFile, canonical, err := recordLocation(outRoot)
+	loc, err := recordLocation(outRoot, target)
 	if err != nil {
 		return Record{}, err
 	}
+	record, err := readRecord(loc.path, loc)
+	if err == nil {
+		return record, nil
+	}
+	if !errors.Is(err, ErrRecordMissing) {
+		return Record{}, err
+	}
+
+	// No record under the target key: fall back to the pre-target-keyed file,
+	// which is adopted only when it names this same target. A legacy file
+	// belonging to another target is left untouched for that target's own run to
+	// claim, and authorizes nothing here.
+	legacy, legacyErr := readRecord(loc.legacy, loc)
+	if legacyErr != nil {
+		if errors.Is(legacyErr, ErrRecordMissing) {
+			return Record{}, fmt.Errorf("%w for %s (target %s)", ErrRecordMissing, loc.canonicalRoot, loc.target)
+		}
+		return Record{}, legacyErr
+	}
+	slog.Info("adopted pre-target-keyed convert ownership record; the next successful sync rewrites it under its target key",
+		"record", loc.legacy, "out_root", loc.canonicalRoot, "target", loc.target, "files", len(legacy.Files))
+	return legacy, nil
+}
+
+// readRecord reads and validates one candidate record file for loc's root and
+// target. A file that is absent, unreadable, malformed, written for another root
+// or written for another target yields no record at all.
+func readRecord(recordFile string, loc recordFiles) (Record, error) {
 	raw, err := os.ReadFile(recordFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Record{}, fmt.Errorf("%w for %s", ErrRecordMissing, canonical)
+			return Record{}, fmt.Errorf("%w: %s", ErrRecordMissing, recordFile)
 		}
 		return Record{}, fmt.Errorf("%w: read %s: %v", ErrRecordCorrupt, recordFile, err)
 	}
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
 		slog.Warn("convert ownership record is not valid JSON; treating all output as unmanaged",
-			"record", recordFile, "out_root", canonical)
+			"record", recordFile, "out_root", loc.canonicalRoot)
 		return Record{}, fmt.Errorf("%w: parse %s: %v", ErrRecordCorrupt, recordFile, err)
 	}
-	if err := validateRecord(record, canonical); err != nil {
+	if err := validateRecord(record, loc.canonicalRoot); err != nil {
 		slog.Warn("convert ownership record refused; treating all output as unmanaged",
-			"record", recordFile, "out_root", canonical, "err", err)
+			"record", recordFile, "out_root", loc.canonicalRoot, "err", err)
 		return Record{}, err
 	}
-	if record.Target != target {
+	recordedTarget, err := normalizeTarget(record.Target)
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: %v", ErrRecordCorrupt, err)
+	}
+	if recordedTarget != loc.target {
 		slog.Warn("convert ownership record describes another target; treating all output as unmanaged",
-			"record", recordFile, "out_root", canonical, "recorded_target", record.Target, "target", target)
-		return Record{}, fmt.Errorf("%w: record describes %q, not %q", ErrRecordOtherTarget, record.Target, target)
+			"record", recordFile, "out_root", loc.canonicalRoot, "recorded_target", recordedTarget, "target", loc.target)
+		return Record{}, fmt.Errorf("%w: %s describes %q, not %q", ErrRecordOtherTarget, recordFile, recordedTarget, loc.target)
 	}
 	record.index = make(map[string]string, len(record.Files))
 	for _, f := range record.Files {
@@ -302,7 +404,8 @@ func validateRelPath(p string) error {
 	return nil
 }
 
-// Save replaces outRoot's record for target with files.
+// Save replaces outRoot's record for target with files, and retires the
+// pre-target-keyed record once this target no longer needs it.
 //
 // It is called only after a successful materialization, so the record always
 // describes bytes that actually reached disk. Replacement rather than merge is
@@ -311,13 +414,11 @@ func validateRelPath(p string) error {
 // passes the complete set that is still owned, including any prior entry it
 // carried over because it could not prune it (see the convert command).
 func Save(outRoot, target string, files []OwnedFile) error {
-	if strings.TrimSpace(target) == "" {
-		return errors.New("convertsync: refusing to record output without a target harness")
-	}
-	recordFile, canonical, err := recordLocation(outRoot)
+	loc, err := recordLocation(outRoot, target)
 	if err != nil {
 		return err
 	}
+	recordFile, canonical := loc.path, loc.canonicalRoot
 	normalized := make([]OwnedFile, 0, len(files))
 	seen := make(map[string]string, len(files))
 	for _, f := range files {
@@ -340,7 +441,7 @@ func Save(outRoot, target string, files []OwnedFile) error {
 		Version:       recordVersion,
 		CanonicalRoot: canonical,
 		RootKey:       ownership.RootKey(canonical),
-		Target:        target,
+		Target:        loc.target,
 		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 		Files:         normalized,
 	}
@@ -379,6 +480,43 @@ func Save(outRoot, target string, files []OwnedFile) error {
 	if err := os.Rename(tmpName, recordFile); err != nil {
 		return fmt.Errorf("convertsync: publish record: %w", err)
 	}
-	slog.Debug("recorded convert output ownership", "out_root", canonical, "target", target, "files", len(normalized))
+	retireLegacyRecord(loc)
+	slog.Debug("recorded convert output ownership", "out_root", canonical, "target", loc.target, "files", len(normalized))
 	return nil
+}
+
+// retireLegacyRecord deletes the pre-target-keyed record once the target it
+// names has published a target-keyed one, completing the migration.
+//
+// It removes the file only after confirming the file names THIS target: a legacy
+// record for another target is that target's only evidence of what it owns, and
+// deleting it would make that output unprunable forever. Every failure is
+// non-fatal — the authoritative record is already published, and a surviving
+// legacy file is never consulted again for this target.
+func retireLegacyRecord(loc recordFiles) {
+	raw, err := os.ReadFile(loc.legacy)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Debug("could not read the pre-target-keyed convert ownership record; leaving it in place",
+				"record", loc.legacy, "err", err)
+		}
+		return
+	}
+	var legacy Record
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		slog.Warn("pre-target-keyed convert ownership record is unreadable; leaving it in place",
+			"record", loc.legacy, "err", err)
+		return
+	}
+	recordedTarget, err := normalizeTarget(legacy.Target)
+	if err != nil || recordedTarget != loc.target {
+		return
+	}
+	if err := os.Remove(loc.legacy); err != nil && !os.IsNotExist(err) {
+		slog.Warn("could not remove the migrated pre-target-keyed convert ownership record",
+			"record", loc.legacy, "err", err)
+		return
+	}
+	slog.Info("migrated pre-target-keyed convert ownership record to its target key",
+		"from", loc.legacy, "to", loc.path, "target", loc.target)
 }
