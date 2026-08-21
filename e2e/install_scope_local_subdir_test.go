@@ -189,6 +189,42 @@ registries:
 	env.AssertFileAbsent("/workspace/.factory/skills/subdir-skill")
 }
 
+// TestUpdateFromSubdirMaterializesAtSubdir verifies that update preserves
+// sync's local-config materialization root when run from a monorepo subdir.
+func TestUpdateFromSubdirMaterializesAtSubdir(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+
+	regURL := env.CreateBareRepo("update-subdir-reg", SkillsOnly(
+		Skill{Name: "update-subdir-skill", Description: "Skill for update subdir test"},
+	))
+	env.WriteRepoConfig(strings.TrimSpace(`
+registries:
+  - url: ` + regURL + `
+    ref: main
+    default: true
+`))
+	env.WriteFile("/workspace/subdir/.agents/config.local.yaml", strings.TrimSpace(`
+registries:
+  - url: `+regURL+`
+    ref: main
+    default: true
+`))
+	env.WriteGlobalConfig(``)
+
+	initial := env.RunAMFrom("/workspace/subdir", "sync")
+	if initial.ExitCode != 0 {
+		t.Fatalf("initial sync from subdir should succeed, but exited %d\noutput:\n%s", initial.ExitCode, initial.Combined)
+	}
+	updated := env.RunAMFrom("/workspace/subdir", "update")
+	if updated.ExitCode != 0 {
+		t.Fatalf("update from subdir should succeed, but exited %d\noutput:\n%s", updated.ExitCode, updated.Combined)
+	}
+
+	env.AssertFileExists("/workspace/subdir/.factory/skills/update-subdir-skill/SKILL.md")
+	env.AssertFileAbsent("/workspace/.factory/skills/update-subdir-skill")
+}
+
 // TestSyncFromSubdirLocalExcludeParent verifies that a local config in a
 // subdirectory can exclude a skill from the parent's config.yaml.
 func TestSyncFromSubdirLocalExcludeParent(t *testing.T) {

@@ -53,13 +53,7 @@ type InstallOptions struct {
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
-	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		return []silentSyncOpt{
-			withMaterializeRoot(opts.LocalConfigDir),
-			withLocalConfigDir(opts.LocalConfigDir),
-		}
-	}
-	return nil
+	return silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
 }
 
 // InstallResult holds the outcome of an install operation.
