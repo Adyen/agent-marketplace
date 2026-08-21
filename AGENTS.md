@@ -28,6 +28,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |
 | Name collisions across registries refuse sync | Prevents silent overwrites when independent registries provide the same resource |
 | Same-URL different-path collisions emit warning | User deliberately configured both entries; keep all for visibility but warn that only one materializes per scope |
+| Executable collisions (`hook`, `mcp`) refuse sync and install nothing, while readable kinds keep the winner-plus-warning behavior | A hook is a command line and an MCP server is a launched process, so choosing between two definitions by precedence — or, at equal precedence, by whichever URL sorts first — lets any added registry substitute the code behind a name another registry published; `required: true` is not an override, and the ambiguity is judged after all excludes so source-qualified selection is a real way out |
 | `required:true` registries immune to all excludes | Enforces org-wide security standards |
 | `--from` ad-hoc registry operations on install/remove/list | Zero-config onboarding: browse, install, and remove resources from any registry URL without editing config files first |
 | `.gitignored` generated harness output | Config is committed; generated files are ephemeral on disk |

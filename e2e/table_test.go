@@ -2013,8 +2013,8 @@ harnesses:
 		},
 	},
 	{
-		Name: "mcp/collision_same_name_different_registries",
-		Desc: "Given two registries each providing an MCP server named 'shared-mcp', When sync is run, Then a collision warning is emitted",
+		Name: "mcp/collision_same_name_different_registries_is_refused",
+		Desc: "Given two registries each providing an MCP server named 'shared-mcp', When sync is run, Then it fails without installing either definition because executable resources are not selected by precedence",
 		Registries: []RegistryDef{
 			{Name: "mcp-reg-a", MCPServers: []MCPServer{
 				{Name: "shared-mcp", Command: "npx", Args: []string{"-y", "@a/mcp"}},
@@ -2035,8 +2035,41 @@ registries:
       - shared-mcp
 `,
 		Steps: []Step{
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"shared-mcp", "was not installed"},
+				FilesAbsent: []string{"/root/.factory/mcp.json"}},
+			{Args: []string{"status"},
+				OutContains: []string{"shared-mcp"}},
+		},
+	},
+	{
+		Name: "mcp/collision_resolved_by_excluding_one_source",
+		Desc: "Given two registries providing 'shared-mcp' and one of them excluding it, When sync is run, Then the remaining definition installs and sync succeeds",
+		Registries: []RegistryDef{
+			{Name: "mcp-excl-a", MCPServers: []MCPServer{
+				{Name: "shared-mcp", Command: "npx", Args: []string{"-y", "@a/mcp"}},
+			}},
+			{Name: "mcp-excl-b", MCPServers: []MCPServer{
+				{Name: "shared-mcp", Command: "node", Args: []string{"b.js"}},
+			}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-excl-a}}
+    ref: main
+    mcp:
+      exclude:
+        - shared-mcp
+  - url: {{REG:mcp-excl-b}}
+    ref: main
+    mcp:
+      - shared-mcp
+`,
+		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
-				OutContains: []string{"collision"}},
+				FileContains: map[string]string{
+					"/root/.factory/mcp.json": "b.js",
+				}},
 		},
 	},
 	{

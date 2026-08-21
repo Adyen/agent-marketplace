@@ -211,6 +211,98 @@ func (e *NameCollisionWarning) Remediation() string {
 	return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from <url>'", e.Name)
 }
 
+// ExecutableSource is one configured registry location that claims a contested
+// executable identity. It keeps the URL, ref and path separate so remediation
+// can name flags the user can paste, instead of asking them to take a label
+// apart again.
+type ExecutableSource struct {
+	URL  string
+	Ref  string
+	Path string
+}
+
+// Label renders the source for a user-facing message, with any embedded URL
+// credentials redacted. Ref and path are included because two pins or two
+// sub-directories of one repository are different content under one URL, and a
+// refusal that cannot tell them apart cannot be acted on.
+func (s ExecutableSource) Label() string {
+	label := redact.URL(config.NormalizeGitURL(s.URL))
+	if s.Path != "" {
+		label += " (" + redact.URL(s.Path) + ")"
+	}
+	if s.Ref != "" {
+		label += "@" + s.Ref
+	}
+	return label
+}
+
+// ExecutableCollisionError is a hard error emitted when more than one configured
+// registry location provides the same hook or MCP-server identity within one
+// install scope.
+//
+// It is deliberately not a NameCollisionWarning: a hook and an MCP server carry
+// a command line, arguments and environment that a harness executes, so
+// choosing between two definitions by source precedence (or, at equal
+// precedence, by whichever URL sorts first) lets any registry a user adds
+// substitute the code behind a name another registry already published. Nothing
+// is installed for the contested identity, and the resource stays uninstalled
+// until the user names the source they want. The refusal is evaluated after
+// every exclude has been applied, so excluding a source is a real way out.
+type ExecutableCollisionError struct {
+	Kind ir.ResourceKind
+	Name string
+	// Sources lists every location that claims the identity, in config order.
+	Sources []ExecutableSource
+}
+
+func (e *ExecutableCollisionError) Error() string {
+	return fmt.Sprintf("%s %q is provided by %d registry sources (%s) and was not installed: executable resources are not selected by precedence",
+		skill.KindLabel(e.Kind), e.Name, len(e.Sources), strings.Join(e.sourceLabels(), ", "))
+}
+
+// Remediation returns a user-facing hint about how to resolve the ambiguity by
+// source-qualified selection.
+func (e *ExecutableCollisionError) Remediation() string {
+	target := "<url>"
+	pathFlag := ""
+	if len(e.Sources) > 0 {
+		target = redact.URL(config.NormalizeGitURL(e.Sources[0].URL))
+		if e.Sources[0].Path != "" {
+			pathFlag = " --path " + redact.URL(e.Sources[0].Path)
+		}
+	}
+	return fmt.Sprintf("keep exactly one source for this %s: 'agent-marketplace remove %q --from %s%s' (repeat for every source you do not want), then re-run sync",
+		skill.KindLabel(e.Kind), e.Name, target, pathFlag)
+}
+
+func (e *ExecutableCollisionError) sourceLabels() []string {
+	labels := make([]string, len(e.Sources))
+	for i, source := range e.Sources {
+		labels[i] = source.Label()
+	}
+	return labels
+}
+
+// IsExecutableCollision reports whether err is an ExecutableCollisionError.
+func IsExecutableCollision(err error) bool {
+	var refusal *ExecutableCollisionError
+	return errors.As(err, &refusal)
+}
+
+// isExecutableKind reports whether a resource kind carries content a harness
+// executes rather than reads. A hook is a command line run on an event and an
+// MCP server is a process launched with arguments and environment, so their
+// identity is a trust boundary; skills, commands, subagents and rules are
+// prompt text a model reads.
+func isExecutableKind(kind ir.ResourceKind) bool {
+	switch kind {
+	case ir.KindHook, ir.KindMcpServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // AmbiguousCollectionMemberWarning is emitted when a collection member names a
 // registry URL without a path and more than one configured location for that
 // repository actually contains the member. Binding to whichever entry came
@@ -720,10 +812,145 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	var expandErrs []error
 	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, targetSet)
 	errs = append(errs, expandErrs...)
+
+	// Executable ambiguity is judged last, once every exclude and every
+	// collection expansion has had its say: the refusal must reflect the
+	// sources that would actually be installed, not the ones the config
+	// mentions.
+	var executableErrs []error
+	resolved, executableErrs = refuseAmbiguousExecutables(resolved)
+	errs = append(errs, executableErrs...)
+
 	errs = append(errs, validateRequirements(resolved)...)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
+}
+
+// refuseAmbiguousExecutables removes every hook and MCP server whose identity is
+// claimed by more than one registry location that installs into the same scope,
+// and returns one ExecutableCollisionError per contested identity.
+//
+// Scope is part of the grouping because a machine-scoped and a repo-scoped
+// artifact materialize into different roots: the same server configured at both
+// scopes is complementary, not contested. Both claimants are dropped rather than
+// ranked — a refusal that still installed one of them would be the precedence
+// selection it is meant to prevent.
+func refuseAmbiguousExecutables(resolved []ResolvedArtifact) ([]ResolvedArtifact, []error) {
+	type scopedKey struct {
+		kind    ir.ResourceKind
+		name    string
+		machine bool
+	}
+
+	// Most catalogs carry no hook or MCP server at all; the pre-scan keeps that
+	// case free of the grouping maps below.
+	hasExecutable := false
+	for _, artifact := range resolved {
+		if isExecutableKind(artifact.Kind) {
+			hasExecutable = true
+			break
+		}
+	}
+	if !hasExecutable {
+		return resolved, nil
+	}
+
+	identitiesByScope := make(map[scopedKey]map[string]struct{})
+	for _, artifact := range resolved {
+		if !isExecutableKind(artifact.Kind) {
+			continue
+		}
+		key := scopedKey{kind: artifact.Kind, name: artifact.Name, machine: artifact.Source.IsMachineScope()}
+		identities, ok := identitiesByScope[key]
+		if !ok {
+			identities = make(map[string]struct{}, 2)
+			identitiesByScope[key] = identities
+		}
+		identities[executableSourceIdentity(artifact)] = struct{}{}
+	}
+
+	contested := false
+	for _, identities := range identitiesByScope {
+		if len(identities) > 1 {
+			contested = true
+			break
+		}
+	}
+	if !contested {
+		return resolved, nil
+	}
+
+	type refusal struct {
+		kind    ir.ResourceKind
+		name    string
+		sources []ExecutableSource
+		seen    map[string]struct{}
+	}
+	refusals := make(map[resourceSelection]*refusal)
+
+	// Iterating the resolved slice — rather than the grouping map — is what
+	// makes the reported source order config order instead of map order.
+	kept := make([]ResolvedArtifact, 0, len(resolved))
+	for _, artifact := range resolved {
+		if !isExecutableKind(artifact.Kind) {
+			kept = append(kept, artifact)
+			continue
+		}
+		key := scopedKey{kind: artifact.Kind, name: artifact.Name, machine: artifact.Source.IsMachineScope()}
+		if len(identitiesByScope[key]) < 2 {
+			kept = append(kept, artifact)
+			continue
+		}
+
+		refusalKey := resourceSelection{kind: artifact.Kind, name: artifact.Name}
+		entry, ok := refusals[refusalKey]
+		if !ok {
+			entry = &refusal{kind: artifact.Kind, name: artifact.Name, seen: make(map[string]struct{}, 2)}
+			refusals[refusalKey] = entry
+		}
+		identity := executableSourceIdentity(artifact)
+		if _, dup := entry.seen[identity]; !dup {
+			entry.seen[identity] = struct{}{}
+			entry.sources = append(entry.sources, ExecutableSource{
+				URL:  artifact.RegistryURL,
+				Ref:  artifact.Ref,
+				Path: artifact.RegistryPath,
+			})
+		}
+	}
+
+	errs := make([]error, 0, len(refusals))
+	keys := make([]resourceSelection, 0, len(refusals))
+	for key := range refusals {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, func(a, b resourceSelection) int {
+		if a.kind != b.kind {
+			return int(a.kind) - int(b.kind)
+		}
+		return strings.Compare(a.name, b.name)
+	})
+	for _, key := range keys {
+		entry := refusals[key]
+		err := &ExecutableCollisionError{Kind: entry.kind, Name: entry.name, Sources: entry.sources}
+		slog.Error("executable resource refused: ambiguous source",
+			"kind", entry.kind.String(), "name", entry.name, "sources", len(entry.sources))
+		errs = append(errs, err)
+	}
+
+	return kept, errs
+}
+
+// executableSourceIdentity keys the registry location an executable artifact
+// came from. A local registry is identified by its resolved bundle path; a git
+// registry by normalized URL, ref and sub-path, because two refs or two
+// sub-directories of one repository are different content.
+func executableSourceIdentity(artifact ResolvedArtifact) string {
+	if artifact.IsLocal() {
+		return "local\x00" + artifact.CatalogKey + "\x00" + artifact.RegistryPath
+	}
+	return config.NormalizeGitURL(artifact.RegistryURL) + "\x00" + artifact.Ref + "\x00" + artifact.RegistryPath
 }
 
 func validateRequirements(resolved []ResolvedArtifact) []error {
@@ -1650,6 +1877,16 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 	for _, key := range keys {
 		occurrences := occurrencesByName[key]
 		deduped := deduplicateOccurrences(occurrences)
+
+		// An executable identity is never awarded to a winner here. Every
+		// claimant is carried forward so that refuseAmbiguousExecutables can
+		// judge the ambiguity after excludes have been applied — an exclude the
+		// user wrote to resolve it lands in a later phase, and a winner picked
+		// now would already have hidden the other claimant from it.
+		if isExecutableKind(key.kind) {
+			winners = append(winners, deduped...)
+			continue
+		}
 
 		if hasMultiRegistryCollision(deduped) {
 			// Pick a deterministic winner instead of skipping the resource.

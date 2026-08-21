@@ -102,10 +102,39 @@ needed. `kind` defaults to `skill`.
 
 ## Name collisions and ambiguity
 
-- If the same resource name (within the same kind) is selected from multiple different registries, resolution errors.
-- The CLI does not auto-pick a winner across different registries.
-- Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one source.
-- The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+When the same resource name within the same kind is selected from more than one
+registry location, the outcome depends on whether the resource is executable.
+
+**Readable kinds — `skill`, `command`, `subagent`, `rule`, `collection`:**
+
+- A deterministic winner is picked and a collision warning is reported: `required`
+  first, then the higher-precedence config layer, then the alphabetically-first
+  normalized URL.
+- `sync` still succeeds; the warning names the winner and every runner-up.
+- To prefer a different source, exclude the winner
+  (`agent-marketplace remove <name> --from <url> [--path <path>]`).
+
+**Executable kinds — `hook`, `mcp`:**
+
+- Nothing is installed for the contested name and `sync` fails. A hook is a
+  command line the harness runs and an MCP server is a process it launches with
+  arguments and environment, so silently preferring one definition over another
+  would let any registry a user adds substitute the code behind a name another
+  registry already published. Precedence — including `required: true` — never
+  selects executable content.
+- The refusal names every claiming location as `<url> (<path>)@<ref>`, so two
+  pins or two sub-directories of one repository are distinguishable.
+- Resolve it by source-qualified selection: keep exactly one source and exclude
+  the rest with `agent-marketplace remove <name> --from <url> [--path <path>]`.
+  The refusal is evaluated after all excludes are applied, so an exclude at any
+  layer resolves it.
+- Two configured locations are the same source (not a collision) when their
+  normalized URL, ref and path match. The same source selected at both machine
+  and repo scope stays complementary: those materialize into different roots.
+
+The same name may exist across different kinds (e.g. a skill named `deploy` and a
+command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to
+disambiguate.
 
 ## Practical examples
 

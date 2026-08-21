@@ -2592,18 +2592,21 @@ func TestResolveMcpServerCollisionAcrossRegistries(t *testing.T) {
 
 	got, errs := Resolve(cfg, catalogs, nil)
 	if len(errs) != 1 {
-		t.Fatalf("expected one collision warning, got %v", errs)
+		t.Fatalf("expected one collision refusal, got %v", errs)
 	}
-	if !IsNameCollision(errs[0]) {
-		t.Fatalf("expected collision type, got %T: %v", errs[0], errs[0])
+	// An MCP server is executable content, so the ambiguity is refused instead
+	// of being awarded to a winner by precedence. See
+	// TestResolveRefusesMcpCollisionAcrossRegistries for the full contract.
+	if !IsExecutableCollision(errs[0]) {
+		t.Fatalf("expected *ExecutableCollisionError, got %T: %v", errs[0], errs[0])
 	}
 
 	names := make(map[string]bool)
 	for _, a := range got {
 		names[a.Name] = true
 	}
-	if !names["youtrack"] {
-		t.Fatalf("expected colliding MCP server 'youtrack' to be resolved, got %v", got)
+	if names["youtrack"] {
+		t.Fatalf("expected contested MCP server 'youtrack' to be refused, got %v", got)
 	}
 }
 
