@@ -29,8 +29,18 @@ func NewResolver() *Resolver {
 	return &Resolver{Cache: DefaultCache()}
 }
 
-// Resolve implements resolver.MarketplaceResolver.
+// Resolve implements resolver.MarketplaceResolver without a temporary
+// revocation override.
 func (r *Resolver) Resolve(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) ([]resolver.ResolvedArtifact, []error) {
+	return r.ResolveWithPolicy(ctx, cfg, targetSet, mode, nil)
+}
+
+// ResolveWithPolicy is the optional policy-aware Marketplace resolver path.
+// The policy is intentionally supplied per call and is never persisted.
+func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) ([]resolver.ResolvedArtifact, []error) {
+	if err := ctx.Err(); err != nil {
+		return nil, []error{err}
+	}
 	if cfg == nil || len(cfg.Marketplaces) == 0 {
 		return nil, nil
 	}
@@ -56,22 +66,27 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *config.Config, targetSet []
 			errs = append(errs, fmt.Errorf("marketplace %s: configured marketplace instance ID is required", entry.URL))
 			continue
 		}
-		client, err := r.clientForEntry(entry)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("marketplace %s: %w", entry.URL, err))
-			continue
-		}
-		wellKnown, err := client.WellKnown(ctx)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("marketplace %s well-known document: %w", entry.URL, err))
-			continue
-		}
-		if wellKnown.InstanceID != entry.InstanceID {
-			errs = append(errs, fmt.Errorf("marketplace %s instance ID mismatch: endpoint %q, configured %q", entry.URL, wellKnown.InstanceID, entry.InstanceID))
-			continue
+		var client *Client
+		if mode != resolver.MarketplaceResolveModeCachedNoFetch {
+			client, err = r.clientForEntry(entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("marketplace %s: %w", entry.URL, err))
+				continue
+			}
+			wellKnown, err := client.WellKnown(ctx)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("marketplace %s well-known document: %w", entry.URL, err))
+				continue
+			}
+			if wellKnown.InstanceID != entry.InstanceID {
+				errs = append(errs, fmt.Errorf("marketplace %s instance ID mismatch: endpoint %q, configured %q", entry.URL, wellKnown.InstanceID, entry.InstanceID))
+				continue
+			}
+		} else {
+			slog.Debug("marketplace cached no-fetch resolution", "url", entry.URL, "instance_id", entry.InstanceID)
 		}
 		for _, pin := range entry.Resources {
-			resolved, err := r.resolvePin(ctx, client, cache, entry, pin, targetSet, mode)
+			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err))
 				continue
@@ -120,8 +135,8 @@ func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error
 	return NewClient(entry.URL, opts...)
 }
 
-func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) (resolver.ResolvedArtifact, error) {
-	artifact, _, err := r.resolvePinWithArtifact(ctx, client, cache, entry, pin, targetSet, mode)
+func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) (resolver.ResolvedArtifact, error) {
+	artifact, _, err := r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy)
 	return artifact, err
 }
 
@@ -130,6 +145,13 @@ func (r *Resolver) resolvePin(ctx context.Context, client *Client, cache *Cache,
 // Callers that need metadata for a prepared install must use this value rather
 // than rereading the cache, since the cache is intentionally disposable.
 func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
+	return r.resolvePinWithArtifactPolicy(ctx, client, cache, entry, pin, targetSet, mode, nil)
+}
+
+func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
+	if err := ctx.Err(); err != nil {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+	}
 	kind, err := irKind(pin.Kind)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
@@ -195,7 +217,17 @@ func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, c
 	}
 
 	if rev.Revocation != nil {
-		return artifact, hccartifact.CanonicalArtifact{}, fmt.Errorf("revision is revoked")
+		identity := resolver.MarketplaceRevocationIdentity{
+			Marketplace:   entry.InstanceID,
+			Source:        pin.SourceID,
+			Kind:          pin.Kind,
+			Name:          pin.Name,
+			ContentDigest: pin.Digest,
+		}
+		if policy == nil || !policy.AllowRevoked(identity) {
+			return artifact, hccartifact.CanonicalArtifact{}, fmt.Errorf("revision is revoked")
+		}
+		slog.Warn("marketplace revoked revision explicitly allowed for this invocation", "marketplace", entry.InstanceID, "source", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "content_digest", pin.Digest)
 	}
 
 	if mode == resolver.MarketplaceResolveModeInspect {
@@ -207,6 +239,12 @@ func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, c
 	raw, verified, err := cache.ReadArtifact(archiveDigest)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached artifact: %w", err)
+	}
+	if mode == resolver.MarketplaceResolveModeCachedNoFetch && (!verified || raw == nil) {
+		if raw == nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verified artifact is missing from cache")
+		}
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached artifact is not verified")
 	}
 	if !verified || raw == nil {
 		if mode == resolver.MarketplaceResolveModeCached {
@@ -264,6 +302,9 @@ func (r *Resolver) resolvePinWithArtifact(ctx context.Context, client *Client, c
 }
 
 func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
+	if err := ctx.Err(); err != nil {
+		return store.ResourceRevision{}, err
+	}
 	if mode != resolver.MarketplaceResolveModeRefresh {
 		rev, ok, err := cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 		if err != nil {
@@ -275,8 +316,14 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 		if mode == resolver.MarketplaceResolveModeCached {
 			return store.ResourceRevision{}, fmt.Errorf("resource revision not in cache")
 		}
+		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			return store.ResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
+		}
 	}
 
+	if client == nil {
+		return store.ResourceRevision{}, fmt.Errorf("cached no-fetch resolver has no Marketplace client")
+	}
 	rev, err := client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 	if err != nil {
 		return store.ResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)

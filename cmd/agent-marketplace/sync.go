@@ -16,6 +16,7 @@ import (
 
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -30,15 +31,32 @@ func newSyncCmd() *cobra.Command {
 	var strict bool
 	var pruneStale bool
 	var verbose bool
+	var offline bool
+	var allowRevoked []string
+	var policy resolver.MarketplaceRevocationPolicy
 
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync enabled skills into local skill directories",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if offline && pruneStale {
+				return fmt.Errorf("--prune-stale cannot be used with --offline: cached snapshots must never drive destructive stale-selection pruning")
+			}
+			parsedPolicy, err := marketplace.NewRevocationOverridePolicy(allowRevoked)
+			if err != nil {
+				return fmt.Errorf("invalid --allow-revoked value: %w", err)
+			}
+			policy = parsedPolicy
+			if checkOnly && len(allowRevoked) > 0 {
+				return fmt.Errorf("--allow-revoked cannot be used with --check: revoked overrides are execution-only and checks must remain unhealthy")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkOnly {
-				return runSyncCheck(cmd.Context(), cmd.OutOrStdout())
+				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline)
 			}
-			return runSync(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose)
+			return runSync(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, policy)
 		},
 	}
 
@@ -47,17 +65,27 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
+	cmd.Flags().StringArrayVar(&allowRevoked, "allow-revoked", nil, "Allow one exact revoked Marketplace pin for this invocation: marketplace/source/kind/name@sha256:<64 lowercase hex>")
 
 	return cmd
 }
 
-func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool) error {
-	if err := config.EnsureGlobalConfig(); err != nil {
-		slog.Warn("failed to create global config skeleton", "error", err)
+func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, policy resolver.MarketplaceRevocationPolicy) error {
+	if !offline {
+		if err := config.EnsureGlobalConfig(); err != nil {
+			slog.Warn("failed to create global config skeleton", "error", err)
+		}
 	}
 
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, SkipInventory: pruneStale}
+	resolveOpts := pipeline.ResolveOptions{
+		RepoRoot:                    repoRoot,
+		NoBackup:                    noBackup,
+		SkipInventory:               pruneStale,
+		Offline:                     offline,
+		MarketplaceRevocationPolicy: policy,
+	}
 	localDir := config.FindLocalConfigDir()
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir
@@ -251,7 +279,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			// remove (collection-sourced, or a failed config edit) are still
 			// in the config — silently discarding the promotion the user
 			// asked for. Pinned by TestSyncPruneStaleStrictSurvivesTheReSync.
-			return runSync(ctx, out, noBackup, strict, false, verbose)
+			return runSync(ctx, out, noBackup, strict, false, verbose, offline, policy)
 		}
 	}
 
@@ -321,9 +349,10 @@ func printRemediations(out io.Writer, issues []error) error {
 	return nil
 }
 
-func runSyncCheck(ctx context.Context, out io.Writer) error {
+func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh}
+	isOffline := len(offline) > 0 && offline[0]
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline}
 	resolveOpts.RequireTargetSet = true
 	localDir := config.FindLocalConfigDir()
 	if localDir != "" && localDir != repoRoot {

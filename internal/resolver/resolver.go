@@ -83,12 +83,13 @@ func (w *UnmetRequirementWarning) Remediation() string {
 
 // resolveOptions holds optional parameters for Resolve.
 type resolveOptions struct {
-	context             context.Context
-	resources           map[string]map[string]ir.Resource
-	malformed           map[string][]skill.MalformedSkill
-	targetHarnesses     []hcc.Target
-	marketplaceResolver MarketplaceResolver
-	marketplaceMode     MarketplaceResolveMode
+	context                     context.Context
+	resources                   map[string]map[string]ir.Resource
+	malformed                   map[string][]skill.MalformedSkill
+	targetHarnesses             []hcc.Target
+	marketplaceResolver         MarketplaceResolver
+	marketplaceMode             MarketplaceResolveMode
+	marketplaceRevocationPolicy MarketplaceRevocationPolicy
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -105,13 +106,40 @@ const (
 	MarketplaceResolveModeCached
 	// MarketplaceResolveModeInspect fetches metadata only and leaves Resource nil.
 	MarketplaceResolveModeInspect
+	// MarketplaceResolveModeCachedNoFetch uses only cached metadata and verified
+	// artifacts. It does not construct a client or perform any HTTP request.
+	MarketplaceResolveModeCachedNoFetch
 )
+
+// MarketplaceRevocationIdentity is the exact identity a temporary revoked
+// override is allowed to match. ContentDigest is part of the identity so an
+// override cannot authorize a different revision of the same resource.
+type MarketplaceRevocationIdentity struct {
+	Marketplace   string
+	Source        string
+	Kind          string
+	Name          string
+	ContentDigest string
+}
+
+// MarketplaceRevocationPolicy authorizes only explicitly approved revoked
+// identities for the current in-memory resolution.
+type MarketplaceRevocationPolicy interface {
+	AllowRevoked(MarketplaceRevocationIdentity) bool
+}
 
 // MarketplaceResolver resolves configured Marketplace pins into ResolvedArtifact
 // values that participate in the same deduplication/collision pipeline as
 // registry resources.
 type MarketplaceResolver interface {
 	Resolve(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode) ([]ResolvedArtifact, []error)
+}
+
+// MarketplaceResolverWithPolicy is an optional extension implemented by
+// Marketplace resolvers that support temporary revocation overrides. Existing
+// MarketplaceResolver implementations remain source-compatible.
+type MarketplaceResolverWithPolicy interface {
+	ResolveWithPolicy(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy) ([]ResolvedArtifact, []error)
 }
 
 // WithContext supplies the caller context to Marketplace resolution. It keeps
@@ -133,6 +161,14 @@ func WithMarketplaceResolver(r MarketplaceResolver) ResolveOption {
 func WithMarketplaceResolveMode(m MarketplaceResolveMode) ResolveOption {
 	return func(opts *resolveOptions) {
 		opts.marketplaceMode = m
+	}
+}
+
+// WithMarketplaceRevocationPolicy supplies an optional in-memory policy for
+// exact revoked Marketplace overrides.
+func WithMarketplaceRevocationPolicy(policy MarketplaceRevocationPolicy) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceRevocationPolicy = policy
 	}
 }
 
@@ -804,7 +840,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// Phase 1b: Add Marketplace pins to the occurrence map.
 	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
 		nextOrder := maxOccurrenceOrder(occurrencesByName)
-		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, nextOrder)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
 		errs = append(errs, mpErrs...)
 		for sel, occs := range mpOccurrences {
 			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
@@ -860,8 +896,14 @@ func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrenc
 	return max
 }
 
-func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
-	artifacts, errs := mpResolver.Resolve(ctx, cfg, targetSet, mode)
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+	var artifacts []ResolvedArtifact
+	var errs []error
+	if resolverWithPolicy, ok := mpResolver.(MarketplaceResolverWithPolicy); ok {
+		artifacts, errs = resolverWithPolicy.ResolveWithPolicy(ctx, cfg, targetSet, mode, policy)
+	} else {
+		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
 		sel := resourceSelection{kind: a.Kind, name: a.Name}

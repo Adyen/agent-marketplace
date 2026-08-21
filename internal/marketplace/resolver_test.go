@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -176,6 +177,75 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 		t.Fatalf("refresh resolve did not refresh metadata")
 	}
 
+	before = requestCount
+	resolved3, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) > 0 {
+		t.Fatalf("CachedNoFetch Resolve errors: %v", errs)
+	}
+	if len(resolved3) != 1 || resolved3[0].Resource == nil {
+		t.Fatalf("CachedNoFetch resolved artifacts = %#v, want one materializable artifact", resolved3)
+	}
+	if requestCount != before {
+		t.Fatalf("CachedNoFetch made %d network requests, want none", requestCount-before)
+	}
+
+}
+
+func TestResolverCachedNoFetchFailsClosedBeforeHTTP(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	archiveDigest := "sha256:" + strings.Repeat("b", 64)
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest,
+	}}}
+	r := &Resolver{Cache: cache}
+	_, errs := r.Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "metadata is missing") {
+		t.Fatalf("missing metadata errors = %v, want precise cache miss", errs)
+	}
+	if requests != 0 {
+		t.Fatalf("missing metadata made %d HTTP requests", requests)
+	}
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", digest, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, errs = r.Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "verified artifact is missing") {
+		t.Fatalf("missing artifact errors = %v, want precise cache miss", errs)
+	}
+	if requests != 0 {
+		t.Fatalf("missing artifact made %d HTTP requests", requests)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, []byte("unverified")); err != nil {
+		t.Fatal(err)
+	}
+	_, errs = r.Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "not verified") {
+		t.Fatalf("unverified artifact errors = %v, want trust failure", errs)
+	}
+	if requests != 0 {
+		t.Fatalf("unverified artifact made %d HTTP requests", requests)
+	}
+}
+
+func TestResolverContextCancellationCachedNoFetch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(ctx, &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example", InstanceID: "mp",
+	}}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
+		t.Fatalf("canceled resolve errors = %v, want context.Canceled", errs)
+	}
 }
 
 func TestResolverInspect(t *testing.T) {
@@ -359,8 +429,25 @@ func TestResolverRevoked(t *testing.T) {
 	tmp := t.TempDir()
 	cache := NewCache(tmp)
 
-	sum := sha256.Sum256([]byte("payload"))
-	contentDigest := "sha256:" + hex.EncodeToString(sum[:])
+	resource := ir.NewSkill("review", "Review code", "Review the code carefully.", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
+		t.Fatalf("WriteArtifact: %v", err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("MarkArtifactVerified: %v", err)
+	}
+
 	rev := store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
@@ -369,6 +456,7 @@ func TestResolverRevoked(t *testing.T) {
 			Name:        "review",
 		},
 		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		Revocation: &store.Revocation{
 			Kind:     store.RevocationRevision,
 			TargetID: contentDigest,
@@ -410,6 +498,27 @@ func TestResolverRevoked(t *testing.T) {
 	}
 	if !strings.Contains(errs[0].Error(), "revoked") && !strings.Contains(errs[0].Error(), "revocation") {
 		t.Fatalf("expected revoked error, got %v", errs[0])
+	}
+
+	if resolved, errs := r.Resolve(ctx, cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch); len(resolved) != 0 || len(errs) == 0 || !strings.Contains(errs[0].Error(), "revoked") {
+		t.Fatalf("cached revoked result = %d artifacts, errors %v, want blocked", len(resolved), errs)
+	}
+
+	policy, err := NewRevocationOverridePolicy([]string{"mp/src/skill/review@" + contentDigest})
+	if err != nil {
+		t.Fatalf("NewRevocationOverridePolicy: %v", err)
+	}
+	resolved, errs := r.ResolveWithPolicy(ctx, cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch, policy)
+	if len(errs) != 0 || len(resolved) != 1 || !resolved[0].Revoked {
+		t.Fatalf("exact revoked override result = %d artifacts, errors %v, want one revoked artifact", len(resolved), errs)
+	}
+
+	wrongPolicy, err := NewRevocationOverridePolicy([]string{"mp/src/skill/review@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+	if err != nil {
+		t.Fatalf("NewRevocationOverridePolicy wrong digest: %v", err)
+	}
+	if resolved, errs := r.ResolveWithPolicy(ctx, cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch, wrongPolicy); len(resolved) != 0 || len(errs) == 0 {
+		t.Fatalf("wrong digest override result = %d artifacts, errors %v, want blocked", len(resolved), errs)
 	}
 }
 

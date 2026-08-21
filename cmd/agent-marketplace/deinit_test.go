@@ -2,13 +2,20 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func TestDeinitTable(t *testing.T) {
@@ -526,9 +533,45 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func TestDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
-	homeDir := t.TempDir()
+func TestDeinitUserDryRunFailsClosedWhenOrgCatalogUnavailable(t *testing.T) {
+	homeDir, repoRoot, cacheEntry := setupUnavailableOrganization(t)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("deinit", "--dry-run")
+	if err == nil {
+		t.Fatalf("expected deinit --dry-run to refuse unavailable organization catalog, output:\n%s", output)
+	}
+	if !strings.Contains(output, "refusing teardown") {
+		t.Fatalf("unexpected deinit --dry-run output: %v\n%s", err, output)
+	}
+	assertSkillLinkPresent(t, homeDir, "org-skill")
+	if _, statErr := os.Stat(cacheEntry); statErr != nil {
+		t.Fatalf("expected cache to remain after failed dry-run: %v", statErr)
+	}
+}
+
+func TestDeinitUserFailsClosedWhenOrgCatalogUnavailable(t *testing.T) {
+	homeDir, repoRoot, cacheEntry := setupUnavailableOrganization(t)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("deinit")
+	if err == nil {
+		t.Fatalf("expected deinit to refuse unavailable organization catalog, output:\n%s", output)
+	}
+	if !strings.Contains(output, "refusing teardown") {
+		t.Fatalf("unexpected deinit output: %v\n%s", err, output)
+	}
+	assertSkillLinkPresent(t, homeDir, "org-skill")
+	if _, statErr := os.Stat(cacheEntry); statErr != nil {
+		t.Fatalf("expected cache to remain after failed teardown: %v", statErr)
+	}
+}
+
+func setupUnavailableOrganization(t *testing.T) (homeDir, repoRoot, cacheEntry string) {
+	t.Helper()
+	homeDir = t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
 
 	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
 	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
@@ -542,7 +585,7 @@ registries:
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
-	repoRoot := filepath.Join(t.TempDir(), "repo")
+	repoRoot = filepath.Join(t.TempDir(), "repo")
 	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
 harnesses:
   - factory
@@ -550,16 +593,19 @@ registries: []
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
 
-	withWorkingDir(t, repoRoot)
+	cacheEntry = filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/should-not-be-fetched.git"), "main")
+	writeFile(t, filepath.Join(cacheEntry, ".gitkeep"), "cached\n")
 
-	output, err := executeCommand("deinit", "--dry-run")
-	if err != nil {
-		t.Fatalf("expected deinit --dry-run to succeed without fetching: %v\n%s", err, output)
+	externalSkill := filepath.Join(t.TempDir(), "org-skill")
+	writeFile(t, filepath.Join(externalSkill, "SKILL.md"), "---\nname: org-skill\ndescription: Org skill\n---\n")
+	orgOutput := filepath.Join(homeDir, ".factory", "skills", "org-skill")
+	if err := os.MkdirAll(filepath.Dir(orgOutput), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	if !strings.Contains(output, "No managed artifacts to remove") {
-		t.Fatalf("expected dry-run output to report no managed artifacts, got:\n%s", output)
+	if err := os.Symlink(externalSkill, orgOutput); err != nil {
+		t.Fatal(err)
 	}
+	return homeDir, repoRoot, cacheEntry
 }
 
 func TestDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
@@ -634,6 +680,252 @@ registries:
 	assertSkillLinkAbsent(t, homeDir, "user-skill")
 	// With no target harness set there is no org-owned output to preserve.
 	assertSkillLinkAbsent(t, homeDir, "org-skill")
+}
+
+func TestDeinitUserPreservesCachedOrganizationMarketplaceWithoutNetwork(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+
+	orgPin, orgRevision, orgRaw := deinitMarketplaceFixture(t, "org-review", "org-source")
+	userPin, userRevision, userRaw := deinitMarketplaceFixture(t, "user-review", "user-source")
+	var requests atomic.Int32
+	var failEndpoint atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failEndpoint.Load() {
+			requests.Add(1)
+			http.Error(w, "Marketplace endpoint must not be contacted during deinit", http.StatusInternalServerError)
+			return
+		}
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "deinit-marketplace"})
+		case strings.Contains(r.URL.Path, "/revisions/"+orgPin.Digest):
+			_ = json.NewEncoder(w).Encode(orgRevision)
+		case strings.Contains(r.URL.Path, "/revisions/"+userPin.Digest):
+			_ = json.NewEncoder(w).Encode(userRevision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") && strings.HasSuffix(r.URL.Path, strings.TrimPrefix(string(orgRevision.ArchiveDigest), "sha256:")):
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+			_, _ = w.Write(orgRaw)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") && strings.HasSuffix(r.URL.Path, strings.TrimPrefix(string(userRevision.ArchiveDigest), "sha256:")):
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+			_, _ = w.Write(userRaw)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+marketplaces:
+  - url: `+server.URL+`
+    instance_id: deinit-marketplace
+    resources:
+      - source_id: org-source
+        kind: skill
+        name: org-review
+        revision: v1
+        digest: `+orgPin.Digest+`
+`)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+marketplaces:
+  - url: `+server.URL+`
+    instance_id: deinit-marketplace
+    resources:
+      - source_id: user-source
+        kind: skill
+        name: user-review
+        revision: v1
+        digest: `+userPin.Digest+`
+`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("sync"); err != nil {
+		t.Fatalf("expected Marketplace sync to seed materialized output: %v", err)
+	}
+	assertFactorySkillExists(t, homeDir, "org-review")
+	assertFactorySkillExists(t, homeDir, "user-review")
+
+	// The organization artifact remains warm, while the optional user artifact
+	// is removed to prove it cannot block preservation. Deinit must not need the
+	// endpoint for either pin, and must preserve the cached organization output.
+	mpCache := marketplace.DefaultCache()
+	if err := os.RemoveAll(filepath.Dir(mpCache.ArtifactPath(string(userRevision.ArchiveDigest)))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mpCache.MetadataPath(server.URL, userPin.SourceID, userPin.Kind, userPin.Name, userPin.Digest)); err != nil {
+		t.Fatal(err)
+	}
+	failEndpoint.Store(true)
+
+	output, err := executeCommand("deinit")
+	if err != nil {
+		t.Fatalf("expected cached organization Marketplace preservation: %v\n%s", err, output)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("deinit contacted Marketplace endpoint %d time(s)", requests.Load())
+	}
+	assertSkillLinkAbsent(t, homeDir, "user-review")
+	assertFactorySkillExists(t, homeDir, "org-review")
+	if _, err := os.Stat(mpCache.ArtifactPath(string(orgRevision.ArchiveDigest))); err != nil {
+		t.Fatalf("organization Marketplace artifact cache was removed: %v", err)
+	}
+}
+
+func TestDeinitUserFailsClosedForInvalidOrganizationMarketplaceCache(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		breakCache func(t *testing.T, c *marketplace.Cache, revision store.ResourceRevision) string
+	}{
+		{
+			name: "missing artifact",
+			breakCache: func(t *testing.T, c *marketplace.Cache, revision store.ResourceRevision) string {
+				if err := os.Remove(c.ArtifactPath(string(revision.ArchiveDigest))); err != nil {
+					t.Fatal(err)
+				}
+				return ""
+			},
+		},
+		{
+			name: "symlinked artifact directory",
+			breakCache: func(t *testing.T, c *marketplace.Cache, revision store.ResourceRevision) string {
+				artifactDir := filepath.Dir(c.ArtifactPath(string(revision.ArchiveDigest)))
+				external := t.TempDir()
+				marker := filepath.Join(external, "must-survive")
+				writeFile(t, marker, "external\n")
+				if err := os.RemoveAll(artifactDir); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(external, artifactDir); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
+				return marker
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scenario := setupDeinitOrganizationMarketplace(t)
+			externalMarker := tc.breakCache(t, scenario.cache, scenario.revision)
+			scenario.failEndpoint.Store(true)
+
+			output, err := executeCommand("deinit")
+			if err == nil {
+				t.Fatalf("expected deinit to refuse invalid organization cache, output:\n%s", output)
+			}
+			if !strings.Contains(output, "refusing teardown") {
+				t.Fatalf("unexpected deinit output: %v\n%s", err, output)
+			}
+			if scenario.requests.Load() != 0 {
+				t.Fatalf("deinit contacted Marketplace endpoint %d time(s)", scenario.requests.Load())
+			}
+			assertFactorySkillExists(t, scenario.homeDir, "org-review")
+			if externalMarker != "" {
+				if _, statErr := os.Stat(externalMarker); statErr != nil {
+					t.Fatalf("deinit touched symlink target: %v", statErr)
+				}
+			}
+		})
+	}
+}
+
+type deinitMarketplaceScenario struct {
+	homeDir      string
+	cache        *marketplace.Cache
+	revision     store.ResourceRevision
+	requests     *atomic.Int32
+	failEndpoint *atomic.Bool
+}
+
+func setupDeinitOrganizationMarketplace(t *testing.T) deinitMarketplaceScenario {
+	t.Helper()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+	pin, revision, raw := deinitMarketplaceFixture(t, "org-review", "org-source")
+	var requests atomic.Int32
+	var failEndpoint atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failEndpoint.Load() {
+			requests.Add(1)
+			http.Error(w, "Marketplace endpoint must not be contacted during deinit", http.StatusInternalServerError)
+			return
+		}
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "deinit-marketplace"})
+		case strings.Contains(r.URL.Path, "/revisions/"+pin.Digest):
+			_ = json.NewEncoder(w).Encode(revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") && strings.HasSuffix(r.URL.Path, strings.TrimPrefix(string(revision.ArchiveDigest), "sha256:")):
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+			_, _ = w.Write(raw)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+marketplaces:
+  - url: `+server.URL+`
+    instance_id: deinit-marketplace
+    resources:
+      - source_id: org-source
+        kind: skill
+        name: org-review
+        revision: v1
+        digest: `+pin.Digest+`
+`)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nmarketplaces: []\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	withWorkingDir(t, repoRoot)
+	if _, err := executeCommand("sync"); err != nil {
+		t.Fatalf("expected Marketplace sync to seed materialized output: %v", err)
+	}
+	assertFactorySkillExists(t, homeDir, "org-review")
+	return deinitMarketplaceScenario{
+		homeDir: homeDir, cache: marketplace.DefaultCache(), revision: revision,
+		requests: &requests, failEndpoint: &failEndpoint,
+	}
+}
+
+func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.MarketplaceResourcePin, store.ResourceRevision, []byte) {
+	t.Helper()
+	canonical, err := hccartifact.FromIR(ir.NewSkill(name, name+" description", "body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	canonical.Manifest.SourceID = sourceID
+	canonical.Manifest.Revision = "v1"
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	pin := config.MarketplaceResourcePin{
+		SourceID: sourceID, Kind: "skill", Name: name,
+		Revision: "refs/heads/main", Digest: contentDigest,
+	}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "deinit-marketplace", Source: store.SourceID(sourceID), Kind: "skill", Name: name},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	return pin, revision, raw
 }
 
 func assertSkillLinkPresent(t *testing.T, root, name string) {

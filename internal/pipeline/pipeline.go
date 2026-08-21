@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,10 +33,13 @@ type Loaders struct {
 }
 
 type ResolveOptions struct {
-	RepoRoot         string
-	MaterializeRoot  string // where to materialize harness files; defaults to RepoRoot if empty
-	LocalConfigDir   string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
-	CatalogMode      catalog.LoadMode
+	RepoRoot        string
+	MaterializeRoot string // where to materialize harness files; defaults to RepoRoot if empty
+	LocalConfigDir  string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
+	CatalogMode     catalog.LoadMode
+	// Offline reads only existing Git catalogs and trusted Marketplace caches.
+	// It never acquires registry data or queries Marketplace endpoints.
+	Offline          bool
 	Loaders          Loaders
 	CatalogOption    []catalog.LoadOption
 	Gitignore        bool
@@ -50,6 +54,17 @@ type ResolveOptions struct {
 	// SkipInventory suppresses recording for internal pre-mutation lookups. The
 	// post-mutation Resolve performed by sync remains the reported generation.
 	SkipInventory bool
+	// MarketplaceRevocationPolicy is an optional, invocation-scoped policy for
+	// exact revoked Marketplace overrides.
+	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
+	// MarketplaceMode overrides the mode derived from CatalogMode when set.
+	// This is useful for callers that need Git inspection semantics while using
+	// a different, explicitly local-only Marketplace resolution policy.
+	MarketplaceMode *resolver.MarketplaceResolveMode
+	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
+	// the selected sources. It is applied only to the resolver's view and does
+	// not change the effective configuration returned to callers.
+	MarketplaceSourceFilter func(config.Source) bool
 }
 
 type ResolveResult struct {
@@ -202,6 +217,20 @@ func SoftWarnings(resolved ResolveResult) []error {
 	return warnings
 }
 
+func isOfflineUnresolvedSelection(err error) bool {
+	return resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err)
+}
+
+func offlineHardResolveErrors(resolveErrors []error) []error {
+	hard := make([]error, 0, len(resolveErrors))
+	for _, err := range resolveErrors {
+		if isOfflineUnresolvedSelection(err) {
+			hard = append(hard, err)
+		}
+	}
+	return hard
+}
+
 func DefaultLoaders() Loaders {
 	return Loaders{Org: config.LoadOrganizationConfig, Global: config.LoadGlobalConfig, Repo: config.LoadRepoConfig, Local: config.LoadLocalConfig}
 }
@@ -222,7 +251,10 @@ func filterBlockedRegistryErrors(errs []error) []error {
 
 func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	start := time.Now()
-	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode)
+	if opts.Offline {
+		opts.CatalogMode = catalog.LoadModeInspect
+	}
+	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -410,6 +442,11 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		}
 	}
 	result.MergedCfg = mergedCfg
+	if opts.Offline && len(mergedCfg.Marketplaces) > 0 {
+		warning := errors.New("offline Marketplace sync cannot observe newer revocations; cached revocation metadata is used")
+		result.Warnings = append(result.Warnings, warning)
+		slog.Warn("offline Marketplace sync cannot observe newer revocations", "marketplaces", len(mergedCfg.Marketplaces))
+	}
 	materializationModes, modeErr := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
 	if modeErr != nil {
 		result.ConfigErrors = append(result.ConfigErrors, modeErr)
@@ -451,17 +488,34 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	// Malformed resources are dropped from Entries by the ingesters, so the
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
-	mpMode := marketplaceResolveMode(opts.CatalogMode)
+	mpMode := marketplaceResolveMode(opts.CatalogMode, opts.Offline)
+	if opts.MarketplaceMode != nil {
+		mpMode = *opts.MarketplaceMode
+	}
 	marketplaceResolver := marketplace.NewResolver()
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
-	if opts.CatalogMode == catalog.LoadModeInspect && loadedCfg != nil {
+	// Status inspection is deliberately metadata-only. A caller may retain Git
+	// LoadModeInspect's hard-fail behavior while requesting a materializable,
+	// cached-only Marketplace view (notably user-scope deinit).
+	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
 		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
 	}
+	marketplaceCfg := loadedCfg
+	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
+		filtered := *loadedCfg
+		filtered.Marketplaces = make([]config.MarketplaceEntry, 0, len(loadedCfg.Marketplaces))
+		for _, entry := range loadedCfg.Marketplaces {
+			if opts.MarketplaceSourceFilter(entry.Source) {
+				filtered.Marketplaces = append(filtered.Marketplaces, entry)
+			}
+		}
+		marketplaceCfg = &filtered
+	}
 	resolved, resolveErrs := resolver.Resolve(
-		loadedCfg,
+		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
 		result.LocalCfg,
 		resolver.WithResources(loadResult.ResourceCatalogs),
@@ -470,6 +524,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
+		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
@@ -495,12 +550,17 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	return result
 }
 
-func marketplaceResolveMode(mode catalog.LoadMode) resolver.MarketplaceResolveMode {
+func marketplaceResolveMode(mode catalog.LoadMode, offline bool) resolver.MarketplaceResolveMode {
+	if offline {
+		return resolver.MarketplaceResolveModeCachedNoFetch
+	}
 	switch mode {
 	case catalog.LoadModeRefresh:
 		return resolver.MarketplaceResolveModeRefresh
 	case catalog.LoadModeInspect:
 		return resolver.MarketplaceResolveModeInspect
+	case catalog.LoadModeCachedNoFetch:
+		return resolver.MarketplaceResolveModeCachedNoFetch
 	default:
 		return resolver.MarketplaceResolveModeCached
 	}
@@ -508,9 +568,11 @@ func marketplaceResolveMode(mode catalog.LoadMode) resolver.MarketplaceResolveMo
 
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	start := time.Now()
-	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot)
-	opts.CatalogMode = catalog.LoadModeRefresh
-	opts.Gitignore = true
+	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "offline", opts.Offline)
+	if !opts.Offline {
+		opts.CatalogMode = catalog.LoadModeRefresh
+		opts.Gitignore = true
+	}
 	opts.RequireTargetSet = true
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -545,7 +607,22 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			syncSpan.End()
 		}
 	}()
-	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
+	softWarnings := SoftWarnings(resolved)
+	if opts.Offline {
+		// A cached Git snapshot can be warm yet incomplete. Treating an absent
+		// selection as a warning in that case would let materialization prune
+		// output that is still present upstream but missing from the snapshot.
+		// Offline sync therefore promotes only the normally-soft unresolved
+		// selection errors; online sync retains its warning semantics.
+		filteredWarnings := make([]error, 0, len(softWarnings))
+		for _, warning := range softWarnings {
+			if !isOfflineUnresolvedSelection(warning) {
+				filteredWarnings = append(filteredWarnings, warning)
+			}
+		}
+		softWarnings = filteredWarnings
+	}
+	result.Warnings = append(result.Warnings, softWarnings...)
 
 	// Compute the materialization root once and reuse it for both the
 	// ancestor-exclude detection (below) and the actual materialize.Run
@@ -579,6 +656,13 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			filteredErrors = append(filteredErrors, err)
 		}
 		result.Errors = filteredErrors
+	}
+	if opts.Offline {
+		offlineErrors := offlineHardResolveErrors(resolved.ResolveErrors)
+		if len(offlineErrors) > 0 {
+			slog.Error("offline sync refusing to materialize unresolved selections", "errors", len(offlineErrors))
+			result.Errors = append(result.Errors, offlineErrors...)
+		}
 	}
 
 	// Everything hard that is known at this point predates materialization, so
