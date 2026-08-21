@@ -7,19 +7,24 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
 )
 
-const (
-	codexHooksFile = "hooks.json"
-	codexMCPFile   = "config.toml"
+var (
+	codexHooksArtifactPath = mustCodexAggregatePath(ir.KindHook)
+	codexMCPArtifactPath   = mustCodexAggregatePath(ir.KindMcpServer)
+	codexHooksFile         = path.Base(codexHooksArtifactPath)
+	codexMCPFile           = path.Base(codexMCPArtifactPath)
 )
 
 type codexMCPEntry struct {
@@ -49,13 +54,13 @@ func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([
 			continue
 		}
 		switch candidate.Path {
-		case ".codex/hooks.json":
+		case codexHooksArtifactPath:
 			parsed, err := ownedJSONFragmentEntries(codexHooksFile, candidate.Bytes, resource)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("decode Codex hooks fragment: %w", err)
 			}
 			hooks = append(hooks, parsed...)
-		case ".codex/config.toml":
+		case codexMCPArtifactPath:
 			parsed, err := codexDesiredMCP(candidate.Bytes, resource)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("decode Codex MCP fragment: %w", err)
@@ -66,6 +71,14 @@ func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([
 		}
 	}
 	return rest, hooks, mcps, nil
+}
+
+func mustCodexAggregatePath(kind ir.ResourceKind) string {
+	artifactPath, ok := targetmeta.NativeAggregatePath(targetmeta.TargetCodex, kind)
+	if !ok {
+		panic(fmt.Sprintf("Codex native aggregate path for %s is not registered", kind))
+	}
+	return artifactPath
 }
 
 func codexDesiredMCP(raw []byte, resource string) ([]codexMCPEntry, error) {

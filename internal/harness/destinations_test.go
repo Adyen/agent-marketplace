@@ -86,6 +86,38 @@ func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 	}
 }
 
+func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	if !ok {
+		t.Fatal("Codex native layout is not registered")
+	}
+	got, err := codexVirtualTargetInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantComponents, wantAggregates []string
+	wantResourceDirs := make(map[ir.ResourceKind]string)
+	wantSkillPath := ""
+	for _, partition := range layout.Partitions {
+		wantComponents = append(wantComponents, partition.Prefix)
+		for kind, pattern := range partition.ResourcePaths {
+			switch kind {
+			case ir.KindSkill:
+				wantSkillPath = path.Join(partition.Prefix, pattern)
+			case ir.KindCommand:
+			default:
+				wantResourceDirs[kind] = path.Join(partition.Prefix, path.Dir(pattern))
+			}
+		}
+		for _, aggregate := range partition.Aggregates {
+			wantAggregates = append(wantAggregates, path.Join(partition.Prefix, aggregate.Path))
+		}
+	}
+	if !reflect.DeepEqual(got.Components, wantComponents) || got.SkillPathPattern != wantSkillPath || !reflect.DeepEqual(got.ResourceDirs, wantResourceDirs) || !reflect.DeepEqual(got.AggregateFilesForScope(false), wantAggregates) {
+		t.Fatalf("virtual Codex target info = %#v; want components=%v skill=%q dirs=%v aggregates=%v", got, wantComponents, wantSkillPath, wantResourceDirs, wantAggregates)
+	}
+}
+
 func TestResolveDestinationsCanonicalizesMissingCodexHomeBelowSymlink(t *testing.T) {
 	home, realParent, linkParent := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(realParent, linkParent); err != nil {
