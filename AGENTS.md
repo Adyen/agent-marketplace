@@ -29,6 +29,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Name collisions across registries refuse sync | Prevents silent overwrites when independent registries provide the same resource |
 | Same-URL different-path collisions emit warning | User deliberately configured both entries; keep all for visibility but warn that only one materializes per scope |
 | `required:true` registries immune to all excludes | Enforces org-wide security standards |
+| Registry cache refs are one base32 path component, and git is anchored to a directory descriptor | A ref comes from config, so it must never be able to name a location outside the cache; base32's single-case alphabet also stops two refs sharing one entry on a case-insensitive filesystem, and `fchdir(2)` closes the window in which a path handed to git could be redirected after validation |
+| Published cache entries are replaced, never edited | A reader holds no lock, so an in-place worktree rewrite would let it see half of two trees; a refresh that changes content is built in a scratch sibling and swapped in with renames, while a refresh that changes nothing writes nothing |
 | `--from` ad-hoc registry operations on install/remove/list | Zero-config onboarding: browse, install, and remove resources from any registry URL without editing config files first |
 | `.gitignored` generated harness output | Config is committed; generated files are ephemeral on disk |
 | Adding Devin did not change default harness lists | Existing configurations keep their selected targets; select Devin through the TUI or a `harnesses:` edit |
@@ -64,7 +66,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 - **Language:** Go (static binary, no runtime deps)
 - **Distribution:** package managers and GitHub releases
-- **Cache:** `~/.cache/agent-marketplace/<registry-hash>/<ref>/` — disposable; deleting it has no effect on aggregate ownership
+- **Cache:** `~/.cache/agent-marketplace/<registry-hash>/<base32-ref>/` — disposable; deleting it has no effect on aggregate ownership. Containment, ref resolution, atomic publication and locking invariants: [`docs/registry-cache.md`](./docs/registry-cache.md)
 - **Durable state:** `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`) — journaled aggregate-ownership records and mandatory safety backups (`internal/ownership`)
 - **Materialization:** `harness-compilation` for multi-harness compilation (Factory, Claude, Cursor, Windsurf, Gemini, and Devin). All six are bidirectional compile/ingest/convert targets; the authoritative registry is `pkg/harness-compilation/target`
 

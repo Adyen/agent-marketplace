@@ -2,7 +2,7 @@ package cache
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/base32"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -103,16 +103,36 @@ func RegistryCachePath(url, ref string) string {
 	return filepath.Join(CacheDir(), HashURL(url), cacheRefComponent(ref))
 }
 
-const maxCacheRefComponentLength = 200
+// maxCacheRefComponentLength bounds the encoded ref component well below
+// NAME_MAX (255). The publication swap derives sibling names from it by adding
+// a prefix and a random suffix, so the budget has to cover the longest derived
+// name, not just the component itself.
+const maxCacheRefComponentLength = 150
+
+// refDigestPrefix marks a component that is a digest of an over-long ref rather
+// than an encoding of it. '@' is outside the base32 alphabet, so a digest
+// component can never be confused with — or case-fold onto — an encoded one.
+const refDigestPrefix = "@"
+
+// cacheRefEncoding encodes a ref into exactly one path component.
+//
+// base32 rather than base64: its alphabet is single-case (A-Z, 2-7). Two
+// distinct refs therefore always differ in some *character*, never merely in
+// the case of one, so they cannot collide on a case-insensitive filesystem
+// (APFS and HFS+ default to case-insensitive). Under base64 the refs "\x00"
+// and "\x34" encode to "AA" and "NA"… harmless, but "1" and "\xd5" encode to
+// "MQ" and "1Q" while other pairs differ only by case, which would silently
+// serve one registry ref's checkout for another's.
+var cacheRefEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 func cacheRefComponent(ref string) string {
-	component := base64.RawURLEncoding.EncodeToString([]byte(ref))
+	component := cacheRefEncoding.EncodeToString([]byte(ref))
 	if len(component) <= maxCacheRefComponentLength {
 		return component
 	}
 
 	sum := sha256.Sum256([]byte(ref))
-	return "@" + hex.EncodeToString(sum[:])
+	return refDigestPrefix + hex.EncodeToString(sum[:])
 }
 
 func HashURL(url string) string {

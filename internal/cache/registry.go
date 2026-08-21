@@ -1,16 +1,24 @@
 package cache
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/redact"
+)
+
+var (
+	// errLockBusy reports that another open file description holds the lock.
+	errLockBusy = errors.New("registry cache lock is held")
+	// errLockUnsupported reports that the filesystem refuses advisory locks, in
+	// which case serialization degrades to convergent publication.
+	errLockUnsupported = errors.New("registry cache locking is unsupported")
 )
 
 // redactSecrets removes embedded credentials from any URLs found in s while
@@ -26,10 +34,21 @@ func redactArgs(args []string) []string {
 	return redact.Strings(args)
 }
 
+// CloneOrPull materializes url at ref inside the registry cache and returns the
+// cache path.
+//
+// Containment: the ref is validated, then encoded into exactly one path
+// component, and every filesystem operation is performed through descriptors
+// anchored under the cache root (see cacheStore). Nothing a registry or a config
+// file can say about a ref can name a location outside the cache.
+//
+// Atomicity: a published entry is never mutated in place. A refresh that changes
+// content is built in a scratch sibling and swapped in with renames, so a
+// concurrent reader always resolves the entry path to a complete tree, and a
+// failed operation leaves neither a partial entry nor an escaped repository.
 func CloneOrPull(url, ref string) (string, error) {
 	redactedURL := redactSecrets(url)
-	if strings.TrimSpace(url) == "" {
-		err := errors.New("registry url is required")
+	if err := validateGitURL(url); err != nil {
 		slog.Error("registry validation failed", "field", "url", "error", err)
 		return "", err
 	}
@@ -39,45 +58,261 @@ func CloneOrPull(url, ref string) (string, error) {
 	}
 
 	cachePath := RegistryCachePath(url, ref)
-	cacheDirs, err := openCacheDirs(CacheDir(), HashURL(url))
-	if err == nil {
-		defer cacheDirs.close()
-		cacheEntry, entryErr := cacheDirs.openEntry(cacheRefComponent(ref))
-		switch {
-		case entryErr == nil:
-			defer func() { _ = cacheEntry.Close() }()
-			slog.Debug("registry cache hit; fetching", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-			if err := runGitAt(cacheEntry, "fetch", "--tags", "--prune", "origin"); err != nil {
-				slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
-				if checkoutErr := checkoutResolvedRefAt(cacheEntry, ref); checkoutErr != nil {
-					slog.Error("stale registry cache checkout failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", checkoutErr)
-					return "", fmt.Errorf("use stale cache at %q: %w", cachePath, checkoutErr)
-				}
-				return cachePath, nil
-			}
+	entryName := cacheRefComponent(ref)
 
-			slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-			if err := checkoutResolvedRefAt(cacheEntry, ref); err != nil {
-				slog.Error("registry cache checkout failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
-				return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
-			}
-			return cachePath, nil
-		case errors.Is(entryErr, os.ErrNotExist):
-		default:
-			slog.Error("registry cache entry validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", entryErr)
-			return "", fmt.Errorf("check cache path %q: %w", cachePath, entryErr)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	store, err := openCacheStore(CacheDir(), HashURL(url))
+	if err != nil {
 		slog.Error("registry cache directory validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
 	}
+	defer store.close()
 
-	slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-	if err := cloneAndPublish(url, ref, cachePath); err != nil {
+	if err := store.lock(); err != nil {
+		if !errors.Is(err, errLockUnsupported) {
+			slog.Error("registry cache lock failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+			cleanupCacheSkeleton(store, cachePath)
+			return "", fmt.Errorf("lock registry cache for %q: %w", cachePath, err)
+		}
+		// Degraded, not silent: publication is a rename that converges on a
+		// concurrent winner, so an unserialized run stays correct.
+		slog.Warn("registry cache locking unavailable; relying on convergent publication", "cache_path", cachePath, "error", err)
+	}
+	store.sweepScratch()
+
+	resultPath, err := syncCacheEntry(store, url, ref, entryName, cachePath)
+	if err != nil {
+		cleanupCacheSkeleton(store, cachePath)
+		return "", err
+	}
+	return resultPath, nil
+}
+
+// cleanupCacheSkeleton drops the directories this run created so a failed
+// operation leaves no cache behind. The lock is released first: the directory it
+// is taken on is one of the directories being removed.
+func cleanupCacheSkeleton(store *cacheStore, cachePath string) {
+	store.unlock()
+	if err := store.cleanupNew(); err != nil {
+		slog.Warn("remove unused registry cache directories", "cache_path", cachePath, "error", err)
+	}
+}
+
+func syncCacheEntry(store *cacheStore, url, ref, entryName, cachePath string) (string, error) {
+	redactedURL := redactSecrets(url)
+	entry, err := store.openEntry(entryName)
+	switch {
+	case err == nil:
+		defer func() { _ = entry.Close() }()
+		slog.Debug("registry cache hit; refreshing", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		return refreshCacheEntry(store, entry, url, ref, entryName, cachePath)
+	case errors.Is(err, os.ErrNotExist):
+		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		return createCacheEntry(store, url, ref, entryName, cachePath)
+	default:
+		slog.Error("registry cache entry validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
+	}
+}
+
+func createCacheEntry(store *cacheStore, url, ref, entryName, cachePath string) (string, error) {
+	redactedURL := redactSecrets(url)
+	temp, err := buildCacheEntry(store, url, ref, entryName, "", "")
+	if err != nil {
 		slog.Error("registry cache clone failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
 	}
+
+	converged, err := store.publish(temp, entryName)
+	if err != nil {
+		if rmErr := store.removeEntry(temp); rmErr != nil {
+			slog.Warn("remove unpublished registry cache entry", "entry", temp, "error", rmErr)
+		}
+		slog.Error("registry cache publication failed", "cache_path", cachePath, "ref", ref, "error", err)
+		return "", fmt.Errorf("publish cache entry %q: %w", cachePath, err)
+	}
+	if converged {
+		// Another process published the same ref first. Its entry is equivalent,
+		// so discard ours rather than fighting over the name.
+		slog.Debug("registry cache entry published concurrently; converging", "cache_path", cachePath, "ref", ref)
+		if rmErr := store.removeEntry(temp); rmErr != nil {
+			slog.Warn("remove superseded registry cache entry", "entry", temp, "error", rmErr)
+		}
+		return cachePath, nil
+	}
+
+	slog.Debug("registry cache published", "cache_path", cachePath, "ref", ref)
 	return cachePath, nil
+}
+
+func refreshCacheEntry(store *cacheStore, entry *os.File, url, ref, entryName, cachePath string) (string, error) {
+	redactedURL := redactSecrets(url)
+
+	// Fetching mutates only the object store and the remote-tracking refs, never
+	// the worktree, so it is safe to do in the published entry: a reader of the
+	// checked-out files cannot observe it.
+	fetchErr := runGitIn(entry, "fetch", "--tags", "--prune", "origin")
+	if fetchErr != nil {
+		slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", fetchErr)
+	}
+
+	target, resolveErr := resolveCommit(entry, ref)
+	if resolveErr != nil {
+		if fetchErr != nil {
+			slog.Error("stale registry cache resolution failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", resolveErr)
+			return "", fmt.Errorf("use stale cache at %q: %w", cachePath, errors.Join(fetchErr, resolveErr))
+		}
+		slog.Error("registry ref resolution failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", resolveErr)
+		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, resolveErr)
+	}
+
+	if cacheEntryIsAt(entry, target) {
+		slog.Debug("registry cache entry already at target commit", "url", redactedURL, "ref", ref, "cache_path", cachePath, "commit", target)
+		return cachePath, nil
+	}
+
+	slog.Debug("rebuilding registry cache entry out of place", "url", redactedURL, "ref", ref, "cache_path", cachePath, "commit", target)
+	temp, err := buildCacheEntry(store, url, ref, entryName, entryName, target)
+	if err != nil {
+		slog.Error("registry cache rebuild failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
+	}
+	if err := store.swap(temp, entryName); err != nil {
+		if rmErr := store.removeEntry(temp); rmErr != nil {
+			slog.Warn("remove unpublished registry cache entry", "entry", temp, "error", rmErr)
+		}
+		slog.Error("registry cache publication failed", "cache_path", cachePath, "ref", ref, "error", err)
+		return "", fmt.Errorf("publish cache entry %q: %w", cachePath, err)
+	}
+
+	slog.Debug("registry cache republished", "cache_path", cachePath, "ref", ref, "commit", target)
+	return cachePath, nil
+}
+
+// buildCacheEntry clones into a fresh scratch sibling of entryName, checks out
+// ref there, and returns the scratch name for the caller to publish or swap in.
+// The scratch directory is removed if anything fails, so a failed operation never
+// leaves a partial entry.
+//
+// localSource, when non-empty, names a sibling cache entry to clone from:
+// `git clone --local` hardlinks the object store, so a refresh costs neither a
+// second network transfer nor an object copy, and the hardlinks outlive the
+// source entry that the swap retires. target, when non-empty, is an
+// already-resolved commit to check out.
+func buildCacheEntry(store *cacheStore, url, ref, entryName, localSource, target string) (name string, err error) {
+	temp, err := store.makeTemp(entryName, tempEntryInfix)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rmErr := store.removeEntry(temp); rmErr != nil {
+			slog.Warn("remove failed temporary registry cache entry", "entry", temp, "error", rmErr)
+		}
+	}()
+
+	hashDir := store.dir()
+	if localSource != "" {
+		if cloneErr := runGitIn(hashDir, "clone", "--no-checkout", "--local", "--", localSource, temp); cloneErr != nil {
+			// A damaged local source must not wedge the cache: fall back to the
+			// registry and pay the network cost once. The resolved target is
+			// dropped with it, because it was resolved against that source.
+			slog.Warn("local registry cache clone failed; cloning from registry", "source", localSource, "error", cloneErr)
+			if rmErr := store.removeEntry(temp); rmErr != nil {
+				return "", rmErr
+			}
+			if mkErr := store.hash.Mkdir(temp, cacheDirPerm); mkErr != nil {
+				return "", mkErr
+			}
+			localSource, target = "", ""
+		}
+	}
+
+	if localSource == "" {
+		if err = runGitIn(hashDir, "clone", "--no-checkout", "--", url, temp); err != nil {
+			return "", err
+		}
+	} else if err = runGitIn(hashDir, "-C", temp, "remote", "set-url", "origin", url); err != nil {
+		// A local clone inherits the source entry's path as its origin URL, which
+		// stops existing once the swap retires that entry.
+		return "", err
+	}
+
+	scratch, err := store.openEntry(temp)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = scratch.Close() }()
+
+	if target == "" {
+		if target, err = resolveCommit(scratch, ref); err != nil {
+			return "", err
+		}
+	}
+	if err = runGitIn(scratch, "-c", "advice.detachedHead=false", "checkout", "--force", "--detach", target); err != nil {
+		return "", err
+	}
+	return temp, nil
+}
+
+// resolveCommit resolves ref to a full object name inside repo.
+//
+// Resolution is explicit and ordered — remote-tracking ref, tag, then the ref as
+// written — and every candidate is suffixed with ^{commit} and passed after
+// --end-of-options. That is what stops a ref from being reinterpreted as
+// something else: `git checkout <ref>` falls back to treating its argument as a
+// *pathspec* when no such ref exists, so a registry pinned to a ref that does
+// not exist but that happens to name a tracked file "succeeds" and silently
+// serves the default branch's content. rev-parse has no pathspec fallback, and a
+// resolved object name checked out with --detach cannot be reinterpreted either.
+func resolveCommit(repo *os.File, ref string) (string, error) {
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, "refs/tags/" + ref, ref} {
+		out, err := gitOutputIn(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err != nil {
+			continue
+		}
+		if commit := strings.TrimSpace(out); isObjectName(commit) {
+			return commit, nil
+		}
+	}
+	return "", fmt.Errorf("git ref %q does not resolve to a commit", ref)
+}
+
+// isObjectName reports whether s is a full git object name. Both hash lengths are
+// accepted because a registry may be a SHA-256 repository.
+func isObjectName(s string) bool {
+	return (len(s) == 40 || len(s) == 64) && isHex(s)
+}
+
+// cacheEntryIsAt reports whether the entry's worktree already is target with no
+// local modification.
+//
+// A matching, clean entry is left completely untouched, which is what keeps the
+// common refresh free of worktree writes — and therefore free of any window in
+// which a concurrent reader could see a half-updated tree.
+func cacheEntryIsAt(entry *os.File, target string) bool {
+	head, err := gitOutputIn(entry, "rev-parse", "--verify", "--quiet", "--end-of-options", "HEAD^{commit}")
+	if err != nil || strings.TrimSpace(head) != target {
+		return false
+	}
+	// `diff --quiet` exits non-zero on any difference from HEAD. Every error is
+	// treated as "rebuild", so a damaged entry is replaced rather than served.
+	return runGitIn(entry, "diff", "--quiet", "HEAD") == nil
+}
+
+func validateGitURL(url string) error {
+	trimmed := strings.TrimSpace(url)
+	if trimmed == "" {
+		return errors.New("registry url is required")
+	}
+	// git clone is always given the URL after a "--" separator, but an
+	// option-like URL is a configuration mistake worth reporting rather than
+	// passing to git as a path.
+	if strings.HasPrefix(trimmed, "-") {
+		return errors.New("invalid registry url: option-like")
+	}
+	return nil
 }
 
 func validateGitRef(ref string) error {
@@ -118,109 +353,65 @@ func validateGitRef(ref string) error {
 	return nil
 }
 
-func cloneAndPublish(url, ref, cachePath string) error {
-	cacheDirs, err := createCacheDirs(CacheDir(), HashURL(url))
-	if err != nil {
-		slog.Error("registry cache setup failed", "cache_path", cachePath, "ref", ref, "error", err)
-		return fmt.Errorf("create cache parent for %q: %w", cachePath, err)
-	}
-	defer cacheDirs.close()
-
-	tempName, err := cacheDirs.makeTemp("." + filepath.Base(cachePath) + ".tmp-")
-	if err != nil {
-		slog.Error("registry cache temporary directory setup failed", "cache_path", cachePath, "ref", ref, "error", err)
-		_ = cacheDirs.cleanupNew()
-		return fmt.Errorf("create temporary cache entry for %q: %w", cachePath, err)
-	}
-	published := false
-	defer func() {
-		if published {
-			return
-		}
-		if cleanupErr := cacheDirs.removeTemp(tempName); cleanupErr != nil {
-			slog.Warn("remove failed temporary registry cache", "cache_path", cachePath, "error", cleanupErr)
-		}
-		if cleanupErr := cacheDirs.cleanupNew(); cleanupErr != nil {
-			slog.Warn("remove failed new registry cache directories", "cache_path", cachePath, "error", cleanupErr)
-		}
-	}()
-
-	if err := runGitAt(cacheDirs.hash, "clone", url, tempName); err != nil {
-		slog.Error("registry cache clone failed", "cache_path", cachePath, "ref", ref, "error", err)
-		return err
-	}
-	tempDir, err := cacheDirs.openEntry(tempName)
-	if err != nil {
-		slog.Error("registry cache checkout setup failed", "cache_path", cachePath, "ref", ref, "error", err)
-		return fmt.Errorf("open temporary cache entry: %w", err)
-	}
-	if err := checkoutResolvedRefAt(tempDir, ref); err != nil {
-		_ = tempDir.Close()
-		slog.Error("registry cache checkout failed", "cache_path", cachePath, "ref", ref, "error", err)
-		return err
-	}
-	_ = tempDir.Close()
-
-	if err := cacheDirs.publish(tempName, filepath.Base(cachePath)); err != nil {
-		slog.Error("registry cache publication failed", "cache_path", cachePath, "ref", ref, "error", err)
-		return fmt.Errorf("publish cache entry: %w", err)
-	}
-	published = true
-	slog.Debug("registry cache published", "cache_path", cachePath, "ref", ref)
-	return nil
+// runGitIn runs git anchored to dir. Every path in args must be relative to dir.
+func runGitIn(dir *os.File, args ...string) error {
+	_, err := gitOutputIn(dir, args...)
+	return err
 }
 
-func checkoutResolvedRefAt(repoDir *os.File, ref string) error {
-	if !gitRefExistsAt(repoDir, "refs/remotes/origin/"+ref) {
-		slog.Debug("checking out direct git ref", "repo_dir", "cache-fd", "ref", ref)
-		return runGitAt(repoDir, "checkout", "--force", ref)
+// gitOutputIn runs git anchored to dir and returns its standard output. Standard
+// error is kept out of the returned value so that a warning on stderr cannot be
+// mistaken for output by a caller parsing it.
+func gitOutputIn(dir *os.File, args ...string) (string, error) {
+	cmd, err := gitCommand(dir, args)
+	if err != nil {
+		return "", err
 	}
-
-	slog.Debug("checking out remote git ref", "repo_dir", "cache-fd", "ref", ref)
-	return runGitAt(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref)
+	return runGitProcess(cmd, dir.Name(), args)
 }
 
-func gitRefExistsAt(repoDir *os.File, ref string) bool {
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
-	cmd.Dir = repoDir.Name()
-	return cmd.Run() == nil
-}
-
+// runGit runs git with a working directory given as a path. It is the unanchored
+// variant, kept for the tests and benchmarks that set up fixture repositories
+// outside the cache; everything that touches the cache uses runGitIn.
 func runGit(repoDir string, args ...string) error {
-	start := time.Now()
-	redactedArgs := redactArgs(args)
-	redactedCmd := strings.Join(redactedArgs, " ")
-	slog.Debug("git command start", "dir", repoDir, "args", redactedArgs)
 	cmd := exec.Command("git", args...)
 	if repoDir != "" {
 		cmd.Dir = repoDir
 	}
+	_, err := runGitProcess(cmd, repoDir, args)
+	return err
+}
 
-	output, err := cmd.CombinedOutput()
+func runGitProcess(cmd *exec.Cmd, dir string, args []string) (string, error) {
+	start := time.Now()
+	redactedArgs := redactArgs(args)
+	redactedCmd := strings.Join(redactedArgs, " ")
+	slog.Debug("git command start", "dir", dir, "args", redactedArgs)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err == nil {
-		slog.Debug("git command end", "dir", repoDir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", true)
-		return nil
+		slog.Debug("git command end", "dir", dir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", true)
+		return stdout.String(), nil
 	}
 
-	trimmedOutput := redactSecrets(strings.TrimSpace(string(output)))
-	slog.Debug("git command end", "dir", repoDir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", trimmedOutput)
-	if trimmedOutput == "" {
-		return fmt.Errorf("git %s: %w", redactedCmd, err)
+	diagnostics := redactSecrets(strings.TrimSpace(stderr.String() + "\n" + stdout.String()))
+	slog.Debug("git command end", "dir", dir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", diagnostics)
+	if diagnostics == "" {
+		return "", fmt.Errorf("git %s: %w", redactedCmd, err)
 	}
 
 	// Bound the error message to prevent screen flooding. Git can emit
 	// multi-page stacktraces and verbose diagnostics; keep only the first
 	// line for the user-facing error, preserving full detail in the log.
-	firstLine := trimmedOutput
+	firstLine := diagnostics
 	if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
 		firstLine = firstLine[:idx]
 	}
 	firstLine = truncateGitError(firstLine)
-	return fmt.Errorf("git %s: %w: %s", redactedCmd, err, firstLine)
-}
-
-func runGitAt(repoDir *os.File, args ...string) error {
-	return runGit(repoDir.Name(), args...)
+	return "", fmt.Errorf("git %s: %w: %s", redactedCmd, err, firstLine)
 }
 
 const maxGitErrorChars = 200

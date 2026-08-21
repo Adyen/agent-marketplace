@@ -372,32 +372,42 @@ func TestCloneOrPullRejectsSymlinkedCacheHashDirectory(t *testing.T) {
 	}
 }
 
-func TestCloneOrPullRejectsSymlinkedCacheParent(t *testing.T) {
+// A symlinked ~/.cache is a legitimate user setup (a cache relocated to another
+// volume), so it must keep working. The trust boundary is the cache root, not the
+// path used to reach it: everything below the resolved root stays contained.
+func TestCloneOrPullAcceptsSymlinkedCacheParent(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, _ := createBareRepoWithWorkingClone(t)
-	outside := t.TempDir()
-	writeFile(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	origin, working := createBareRepoWithWorkingClone(t)
+	writeAndPushCommit(t, working, "skill.txt", "relocated\n", "initial commit")
+	relocated := t.TempDir()
 	cacheParent := filepath.Dir(CacheDir())
 	if err := os.MkdirAll(filepath.Dir(cacheParent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, cacheParent); err != nil {
+	if err := os.Symlink(relocated, cacheParent); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := CloneOrPull(origin, "main")
-	if err == nil {
-		t.Fatal("expected symlinked cache parent to be rejected")
+	cachePath, err := CloneOrPull(origin, "main")
+	if err != nil {
+		t.Fatalf("expected symlinked cache parent to be usable: %v", err)
 	}
-	assertFileContents(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
-	if _, statErr := os.Stat(filepath.Join(outside, filepath.Base(CacheDir()))); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("symlinked cache parent was used outside CacheDir: %v", statErr)
+	assertFileContents(t, filepath.Join(cachePath, "skill.txt"), "relocated\n")
+
+	resolvedRoot := filepath.Join(relocated, filepath.Base(CacheDir()))
+	if _, statErr := os.Stat(filepath.Join(resolvedRoot, HashURL(origin))); statErr != nil {
+		t.Fatalf("expected the cache to be materialized below the resolved root: %v", statErr)
 	}
+	assertNoEscapedEntries(t, resolvedRoot, relocated)
 }
 
-func TestCloneOrPullRejectsSymlinkedCacheAncestor(t *testing.T) {
+// A symlinked HOME is common (relocated home directories, and /Users on macOS
+// resolving through /System/Volumes/Data), so refusing it would break ordinary
+// installs while buying no containment: the ref never gets to name any component
+// of the path used to reach the cache root.
+func TestCloneOrPullAcceptsSymlinkedHome(t *testing.T) {
 	realHome := t.TempDir()
 	homeDir := filepath.Join(t.TempDir(), "home-link")
 	if err := os.Symlink(realHome, homeDir); err != nil {
@@ -405,16 +415,45 @@ func TestCloneOrPullRejectsSymlinkedCacheAncestor(t *testing.T) {
 	}
 	t.Setenv("HOME", homeDir)
 
-	origin, _ := createBareRepoWithWorkingClone(t)
-	writeFile(t, filepath.Join(realHome, "sentinel.txt"), "untouched\n")
+	origin, working := createBareRepoWithWorkingClone(t)
+	writeAndPushCommit(t, working, "skill.txt", "linked home\n", "initial commit")
 
-	_, err := CloneOrPull(origin, "main")
-	if err == nil {
-		t.Fatal("expected symlinked cache ancestor to be rejected")
+	cachePath, err := CloneOrPull(origin, "main")
+	if err != nil {
+		t.Fatalf("expected symlinked home to be usable: %v", err)
 	}
-	assertFileContents(t, filepath.Join(realHome, "sentinel.txt"), "untouched\n")
-	if _, statErr := os.Stat(filepath.Join(realHome, ".cache")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("symlinked cache ancestor was used outside CacheDir: %v", statErr)
+	assertFileContents(t, filepath.Join(cachePath, "skill.txt"), "linked home\n")
+
+	resolvedRoot := filepath.Join(realHome, ".cache", "agent-marketplace")
+	if _, statErr := os.Stat(filepath.Join(resolvedRoot, HashURL(origin))); statErr != nil {
+		t.Fatalf("expected the cache to be materialized below the resolved home: %v", statErr)
+	}
+	assertNoEscapedEntries(t, resolvedRoot, realHome)
+}
+
+// assertNoEscapedEntries fails if anything was created directly under boundary
+// other than the resolved cache root, i.e. if a cache operation escaped it.
+func assertNoEscapedEntries(t *testing.T, resolvedRoot, boundary string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(boundary)
+	if err != nil {
+		t.Fatalf("read boundary %q: %v", boundary, err)
+	}
+	allowed := filepath.Base(resolvedRoot)
+	if filepath.Dir(resolvedRoot) != boundary {
+		// The root is deeper than the boundary (a home directory); only its first
+		// component may appear.
+		rel, relErr := filepath.Rel(boundary, resolvedRoot)
+		if relErr != nil {
+			t.Fatalf("relate %q to %q: %v", resolvedRoot, boundary, relErr)
+		}
+		allowed = strings.Split(rel, string(filepath.Separator))[0]
+	}
+	for _, entry := range entries {
+		if entry.Name() != allowed {
+			t.Fatalf("cache operation created %q outside the resolved cache root %q", entry.Name(), resolvedRoot)
+		}
 	}
 }
 
