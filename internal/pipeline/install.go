@@ -64,6 +64,18 @@ type InstallResult struct {
 	IsCollection        bool
 	CollectionLabel     string
 	RequirementWarnings []error
+	// Withheld lists the hooks and MCP servers a broad install discovered but
+	// did not enable. Reporting them is what keeps the fail-closed rule usable:
+	// the user learns the executable resources exist and how to ask for them by
+	// name, instead of seeing them listed as installed and never materialized.
+	Withheld []WithheldResource
+}
+
+// WithheldResource is an executable resource that a broad install refused to
+// enable on the user's behalf.
+type WithheldResource struct {
+	Kind ir.ResourceKind
+	Name string
 }
 
 type resourceIdentity struct {
@@ -230,6 +242,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	var installed []string
 	var installedResources []resourceIdentity
+	var withheld []WithheldResource
 	if trimmedTag := strings.TrimSpace(opts.Tag); trimmedTag != "" {
 		if opts.Scope != ScopeRepo {
 			return nil, fmt.Errorf("--tag is only supported with --scope repo (or no --scope)")
@@ -278,6 +291,15 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			var allInstalled []string
 			for _, k := range config.AllKinds {
 				names, err := allDiscoveredResourceNames(discoveryCfg.Registries, catalogs, opts.Registry, k)
+				if config.KindRequiresExplicitSelection(k) {
+					// "everything" must not mean "and start running things".
+					// The names are reported so the user can ask for them with
+					// --kind, which is the deliberate act that enables them.
+					if err == nil {
+						withheld = append(withheld, withheldResources(k, names)...)
+					}
+					continue
+				}
 				if err != nil {
 					// If no resources of this kind exist, skip silently.
 					// Propagate all other errors (e.g. collisions).
@@ -299,6 +321,10 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				installedResources = append(installedResources, resourceIdentities(k, names)...)
 			}
 			if len(allInstalled) == 0 {
+				if len(withheld) > 0 {
+					return nil, fmt.Errorf("configured registries provide only %s; install them by name (for example 'agent-marketplace install --kind %s %s')",
+						withheldSummary(withheld), skill.KindLabel(withheld[0].Kind), withheld[0].Name)
+				}
 				return nil, fmt.Errorf("no resources found in configured registries")
 			}
 			slices.Sort(allInstalled)
@@ -391,7 +417,28 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	return &InstallResult{
 		Installed:           installed,
 		RequirementWarnings: requirementWarnings,
+		Withheld:            withheld,
 	}, nil
+}
+
+// withheldResources pairs each name with its kind for reporting.
+func withheldResources(kind ir.ResourceKind, names []string) []WithheldResource {
+	out := make([]WithheldResource, 0, len(names))
+	for _, name := range names {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, WithheldResource{Kind: kind, Name: name})
+		}
+	}
+	return out
+}
+
+// withheldSummary renders withheld resources as "hook a, mcp b" for messages.
+func withheldSummary(withheld []WithheldResource) string {
+	parts := make([]string, 0, len(withheld))
+	for _, w := range withheld {
+		parts = append(parts, skill.KindLabel(w.Kind)+" "+w.Name)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity {
@@ -929,6 +976,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 	var allInstalled []string
 	var installedResources []resourceIdentity
+	var withheld []WithheldResource
 	for _, discovered := range catalogForEntry.Entries {
 		if hasKind && discovered.Kind != kind {
 			continue
@@ -937,12 +985,24 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if name == "" {
 			continue
 		}
+		// Bundle mode writes `default: true`, which never selects hooks or MCP
+		// servers. Listing them as installed would promise a materialization
+		// that cannot happen, so they are reported as withheld instead. An
+		// explicit --kind is the deliberate act that installs them by name.
+		if !hasKind && config.KindRequiresExplicitSelection(discovered.Kind) {
+			withheld = append(withheld, WithheldResource{Kind: discovered.Kind, Name: name})
+			continue
+		}
 		allInstalled = append(allInstalled, name)
 		installedResources = append(installedResources, resourceIdentity{kind: discovered.Kind, name: name})
 	}
 	if len(allInstalled) == 0 {
 		if hasKind {
 			return nil, fmt.Errorf("no %ss found in registry %s", skill.KindLabel(kind), fromURL)
+		}
+		if len(withheld) > 0 {
+			return nil, fmt.Errorf("registry %s provides only %s; install them by name (for example 'agent-marketplace install --kind %s %s --from %s')",
+				fromURL, withheldSummary(withheld), skill.KindLabel(withheld[0].Kind), withheld[0].Name, fromURL)
 		}
 		return nil, fmt.Errorf("no resources found in registry %s", fromURL)
 	}
@@ -962,6 +1022,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	return &InstallResult{
 		Installed:           allInstalled,
 		RequirementWarnings: requirementWarnings,
+		Withheld:            withheld,
 	}, nil
 }
 

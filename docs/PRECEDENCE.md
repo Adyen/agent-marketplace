@@ -43,6 +43,10 @@ For each registry entry, selection works per resource kind:
   require an explicit name in their per-kind `include` list
 - `required: true` is trusted organization policy and retains all-resource
   selection, including hooks and MCP servers
+- the same rule governs the commands that write these selections: `install --all`
+  without `--kind`, and `install --from <url>` without a resource name, write a
+  broad selection, so they report discovered hooks and MCP servers as withheld
+  instead of enabling them. `--kind hook` / `--kind mcp` installs one by name.
 - then per-kind `exclude` removes from selected names, except when `required: true` (required is immune)
 - per-kind `exclude_all: true` removes ALL resources of that kind from the entry's selection (except when `required: true`)
 
@@ -65,6 +69,17 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 
 ## Collection precedence
 
+- A collection expands its hook and MCP server members only when the collection
+  itself was selected deliberately: named in a `collections: include:` list (at
+  the top level or on the entry — `agent-marketplace install <collection>` writes
+  this), or provided by a `required: true` organization registry. A collection
+  reached only through `default: true` or a tag match expands its other members,
+  withholds each executable member with a warning naming the command that enables
+  it, and does not fail the sync. Trust is inherited down an `includes:` chain:
+  naming the outer collection accepts what it composes, and an include can only
+  widen trust when the nested collection is itself deliberately selected.
+  A member pinned to a `required: true` registry is already broadly selected by
+  that policy, so it expands regardless of how the collection was reached.
 - Collections expand into synthetic registry entries before resolution.
 - Removing a collection member writes a per-kind `exclude` in the active scope (collection stays installed).
 - If a resource is both direct-selected and collection-provided, direct selection takes precedence for conflict handling and `Via` annotation.

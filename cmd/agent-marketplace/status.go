@@ -404,6 +404,16 @@ func splitResolveErrors(errs []error) []collisionRow {
 			})
 			continue
 		}
+		// Same reason as the ambiguity branch: a withheld executable member is
+		// a warning, and the generic branch would print its whole message in
+		// the name column.
+		if resolver.IsExecutableCollectionMemberWithheld(err) {
+			collisions = append(collisions, collisionRow{
+				Name:    executableWithheldName(err),
+				Details: err.Error(),
+			})
+			continue
+		}
 		if resolver.IsSoftSelectedNotFound(err) || resolver.IsWarning(err) {
 			// Non-required "selected but not found", incompatible organization
 			// defaults, and other resolve warnings are displayed in the
@@ -444,6 +454,16 @@ func collectionMemberAmbiguityName(err error) string {
 	var ambiguous *resolver.AmbiguousCollectionMemberWarning
 	if errors.As(err, &ambiguous) {
 		return ambiguous.Name
+	}
+	return err.Error()
+}
+
+// executableWithheldName returns the resource name to show in the WARNINGS
+// table for a hook or MCP server a collection was not trusted to enable.
+func executableWithheldName(err error) string {
+	var withheld *resolver.ExecutableCollectionMemberWarning
+	if errors.As(err, &withheld) {
+		return withheld.Name
 	}
 	return err.Error()
 }

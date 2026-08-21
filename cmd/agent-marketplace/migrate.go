@@ -121,5 +121,38 @@ func reportMigrateResult(out io.Writer, result *config.MigrateResult) error {
 			return err
 		}
 	}
+	return reportDroppedRequired(out, result.DroppedRequired)
+}
+
+// reportDroppedRequired names every registry that lost `required: true`. The
+// flag enforces organization policy, so its removal has to be actionable rather
+// than a silent downgrade the user discovers from a later sync.
+func reportDroppedRequired(out io.Writer, dropped []config.DroppedRequiredRegistry) error {
+	if len(dropped) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "\nRemoved 'required: true' from %d registry entr%s; only the organization config may declare it:\n",
+		len(dropped), plural(len(dropped), "y", "ies")); err != nil {
+		return err
+	}
+	for _, entry := range dropped {
+		url := entry.URL
+		if url == "" {
+			url = "<entry without url>"
+		}
+		if _, err := fmt.Fprintf(out, "  - %s (%s config: %s)\n", url, entry.Layer, entry.Path); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "Re-declare them in %s to keep them mandatory.\n", config.OrganizationConfigPath()); err != nil {
+		return err
+	}
 	return nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

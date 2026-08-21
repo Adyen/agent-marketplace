@@ -29,6 +29,9 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Name collisions across registries refuse sync | Prevents silent overwrites when independent registries provide the same resource |
 | Same-URL different-path collisions emit warning | User deliberately configured both entries; keep all for visibility but warn that only one materializes per scope |
 | `required:true` registries immune to all excludes | Enforces org-wide security standards |
+| `required: true` accepted only in the organization layer | The flag is immune to every exclude, so a layer the repository or the user controls must not be able to grant it. `required: false` stays accepted everywhere (it claims nothing), and `migrate` strips a v2 claim it cannot keep and names every removal |
+| Hooks and MCP servers are enabled only by a selection that names them, or by `required` organization policy | They execute commands. `default: true`, `tags:`, `install --all` without `--kind`, `install --from` without a name, and a collection reached by any of those are broad selections that must not turn into command execution the config never mentions — each withholds executables and reports them instead |
+| A collection carries executables only when the collection itself was named (or is organization policy) | A collection's contents are authored in the registry and can change under a consumer who never named them; `collections: include: [...]` is the deliberate act, and trust is inherited down `includes:` chains |
 | `--from` ad-hoc registry operations on install/remove/list | Zero-config onboarding: browse, install, and remove resources from any registry URL without editing config files first |
 | `.gitignored` generated harness output | Config is committed; generated files are ephemeral on disk |
 | Adding Devin did not change default harness lists | Existing configurations keep their selected targets; select Devin through the TUI or a `harnesses:` edit |
@@ -45,8 +48,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace list --from <url> [--ref <ref>] [--path <path>] [--kind <kind>]` — browse resources at an ad-hoc URL without pre-configuring it
 - `agent-marketplace install <resource>` / `install --tag <tag>` / `install --scope {user,repo,local}` — add resource to target config layer and sync
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
-- `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
-- `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
+- `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource; without `--kind` it reports discovered hooks and MCP servers as withheld instead of enabling them
+- `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode), which likewise withholds hooks and MCP servers
 - `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; refuses required resources
 - `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry
 - `agent-marketplace sync` — deterministic materialization based on merged config

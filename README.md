@@ -285,6 +285,28 @@ registries:
   explicit per-kind `include` even when a registry has `default: true` or
   matching tags.
 
+### Hooks and MCP servers are never enabled implicitly
+
+Hooks and MCP servers run commands, so they are only enabled by a deliberate
+selection. Every implicit route is closed:
+
+- `default: true` and `tags:` never select them — they need a name in
+  `hooks: include:` / `mcp: include:` (or `install --kind hook|mcp <name>`).
+- A **collection** carries them only when the collection itself was selected by
+  name (`collections: include: [...]`, which is what
+  `agent-marketplace install <collection>` writes) or comes from a `required`
+  organization registry. A collection reached only by `default: true` or a tag
+  expands its other members, withholds the executables, and reports each one
+  with the command that enables it.
+- `agent-marketplace install --all` (no `--kind`) and
+  `agent-marketplace install --from <url>` without a resource name install a
+  broad selection, so they list discovered hooks and MCP servers as *not
+  installed* instead of enabling them. Add `--kind hook` or `--kind mcp` to
+  install one by name.
+
+Only `required: true` organization policy selects them broadly — the same
+authority that makes it immune to every `exclude`.
+
 ### Personal config (without touching the repo config)
 
 The gitignored local file (`.agents/config.local.yaml`) is your per-repo

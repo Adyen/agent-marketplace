@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
 func newInstallCmd() *cobra.Command {
@@ -118,13 +119,42 @@ func runInstall(out io.Writer, args []string, tag string, installAll bool, regis
 
 	if result.IsCollection {
 		_, err = fmt.Fprintf(out, "Installed collection %s %s\n", result.CollectionLabel, pipeline.InstallScopeLabel(scope))
-		return err
+		if err != nil {
+			return err
+		}
+		return reportWithheldResources(out, result.Withheld, fromURL)
 	}
 
 	if _, err = fmt.Fprintf(out, "Installed %s %s\n", strings.Join(result.Installed, ", "), pipeline.InstallScopeLabel(scope)); err != nil {
 		return err
 	}
-	return nil
+	return reportWithheldResources(out, result.Withheld, fromURL)
+}
+
+// reportWithheldResources lists the hooks and MCP servers a broad install
+// discovered but did not enable, with the command that enables one. Silence
+// here would read as "there were none", and the user would only find out that
+// an executable resource exists by reading the registry.
+func reportWithheldResources(out io.Writer, withheld []pipeline.WithheldResource, fromURL string) error {
+	if len(withheld) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(out, "\nNot installed (hooks and MCP servers are never enabled by a broad install):\n"); err != nil {
+		return err
+	}
+	fromFlag := ""
+	if trimmed := strings.TrimSpace(fromURL); trimmed != "" {
+		fromFlag = " --from " + trimmed
+	}
+	for _, w := range withheld {
+		if _, err := fmt.Fprintf(out, "  - %s %s\n", skill.KindLabel(w.Kind), w.Name); err != nil {
+			return err
+		}
+	}
+	first := withheld[0]
+	_, err := fmt.Fprintf(out, "Install one deliberately: agent-marketplace install --kind %s %s%s\n",
+		skill.KindLabel(first.Kind), first.Name, fromFlag)
+	return err
 }
 
 // looksLikeRegistryURL reports whether the argument looks like a Git hosting

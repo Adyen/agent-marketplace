@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -244,7 +246,7 @@ func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 			continue
 		}
 
-		if key == "required" && kind != organizationLayer {
+		if key == "required" && kind != organizationLayer && nodeClaimsRequired(node.Content[i+1]) {
 			errs = append(errs, fmt.Errorf("forbidden registry entry field %q in %s configuration; only organization policy may set required", key, kind.name()))
 		}
 		if key == "default" && kind == localLayer {
@@ -253,6 +255,25 @@ func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 	}
 
 	return errs
+}
+
+// nodeClaimsRequired reports whether a `required:` value claims required
+// authority. Only an explicit boolean false disclaims it: `required: false` is
+// noise rather than a privilege grab, and rejecting it would make the strict v3
+// loader refuse documents the v2 loader accepts. Anything the YAML scalar rules
+// do not resolve to false — including a value that is not a boolean at all —
+// counts as a claim, so an unparseable value fails closed here instead of
+// reaching the decoder as a trusted flag.
+func nodeClaimsRequired(value *yaml.Node) bool {
+	value = resolveAlias(value)
+	if value == nil || value.Kind != yaml.ScalarNode {
+		return true
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value.Value))
+	if err != nil {
+		return true
+	}
+	return parsed
 }
 
 // validateRegistryAuthority applies the layer restriction that cannot be

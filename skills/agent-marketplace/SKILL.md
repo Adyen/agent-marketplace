@@ -222,6 +222,19 @@ registries:
 higher-precedence config. Hooks and MCP servers require explicit per-kind
 includes.
 
+### Enabling hooks and MCP servers
+
+They execute commands, so nothing implicit enables them:
+
+- name them in `hooks: include:` / `mcp: include:`, or run
+  `agent-marketplace install --kind hook <name>` / `--kind mcp <name>`;
+- a collection carries them only when the collection is named in
+  `collections: include:` (what `install <collection>` writes) or comes from a
+  `required` organization registry — a collection reached only by `default: true`
+  or a tag reports each executable member as withheld instead;
+- `install --all` and `install --from <url>` without a resource name write a broad
+  selection, so they list discovered hooks and MCP servers as *not installed*.
+
 ### Local config: `.agents/config.local.yaml`
 
 ```yaml

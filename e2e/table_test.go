@@ -1987,6 +1987,69 @@ registries:
 		},
 	},
 	{
+		Name: "mcp/broadly_selected_collection_withholds_mcp",
+		Desc: "Given a collection carrying a skill and an MCP server in a default:true registry with no collection named, When sync is run, Then the skill materializes, no MCP server does, and the withholding is reported",
+		Registries: []RegistryDef{
+			{Name: "mcp-collection-broad",
+				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
+				MCPServers: []MCPServer{{Name: "bundled-mcp", Command: "node", Args: []string{"bundled.js"}}},
+				Files: map[string]string{
+					"collections/dev/COLLECTION.yaml": `name: dev
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`,
+				}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-collection-broad}}
+    ref: main
+    default: true
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:  []string{"/root/.factory/skills/safe-skill/SKILL.md"},
+				FilesAbsent: []string{"/root/.factory/mcp.json"},
+				OutContains: []string{"bundled-mcp", "was not enabled"}},
+		},
+	},
+	{
+		Name: "mcp/named_collection_enables_mcp",
+		Desc: "Given the same collection named in collections.include, When sync is run, Then the MCP server materializes",
+		Registries: []RegistryDef{
+			{Name: "mcp-collection-named",
+				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
+				MCPServers: []MCPServer{{Name: "bundled-mcp", Command: "node", Args: []string{"bundled.js"}}},
+				Files: map[string]string{
+					"collections/dev/COLLECTION.yaml": `name: dev
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`,
+				}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-collection-named}}
+    ref: main
+collections:
+  include:
+    - dev
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/root/.factory/skills/safe-skill/SKILL.md"},
+				FileContains: map[string]string{
+					"/root/.factory/mcp.json": "bundled-mcp",
+				}},
+		},
+	},
+	{
 		Name: "mcp/remove_explicit_selection_adds_exclude",
 		Desc: "Given explicitly selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
 		Registries: []RegistryDef{

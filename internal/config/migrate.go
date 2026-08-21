@@ -38,6 +38,20 @@ type MigrateResult struct {
 	UserPath      string
 	RepoPath      string
 	LocalPath     string
+	// DroppedRequired names the registry URLs whose `required: true` was
+	// removed because v3 grants that authority to the organization layer alone.
+	// Migration cannot keep the flag (the result would not load) and must not
+	// discard it silently, so the caller reports it for re-declaration in
+	// /etc/agent-marketplace/config.yaml.
+	DroppedRequired []DroppedRequiredRegistry
+}
+
+// DroppedRequiredRegistry identifies one registry entry that lost its
+// `required: true` during migration.
+type DroppedRequiredRegistry struct {
+	Layer string // "user personal", "repository", or "repository personal"
+	Path  string // config file the entry was declared in
+	URL   string // registry URL, empty when the entry declares none
 }
 
 // migrationFile holds the parsed YAML state for one config file during the
@@ -137,11 +151,13 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 	slog.Info("resolved migration target harnesses", "harnesses", targetHarnesses)
 
 	// Build the migrated document for each existing file.
+	var droppedRequired []DroppedRequiredRegistry
 	for _, name := range layerOrder {
 		f := files[name]
 		if f == nil || !f.exists {
 			continue
 		}
+		droppedRequired = append(droppedRequired, dropRequiredRegistries(f)...)
 		switch name {
 		case "user":
 			if err := migrateFileNode(f, targetHarnesses); err != nil {
@@ -194,9 +210,10 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 	}
 
 	result := &MigrateResult{
-		UserPath:  paths.User,
-		RepoPath:  paths.Repo,
-		LocalPath: paths.Local,
+		UserPath:        paths.User,
+		RepoPath:        paths.Repo,
+		LocalPath:       paths.Local,
+		DroppedRequired: droppedRequired,
 	}
 
 	// Write migrated documents atomically: create all temp files first, then
@@ -318,6 +335,46 @@ func migrateFileNode(f *migrationFile, harnesses []string) error {
 	}
 
 	return nil
+}
+
+// dropRequiredRegistries removes every `required:` key that claims required
+// authority from the registry entries of a non-organization config. v3 accepts
+// the claim only in /etc/agent-marketplace/config.yaml, so a migrated file that
+// kept it would fail its own validation and leave the user with no way forward.
+// Each removal is returned so the caller can name it rather than let a policy
+// flag disappear quietly.
+func dropRequiredRegistries(f *migrationFile) []DroppedRequiredRegistry {
+	if f == nil || !f.exists || f.kind == organizationLayer {
+		return nil
+	}
+	registries := findMappingValue(f.root, "registries")
+	if registries == nil || registries.Kind != yaml.SequenceNode {
+		return nil
+	}
+
+	var dropped []DroppedRequiredRegistry
+	for _, entryNode := range registries.Content {
+		entry := resolveAlias(entryNode)
+		if entry == nil || entry.Kind != yaml.MappingNode {
+			continue
+		}
+		value := findMappingValue(entry, "required")
+		if value == nil || !nodeClaimsRequired(value) {
+			continue
+		}
+		if !removeMappingKeyByName(entry, "required") {
+			continue
+		}
+		f.modified = true
+		url := ""
+		if urlNode := findMappingValue(entry, "url"); urlNode != nil && urlNode.Kind == yaml.ScalarNode {
+			url = strings.TrimSpace(urlNode.Value)
+		}
+		slog.Warn("dropped required authority during migration",
+			"layer", f.kind.name(), "path", f.path, "url", url)
+		dropped = append(dropped, DroppedRequiredRegistry{Layer: f.kind.name(), Path: f.path, URL: url})
+	}
+	return dropped
 }
 
 // migrateCollections rewrites the legacy [{name: X}] and [X] collections

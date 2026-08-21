@@ -253,6 +253,49 @@ func IsCollectionMemberAmbiguity(err error) bool {
 	return errors.As(err, &ambiguous)
 }
 
+// ExecutableCollectionMemberWarning is emitted when a collection contributes a
+// hook or MCP server that no trusted selection asked for. A collection reached
+// only by broad selection (`default: true`) or by a tag match carries whatever
+// its author put in it, so expanding it would enable a command-executing
+// resource that appears nowhere in any config — the same silent enablement the
+// per-kind rule forbids for the registry itself. The rest of the collection
+// still expands; only the executable member is withheld.
+type ExecutableCollectionMemberWarning struct {
+	Kind ir.ResourceKind
+	Name string
+	// Via is the collection provenance label, e.g. "collection:<name>@<v>".
+	Via string
+	// URL is the registry the withheld member would have come from.
+	URL string
+}
+
+func (w *ExecutableCollectionMemberWarning) Error() string {
+	return fmt.Sprintf("%s %q from %s was not enabled: the collection is selected broadly (default:true or tags) rather than by name, and %s resources are never enabled implicitly",
+		skill.KindLabel(w.Kind), w.Name, w.Via, skill.KindLabel(w.Kind))
+}
+
+// Remediation returns a user-facing hint about how to enable the withheld
+// executable resource deliberately.
+func (w *ExecutableCollectionMemberWarning) Remediation() string {
+	selector := kindSelectorKey[w.Kind]
+	if selector == "" {
+		selector = "hooks"
+	}
+	url := redact.URL(w.URL)
+	if url == "" {
+		url = "<url>"
+	}
+	return fmt.Sprintf("select the collection by name (collections: include: [...]), or add %q to the registry entry's %s: include: list ('agent-marketplace install --kind %s %s --from %s')",
+		w.Name, selector, skill.KindLabel(w.Kind), w.Name, url)
+}
+
+// IsExecutableCollectionMemberWithheld reports whether err is an
+// ExecutableCollectionMemberWarning.
+func IsExecutableCollectionMemberWithheld(err error) bool {
+	var withheld *ExecutableCollectionMemberWarning
+	return errors.As(err, &withheld)
+}
+
 func IsUnmetRequirement(err error) bool {
 	var requirement *UnmetRequirementWarning
 	return errors.As(err, &requirement)
@@ -313,7 +356,8 @@ func IsWarning(err error) bool {
 		errors.As(err, &collision) ||
 		errors.As(err, &requirement) ||
 		errors.As(err, &incompatibleDefault) ||
-		IsCollectionMemberAmbiguity(err)
+		IsCollectionMemberAmbiguity(err) ||
+		IsExecutableCollectionMemberWithheld(err)
 }
 
 // SelectedNotFoundError indicates that a resource was explicitly selected in
@@ -893,6 +937,8 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		}
 	}
 
+	trust := newCollectionTrust(cfg)
+
 	// Expand each resolved collection artifact into member resources.
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -911,10 +957,35 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, &out, &errs, targetSet)
+		trusted := artifact.Required || trust.trusts(artifact.Name, artifact.CatalogKey)
+		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, &out, &errs, targetSet, trust, trusted)
 	}
 
-	return out, suppressResolvedMemberMisses(errs, directResolved)
+	return out, dedupeWithheldExecutables(suppressResolvedMemberMisses(errs, directResolved))
+}
+
+// dedupeWithheldExecutables keeps one withholding warning per (kind, name).
+// A collection that is both selected on its own and reached through an
+// including collection walks the same member twice, and the user has one
+// decision to make about it, not one per path.
+func dedupeWithheldExecutables(errs []error) []error {
+	if len(errs) < 2 {
+		return errs
+	}
+	seen := make(map[string]struct{}, len(errs))
+	filtered := errs[:0]
+	for _, err := range errs {
+		var withheld *ExecutableCollectionMemberWarning
+		if errors.As(err, &withheld) {
+			key := ViaMapKey(withheld.Kind, withheld.Name)
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		filtered = append(filtered, err)
+	}
+	return filtered
 }
 
 // suppressResolvedMemberMisses drops "selected but not found" errors raised
@@ -949,6 +1020,57 @@ type collectionCatalogEntry struct {
 	catalogKey string
 }
 
+// collectionTrust answers whether a collection may contribute executable
+// members (hooks, MCP servers) when it expands.
+//
+// A collection is a registry-authored bundle: its contents can change under a
+// consumer who never named them. So the gate is on how the collection itself
+// entered the selection, not on what it contains. Naming a collection in a
+// `collections: include:` list (which is what `agent-marketplace install
+// <collection>` writes) is a deliberate act and carries executables; being
+// swept in by `default: true` or by a tag match is not, and withholds them.
+// Organization policy (`required: true`) is trusted for the same reason it may
+// select hooks directly.
+type collectionTrust struct {
+	// namedInSelector holds collection names that some registry entry selects
+	// by name. Top-level `collections:` is already propagated onto every entry
+	// by propagateTopLevelCollections, so this covers both spellings.
+	namedInSelector map[string]struct{}
+	// requiredCatalogKeys holds the catalog keys of required registries.
+	requiredCatalogKeys map[string]struct{}
+}
+
+func newCollectionTrust(cfg *config.Config) collectionTrust {
+	trust := collectionTrust{
+		namedInSelector:     map[string]struct{}{},
+		requiredCatalogKeys: map[string]struct{}{},
+	}
+	if cfg == nil {
+		return trust
+	}
+	for _, entry := range cfg.Registries {
+		for _, name := range entry.SelectorForKind(ir.KindCollection).Include {
+			if name = strings.TrimSpace(name); name != "" {
+				trust.namedInSelector[name] = struct{}{}
+			}
+		}
+		if entry.Required {
+			trust.requiredCatalogKeys[entry.CatalogKey] = struct{}{}
+		}
+	}
+	return trust
+}
+
+// trusts reports whether the named collection, provided by the registry with
+// the given catalog key, may contribute executable members.
+func (t collectionTrust) trusts(name, catalogKey string) bool {
+	if _, named := t.namedInSelector[strings.TrimSpace(name)]; named {
+		return true
+	}
+	_, required := t.requiredCatalogKeys[catalogKey]
+	return required
+}
+
 // expandMembersRecursive walks the members of a collection and appends resolved
 // artifacts for each. When a collection includes other collections (via
 // ir.Collection.Includes), those are expanded recursively with cycle detection.
@@ -967,6 +1089,10 @@ func expandMembersRecursive(
 	out *[]ResolvedArtifact,
 	errs *[]error,
 	targetSet []hcc.Target,
+	trust collectionTrust,
+	// trusted reports whether this collection was reached by a deliberate
+	// selection, which is what permits executable members to expand.
+	trusted bool,
 ) {
 	// Expand direct members.
 	for _, member := range col.Members {
@@ -1162,6 +1288,22 @@ func expandMembersRecursive(
 			continue
 		}
 
+		// A hook or MCP server is only enabled by a deliberate selection. An
+		// untrusted collection expands everything else and withholds this one,
+		// so a registry author cannot turn a broadly-selected bundle into
+		// command execution the config never mentions.
+		if config.KindRequiresExplicitSelection(member.Kind) && !trusted && !memberRequired {
+			slog.Debug("collection member withheld: executable resource needs a deliberate selection",
+				"collection", col.Label(), "kind", member.Kind.String(), "name", memberName, "via", viaLabel)
+			*errs = append(*errs, &ExecutableCollectionMemberWarning{
+				Kind: member.Kind,
+				Name: memberName,
+				Via:  viaLabel,
+				URL:  memberRegistryURL,
+			})
+			continue
+		}
+
 		// Mark as resolved to prevent duplicates from other collections.
 		directResolved[memberKey] = struct{}{}
 
@@ -1215,7 +1357,11 @@ func expandMembersRecursive(
 			CatalogKey:   includedEntry.catalogKey,
 			Harnesses:    artifact.Harnesses,
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet)
+		// Trust is inherited down the include chain: naming the outer
+		// collection accepts what it composes. An include can only widen trust
+		// when the nested collection is itself deliberately selected.
+		includedTrusted := trusted || trust.trusts(name, includedEntry.catalogKey)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet, trust, includedTrusted)
 	}
 }
 

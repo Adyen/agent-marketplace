@@ -213,6 +213,18 @@ commands, subagents, hooks, and MCP servers stay aligned.
 configured machine-scope harness roots regardless of repo/local config.
 The resolver enforces this; never add a bypass.
 
+### Executable resources need a deliberate selection
+
+Hooks and MCP servers are only enabled by a name (`hooks`/`mcp` include, or a
+collection named in `collections: include:`) or by `required: true` organization
+policy. Broad selection — `default: true`, `tags:`, `install --all` without
+`--kind`, `install --from` without a name, and a collection reached by any of
+those — must never enable them. When code has to withhold one, it reports it
+(`resolver.ExecutableCollectionMemberWarning`,
+`pipeline.InstallResult.Withheld`); dropping it silently is the bug this rule
+exists to prevent. Never add a bypass, and never let a new code path enable an
+executable kind without a selection that names it.
+
 ### Name collisions refuse sync
 
 If two registries expose the same resource kind and name, `Resolve`
