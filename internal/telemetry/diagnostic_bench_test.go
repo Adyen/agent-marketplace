@@ -65,7 +65,7 @@ func BenchmarkDiagnosticRedaction(b *testing.B) {
 	if res == nil && len(spans) > 0 {
 		res = spans[0].Resource()
 	}
-	redactedRes := redactResource(context.Background(), res)
+	redactedRes := redactResource(res)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -119,7 +119,7 @@ func BenchmarkDiagnosticPayloadSerialization(b *testing.B) {
 	if res == nil && len(spans) > 0 {
 		res = spans[0].Resource()
 	}
-	redactedRes := redactResource(context.Background(), res)
+	redactedRes := redactResource(res)
 	rmRedacted := redactResourceMetrics(context.Background(), &rm)
 	rmRedacted.Resource = redactedRes
 	redactedSpans := redactSpans(context.Background(), spans, redactedRes)
