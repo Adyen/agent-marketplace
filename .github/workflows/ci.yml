@@ -5,7 +5,11 @@ on:
     branches:
       - main
     tags:
-      - '*'
+      # Only the release tag shape reaches the privileged release job. These
+      # globs are a coarse filter (GitHub filter patterns cannot express SemVer);
+      # scripts/validate-release-tag.sh is the authoritative gate.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
   pull_request:
     branches:
       - main
@@ -14,6 +18,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default: every job below opts in to exactly what it needs.
+#   build / test / lint / govulncheck / release-tag-guard: contents: read
+#     (checkout only, no token persisted).
+#   release: contents: write, required solely to publish the GitHub Release and
+#     upload its assets, and reachable only after the tag guard has passed.
+# No job requests id-token, packages, pull-requests, or actions permissions.
 permissions: {}
 
 env:
@@ -109,12 +119,38 @@ jobs:
           go-version-input: ""
           repo-checkout: false
 
+  # Tag names are attacker-controllable text, so they are validated in an
+  # unprivileged job before any job that can write releases runs. The tag never
+  # reaches a `run:` script through `${{ }}` interpolation; it is passed as an
+  # environment variable and quoted.
+  release-tag-guard:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: ./scripts/validate-release-tag.sh "$RELEASE_TAG"
+
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, test, lint, govulncheck]
+    needs: [release-tag-guard, build, test, lint, govulncheck]
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 15
+    # Restricts who can actually publish: the `release` environment carries the
+    # required reviewers and tag-ref deployment rules documented in
+    # docs/release-process.md.
+    environment: release
     permissions:
       contents: write
     env:
@@ -126,6 +162,12 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+
+      # Re-validated inside this job so the strict SemVer contract is enforced
+      # here even if `needs` is ever edited, and always before Make or the Go
+      # toolchain sees the tag-derived VERSION.
+      - name: Validate release tag
+        run: ./scripts/validate-release-tag.sh "$VERSION"
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

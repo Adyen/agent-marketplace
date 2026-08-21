@@ -36,6 +36,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Devin aggregate updates are serialized per canonical root by advisory `flock(2)`, with compare-and-swap as a degraded-filesystem backstop | Two real processes cannot patch the same Devin aggregate concurrently; `flock` is owned by the open file description so it survives crashes without stale-lock heuristics, and `Store.Apply` refuses with `ownership.generation-conflict` rather than corrupting when advisory locking is unavailable |
 | `doctor --repair` never removes or overwrites an entry without interactive confirmation | Adoption is byte-neutral and safe to batch with `--yes`; deleting a user-visible entry, or replacing its value, is not — so both need per-entry consent plus a fresh backup |
 | `doctor --repair` offers three classes: adopt an exact match, remove an evidence-backed orphan, or replace an unmanaged entry whose key matches but whose value differs | A collision needs only key equality, adoption needs value equality, and orphan nomination needs evidence only a completed mutation produces — so such an entry was reported by every sync and repairable by nothing |
+| Release tags are validated by one shared script before Make or a shell sees them | Git allows tag names carrying shell and Make syntax, so a pushed tag is untrusted input to a privileged build; `scripts/validate-release-tag.sh` is the single strict-SemVer gate called by both the workflow and the Makefile, and `docs/release-process.md` records the trigger, permission, and tag-creation restrictions |
 
 ## CLI Commands
 
@@ -162,6 +163,7 @@ agent-marketplace/
 ├── docs/
 │   ├── adoption-guide.md         ← v3 onboarding guide
 │   ├── PRECEDENCE.md             ← selection & precedence reference
+│   ├── release-process.md        ← release tag contract, permissions, tag restrictions
 │   └── plans/                    ← phased implementation plans
 ├── e2e/              ← declarative E2E test suite (local-only; see above)
 ├── internal/
@@ -173,9 +175,11 @@ agent-marketplace/
 │   ├── harness/       ← install roots, per-target aggregate files and capabilities
 │   ├── devincli/      ← non-blocking Devin CLI version detection for doctor
 │   ├── collection/    ← collection discovery and expansion
+│   ├── releaseguard/  ← regression tests for the release tag admission contract
 │   ├── tui/           ← Bubble Tea interactive UI
 │   └── cache/         ← registry clone/pull cache management
 ├── cmd/agent-marketplace/  ← Cobra CLI subcommands
+├── scripts/           ← release tag validation gate (shared by CI and the Makefile)
 └── skills/            ← self-hosted skills for this repo
 ```
 

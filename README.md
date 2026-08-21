@@ -36,12 +36,15 @@ make build
 
 # Cross-compile versioned release artifacts for
 # darwin-arm64, darwin-amd64, and linux-amd64 into ./dist/
-make release
+make release VERSION=v0.0.0-dev
 ```
 
 Use `make build` for day-to-day local use, and `make release` when you need
 the distributable, version-stamped artifacts (the same ones shipped through
-package managers and GitHub releases).
+package managers and GitHub releases). `make release` requires `VERSION` to be a
+valid release tag (`v<MAJOR>.<MINOR>.<PATCH>[-<prerelease>]`); see
+[`docs/release-process.md`](./docs/release-process.md) for the release tag
+contract and how releases are published.
 
 ---
 
@@ -664,7 +667,7 @@ overridable keys, and the environment variables.
 make build     # build the local binary
 make test      # run unit tests
 make lint      # run linters (gofmt, go vet, golangci-lint)
-make release   # cross-compile versioned artifacts (darwin-arm64/amd64, linux-amd64)
+make release   # cross-compile versioned artifacts (needs VERSION=v<x>.<y>.<z>)
 make e2e       # run the end-to-end suite (see below)
 ```
 

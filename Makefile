@@ -1,15 +1,36 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# VERSION is untrusted input: release automation sets it from a pushed Git tag
+# name, and Git allows tag names containing Make and shell syntax. Two rules keep
+# such a name inert here, and both are covered by internal/releaseguard tests:
+#
+#   1. $(value VERSION) yields the raw text of an environment or command line
+#      override, so an injected $(shell ...) stays data instead of being expanded
+#      by Make. Simply-expanded (:=) assignment then stores that text verbatim.
+#   2. VERSION is exported and referenced in recipes as "$$VERSION", never
+#      interpolated as $(VERSION), so a quote or semicolon in the value cannot
+#      terminate a shell word.
+#
+# Privileged release artifacts additionally require the strict SemVer contract;
+# see the check-release-tag target.
+ifeq ($(origin VERSION),undefined)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+else
+# `override` is required: without it a command line VERSION= would keep its own
+# recursively expanded definition and Make would expand it when exporting.
+override VERSION := $(value VERSION)
+endif
+export VERSION
+
 BINARY := agent-marketplace
-RELEASE_BINARY := $(BINARY)-$(VERSION)
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+LDFLAGS := -ldflags "-X main.version=$$VERSION"
 GO := go
 CMD := ./cmd/agent-marketplace
+VALIDATE_RELEASE_TAG := scripts/validate-release-tag.sh
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release check-release-tag clean e2e devin-probe $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -25,7 +46,7 @@ define run_golangci_lint
 endef
 
 build:
-	CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BINARY) $(CMD)
+	CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o "$(BINARY)" $(CMD)
 
 test:
 	@: # Tests shadow HOME per-package (TestMain) and per-test (t.Setenv), so
@@ -55,22 +76,30 @@ lint-common:
 	$(run_golangci_lint)
 
 version:
-	@echo $(VERSION)
+	@printf '%s\n' "$$VERSION"
+
+# Admission gate for privileged release builds: VERSION must be the strict
+# SemVer release tag form before it is used to name or stamp artifacts. The same
+# script gates the tag in .github/workflows/ci.yml, so a tag that CI accepted
+# also builds locally, and `make release VERSION=v0.0.0-dev` covers local
+# experiments on an untagged checkout.
+check-release-tag:
+	@$(VALIDATE_RELEASE_TAG) "$$VERSION"
 
 # Cross-compilation targets
-darwin-arm64:
-	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-arm64 $(CMD)
+darwin-arm64: check-release-tag
+	@mkdir -p "$(DIST_DIR)"
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o "$(DIST_DIR)/$(BINARY)-$$VERSION-darwin-arm64" $(CMD)
 
-darwin-amd64:
-	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-amd64 $(CMD)
+darwin-amd64: check-release-tag
+	@mkdir -p "$(DIST_DIR)"
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o "$(DIST_DIR)/$(BINARY)-$$VERSION-darwin-amd64" $(CMD)
 
-linux-amd64:
-	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
+linux-amd64: check-release-tag
+	@mkdir -p "$(DIST_DIR)"
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o "$(DIST_DIR)/$(BINARY)-$$VERSION-linux-amd64" $(CMD)
 
-release: $(PLATFORMS)
+release: check-release-tag $(PLATFORMS)
 
 clean:
 	rm -rf $(DIST_DIR) $(BINARY)
