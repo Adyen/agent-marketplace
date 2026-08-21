@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -39,53 +41,94 @@ func New(path string) *Store {
 }
 
 // Open opens the database, enables WAL, foreign keys, and a bounded busy
-// timeout, and applies any pending migrations.
+// timeout through modernc.org/sqlite's supported _pragma DSN options, and
+// applies any pending migrations. SQLite is deliberately kept to one pooled
+// connection: this serializes writes and prevents each connection from seeing
+// a separate :memory: database.
 func (s *Store) Open(ctx context.Context) error {
-	dsn := s.path
-	if dsn == "" {
+	if strings.TrimSpace(s.path) == "" {
 		return fmt.Errorf("%w: missing database path", store.ErrTopology)
 	}
-	if dsn != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(dsn), 0755); err != nil {
-			return fmt.Errorf("create database directory: %w", err)
+
+	dsn, err := buildDSN(s.path)
+	if err != nil {
+		return store.SanitizeDSNError(fmt.Errorf("build sqlite DSN: %w", err), s.path)
+	}
+	if path := sqliteFilePath(s.path); path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return store.SanitizeDSNError(fmt.Errorf("create database directory: %w", err), s.path)
 		}
-		dsn = fmt.Sprintf("file:%s?_txlock=immediate&_fk=1&_busy_timeout=5000&_journal=WAL", dsn)
-	} else {
-		dsn = "file::memory:?_txlock=immediate&_fk=1&_busy_timeout=5000"
 	}
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return fmt.Errorf("open sqlite: %w", err)
+		return store.SanitizeDSNError(fmt.Errorf("open sqlite: %w", err), s.path)
 	}
+	// modernc connections carry connection-local PRAGMA state. A single
+	// connection is required for :memory: and also avoids SQLite write-lock
+	// races between database/sql pool connections.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s.db = db
 	s.q = db
 
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL;"); err != nil {
+	if err := runMigrations(ctx, db); err != nil {
 		_ = db.Close()
-		return fmt.Errorf("enable WAL: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON;"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("enable foreign keys: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000;"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	for i, m := range migrations {
-		if _, err := db.ExecContext(ctx, m); err != nil {
-			_ = db.Close()
-			return fmt.Errorf("migration %d: %w", i, err)
-		}
+		return store.SanitizeDSNError(fmt.Errorf("run migrations: %w", err), s.path)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return fmt.Errorf("ping sqlite: %w", err)
+		return store.SanitizeDSNError(fmt.Errorf("ping sqlite: %w", err), s.path)
 	}
 	return nil
+}
+
+func buildDSN(path string) (string, error) {
+	if path == ":memory:" {
+		path = "file::memory:"
+	} else if !strings.HasPrefix(path, "file:") {
+		// Escape the filename as a SQLite URI path. In particular, a '?' in a
+		// filesystem path must not become the beginning of the DSN query.
+		path = "file:" + url.PathEscape(path)
+	}
+
+	u, err := url.Parse(path)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("_txlock", "immediate")
+	q.Del("_fk")
+	q.Del("_busy_timeout")
+	q.Del("_journal")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "foreign_keys(ON)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// sqliteFilePath returns the filesystem path to create before opening a file
+// database. An empty result means that the DSN is an in-memory database.
+func sqliteFilePath(path string) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file::memory:") {
+		return ""
+	}
+	if !strings.HasPrefix(path, "file:") {
+		return path
+	}
+	u, err := url.Parse(path)
+	if err != nil || u.Host != "" {
+		return ""
+	}
+	if u.Path != "" {
+		return u.Path
+	}
+	if u.Opaque != "" {
+		return u.Opaque
+	}
+	return ""
 }
 
 // Close closes the underlying database connection.

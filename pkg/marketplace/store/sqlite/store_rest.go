@@ -65,7 +65,7 @@ func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurre
 		occ.OccurredAt = time.Now().UTC()
 	}
 	mirrored := string(occ.MirroredArtifactDigest)
-	_, err := s.q.ExecContext(ctx,
+	err := execWithBusyRetry(ctx, s.q,
 		`INSERT OR IGNORE INTO source_occurrences
 		 (source_id, ref, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
 		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,

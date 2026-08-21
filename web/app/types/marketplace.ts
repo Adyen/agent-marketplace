@@ -34,6 +34,8 @@ export interface SourcePublisher {
   url?: string
 }
 
+// Public source metadata only. The API deliberately omits credentials, policy
+// internals, and refresh diagnostics; origins are already sanitized server-side.
 export interface Source {
   id: string
   slug: string

@@ -6,10 +6,10 @@ GO := go
 CMD := ./cmd/agent-marketplace
 
 # Platform targets
-PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
+PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -58,6 +58,42 @@ lint-common:
 version:
 	@echo $(VERSION)
 
+secrets-check:
+	@test -n "$$(git check-ignore --no-index deploy/compose/postgres-s3/.env 2>/dev/null)" || { echo "ERROR: deploy .env files must be ignored"; exit 1; }
+	@test -z "$$(git ls-files | awk '/^deploy\/.*\/\.env$$/ {print}')" || { echo "ERROR: tracked deploy .env file"; exit 1; }
+	@if git grep -nIE 'postgres(ql)?://[^[:space:]/:@]+:[^[:space:]@]+@|^(AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|POSTGRES_PASSWORD|MARKETPLACE_POSTGRES_DSN)=|(^|[[:space:]])(password|token|access_token)[[:space:]]*=' -- deploy | grep -vE 'replace-with|example\.invalid|\.example(:|$$)|^[^:]+:[^:]+:#'; then \
+		echo "ERROR: tracked deployment content looks like it contains a real secret"; exit 1; \
+	fi
+	@echo "Deployment secret static check passed"
+
+container-check: secrets-check
+	@test -s Dockerfile.marketplace
+	@test -s .dockerignore
+	@test -s web/Dockerfile
+	@awk '/FROM .*golang:1.26.6-alpine3.22 AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM alpine:3.22.1 AS api/{api=1} /FROM alpine:3.22.1 AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
+	@awk '/USER node/{user=1} /HEALTHCHECK/{health=1} END {if (!user || !health) exit 1}' web/Dockerfile
+	@test "$$(grep -Fc -- 'wget -q -O - -T 5' Dockerfile.marketplace)" -eq 1
+	@test "$$(grep -Fh -- 'wget' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | grep -Fc -- '"-q", "-O", "-", "-T", "5"')" -eq 2
+	@test -z "$$(grep -nE -- '--(tries|quiet|output-document)' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml)"
+	@echo "Container static checks passed"
+
+compose-config:
+	@if ! command -v docker >/dev/null 2>&1; then \
+		echo "SKIP: docker unavailable; cannot validate Compose files"; \
+	elif ! docker compose version >/dev/null 2>&1; then \
+		echo "SKIP: docker compose unavailable; cannot validate Compose files"; \
+	else \
+		secret_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-dsn; \
+		password_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-password; \
+		trap 'rm -f "$$secret_file" "$$password_file"' EXIT; \
+		printf '%s\n' 'postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable' > "$$secret_file"; \
+		printf '%s\n' 'validation-only' > "$$password_file"; \
+		docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config --quiet && \
+		docker compose -f deploy/compose/postgres-s3/compose.yaml config --quiet && \
+		docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.dsn-file.yaml config --quiet && \
+		POSTGRES_PASSWORD=validation-only MARKETPLACE_POSTGRES_DSN=postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable AWS_ACCESS_KEY_ID=validation-only AWS_SECRET_ACCESS_KEY=validation-only docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.development.yaml config --quiet; \
+	fi
+
 # Cross-compilation targets
 darwin-arm64:
 	@mkdir -p $(DIST_DIR)
@@ -70,6 +106,10 @@ darwin-amd64:
 linux-amd64:
 	@mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
+
+linux-arm64:
+	@mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
 release: $(PLATFORMS)
 

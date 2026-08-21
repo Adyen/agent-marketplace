@@ -1,8 +1,61 @@
 package postgres
 
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+)
+
 // migrations contains the complete schema for the PostgreSQL metadata adapter.
 // Additional migrations can be appended to this slice over time.
 var migrations = []string{migration0, migration1, migration2}
+
+const migrationTable = "marketplace_schema_migrations"
+
+func runMigrations(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
+		"agent-marketplace:metadata-schema-migrations",
+	); err != nil {
+		return rollback(fmt.Errorf("acquire migration lock: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+migrationTable+` (
+		version INTEGER PRIMARY KEY,
+		applied_at BIGINT NOT NULL
+	)`); err != nil {
+		return rollback(err)
+	}
+	for version, migration := range migrations {
+		var applied bool
+		if err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS (SELECT 1 FROM "+migrationTable+" WHERE version = $1)", version,
+		).Scan(&applied); err != nil {
+			return rollback(fmt.Errorf("check migration %d: %w", version, err))
+		}
+		if applied {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, migration); err != nil {
+			return rollback(fmt.Errorf("migration %d: %w", version, err))
+		}
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO "+migrationTable+" (version, applied_at) VALUES ($1, $2)",
+			version, time.Now().UTC().Unix(),
+		); err != nil {
+			return rollback(fmt.Errorf("record migration %d: %w", version, err))
+		}
+	}
+	return tx.Commit()
+}
 
 const migration0 = `
 CREATE TABLE IF NOT EXISTS marketplaces (

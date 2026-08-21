@@ -13,17 +13,23 @@ import (
 
 // OpenStores opens the metadata and blob stores described by cfg.
 func OpenStores(ctx context.Context, cfg Config) (store.MetadataStore, store.BlobStore, error) {
+	dsn, err := cfg.Storage.Metadata.ResolveDSN()
+	if err != nil {
+		return nil, nil, err
+	}
 	var meta store.MetadataStore
 	switch cfg.Storage.Metadata.Driver {
 	case "sqlite":
-		meta = sqlite.New(cfg.Storage.Metadata.DSN)
+		meta = sqlite.New(dsn)
 	case "postgres":
-		meta = postgres.New(cfg.Storage.Metadata.DSN)
+		meta = postgres.New(dsn)
 	default:
 		return nil, nil, fmt.Errorf("unsupported metadata driver %q", cfg.Storage.Metadata.Driver)
 	}
 	if err := meta.Open(ctx); err != nil {
-		return nil, nil, fmt.Errorf("open metadata store: %w", err)
+		// Store adapters sanitize their own startup errors, but keep this
+		// boundary defensive because this error is logged by serve/reindex.
+		return nil, nil, fmt.Errorf("open metadata store: %w", store.SanitizeDSNError(err, dsn))
 	}
 
 	var blobs store.BlobStore

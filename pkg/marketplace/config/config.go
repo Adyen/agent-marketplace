@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"gopkg.in/yaml.v3"
 )
 
@@ -113,8 +115,52 @@ type Storage struct {
 
 // StorageMetadata configures the metadata backend.
 type StorageMetadata struct {
-	Driver string `yaml:"driver"`
-	DSN    string `yaml:"dsn"`
+	Driver  string `yaml:"driver"`
+	DSN     string `yaml:"dsn"`
+	DSNEnv  string `yaml:"dsn_env"`
+	DSNFile string `yaml:"dsn_file"`
+}
+
+// ResolveDSN returns the configured metadata DSN without exposing its value in
+// errors. Exactly one literal, environment, or file source must be selected.
+func (s StorageMetadata) ResolveDSN() (string, error) {
+	var selected []string
+	if strings.TrimSpace(s.DSN) != "" {
+		selected = append(selected, "dsn")
+	}
+	if strings.TrimSpace(s.DSNEnv) != "" {
+		selected = append(selected, "dsn_env")
+	}
+	if strings.TrimSpace(s.DSNFile) != "" {
+		selected = append(selected, "dsn_file")
+	}
+	if len(selected) != 1 {
+		return "", fmt.Errorf("storage.metadata must select exactly one usable DSN source (dsn, dsn_env, or dsn_file); selected %v", selected)
+	}
+
+	switch selected[0] {
+	case "dsn":
+		return strings.TrimSpace(s.DSN), nil
+	case "dsn_env":
+		name := strings.TrimSpace(s.DSNEnv)
+		value, ok := os.LookupEnv(name)
+		if !ok || strings.TrimSpace(value) == "" {
+			return "", fmt.Errorf("storage.metadata.dsn_env %q is unset or empty", name)
+		}
+		return strings.TrimSpace(value), nil
+	case "dsn_file":
+		path := strings.TrimSpace(s.DSNFile)
+		value, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read storage.metadata.dsn_file %q: %w", path, err)
+		}
+		if strings.TrimSpace(string(value)) == "" {
+			return "", fmt.Errorf("storage.metadata.dsn_file %q is empty", path)
+		}
+		return strings.TrimSpace(string(value)), nil
+	default:
+		return "", errors.New("storage.metadata DSN source is invalid")
+	}
 }
 
 // StorageBlobs configures the blob backend.
@@ -293,6 +339,9 @@ func (cfg Config) Validate() error {
 	if cfg.Refresh.Interval.Duration() <= 0 {
 		errs = append(errs, errors.New("refresh.interval must be a positive duration"))
 	}
+	if cfg.RefreshConcurrency < 0 {
+		errs = append(errs, errors.New("refresh_concurrency must not be negative"))
+	}
 	errs = append(errs, cfg.Policy.Validate()...)
 	seenIDs := make(map[string]bool)
 	seenSlugs := make(map[string]bool)
@@ -321,14 +370,126 @@ func validateInstance(inst Instance) error {
 	if strings.TrimSpace(inst.CanonicalURL) == "" {
 		return errors.New("instance.canonical_url is required")
 	}
-	u, err := url.Parse(inst.CanonicalURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("instance.canonical_url must be an http or https URL")
+	if err := publicurl.ErrorForField("instance.canonical_url", inst.CanonicalURL); err != nil {
+		return err
 	}
 	if strings.Contains(inst.CanonicalURL, "..") {
 		return errors.New("instance.canonical_url must not contain path traversal")
 	}
 	return nil
+}
+
+// validateMetadataDSN checks only the syntax and driver compatibility of a
+// resolved metadata DSN. It intentionally never includes the DSN in an error.
+func validateMetadataDSN(driver, dsn string) error {
+	dsn = strings.TrimSpace(dsn)
+	switch driver {
+	case "sqlite":
+		// In-memory, read-only, and immutable SQLite databases are useful in
+		// unit tests but cannot provide durable, writable production metadata.
+		if dsn == ":memory:" || strings.HasPrefix(strings.ToLower(dsn), "file::memory:") {
+			return errors.New("storage.metadata sqlite DSN must be a writable filesystem database")
+		}
+		if strings.HasPrefix(dsn, "file:") {
+			u, err := url.Parse(dsn)
+			if err != nil || u.Scheme != "file" || (u.Host != "" && u.Host != "localhost") || (u.Path == "" && u.Opaque == "") {
+				return errors.New("storage.metadata DSN is not valid for sqlite driver")
+			}
+			for key, values := range u.Query() {
+				for _, value := range values {
+					switch {
+					case strings.EqualFold(key, "mode") && (strings.EqualFold(value, "memory") || strings.EqualFold(value, "ro")):
+						return errors.New("storage.metadata sqlite DSN must not use memory or read-only mode")
+					case strings.EqualFold(key, "immutable") && (value == "1" || strings.EqualFold(value, "true")):
+						return errors.New("storage.metadata sqlite DSN must not use immutable mode")
+					}
+				}
+			}
+			return nil
+		}
+		if strings.Contains(dsn, "=") || strings.Contains(dsn, "://") || strings.IndexByte(dsn, 0) >= 0 {
+			return errors.New("storage.metadata DSN is not valid for sqlite driver")
+		}
+		return nil
+	case "postgres":
+		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+			u, err := url.Parse(dsn)
+			if err != nil || u.Host == "" {
+				return errors.New("storage.metadata DSN is not valid for postgres driver")
+			}
+			if port := u.Port(); port != "" {
+				portNumber, portErr := strconv.Atoi(port)
+				if portErr != nil || portNumber < 1 || portNumber > 65535 {
+					return errors.New("storage.metadata DSN is not valid for postgres driver")
+				}
+			}
+			return nil
+		}
+		if strings.HasPrefix(dsn, "file:") || dsn == ":memory:" || !validPostgresKeyValueDSN(dsn) {
+			return errors.New("storage.metadata DSN is not valid for postgres driver")
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func validPostgresKeyValueDSN(dsn string) bool {
+	seen := false
+	for i := 0; i < len(dsn); {
+		for i < len(dsn) && (dsn[i] == ' ' || dsn[i] == '\t' || dsn[i] == '\n' || dsn[i] == '\r') {
+			i++
+		}
+		if i == len(dsn) || !isDSNKeyStart(dsn[i]) {
+			return false
+		}
+		start := i
+		for i < len(dsn) && isDSNKeyChar(dsn[i]) {
+			i++
+		}
+		if i == start || i >= len(dsn) || dsn[i] != '=' {
+			return false
+		}
+		i++
+		if i < len(dsn) && (dsn[i] == '\'' || dsn[i] == '"') {
+			quote := dsn[i]
+			i++
+			closed := false
+			for i < len(dsn) {
+				if dsn[i] == '\\' && i+1 < len(dsn) {
+					i += 2
+					continue
+				}
+				if dsn[i] == quote {
+					i++
+					closed = true
+					break
+				}
+				i++
+			}
+			if !closed || (i < len(dsn) && dsn[i] != ' ' && dsn[i] != '\t' && dsn[i] != '\n' && dsn[i] != '\r') {
+				return false
+			}
+		} else {
+			start = i
+			for i < len(dsn) && dsn[i] != ' ' && dsn[i] != '\t' && dsn[i] != '\n' && dsn[i] != '\r' {
+				i++
+			}
+			if i == start {
+				return false
+			}
+		}
+		seen = true
+	}
+	return seen
+}
+
+func isDSNKeyStart(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+func isDSNKeyChar(c byte) bool {
+	return isDSNKeyStart(c) || (c >= '0' && c <= '9')
 }
 
 // Validate validates the storage configuration.
@@ -337,8 +498,13 @@ func (s Storage) Validate() []error {
 	if !validMetadataDrivers[s.Metadata.Driver] {
 		errs = append(errs, fmt.Errorf("storage.metadata.driver must be one of %v", keys(validMetadataDrivers)))
 	}
-	if strings.TrimSpace(s.Metadata.DSN) == "" {
-		errs = append(errs, errors.New("storage.metadata.dsn is required"))
+	dsn, dsnErr := s.Metadata.ResolveDSN()
+	if dsnErr != nil {
+		errs = append(errs, dsnErr)
+	} else if validMetadataDrivers[s.Metadata.Driver] {
+		if err := validateMetadataDSN(s.Metadata.Driver, dsn); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if !validBlobDrivers[s.Blobs.Driver] {
 		errs = append(errs, fmt.Errorf("storage.blobs.driver must be one of %v", keys(validBlobDrivers)))
@@ -386,6 +552,10 @@ func (p Policy) Validate() []error {
 	return errs
 }
 
+func validateSourceOrigin(origin string) error {
+	return publicurl.Validate(origin)
+}
+
 func validateSource(idx int, src Source, policy Policy) []error {
 	var errs []error
 	if strings.TrimSpace(src.ID) == "" {
@@ -398,6 +568,13 @@ func validateSource(idx int, src Source, policy Policy) []error {
 	}
 	if strings.TrimSpace(src.Origin) == "" {
 		errs = append(errs, fmt.Errorf("sources[%d].origin is required", idx))
+	} else if err := validateSourceOrigin(src.Origin); err != nil {
+		errs = append(errs, fmt.Errorf("sources[%d].origin: %w", idx, err))
+	}
+	if strings.TrimSpace(src.Publisher.URL) != "" {
+		if err := publicurl.ErrorForField("publisher.url", src.Publisher.URL); err != nil {
+			errs = append(errs, fmt.Errorf("sources[%d].publisher.url: %w", idx, err))
+		}
 	}
 	if strings.TrimSpace(src.Ref) == "" {
 		errs = append(errs, fmt.Errorf("sources[%d].ref is required", idx))
