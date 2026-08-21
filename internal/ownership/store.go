@@ -30,6 +30,9 @@ const (
 	// CrashAfterStagedWrite: the patched bytes are durable in the staging file
 	// but the live aggregate is untouched.
 	CrashAfterStagedWrite CrashPoint = "after-staged-write"
+	// CrashAfterStagedVerified: the staging object passed its identity check,
+	// immediately before publication.
+	CrashAfterStagedVerified CrashPoint = "after-staged-verified"
 	// CrashAfterAggregateRename: the live aggregate is the patched content, but
 	// the journal still says "prepared" and state still records the old
 	// generation.
