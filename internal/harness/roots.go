@@ -362,19 +362,13 @@ func MachineRoot(target hcc.Target) (string, bool) {
 func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	roots := InstallRoots
 	codex := hcc.Target(targetmeta.TargetCodex)
+	codexInfo, err := codexVirtualTargetInfo()
+	if err != nil {
+		return nil, err
+	}
 
 	m := map[hcc.Target]TargetInfo{
-		codex: {
-			Components:       []string{".agents", ".codex"},
-			PlanStrategy:     PlanSubtree,
-			SkillPathPattern: ".agents/skills/%s/SKILL.md",
-			SkillDirKinds:    map[ir.ResourceKind]bool{ir.KindCommand: true},
-			AggregateFiles: AggregateFileSet{
-				Project: []string{".codex/config.toml", ".codex/hooks.json"},
-				User:    []string{".codex/config.toml", ".codex/hooks.json"},
-			},
-			OwnershipReconciledAggregates: true,
-		},
+		codex: codexInfo,
 		hcc.TargetClaude: {
 			Roots:        roots[hcc.TargetClaude],
 			Components:   []string{"skills", "commands", "agents", "hooks", ".claude-plugin"},

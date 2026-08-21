@@ -96,3 +96,36 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 		OwnershipReconciledAggregates: len(aggregates) > 0,
 	}
 }
+
+func codexVirtualTargetInfo() (TargetInfo, error) {
+	layout, ok := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	if !ok {
+		return TargetInfo{}, fmt.Errorf("Codex native layout is not registered")
+	}
+	info := TargetInfo{
+		PlanStrategy:                  PlanSubtree,
+		ResourceDirs:                  make(map[ir.ResourceKind]string),
+		SkillDirKinds:                 make(map[ir.ResourceKind]bool),
+		OwnershipReconciledAggregates: true,
+	}
+	for _, partition := range layout.Partitions {
+		info.Components = append(info.Components, partition.Prefix)
+		for kind, pattern := range partition.ResourcePaths {
+			switch kind {
+			case ir.KindSkill:
+				info.SkillPathPattern = path.Join(partition.Prefix, pattern)
+			case ir.KindCommand:
+			default:
+				info.ResourceDirs[kind] = path.Join(partition.Prefix, path.Dir(pattern))
+			}
+		}
+		for kind, directory := range partition.SkillDirKinds {
+			info.SkillDirKinds[kind] = directory
+		}
+		for _, aggregate := range partition.Aggregates {
+			info.AggregateFiles.Project = append(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Path))
+		}
+	}
+	info.AggregateFiles.User = slices.Clone(info.AggregateFiles.Project)
+	return info, nil
+}

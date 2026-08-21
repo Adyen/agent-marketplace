@@ -605,10 +605,10 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			continue
 		}
 		for _, destination := range destinations {
-			// .agents is shared by multiple harnesses and is never a Codex
-			// installation marker. Only the resolved Codex home/root can revive
-			// an empty output key for ownership pruning.
-			if destination.Prefix != ".codex" {
+			// Shared native partitions are not installation markers. Only a
+			// destination declared as installation evidence can revive an empty
+			// output key for ownership pruning.
+			if !destination.InstallationEvidence {
 				continue
 			}
 			if outputDirExists(destination.Root) {
@@ -1080,7 +1080,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
 		if isCodex {
 			for _, destination := range codexDestinations {
-				if destination.Prefix == ".codex" {
+				if destination.Info.OwnershipReconciledAggregates {
 					report = reconcileCodexHooks(ctx, report, key, destination.Root, compileResult.codexAggregates[key], dryRun)
 					report = reconcileCodexMCP(ctx, report, key, destination.Root, compileResult.codexMCP[key], compileResult.codexMCPBlocked[key], dryRun)
 					break
