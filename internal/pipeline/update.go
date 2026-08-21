@@ -27,7 +27,14 @@ type RefBump struct {
 
 // UpdateOptions holds the arguments for an update operation.
 type UpdateOptions struct {
-	RepoRoot            string
+	RepoRoot string
+	// MaterializeRoot overrides where harness files are written. When empty,
+	// update materializes at RepoRoot unless a monorepo local config directory
+	// is supplied.
+	MaterializeRoot string
+	// LocalConfigDir is the directory containing the local config layer. It is
+	// also the base for resolving relative paths from that layer.
+	LocalConfigDir      string
 	Bump                bool
 	MarketplaceResolver *marketplace.Resolver
 }
@@ -76,7 +83,10 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 
 	// Load the effective configuration to obtain the authoritative allowlists
 	// and validate all configured endpoints before network access.
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{
+		RepoRoot:       repoRoot,
+		LocalConfigDir: opts.LocalConfigDir,
+	})
 	if len(ec.Errors) > 0 {
 		slog.Error("update aborted on effective config errors", "error_count", len(ec.Errors))
 		return nil, errors.Join(ec.Errors...)
@@ -85,6 +95,13 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	updatedRegistries := 0
 	if ec.Merged != nil {
 		updatedRegistries = len(ec.Merged.Registries)
+	}
+	// A Git registry always causes the final sync to run. Fail before bumping
+	// refs or refreshing Marketplace metadata when that sync cannot run.
+	if updatedRegistries > 0 && len(ec.TargetHarnesses) == 0 {
+		err := &TargetHarnessSetMissingError{}
+		slog.Error("update requires target harness set for Git sync", "error", err)
+		return nil, err
 	}
 	plans, err := planMarketplaceUpdates(ctx, opts, &ec)
 	if err != nil {
@@ -152,7 +169,7 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		syncRequired = syncRequired || plan.Updated
 	}
 	if syncRequired {
-		if err := silentSync(ctx, repoRoot); err != nil {
+		if err := silentSync(ctx, repoRoot, silentSyncOptsForUpdate(opts)...); err != nil {
 			if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
 				err = fmt.Errorf("sync was required, but unsupported Marketplace pins prevented synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
 			}
@@ -176,14 +193,18 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	return result, nil
 }
 
+func silentSyncOptsForUpdate(opts UpdateOptions) []silentSyncOpt {
+	materializeRoot := opts.MaterializeRoot
+	if materializeRoot == "" && opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
+		materializeRoot = opts.LocalConfigDir
+	}
+	return silentSyncOptsForPaths(opts.RepoRoot, materializeRoot, opts.LocalConfigDir)
+}
+
 func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.EffectiveConfig) ([]marketplaceUpdatePlan, error) {
 	if ec == nil || ec.Merged == nil || len(ec.Merged.Marketplaces) == 0 {
 		return nil, nil
 	}
-	if len(ec.TargetHarnesses) == 0 {
-		return nil, &TargetHarnessSetMissingError{}
-	}
-
 	resolverMP := opts.MarketplaceResolver
 	if resolverMP == nil {
 		resolverMP = marketplace.NewResolver()
@@ -236,6 +257,14 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				continue
 			}
 
+			// LatestRevision is only the metadata probe needed to distinguish an
+			// unchanged pin from one that will be prepared. Require targets before
+			// fetching and preparing the changed artifact.
+			if len(targets) == 0 {
+				err := &TargetHarnessSetMissingError{}
+				slog.Error("update requires target harness set for Marketplace preparation", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "error", err)
+				return nil, err
+			}
 			locator := marketplace.MarketplaceLocator{Source: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
 			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
 			if err != nil {
@@ -265,7 +294,10 @@ func marketplaceConfigPath(opts UpdateOptions, ec *config.EffectiveConfig, sourc
 	case config.RepoCommitted:
 		return config.ProjectConfigPath(opts.RepoRoot), nil
 	case config.RepoPersonal:
-		dir := config.FindLocalConfigDir()
+		dir := opts.LocalConfigDir
+		if dir == "" {
+			dir = config.FindLocalConfigDir()
+		}
 		return config.LocalConfigPath(dir), nil
 	default:
 		return "", fmt.Errorf("marketplace source %s is not writable", source)

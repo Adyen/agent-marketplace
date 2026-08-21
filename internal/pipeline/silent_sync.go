@@ -10,6 +10,19 @@ func silentSync(ctx context.Context, repoRoot string, opts ...silentSyncOpt) err
 	return err
 }
 
+// silentSyncOptsForPaths carries the non-default roots used by monorepo
+// commands into the shared sync path.
+func silentSyncOptsForPaths(repoRoot, materializeRoot, localConfigDir string) []silentSyncOpt {
+	var opts []silentSyncOpt
+	if materializeRoot != "" && materializeRoot != repoRoot {
+		opts = append(opts, withMaterializeRoot(materializeRoot))
+	}
+	if localConfigDir != "" && localConfigDir != repoRoot {
+		opts = append(opts, withLocalConfigDir(localConfigDir))
+	}
+	return opts
+}
+
 func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncOpt) ([]error, error) {
 	var o silentSyncOptions
 	for _, opt := range opts {

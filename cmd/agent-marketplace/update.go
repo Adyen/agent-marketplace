@@ -31,10 +31,13 @@ func newUpdateCmd() *cobra.Command {
 
 func runUpdate(ctx context.Context, out io.Writer, bump bool) error {
 	repoRoot := config.FindRepoRoot()
-	result, err := pipeline.Update(ctx, pipeline.UpdateOptions{
-		RepoRoot: repoRoot,
-		Bump:     bump,
-	})
+	updateOpts := pipeline.UpdateOptions{RepoRoot: repoRoot, Bump: bump}
+	localDir := config.FindLocalConfigDir()
+	if localDir != "" && localDir != repoRoot {
+		updateOpts.LocalConfigDir = localDir
+		updateOpts.MaterializeRoot = localDir
+	}
+	result, err := pipeline.Update(ctx, updateOpts)
 	if err != nil {
 		return err
 	}
