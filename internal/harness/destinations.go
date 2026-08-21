@@ -11,10 +11,11 @@ import (
 
 // Destination is one independently rooted native target layout.
 type Destination struct {
-	ID     string
-	Root   string
-	Prefix string
-	Info   TargetInfo
+	ID                   string
+	Root                 string
+	Prefix               string
+	InstallationEvidence bool
+	Info                 TargetInfo
 }
 
 type resolvedLayoutProvider func(machineScope bool, repoRoot string) ([]Destination, error)
@@ -62,7 +63,7 @@ func ResolveDestinations(target hcc.Target, machineScope bool, repoRoot string) 
 	if err != nil {
 		return nil, err
 	}
-	return []Destination{{ID: "default", Root: root, Info: info}}, nil
+	return []Destination{{ID: "default", Root: root, InstallationEvidence: true, Info: info}}, nil
 }
 
 func canonicalRoot(path string) (string, error) {
