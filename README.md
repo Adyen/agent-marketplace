@@ -680,12 +680,14 @@ ownership store — must be green under `-race` before it lands.
 Two distinct failure modes, two distinct signals:
 
 - **Data races** are what `-race` reports.
-- **Deadlocks are not.** `-race` does not detect lock-order cycles, and the Go
-  runtime's deadlock detector only fires when *every* goroutine is asleep, which
-  never happens in a test binary. Those are caught by deterministic regression
-  tests that drive the interleaving and bound every wait, so a cycle fails with a
-  diagnostic instead of hanging (see
-  `internal/config/repo_root_singleflight_test.go`).
+- **Deadlocks are not.** `-race` does not detect lock-order cycles. The Go
+  runtime's `all goroutines are asleep - deadlock!` check does not help either:
+  it fires only when no goroutine is runnable *and* no timer is pending, and
+  `go test` keeps a `-timeout` timer armed, so a cycle shows up as the
+  whole-package timeout panic minutes later (and only if it stopped every
+  goroutine). Cycles are caught instead by regression tests that drive the
+  interleaving and bound every wait, so a cycle fails with a diagnostic instead of
+  hanging (see `internal/config/repo_root_singleflight_test.go`).
 
 Maintainers: for the Race job to block merges rather than just releases, it must be
 listed as a required status check in the branch protection rules for `main`; the

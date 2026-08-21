@@ -41,12 +41,18 @@ func installGitRootProbe(t *testing.T, probe func(dir string) (string, bool)) {
 	})
 }
 
-// memoWedged records that a helper gave up on gitRootMu. A lock nobody will ever
-// release stays unreleased for the life of the binary, so every later test fails
-// on that fact immediately instead of paying the timeout again — six tests each
-// waiting probeWaitTimeout at several points is what pushes a package past its
-// -timeout, and a binary-wide timeout panic reads as a broken runner rather than
-// as the finding this file exists to report.
+// memoWedged records that a helper gave up on gitRootMu, or that a bounded wait
+// on the memo expired. A lock nobody will ever release stays unreleased for the
+// life of the binary, so once one test has established that, every later test that
+// goes through these helpers fails on that fact immediately instead of paying the
+// bound again — the verdict is already known, and re-deriving it per helper call
+// only buries the diagnostic.
+//
+// It cannot save the whole package: a test elsewhere in internal/config that
+// resolves a repo root through FindRepoRoot blocks on the wedged lock with no
+// bound available to it, so a wedge that survives into a second `-count` pass ends
+// in the whole-package timeout panic. The diagnostics from this file are flushed
+// before that panic, and TEST_RACE_TIMEOUT keeps the tail short.
 var memoWedged atomic.Bool
 
 // tryAcquireMemoLock takes gitRootMu without blocking indefinitely, reporting
@@ -145,6 +151,47 @@ func awaitRoot(t *testing.T, results <-chan string, want, whatFailed string) {
 	}
 }
 
+// awaitGoroutines waits for wg with a bound. A bare wg.Wait() is the one wait a
+// test cannot recover from: unlike the bounded helpers here, it never returns
+// against a wedged memo, so the failure is reported by the whole-package timeout
+// panic long after the fact instead of by the test that caused it.
+func awaitGoroutines(t *testing.T, wg *sync.WaitGroup, whatFailed string) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(probeWaitTimeout):
+		memoWedged.Store(true)
+		t.Fatalf("%s did not finish within %s: the memo is deadlocked", whatFailed, probeWaitTimeout)
+	}
+}
+
+// awaitReset calls the exported ResetRepoRootCache with a bounded wait. Tests
+// that need the reset's effect go through it rather than tryResetRepoRootCache,
+// which clears the map itself and so would assert nothing about the exported
+// function; tests that only need a clean memo use the bounded helper.
+func awaitReset(t *testing.T, when string) {
+	t.Helper()
+	if memoWedged.Load() {
+		t.Fatalf("gitRootMu is already wedged by an earlier test, so ResetRepoRootCache cannot be exercised %s", when)
+	}
+	returned := make(chan struct{})
+	go func() {
+		ResetRepoRootCache()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(probeWaitTimeout):
+		memoWedged.Store(true)
+		t.Fatalf("ResetRepoRootCache did not return within %s %s: gitRootMu is held across a wait", probeWaitTimeout, when)
+	}
+}
+
 // TestGitRootForSingleFlightsConcurrentSameDirectoryLookups is the regression
 // test for the loader lock-order cycle. Concurrent lookups for one directory
 // must collapse into a single probe AND all return, while the probe is still
@@ -189,7 +236,7 @@ func TestGitRootForSingleFlightsConcurrentSameDirectoryLookups(t *testing.T) {
 	for i := 0; i < lookups; i++ {
 		awaitRoot(t, results, "/repo", "concurrent gitRootFor(\"/repo\")")
 	}
-	wg.Wait()
+	awaitGoroutines(t, &wg, "the concurrent lookups of one directory")
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("git probe ran %d times for %d concurrent lookups of one directory; want exactly 1", got, lookups)
@@ -271,18 +318,9 @@ func TestResetRepoRootCacheReturnsDuringInFlightProbe(t *testing.T) {
 	go func() { follower <- gitRootFor("/repo") }()
 	awaitQueuedWaiters(t, queuedBefore, 1)
 
-	// Deliberately a plain ResetRepoRootCache, not the bounded test helper: this
-	// is the assertion that the exported reset itself does not block.
-	returned := make(chan struct{})
-	go func() {
-		ResetRepoRootCache()
-		close(returned)
-	}()
-	select {
-	case <-returned:
-	case <-time.After(probeWaitTimeout):
-		t.Fatalf("ResetRepoRootCache did not return within %s while a probe was in flight with a waiter queued behind it", probeWaitTimeout)
-	}
+	// Deliberately the exported ResetRepoRootCache, not tryResetRepoRootCache:
+	// this is the assertion that the exported reset itself does not block.
+	awaitReset(t, "while a probe was in flight with a waiter queued behind it")
 
 	close(release)
 	// The reset does not cancel an in-flight probe, so both callers still get the
@@ -433,14 +471,7 @@ func TestGitRootForMixedConcurrentLookups(t *testing.T) {
 		}(i)
 	}
 	close(start)
-
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(probeWaitTimeout):
-		t.Fatalf("mixed concurrent lookups did not finish within %s: the memo is deadlocked", probeWaitTimeout)
-	}
+	awaitGoroutines(t, &wg, "mixed concurrent lookups")
 
 	close(bad)
 	for got := range bad {

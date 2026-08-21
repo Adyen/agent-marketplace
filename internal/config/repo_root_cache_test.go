@@ -4,10 +4,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 )
+
+// The tests in this file drive the memo from a single goroutine: they pin what
+// it answers and how often it probes. Its concurrent behaviour is covered in
+// repo_root_singleflight_test.go, which drives the interleaving and bounds every
+// wait.
+//
+// Single-goroutine or not, they reach the memo through gitRootFor and
+// ResetRepoRootCache, both of which block on gitRootMu, so their setup and their
+// resets go through that file's bounded helpers: a memo wedged by an earlier test
+// would otherwise hang the binary here and bury the diagnostic that test just
+// produced.
 
 // countingProbe installs a deterministic stand-in for the git probe and
 // returns a counter of how many times it actually forked (conceptually — the
@@ -17,15 +27,9 @@ import (
 func countingProbe(t *testing.T, roots map[string]string) *atomic.Int64 {
 	t.Helper()
 	var calls atomic.Int64
-	previous := gitRootProbe
-	ResetRepoRootCache()
-	gitRootProbe = func(dir string) (string, bool) {
+	installGitRootProbe(t, func(dir string) (string, bool) {
 		calls.Add(1)
 		return roots[dir], true
-	}
-	t.Cleanup(func() {
-		gitRootProbe = previous
-		ResetRepoRootCache()
 	})
 	return &calls
 }
@@ -139,7 +143,7 @@ func TestResetRepoRootCacheForcesReresolution(t *testing.T) {
 		t.Fatalf("probe ran %d times before reset; want 1", got)
 	}
 
-	ResetRepoRootCache()
+	awaitReset(t, "with no probe in flight")
 
 	// The boundary "moved" while the process was running; after a reset the
 	// new answer is observed.
@@ -149,37 +153,6 @@ func TestResetRepoRootCacheForcesReresolution(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("probe ran %d times after reset; want 2", got)
-	}
-}
-
-// TestGitRootForConcurrent exercises the memo from many goroutines, which is
-// how the TUI reaches it (snapshot loads and background refreshes run as
-// tea.Cmds). Run under `go test -race` it also proves the map is guarded.
-func TestGitRootForConcurrent(t *testing.T) {
-	calls := countingProbe(t, map[string]string{"/repo": "/repo"})
-
-	const goroutines = 64
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	results := make([]string, goroutines)
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			results[i] = gitRootFor("/repo")
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-
-	for i, got := range results {
-		if got != "/repo" {
-			t.Fatalf("goroutine %d got %q; want /repo", i, got)
-		}
-	}
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("git probe ran %d times across %d concurrent lookups; want exactly 1", got, goroutines)
 	}
 }
 

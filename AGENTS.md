@@ -158,11 +158,15 @@ decisions, and error paths.
 Concurrency is guarded by **two different signals**, and neither substitutes for
 the other:
 
-1. **Deterministic deadlock tests catch lock-order cycles.** `-race` does not
-   detect deadlocks, and the Go runtime's "all goroutines are asleep" detector
-   never fires in a test binary (the testing timer keeps a goroutine runnable), so
-   a lock-order cycle is only caught by a test that drives the interleaving and
-   bounds every wait — see `internal/config/repo_root_singleflight_test.go`.
+1. **Bounded deadlock tests catch lock-order cycles.** `-race` does not detect
+   deadlocks, and the runtime's `all goroutines are asleep - deadlock!` check
+   requires that *no* goroutine is runnable and *no* timer is pending: `go test`
+   arms a timer for `-timeout` (10m by default, `TEST_RACE_TIMEOUT` under
+   `make test-race`), so a cycle surfaces as that whole-package timeout panic
+   minutes later — and only if it happens to stop every goroutine. A cycle is
+   therefore reported usefully only by a test that drives the interleaving and
+   bounds every wait, including the waits inside its own helpers — see
+   `internal/config/repo_root_singleflight_test.go`.
 2. **`-race` catches data races**: unsynchronized concurrent access that a plain
    run silently tolerates. `make test-race` runs the full suite with `-race` (and
    `CGO_ENABLED=1`, unlike the shipped `CGO_ENABLED=0` binaries); the **Race** job
@@ -186,9 +190,14 @@ the other:
   in-flight probe) instead of sleeping for a settle delay: the sleep is both a
   flake and a lie about what was reached.
 - **A test helper must never block on the lock under test.** Acquire it with
-  `TryLock` plus a deadline. Helpers run from `t.Cleanup` after `t.Fatal`, so a
-  blocking helper replaces the bounded diagnostic with a test-binary timeout panic
-  minutes later.
+  `TryLock` plus a deadline, and bound every other wait too — a bare `wg.Wait()`
+  is the one wait that cannot recover. Helpers run from `t.Cleanup` after
+  `t.Fatal`, so a blocking helper replaces the bounded diagnostic with a
+  test-binary timeout panic minutes later. Once one helper has established that the
+  lock is wedged, every later test that goes through those helpers should fail on
+  that fact immediately (`memoWedged`) instead of re-deriving it — that will not
+  save a test elsewhere in the package that reaches the lock directly, which is one
+  reason to keep `TEST_RACE_TIMEOUT` low.
 - **A promise must always be resolved**, including when the producing goroutine
   panics; otherwise its waiters block forever.
 

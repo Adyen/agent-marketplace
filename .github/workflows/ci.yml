@@ -68,11 +68,12 @@ jobs:
   race:
     name: Race
     runs-on: ubuntu-latest
-    # Headroom over the Go -timeout in `make test-race` (TEST_RACE_TIMEOUT, 40m):
-    # this budget also covers checkout, toolchain setup, module download and
-    # race-instrumented compilation. Go must be the one to time out, because only
-    # its goroutine dump names the deadlocked call; a job killed by GitHub first
-    # leaves no such evidence. Raise both together, keeping this the larger.
+    # Headroom over the per-package Go -timeout in `make test-race`
+    # (TEST_RACE_TIMEOUT, 15m): this budget also covers checkout, toolchain setup,
+    # module download, race-instrumented compilation, and the packages that keep
+    # running after one of them times out. Go must be the one to time out, because
+    # only its goroutine dump names the deadlocked call; a job killed by GitHub
+    # first leaves no such evidence. Keep this comfortably the larger of the two.
     timeout-minutes: 60
     permissions:
       contents: read

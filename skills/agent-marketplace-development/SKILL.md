@@ -67,12 +67,15 @@ Any change that touches concurrent code (the git-root memo in
 must also be green under `make test-race`, which CI runs as its own job and the
 release job depends on.
 
-`-race` reports data races; it does **not** detect deadlocks (and the runtime's
-all-goroutines-asleep detector never fires in a test binary). Lock-order cycles
-need a deterministic test that drives the interleaving, synchronizes on an
-observation rather than a sleep, and bounds every wait — including the waits inside
-its own helpers, which must use `TryLock` with a deadline so a wedged lock reports
-a failure instead of hanging the binary from `t.Cleanup`. See
+`-race` reports data races; it does **not** detect deadlocks. The runtime's
+`all goroutines are asleep - deadlock!` check does not cover them under `go test`
+either: it needs no runnable goroutine and no pending timer, and `-timeout` keeps
+a timer armed, so a cycle surfaces as the whole-package timeout panic minutes
+later. Lock-order cycles need a test that drives the interleaving, synchronizes on
+an observation rather than a sleep, and bounds every wait — including the waits
+inside its own helpers, which must use `TryLock` (or a `select` with a timeout) so
+a wedged lock reports a failure instead of hanging the binary from `t.Cleanup`.
+Never call `wg.Wait()` unbounded in such a test. See
 `internal/config/repo_root_singleflight_test.go`.
 
 ## Architecture: Two Entry Points, One Data Flow

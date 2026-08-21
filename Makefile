@@ -47,15 +47,22 @@ test:
 # cgo, hence CGO_ENABLED=1 even though every shipped binary is CGO_ENABLED=0.
 # -count=1 keeps a cached pass from standing in for an actual run.
 #
-# TEST_RACE_TIMEOUT is the per-package Go timeout. It is well above the default
-# 10m: instrumented binaries plus the subprocess-heavy cmd tests take ~12m on a
-# fast laptop and more on a CI runner, and a timeout panic there would read as a
-# deadlock rather than a slow box. It must stay comfortably BELOW the Race job's
-# timeout-minutes in .github/workflows/ci.yml (which also has to cover checkout,
-# toolchain setup, module download and race-instrumented compilation): if the job
-# is killed first, the Go goroutine dump — the only artifact that names the
-# deadlocked lookup — is never printed.
-TEST_RACE_TIMEOUT ?= 40m
+# TEST_RACE_TIMEOUT is the Go -timeout, which applies per test binary, i.e. per
+# package. It is above the 10m default because race instrumentation is slowest on
+# the subprocess-heavy cmd/agent-marketplace tests: on a fast laptop that package
+# takes 3m34s alone and 6m19s while the other 41 packages compete for the same
+# cores, which is how `./...` actually runs it. A slower CI runner must not look
+# like a deadlock, so raise this (and the job budget below it) rather than letting
+# a legitimate run be killed.
+#
+# It must also stay well BELOW the Race job's timeout-minutes in
+# .github/workflows/ci.yml, because Go has to be the one that times out: only its
+# goroutine dump names the deadlocked call, and a job killed by GitHub first
+# leaves no such evidence. The job budget covers checkout, toolchain setup, module
+# download and race-instrumented compilation, plus the packages that keep running
+# after one of them times out — so the gap has to be large enough for a timed-out
+# package to print its dump AND for the rest of the suite to finish.
+TEST_RACE_TIMEOUT ?= 15m
 
 test-race:
 	$(call run_go_test,CGO_ENABLED=1 $(GO) test -race -count=1 -timeout $(TEST_RACE_TIMEOUT) ./...)
