@@ -149,12 +149,8 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	}
 
 	var errs []error
-	level, err := NormalizeLevel(tc.Level)
-	if err != nil {
+	if _, err := NormalizeLevel(tc.Level); err != nil {
 		errs = append(errs, err)
-	}
-	if level == LevelOff {
-		return errs
 	}
 	// allow_insecure is only meaningful for organization-configured private endpoints.
 	allowInsecure := tc.AllowInsecure && layer == "organization"

@@ -162,14 +162,14 @@ func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath stri
 	_, _ = fmt.Fprint(out, "Enable basic telemetry? [Y/n]: ")
 
 	reply, err := reader.ReadString('\n')
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			slog.Info("telemetry consent: declined", "path", configPath, "reason", "eof")
-			return nil
-		}
+	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read telemetry consent: %w", err)
 	}
 	reply = strings.TrimSpace(strings.ToLower(reply))
+	if errors.Is(err, io.EOF) && reply == "" {
+		slog.Info("telemetry consent: declined", "path", configPath, "reason", "eof")
+		return nil
+	}
 
 	if reply == "" || strings.HasPrefix(reply, "y") {
 		if err := config.SetUserTelemetryLevel(configPath, tmcfg.LevelBasic); err != nil {

@@ -64,18 +64,18 @@ func TestValidateEmptyTelemetry(t *testing.T) {
 	}
 }
 
-func TestValidateOffSkipsInactiveSettings(t *testing.T) {
+func TestValidateOffValidatesPopulatedSettings(t *testing.T) {
 	tc := &TelemetryConfig{
 		Level:           " OFF ",
 		Endpoint:        "not a URL",
 		RetentionPolicy: "not a URL",
 		CAFile:          filepath.Join(t.TempDir(), "missing-ca.pem"),
 		Headers: map[string]HeaderSource{
-			"Authorization": {File: filepath.Join(t.TempDir(), "missing-header")},
+			"Authorization": {Env: "TOKEN", File: filepath.Join(t.TempDir(), "missing-header")},
 		},
 	}
-	if errs := Validate(tc, "user personal"); len(errs) > 0 {
-		t.Fatalf("expected disabled telemetry to skip inactive setting validation, got %v", errs)
+	if errs := Validate(tc, "user personal"); len(errs) == 0 {
+		t.Fatal("expected populated settings in disabled telemetry to be validated")
 	}
 }
 
