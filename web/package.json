@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "typecheck": "nuxt typecheck",
     "api:generate": "node scripts/generate-api.mjs",
-    "api:drift": "node scripts/generate-api.mjs --check"
+    "api:drift": "node scripts/generate-api.mjs --check",
+    "e2e:install": "node scripts/playwright-e2e.mjs install",
+    "test:e2e": "node scripts/playwright-e2e.mjs test"
   },
   "dependencies": {
     "@nuxt/ui": "4.10.0",

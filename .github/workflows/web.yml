@@ -49,3 +49,6 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      # @playwright/test is blocked by the active pnpm supply-chain policy. Keep
+      # browser E2E local and treat it as a release gate pending an approved dependency.
