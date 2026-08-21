@@ -169,9 +169,23 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	return errs
 }
 
-// ValidateEndpoint checks that an endpoint uses a safe transport. allowInsecure
-// is honored only for organization private endpoints; loopback is always allowed.
+// ValidateEndpoint checks the endpoint syntax and static transport policy.
+// DNS-dependent private-hostname validation is best effort: a DNS failure is
+// logged and treated as a soft failure so offline configuration loading remains
+// available.
 func ValidateEndpoint(endpoint string, allowInsecure bool) error {
+	return validateEndpoint(endpoint, allowInsecure, false)
+}
+
+// ValidateEndpointForDelivery performs the endpoint checks that must happen
+// immediately before an HTTP request. In particular, an organization endpoint
+// allowed to use insecure HTTP must resolve exclusively to private, loopback,
+// or link-local addresses. DNS failures are hard failures at delivery time.
+func ValidateEndpointForDelivery(endpoint string, allowInsecure bool) error {
+	return validateEndpoint(endpoint, allowInsecure, true)
+}
+
+func validateEndpoint(endpoint string, allowInsecure, dnsFailureIsError bool) error {
 	if endpoint == "" {
 		return nil
 	}
@@ -213,16 +227,17 @@ func ValidateEndpoint(endpoint string, allowInsecure bool) error {
 		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", endpoint)
 	}
 
-	// Hostname: for allow_insecure, it must resolve exclusively to
-	// private/loopback/link-local addresses.
+	// Hostnames are only allowed for insecure HTTP under organization policy.
 	if !allowInsecure {
 		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "hostname_requires_allow_insecure")
 		return fmt.Errorf("insecure HTTP for non-loopback, non-private hostname %q requires allow_insecure: true from organization policy", host)
 	}
-
 	ips, err := LookupIP(host)
 	if err != nil || len(ips) == 0 {
-		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "hostname_does_not_resolve", "error", err)
+		slog.Warn("could not resolve insecure HTTP hostname", "host", host, "reason", "hostname_does_not_resolve", "error", err, "delivery_check", dnsFailureIsError)
+		if !dnsFailureIsError {
+			return nil
+		}
 		return fmt.Errorf("insecure HTTP hostname %q does not resolve to a private/loopback/link-local address", host)
 	}
 	for _, ip := range ips {

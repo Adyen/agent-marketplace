@@ -189,6 +189,27 @@ func tlsConfig(caFile string) (*tls.Config, error) {
 	return cfg, nil
 }
 
+// endpointValidationTransport defers DNS-dependent endpoint validation until
+// an actual request. This keeps offline configuration loading and runtime setup
+// non-blocking while preserving the private-network invariant at delivery time.
+type endpointValidationTransport struct {
+	inner         http.RoundTripper
+	allowInsecure bool
+}
+
+func (t *endpointValidationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("nil request")
+	}
+	if req.URL == nil {
+		return nil, errors.New("request URL is nil")
+	}
+	if err := tmcfg.ValidateEndpointForDelivery(req.URL.String(), t.allowInsecure); err != nil {
+		return nil, err
+	}
+	return t.inner.RoundTrip(req)
+}
+
 // buildRouteClients builds the HTTP clients used for live exports and for
 // draining queued payloads to endpoint. The live client queues failed payloads.
 func buildRouteClients(endpoint string, headers map[string]string, caFile string, allowInsecure bool, route, signal string, onFailure func(error), q *Queue) (*http.Client, *http.Client, error) {
@@ -226,9 +247,13 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 	}
 	transportCacheMu.Unlock()
 
+	validatedTransport := &endpointValidationTransport{
+		inner:         innerTransport,
+		allowInsecure: allowInsecure,
+	}
 	live := &http.Client{
 		Transport: &queueTransport{
-			inner:     innerTransport,
+			inner:     validatedTransport,
 			queue:     q,
 			route:     route,
 			signal:    signal,
@@ -236,7 +261,7 @@ func buildRouteClients(endpoint string, headers map[string]string, caFile string
 		},
 	}
 	send := &http.Client{
-		Transport: innerTransport,
+		Transport: validatedTransport,
 		Timeout:   30 * time.Second,
 	}
 

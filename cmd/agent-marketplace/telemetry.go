@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -130,7 +129,10 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		return err
 	}
 
-	org, _ := config.LoadOrganizationConfig()
+	org, err := config.LoadOrganizationConfig()
+	if err != nil {
+		return fmt.Errorf("load organization config: %w", err)
+	}
 	orgLevel := tmcfg.LevelOff
 	if org != nil && org.Telemetry != nil {
 		orgLevel, _ = tmcfg.NormalizeLevel(org.Telemetry.Level)
@@ -263,7 +265,8 @@ func runTelemetryPreview(ctx context.Context, out io.Writer, in io.Reader, level
 	}
 
 	if level == tmcfg.LevelDiagnostic && !diagnosticAcceptSensitive {
-		if term.IsTerminal(os.Stdin.Fd()) {
+		fdReader, hasFD := in.(interface{ Fd() uintptr })
+		if hasFD && isTerminal(fdReader.Fd()) {
 			reader := bufio.NewReader(in)
 			_, _ = fmt.Fprint(out, "Diagnostic payloads may contain sensitive data. Continue? [y/N]: ")
 			reply, err := reader.ReadString('\n')

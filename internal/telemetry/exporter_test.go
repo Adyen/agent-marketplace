@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,6 +72,31 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}
 	if gotHeaders.Get("X-Tenant") != "tenant-42" {
 		t.Fatalf("x-tenant header = %q, want tenant-42", gotHeaders.Get("X-Tenant"))
+	}
+}
+
+func TestEndpointValidationDefersDNSUntilDelivery(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	old := tmcfg.LookupIP
+	tmcfg.LookupIP = func(host string) ([]net.IP, error) {
+		return nil, &net.DNSError{Err: "network is unreachable", Name: host}
+	}
+	defer func() { tmcfg.LookupIP = old }()
+
+	q := NewQueue(filepath.Join(dir, "queue"))
+	_, send, err := buildRouteClients("http://private.example.com", nil, "", true, "primary", queueSubdirMetrics, nil, q)
+	if err != nil {
+		t.Fatalf("building clients should defer DNS failure: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://private.example.com/v1/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := send.Do(req); err == nil {
+		t.Fatal("delivery should reject an unresolved insecure hostname")
 	}
 }
 
