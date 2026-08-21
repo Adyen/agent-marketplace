@@ -19,6 +19,11 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// MaxSourceHistoryEntries is the maximum number of occurrences returned by the
+// source history endpoint. Entries are ordered newest first by the metadata
+// store, so truncation is deterministic.
+const MaxSourceHistoryEntries = store.MaxSourceHistoryEntries
+
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
 	cfg    config.Config
@@ -302,6 +307,7 @@ func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slu
 		writeError(w, http.StatusInternalServerError, "failed to load source history")
 		return
 	}
+	history = boundSourceHistory(history)
 	writeJSON(w, http.StatusOK, history)
 }
 
@@ -415,9 +421,8 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 
 func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	digest := strings.TrimPrefix(r.URL.Path, "/api/v1/manifests/")
-	digest = strings.Trim(digest, "/")
-	if digest == "" {
-		writeError(w, http.StatusNotFound, "manifest not found")
+	if !isCanonicalSHA256Digest(digest) {
+		writeError(w, http.StatusBadRequest, "invalid manifest digest")
 		return
 	}
 
@@ -439,10 +444,9 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
-	path = strings.Trim(path, "/")
 	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] != "sha256" {
-		writeError(w, http.StatusNotFound, "artifact not found")
+	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
+		writeError(w, http.StatusBadRequest, "invalid artifact digest")
 		return
 	}
 
@@ -564,6 +568,34 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 func setImmutableCache(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+}
+
+func boundSourceHistory(history []store.SourceOccurrence) []store.SourceOccurrence {
+	if history == nil {
+		return make([]store.SourceOccurrence, 0)
+	}
+	if len(history) > MaxSourceHistoryEntries {
+		slog.Debug("source history response truncated", "entries", len(history), "max_entries", MaxSourceHistoryEntries)
+		return history[:MaxSourceHistoryEntries]
+	}
+	return history
+}
+
+func isCanonicalSHA256Digest(value string) bool {
+	return strings.HasPrefix(value, "sha256:") && isLowerHexDigest(value[len("sha256:"):])
+}
+
+func isLowerHexDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func parseLimit(raw string, defaultVal, maxVal int) (int, error) {

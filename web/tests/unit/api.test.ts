@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, normalizeApiBase, resourcePath, resourceRevisionPath, selectMarketplaceFetcher, serializeSearchQuery, wellKnownPath } from '../../app/lib/api'
-import { ApiValidationError, normalizeSearchResult, normalizeWellKnown } from '../../app/lib/validation'
+import { apiPath, createMarketplaceApi, normalizeApiBase, resourcePath, resourceRevisionPath, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 const params: SearchParams = {
@@ -59,6 +59,51 @@ describe('Marketplace API URL handling', () => {
       content_digest: digest,
     }))
     await expect(api.getResource('team/tools', 'skill', 'code review')).resolves.toMatchObject({ content_digest: digest })
+  })
+
+  it('builds source discovery paths and validates source/history payloads', async () => {
+    expect(sourcePath('/api/v1', 'team/tools')).toBe('/api/v1/sources/team%2Ftools')
+    expect(sourceHistoryPath('/api/v1', 'team/tools')).toBe('/api/v1/sources/team%2Ftools/history')
+
+    const sourcePayload = {
+      id: 'source-id',
+      slug: 'team-tools',
+      aliases: ['old-team-tools'],
+      origins: ['https://git.example/team/tools.git'],
+      ref: 'main',
+      roots: [{ path: 'skills', source_harness: 'factory' }],
+      acquisition: 'mirror',
+      publisher: { name: '<publisher>', url: '<not-a-link>' },
+      license: 'MIT',
+      listed: true,
+    }
+    const historyPayload = [{
+      source_id: 'source-id',
+      ref: 'main',
+      commit: 'abc123',
+      source_revision_manifest_digest: 'sha256:' + 'a'.repeat(64),
+      acquisition: 'mirror',
+      occurred_at: '2026-01-02T03:04:05Z',
+    }]
+    const api = createMarketplaceApi(async request => request.endsWith('/history') ? historyPayload : sourcePayload)
+    await expect(api.getSource('team/tools')).resolves.toMatchObject({ slug: 'team-tools', publisher: { name: '<publisher>' } })
+    await expect(api.getSourceHistory('team/tools')).resolves.toMatchObject([{ commit: 'abc123' }])
+  })
+
+  it('accepts the Go commit field and legacy digest and commit aliases', () => {
+    const base = {
+      source_id: 'source-id', ref: 'main', source_revision_manifest_digest: 'sha256:' + 'b'.repeat(64), acquisition: 'index-only', occurred_at: '2026-01-02T03:04:05Z',
+    }
+    expect(normalizeSourceHistory([{ ...base, commit: 'go-commit' }])[0].commit).toBe('go-commit')
+    expect(normalizeSourceHistory([{ ...base, revision_commit: 'legacy-commit' }])[0].commit).toBe('legacy-commit')
+    expect(normalizeSourceHistory([{ ...base, commit: 'go-commit', source_revision_manifest_digest: 'sha256:manifest123' }])[0].source_revision_manifest_digest).toBe('sha256:manifest123')
+    expect(() => normalizeSourceHistory([{ ...base, commit: 'one', revision_commit: 'two' }])).toThrow(/do not match/)
+    expect(() => normalizeSourceHistory(Array.from({ length: MAX_SOURCE_HISTORY_ENTRIES + 1 }, () => ({ ...base, commit: 'go-commit' })))).toThrow(/at most 1000 entries/)
+  })
+
+  it('bounds hostile source metadata and history fields', () => {
+    expect(() => normalizeSource({ id: 'id', slug: 'slug', origins: ['x'.repeat(4097)], ref: 'main', roots: [], acquisition: 'mirror', listed: true })).toThrow(ApiValidationError)
+    expect(() => normalizeSourceHistory([{ source_id: 'id', ref: 'main', commit: '<script>', source_revision_manifest_digest: 'digest', acquisition: 'mirror', occurred_at: 'not-a-date' }])).toThrow(ApiValidationError)
   })
 
   it('rejects a revision response whose digest or coordinate differs from the request', async () => {

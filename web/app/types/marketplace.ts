@@ -17,6 +17,46 @@ export interface WellKnown extends Capabilities {
   browser_route_template: string
 }
 
+export interface Marketplace {
+  id: string
+  name: string
+  canonical_url: string
+  instance_metadata?: Record<string, unknown>
+}
+
+export interface SourceRoot {
+  path: string
+  source_harness?: string
+}
+
+export interface SourcePublisher {
+  name: string
+  url?: string
+}
+
+export interface Source {
+  id: string
+  slug: string
+  aliases?: string[]
+  origins: string[]
+  ref: string
+  roots: SourceRoot[]
+  acquisition: 'index-only' | 'mirror'
+  publisher?: SourcePublisher
+  license?: string
+  listed: boolean
+}
+
+export interface SourceOccurrence {
+  source_id: string
+  ref: string
+  commit: string
+  source_revision_manifest_digest: string
+  acquisition: 'index-only' | 'mirror'
+  mirrored_artifact_digest?: string
+  occurred_at: string
+}
+
 export interface ResourceListItem {
   source_id: string
   source_slug?: string

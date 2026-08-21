@@ -7,8 +7,11 @@ info:
     agent-marketplace instance.
 
 servers:
-  - url: /api/v1
-    description: Marketplace API v1
+  # Paths below are absolute from the public origin. Keeping the server at the
+  # origin prevents /api/v1 from being prepended to well-known, browser, health,
+  # and already-versioned API paths.
+  - url: /
+    description: Marketplace public origin
 
 paths:
   /.well-known/agent-marketplace.json:
@@ -97,8 +100,10 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
           description: Source details
@@ -115,15 +120,18 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
-          description: Source occurrence history
+          description: Source occurrence history, newest first. The server returns at most 1000 entries and returns [] when no history exists.
           content:
             application/json:
               schema:
                 type: array
+                maxItems: 1000
                 items:
                   $ref: "#/components/schemas/SourceOccurrence"
 
@@ -135,8 +143,10 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
         - in: path
           name: kind
           required: true
@@ -152,8 +162,10 @@ paths:
         - in: path
           name: name
           required: true
+          description: Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
           description: Resource revision
@@ -170,8 +182,10 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
         - in: path
           name: kind
           required: true
@@ -187,8 +201,10 @@ paths:
         - in: path
           name: name
           required: true
+          description: Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
           description: Resource revisions
@@ -207,8 +223,10 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
         - in: path
           name: kind
           required: true
@@ -224,8 +242,10 @@ paths:
         - in: path
           name: name
           required: true
+          description: Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
         - in: path
           name: revision
           required: true
@@ -247,8 +267,10 @@ paths:
         - in: path
           name: source-revision
           required: true
+          description: Canonical source manifest digest.
           schema:
             type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
       responses:
         "200":
           description: Source revision manifest JSON
@@ -265,6 +287,7 @@ paths:
         - in: path
           name: digest
           required: true
+          description: Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path).
           schema:
             type: string
             pattern: "^[0-9a-f]{64}$"
@@ -285,8 +308,10 @@ paths:
         - in: path
           name: source
           required: true
+          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
         - in: path
           name: kind
           required: true
@@ -302,8 +327,10 @@ paths:
         - in: path
           name: name
           required: true
+          description: Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators.
           schema:
             type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
           description: Resource revision
@@ -432,37 +459,80 @@ components:
         roots:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/SourceRoot"
         acquisition:
           type: string
           enum:
             - index-only
             - mirror
+        publisher:
+          $ref: "#/components/schemas/Publisher"
+        license:
+          type: string
         listed:
           type: boolean
 
+    SourceRoot:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+        source_harness:
+          type: string
+
+    Publisher:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+
     SourceOccurrence:
       type: object
+      description: |
+        An immutable source observation. Current Go servers emit `commit`;
+        `revision_commit` is accepted as a legacy wire alias. At least one of
+        these fields is required, and clients must reject conflicting values
+        when both are present. History digest values retain the bounded opaque
+        `sha256:` token form used by legacy stores for compatibility; the token
+        excludes slashes and control characters. Routeable source manifests
+        require the canonical 64-character lowercase form.
       required:
         - source_id
         - ref
-        - revision_commit
         - source_revision_manifest_digest
         - acquisition
         - occurred_at
+      anyOf:
+        - required:
+            - commit
+        - required:
+            - revision_commit
       properties:
         source_id:
           type: string
         ref:
           type: string
+        commit:
+          type: string
         revision_commit:
           type: string
+          deprecated: true
+          description: Compatibility alias for commit.
         source_revision_manifest_digest:
           type: string
+          pattern: "^sha256:[A-Za-z0-9._~-]{1,256}$"
         acquisition:
           type: string
+          enum:
+            - index-only
+            - mirror
         mirrored_artifact_digest:
           type: string
+          pattern: "^sha256:[A-Za-z0-9._~-]{1,256}$"
         occurred_at:
           type: string
           format: date-time

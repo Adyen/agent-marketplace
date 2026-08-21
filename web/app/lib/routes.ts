@@ -18,6 +18,14 @@ export function routeParam(value: string | string[] | undefined, label: string):
   return candidate
 }
 
+export function sourceAsyncDataKey(source: string): string {
+  return JSON.stringify(['marketplace-source', source])
+}
+
+export function sourceHistoryAsyncDataKey(source: string): string {
+  return JSON.stringify(['marketplace-source-history', source])
+}
+
 export function resourceAsyncDataKey(source: string, kind: ResourceKind, name: string): string {
   return JSON.stringify(['marketplace-resource', source, kind, name])
 }

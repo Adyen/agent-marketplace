@@ -3,7 +3,7 @@ import type {
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
-import { normalizeResourceRevision, normalizeSearchResult, normalizeWellKnown } from '~/lib/validation'
+import { normalizeMarketplace, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '~/lib/validation'
 
 const API_VERSION_PATH = '/api/v1'
 const WELL_KNOWN_PATH = '/.well-known/agent-marketplace.json'
@@ -64,6 +64,9 @@ export function wellKnownPath(apiBase: string | undefined): string {
 export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
   return {
     getWellKnown: () => fetcher<unknown>(wellKnownPath(apiBase)).then(normalizeWellKnown),
+    getInstance: () => fetcher<unknown>(apiPath(apiBase, '/instance')).then(normalizeMarketplace),
+    getSource: (source: string) => fetcher<unknown>(sourcePath(apiBase, source)).then(normalizeSource),
+    getSourceHistory: (source: string) => fetcher<unknown>(sourceHistoryPath(apiBase, source)).then(normalizeSourceHistory),
     search: (params: SearchParams) =>
       fetcher<unknown>(apiPath(apiBase, '/search'), {
         query: serializeSearchQuery(params),
@@ -77,6 +80,14 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
 
 export function isResourceKind(value: string): value is ResourceKind {
   return ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'].includes(value)
+}
+
+export function sourcePath(apiBase: string | undefined, source: string): string {
+  return apiPath(apiBase, `/sources/${encodeURIComponent(source)}`)
+}
+
+export function sourceHistoryPath(apiBase: string | undefined, source: string): string {
+  return apiPath(apiBase, `/sources/${encodeURIComponent(source)}/history`)
 }
 
 export function resourcePath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string): string {

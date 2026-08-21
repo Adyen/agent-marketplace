@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,6 +108,32 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put source occurrence: %v", err)
 	}
 
+	emptySource := src
+	emptySource.ID = "src-empty"
+	emptySource.Slug = "empty-source"
+	if err := meta.PutSource(ctx, emptySource); err != nil {
+		t.Fatalf("put empty source: %v", err)
+	}
+
+	boundedSource := src
+	boundedSource.ID = "src-bounded"
+	boundedSource.Slug = "bounded-source"
+	if err := meta.PutSource(ctx, boundedSource); err != nil {
+		t.Fatalf("put bounded source: %v", err)
+	}
+	for i := 0; i < MaxSourceHistoryEntries+1; i++ {
+		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{
+			SourceID:                     boundedSource.ID,
+			Ref:                          boundedSource.Ref,
+			Commit:                       fmt.Sprintf("commit-%04d", i),
+			SourceRevisionManifestDigest: rev.Provenance.ManifestDigest,
+			Acquisition:                  boundedSource.Acquisition,
+			OccurredAt:                   time.Unix(int64(i+1), 0).UTC(),
+		}); err != nil {
+			t.Fatalf("put bounded source occurrence %d: %v", i, err)
+		}
+	}
+
 	server := NewServer(cfg, meta, blobs)
 	public := httptest.NewServer(server.PublicHandler())
 	defer public.Close()
@@ -172,6 +200,33 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("history missing commit: %s", body)
 	}
 
+	// Empty source history is a JSON array, not null.
+	resp = mustGet(t, public.URL+"/api/v1/sources/empty-source/history")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("empty history status %d: %s", resp.StatusCode, body)
+	}
+	if body != "[]\n" {
+		t.Fatalf("empty history body = %q, want []", body)
+	}
+
+	// History is bounded before it is serialized.
+	resp = mustGet(t, public.URL+"/api/v1/sources/bounded-source/history")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("bounded history status %d: %s", resp.StatusCode, body)
+	}
+	var boundedHistory []store.SourceOccurrence
+	if err := json.Unmarshal([]byte(body), &boundedHistory); err != nil {
+		t.Fatalf("decode bounded history: %v", err)
+	}
+	if len(boundedHistory) != MaxSourceHistoryEntries {
+		t.Fatalf("bounded history entries = %d, want %d", len(boundedHistory), MaxSourceHistoryEntries)
+	}
+	if boundedHistory[0].Commit != "commit-1000" || boundedHistory[len(boundedHistory)-1].Commit != "commit-0001" {
+		t.Fatalf("bounded history ordering/truncation = first %q last %q", boundedHistory[0].Commit, boundedHistory[len(boundedHistory)-1].Commit)
+	}
+
 	// /api/v1/resources/{source}/{kind}/{name}
 	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review")
 	body = mustRead(t, resp)
@@ -223,6 +278,28 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.agent-marketplace.artifact.v1.tar+gzip" {
 		t.Fatalf("artifact content-type = %q", ct)
+	}
+
+	// Digest route parameters reject malformed, uppercase, and traversal-shaped
+	// values before consulting the blob store.
+	invalidDigestURLs := []string{
+		public.URL + "/api/v1/manifests/sha256:" + strings.Repeat("a", 63),
+		public.URL + "/api/v1/manifests/sha256:" + strings.Repeat("A", 64),
+		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 63),
+		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("A", 64),
+		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 64) + "/extra",
+	}
+	for _, url := range invalidDigestURLs {
+		resp = mustGet(t, url)
+		body = mustRead(t, resp)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid digest URL %s status %d: %s", url, resp.StatusCode, body)
+		}
+	}
+	resp = mustGet(t, public.URL+"/api/v1/manifests/../secret")
+	body = mustRead(t, resp)
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("traversal-shaped manifest URL status %d: %s", resp.StatusCode, body)
 	}
 
 	// healthz

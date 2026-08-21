@@ -22,6 +22,10 @@ type ResourceSearchFilter struct {
 	Query string
 }
 
+// MaxSourceHistoryEntries is the maximum number of source occurrences returned
+// by history queries. API handlers apply the same bound before serialization.
+const MaxSourceHistoryEntries = 1000
+
 // MetadataStore is the capability-oriented interface for Marketplace metadata.
 // Backend names and details never appear in this interface.
 type MetadataStore interface {
@@ -44,6 +48,8 @@ type MetadataStore interface {
 	PutSource(ctx context.Context, src Source) error
 	ListSources(ctx context.Context) ([]Source, error)
 	GetSourceBySlug(ctx context.Context, slug string) (Source, error)
+	// SourceHistory returns occurrences newest first, with a deterministic
+	// bounded result and a non-nil empty slice when no occurrences exist.
 	SourceHistory(ctx context.Context, id SourceID) ([]SourceOccurrence, error)
 
 	// Resource revisions.
