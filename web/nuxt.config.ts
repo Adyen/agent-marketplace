@@ -12,17 +12,6 @@ export default defineNuxtConfig({
     strict: true,
     typeCheck: true,
   },
-  routeRules: {
-    '/**': {
-      headers: {
-        'Content-Security-Policy': "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'",
-        'Referrer-Policy': 'strict-origin-when-cross-origin',
-        'X-Content-Type-Options': 'nosniff',
-        'X-Frame-Options': 'DENY',
-        'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
-      },
-    },
-  },
   nitro: {
     preset: 'node-server',
   },

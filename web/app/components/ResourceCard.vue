@@ -10,10 +10,11 @@ type Props = {
 }
 
 const props = defineProps<Props>()
-const { copied, copy } = useCopyText()
+const { copied, copyError, copy } = useCopyText()
 
 const browserUrl = computed(() => resourceLocator(props.item, props.canonicalUrl))
 const command = computed(() => installCommand(props.item, props.canonicalUrl))
+const actionsAvailable = computed(() => Boolean(browserUrl.value && command.value))
 </script>
 
 <template>
@@ -26,7 +27,8 @@ const command = computed(() => installCommand(props.item, props.canonicalUrl))
         <div class="min-w-0">
           <p class="truncate text-sm font-medium text-muted">{{ sourceLabel(item) }}</p>
           <h2 class="truncate text-lg font-semibold text-highlighted" :title="item.name">
-            <NuxtLink :to="browserUrl" class="rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.name }}</NuxtLink>
+            <NuxtLink v-if="browserUrl" :to="browserUrl" class="rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.name }}</NuxtLink>
+            <span v-else>{{ item.name }}</span>
           </h2>
         </div>
       </div>
@@ -47,6 +49,7 @@ const command = computed(() => installCommand(props.item, props.canonicalUrl))
           variant="soft"
           icon="i-lucide-link"
           :aria-label="`Copy canonical browser URL for ${item.name}`"
+          :disabled="!actionsAvailable"
           @click="copy(browserUrl, 'url')"
         >
           {{ copied === 'url' ? 'Copied URL' : 'Copy URL' }}
@@ -57,11 +60,14 @@ const command = computed(() => installCommand(props.item, props.canonicalUrl))
           variant="ghost"
           icon="i-lucide-terminal"
           :aria-label="`Copy CLI install command for ${item.name}`"
+          :disabled="!actionsAvailable"
           @click="copy(command, 'command')"
         >
           {{ copied === 'command' ? 'Copied command' : 'Copy CLI command' }}
         </UButton>
       </div>
+      <p v-if="!actionsAvailable" role="status" class="mt-3 text-sm text-warning">Actions unavailable: the Marketplace returned an invalid route value.</p>
+      <p v-else-if="copyError" role="alert" class="mt-3 text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
       <p class="sr-only" aria-live="polite">
         {{ copied === 'url' ? 'Canonical browser URL copied.' : copied === 'command' ? 'CLI install command copied.' : '' }}
       </p>

@@ -23,7 +23,7 @@ const resource = {
 describe('ResourceDetailView', () => {
   it('shows read-only provenance, findings, and digest-pinned actions as text', () => {
     const wrapper = mount(ResourceDetailView, {
-      props: { resource, source: 'team/tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
+      props: { resource, source: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
       global: { stubs },
     })
 
@@ -49,6 +49,7 @@ describe('ResourceDetailView', () => {
     })
 
     expect(wrapper.text()).toContain('This revision is revoked')
+    expect(wrapper.get('[role="alert"]').text()).toContain('This revision is revoked')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').exists()).toBe(true)
     expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
   })

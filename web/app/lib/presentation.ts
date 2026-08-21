@@ -1,4 +1,6 @@
 import type { ResourceKind, ResourceListItem } from '~/types/marketplace'
+import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
+import { isSha256Digest } from '~/lib/validation'
 
 export const KIND_LABELS: Record<ResourceKind, string> = {
   skill: 'Skill',
@@ -43,17 +45,14 @@ export function safeCanonicalUrl(value: string | undefined): string {
 
 export function resourceLocator(item: ResourceListItem, canonicalURL: string): string {
   const canonical = safeCanonicalUrl(canonicalURL)
-  if (!canonical) return ''
-  const source = encodeURIComponent(item.source_slug || item.source_id)
-  const kind = encodeURIComponent(item.kind)
-  const name = encodeURIComponent(item.name)
-  const digest = encodeURIComponent(item.content_digest)
-  return `${canonical}/s/${source}/${kind}/${name}/revisions/${digest}`
+  const source = item.source_slug || item.source_id
+  if (!canonical || !isSafeRouteToken(item.source_id) || (item.source_slug !== undefined && !isSafeRouteToken(item.source_slug)) || !isSafeResourceRoute(source, item.kind, item.name) || !isSha256Digest(item.content_digest)) return ''
+  return `${canonical}/s/${encodeURIComponent(source)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/revisions/${encodeURIComponent(item.content_digest)}`
 }
 
 export function installCommand(item: ResourceListItem, canonicalURL: string): string {
   const locator = resourceLocator(item, canonicalURL)
-  return `agent-marketplace install "${locator}"`
+  return locator ? `agent-marketplace install "${locator}"` : ''
 }
 
 function hasUnsafeURLCharacters(value: string): boolean {
