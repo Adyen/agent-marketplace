@@ -974,6 +974,12 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		return nil, fmt.Errorf("no catalog found for registry %s; check that the URL and ref are correct", fromURL)
 	}
 
+	// `--kind hook` / `--kind mcp` is the deliberate act that may install an
+	// executable resource, so a bundle install of that kind writes an explicit
+	// include per discovered name instead of the `default: true` that would
+	// select nothing of the kind.
+	explicitKindInstall := hasKind && config.KindRequiresExplicitSelection(kind)
+
 	var allInstalled []string
 	var installedResources []resourceIdentity
 	var withheld []WithheldResource
@@ -1008,7 +1014,16 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	}
 	slices.Sort(allInstalled)
 
-	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
+	if explicitKindInstall {
+		if err := config.AddResourcesToExactRegistryEntry(configPath, fromURL, fromPath, kind, allInstalled); err != nil {
+			return nil, fmt.Errorf("select %ss on registry in %s config: %w", skill.KindLabel(kind), opts.Scope, err)
+		}
+		for _, name := range allInstalled {
+			if err := clearInstallExcludes(repoRoot, opts.Scope, kind, name); err != nil {
+				return nil, err
+			}
+		}
+	} else if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}
 	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries)

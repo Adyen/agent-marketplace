@@ -225,6 +225,22 @@ those — must never enable them. When code has to withhold one, it reports it
 exists to prevent. Never add a bypass, and never let a new code path enable an
 executable kind without a selection that names it.
 
+Two consequences are easy to get wrong:
+
+- **Trust is keyed by (provider, collection name).** `resolver.collectionTrust`
+  is built from the config *before* `propagateTopLevelCollections` runs, because
+  propagation deliberately copies top-level collection names onto every registry
+  entry. Never key trust on a bare name, and keep the top-level case failing
+  closed when more than one configured registry publishes the name.
+- **Explicitness is per kind for hooks and MCP servers.** An include for a kind
+  broad selection never reaches must not disable `default: true` for the other
+  kinds (`resolver.hasExplicitSelection`), and the editor's
+  `entryNodeAutoSelectsKind` must agree — a divergence makes the editor write an
+  include the resolver reads as "and nothing else".
+- **A command that reports an executable as installed must have written a
+  selection for it.** Anything that only writes `default: true` has installed
+  nothing of these two kinds.
+
 ### Name collisions refuse sync
 
 If two registries expose the same resource kind and name, `Resolve`

@@ -41,12 +41,22 @@ For each registry entry, selection works per resource kind:
   - resources matching `tags` for safe kinds on non-required entries
 - non-required hooks and MCP servers are not selected by `default` or `tags`; they
   require an explicit name in their per-kind `include` list
+- explicitness is per kind for those two kinds: a `hooks:`/`mcp:` include on a
+  non-required entry does **not** switch off `default: true` for the kinds it does
+  not mention, because it is the only way to name an executable at all. Naming one
+  hook therefore keeps every skill the entry selects. An include for any other
+  kind (or `tags:`) still means "these instead of everything", and on a
+  `required: true` entry — where executables *are* selected broadly — a
+  `hooks:`/`mcp:` include narrows as usual
 - `required: true` is trusted organization policy and retains all-resource
   selection, including hooks and MCP servers
 - the same rule governs the commands that write these selections: `install --all`
   without `--kind`, and `install --from <url>` without a resource name, write a
   broad selection, so they report discovered hooks and MCP servers as withheld
-  instead of enabling them. `--kind hook` / `--kind mcp` installs one by name.
+  instead of enabling them. `--kind hook` / `--kind mcp` installs them by name:
+  with an explicit executable `--kind`, both commands write per-kind `include`
+  entries for every name they report, so the reported install is one the resolver
+  actually materializes.
 - then per-kind `exclude` removes from selected names, except when `required: true` (required is immune)
 - per-kind `exclude_all: true` removes ALL resources of that kind from the entry's selection (except when `required: true`)
 
@@ -80,6 +90,18 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   widen trust when the nested collection is itself deliberately selected.
   A member pinned to a `required: true` registry is already broadly selected by
   that policy, so it expands regardless of how the collection was reached.
+- That trust is keyed by **(provider, collection name)**, never by name alone. A
+  collection name is not a globally unique identifier: any configured registry may
+  publish a bundle called `dev-tools`, so `collections: include: [dev-tools]` on
+  one registry entry vouches only for *that* registry's `dev-tools`. The same
+  applies to an `includes:` chain — a nested name matching some other registry's
+  collection widens nothing.
+  - A **top-level** `collections: include:` names no registry, so it vouches for a
+    provider only while exactly one configured registry publishes that name. Once a
+    second registry answers to it, no layer says which was meant: trust fails
+    closed and the withholding warning names the competing locations instead of
+    asking for a selection that already exists. Move the name onto the registry
+    entry you meant to resolve it.
 - Collections expand into synthetic registry entries before resolution.
 - Removing a collection member writes a per-kind `exclude` in the active scope (collection stays installed).
 - If a resource is both direct-selected and collection-provided, direct selection takes precedence for conflict handling and `Via` annotation.

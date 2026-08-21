@@ -2050,6 +2050,97 @@ collections:
 		},
 	},
 	{
+		Name: "mcp/collection_trust_is_keyed_by_provider",
+		Desc: "Given two registries publishing a collection named 'dev' and only one of them named in a per-entry collections include, When sync is run, Then the other registry's MCP server is withheld while its safe member still materializes",
+		Registries: []RegistryDef{
+			{Name: "mcp-collection-untrusted",
+				Skills:     []Skill{{Name: "safe-skill", Description: "Safe skill"}},
+				MCPServers: []MCPServer{{Name: "bundled-mcp", Command: "node", Args: []string{"bundled.js"}}},
+				Files: map[string]string{
+					"collections/dev/COLLECTION.yaml": `name: dev
+version: "1.0"
+resources:
+  - name: safe-skill
+  - name: bundled-mcp
+    kind: mcp
+`,
+				}},
+			{Name: "mcp-collection-trusted",
+				Skills: []Skill{{Name: "other-skill", Description: "Other skill"}}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-collection-untrusted}}
+    ref: main
+    default: true
+  - url: {{REG:mcp-collection-trusted}}
+    ref: main
+    collections:
+      include: [dev]
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist:  []string{"/root/.factory/skills/safe-skill/SKILL.md"},
+				FilesAbsent: []string{"/root/.factory/mcp.json"},
+				OutContains: []string{"bundled-mcp", "was not enabled"}},
+		},
+	},
+	{
+		Name: "mcp/explicit_include_keeps_broad_skill_selection",
+		Desc: "Given a default:true registry with an explicit mcp include, When sync is run, Then the named MCP server and the registry's skills both materialize",
+		Registries: []RegistryDef{
+			{Name: "mcp-explicit-plus-broad",
+				Skills:     []Skill{{Name: "broad-skill", Description: "Broad skill"}},
+				MCPServers: []MCPServer{{Name: "named-mcp", Command: "node", Args: []string{"named.js"}}},
+			},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-explicit-plus-broad}}
+    ref: main
+    default: true
+    mcp:
+      include: [named-mcp]
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/root/.factory/skills/broad-skill/SKILL.md"},
+				FileContains: map[string]string{
+					"/root/.factory/mcp.json": "named-mcp",
+				}},
+		},
+	},
+	{
+		Name: "mcp/adhoc_bundle_kind_mcp_writes_explicit_include",
+		Desc: "Given no pre-configured registries, When install --from --kind mcp is run without a resource name, Then the config carries an explicit mcp include rather than default:true and the server materializes",
+		Registries: []RegistryDef{
+			{Name: "mcp-adhoc-bundle",
+				Skills: []Skill{{Name: "bundled-skill", Description: "Bundled skill"}},
+				MCPServers: []MCPServer{
+					{Name: "adhoc-mcp", Command: "npx", Args: []string{"-y", "@adhoc/mcp"}},
+				}},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+`,
+		Steps: []Step{
+			{Args: []string{"install", "--from", "{{REG:mcp-adhoc-bundle}}", "--ref", "main", "--kind", "mcp", "--scope", "user"}, MustPass: true,
+				OutContains: []string{"adhoc-mcp"},
+				FileContains: map[string]string{
+					"/root/.agents/config.yaml": "adhoc-mcp",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.factory/mcp.json": "adhoc-mcp",
+				},
+				// default:true would have swept the registry's skills in; the
+				// install asked for MCP servers only.
+				FilesAbsent: []string{"/root/.factory/skills/bundled-skill/SKILL.md"}},
+		},
+	},
+	{
 		Name: "mcp/remove_explicit_selection_adds_exclude",
 		Desc: "Given explicitly selected MCP servers, When remove --scope user is run for one MCP server and re-synced, Then that server is pruned while others remain",
 		Registries: []RegistryDef{

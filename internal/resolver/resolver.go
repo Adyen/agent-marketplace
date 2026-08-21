@@ -267,11 +267,30 @@ type ExecutableCollectionMemberWarning struct {
 	Via string
 	// URL is the registry the withheld member would have come from.
 	URL string
+	// Provider is the configured location that published the collection. It is
+	// not always the same as URL: a collection may name members in other
+	// registries, and it is the collection's provider that trust is keyed on.
+	Provider string
+	// AmbiguousProviders is set when the collection *was* named — in a
+	// top-level `collections: include:` list, which names no registry — but
+	// more than one configured registry publishes a collection of that name. The
+	// name then cannot express which provider was vouched for, so trust fails
+	// closed and these are the locations that answer to it.
+	AmbiguousProviders []string
 }
 
 func (w *ExecutableCollectionMemberWarning) Error() string {
-	return fmt.Sprintf("%s %q from %s was not enabled: the collection is selected broadly (default:true or tags) rather than by name, and %s resources are never enabled implicitly",
-		skill.KindLabel(w.Kind), w.Name, w.Via, skill.KindLabel(w.Kind))
+	if len(w.AmbiguousProviders) > 0 {
+		return fmt.Sprintf("%s %q from %s was not enabled: %d configured registries publish a collection of that name (%s), so naming it at top level does not say which provider was trusted, and %s resources are never enabled implicitly",
+			skill.KindLabel(w.Kind), w.Name, w.Via, len(w.AmbiguousProviders),
+			strings.Join(redact.Strings(w.AmbiguousProviders), ", "), skill.KindLabel(w.Kind))
+	}
+	provider := redact.URL(w.Provider)
+	if provider == "" {
+		provider = "the registry that publishes it"
+	}
+	return fmt.Sprintf("%s %q from %s was not enabled: no configuration selects that collection by name from %s — a broad default:true or tag match does not, and neither does the same name on a different registry — and %s resources are never enabled implicitly",
+		skill.KindLabel(w.Kind), w.Name, w.Via, provider, skill.KindLabel(w.Kind))
 }
 
 // Remediation returns a user-facing hint about how to enable the withheld
@@ -285,8 +304,14 @@ func (w *ExecutableCollectionMemberWarning) Remediation() string {
 	if url == "" {
 		url = "<url>"
 	}
-	return fmt.Sprintf("select the collection by name (collections: include: [...]), or add %q to the registry entry's %s: include: list ('agent-marketplace install --kind %s %s --from %s')",
-		w.Name, selector, skill.KindLabel(w.Kind), w.Name, url)
+	byName := fmt.Sprintf("select the collection by name on the entry that provides it (collections: include: [%s] under that registry, or a top-level collections: include: while no other registry publishes the name)", collectionRemoveTarget(w.Via))
+	if len(w.AmbiguousProviders) > 0 {
+		// Repeating "name the collection" would be advice the user has already
+		// taken; the missing piece is which registry the name refers to.
+		byName = fmt.Sprintf("move the collection name onto the registry entry you meant (registries: - url: ...  collections: include: [%s]) so it names one provider", collectionRemoveTarget(w.Via))
+	}
+	return fmt.Sprintf("%s, or add %q to the registry entry's %s: include: list ('agent-marketplace install --kind %s %s --from %s')",
+		byName, w.Name, selector, skill.KindLabel(w.Kind), w.Name, url)
 }
 
 // IsExecutableCollectionMemberWithheld reports whether err is an
@@ -717,6 +742,11 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		excludeAllKinds = localExcludeAllKinds(localCfg)
 	}
 
+	// What the config vouches for has to be read before propagation, which
+	// deliberately copies top-level collection names onto every registry entry
+	// and so makes every provider look named.
+	trust := newCollectionTrust(cfg, catalogs)
+
 	// Propagate top-level Collections.Include to all registry entries so
 	// collections are selected from whichever registry provides them.
 	// Without this, a collection named in the global config would only be
@@ -762,7 +792,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// collections the same collision detection and disambiguation as
 	// skills/commands/etc.
 	var expandErrs []error
-	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, targetSet)
+	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, targetSet, trust)
 	errs = append(errs, expandErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
@@ -864,7 +894,7 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, targetSet []hcc.Target, trust collectionTrust) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var errs []error
 
@@ -937,8 +967,6 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		}
 	}
 
-	trust := newCollectionTrust(cfg)
-
 	// Expand each resolved collection artifact into member resources.
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -957,7 +985,10 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		trusted := artifact.Required || trust.trusts(artifact.Name, artifact.CatalogKey)
+		trusted := trust.evaluate(artifact.Name, artifact.CatalogKey)
+		if artifact.Required {
+			trusted = executableTrust{granted: true}
+		}
 		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, &out, &errs, targetSet, trust, trusted)
 	}
 
@@ -1031,31 +1062,99 @@ type collectionCatalogEntry struct {
 // swept in by `default: true` or by a tag match is not, and withholds them.
 // Organization policy (`required: true`) is trusted for the same reason it may
 // select hooks directly.
+//
+// Trust is keyed by (provider, name), never by name alone. A collection name is
+// not a globally unique identifier: any configured registry may publish a
+// bundle called "dev-tools", so trusting the bare name would let a registry
+// that nobody vouched for answer a selection meant for another one and ship its
+// own hooks. The provider is the registry that actually supplies the collection
+// being expanded, identified by catalog key.
 type collectionTrust struct {
-	// namedInSelector holds collection names that some registry entry selects
-	// by name. Top-level `collections:` is already propagated onto every entry
-	// by propagateTopLevelCollections, so this covers both spellings.
-	namedInSelector map[string]struct{}
+	// namedForProvider holds the (catalog key, collection name) pairs a
+	// registry entry names on its own `collections: include:` list. It is built
+	// before propagateTopLevelCollections copies top-level names onto every
+	// entry, so it reflects what the config actually says about each registry.
+	namedForProvider map[providerCollection]struct{}
+	// namedAtTopLevel holds names from the merged top-level `collections:`
+	// selector, which does not say which registry provides them. Such a name
+	// vouches for the collection only while exactly one configured registry
+	// publishes it — see trusts.
+	namedAtTopLevel map[string]struct{}
+	// providersByName holds the catalog keys of every configured registry that
+	// publishes a collection of that name.
+	providersByName map[string]map[string]struct{}
 	// requiredCatalogKeys holds the catalog keys of required registries.
 	requiredCatalogKeys map[string]struct{}
+	// cfg is retained to render a provider for user-facing messages, which must
+	// name registries the way the config does rather than by catalog key. Only
+	// fields propagation does not touch (URL, Path, CatalogKey) are read from
+	// it, so the later mutation of the collection selectors is not visible here.
+	cfg *config.Config
 }
 
-func newCollectionTrust(cfg *config.Config) collectionTrust {
-	trust := collectionTrust{
-		namedInSelector:     map[string]struct{}{},
-		requiredCatalogKeys: map[string]struct{}{},
-	}
+// providerCollection identifies one collection as published by one registry.
+type providerCollection struct {
+	catalogKey string
+	name       string
+}
+
+// newCollectionTrust records what the config vouches for. It must be called
+// before propagateTopLevelCollections, which erases the distinction between a
+// name a config attached to a specific registry entry and one it stated
+// globally.
+// Every map is allocated only when it has an entry to hold, and the provider
+// index only when a top-level name makes ambiguity possible: Resolve is a hot
+// path, and reads from a nil map are free.
+func newCollectionTrust(cfg *config.Config, catalogs map[string][]catalog.Entry) collectionTrust {
+	trust := collectionTrust{cfg: cfg}
 	if cfg == nil {
 		return trust
 	}
 	for _, entry := range cfg.Registries {
 		for _, name := range entry.SelectorForKind(ir.KindCollection).Include {
-			if name = strings.TrimSpace(name); name != "" {
-				trust.namedInSelector[name] = struct{}{}
+			if name = strings.TrimSpace(name); name == "" {
+				continue
 			}
+			if trust.namedForProvider == nil {
+				trust.namedForProvider = map[providerCollection]struct{}{}
+			}
+			trust.namedForProvider[providerCollection{catalogKey: entry.CatalogKey, name: name}] = struct{}{}
 		}
 		if entry.Required {
+			if trust.requiredCatalogKeys == nil {
+				trust.requiredCatalogKeys = map[string]struct{}{}
+			}
 			trust.requiredCatalogKeys[entry.CatalogKey] = struct{}{}
+		}
+	}
+	for _, name := range cfg.Collections.Include {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		if trust.namedAtTopLevel == nil {
+			trust.namedAtTopLevel = map[string]struct{}{}
+		}
+		trust.namedAtTopLevel[name] = struct{}{}
+	}
+	if len(trust.namedAtTopLevel) == 0 {
+		return trust
+	}
+	trust.providersByName = map[string]map[string]struct{}{}
+	for catalogKey, entries := range catalogs {
+		for _, entry := range entries {
+			if entry.Kind != ir.KindCollection {
+				continue
+			}
+			name := strings.TrimSpace(entry.Name)
+			if name == "" {
+				continue
+			}
+			providers, ok := trust.providersByName[name]
+			if !ok {
+				providers = map[string]struct{}{}
+				trust.providersByName[name] = providers
+			}
+			providers[catalogKey] = struct{}{}
 		}
 	}
 	return trust
@@ -1064,11 +1163,117 @@ func newCollectionTrust(cfg *config.Config) collectionTrust {
 // trusts reports whether the named collection, provided by the registry with
 // the given catalog key, may contribute executable members.
 func (t collectionTrust) trusts(name, catalogKey string) bool {
-	if _, named := t.namedInSelector[strings.TrimSpace(name)]; named {
+	name = strings.TrimSpace(name)
+	if _, required := t.requiredCatalogKeys[catalogKey]; required {
 		return true
 	}
-	_, required := t.requiredCatalogKeys[catalogKey]
-	return required
+	if _, named := t.namedForProvider[providerCollection{catalogKey: catalogKey, name: name}]; named {
+		return true
+	}
+	if _, named := t.namedAtTopLevel[name]; !named {
+		return false
+	}
+	// A top-level name names no registry, so it can only be read as a vouch
+	// while the name is unambiguous. Once a second registry publishes the same
+	// collection, no config layer says which one was meant, and guessing is how
+	// an unvouched-for registry would get its hooks enabled: fail closed.
+	providers := t.providersByName[name]
+	if len(providers) != 1 {
+		return false
+	}
+	_, provides := providers[catalogKey]
+	return provides
+}
+
+// ambiguousTopLevelProviders returns the configured locations that publish a
+// collection named at top level, when there is more than one of them. It is
+// what turns a withheld executable into an accurate message: the user did name
+// the collection, so the remediation must point at the ambiguity rather than
+// tell them to do what they already did.
+func (t collectionTrust) ambiguousTopLevelProviders(name string) []string {
+	name = strings.TrimSpace(name)
+	if _, named := t.namedAtTopLevel[name]; !named {
+		return nil
+	}
+	providers := t.providersByName[name]
+	if len(providers) < 2 {
+		return nil
+	}
+	labels := make([]string, 0, len(providers))
+	for key := range providers {
+		label := t.locationOf(key)
+		if label == "" {
+			label = key
+		}
+		labels = append(labels, label)
+	}
+	slices.Sort(labels)
+	return labels
+}
+
+// locationOf renders the configured location of the registry with the given
+// catalog key, the way the config spells it. It walks the registries on demand
+// because it is only needed to explain a withheld member, which is rare, while
+// building a label per entry would cost every resolve.
+func (t collectionTrust) locationOf(catalogKey string) string {
+	if t.cfg == nil {
+		return ""
+	}
+	for _, entry := range t.cfg.Registries {
+		if entry.CatalogKey != catalogKey {
+			continue
+		}
+		label := strings.TrimSpace(entry.URL)
+		if p := strings.TrimSpace(entry.Path); p != "" {
+			label += " (" + p + ")"
+		}
+		return label
+	}
+	return ""
+}
+
+// evaluate resolves the trust of one collection as published by one registry.
+// A denial keeps the identity of what it denied rather than a rendered message,
+// so nothing is formatted or looked up unless a member is actually withheld.
+func (t collectionTrust) evaluate(name, catalogKey string) executableTrust {
+	if t.trusts(name, catalogKey) {
+		return executableTrust{granted: true}
+	}
+	return executableTrust{collection: strings.TrimSpace(name), providerKey: catalogKey}
+}
+
+// executableTrust is the verdict on whether a collection being expanded may
+// contribute hooks and MCP servers, plus the identity of the collection that was
+// denied so the withholding can be explained.
+type executableTrust struct {
+	granted bool
+	// collection and providerKey identify the denied collection: the name it was
+	// selected under and the catalog key of the registry that published it.
+	collection  string
+	providerKey string
+}
+
+// explain renders what to tell the user about a denial: the provider whose
+// collection nobody named, and — when the name was stated at top level and more
+// than one registry answers to it — the competing locations.
+func (e executableTrust) explain(trust collectionTrust) (provider string, ambiguousProviders []string) {
+	return trust.locationOf(e.providerKey), trust.ambiguousTopLevelProviders(e.collection)
+}
+
+// widenedBy combines the trust of an including collection with the trust of the
+// collection it includes. Trust is inherited down an include chain, and an
+// include may only widen it, never narrow it.
+func (e executableTrust) widenedBy(other executableTrust) executableTrust {
+	if e.granted || other.granted {
+		return executableTrust{granted: true}
+	}
+	// The outer collection is the one the user selected, so its identity is the
+	// one worth reporting; an included collection only explains itself when the
+	// chain started with no identity at all.
+	if e.collection != "" || e.providerKey != "" {
+		return e
+	}
+	return other
 }
 
 // expandMembersRecursive walks the members of a collection and appends resolved
@@ -1091,8 +1296,9 @@ func expandMembersRecursive(
 	targetSet []hcc.Target,
 	trust collectionTrust,
 	// trusted reports whether this collection was reached by a deliberate
-	// selection, which is what permits executable members to expand.
-	trusted bool,
+	// selection of this provider's collection, which is what permits executable
+	// members to expand, and carries the denial reason when it was not.
+	trusted executableTrust,
 ) {
 	// Expand direct members.
 	for _, member := range col.Members {
@@ -1292,14 +1498,18 @@ func expandMembersRecursive(
 		// untrusted collection expands everything else and withholds this one,
 		// so a registry author cannot turn a broadly-selected bundle into
 		// command execution the config never mentions.
-		if config.KindRequiresExplicitSelection(member.Kind) && !trusted && !memberRequired {
+		if config.KindRequiresExplicitSelection(member.Kind) && !trusted.granted && !memberRequired {
+			provider, ambiguousProviders := trusted.explain(trust)
 			slog.Debug("collection member withheld: executable resource needs a deliberate selection",
-				"collection", col.Label(), "kind", member.Kind.String(), "name", memberName, "via", viaLabel)
+				"collection", col.Label(), "kind", member.Kind.String(), "name", memberName, "via", viaLabel,
+				"provider", provider, "ambiguous_providers", ambiguousProviders)
 			*errs = append(*errs, &ExecutableCollectionMemberWarning{
-				Kind: member.Kind,
-				Name: memberName,
-				Via:  viaLabel,
-				URL:  memberRegistryURL,
+				Kind:               member.Kind,
+				Name:               memberName,
+				Via:                viaLabel,
+				URL:                memberRegistryURL,
+				Provider:           provider,
+				AmbiguousProviders: ambiguousProviders,
 			})
 			continue
 		}
@@ -1359,8 +1569,10 @@ func expandMembersRecursive(
 		}
 		// Trust is inherited down the include chain: naming the outer
 		// collection accepts what it composes. An include can only widen trust
-		// when the nested collection is itself deliberately selected.
-		includedTrusted := trusted || trust.trusts(name, includedEntry.catalogKey)
+		// when the nested collection is itself deliberately selected from the
+		// registry that publishes it — a bare name matching some other
+		// registry's collection vouches for nothing.
+		includedTrusted := trusted.widenedBy(trust.evaluate(name, includedEntry.catalogKey))
 		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet, trust, includedTrusted)
 	}
 }
@@ -2468,9 +2680,21 @@ func hasExplicitSelection(entry config.RegistryEntry) bool {
 	// A selector is explicit only when it has a non-empty Include list,
 	// not merely an Exclude. Exclude-only selectors should not disable autoSelectAll.
 	for _, kind := range config.AllKinds {
-		if len(entry.SelectorForKind(kind).Include) > 0 {
-			return true
+		if len(entry.SelectorForKind(kind).Include) == 0 {
+			continue
 		}
+		// An include for a kind that broad selection never reaches cannot be
+		// read as "select these instead of everything": for a non-required
+		// entry it is the only way to name a hook or MCP server at all. Letting
+		// it switch off the broad selection of the kinds it says nothing about
+		// would make enabling one hook silently drop every skill, which pushes
+		// users back to the implicit routes this rule closes. A required
+		// registry does select executables broadly, so there the include is a
+		// genuine narrowing and still counts.
+		if !entry.Required && config.KindRequiresExplicitSelection(kind) {
+			continue
+		}
+		return true
 	}
 	return entry.Tags != nil
 }

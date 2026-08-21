@@ -1102,6 +1102,78 @@ registries:
 	}
 }
 
+// A hooks include does not put a non-required entry into explicit-selection
+// mode (see resolver.hasExplicitSelection): broad selection still covers the
+// other kinds. The editor has to agree, or re-enabling a skill would write an
+// include the resolver reads as "this skill and nothing else".
+func TestReEnableOnEntryWithExecutableIncludeStaysAutoSelecting(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - url: git@example.com:infra.git
+    ref: main
+    default: true
+    hooks:
+      include:
+        - pre-commit-scan
+    skills:
+      exclude:
+        - smith
+`))
+
+	if err := AddSkillToRegistryInConfig(configPath, "git@example.com:infra.git", "", "smith"); err != nil {
+		t.Fatalf("AddSkillToRegistryInConfig: %v", err)
+	}
+
+	cfg, err := loadProjectConfig(t, configPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	entry := cfg.Registries[0]
+	if len(entry.Skills.Include) != 0 {
+		t.Fatalf("expected NO explicit skills include on an entry that still auto-selects, got %#v", entry.Skills.Include)
+	}
+	if stringSliceContains(entry.Skills.Exclude, "smith") {
+		t.Fatalf("expected smith NOT in exclude after re-enable, got %#v", entry.Skills.Exclude)
+	}
+	if got := entry.Hooks.Include; len(got) != 1 || got[0] != "pre-commit-scan" {
+		t.Fatalf("expected the hooks include to be preserved, got %#v", got)
+	}
+}
+
+func TestAddResourcesToExactRegistryEntryWritesEveryNameAndClearsExcludes(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - url: git@example.com:infra.git
+    ref: main
+    mcp:
+      exclude:
+        - prometheus-mcp
+`))
+
+	if err := AddResourcesToExactRegistryEntry(configPath, "git@example.com:infra.git", "", ir.KindMcpServer,
+		[]string{"prometheus-mcp", "grafana-mcp"}); err != nil {
+		t.Fatalf("AddResourcesToExactRegistryEntry: %v", err)
+	}
+
+	cfg, err := loadProjectConfig(t, configPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	entry := cfg.Registries[0]
+	for _, want := range []string{"prometheus-mcp", "grafana-mcp"} {
+		if !stringSliceContains(entry.MCP.Include, want) {
+			t.Fatalf("expected %q in the mcp include, got %#v", want, entry.MCP.Include)
+		}
+	}
+	if len(entry.MCP.Exclude) != 0 {
+		t.Fatalf("expected the stale exclude to be cleared, got %#v", entry.MCP.Exclude)
+	}
+}
+
 func TestEnableAfterLocalExcludeCleansUpExclude(t *testing.T) {
 	repoRoot := t.TempDir()
 

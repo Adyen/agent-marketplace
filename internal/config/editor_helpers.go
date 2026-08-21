@@ -443,7 +443,14 @@ func entryNodeAutoSelectsKind(entryNode *yaml.Node, kind ir.ResourceKind) bool {
 			continue
 		}
 		// A non-empty include on ANY kind puts the entry into
-		// explicit-selection mode, disabling auto-select-all.
+		// explicit-selection mode, disabling auto-select-all — except an
+		// include for a kind that auto-selection never reaches anyway, which
+		// the resolver also ignores for this decision (see
+		// resolver.hasExplicitSelection). Diverging here would make the editor
+		// write an explicit include the resolver reads as "and nothing else".
+		if !required && KindRequiresExplicitSelection(k) {
+			continue
+		}
 		if _, incNode := findEntrySequence(kindMapping, "include"); incNode != nil && len(incNode.Content) > 0 {
 			return false
 		}

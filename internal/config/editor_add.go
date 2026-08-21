@@ -605,12 +605,18 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 // entries with no path (root entries), avoiding "matches multiple entries"
 // errors when the same URL has entries at different paths.
 func AddResourceToExactRegistryEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, name string) error {
-	if err := addValuesToExactRegistryEntry(configPath, registryURL, registryPath, kind, "include", []string{name}); err != nil {
+	return AddResourcesToExactRegistryEntry(configPath, registryURL, registryPath, kind, []string{name})
+}
+
+// AddResourcesToExactRegistryEntry is AddResourceToExactRegistryEntry for
+// several names of one kind, written in a single rewrite of the config file.
+func AddResourcesToExactRegistryEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, names []string) error {
+	if err := addValuesToExactRegistryEntry(configPath, registryURL, registryPath, kind, "include", names); err != nil {
 		return err
 	}
-	// Clean up stale exclude for the same name so the resolver does not
+	// Clean up stale excludes for the same names so the resolver does not
 	// suppress a resource that was just enabled.
-	return removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath, kind, "exclude", []string{name})
+	return removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath, kind, "exclude", names)
 }
 
 // addValuesToExactRegistryEntry adds values to a sub-key (e.g. "include" or

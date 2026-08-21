@@ -227,13 +227,19 @@ includes.
 They execute commands, so nothing implicit enables them:
 
 - name them in `hooks: include:` / `mcp: include:`, or run
-  `agent-marketplace install --kind hook <name>` / `--kind mcp <name>`;
+  `agent-marketplace install --kind hook <name>` / `--kind mcp <name>`; doing so
+  does not switch off `default: true` for the other kinds, so the registry's
+  skills keep being selected;
 - a collection carries them only when the collection is named in
   `collections: include:` (what `install <collection>` writes) or comes from a
   `required` organization registry — a collection reached only by `default: true`
-  or a tag reports each executable member as withheld instead;
+  or a tag reports each executable member as withheld instead. The name must
+  identify one provider: an entry-level include vouches for that registry only,
+  and a top-level one only while a single configured registry publishes the name;
 - `install --all` and `install --from <url>` without a resource name write a broad
-  selection, so they list discovered hooks and MCP servers as *not installed*.
+  selection, so they list discovered hooks and MCP servers as *not installed*;
+  adding `--kind hook` / `--kind mcp` installs them by writing the explicit
+  per-kind include, so the reported install is real.
 
 ### Local config: `.agents/config.local.yaml`
 

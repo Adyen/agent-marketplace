@@ -292,17 +292,26 @@ selection. Every implicit route is closed:
 
 - `default: true` and `tags:` never select them — they need a name in
   `hooks: include:` / `mcp: include:` (or `install --kind hook|mcp <name>`).
+  Naming one costs you nothing else: because a broad selection never reaches
+  these two kinds, a `hooks:`/`mcp:` include does **not** turn `default: true`
+  off for the kinds it does not mention, so the registry's skills keep coming.
 - A **collection** carries them only when the collection itself was selected by
   name (`collections: include: [...]`, which is what
   `agent-marketplace install <collection>` writes) or comes from a `required`
   organization registry. A collection reached only by `default: true` or a tag
   expands its other members, withholds the executables, and reports each one
   with the command that enables it.
+  - The name has to identify the registry you trusted. A `collections: include:`
+    on a registry entry vouches for that registry's collection only; a top-level
+    one vouches only while a single configured registry publishes the name. If a
+    second registry publishes a collection of the same name, both fail closed and
+    the warning names the competing locations.
 - `agent-marketplace install --all` (no `--kind`) and
   `agent-marketplace install --from <url>` without a resource name install a
   broad selection, so they list discovered hooks and MCP servers as *not
   installed* instead of enabling them. Add `--kind hook` or `--kind mcp` to
-  install one by name.
+  install them by name — that writes the explicit per-kind `include` the
+  resolver needs, so what the command reports as installed really is.
 
 Only `required: true` organization policy selects them broadly — the same
 authority that makes it immune to every `exclude`.

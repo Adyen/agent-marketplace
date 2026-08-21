@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +89,58 @@ registries:
 	}
 	if got := cfg.Registries[0].MCP.Include; len(got) != 1 || got[0] != "prometheus-mcp" {
 		t.Fatalf("expected mcp include [prometheus-mcp], got %#v", got)
+	}
+}
+
+// An ad-hoc bundle install of an executable kind is a deliberate act, so it
+// writes the explicit includes that kind needs. It used to write only
+// `default: true` — which never selects an MCP server — and still report the
+// server as installed, so the success message promised a materialization the
+// resolver would never perform.
+func TestInstallFromBundleWithExecutableKindWritesExplicitIncludes(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "adhoc-executables.git")
+	writeSkill(t, working, "deploy-helper", "Deploy helper", nil)
+	writeFile(t, filepath.Join(working, ".mcp.json"), `{"mcpServers":{"prometheus-mcp":{"command":"npx","args":["-y","@promo/mcp"]}}}`)
+	commitAndPushAll(t, working, "Add a skill and an MCP server")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--kind", "mcp")
+	if err != nil {
+		t.Fatalf("expected install --from --kind mcp to succeed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Installed prometheus-mcp") {
+		t.Fatalf("expected the MCP server to be reported as installed, got:\n%s", output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load: %v", err)
+	}
+	entry := cfg.Registries[0]
+	if got := entry.MCP.Include; len(got) != 1 || got[0] != "prometheus-mcp" {
+		t.Fatalf("expected an explicit mcp include, got %#v", got)
+	}
+	if entry.Default {
+		t.Fatal("default:true selects no MCP server, so an executable-kind install must not rely on it")
+	}
+
+	// The report is only true if the server is actually materialized.
+	mcpConfig := filepath.Join(repoRoot, ".factory", "mcp.json")
+	data, err := os.ReadFile(mcpConfig)
+	if err != nil {
+		t.Fatalf("expected %s to be materialized: %v", mcpConfig, err)
+	}
+	if !strings.Contains(string(data), "prometheus-mcp") {
+		t.Fatalf("expected the MCP server in %s, got:\n%s", mcpConfig, data)
+	}
+	if out, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("expected the installed selection to be in sync: %v\n%s", err, out)
 	}
 }
 
