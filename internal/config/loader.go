@@ -73,67 +73,91 @@ func probeGitRoot(dir string) (string, bool) {
 // The key is the working directory, so a test that chdirs into its own
 // t.TempDir() can never observe another test's memo. A "" (not in a git repo)
 // answer is cached like any other genuine result. Failed probes are not cached
-// so a transient git stall can self-correct on the next call.
+// so a transient git stall can self-correct on the next call; callers that were
+// already waiting on that probe share its failure rather than each paying
+// another probe timeout, and the retry happens on the next call.
 //
-// A per-directory mutex is kept so concurrent calls for the same directory only
-// probe once while calls for different directories do not block each other.
+// Concurrent calls for the same directory collapse into a single probe, while
+// calls for different directories never wait on each other. That de-duplication
+// is expressed as a promise (a per-directory record with a done channel) rather
+// than a per-directory lock: gitRootMu is only ever held for map access and is
+// never held while waiting for a probe, so there is no lock-order cycle between
+// the map lock and the per-directory wait.
 var (
-	gitRootMu    sync.Mutex
-	gitRootCache = map[string]string{}
-	gitRootLocks = map[string]*sync.Mutex{}
+	gitRootMu       sync.Mutex
+	gitRootCache    = map[string]string{}
+	gitRootInflight = map[string]*gitRootProbeCall{}
 )
+
+// gitRootProbeCall is one in-flight probe other callers can wait on. root and
+// cacheable are written only by the goroutine running the probe and read by
+// waiters only after done is closed, so the close is the happens-before edge
+// that publishes them.
+type gitRootProbeCall struct {
+	done      chan struct{}
+	root      string
+	cacheable bool
+}
+
+// publish memoizes a cacheable answer, retires the in-flight record, and
+// releases every waiter. It runs even when the probe panics, because a waiter
+// whose leader died would otherwise block forever.
+func (c *gitRootProbeCall) publish(dir string) {
+	gitRootMu.Lock()
+	if c.cacheable {
+		gitRootCache[dir] = c.root
+	}
+	// The record is retired whether or not the answer was memoized: a failed
+	// probe must leave the next caller free to start a fresh one instead of
+	// resolving against an already-finished promise. The identity check keeps a
+	// late publish from evicting a newer promise for the same directory.
+	if gitRootInflight[dir] == c {
+		delete(gitRootInflight, dir)
+	}
+	gitRootMu.Unlock()
+	close(c.done)
+}
 
 // gitRootFor returns the git worktree root containing dir, resolving it at
 // most once per directory per process for successful probes.
 func gitRootFor(dir string) string {
-	// Fast path: read the cache.
 	gitRootMu.Lock()
 	if root, ok := gitRootCache[dir]; ok {
 		gitRootMu.Unlock()
 		return root
 	}
-
-	// Slow path: obtain the per-directory lock so only one goroutine probes
-	// for this directory. Other goroutines for the same dir block here; callers
-	// for other dirs can proceed in parallel.
-	mu, ok := gitRootLocks[dir]
-	if !ok {
-		mu = &sync.Mutex{}
-		gitRootLocks[dir] = mu
+	if inflight, ok := gitRootInflight[dir]; ok {
+		// Wait outside the lock: the probing goroutine needs gitRootMu to
+		// publish its answer.
+		gitRootMu.Unlock()
+		<-inflight.done
+		return inflight.root
 	}
-	mu.Lock()
+	call := &gitRootProbeCall{done: make(chan struct{})}
+	gitRootInflight[dir] = call
 	gitRootMu.Unlock()
 
-	defer mu.Unlock()
+	defer call.publish(dir)
 
-	// Double-check the cache now that we hold the per-directory lock.
-	gitRootMu.Lock()
-	if root, ok := gitRootCache[dir]; ok {
-		gitRootMu.Unlock()
-		return root
-	}
-	gitRootMu.Unlock()
-
-	root, cacheable := gitRootProbe(dir)
-	if cacheable {
-		gitRootMu.Lock()
-		gitRootCache[dir] = root
-		gitRootMu.Unlock()
-	}
+	call.root, call.cacheable = gitRootProbe(dir)
 
 	slog.Debug("git root resolved",
 		"dir", dir,
-		"git_root", root,
-		"in_git_repo", root != "",
-		"cached", cacheable,
+		"git_root", call.root,
+		"in_git_repo", call.root != "",
+		"cached", call.cacheable,
 	)
-	return root
+	return call.root
 }
 
 // ResetRepoRootCache discards the memoized git-root lookups. Tests that change
 // the git boundary of a directory in place must call it; production code never
 // needs to, because the git boundary of a working directory does not change
 // during a single CLI invocation.
+//
+// It does not cancel probes that are already running: a concurrent probe still
+// publishes the answer it observed, so a test that needs the post-reset answer
+// must reset after its lookups have returned.
 func ResetRepoRootCache() {
 	gitRootMu.Lock()
 	defer gitRootMu.Unlock()

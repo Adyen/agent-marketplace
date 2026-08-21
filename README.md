@@ -663,10 +663,21 @@ overridable keys, and the environment variables.
 ```bash
 make build     # build the local binary
 make test      # run unit tests
+make test-race # run unit tests under the race detector (required CI signal)
 make lint      # run linters (gofmt, go vet, golangci-lint)
 make release   # cross-compile versioned artifacts (darwin-arm64/amd64, linux-amd64)
 make e2e       # run the end-to-end suite (see below)
 ```
+
+### Race testing
+
+`make test-race` runs the whole suite with `-race` (and therefore `CGO_ENABLED=1`,
+unlike the shipped `CGO_ENABLED=0` binaries). The **Race** CI job runs it on every
+pull request and gates releases: a plain `go test` run cannot distinguish a
+correct concurrent memo from one that deadlocks or corrupts shared state under
+interleaving, so any change to concurrent code — the git-root memo in
+`internal/config`, TUI background commands, the Devin ownership store — must be
+green under `-race` before it lands.
 
 ### E2E tests
 

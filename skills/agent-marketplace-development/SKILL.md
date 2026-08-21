@@ -45,6 +45,7 @@ Then skim:
 ```bash
 make build           # CGO_ENABLED=0 go build -> ./agent-marketplace
 make test            # go test ./...
+make test-race       # CGO_ENABLED=1 go test -race -count=1 ./... (required CI job)
 make lint            # go mod tidy + go fmt + go vet + golangci-lint if present
 make ci-lint         # non-destructive equivalent used in CI
 
@@ -60,6 +61,11 @@ make build && ./agent-marketplace
 
 Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`
 modifies files during lint, re-stage and commit again.
+
+Any change that touches concurrent code (the git-root memo in
+`internal/config/loader.go`, TUI background commands, the Devin ownership store)
+must also be green under `make test-race` — CI runs it as a required job and
+releases are gated on it.
 
 ## Architecture: Two Entry Points, One Data Flow
 

@@ -153,6 +153,26 @@ decisions, and error paths.
   **env var > config file > code default**.
 - Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
 
+## Concurrency Testing Policy
+
+Race-enabled testing is a **required CI signal**, not an optional local extra.
+`make test-race` runs the full suite with `-race` (and `CGO_ENABLED=1`, unlike the
+shipped `CGO_ENABLED=0` binaries); the **Race** job runs it on every pull request
+and the release job depends on it.
+
+- **Never guard shared state with a lock you also hold while waiting.** Concurrent
+  memoization uses the promise pattern (a per-key record with a `done` channel;
+  see `gitRootFor` in `internal/config/loader.go`): the map lock is held only for
+  map access and never across a wait, so a lock-order cycle cannot exist. A
+  per-key mutex acquired while holding the map lock is the shape that deadlocked
+  git-root discovery.
+- **A concurrency fix ships with a test that fails without it.** Drive the
+  interleaving from a substituted dependency (the `gitRootProbe` var), bound every
+  wait with a timeout so a regression reports a failure instead of hanging the
+  suite, and assert the bookkeeping is drained afterwards.
+- **A promise must always be resolved**, including when the producing goroutine
+  panics; otherwise its waiters block forever.
+
 ## File Layout
 
 ```

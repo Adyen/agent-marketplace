@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
+.PHONY: build test test-race lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -27,14 +27,30 @@ endef
 build:
 	CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o $(BINARY) $(CMD)
 
-test:
-	@: # Tests shadow HOME per-package (TestMain) and per-test (t.Setenv), so
-	@: # Makefile no longer needs a temporary HOME. Git environment is still
-	@: # neutralized so tests that spawn git commands work when run from hooks.
+# Tests shadow HOME per-package (TestMain) and per-test (t.Setenv), so the
+# Makefile does not need a temporary HOME. The git environment is still
+# neutralized so tests that spawn git commands work when run from hooks.
+define run_go_test
 	@set -e; \
 	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 		GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR GIT_CONFIG_PARAMETERS; \
-	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 $(GO) test ./...
+	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 $(1)
+endef
+
+test:
+	$(call run_go_test,$(GO) test ./...)
+
+# Race-detector run. This is a REQUIRED CI signal, not an optional local extra:
+# the loader's git-root memo, the TUI's background commands and the Devin
+# ownership store are concurrent paths whose failure mode is a hang or a
+# corrupted shared file, which a non-race run reports as a pass. -race needs
+# cgo, hence CGO_ENABLED=1 even though every shipped binary is CGO_ENABLED=0.
+# -count=1 keeps a cached pass from standing in for an actual run. The timeout is
+# well above the default 10m per package: instrumented binaries plus the
+# subprocess-heavy cmd tests take ~12m on a fast laptop and more on CI runners,
+# and a timeout panic there would look like a deadlock rather than a slow box.
+test-race:
+	$(call run_go_test,CGO_ENABLED=1 $(GO) test -race -count=1 -timeout 40m ./...)
 
 lint: LINT_MODE=fix
 lint: lint-common
