@@ -135,6 +135,64 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 	}
 }
 
+func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("8", 64)
+	archiveDigest := "sha256:" + strings.Repeat("9", 64)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected network request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{
+		{SourceID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest},
+		{SourceID: "src", Kind: "skill", Name: "missing", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64)},
+	}}
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "cached", contentDigest, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if _, err := cache.WriteArtifact(archiveDigest, []byte("cached artifact")); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
+		t.Fatalf("mark artifact verified: %v", err)
+	}
+
+	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if requests != 0 {
+		t.Fatalf("cached no-fetch inspection made %d HTTP requests, want 0", requests)
+	}
+	if len(inspection.Pins) != 2 {
+		t.Fatalf("inspected %d pins, want 2", len(inspection.Pins))
+	}
+	states := make(map[string]PinStatus, len(inspection.Pins))
+	for _, pin := range inspection.Pins {
+		states[pin.Name] = pin
+		if pin.EndpointQueried || pin.LatestQueried {
+			t.Fatalf("cached no-fetch pin queried endpoint: %#v", pin)
+		}
+	}
+	if pin := states["cached"]; pin.State != PinStateCached || pin.Cache != CacheStateArtifactVerified {
+		t.Fatalf("cached pin = %#v, want cached verified state", pin)
+	}
+	if pin := states["missing"]; pin.State != PinStateMissing {
+		t.Fatalf("missing pin = %#v, want missing state", pin)
+	}
+	_, errs := inspection.Resolve(context.Background(), nil, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 {
+		t.Fatalf("required health errors = %d, want 1: %v", len(errs), errs)
+	}
+	var statusErr *PinStatusError
+	if !errors.As(errs[0], &statusErr) || statusErr.Pin.Name != "missing" {
+		t.Fatalf("required health error = %v, want missing PinStatusError", errs[0])
+	}
+}
+
 func TestInspectionResolveFiltersMetadataAndPromotesRequiredHealth(t *testing.T) {
 	materializable := resolver.ResolvedArtifact{
 		Entry: catalog.Entry{Kind: ir.KindSkill, Name: "ready", Resource: ir.NewSkill("ready", "", "body", nil, nil, ir.SourceRef{})},

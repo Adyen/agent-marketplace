@@ -647,17 +647,22 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 			entry.CatalogKey = catalogKey
 			cfg.Registries[i].CatalogKey = catalogKey
 
-			// Stat the local registry path before attempting ingest so a missing
-			// directory is reported clearly instead of falling through to the
-			// autodetect/ingest failure path (which can yield a misleading
-			// "no recognizable Claude layout" error).
-			if err := config.ValidateLocalRegistryPath(catalogKey); err != nil {
-				if mode == LoadModeCachedNoFetch {
-					// No local registry present and we are forbidden from fetching;
-					// skip it so teardown/dry-run paths remain read-only.
-					slog.Debug("local registry skipped in no-fetch mode", "path", catalogKey, "error", err)
+			if mode == LoadModeInspect || mode == LoadModeCachedNoFetch {
+				allowMissing := mode == LoadModeCachedNoFetch
+				localExists, err := inspectLocalRegistryPath(localPath, catalogKey, allowMissing)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("inspect local registry %q: %w", catalogKey, err))
 					continue
 				}
+				if !localExists {
+					// CachedNoFetch deliberately skips missing local registries;
+					// Inspect treats them as hard errors via allowMissing=false.
+					continue
+				}
+			} else if err := config.ValidateLocalRegistryPath(catalogKey); err != nil {
+				// Stat the local registry path before attempting ingest so a missing
+				// directory is reported clearly instead of falling through to the
+				// autodetect/ingest failure path.
 				slog.Warn("local registry validation failed", "path", catalogKey, "error", err)
 				errs = append(errs, err)
 				continue
@@ -677,7 +682,37 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 
 		bundlePath := entry.BundlePath(cachePath)
 		bundleExists := false
-		if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
+		if mode == LoadModeInspect || mode == LoadModeCachedNoFetch {
+			allowCacheMissing := mode == LoadModeCachedNoFetch
+			cacheExists, err := inspectRemoteGitCachePath(cachePath, allowCacheMissing)
+			if err != nil {
+				job, ok := jobsByKey[cachePath]
+				if !ok {
+					job = &fetchJob{url: entry.URL, ref: entry.Ref, cachePath: cachePath}
+					jobsByKey[cachePath] = job
+				}
+				job.err = fmt.Errorf("inspect cache %q: %w", cachePath, err)
+				requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, job: job})
+				continue
+			}
+			if !cacheExists && mode == LoadModeCachedNoFetch {
+				// No cache on disk and we are forbidden from fetching; skip it so
+				// teardown/dry-run paths remain read-only.
+				continue
+			}
+
+			bundleExists, err = inspectRemoteGitCachePath(bundlePath, true)
+			if err != nil {
+				job, ok := jobsByKey[cachePath]
+				if !ok {
+					job = &fetchJob{url: entry.URL, ref: entry.Ref, cachePath: cachePath}
+					jobsByKey[cachePath] = job
+				}
+				job.err = fmt.Errorf("inspect cache bundle %q: %w", bundlePath, err)
+				requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, job: job})
+				continue
+			}
+		} else if info, err := os.Stat(bundlePath); err == nil && info.IsDir() {
 			bundleExists = true
 		}
 
@@ -716,6 +751,48 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 	return requests, jobs, errs
 }
 
+func inspectLocalRegistryPath(root, path string, allowMissing bool) (bool, error) {
+	return inspectDirectoryPath(root, path, allowMissing)
+}
+
+func inspectRemoteGitCachePath(path string, allowMissing bool) (bool, error) {
+	cacheRoot := cache.CacheDir()
+	cacheBoundary := cacheRoot
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		cacheBoundary = homeDir
+	}
+	if err := cache.ValidateDirectoryAncestry(cacheBoundary, cacheRoot); err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return inspectDirectoryPath(cacheRoot, path, allowMissing)
+}
+
+func inspectDirectoryPath(root, path string, allowMissing bool) (bool, error) {
+	if err := cache.ValidateDirectoryAncestry(root, path); err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if allowMissing && errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("path %q is a symlink", path)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("path %q is not a directory", path)
+	}
+	return true, nil
+}
+
 // runFetches executes fetch jobs according to the load mode.
 func runFetches(jobs []*fetchJob, mode LoadMode, cloneOrPull CloneOrPullFunc) {
 	switch mode {
@@ -731,13 +808,8 @@ func runFetches(jobs []*fetchJob, mode LoadMode, cloneOrPull CloneOrPullFunc) {
 		runFetchJobs(cold, cloneOrPull)
 	case LoadModeInspect:
 		for _, job := range jobs {
-			info, err := os.Stat(job.cachePath)
-			if err != nil {
+			if _, err := inspectRemoteGitCachePath(job.cachePath, false); err != nil {
 				job.err = fmt.Errorf("inspect cache %q: %w", job.cachePath, err)
-				continue
-			}
-			if !info.IsDir() {
-				job.err = fmt.Errorf("inspect cache %q: not a directory", job.cachePath)
 			}
 		}
 	case LoadModeCachedNoFetch:
