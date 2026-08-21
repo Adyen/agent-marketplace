@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // writeSkill creates a registry skill directory with the given manifest bytes.
@@ -42,7 +44,7 @@ func TestDiscoverRejectsSkillSymlinkOutsideRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := Discover(registry, "claude")
+	loaded, err := Discover(registryfs.Local(registry), "claude")
 	if err == nil || !strings.Contains(err.Error(), "resolves outside the registry root") {
 		t.Fatalf("Discover error = %v, want skill symlink containment rejection", err)
 	}
@@ -62,7 +64,7 @@ func TestDiscoverRejectsAbsoluteSkillSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Discover(registry, "claude")
+	_, err := Discover(registryfs.Local(registry), "claude")
 	if err == nil || !strings.Contains(err.Error(), "absolute symlink") {
 		t.Fatalf("Discover error = %v, want absolute symlink rejection", err)
 	}
@@ -78,7 +80,7 @@ func TestDiscoverDoesNotBlockOnFIFOManifest(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := Discover(registry, "claude")
+		_, err := Discover(registryfs.Local(registry), "claude")
 		done <- err
 	}()
 	select {
@@ -105,7 +107,7 @@ func TestDiscoverAllowsContainedRelativeSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := Discover(registry, "claude")
+	loaded, err := Discover(registryfs.Local(registry), "claude")
 	if err != nil {
 		t.Fatalf("Discover rejected a contained relative symlink: %v", err)
 	}
@@ -114,24 +116,33 @@ func TestDiscoverAllowsContainedRelativeSymlink(t *testing.T) {
 	}
 }
 
-func TestDiscoverSetsSourceRootForConfinedSupportReads(t *testing.T) {
+// TestDiscoverStampsSourcePolicyForConfinedSupportReads pins the carrier: both
+// halves of the read policy — the root and the trust level — reach every entry,
+// because the layers that read a resource's support files run long after
+// discovery and have nothing else to derive them from.
+func TestDiscoverStampsSourcePolicyForConfinedSupportReads(t *testing.T) {
 	registry := t.TempDir()
 	writeSkill(t, registry, "provenance", "---\nname: provenance\ndescription: Provenance\n---\n\nBody\n")
 
-	loaded, err := Discover(registry, "claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(loaded.Entries) == 0 {
-		t.Fatal("no entries discovered")
-	}
 	want, err := filepath.Abs(registry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range loaded.Entries {
-		if entry.SourceRoot != want {
-			t.Fatalf("entry %q SourceRoot = %q, want %q", entry.Name, entry.SourceRoot, want)
+	for _, source := range []registryfs.Policy{registryfs.Local(registry), registryfs.Remote(registry)} {
+		loaded, err := Discover(source, "claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(loaded.Entries) == 0 {
+			t.Fatal("no entries discovered")
+		}
+		for _, entry := range loaded.Entries {
+			if entry.SourcePolicy.Root != want {
+				t.Fatalf("entry %q SourcePolicy.Root = %q, want %q", entry.Name, entry.SourcePolicy.Root, want)
+			}
+			if entry.SourcePolicy.RejectSymlinks != source.RejectSymlinks {
+				t.Fatalf("entry %q SourcePolicy.RejectSymlinks = %v, want %v", entry.Name, entry.SourcePolicy.RejectSymlinks, source.RejectSymlinks)
+			}
 		}
 	}
 }
@@ -199,6 +210,94 @@ func TestLoadRegistriesIgnoresGitMetadataForRemotePolicy(t *testing.T) {
 		if strings.Contains(err.Error(), "symlink") {
 			t.Fatalf("remote validation walked .git: %v", err)
 		}
+	}
+}
+
+// TestLoadRegistriesRefusesRemoteSymlinkPlantedAfterValidation is the
+// point-of-use regression for the remote policy. The eager tree walk is a
+// diagnostic about the bytes that were on disk when it ran; a registry cache is
+// rewritten in place by clone/pull, and a `sync` reads the tree again afterwards.
+// A *contained* symlink is the interesting shape here: containment alone accepts
+// it, so only a policy that travelled with the tree to the read refuses it.
+//
+// The discover wrapper is this test's clock: it runs after validateRegistrySelection
+// has already passed, and it hands the real Discover the same policy the loader
+// derived, so what is under test is the read and not the wrapper.
+func TestLoadRegistriesRefusesRemoteSymlinkPlantedAfterValidation(t *testing.T) {
+	registry := t.TempDir()
+	writeSkill(t, registry, "ok", "---\nname: ok\ndescription: Fine\n---\n\nBody\n")
+
+	validated := false
+	result := LoadRegistries(&config.Config{Registries: []config.RegistryEntry{{
+		URL:           "https://example.invalid/registry.git",
+		Ref:           "main",
+		SourceHarness: "claude",
+	}}}, "", LoadModeRefresh,
+		WithCloneOrPull(func(_, _ string) (string, error) { return registry, nil }),
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			validated = true
+			// Contained and relative: legitimate in a local working copy, and
+			// invisible to the walk that already finished.
+			if err := os.Symlink("ok/SKILL.md", filepath.Join(registry, "skills", "swapped.md")); err != nil {
+				t.Fatal(err)
+			}
+			return Discover(source, sourceHarness)
+		}))
+
+	if !validated {
+		t.Fatal("discovery never ran, so the post-validation window was not exercised")
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("LoadRegistries accepted a remote symlink planted after eager validation")
+	}
+	for _, err := range result.Errors {
+		if strings.Contains(err.Error(), "remote registries do not allow symlinks") {
+			return
+		}
+	}
+	t.Fatalf("LoadRegistries errors = %v, want the remote symlink policy applied at the read", result.Errors)
+}
+
+// TestLoadRegistriesRejectsSymlinkInNestedGitDirectory scopes the `.git`
+// exemption to the clone root. `.git` at the top of the cache is metadata this
+// tool wrote; a directory with that name inside a resource is content the
+// registry authored, and exempting it by name would hand every remote registry a
+// place to hide a refused entry from the eager walk.
+func TestLoadRegistriesRejectsSymlinkInNestedGitDirectory(t *testing.T) {
+	registry := t.TempDir()
+	writeSkill(t, registry, "ok", "---\nname: ok\ndescription: Fine\n---\n\nBody\n")
+	nested := filepath.Join(registry, "skills", "ok", ".git")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../SKILL.md", filepath.Join(nested, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Discovery running at all means the eager walk let the tree through, which is
+	// the failure this test is about: the point-of-use checks would still refuse
+	// the entry later, but the operator would learn about it from whichever file
+	// ingestion happened to open rather than from one clear pre-flight message.
+	discovered := false
+	result := LoadRegistries(&config.Config{Registries: []config.RegistryEntry{{
+		URL:           "https://example.invalid/registry.git",
+		Ref:           "main",
+		SourceHarness: "claude",
+	}}}, "", LoadModeRefresh,
+		WithCloneOrPull(func(_, _ string) (string, error) { return registry, nil }),
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			discovered = true
+			return Discover(source, sourceHarness)
+		}))
+
+	if discovered {
+		t.Fatal("a symlink hidden in a nested .git directory escaped the eager remote walk")
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("LoadRegistries accepted a symlink hidden in a nested .git directory")
+	}
+	if !strings.Contains(result.Errors[0].Error(), "remote registries do not allow symlinks") {
+		t.Fatalf("LoadRegistries error = %v, want the nested .git entry refused", result.Errors[0])
 	}
 }
 

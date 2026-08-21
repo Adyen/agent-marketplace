@@ -11,6 +11,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // TestDiscover_VacantLotWithSubBundles verifies that when a directory has no
@@ -48,7 +50,7 @@ metadata:
 # Skill B
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -102,7 +104,7 @@ metadata:
 # Sub Skill
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -169,7 +171,7 @@ metadata:
 # General
 `)
 
-	result, err := Discover(pluginsDir, "claude")
+	result, err := Discover(registryfs.Local(pluginsDir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", pluginsDir, err)
 	}
@@ -224,7 +226,7 @@ metadata:
 # ZZZ
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -243,7 +245,7 @@ func TestDiscover_VacantLotGenuinelyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
 	// A genuinely empty directory with no subdirectories at all.
-	_, err := Discover(dir, "claude")
+	_, err := Discover(registryfs.Local(dir), "claude")
 	if err == nil {
 		t.Fatal("expected error for genuinely empty directory with no recognizable layout")
 	}
@@ -261,7 +263,7 @@ func TestDiscover_VacantLotWithNonBundleSubdirs(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "docs", "README.md"), "# Documentation")
 
-	_, err := Discover(dir, "claude")
+	_, err := Discover(registryfs.Local(dir), "claude")
 	if err == nil {
 		t.Fatal("expected error for directory with no recognizable layout and no sub-bundles")
 	}
@@ -296,7 +298,7 @@ description: PM command
 # PM Command
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -350,7 +352,7 @@ metadata:
 # My Skill
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -400,7 +402,7 @@ func TestScanForSubBundles(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "gamma", "delta", "skills", "z", "SKILL.md"), "---\nname: z\n---\nZ\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(registryfs.Local(dir))
 
 	if len(bundles) != 3 {
 		t.Fatalf("expected 3 sub-bundles, got %d: %v", len(bundles), bundles)
@@ -435,7 +437,7 @@ func TestScanForSubBundles_StopsAtBundleRoot(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "alpha", "sub-skill", "skills", "inner", "SKILL.md"), "---\nname: inner\n---\nI\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(registryfs.Local(dir))
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (alpha only, not descending further), got %d: %v", len(bundles), bundles)
@@ -547,7 +549,7 @@ metadata:
 # Skill A
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -611,7 +613,7 @@ func TestDiscover_SubBundlesIgnoredSuppressedWhenCatalogCoversThem(t *testing.T)
 	}
 	writeFile(t, filepath.Join(dir, "python", "python-testing", "SKILL.md"), "---\nname: python-testing\ndescription: Python testing\nmetadata:\n  tags: []\n---\n\n# Python Testing\n")
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -717,7 +719,7 @@ func TestScanForSubBundles_SkipsHarnessWorkspaceDirs(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "my-plugin", "skills", "x", "SKILL.md"), "---\nname: x\n---\nX\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(registryfs.Local(dir))
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (my-plugin only), got %d: %v", len(bundles), bundles)
@@ -746,7 +748,7 @@ metadata:
 # My Skill
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -776,7 +778,7 @@ func TestDiscover_FactorySubBundle(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(pluginDir, ".factory", "skills", "factory-skill", "SKILL.md"), "Do the factory thing\n")
 
-	result, err := Discover(dir, "factory")
+	result, err := Discover(registryfs.Local(dir), "factory")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"factory\") = _, %v", dir, err)
 	}
@@ -811,7 +813,7 @@ func TestScanForSubBundles_SkipsGitDir(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "my-plugin", "skills", "x", "SKILL.md"), "---\nname: x\n---\nX\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(registryfs.Local(dir))
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (my-plugin, NOT .git), got %d: %v", len(bundles), bundles)
@@ -849,7 +851,7 @@ metadata:
 # VM Lifecycle
 `)
 
-	result, err := Discover(dir, "")
+	result, err := Discover(registryfs.Local(dir), "")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"\") = _, %v", dir, err)
 	}
@@ -895,7 +897,7 @@ metadata:
 # Skill B
 `)
 
-	result, err := Discover(dir, "claude")
+	result, err := Discover(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -1145,7 +1147,7 @@ metadata:
 	// non-existent paths. Load will fail on the non-existent directory.
 	badDir := filepath.Join(dir, "nonexistent-plugin")
 
-	result, err := discoverSubBundles([]string{goodDir, badDir}, "claude")
+	result, err := discoverSubBundles(registryfs.Policy{}, []string{goodDir, badDir}, "claude")
 	if err != nil {
 		t.Fatalf("discoverSubBundles returned error: %v (expected partial success)", err)
 	}
@@ -1183,7 +1185,7 @@ func TestDiscoverSubBundles_AllFailReturnsError(t *testing.T) {
 	aaaDir := filepath.Join(dir, "aaa-plugin")
 	bbbDir := filepath.Join(dir, "bbb-plugin")
 
-	_, err := discoverSubBundles([]string{aaaDir, bbbDir}, "claude")
+	_, err := discoverSubBundles(registryfs.Policy{}, []string{aaaDir, bbbDir}, "claude")
 	if err == nil {
 		t.Fatal("expected error when all sub-bundles fail to load, got nil")
 	}
@@ -1229,10 +1231,10 @@ metadata:
 		WithCloneOrPull(func(url, ref string) (string, error) {
 			return regDir, nil
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
-			if dir == regDir {
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			if source.Root == regDir {
 				// Return a catalog with SubBundles: one good, one failed.
-				goodCat, _ := Discover(goodDir, sourceHarness)
+				goodCat, _ := Discover(source.At(goodDir), sourceHarness)
 				return LoadedCatalog{
 					SubBundles: map[string]LoadedCatalog{
 						goodDir: goodCat,
@@ -1240,7 +1242,7 @@ metadata:
 					Errors: []error{fmt.Errorf("sub-bundle %q: directory does not exist", badDir)},
 				}, nil
 			}
-			return Discover(dir, sourceHarness)
+			return Discover(source, sourceHarness)
 		}),
 	)
 
@@ -1326,15 +1328,15 @@ metadata:
 		},
 	}
 
-	pluginCat, _ := Discover(pluginDir, "claude")
-	otherCat, _ := Discover(otherDir, "claude")
+	pluginCat, _ := Discover(registryfs.Local(pluginDir), "claude")
+	otherCat, _ := Discover(registryfs.Local(otherDir), "claude")
 
 	result := LoadRegistries(cfg, "", LoadModeRefresh,
 		WithCloneOrPull(func(url, ref string) (string, error) {
 			return regDir, nil
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
-			if dir == regDir {
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			if source.Root == regDir {
 				// Root: return SubBundles so recursive discovery triggers
 				return LoadedCatalog{
 					SubBundles: map[string]LoadedCatalog{
@@ -1343,10 +1345,10 @@ metadata:
 					},
 				}, nil
 			}
-			if dir == pluginDir {
+			if source.Root == pluginDir {
 				return pluginCat, nil
 			}
-			if dir == otherDir {
+			if source.Root == otherDir {
 				return otherCat, nil
 			}
 			return LoadedCatalog{}, nil
@@ -1442,8 +1444,8 @@ metadata:
 		},
 	}
 
-	pluginCat, _ := Discover(pluginDir, "claude")
-	otherCat, _ := Discover(otherDir, "claude")
+	pluginCat, _ := Discover(registryfs.Local(pluginDir), "claude")
+	otherCat, _ := Discover(registryfs.Local(otherDir), "claude")
 
 	// Realistic mock: parent catalog contains merged entries from all
 	// sub-bundles, plus SubBundles for decomposition.
@@ -1460,14 +1462,14 @@ metadata:
 		WithCloneOrPull(func(url, ref string) (string, error) {
 			return regDir, nil
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
-			if dir == regDir {
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			if source.Root == regDir {
 				return parentCatWithMerge, nil
 			}
-			if dir == pluginDir {
+			if source.Root == pluginDir {
 				return pluginCat, nil
 			}
-			if dir == otherDir {
+			if source.Root == otherDir {
 				return otherCat, nil
 			}
 			return LoadedCatalog{}, nil
@@ -1540,9 +1542,9 @@ metadata:
 		WithCloneOrPull(func(url, ref string) (string, error) {
 			return regDir, nil
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
-			discoverCalls[dir]++
-			return Discover(dir, sourceHarness)
+		WithDiscoverFunc(func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+			discoverCalls[source.Root]++
+			return Discover(source, sourceHarness)
 		}),
 	)
 
@@ -1693,7 +1695,7 @@ func BenchmarkDiscoverMalformedPathNormalization(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := Discover(dir, "factory"); err != nil {
+		if _, err := Discover(registryfs.Local(dir), "factory"); err != nil {
 			b.Fatal(err)
 		}
 	}

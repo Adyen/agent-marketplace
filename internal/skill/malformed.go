@@ -270,13 +270,14 @@ func ParseFailure(m MalformedSkill) string {
 // path may be a resource file or a resource directory (in which case its
 // SKILL.md is read). Returns "" when nothing usable is found.
 //
-// The read is confined to registryRoot (or to path's own directory when the
-// caller has no registry root to offer). The path reaching this function comes
-// from a registry-authored ingest diagnostic, so it is exactly as untrusted as
-// the registry: without confinement, naming an escaping symlink here reads host
-// content, and naming a FIFO blocks the command forever.
-func DeclaredNameFromFile(registryRoot, path string) string {
-	f, err := registryfs.OpenResourceFile(registryRoot, path)
+// The read is governed by source: confined to its registry root (or to path's own
+// directory when the caller has no root to offer), and symlink-free when the tree
+// is remote. The path reaching this function comes from a registry-authored ingest
+// diagnostic, so it is exactly as untrusted as the registry: without confinement,
+// naming an escaping symlink here reads host content, and naming a FIFO blocks the
+// command forever.
+func DeclaredNameFromFile(source registryfs.Policy, path string) string {
+	f, err := source.OpenResourceFile(path)
 	if err != nil {
 		return ""
 	}

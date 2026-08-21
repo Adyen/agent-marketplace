@@ -88,12 +88,18 @@ type CollectionInclude struct {
 	Version string `yaml:"version,omitempty"`
 }
 
-// DiscoverCollections walks the `collections/` subdirectory of skillDir and
-// parses every COLLECTION.yaml file found. registryURL, ref, and path are
-// stamped on each discovered collection for provenance tracking.
-func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([]Collection, error) {
+// DiscoverCollections walks the `collections/` subdirectory of the registry tree
+// described by source and parses every COLLECTION.yaml file found. registryURL,
+// ref, and path are stamped on each discovered collection for provenance
+// tracking.
+//
+// Every read goes through source, so a collection manifest is subject to the same
+// policy as the rest of the tree it came from: confined to the registry root, and
+// symlink-free when the registry is remote.
+func DiscoverCollections(source registryfs.Policy, catalogKey, registryURL, ref, path string) ([]Collection, error) {
+	skillDir := source.Root
 	collectionsDir := filepath.Join(skillDir, "collections")
-	secure, err := registryfs.New(skillDir, false)
+	secure, err := source.FS()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil

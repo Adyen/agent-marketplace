@@ -21,7 +21,7 @@ func TestValidateTreeRejectsRemoteSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ValidateTree(root, true)
+	err := Remote(root).ValidateTree()
 	if err == nil || !strings.Contains(err.Error(), "remote registries do not allow symlinks") {
 		t.Fatalf("ValidateTree error = %v, want actionable remote symlink rejection", err)
 	}
@@ -39,7 +39,7 @@ func TestValidateTreeAllowsContainedRelativeSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ValidateTree(root, false); err != nil {
+	if err := Local(root).ValidateTree(); err != nil {
 		t.Fatalf("ValidateTree rejected contained local symlink: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestValidateTreeRejectsEscapingLocalSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ValidateTree(root, false)
+	err := Local(root).ValidateTree()
 	if err == nil {
 		t.Fatal("ValidateTree accepted a symlink pointing outside the registry root")
 	}
@@ -86,13 +86,13 @@ func TestValidateTreeRejectsAbsoluteSymlinkInsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ValidateTree(root, false)
+	err := Local(root).ValidateTree()
 	if err == nil || !strings.Contains(err.Error(), "absolute symlink") {
 		t.Fatalf("ValidateTree error = %v, want absolute symlink rejection", err)
 	}
 }
 
-func TestValidateTreeSkipsGitMetadata(t *testing.T) {
+func TestValidateCloneTreeSkipsGitMetadataAtRootOnly(t *testing.T) {
 	root := t.TempDir()
 	external := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git", "objects"), 0o755); err != nil {
@@ -103,8 +103,35 @@ func TestValidateTreeSkipsGitMetadata(t *testing.T) {
 	if err := os.Symlink(filepath.Join(external, "anything"), filepath.Join(root, ".git", "objects", "link")); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateTree(root, true); err != nil {
-		t.Fatalf("ValidateTree walked .git: %v", err)
+	if err := Remote(root).ValidateCloneTree(); err != nil {
+		t.Fatalf("ValidateCloneTree walked the clone's own .git: %v", err)
+	}
+	// The exemption is for the clone root only: ValidateTree makes no assumption
+	// about who wrote the tree, so nothing in it is exempt.
+	if err := Remote(root).ValidateTree(); err == nil {
+		t.Fatal("ValidateTree exempted .git in a tree that is not a clone root")
+	}
+}
+
+// TestValidateCloneTreeWalksNestedGitDirectory is the containment hole a
+// name-based exemption would leave: any registry can create a directory called
+// `.git` at any depth, and a nested one is authored content rather than clone
+// metadata, so skipping it would let a remote registry hide a refused entry from
+// the eager walk entirely.
+func TestValidateCloneTreeWalksNestedGitDirectory(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	nested := filepath.Join(root, "skills", "evil", ".git")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(external, "sentinel"), filepath.Join(nested, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Remote(root).ValidateCloneTree()
+	if err == nil || !strings.Contains(err.Error(), "skills/evil/.git/link") {
+		t.Fatalf("ValidateCloneTree error = %v, want the nested .git entry to be refused", err)
 	}
 }
 
@@ -175,7 +202,7 @@ func TestOpenDoesNotBlockOnFIFO(t *testing.T) {
 	if _, err := fsys.Stat("trap"); err == nil || !strings.Contains(err.Error(), "unsupported file type") {
 		t.Fatalf("Stat error = %v, want unsupported file type", err)
 	}
-	if err := ValidateTree(root, false); err == nil || !strings.Contains(err.Error(), "unsupported file type") {
+	if err := Local(root).ValidateTree(); err == nil || !strings.Contains(err.Error(), "unsupported file type") {
 		t.Fatalf("ValidateTree error = %v, want unsupported file type", err)
 	}
 }
@@ -256,8 +283,9 @@ func TestStatMissingPathIsNotExist(t *testing.T) {
 	if fsys.ValidationError() != nil {
 		t.Fatalf("a missing path recorded a validation error: %v", fsys.ValidationError())
 	}
-	if err := ValidatePath(fsys.Root(), "missing", true); err != nil {
-		t.Fatalf("ValidatePath on a missing path = %v, want nil", err)
+	exists, err := Remote(fsys.Root()).ValidateSelection("missing")
+	if err != nil || exists {
+		t.Fatalf("ValidateSelection on a missing path = %v, %v, want false, nil", exists, err)
 	}
 }
 
@@ -316,7 +344,7 @@ func TestSubtreeConfinesToRegistryRootAndFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fsys, base, err := Subtree(registry, skillDir, false)
+	fsys, base, err := Local(registry).Subtree(skillDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +358,7 @@ func TestSubtreeConfinesToRegistryRootAndFallsBack(t *testing.T) {
 
 	// With no registry provenance the subtree narrows to the directory itself,
 	// so the same intra-registry symlink is refused rather than followed.
-	fsys, base, err = Subtree("", skillDir, false)
+	fsys, base, err = Local("").Subtree(skillDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,6 +368,59 @@ func TestSubtreeConfinesToRegistryRootAndFallsBack(t *testing.T) {
 	}
 	if _, err := fsys.ReadFile("shared.txt"); err == nil {
 		t.Fatal("directory-scoped confinement followed a symlink out of the directory")
+	}
+}
+
+// TestSubtreeRefusesSymlinkedFallbackDirectory pins the one way the
+// no-provenance fallback could end up wider than the directory it is supposed to
+// fence in. os.OpenRoot resolves the root path it is handed, so rooting at a
+// symlink confines reads to the link's target instead — a tree chosen by whoever
+// planted the link, which is the opposite of narrowing.
+func TestSubtreeRefusesSymlinkedFallbackDirectory(t *testing.T) {
+	host := t.TempDir()
+	if err := os.WriteFile(filepath.Join(host, "sentinel"), []byte("SENTINEL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staging := t.TempDir()
+	link := filepath.Join(staging, "resource")
+	if err := os.Symlink(host, link); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, base, err := Local("").Subtree(link)
+	if err == nil {
+		defer func() { _ = fsys.Close() }()
+		data, readErr := fsys.ReadFile(join(base, "sentinel"))
+		t.Fatalf("Subtree rooted at a symlink target: read %q (%v) from a directory no registry vouched for", data, readErr)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Subtree error = %v, want the symlinked fallback directory to be named", err)
+	}
+}
+
+// TestSubtreeRefusesRatherThanWidenWhenKnownRootIsRejected covers the other
+// direction of the same rule. When provenance *is* known and opening that root
+// fails, falling back to the resource directory would quietly root the read
+// inside a tree the policy just refused — narrower in path terms, but a bypass of
+// the decision that produced the failure.
+func TestSubtreeRefusesRatherThanWidenWhenKnownRootIsRejected(t *testing.T) {
+	registry := t.TempDir()
+	skillDir := filepath.Join(registry, "skills", "one")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "registry")
+	if err := os.Symlink(registry, link); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, _, err := Remote(link).Subtree(filepath.Join(link, "skills", "one"))
+	if err == nil {
+		_ = fsys.Close()
+		t.Fatal("Subtree fell back to the resource directory after the remote policy rejected the registry root")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Subtree error = %v, want the rejected registry root to be reported", err)
 	}
 }
 
@@ -397,7 +478,7 @@ func TestReadAfterValidationRefusesSwappedEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ValidateTree(root, false); err != nil {
+	if err := Local(root).ValidateTree(); err != nil {
 		t.Fatalf("ValidateTree on an honest tree: %v", err)
 	}
 	fsys, err := New(root, false)
@@ -507,17 +588,17 @@ func TestReadResourceFileConfinesDirectoryAndFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, file, err := ReadResourceFile(registry, good)
+	data, file, err := Local(registry).ReadResourceFile(good)
 	if err != nil || !strings.Contains(string(data), "name: good") {
 		t.Fatalf("ReadResourceFile(dir) = %q, %q, %v", data, file, err)
 	}
 	if file != filepath.Join(good, "SKILL.md") {
 		t.Fatalf("ReadResourceFile source file = %q", file)
 	}
-	if data, _, err := ReadResourceFile(registry, bad); err == nil {
+	if data, _, err := Local(registry).ReadResourceFile(bad); err == nil {
 		t.Fatalf("ReadResourceFile followed an escaping SKILL.md symlink: %q", data)
 	}
-	if data, _, err := ReadResourceFile(registry, filepath.Join(bad, "SKILL.md")); err == nil {
+	if data, _, err := Local(registry).ReadResourceFile(filepath.Join(bad, "SKILL.md")); err == nil {
 		t.Fatalf("ReadResourceFile followed an escaping file symlink: %q", data)
 	}
 }

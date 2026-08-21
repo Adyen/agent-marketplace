@@ -10,6 +10,7 @@ import (
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -545,8 +546,8 @@ func swapCloneOrPull(fn func(url, ref string) (string, error)) func() {
 
 func swapDiscoverSkills(fn func(dir string) ([]pkgcatalog.Entry, []skill.MalformedSkill, error)) func() {
 	prev := discoverCatalog
-	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
-		entries, malformed, err := fn(dir)
+	discoverCatalog = func(source registryfs.Policy, _ string) (catalogInfo, error) {
+		entries, malformed, err := fn(source.Root)
 		if err != nil {
 			return catalogInfo{}, err
 		}

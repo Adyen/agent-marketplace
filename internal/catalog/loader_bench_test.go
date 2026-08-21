@@ -9,6 +9,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // benchSubBundleCatalog returns a LoadedCatalog with nSkills entries.
@@ -51,8 +53,8 @@ func BenchmarkDiscoverAll_SubBundles(b *testing.B) {
 
 	// Build a discover func that returns SubBundles for the root dir
 	// and plain catalogs for sub-bundle dirs.
-	subBundleDiscover := func(dir, sourceHarness string) (LoadedCatalog, error) {
-		if dir == regDir {
+	subBundleDiscover := func(source registryfs.Policy, _ string) (LoadedCatalog, error) {
+		if source.Root == regDir {
 			subBundles := make(map[string]LoadedCatalog, nSubBundles)
 			mergedEntries := make([]Entry, 0, nSubBundles*nSkills)
 			mergedResources := make(map[string]ir.Resource, nSubBundles*nSkills)
@@ -114,7 +116,7 @@ func BenchmarkDiscoverAll_NormalPath(b *testing.B) {
 
 	regDir := b.TempDir()
 	cloneOrPull := func(url, ref string) (string, error) { return regDir, nil }
-	normalDiscover := func(dir, sourceHarness string) (LoadedCatalog, error) {
+	normalDiscover := func(_ registryfs.Policy, _ string) (LoadedCatalog, error) {
 		return benchSubBundleCatalog(nSkills), nil
 	}
 

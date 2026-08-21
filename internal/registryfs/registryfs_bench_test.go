@@ -115,25 +115,76 @@ func BenchmarkWalkDirRegistry(b *testing.B) {
 	}
 }
 
+// BenchmarkFSReadFileRemotePolicy measures what the remote "no symlinks at all"
+// policy costs per read: one confined Lstat per path component, on every open, so
+// that a symlink planted after the eager walk is still refused when the bytes are
+// read. Compare against BenchmarkFSReadFile for the delta.
+func BenchmarkFSReadFileRemotePolicy(b *testing.B) {
+	root := buildRegistry(b, 4, 4, 0)
+	fsys, err := New(root, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = fsys.Close() }()
+	name := "skills/skill-002/scripts/support-002.sh"
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := fs.ReadFile(fsys, name); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkWalkDirRegistryRemotePolicy is the whole-tree version of the same
+// comparison, which is the shape ingestion of a remote registry actually has.
+func BenchmarkWalkDirRegistryRemotePolicy(b *testing.B) {
+	for _, skills := range []int{10, 100} {
+		root := buildRegistry(b, skills, 5, 0)
+		b.Run(fmt.Sprintf("skills=%d", skills), func(b *testing.B) {
+			fsys, err := New(root, true)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer func() { _ = fsys.Close() }()
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := fs.WalkDir(fsys, ".", func(_ string, _ fs.DirEntry, err error) error { return err }); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkValidateTree measures the eager remote-registry policy walk. The
-// `.git` sub-benchmark is the blast-radius case: a clone's metadata dwarfs its
-// content, which is why the walk skips it.
+// `.git` sub-benchmarks are the blast-radius case: a clone's metadata dwarfs its
+// content, which is why the walk skips it at a clone root — and why that
+// exemption is not extended to a `.git` directory anywhere else, whose cost is
+// the third case.
 func BenchmarkValidateTree(b *testing.B) {
 	cases := []struct {
 		name     string
 		skills   int
 		support  int
 		gitFiles int
+		clone    bool
 	}{
 		{name: "content-only", skills: 50, support: 5},
-		{name: "with-git-metadata", skills: 50, support: 5, gitFiles: 2000},
+		{name: "clone-root-skips-git-metadata", skills: 50, support: 5, gitFiles: 2000, clone: true},
+		{name: "walks-git-metadata", skills: 50, support: 5, gitFiles: 2000},
 	}
 	for _, tc := range cases {
 		root := buildRegistry(b, tc.skills, tc.support, tc.gitFiles)
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := ValidateTree(root, true); err != nil {
+				var err error
+				if tc.clone {
+					err = Remote(root).ValidateCloneTree()
+				} else {
+					err = Remote(root).ValidateTree()
+				}
+				if err != nil {
 					b.Fatal(err)
 				}
 			}

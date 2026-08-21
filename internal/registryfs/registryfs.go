@@ -274,8 +274,11 @@ func (r *FS) validName(name string) error {
 // with a confined Lstat, which cannot itself escape, so the worst a concurrent
 // rewrite can do is swap one contained entry for another — containment and the
 // file-type check are still enforced by the open that follows.
+//
+// This runs on every remote read, so it walks the prefixes without materializing
+// them (see forEachPrefix): the check is unavoidable, the garbage is not.
 func (r *FS) refuseSymlinks(name string) error {
-	for _, prefix := range prefixes(name) {
+	return forEachPrefix(name, func(prefix string) error {
 		info, err := r.root.Lstat(prefix)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -286,8 +289,8 @@ func (r *FS) refuseSymlinks(name string) error {
 		if info.Mode()&fs.ModeSymlink != 0 {
 			return r.record(fmt.Errorf("registry path %q is a symlink; remote registries do not allow symlinks", prefix))
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *FS) checkEntry(dir string, entry fs.DirEntry) error {
@@ -340,28 +343,33 @@ func (r *FS) diagnose(name string, err error) error {
 }
 
 func (r *FS) escapingComponent(name string) (component, target string, escapes bool) {
-	for _, prefix := range prefixes(name) {
+	errStop := errors.New("stop")
+	_ = forEachPrefix(name, func(prefix string) error {
 		info, err := r.root.Lstat(prefix)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return "", "", false
+				return errStop
 			}
 			// Lstat is confined as well, so a non-ENOENT failure here means the
 			// escape happens at or before this component.
-			return prefix, "", true
+			component, escapes = prefix, true
+			return errStop
 		}
 		if info.Mode()&fs.ModeSymlink == 0 {
-			continue
+			return nil
 		}
 		link, err := r.root.Readlink(prefix)
 		if err != nil {
-			return prefix, "", true
+			component, escapes = prefix, true
+			return errStop
 		}
 		if linkEscapes(prefix, link) {
-			return prefix, link, true
+			component, target, escapes = prefix, link, true
+			return errStop
 		}
-	}
-	return "", "", false
+		return nil
+	})
+	return component, target, escapes
 }
 
 func (r *FS) record(err error) error {
@@ -402,17 +410,22 @@ func checkType(name string, mode fs.FileMode) error {
 	return fmt.Errorf("registry path %q has unsupported file type %s; only regular files and directories are allowed", name, mode.Type())
 }
 
-// prefixes lists every path prefix of name, shortest first, excluding ".".
-func prefixes(name string) []string {
+// forEachPrefix calls fn with every path prefix of name, shortest first,
+// excluding ".", and stops at the first error. It slices name instead of building
+// a list because it runs per read under the remote policy.
+func forEachPrefix(name string, fn func(prefix string) error) error {
 	if name == "." {
 		return nil
 	}
-	parts := strings.Split(name, "/")
-	out := make([]string, 0, len(parts))
-	for i := range parts {
-		out = append(out, strings.Join(parts[:i+1], "/"))
+	for i := 0; i < len(name); i++ {
+		if name[i] != '/' {
+			continue
+		}
+		if err := fn(name[:i]); err != nil {
+			return err
+		}
 	}
-	return out
+	return fn(name)
 }
 
 func join(dir, name string) string {

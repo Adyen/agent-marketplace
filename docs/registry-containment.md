@@ -24,12 +24,23 @@ tui.ReadSkillMarkdown           ─┤
 materialize.sourceTree          ─┘
 ```
 
-Provenance travels with the data so the confinement root is never guessed:
-`catalog.Entry.SourceRoot` is stamped at discovery, rides `resolver`'s
-`ResolvedArtifact` into materialization, and becomes the root of the
-`registryfs.FS` that reads support files. When a resource arrives without a
-`SourceRoot` (an in-memory fixture, a synthetic entry), the resource's own
-directory becomes the root: narrower, never wider.
+Provenance travels with the data so neither the confinement root nor the trust
+level is ever guessed. `registryfs.Policy` holds both — the registry root, and
+whether the tree is remote content (no symlinks at all) or a local working copy
+(contained symlinks allowed). It is stamped on `catalog.Entry.SourcePolicy` at
+discovery, rides `resolver`'s `ResolvedArtifact` into materialization, and becomes
+the `registryfs.FS` that reads support files. Carrying one value rather than a
+root plus a flag is deliberate: a caller cannot forward the root and forget that
+the tree was remote.
+
+When a resource arrives without a policy (an in-memory fixture, a synthetic
+entry), the resource's own directory becomes the root: narrower, never wider.
+"Never wider" is enforced, not assumed — `os.Root` resolves the root path it is
+handed, so a *symlinked* resource directory would confine reads to the link's
+target instead, and that fallback is refused rather than rooted at a tree the link
+chose. For the same reason, a failure to open a known registry root is reported
+instead of falling back to the resource directory: the fallback exists for missing
+provenance, not as a way around a policy decision.
 
 ### Point of use, not check-then-use
 
@@ -42,6 +53,15 @@ between the check and the read changes nothing — the read fails.
 For the same reason **no verdict is cached across calls.** `ValidateTree` is an
 eager diagnostic pass that produces a good error message before ingestion starts;
 it is not the mechanism, and its result is deliberately not remembered.
+
+This applies to the remote "no symlinks" rule as much as to containment. The rule
+is not something the eager walk establishes once for a tree — it is re-applied by
+every read, because `sync` copies support files minutes after discovery validated
+the tree, and a *contained* symlink planted in that window passes containment. The
+cost of that per-read check is measured by `BenchmarkFSReadFileRemotePolicy` and
+`BenchmarkWalkDirRegistryRemotePolicy`: on a 100-skill registry a full walk under
+the remote policy runs about 1.5× the local one (each read pays one confined
+`Lstat` per path component). Remote registries only.
 
 ## The rules
 
@@ -73,11 +93,15 @@ Unix that descriptor is opened non-blocking, because a plain `open(2)` of a FIFO
 with no writer blocks forever: a single named pipe committed to a registry could
 otherwise wedge every `list`, `status`, and `sync` until the process was killed.
 
-**`.git` is skipped by the eager validation walk.** It is a clone artifact this
-tool created, it is never ingested, and walking it makes every refresh pay for
-the whole object store (measured: it dominated validation cost, ~7 MB and ~60k
-allocations per walk of a 100-skill registry). Skipping it narrows the walk to
-registry content; content reads are still confined regardless of path.
+**`.git` is skipped by the eager validation walk at a clone root, and nowhere
+else.** At the top of a clone it is an artifact this tool created, it is never
+ingested, and walking it makes every refresh pay for the whole object store
+(measured by `BenchmarkValidateTree`: ~4.8× the walk time and ~5× the allocations
+of the same registry's content). That exemption is scoped by *position*, not by
+name: any registry can create a directory called `.git` at any depth, so a nested
+one is authored content and is walked like the rest of the tree. `ValidateCloneTree`
+is the entry point that skips it; `ValidateTree` skips nothing. Content reads are
+confined regardless of path either way.
 
 ## What happens when a read is refused
 
@@ -105,13 +129,17 @@ diagnostics were suppressed.
 Exploit regressions live next to the code they defend:
 
 - `internal/registryfs/registryfs_test.go` — escape, absolute-symlink, remote
-  symlink, special-file, post-validation swap, and concurrent-rewrite cases.
+  symlink, special-file, post-validation swap, concurrent-rewrite, nested-`.git`,
+  and symlinked-fallback-directory cases.
 - `internal/catalog/registry_security_test.go` — discovery-side rejections,
-  including a FIFO manifest that must not hang.
+  including a FIFO manifest that must not hang, a contained symlink planted
+  *after* the eager walk passed, and a symlink hidden in a nested `.git`.
 - `internal/materialize/registry_containment_test.go` — end-to-end: an external
   sentinel file reached through a registry symlink must never appear anywhere
   under the repo or `HOME` after a sync, in symlink mode, in file mode, or in
-  `--check`.
+  `--check`; plus the same contained-symlink fixture accepted for a local
+  registry and refused for a remote one, which is what proves the policy travelled
+  rather than being re-derived.
 
 The materialization tests assert the *absence of the sentinel bytes* rather than
 just a failed copy, so any future code path that reads a registry file by name

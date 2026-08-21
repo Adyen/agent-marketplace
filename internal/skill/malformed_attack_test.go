@@ -2,6 +2,7 @@ package skill
 
 import (
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,7 +132,7 @@ Every skill manifest starts with a frontmatter block:
 
 name: deploy-tools
 `)
-	if got := DeclaredNameFromFile("", p); got != "" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, p); got != "" {
 		t.Fatalf("an unterminated frontmatter fence must not adopt a body line as the declared name, got %q", got)
 	}
 }
@@ -147,7 +148,7 @@ description: [unterminated
 
 # Broken
 `)
-	if got := DeclaredNameFromFile("", p); got != "bubble-tea" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, p); got != "bubble-tea" {
 		t.Fatalf("expected the recovered frontmatter name, got %q", got)
 	}
 }
@@ -174,7 +175,7 @@ func TestDeclaredNameFromFileEdgeCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := writeTempFile(t, "SKILL.md", tc.content)
-			if got := DeclaredNameFromFile("", p); got != tc.want {
+			if got := DeclaredNameFromFile(registryfs.Policy{}, p); got != tc.want {
 				t.Fatalf("DeclaredNameFromFile = %q, want %q", got, tc.want)
 			}
 		})
@@ -190,7 +191,7 @@ func TestDeclaredNameFromFileBeyondLineCapIsNotRecovered(t *testing.T) {
 	}
 	b.WriteString("name: too-late\n---\n")
 	p := writeTempFile(t, "SKILL.md", b.String())
-	if got := DeclaredNameFromFile("", p); got != "" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, p); got != "" {
 		t.Fatalf("a name past the frontmatter line cap must not be recovered, got %q", got)
 	}
 }
@@ -202,10 +203,10 @@ func TestDeclaredNameFromFileDirectoryAndMissingFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "SKILL.md"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if got := DeclaredNameFromFile("", dir); got != "" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, dir); got != "" {
 		t.Fatalf("a directory named SKILL.md must not yield a name, got %q", got)
 	}
-	if got := DeclaredNameFromFile("", filepath.Join(t.TempDir(), "nope")); got != "" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, filepath.Join(t.TempDir(), "nope")); got != "" {
 		t.Fatalf("a missing file must not yield a name, got %q", got)
 	}
 }
@@ -214,7 +215,7 @@ func TestDeclaredNameFromFileDirectoryAndMissingFile(t *testing.T) {
 // (no newlines) from being mistaken for frontmatter.
 func TestDeclaredNameFromFileHugeSingleLineIsRejected(t *testing.T) {
 	p := writeTempFile(t, "SKILL.md", "---\n"+strings.Repeat("a", 128*1024)+"\nname: victim\n---\n")
-	if got := DeclaredNameFromFile("", p); got != "" {
+	if got := DeclaredNameFromFile(registryfs.Policy{}, p); got != "" {
 		t.Fatalf("a line past the scanner buffer must abort recovery, got %q", got)
 	}
 }

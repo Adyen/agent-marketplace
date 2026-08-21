@@ -8,6 +8,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 func writeAt(t *testing.T, path, content string) {
@@ -40,7 +42,7 @@ func TestDiscoverClassifiesMalformedResourceKind(t *testing.T) {
 	writeAt(t, filepath.Join(dir, "skills", "valid", "SKILL.md"), "---\nname: valid\ndescription: ok\n---\n\n# Valid\n")
 	writeAt(t, filepath.Join(dir, "skills", "broken", "SKILL.md"), brokenSkill("broken"))
 
-	loaded, err := Discover(dir, "")
+	loaded, err := Discover(registryfs.Local(dir), "")
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -79,7 +81,7 @@ func TestDiscoverRootResourceMalformedIsCorrelatable(t *testing.T) {
 	dir := t.TempDir()
 	writeAt(t, filepath.Join(dir, "SKILL.md"), brokenSkill("root-skill"))
 
-	loaded, err := Discover(dir, "")
+	loaded, err := Discover(registryfs.Local(dir), "")
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}

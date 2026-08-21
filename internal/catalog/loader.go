@@ -88,7 +88,10 @@ type LoadResult struct {
 
 type CloneOrPullFunc func(url, ref string) (string, error)
 
-type DiscoverFunc func(dir, sourceHarness string) (LoadedCatalog, error)
+// DiscoverFunc loads one registry tree. source names the tree's root and its
+// trust level; both travel on to every entry the discovery produces, so the
+// reads that happen after discovery apply the same policy.
+type DiscoverFunc func(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error)
 
 type LoadOption func(*loadConfig)
 
@@ -131,16 +134,17 @@ func WithLocalConfigDir(dir string) LoadOption {
 	return func(c *loadConfig) { c.localConfigDir = dir }
 }
 
-func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
-	cat, err := Load(dir, sourceHarness)
+func Discover(source registryfs.Policy, sourceHarness string) (LoadedCatalog, error) {
+	dir := source.Root
+	cat, err := Load(source, sourceHarness)
 	if err != nil {
 		// Load failed — likely no recognizable layout at this directory.
 		// Before falling back to DiscoverSkills, check for sub-bundles.
 		// If subdirectories contain bundle roots, load them recursively
 		// instead of relying on the legacy skill-only discovery.
-		subBundles := scanForSubBundles(dir)
+		subBundles := scanForSubBundles(source)
 		if len(subBundles) > 0 {
-			return discoverSubBundles(subBundles, sourceHarness)
+			return discoverSubBundles(source, subBundles, sourceHarness)
 		}
 
 		// No sub-bundles and no recognizable bundle format: return the
@@ -154,9 +158,9 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// multiple independent bundle subdirectories. Scan for sub-bundles and
 	// recurse into them.
 	if len(cat.Entries) == 0 && !hasWarningOrHigher(cat.Diagnostics) {
-		subBundles := scanForSubBundles(dir)
+		subBundles := scanForSubBundles(source)
 		if len(subBundles) > 0 {
-			return discoverSubBundles(subBundles, sourceHarness)
+			return discoverSubBundles(source, subBundles, sourceHarness)
 		}
 	}
 
@@ -212,7 +216,7 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// frontmatter `name:`, so a config selecting the authored name can only
 		// be correlated with this failure through the recovered name. Without
 		// it, a name/directory mismatch looks exactly like an upstream rename.
-		if declared := skill.DeclaredNameFromFile(rootReal, pReal); declared != "" && declared != malformed[i].DirName {
+		if declared := skill.DeclaredNameFromFile(source.At(rootReal), pReal); declared != "" && declared != malformed[i].DirName {
 			malformed[i].DeclaredName = declared
 		}
 	}
@@ -231,7 +235,7 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// discovers all skills within the workspace, so the sub-bundles don't
 	// contain any missed resources — the warning would be a false positive.
 	if len(cat.Entries) > 0 {
-		if subBundles := scanForSubBundles(dir); len(subBundles) > 0 {
+		if subBundles := scanForSubBundles(source); len(subBundles) > 0 {
 			if !catalogCoversSubBundles(cat.Entries, dir, subBundles) {
 				malformed = append(malformed, skill.MalformedSkill{
 					DirName: "catalog.discover.sub-bundles-ignored",
@@ -319,8 +323,9 @@ func subPathRel(path, prefix string) bool {
 // added to the results and its children are NOT descended into — the bundle's
 // own Load call handles its internal structure. Directories without roots are
 // recursed into. Results are sorted deterministically by path.
-func scanForSubBundles(dir string) []string {
-	secure, err := registryfs.New(dir, false)
+func scanForSubBundles(source registryfs.Policy) []string {
+	dir := source.Root
+	secure, err := source.FS()
 	if err != nil {
 		slog.Debug("sub-bundle scan skipped", "dir", dir, "error", err)
 		return nil
@@ -513,14 +518,16 @@ func normalizeMalformedPaths(root string, malformed []skill.MalformedSkill) []sk
 // for backward compatibility with callers that don't check SubBundles.
 // Name collisions across sub-bundles are resolved by first-wins (sub-bundles
 // are processed in sorted directory order).
-func discoverSubBundles(subBundles []string, sourceHarness string) (LoadedCatalog, error) {
+func discoverSubBundles(source registryfs.Policy, subBundles []string, sourceHarness string) (LoadedCatalog, error) {
 	var merged LoadedCatalog
 	var errs []error
 	seen := make(map[string]struct{})
 	subCats := make(map[string]LoadedCatalog, len(subBundles))
 
 	for _, subDir := range subBundles {
-		subCat, subErr := Load(subDir, sourceHarness)
+		// A sub-bundle inherits the parent tree's trust level; only the root
+		// narrows, so a remote sub-bundle still refuses symlinks.
+		subCat, subErr := Load(source.At(subDir), sourceHarness)
 		if subErr != nil {
 			errs = append(errs, fmt.Errorf("sub-bundle %q: %w", subDir, subErr))
 			continue
@@ -750,19 +757,28 @@ func IsOverlapWarning(err error) bool {
 // open first. Local registries are not walked eagerly: the tree is the user's
 // own working copy, and pre-walking it would make every command pay for content
 // it never reads.
-func validateRegistrySelection(root, selected string, rejectSymlinks bool) error {
-	relative, err := filepath.Rel(root, selected)
+//
+// base is the fetched registry root (the clone directory for a remote entry) and
+// selected is the configured sub-path inside it. Only when they are the same
+// directory is the walk allowed to skip a top-level `.git`: that is the clone
+// metadata this tool wrote. A `.git` directory anywhere else is content the
+// registry authored and is validated like the rest of the tree.
+func validateRegistrySelection(base registryfs.Policy, selected string) error {
+	relative, err := filepath.Rel(base.Root, selected)
 	if err != nil {
 		return fmt.Errorf("resolve selected registry path: %w", err)
 	}
-	exists, err := registryfs.ValidateSelection(root, filepath.ToSlash(relative), rejectSymlinks)
+	exists, err := base.ValidateSelection(filepath.ToSlash(relative))
 	if err != nil {
 		return err
 	}
-	if !exists || !rejectSymlinks {
+	if !exists || !base.RejectSymlinks {
 		return nil
 	}
-	return registryfs.ValidateTree(selected, true)
+	if selected == base.Root {
+		return base.ValidateCloneTree()
+	}
+	return base.At(selected).ValidateTree()
 }
 
 // discoverAll runs skill discovery on all loaded requests and populates the result.
@@ -815,7 +831,11 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			}
 			continue
 		}
-		if err := validateRegistrySelection(basePath, skillDir, !entry.IsLocal()); err != nil {
+		// The trust level travels from here to every later read of this tree: a
+		// remote registry's bytes are refused by the read itself, not only by the
+		// eager validation below.
+		source := registryfs.Policy{Root: skillDir, RejectSymlinks: !entry.IsLocal()}
+		if err := validateRegistrySelection(source.At(basePath), skillDir); err != nil {
 			result.Config.Registries = append(result.Config.Registries, entry)
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): validate registry files: %w", entry.URL, entry.Ref, entry.Path, err))
 			slog.Warn("registry rejected before discovery",
@@ -827,7 +847,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		scannedDirs[skillDir] = struct{}{}
 		scannedDirKeys[skillDir] = req.catalogKey
 
-		discovered, err := discover(skillDir, entry.SourceHarness)
+		discovered, err := discover(source, entry.SourceHarness)
 		if err != nil {
 			result.Config.Registries = append(result.Config.Registries, entry)
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
@@ -849,7 +869,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		// --from install path) can still look up resources without needing
 		// to know about the sub-bundle decomposition.
 		if len(discovered.SubBundles) > 0 {
-			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, requests, entry, req.catalogKey, basePath, discovered.SubBundles, discovered.Errors, discover)
+			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, requests, entry, req.catalogKey, basePath, source, discovered.SubBundles, discovered.Errors, discover)
 			discoveredByKey[req.catalogKey] = discovered
 			result.Catalogs[req.catalogKey] = discovered
 			if len(discovered.Resources) > 0 {
@@ -861,7 +881,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		// Normal path: add the registry entry.
 		result.Config.Registries = append(result.Config.Registries, entry)
 
-		collections, colErr := collection.DiscoverCollections(skillDir, req.catalogKey, entry.URL, entry.Ref, entry.Path)
+		collections, colErr := collection.DiscoverCollections(source, req.catalogKey, entry.URL, entry.Ref, entry.Path)
 		if colErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("discover collections for registry %q (ref %q, path %q) in %q: %w", entry.URL, entry.Ref, entry.Path, skillDir, colErr))
 		}
@@ -919,7 +939,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 // derived from the sub-bundle's path relative to the repo root, so the TUI
 // groups them under distinct sections. The parent registry entry's selectors
 // (default, skills, tags, etc.) are inherited by each sub-bundle entry.
-func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
+func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, source registryfs.Policy, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
 	// Sort sub-bundle directories for deterministic processing.
 	subDirs := make([]string, 0, len(subBundles))
 	for dir := range subBundles {
@@ -993,7 +1013,7 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		result.Config.Registries = append(result.Config.Registries, subEntry)
 
 		// Discover collections for this sub-bundle.
-		subCollections, subColErr := collection.DiscoverCollections(subDir, subKey, parentEntry.URL, parentEntry.Ref, subEntry.Path)
+		subCollections, subColErr := collection.DiscoverCollections(source.At(subDir), subKey, parentEntry.URL, parentEntry.Ref, subEntry.Path)
 		if subColErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("discover collections for sub-bundle %q in %q: %w", relPath, subDir, subColErr))
 		}

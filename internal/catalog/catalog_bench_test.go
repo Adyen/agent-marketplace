@@ -12,6 +12,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // BenchmarkLoadFSHCCIngest measures the cost of HCC-based catalog loading
@@ -74,13 +76,13 @@ func BenchmarkLoadRegistriesMockedDiscover(b *testing.B) {
 				})
 			}
 
-			mockDiscover := func(dir, sourceHarness string) (LoadedCatalog, error) {
+			mockDiscover := func(source registryfs.Policy, _ string) (LoadedCatalog, error) {
 				entries := make([]Entry, c.perReg)
 				for s := 0; s < c.perReg; s++ {
 					entries[s] = Entry{
 						Kind: ir.KindSkill,
 						Name: fmt.Sprintf("skill-%04d", s),
-						Path: filepath.Join(dir, fmt.Sprintf("skill-%04d", s), "SKILL.md"),
+						Path: filepath.Join(source.Root, fmt.Sprintf("skill-%04d", s), "SKILL.md"),
 					}
 				}
 				return LoadedCatalog{Entries: entries}, nil
@@ -138,7 +140,7 @@ metadata:
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = Discover(registryDir, "claude")
+				_, _ = Discover(registryfs.Local(registryDir), "claude")
 			}
 		})
 	}

@@ -712,11 +712,11 @@ func sameStringSet(a, b []string) bool {
 }
 
 // ReadSkillMarkdown reads the SKILL.md content for a given resolved skill path.
-// The read is confined to registryRoot (the registry the resource was
-// discovered in), so previewing a resource cannot render host content that a
-// registry symlinked into place, and cannot block the TUI on a special file.
-func ReadSkillMarkdown(registryRoot, path string) (string, error) {
-	data, sourceFile, err := registryfs.ReadResourceFile(registryRoot, path)
+// The read is governed by the source policy the resource was discovered with, so
+// previewing a resource cannot render host content that a registry symlinked into
+// place, and cannot block the TUI on a special file.
+func ReadSkillMarkdown(source registryfs.Policy, path string) (string, error) {
+	data, sourceFile, err := source.ReadResourceFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read resource source %s: %w", filepath.Base(sourceFile), err)
 	}

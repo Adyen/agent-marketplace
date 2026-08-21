@@ -11,6 +11,7 @@ import (
 
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -52,7 +53,7 @@ This is the body.
 	}
 
 	// Load catalog via HCC pipeline.
-	cat, err := pkgcatalog.Load(cacheDir, string(hcc.TargetClaude))
+	cat, err := pkgcatalog.Load(registryfs.Local(cacheDir), string(hcc.TargetClaude))
 	if err != nil {
 		t.Fatalf("catalog.Load: %v", err)
 	}

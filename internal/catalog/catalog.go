@@ -45,13 +45,15 @@ type Entry struct {
 	Tags        []string
 	Resource    ir.Resource // underlying IR resource for downstream compile/materialize
 	Path        string      // source file path (from ir.SourceRef)
-	// SourceRoot is the absolute registry (bundle) root this entry was loaded
-	// from. Later stages read the resource's own support files, and they must
-	// confine those reads to the tree the resource came from; without the root
-	// travelling with the entry, materialization can only guess at it. Empty for
-	// entries that were synthesized rather than discovered, in which case
+	// SourcePolicy is the registry tree this entry was discovered in: its
+	// absolute root, and whether that tree is remote content (no symlinks at all)
+	// or a local working copy (contained symlinks allowed). Later stages read the
+	// resource's own support files and must apply the same rules to those reads;
+	// without the policy travelling with the entry, materialization can only guess
+	// at the root and would have to assume the laxer trust level. The zero value
+	// marks an entry that was synthesized rather than discovered, in which case
 	// readers confine to the resource directory itself.
-	SourceRoot string
+	SourcePolicy registryfs.Policy
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -167,7 +169,7 @@ func EntriesResources(entries []Entry) map[string]ir.Resource {
 		if e.Kind != ir.KindSkill {
 			continue
 		}
-		body, sourceFile := legacySkillBody(e.SourceRoot, e.Path)
+		body, sourceFile := legacySkillBody(e.SourcePolicy, e.Path)
 		resources[skill.ResourceKey(e.Kind, e.Name)] = ir.NewSkill(e.Name, e.Description, body, nil, nil, ir.SourceRef{File: sourceFile, Line: 1})
 	}
 	return resources
@@ -244,11 +246,11 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 }
 
 // legacySkillBody reads the markdown body of a skill that reached the catalog
-// without an ir.Resource. The read is confined to sourceRoot (or, when the entry
-// carries no provenance, to the resource's own directory), so a registry cannot
-// use a synthesized entry as a path-based read primitive.
-func legacySkillBody(sourceRoot, path string) (string, string) {
-	data, sourceFile, err := registryfs.ReadResourceFile(sourceRoot, path)
+// without an ir.Resource. The read is confined by the entry's own source policy
+// (or, when the entry carries no provenance, to the resource's own directory), so
+// a registry cannot use a synthesized entry as a path-based read primitive.
+func legacySkillBody(source registryfs.Policy, path string) (string, string) {
+	data, sourceFile, err := source.ReadResourceFile(path)
 	if err != nil {
 		slog.Debug("legacy skill body unreadable", "path", sourceFile, "error", err)
 		return "", sourceFile
@@ -285,10 +287,16 @@ func markdownBody(content string) string {
 // filtered to KindSkill. The sourceHarness parameter controls the ingest
 // format; empty string triggers autodetection via ingest.Autodetect.
 //
+// source carries the tree's root and its trust level; ingestion reads every byte
+// through it, so a remote registry's symlink is refused by the read itself rather
+// than only by the eager validation that preceded it. The policy is stamped on
+// each entry so the layers that read the resource later apply the same rules.
+//
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
-func Load(dir string, sourceHarness string) (*Catalog, error) {
-	srcFS, err := registryfs.New(dir, false)
+func Load(source registryfs.Policy, sourceHarness string) (*Catalog, error) {
+	dir := source.Root
+	srcFS, err := source.FS()
 	if err != nil {
 		slog.Warn("registry root rejected", "dir", dir, "error", err)
 		return nil, err
@@ -305,9 +313,9 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := srcFS.Root()
+	rooted := source.At(srcFS.Root())
 	for i := range cat.Entries {
-		cat.Entries[i].SourceRoot = root
+		cat.Entries[i].SourcePolicy = rooted
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(dir, cat.Entries[i].Path)
 		}

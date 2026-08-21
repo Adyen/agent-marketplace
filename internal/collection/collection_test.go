@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 func TestLabelIncludesVersionWhenSet(t *testing.T) {
@@ -53,7 +55,7 @@ func TestFindReturnsFirstMatch(t *testing.T) {
 func TestDiscoverCollectionsReturnsNilWhenCollectionsDirMissing(t *testing.T) {
 	skillDir := t.TempDir()
 	// No collections/ subdir exists.
-	got, err := DiscoverCollections(skillDir, "key", "git@example.com:r.git", "main", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "key", "git@example.com:r.git", "main", "")
 	if err != nil {
 		t.Fatalf("expected nil error when collections dir missing, got %v", err)
 	}
@@ -68,7 +70,7 @@ func TestDiscoverCollectionsIgnoresEmptyDir(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	got, err := DiscoverCollections(skillDir, "key", "git@example.com:r.git", "main", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "key", "git@example.com:r.git", "main", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestDiscoverCollectionsIgnoresNonDirectoryEntries(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	got, err := DiscoverCollections(skillDir, "key", "git@example.com:r.git", "main", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "key", "git@example.com:r.git", "main", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +106,7 @@ func TestDiscoverCollectionsSkipsSubdirsWithoutCollectionFile(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	got, err := DiscoverCollections(skillDir, "key", "git@example.com:r.git", "main", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "key", "git@example.com:r.git", "main", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +130,7 @@ includes:
     version: 2.0.0
 `)
 
-	got, err := DiscoverCollections(skillDir, "cache-key", "git@example.com:source.git", "v1.0", "skills")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "cache-key", "git@example.com:source.git", "v1.0", "skills")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -181,7 +183,7 @@ skills:
   - name: bare-skill
 `)
 
-	got, err := DiscoverCollections(skillDir, "", "", "", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +209,7 @@ func TestDiscoverCollectionsReportsInvalidYAML(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	_, err := DiscoverCollections(skillDir, "", "", "", "")
+	_, err := DiscoverCollections(registryfs.Local(skillDir), "", "", "", "")
 	if err == nil {
 		t.Fatalf("expected error on invalid YAML")
 	}
@@ -221,7 +223,7 @@ func TestDiscoverCollectionsRejectsMissingName(t *testing.T) {
 	writeCollection(t, skillDir, "no-name", `description: missing name
 `)
 
-	_, err := DiscoverCollections(skillDir, "", "", "", "")
+	_, err := DiscoverCollections(registryfs.Local(skillDir), "", "", "", "")
 	if err == nil {
 		t.Fatalf("expected error when name missing")
 	}
@@ -235,7 +237,7 @@ func TestDiscoverCollectionsReturnsMultiple(t *testing.T) {
 	writeCollection(t, skillDir, "first", "name: first\n")
 	writeCollection(t, skillDir, "second", "name: second\nversion: 2.0\n")
 
-	got, err := DiscoverCollections(skillDir, "", "git@example.com:r.git", "main", "")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "", "git@example.com:r.git", "main", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -261,7 +263,7 @@ skills:
     path: skills
 `)
 
-	got, err := DiscoverCollections(skillDir, "cache-key", "git@example.com:source.git", "main", ".factory/skills")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "cache-key", "git@example.com:source.git", "main", ".factory/skills")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

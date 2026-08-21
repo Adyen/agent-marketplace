@@ -35,6 +35,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -75,9 +76,10 @@ type skillLink struct {
 	cacheDir  string
 	artifacts []artifact.Artifact
 	sourceDir string // absolute path to the original skill directory on disk
-	// sourceRoot is the registry root sourceDir was discovered in. Support-file
-	// reads are confined to it; empty means "confine to sourceDir itself".
-	sourceRoot   string
+	// source is the read policy of the registry tree sourceDir was discovered in.
+	// Support-file reads are confined to its root and obey its symlink rule; a
+	// zero value means "confine to sourceDir itself".
+	source       registryfs.Policy
 	kind         ir.ResourceKind // kind of the resource (skill, subagent, command, …)
 	resourceName string          // canonical resource name without file extension
 	machineScope bool            // true when installed to machine-wide (user) scope
@@ -743,11 +745,11 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					sourceDir = filepath.Dir(sourceDir)
 				}
 				addSkillLink(skillLinks, key, installDirRel, skillLink{
-					name:       w.skill.Name,
-					target:     cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
-					artifacts:  compiledSkillArtifacts,
-					sourceDir:  sourceDir,
-					sourceRoot: w.skill.SourceRoot,
+					name:      w.skill.Name,
+					target:    cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
+					artifacts: compiledSkillArtifacts,
+					sourceDir: sourceDir,
+					source:    w.skill.SourcePolicy,
 					// The link records the real resource kind, so a `remove`
 					// hint for a colliding Devin command says --kind command
 					// even though the output shape is a skill directory.
@@ -772,7 +774,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			// (which only removes symlinks, never the regular hooks.json file)
 			// when a hook is excluded.
 			if resourceKind == ir.KindHook {
-				supportArtifacts, supportDiags := collectHookSupportFiles(w.skill.SourceRoot, w.skill.Path, w.target)
+				supportArtifacts, supportDiags := collectHookSupportFiles(w.skill.SourcePolicy, w.skill.Path, w.target)
 				result.Artifacts = append(result.Artifacts, supportArtifacts...)
 				result.Diagnostics = append(result.Diagnostics, supportDiags...)
 			}
@@ -2554,7 +2556,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		return nil
 	}
 	if link.sourceDir != "" {
-		tree, err := openSourceTree(link.sourceRoot, link.sourceDir)
+		tree, err := openSourceTree(link.source, link.sourceDir)
 		if err != nil {
 			if !isNotExist(err) {
 				return "", err
@@ -3018,7 +3020,7 @@ func prepareSkillLinkCache(link skillLink) error {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if copyErr := copySupportFilesExcluding(link.sourceRoot, link.sourceDir, cacheDir, compiled); copyErr != nil {
+		if copyErr := copySupportFilesExcluding(link.source, link.sourceDir, cacheDir, compiled); copyErr != nil {
 			return copyErr
 		}
 	}
@@ -3073,7 +3075,7 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 // do not need to protect additional compiled artifact paths; with no registry
 // provenance to offer, reads are confined to srcDir itself.
 func copySupportFiles(srcDir, dstDir string) error {
-	return copySupportFilesExcluding("", srcDir, dstDir, nil)
+	return copySupportFilesExcluding(registryfs.Policy{}, srcDir, dstDir, nil)
 }
 
 // copySupportFilesExcluding copies a resource's support tree into dstDir,
@@ -3082,8 +3084,8 @@ func copySupportFiles(srcDir, dstDir string) error {
 // fails the copy instead of being written: the cache is a directory the user's
 // harness reads, so smuggling host content into it is the disclosure this
 // guards against.
-func copySupportFilesExcluding(registryRoot, srcDir, dstDir string, compiled map[string]bool) error {
-	tree, err := openSourceTree(registryRoot, srcDir)
+func copySupportFilesExcluding(source registryfs.Policy, srcDir, dstDir string, compiled map[string]bool) error {
+	tree, err := openSourceTree(source, srcDir)
 	if err != nil {
 		if isNotExist(err) {
 			return nil
@@ -3174,7 +3176,7 @@ func writeSupportFile(dstPath string, data []byte, mode fs.FileMode) error {
 // entry is skipped with a diagnostic rather than failing the whole sync — the
 // hook itself still materializes, and the operator is told which file was left
 // behind and why.
-func collectHookSupportFiles(registryRoot, sourcePath string, target hcc.Target) ([]artifact.Artifact, []diag.Diagnostic) {
+func collectHookSupportFiles(source registryfs.Policy, sourcePath string, target hcc.Target) ([]artifact.Artifact, []diag.Diagnostic) {
 	if sourcePath == "" {
 		return nil, nil
 	}
@@ -3183,7 +3185,7 @@ func collectHookSupportFiles(registryRoot, sourcePath string, target hcc.Target)
 		return nil, nil
 	}
 	sourceDir := filepath.Dir(sourcePath)
-	tree, err := openSourceTree(registryRoot, sourceDir)
+	tree, err := openSourceTree(source, sourceDir)
 	if err != nil {
 		if isNotExist(err) {
 			return nil, nil

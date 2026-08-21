@@ -15,6 +15,8 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // TestLoadFromClaudePlugin verifies that Load discovers skills from a
@@ -46,7 +48,7 @@ Hello world
 
 	// Autodetect needs either .claude-plugin/plugin.json or bare plugin form
 	// (root-level skills/ directory). The bare form is sufficient.
-	cat, err := Load(dir, "")
+	cat, err := Load(registryfs.Local(dir), "")
 	if err != nil {
 		t.Fatalf("Load(%q, \"\") = _, %v; want no error", dir, err)
 	}
@@ -113,7 +115,7 @@ metadata:
 		t.Fatal(err)
 	}
 
-	cat, err := Load(dir, "")
+	cat, err := Load(registryfs.Local(dir), "")
 	if err != nil {
 		t.Fatalf("Load = _, %v", err)
 	}
@@ -188,7 +190,7 @@ metadata:
 		t.Fatal(err)
 	}
 
-	cat, err := Load(dir, "claude")
+	cat, err := Load(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Load(%q, \"claude\") = _, %v; want no error", dir, err)
 	}
@@ -239,7 +241,7 @@ description: Should be discovered
 		t.Fatal(err)
 	}
 
-	cat, err := Load(dir, "claude")
+	cat, err := Load(registryfs.Local(dir), "claude")
 	if err != nil {
 		t.Fatalf("Load(%q, \"claude\") = _, %v", dir, err)
 	}
@@ -444,7 +446,7 @@ func TestDiscoverMakesMalformedPathsAbsolute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	loaded, err := Discover(dir, "factory")
+	loaded, err := Discover(registryfs.Local(dir), "factory")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"factory\") = _, %v", dir, err)
 	}
@@ -480,7 +482,7 @@ func TestDiscoverFactoryWorkspaceWithoutPluginSkipsManifestSynthesizedMalformed(
 		t.Fatal(err)
 	}
 
-	cat, err := Load(dir, "factory")
+	cat, err := Load(registryfs.Local(dir), "factory")
 	if err != nil {
 		t.Fatalf("Load(%q, \"factory\") = _, %v", dir, err)
 	}
@@ -498,7 +500,7 @@ func TestDiscoverFactoryWorkspaceWithoutPluginSkipsManifestSynthesizedMalformed(
 		t.Fatalf("missing diagnostic %q", diag.CodeIngestFactoryManifestSynthesized)
 	}
 
-	discovered, err := Discover(dir, "factory")
+	discovered, err := Discover(registryfs.Local(dir), "factory")
 	if err != nil {
 		t.Fatalf("Discover(%q, \"factory\") = _, %v", dir, err)
 	}
@@ -552,7 +554,7 @@ metadata:
 	// No recognizable harness markers — autodetect should fail,
 	// and the claude fallback should also fail (no skills/ dir).
 	// The caller is expected to handle this error gracefully.
-	_, err := Load(dir, "")
+	_, err := Load(registryfs.Local(dir), "")
 	if err == nil {
 		// This is also acceptable — some future HCC version might support
 		// more flexible layouts. The key invariant is that we tried claude.
@@ -654,7 +656,7 @@ func TestLoadRegistriesCachedSkipsCloneOrPullForWarmCache(t *testing.T) {
 			cloneCalls++
 			return "", fmt.Errorf("cached warm path should not clone %s@%s", url, ref)
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+		WithDiscoverFunc(func(_ registryfs.Policy, _ string) (LoadedCatalog, error) {
 			return LoadedCatalog{}, nil
 		}),
 	)
@@ -686,7 +688,7 @@ func TestLoadRegistriesCachedNoFetchSkipsMissingCache(t *testing.T) {
 			cloneCalls++
 			return "", fmt.Errorf("cached no-fetch path should not clone %s@%s", url, ref)
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+		WithDiscoverFunc(func(_ registryfs.Policy, _ string) (LoadedCatalog, error) {
 			return LoadedCatalog{}, nil
 		}),
 	)
@@ -726,7 +728,7 @@ func TestLoadRegistriesCachedNoFetchUsesExistingCache(t *testing.T) {
 			cloneCalls++
 			return "", fmt.Errorf("cached no-fetch path should not clone %s@%s", url, ref)
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+		WithDiscoverFunc(func(_ registryfs.Policy, _ string) (LoadedCatalog, error) {
 			discoverCalls++
 			return LoadedCatalog{}, nil
 		}),
@@ -766,7 +768,7 @@ func TestLoadRegistriesRefreshStillCallsCloneOrPull(t *testing.T) {
 			cloneCalls++
 			return cachePath, nil
 		}),
-		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+		WithDiscoverFunc(func(_ registryfs.Policy, _ string) (LoadedCatalog, error) {
 			return LoadedCatalog{}, nil
 		}),
 	)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -130,10 +131,10 @@ func resolvedSkillFromRegistry(t *testing.T, name, registryRoot, skillDir string
 		ir.SourceRef{File: filepath.Join(skillDir, "SKILL.md"), Line: 1})
 	return []resolver.ResolvedArtifact{{
 		Entry: catalog.Entry{
-			Name:       name,
-			Path:       skillDir,
-			Resource:   irSkill,
-			SourceRoot: registryRoot,
+			Name:         name,
+			Path:         skillDir,
+			Resource:     irSkill,
+			SourcePolicy: registryfs.Local(registryRoot),
 		},
 		Source:    config.RepoCommitted,
 		Harnesses: []hcc.Target{target},
@@ -264,6 +265,61 @@ func TestRunAllowsContainedRelativeSupportSymlink(t *testing.T) {
 	}
 }
 
+// TestRunRefusesContainedSupportSymlinkFromRemoteRegistry is the fixture above
+// with one field changed: the tree is remote. Nothing in a clone this tool
+// produced needs a symlink, so a remote registry is refused one even when it is
+// contained — and the refusal has to happen here, at the copy, because the eager
+// walk that ran at discovery time cannot speak for the bytes `sync` reads
+// afterwards. That is what carrying the policy on the resolved artifact buys.
+func TestRunRefusesContainedSupportSymlinkFromRemoteRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+
+	registryRoot, skillDir := registrySkill(t, "shared")
+	if err := os.WriteFile(filepath.Join(registryRoot, "common.sh"), []byte("#!/bin/sh\necho common\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../common.sh", filepath.Join(skillDir, "common.sh")); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := resolvedSkillFromRegistry(t, "shared", registryRoot, skillDir, hcc.TargetClaude)
+	resolved[0].SourcePolicy = registryfs.Remote(registryRoot)
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	assertRefused(t, report, err, "remote registries do not allow symlinks")
+}
+
+// TestRunRefusesSupportTreeReachedThroughSymlinkedResourceDir pins the
+// no-provenance fallback at the layer that uses it: an artifact with no registry
+// root confines reads to its own directory, and a symlinked directory would make
+// that "confinement" resolve to the link's target instead.
+func TestRunRefusesSupportTreeReachedThroughSymlinkedResourceDir(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+	sentinel := hostSecret(t)
+
+	_, realDir := registrySkill(t, "aliased")
+	if err := os.WriteFile(filepath.Join(realDir, "notes.md"), []byte(sentinelText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The resource is addressed through a link to its directory, and nothing
+	// vouches for a registry root that contains it.
+	linkDir := filepath.Join(t.TempDir(), "aliased")
+	if err := os.Symlink(filepath.Dir(sentinel), linkDir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := resolvedSkillFromRegistry(t, "aliased", "", linkDir, hcc.TargetClaude)
+	resolved[0].SourcePolicy = registryfs.Policy{}
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	assertRefused(t, report, err, "symlink")
+	assertSentinelAbsent(t, repoRoot, homeDir)
+}
+
 func TestRunSkipsHookSupportSymlinkEscapingRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -287,10 +343,10 @@ func TestRunSkipsHookSupportSymlinkEscapingRegistry(t *testing.T) {
 		ir.SourceRef{File: filepath.Join(hookDir, "hooks.json")})
 	resolved := []resolver.ResolvedArtifact{{
 		Entry: catalog.Entry{
-			Name:       "post-tool-use-leak",
-			Resource:   hook,
-			Path:       filepath.Join(hookDir, "hooks.json"),
-			SourceRoot: registryRoot,
+			Name:         "post-tool-use-leak",
+			Resource:     hook,
+			Path:         filepath.Join(hookDir, "hooks.json"),
+			SourcePolicy: registryfs.Local(registryRoot),
 		},
 		Source:    config.RepoCommitted,
 		Harnesses: []hcc.Target{hcc.TargetFactory},
@@ -362,10 +418,10 @@ func TestRunDoesNotHangOnHookSupportFIFO(t *testing.T) {
 		"echo hi", "command", nil, ir.SourceRef{File: filepath.Join(hookDir, "hooks.json")})
 	resolved := []resolver.ResolvedArtifact{{
 		Entry: catalog.Entry{
-			Name:       "pre-tool-use-trap",
-			Resource:   hook,
-			Path:       filepath.Join(hookDir, "hooks.json"),
-			SourceRoot: registryRoot,
+			Name:         "pre-tool-use-trap",
+			Resource:     hook,
+			Path:         filepath.Join(hookDir, "hooks.json"),
+			SourcePolicy: registryfs.Local(registryRoot),
 		},
 		Source:    config.RepoCommitted,
 		Harnesses: []hcc.Target{hcc.TargetFactory},

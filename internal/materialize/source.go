@@ -24,11 +24,14 @@ type sourceTree struct {
 	dir  string // absolute source directory, for messages
 }
 
-// openSourceTree confines reads for sourceDir. registryRoot is the registry the
-// resource was discovered in; when it is unknown, sourceDir itself becomes the
-// confinement root, which is narrower and never wider.
-func openSourceTree(registryRoot, sourceDir string) (*sourceTree, error) {
-	fsys, base, err := registryfs.Subtree(registryRoot, sourceDir, false)
+// openSourceTree confines reads for sourceDir under the policy of the registry
+// the resource was discovered in: reads stay inside that registry's root, and a
+// remote registry's symlink is refused here even though it is contained, because
+// the eager validation that ran at discovery time cannot speak for the bytes this
+// copy is about to read. When the registry root is unknown, sourceDir itself
+// becomes the confinement root, which is narrower and never wider.
+func openSourceTree(source registryfs.Policy, sourceDir string) (*sourceTree, error) {
+	fsys, base, err := source.Subtree(sourceDir)
 	if err != nil {
 		return nil, err
 	}

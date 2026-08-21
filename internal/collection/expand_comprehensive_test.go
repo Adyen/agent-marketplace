@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // ============================================================
@@ -1171,7 +1172,7 @@ skills:
     path: other/skills
 `)
 
-	got, err := DiscoverCollections(skillDir, "cache-key", "git@example.com:source.git", "v1", ".factory/skills")
+	got, err := DiscoverCollections(registryfs.Local(skillDir), "cache-key", "git@example.com:source.git", "v1", ".factory/skills")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1203,14 +1204,14 @@ func TestDiscoverCollectionsMultipleCollectionsWithDifferentSourcePaths(t *testi
 	skillDir := t.TempDir()
 	writeCollection(t, skillDir, "tools", "name: tools\nskills:\n  - name: s1\n")
 
-	got1, err1 := DiscoverCollections(skillDir, "key1", "git@example.com:core.git", "main", ".factory/skills")
+	got1, err1 := DiscoverCollections(registryfs.Local(skillDir), "key1", "git@example.com:core.git", "main", ".factory/skills")
 	if err1 != nil {
 		t.Fatalf("first DiscoverCollections: %v", err1)
 	}
 	if len(got1) == 0 {
 		t.Fatalf("first DiscoverCollections returned no collections")
 	}
-	got2, err2 := DiscoverCollections(skillDir, "key2", "git@example.com:core.git", "main", "skills")
+	got2, err2 := DiscoverCollections(registryfs.Local(skillDir), "key2", "git@example.com:core.git", "main", "skills")
 	if err2 != nil {
 		t.Fatalf("second DiscoverCollections: %v", err2)
 	}
