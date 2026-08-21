@@ -1,0 +1,80 @@
+name: agent-marketplace-sqlite
+
+services:
+  # SQLite is intentionally all-in-one: one process owns the database handle,
+  # API listener, and refresh worker. Do not split API and worker across
+  # containers unless the metadata store is changed to PostgreSQL.
+  app:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile.marketplace
+      target: worker
+      args:
+        VERSION: ${MARKETPLACE_VERSION:-dev}
+    command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "all"]
+    volumes:
+      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+      - marketplace-data:/var/lib/agent-marketplace
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "-T", "5", "http://127.0.0.1:9090/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: ../../../web
+      dockerfile: Dockerfile
+    environment:
+      NUXT_PUBLIC_API_BASE: /
+      NUXT_API_BASE_INTERNAL: http://app:8080
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "3000"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "${MARKETPLACE_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./proxy-headers.conf:/etc/nginx/proxy-headers.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  marketplace-data:

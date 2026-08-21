@@ -33,6 +33,12 @@ export function isAbsoluteApiBase(value: string | undefined): boolean {
   return /^https?:\/\//i.test((value ?? '').trim())
 }
 
+// The private base is evaluated only by the SSR process. It must never be
+// passed to client-side code, where Nuxt only exposes runtimeConfig.public.
+export function selectMarketplaceApiBase(isServer: boolean, publicBase: string | undefined, internalBase: string | undefined): string | undefined {
+  return isServer && internalBase?.trim() ? internalBase : publicBase
+}
+
 export function selectMarketplaceFetcher(isServer: boolean, apiBase: string | undefined, requestFetcher: ApiFetcher, clientFetcher: ApiFetcher): ApiFetcher {
   return isServer && !isAbsoluteApiBase(apiBase) ? requestFetcher : clientFetcher
 }

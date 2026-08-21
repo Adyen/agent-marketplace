@@ -72,7 +72,7 @@ func (s *Store) Open(ctx context.Context) error {
 
 	db, err := sql.Open("pgx", s.dsn)
 	if err != nil {
-		return fmt.Errorf("open postgres: %w", err)
+		return store.SanitizeDSNError(fmt.Errorf("open postgres: %w", err), s.dsn)
 	}
 	s.db = db
 	s.q = db
@@ -81,20 +81,18 @@ func (s *Store) Open(ctx context.Context) error {
 		_, err = db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{s.schema}.Sanitize())
 		if err != nil {
 			_ = db.Close()
-			return fmt.Errorf("create schema: %w", err)
+			return store.SanitizeDSNError(fmt.Errorf("create schema: %w", err), s.dsn)
 		}
 	}
 
-	for i, m := range migrations {
-		if _, err := db.ExecContext(ctx, m); err != nil {
-			_ = db.Close()
-			return fmt.Errorf("migration %d: %w", i, err)
-		}
+	if err := runMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		return store.SanitizeDSNError(fmt.Errorf("run migrations: %w", err), s.dsn)
 	}
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return fmt.Errorf("ping postgres: %w", err)
+		return store.SanitizeDSNError(fmt.Errorf("ping postgres: %w", err), s.dsn)
 	}
 	return nil
 }

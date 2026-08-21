@@ -1,0 +1,30 @@
+# Local development override. The base compose.yaml is production-safe: it
+# uses Compose secret files for PostgreSQL and the metadata DSN and relies on
+# the AWS SDK default credential chain. Use this file only with an untracked
+# .env and never expose it as a production deployment.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD_FILE: !reset null
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    secrets: !reset []
+
+  api:
+    environment:
+      MARKETPLACE_POSTGRES_DSN: ${MARKETPLACE_POSTGRES_DSN:?set MARKETPLACE_POSTGRES_DSN in .env}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    volumes:
+      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+    secrets: !reset []
+
+  worker:
+    environment:
+      MARKETPLACE_POSTGRES_DSN: ${MARKETPLACE_POSTGRES_DSN:?set MARKETPLACE_POSTGRES_DSN in .env}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    volumes:
+      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+    secrets: !reset []

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, normalizeApiBase, resourcePath, resourceRevisionPath, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, createMarketplaceApi, normalizeApiBase, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
 import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
@@ -40,6 +40,12 @@ describe('Marketplace API URL handling', () => {
 
   it.each(['//evil.example', 'ftp://evil.example', 'https://user:pass@evil.example', 'https://market.example?x=1', 'https://market.example#x', '/api/v1?x=1', '/api/\u0000'])('bounds malformed API bases: %s', value => {
     expect(normalizeApiBase(value)).toBe('')
+  })
+
+  it('keeps the internal API base server-only', () => {
+    expect(selectMarketplaceApiBase(true, '/', 'http://api:8080')).toBe('http://api:8080')
+    expect(selectMarketplaceApiBase(false, '/', 'http://api:8080')).toBe('/')
+    expect(selectMarketplaceApiBase(true, '/', '')).toBe('/')
   })
 
   it('uses request-bound fetch only for SSR relative API bases', () => {

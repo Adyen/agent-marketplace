@@ -29,13 +29,13 @@ export default defineConfig({
       command: `pnpm exec nuxt preview --host 127.0.0.1 --port ${appPort}`,
       url: appURL,
       reuseExistingServer: !process.env.CI,
-      env: { ...process.env, NUXT_PUBLIC_API_BASE: mockURL },
+      env: { ...process.env, NUXT_PUBLIC_API_BASE: mockURL, NUXT_API_BASE_INTERNAL: '' },
     },
     {
       command: `pnpm exec nuxt preview --host 127.0.0.1 --port ${relativeAppPort}`,
       url: relativeAppURL,
       reuseExistingServer: !process.env.CI,
-      env: { ...process.env, NUXT_PUBLIC_API_BASE: '/' },
+      env: { ...process.env, NUXT_PUBLIC_API_BASE: '/', NUXT_API_BASE_INTERNAL: mockURL },
     },
   ],
 })

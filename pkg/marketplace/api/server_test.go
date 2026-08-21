@@ -48,18 +48,21 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	src := store.Source{
-		ID:          store.SourceID("src-test"),
-		Slug:        "test-source",
-		Ref:         "main",
-		Origins:     []string{"https://example.com/repo.git"},
-		Acquisition: store.AcquisitionMirror,
-		License:     "MIT",
+		ID:             store.SourceID("src-test"),
+		Slug:           "test-source",
+		Ref:            "main",
+		Origins:        []string{"https://user:origin-secret@example.com/repo.git?token=query-secret"},
+		Acquisition:    store.AcquisitionMirror,
+		License:        "MIT",
+		CredentialsRef: "env:MARKETPLACE_GIT_TOKEN",
+		RefreshStatus:  store.SourceRefreshStatusFailed,
 		Roots: []store.SourceRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
-		Listed:    true,
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		Listed:       true,
+		RefreshError: "clone failed with token=public-api-secret",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 	if err := meta.PutSource(ctx, src); err != nil {
 		t.Fatalf("put source: %v", err)
@@ -189,6 +192,14 @@ func TestServerRoutes(t *testing.T) {
 	if !strings.Contains(body, `"slug":"test-source"`) {
 		t.Fatalf("source missing slug: %s", body)
 	}
+	for _, secret := range []string{"public-api-secret", "origin-secret", "query-secret", "credentials_ref", "refresh_error", "refresh_status", "refreshed_at"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("source response leaked private source field %q: %s", secret, body)
+		}
+	}
+	if !strings.Contains(body, "https://example.com/repo.git?token=%5Bredacted%5D") {
+		t.Fatalf("source response did not preserve a sanitized origin: %s", body)
+	}
 
 	// /api/v1/sources/{source}/history
 	resp = mustGet(t, public.URL+"/api/v1/sources/test-source/history")
@@ -309,6 +320,15 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("healthz status %d: %s", resp.StatusCode, body)
 	}
 
+	// Operations endpoints are never available on the public listener.
+	for _, path := range []string{"/readyz", "/metrics"} {
+		resp = mustGet(t, public.URL+path)
+		body = mustRead(t, resp)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("public %s status %d: %s", path, resp.StatusCode, body)
+		}
+	}
+
 	// readyz
 	resp = mustGet(t, ops.URL+"/readyz")
 	body = mustRead(t, resp)
@@ -324,6 +344,38 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, "agent_marketplace_requests_total") {
 		t.Fatalf("metrics missing requests_total: %s", body)
+	}
+}
+
+func TestServerSanitizesLegacyCanonicalURLInPublicResponses(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = meta.Close() }()
+
+	const unsafe = "https://user:canonical-secret@example.com/marketplace?X-Amz-Security-Token=canonical-secret#fragment"
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "legacy", Name: "Legacy", CanonicalURL: unsafe}); err != nil {
+		t.Fatalf("put marketplace: %v", err)
+	}
+	cfg := config.Config{Instance: config.Instance{ID: "legacy", CanonicalURL: unsafe}}
+	server := NewServer(cfg, meta, fsblob.New(t.TempDir()))
+	public := httptest.NewServer(server.PublicHandler())
+	defer public.Close()
+
+	for _, path := range []string{"/.well-known/agent-marketplace.json", "/api/v1/instance"} {
+		resp := mustGet(t, public.URL+path)
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status %d: %s", path, resp.StatusCode, body)
+		}
+		if strings.Contains(body, "canonical-secret") || strings.Contains(body, "user@") {
+			t.Fatalf("%s leaked unsafe canonical URL: %s", path, body)
+		}
+		if strings.Contains(body, "X-Amz-Security-Token") || strings.Contains(body, "fragment") {
+			t.Fatalf("%s retained unsafe canonical URL components: %s", path, body)
+		}
 	}
 }
 

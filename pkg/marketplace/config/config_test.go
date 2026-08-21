@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,202 @@ func TestLoadConfigInvalidMetadataDriver(t *testing.T) {
 	_, err := LoadConfig(path)
 	if err == nil {
 		t.Fatalf("expected error for invalid metadata driver")
+	}
+}
+
+func TestOpenStoresErrorDoesNotLeakDSNSecret(t *testing.T) {
+	const secret = "startup-config-secret"
+	_, _, err := OpenStores(context.Background(), Config{Storage: Storage{
+		Metadata: StorageMetadata{Driver: "postgres", DSN: "postgres://marketplace:" + secret + "@%zz"},
+		Blobs:    StorageBlobs{Driver: "filesystem", Path: t.TempDir()},
+	}})
+	if err == nil {
+		t.Fatal("OpenStores unexpectedly succeeded")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("OpenStores error leaked DSN secret: %v", err)
+	}
+}
+
+func TestStorageMetadataResolveDSNFromEnv(t *testing.T) {
+	const secret = "postgres://user:secret@example.invalid/db"
+	t.Setenv("MARKETPLACE_TEST_DSN", secret)
+	got, err := (StorageMetadata{DSNEnv: "MARKETPLACE_TEST_DSN"}).ResolveDSN()
+	if err != nil {
+		t.Fatalf("ResolveDSN: %v", err)
+	}
+	if got != secret {
+		t.Fatalf("DSN = %q, want environment value", got)
+	}
+}
+
+func TestStorageMetadataResolveDSNFromFile(t *testing.T) {
+	const secret = "host=db.example.invalid user=marketplace password=secret dbname=marketplace"
+	path := filepath.Join(t.TempDir(), "postgres-dsn")
+	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (StorageMetadata{DSNFile: path}).ResolveDSN()
+	if err != nil {
+		t.Fatalf("ResolveDSN: %v", err)
+	}
+	if got != secret {
+		t.Fatalf("DSN = %q, want file value", got)
+	}
+}
+
+func TestStorageMetadataDriverDSNValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		driver string
+		dsn    string
+		valid  bool
+	}{
+		{name: "sqlite path", driver: "sqlite", dsn: filepath.Join(t.TempDir(), "marketplace.db"), valid: true},
+		{name: "sqlite memory", driver: "sqlite", dsn: ":memory:", valid: false},
+		{name: "sqlite memory uri", driver: "sqlite", dsn: "file::memory:?mode=memory&cache=shared", valid: false},
+		{name: "sqlite shared memory uri", driver: "sqlite", dsn: "file::memory:?cache=shared", valid: false},
+		{name: "sqlite read-only uri", driver: "sqlite", dsn: "file:/var/lib/marketplace.db?mode=ro", valid: false},
+		{name: "sqlite immutable uri", driver: "sqlite", dsn: "file:/var/lib/marketplace.db?immutable=1", valid: false},
+		{name: "postgres url", driver: "postgres", dsn: "postgres://marketplace:secret@db.example.invalid/marketplace", valid: true},
+		{name: "postgres key value", driver: "postgres", dsn: "host=db.example.invalid user=marketplace password=secret dbname=marketplace", valid: true},
+		{name: "sqlite postgres url", driver: "sqlite", dsn: "postgres://user:secret@db.example.invalid/db", valid: false},
+		{name: "postgres sqlite path", driver: "postgres", dsn: ":memory:", valid: false},
+		{name: "postgres malformed url", driver: "postgres", dsn: "postgres://%zz", valid: false},
+		{name: "postgres malformed key value", driver: "postgres", dsn: "host=db.example.invalid password=\"unterminated", valid: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := (Storage{Metadata: StorageMetadata{Driver: tt.driver, DSN: tt.dsn}, Blobs: StorageBlobs{Driver: "filesystem", Path: "/tmp/blobs"}}).Validate()
+			if (len(errs) == 0) != tt.valid {
+				t.Fatalf("Validate() errors = %v, valid = %v", errs, tt.valid)
+			}
+			for _, err := range errs {
+				if strings.Contains(err.Error(), "secret") {
+					t.Fatalf("validation error leaked DSN secret: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestStorageMetadataDriverDSNValidationFromEnvAndFile(t *testing.T) {
+	t.Setenv("MARKETPLACE_POSTGRES_DSN", "postgres://marketplace:secret@db.example.invalid/marketplace")
+	if errs := (Storage{Metadata: StorageMetadata{Driver: "postgres", DSNEnv: "MARKETPLACE_POSTGRES_DSN"}, Blobs: StorageBlobs{Driver: "filesystem", Path: "/tmp/blobs"}}).Validate(); len(errs) != 0 {
+		t.Fatalf("valid dsn_env rejected: %v", errs)
+	}
+	path := filepath.Join(t.TempDir(), "dsn")
+	if err := os.WriteFile(path, []byte("postgres://marketplace:secret@db.example.invalid/marketplace\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if errs := (Storage{Metadata: StorageMetadata{Driver: "sqlite", DSNFile: path}, Blobs: StorageBlobs{Driver: "filesystem", Path: "/tmp/blobs"}}).Validate(); len(errs) == 0 {
+		t.Fatal("expected sqlite dsn_file containing postgres-incompatible DSN to be rejected")
+	}
+	if err := os.WriteFile(path, []byte(filepath.Join(t.TempDir(), "marketplace.db")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if errs := (Storage{Metadata: StorageMetadata{Driver: "sqlite", DSNFile: path}, Blobs: StorageBlobs{Driver: "filesystem", Path: "/tmp/blobs"}}).Validate(); len(errs) != 0 {
+		t.Fatalf("valid sqlite dsn_file rejected: %v", errs)
+	}
+	if err := os.WriteFile(path, []byte("file::memory:?mode=memory&cache=shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if errs := (Storage{Metadata: StorageMetadata{Driver: "sqlite", DSNFile: path}, Blobs: StorageBlobs{Driver: "filesystem", Path: "/tmp/blobs"}}).Validate(); len(errs) == 0 {
+		t.Fatal("expected sqlite memory dsn_file to be rejected for production configuration")
+	}
+}
+
+func TestStorageMetadataDSNSourceValidationDoesNotLeakSecret(t *testing.T) {
+	const secret = "postgres://user:secret@example.invalid/db"
+	t.Setenv("MARKETPLACE_TEST_DSN", "")
+	_, err := (StorageMetadata{
+		DSN:    secret,
+		DSNEnv: "MARKETPLACE_TEST_DSN",
+	}).ResolveDSN()
+	if err == nil {
+		t.Fatal("expected multiple DSN source error")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("DSN secret leaked in error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsUnsafeCanonicalURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:canonical-secret@example.com",
+		"https://marketplace.example/canonical#fragment",
+		"https://marketplace.example/canonical?oauth_token=canonical-secret",
+		"https://marketplace.example/canonical?X-Amz-Security-Token=canonical-secret",
+		"https://marketplace.example/canonical?signature=canonical-secret",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			path := writeConfig(t, strings.Replace(validConfigYAML(), "https://marketplace.test", raw, 1))
+			_, err := LoadConfig(path)
+			if err == nil {
+				t.Fatalf("LoadConfig accepted unsafe canonical URL %q", raw)
+			}
+			if strings.Contains(err.Error(), "canonical-secret") {
+				t.Fatalf("canonical URL secret leaked in validation error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigRejectsUnsafePublisherURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://publisher.example#fragment",
+		"https://publisher.example?oauth_token=publisher-secret",
+		"https://publisher.example?X-Amz-Security-Token=publisher-secret",
+		"https://publisher.example?signature=publisher-secret",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			yaml := strings.Replace(validConfigYAML(), "      name: Example", "      name: Example\n      url: "+raw, 1)
+			_, err := LoadConfig(writeConfig(t, yaml))
+			if err == nil {
+				t.Fatalf("LoadConfig accepted unsafe publisher URL %q", raw)
+			}
+			if strings.Contains(err.Error(), "publisher-secret") {
+				t.Fatalf("publisher URL secret leaked in validation error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigRejectsSourceOriginUserinfo(t *testing.T) {
+	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://user:source-secret@example.com/resources.git", 1))
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "userinfo") {
+		t.Fatalf("expected source origin userinfo rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), "source-secret") {
+		t.Fatalf("origin secret leaked in validation error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsSourceOriginQueryCredentials(t *testing.T) {
+	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://example.com/resources.git?access_token=source-secret", 1))
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "query parameters") {
+		t.Fatalf("expected source origin query credential rejection, got %v", err)
+	}
+	if strings.Contains(err.Error(), "source-secret") {
+		t.Fatalf("origin query secret leaked in validation error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsNegativeRefreshConcurrency(t *testing.T) {
+	path := writeConfig(t, strings.Replace(validConfigYAML(), "refresh:\n  interval: 30m", "refresh:\n  interval: 30m\nrefresh_concurrency: -1", 1))
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "refresh_concurrency") {
+		t.Fatalf("expected negative refresh_concurrency rejection, got %v", err)
+	}
+}
+
+func TestLoadConfigRejectsMalformedSourceOriginQuery(t *testing.T) {
+	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://example.com/resources.git?access_token=%zz", 1))
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "valid URL query") {
+		t.Fatalf("expected malformed source origin query rejection, got %v", err)
 	}
 }
 
