@@ -64,8 +64,16 @@ modifies files during lint, re-stage and commit again.
 
 Any change that touches concurrent code (the git-root memo in
 `internal/config/loader.go`, TUI background commands, the Devin ownership store)
-must also be green under `make test-race` — CI runs it as a required job and
-releases are gated on it.
+must also be green under `make test-race`, which CI runs as its own job and the
+release job depends on.
+
+`-race` reports data races; it does **not** detect deadlocks (and the runtime's
+all-goroutines-asleep detector never fires in a test binary). Lock-order cycles
+need a deterministic test that drives the interleaving, synchronizes on an
+observation rather than a sleep, and bounds every wait — including the waits inside
+its own helpers, which must use `TryLock` with a deadline so a wedged lock reports
+a failure instead of hanging the binary from `t.Cleanup`. See
+`internal/config/repo_root_singleflight_test.go`.
 
 ## Architecture: Two Entry Points, One Data Flow
 

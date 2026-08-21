@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -89,6 +90,17 @@ var (
 	gitRootInflight = map[string]*gitRootProbeCall{}
 )
 
+// gitRootQueued counts, cumulatively for the life of the process, the callers
+// that have observed an in-flight probe and are therefore about to wait on it.
+//
+// It is incremented under gitRootMu, so it is ordered with the map access it
+// describes, but it is read without the lock. That asymmetry is the point: it
+// lets a concurrency test observe the waiter queue forming — instead of guessing
+// with a settle sleep — while staying lock-free, so a regression that holds
+// gitRootMu across a wait still yields a bounded failure rather than a test
+// binary that hangs on the observation itself.
+var gitRootQueued atomic.Int64
+
 // gitRootProbeCall is one in-flight probe other callers can wait on. root and
 // cacheable are written only by the goroutine running the probe and read by
 // waiters only after done is closed, so the close is the happens-before edge
@@ -127,6 +139,9 @@ func gitRootFor(dir string) string {
 		return root
 	}
 	if inflight, ok := gitRootInflight[dir]; ok {
+		// Counted before the wait starts so an observer can tell that this
+		// caller committed to waiting, even if the wait never ends.
+		gitRootQueued.Add(1)
 		// Wait outside the lock: the probing goroutine needs gitRootMu to
 		// publish its answer.
 		gitRootMu.Unlock()
@@ -155,9 +170,11 @@ func gitRootFor(dir string) string {
 // needs to, because the git boundary of a working directory does not change
 // during a single CLI invocation.
 //
-// It does not cancel probes that are already running: a concurrent probe still
-// publishes the answer it observed, so a test that needs the post-reset answer
-// must reset after its lookups have returned.
+// It does not cancel probes that are already running, and it does not wait for
+// them either: gitRootMu is held only for the map clear, so a reset issued while
+// a probe is in flight returns immediately. A concurrent probe still publishes
+// the answer it observed, so a test that needs the post-reset answer must reset
+// after its lookups have returned.
 func ResetRepoRootCache() {
 	gitRootMu.Lock()
 	defer gitRootMu.Unlock()

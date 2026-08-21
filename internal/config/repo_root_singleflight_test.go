@@ -12,34 +12,123 @@ import (
 // a reported failure instead of a hung test binary.
 const probeWaitTimeout = 10 * time.Second
 
-// wedgeSettleDelay gives the goroutines that are queueing behind an in-flight
-// probe time to actually reach the memo's critical section. Without it a
-// lock-order cycle can be missed because the follower had not yet arrived when
-// the leader published, so these tests would pass against the very
-// implementation they exist to reject.
-const wedgeSettleDelay = 100 * time.Millisecond
+// pollInterval is how often the lock-free observations in this file re-check
+// their condition. Small enough that no test pays a visible settle cost, large
+// enough that the polling goroutine does not starve the goroutines it waits for.
+const pollInterval = 200 * time.Microsecond
 
 // installGitRootProbe substitutes a deterministic probe for the duration of the
 // test and clears the memo on both sides, so nothing is inherited from or
 // leaked to a sibling test (including a second `-count=2` pass).
+//
+// Both resets go through the non-blocking path. A blocking reset would defeat
+// the whole file: on the way in it would inherit a previous test's wedged lock,
+// and on the way out it runs from t.Cleanup after a t.Fatal, where blocking
+// swallows the bounded diagnostic that was just reported and replaces it with a
+// test-binary timeout panic minutes later.
 func installGitRootProbe(t *testing.T, probe func(dir string) (string, bool)) {
 	t.Helper()
 	previous := gitRootProbe
-	ResetRepoRootCache()
+	if !tryResetRepoRootCache() {
+		t.Fatalf("gitRootMu could not be acquired: the memo is holding it across a wait, so this test cannot start from a clean memo")
+	}
 	gitRootProbe = probe
 	t.Cleanup(func() {
 		gitRootProbe = previous
-		ResetRepoRootCache()
+		if !tryResetRepoRootCache() {
+			t.Errorf("gitRootMu could not be acquired after the test: the memo is holding it across a wait, so the cache could not be cleared for the next test")
+		}
 	})
+}
+
+// memoWedged records that a helper gave up on gitRootMu. A lock nobody will ever
+// release stays unreleased for the life of the binary, so every later test fails
+// on that fact immediately instead of paying the timeout again — six tests each
+// waiting probeWaitTimeout at several points is what pushes a package past its
+// -timeout, and a binary-wide timeout panic reads as a broken runner rather than
+// as the finding this file exists to report.
+var memoWedged atomic.Bool
+
+// tryAcquireMemoLock takes gitRootMu without blocking indefinitely, reporting
+// whether it succeeded. Every helper in this file that reads memo internals goes
+// through it, because the failure these tests exist to catch is exactly
+// "gitRootMu is held forever": a plain Lock() there converts a reportable
+// failure into a hung binary.
+func tryAcquireMemoLock() bool {
+	if memoWedged.Load() {
+		return false
+	}
+	deadline := time.Now().Add(probeWaitTimeout)
+	for {
+		if gitRootMu.TryLock() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			memoWedged.Store(true)
+			return false
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// tryResetRepoRootCache is ResetRepoRootCache with a bounded acquisition. It
+// reports false rather than waiting forever for a wedged lock.
+func tryResetRepoRootCache() bool {
+	if !tryAcquireMemoLock() {
+		return false
+	}
+	defer gitRootMu.Unlock()
+	clear(gitRootCache)
+	return true
 }
 
 // inflightProbeCount reports how many probes the memo currently believes are
 // running. A non-zero count after every caller has returned means the memo
 // leaks bookkeeping and would deadlock or re-probe forever.
-func inflightProbeCount() int {
-	gitRootMu.Lock()
+func inflightProbeCount(t *testing.T) int {
+	t.Helper()
+	if !tryAcquireMemoLock() {
+		t.Fatalf("gitRootMu could not be acquired to read the in-flight records: the memo is holding it across a wait")
+	}
 	defer gitRootMu.Unlock()
 	return len(gitRootInflight)
+}
+
+// awaitQueuedWaiters blocks until at least want callers have queued behind an
+// in-flight probe since base, and fails with a bounded diagnostic if they never
+// do.
+//
+// This replaces a fixed settle sleep. The tests here need the followers to have
+// actually reached the memo's critical section before the probe is released,
+// otherwise they would pass against the cyclic implementation they exist to
+// reject; waiting for the observation itself makes that ordering a fact rather
+// than a bet on a timer, and removes the sleep from the fast path. The counter is
+// read without gitRootMu on purpose: a memo that wedges the lock must still be
+// able to produce this failure message.
+func awaitQueuedWaiters(t *testing.T, base, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(probeWaitTimeout)
+	for {
+		got := gitRootQueued.Load() - base
+		if got >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d callers queued behind the in-flight probe within %s", got, want, probeWaitTimeout)
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// awaitProbeEntry waits for a substituted probe to signal that it is running,
+// so a test can be sure the leader exists before it starts followers.
+func awaitProbeEntry(t *testing.T, entered <-chan struct{}, dir string) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(probeWaitTimeout):
+		t.Fatalf("no goroutine reached the git probe for %s within %s", dir, probeWaitTimeout)
+	}
 }
 
 // awaitRoot waits for one lookup result, failing with context instead of
@@ -78,10 +167,11 @@ func TestGitRootForSingleFlightsConcurrentSameDirectoryLookups(t *testing.T) {
 		return "/repo", true
 	})
 
-	const followers = 32
-	results := make(chan string, followers)
+	const lookups = 32
+	queuedBefore := gitRootQueued.Load()
+	results := make(chan string, lookups)
 	var wg sync.WaitGroup
-	for i := 0; i < followers; i++ {
+	for i := 0; i < lookups; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -89,23 +179,22 @@ func TestGitRootForSingleFlightsConcurrentSameDirectoryLookups(t *testing.T) {
 		}()
 	}
 
-	select {
-	case <-entered:
-	case <-time.After(probeWaitTimeout):
-		t.Fatal("no goroutine reached the git probe")
-	}
-	time.Sleep(wedgeSettleDelay)
+	awaitProbeEntry(t, entered, "/repo")
+	// One goroutine leads the probe, so every other one must have queued behind
+	// it before the probe is allowed to finish — that is the interleaving a
+	// lock-order cycle cannot survive.
+	awaitQueuedWaiters(t, queuedBefore, lookups-1)
 	close(release)
 
-	for i := 0; i < followers; i++ {
+	for i := 0; i < lookups; i++ {
 		awaitRoot(t, results, "/repo", "concurrent gitRootFor(\"/repo\")")
 	}
 	wg.Wait()
 
 	if got := calls.Load(); got != 1 {
-		t.Fatalf("git probe ran %d times for %d concurrent lookups of one directory; want exactly 1", got, followers)
+		t.Fatalf("git probe ran %d times for %d concurrent lookups of one directory; want exactly 1", got, lookups)
 	}
-	if got := inflightProbeCount(); got != 0 {
+	if got := inflightProbeCount(t); got != 0 {
 		t.Fatalf("%d in-flight probe records left behind; want 0", got)
 	}
 }
@@ -130,20 +219,17 @@ func TestGitRootForDoesNotSerializeUnrelatedDirectories(t *testing.T) {
 		return dir, true
 	})
 
+	queuedBefore := gitRootQueued.Load()
 	slow := make(chan string, 1)
 	go func() { slow <- gitRootFor("/slow") }()
-	select {
-	case <-slowEntered:
-	case <-time.After(probeWaitTimeout):
-		t.Fatal("no goroutine reached the git probe for /slow")
-	}
+	awaitProbeEntry(t, slowEntered, "/slow")
 
 	// A same-directory follower is what pins the shared lock in a cyclic
-	// implementation, so it has to be in the picture before the unrelated
-	// lookup is attempted.
+	// implementation, so it has to have reached the memo's critical section
+	// before the unrelated lookup is attempted.
 	sameDir := make(chan string, 1)
 	go func() { sameDir <- gitRootFor("/slow") }()
-	time.Sleep(wedgeSettleDelay)
+	awaitQueuedWaiters(t, queuedBefore, 1)
 
 	unrelated := make(chan string, 1)
 	go func() { unrelated <- gitRootFor("/fast") }()
@@ -153,8 +239,59 @@ func TestGitRootForDoesNotSerializeUnrelatedDirectories(t *testing.T) {
 	awaitRoot(t, slow, "/slow", "gitRootFor(\"/slow\") leader")
 	awaitRoot(t, sameDir, "/slow", "gitRootFor(\"/slow\") follower")
 
-	if got := inflightProbeCount(); got != 0 {
+	if got := inflightProbeCount(t); got != 0 {
 		t.Fatalf("%d in-flight probe records left behind; want 0", got)
+	}
+}
+
+// TestResetRepoRootCacheReturnsDuringInFlightProbe pins the property that makes
+// the memo's own test cleanup safe: a reset must complete while a probe is
+// running and while other callers are queued behind it. An implementation that
+// holds gitRootMu across the probe (or across a waiter's wait) blocks the reset
+// for as long as the probe runs, which in a test means the cleanup of a failing
+// test hangs the binary instead of reporting the failure.
+func TestResetRepoRootCacheReturnsDuringInFlightProbe(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	installGitRootProbe(t, func(dir string) (string, bool) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return "/repo", true
+	})
+
+	queuedBefore := gitRootQueued.Load()
+	leader := make(chan string, 1)
+	go func() { leader <- gitRootFor("/repo") }()
+	awaitProbeEntry(t, entered, "/repo")
+
+	follower := make(chan string, 1)
+	go func() { follower <- gitRootFor("/repo") }()
+	awaitQueuedWaiters(t, queuedBefore, 1)
+
+	// Deliberately a plain ResetRepoRootCache, not the bounded test helper: this
+	// is the assertion that the exported reset itself does not block.
+	returned := make(chan struct{})
+	go func() {
+		ResetRepoRootCache()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(probeWaitTimeout):
+		t.Fatalf("ResetRepoRootCache did not return within %s while a probe was in flight with a waiter queued behind it", probeWaitTimeout)
+	}
+
+	close(release)
+	// The reset does not cancel an in-flight probe, so both callers still get the
+	// answer that probe observed.
+	awaitRoot(t, leader, "/repo", "gitRootFor(\"/repo\") leader across a reset")
+	awaitRoot(t, follower, "/repo", "gitRootFor(\"/repo\") follower across a reset")
+
+	if got := inflightProbeCount(t); got != 0 {
+		t.Fatalf("%d in-flight probe records left behind after a reset during a probe; want 0", got)
 	}
 }
 
@@ -178,17 +315,18 @@ func TestGitRootForFailedProbeIsRetriedNotMemoized(t *testing.T) {
 	})
 
 	const failing = 4
+	queuedBefore := gitRootQueued.Load()
 	results := make(chan string, failing)
 	for i := 0; i < failing; i++ {
 		go func() { results <- gitRootFor("/repo") }()
 	}
-	<-entered
-	time.Sleep(wedgeSettleDelay)
+	awaitProbeEntry(t, entered, "/repo")
+	awaitQueuedWaiters(t, queuedBefore, failing-1)
 	close(release)
 	for i := 0; i < failing; i++ {
 		awaitRoot(t, results, "", "gitRootFor(\"/repo\") with a failing probe")
 	}
-	if got := inflightProbeCount(); got != 0 {
+	if got := inflightProbeCount(t); got != 0 {
 		t.Fatalf("%d in-flight probe records left behind after a failed probe; want 0", got)
 	}
 
@@ -226,21 +364,18 @@ func TestGitRootForPanickingProbeDoesNotWedgeWaiters(t *testing.T) {
 		return "/repo", true
 	})
 
+	queuedBefore := gitRootQueued.Load()
 	leaderReturned := make(chan struct{})
 	go func() {
 		defer close(leaderReturned)
 		defer func() { _ = recover() }()
 		gitRootFor("/repo")
 	}()
-	select {
-	case <-entered:
-	case <-time.After(probeWaitTimeout):
-		t.Fatal("no goroutine reached the git probe")
-	}
+	awaitProbeEntry(t, entered, "/repo")
 
 	waiter := make(chan string, 1)
 	go func() { waiter <- gitRootFor("/repo") }()
-	time.Sleep(wedgeSettleDelay)
+	awaitQueuedWaiters(t, queuedBefore, 1)
 	close(release)
 
 	select {
@@ -250,7 +385,7 @@ func TestGitRootForPanickingProbeDoesNotWedgeWaiters(t *testing.T) {
 	}
 	awaitRoot(t, waiter, "", "gitRootFor(\"/repo\") waiting on a panicking probe")
 
-	if got := inflightProbeCount(); got != 0 {
+	if got := inflightProbeCount(t); got != 0 {
 		t.Fatalf("%d in-flight probe records left behind after a panicking probe; want 0", got)
 	}
 	// Nothing was memoized, so the next caller re-probes and gets a real answer.
@@ -311,7 +446,7 @@ func TestGitRootForMixedConcurrentLookups(t *testing.T) {
 	for got := range bad {
 		t.Fatalf("lookup returned %q, which is neither a valid root nor the empty not-a-repo answer", got)
 	}
-	if got := inflightProbeCount(); got != 0 {
+	if got := inflightProbeCount(t); got != 0 {
 		t.Fatalf("%d in-flight probe records left behind; want 0", got)
 	}
 }

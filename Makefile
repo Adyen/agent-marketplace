@@ -45,12 +45,20 @@ test:
 # ownership store are concurrent paths whose failure mode is a hang or a
 # corrupted shared file, which a non-race run reports as a pass. -race needs
 # cgo, hence CGO_ENABLED=1 even though every shipped binary is CGO_ENABLED=0.
-# -count=1 keeps a cached pass from standing in for an actual run. The timeout is
-# well above the default 10m per package: instrumented binaries plus the
-# subprocess-heavy cmd tests take ~12m on a fast laptop and more on CI runners,
-# and a timeout panic there would look like a deadlock rather than a slow box.
+# -count=1 keeps a cached pass from standing in for an actual run.
+#
+# TEST_RACE_TIMEOUT is the per-package Go timeout. It is well above the default
+# 10m: instrumented binaries plus the subprocess-heavy cmd tests take ~12m on a
+# fast laptop and more on a CI runner, and a timeout panic there would read as a
+# deadlock rather than a slow box. It must stay comfortably BELOW the Race job's
+# timeout-minutes in .github/workflows/ci.yml (which also has to cover checkout,
+# toolchain setup, module download and race-instrumented compilation): if the job
+# is killed first, the Go goroutine dump — the only artifact that names the
+# deadlocked lookup — is never printed.
+TEST_RACE_TIMEOUT ?= 40m
+
 test-race:
-	$(call run_go_test,CGO_ENABLED=1 $(GO) test -race -count=1 -timeout 40m ./...)
+	$(call run_go_test,CGO_ENABLED=1 $(GO) test -race -count=1 -timeout $(TEST_RACE_TIMEOUT) ./...)
 
 lint: LINT_MODE=fix
 lint: lint-common

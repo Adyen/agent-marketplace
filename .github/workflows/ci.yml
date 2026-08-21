@@ -62,10 +62,18 @@ jobs:
       - name: Run tests
         run: make test
 
+  # Race must also be listed as a required status check in the branch protection
+  # rules for main: the `needs:` list below only gates the tag-triggered release
+  # job, it cannot block a pull request from merging.
   race:
     name: Race
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Headroom over the Go -timeout in `make test-race` (TEST_RACE_TIMEOUT, 40m):
+    # this budget also covers checkout, toolchain setup, module download and
+    # race-instrumented compilation. Go must be the one to time out, because only
+    # its goroutine dump names the deadlocked call; a job killed by GitHub first
+    # leaves no such evidence. Raise both together, keeping this the larger.
+    timeout-minutes: 60
     permissions:
       contents: read
     # The race detector is implemented in cgo, so this job opts out of the

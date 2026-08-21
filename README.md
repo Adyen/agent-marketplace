@@ -669,15 +669,27 @@ make release   # cross-compile versioned artifacts (darwin-arm64/amd64, linux-am
 make e2e       # run the end-to-end suite (see below)
 ```
 
-### Race testing
+### Race and concurrency testing
 
 `make test-race` runs the whole suite with `-race` (and therefore `CGO_ENABLED=1`,
 unlike the shipped `CGO_ENABLED=0` binaries). The **Race** CI job runs it on every
-pull request and gates releases: a plain `go test` run cannot distinguish a
-correct concurrent memo from one that deadlocks or corrupts shared state under
-interleaving, so any change to concurrent code — the git-root memo in
-`internal/config`, TUI background commands, the Devin ownership store — must be
-green under `-race` before it lands.
+pull request and the release job depends on it, so any change to concurrent code —
+the git-root memo in `internal/config`, TUI background commands, the Devin
+ownership store — must be green under `-race` before it lands.
+
+Two distinct failure modes, two distinct signals:
+
+- **Data races** are what `-race` reports.
+- **Deadlocks are not.** `-race` does not detect lock-order cycles, and the Go
+  runtime's deadlock detector only fires when *every* goroutine is asleep, which
+  never happens in a test binary. Those are caught by deterministic regression
+  tests that drive the interleaving and bound every wait, so a cycle fails with a
+  diagnostic instead of hanging (see
+  `internal/config/repo_root_singleflight_test.go`).
+
+Maintainers: for the Race job to block merges rather than just releases, it must be
+listed as a required status check in the branch protection rules for `main`; the
+workflow's `needs:` list can only gate the release job.
 
 ### E2E tests
 

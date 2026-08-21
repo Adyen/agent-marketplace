@@ -155,10 +155,21 @@ decisions, and error paths.
 
 ## Concurrency Testing Policy
 
-Race-enabled testing is a **required CI signal**, not an optional local extra.
-`make test-race` runs the full suite with `-race` (and `CGO_ENABLED=1`, unlike the
-shipped `CGO_ENABLED=0` binaries); the **Race** job runs it on every pull request
-and the release job depends on it.
+Concurrency is guarded by **two different signals**, and neither substitutes for
+the other:
+
+1. **Deterministic deadlock tests catch lock-order cycles.** `-race` does not
+   detect deadlocks, and the Go runtime's "all goroutines are asleep" detector
+   never fires in a test binary (the testing timer keeps a goroutine runnable), so
+   a lock-order cycle is only caught by a test that drives the interleaving and
+   bounds every wait — see `internal/config/repo_root_singleflight_test.go`.
+2. **`-race` catches data races**: unsynchronized concurrent access that a plain
+   run silently tolerates. `make test-race` runs the full suite with `-race` (and
+   `CGO_ENABLED=1`, unlike the shipped `CGO_ENABLED=0` binaries); the **Race** job
+   runs it on every pull request and the release job depends on it. Making it
+   block a merge additionally requires listing `Race` as a required status check
+   in the branch protection rules for `main` — a `needs:` entry only gates the
+   release job.
 
 - **Never guard shared state with a lock you also hold while waiting.** Concurrent
   memoization uses the promise pattern (a per-key record with a `done` channel;
@@ -170,6 +181,14 @@ and the release job depends on it.
   interleaving from a substituted dependency (the `gitRootProbe` var), bound every
   wait with a timeout so a regression reports a failure instead of hanging the
   suite, and assert the bookkeeping is drained afterwards.
+- **Synchronize on an observation, not on a sleep.** Wait until the state the test
+  needs is visible (`gitRootQueued` counts callers that have queued behind an
+  in-flight probe) instead of sleeping for a settle delay: the sleep is both a
+  flake and a lie about what was reached.
+- **A test helper must never block on the lock under test.** Acquire it with
+  `TryLock` plus a deadline. Helpers run from `t.Cleanup` after `t.Fatal`, so a
+  blocking helper replaces the bounded diagnostic with a test-binary timeout panic
+  minutes later.
 - **A promise must always be resolved**, including when the producing goroutine
   panics; otherwise its waiters block forever.
 
