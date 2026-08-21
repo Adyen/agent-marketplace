@@ -69,9 +69,9 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
         query: serializeSearchQuery(params),
       }).then(normalizeSearchResult),
     getResource: (source: string, kind: ResourceKind, name: string) =>
-      fetcher<unknown>(resourcePath(apiBase, source, kind, name)).then(normalizeResourceRevision),
+      fetcher<unknown>(resourcePath(apiBase, source, kind, name)).then(payload => normalizeResourceRevision(payload, { source, kind, name })),
     getResourceRevision: (source: string, kind: ResourceKind, name: string, revision: string) =>
-      fetcher<unknown>(resourceRevisionPath(apiBase, source, kind, name, revision)).then(normalizeResourceRevision),
+      fetcher<unknown>(resourceRevisionPath(apiBase, source, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { source, kind, name, contentDigest: revision })),
   }
 }
 

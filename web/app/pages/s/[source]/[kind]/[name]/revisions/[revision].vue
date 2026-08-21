@@ -2,29 +2,23 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
+import { revisionAsyncDataKey, routeParam } from '~/lib/routes'
+import { isSha256Digest } from '~/lib/validation'
 
 const route = useRoute()
 const api = useMarketplaceApi()
 
-function routeValue(value: string | string[] | undefined): string {
-  const raw = Array.isArray(value) ? value[0] : value
-  try {
-    return decodeURIComponent(raw || '')
-  } catch {
-    return ''
-  }
-}
-
-const source = routeValue(route.params.source)
-const kindValue = routeValue(route.params.kind)
-const name = routeValue(route.params.name)
-const revision = routeValue(route.params.revision)
+const source = routeParam(route.params.source, 'source')
+const kindValue = routeParam(route.params.kind, 'resource kind')
+const name = routeParam(route.params.name, 'resource name')
+const revision = routeParam(route.params.revision, 'revision')
 if (!isResourceKind(kindValue)) throw createError({ statusCode: 404, statusMessage: 'Resource kind not found' })
+if (!isSha256Digest(revision)) throw createError({ statusCode: 404, statusMessage: 'Resource revision not found' })
 const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: resource, pending, error, refresh } = await useAsyncData(
-  `marketplace-resource-${source}-${kind}-${name}-${revision}`,
+  revisionAsyncDataKey(source, kind, name, revision),
   () => api.getResourceRevision(source, kind, name, revision),
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url) || (import.meta.client ? window.location.origin : ''))

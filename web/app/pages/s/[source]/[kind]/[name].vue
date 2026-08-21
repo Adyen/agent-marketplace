@@ -2,28 +2,20 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
+import { resourceAsyncDataKey, routeParam } from '~/lib/routes'
 
 const route = useRoute()
 const api = useMarketplaceApi()
 
-function routeValue(value: string | string[] | undefined): string {
-  const raw = Array.isArray(value) ? value[0] : value
-  try {
-    return decodeURIComponent(raw || '')
-  } catch {
-    return ''
-  }
-}
-
-const source = routeValue(route.params.source)
-const kindValue = routeValue(route.params.kind)
-const name = routeValue(route.params.name)
+const source = routeParam(route.params.source, 'source')
+const kindValue = routeParam(route.params.kind, 'resource kind')
+const name = routeParam(route.params.name, 'resource name')
 if (!isResourceKind(kindValue)) throw createError({ statusCode: 404, statusMessage: 'Resource kind not found' })
 const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: resource, pending, error, refresh } = await useAsyncData(
-  `marketplace-resource-${source}-${kind}-${name}`,
+  resourceAsyncDataKey(source, kind, name),
   () => api.getResource(source, kind, name),
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url) || (import.meta.client ? window.location.origin : ''))

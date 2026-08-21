@@ -13,7 +13,7 @@ type Props = {
 }
 
 const props = defineProps<Props>()
-const { copied, copy } = useCopyText()
+const { copied, copyError, copy } = useCopyText()
 
 const listItem = computed<ResourceListItem>(() => ({
   source_id: props.source,
@@ -24,6 +24,7 @@ const listItem = computed<ResourceListItem>(() => ({
 }))
 const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
+const actionsAvailable = computed(() => Boolean(browserUrl.value && command.value))
 const revoked = computed(() => Boolean(props.resource.revocation && Object.keys(props.resource.revocation).length))
 const acquisition = computed(() => props.resource.acquisition || valueFromRecord(props.resource.provenance, 'acquisition') || 'Not specified')
 const provenanceEntries = computed(() => Object.entries(props.resource.provenance ?? {}))
@@ -79,7 +80,7 @@ function formatValue(value: unknown): string {
       </div>
     </div>
 
-    <section v-if="revoked" class="border-b border-default py-6" aria-labelledby="revocation-heading">
+    <section v-if="revoked" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="revocation-heading">
       <h2 id="revocation-heading" class="text-lg font-semibold text-error">This revision is revoked</h2>
       <p class="mt-2 text-sm leading-6 text-muted">The Marketplace has marked this exact digest as revoked. This page is read-only; do not install it.</p>
       <p class="mt-3 break-words font-mono text-xs text-dimmed">{{ formatValue(resource.revocation) }}</p>
@@ -110,15 +111,17 @@ function formatValue(value: unknown): string {
       <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Copy exact pin</h2>
       <p class="mt-2 text-sm leading-6 text-muted">The command and browser URL include this revision's content digest. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
-        <code class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
+        <code v-if="actionsAvailable" class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
+        <p v-if="!actionsAvailable" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.</p>
         <div class="flex flex-wrap gap-2">
-          <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" @click="copy(command, 'command')">
+          <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" :disabled="!actionsAvailable" @click="copy(command, 'command')">
             {{ copied === 'command' ? 'Copied command' : 'Copy pinned command' }}
           </UButton>
-          <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" @click="copy(browserUrl, 'url')">
+          <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" :disabled="!actionsAvailable" @click="copy(browserUrl, 'url')">
             {{ copied === 'url' ? 'Copied URL' : 'Copy pinned URL' }}
           </UButton>
         </div>
+        <p v-if="actionsAvailable && copyError" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
         <p class="sr-only" aria-live="polite">{{ copied === 'command' ? 'Pinned CLI install command copied.' : copied === 'url' ? 'Pinned browser URL copied.' : '' }}</p>
       </div>
     </section>

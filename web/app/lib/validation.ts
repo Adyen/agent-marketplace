@@ -6,6 +6,10 @@ const MAX_ARRAY_LENGTH = 100
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 
+export function isSha256Digest(value: string): boolean {
+  return DIGEST_PATTERN.test(value)
+}
+
 export class ApiValidationError extends Error {
   constructor(message: string) {
     super(`Invalid Marketplace API response: ${message}`)
@@ -40,7 +44,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   const kind = requiredString(object.kind, `${label}.kind`)
   if (!isResourceKind(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
   const digest = requiredString(object.content_digest, `${label}.content_digest`)
-  if (!DIGEST_PATTERN.test(digest)) throw new ApiValidationError(`${label}.content_digest is not a SHA-256 digest`)
+  if (!isSha256Digest(digest)) throw new ApiValidationError(`${label}.content_digest is not a SHA-256 digest`)
   const metadata = object.metadata === undefined ? undefined : stringRecord(object.metadata, `${label}.metadata`)
   return {
     source_id: requiredString(object.source_id, `${label}.source_id`),
@@ -55,11 +59,22 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   }
 }
 
-export function normalizeResourceRevision(input: unknown): ResourceRevision {
+export type ExpectedResourceCoordinate = {
+  source: string
+  kind: ResourceKind
+  name: string
+  contentDigest?: string
+}
+
+export function normalizeResourceRevision(input: unknown, expected?: ExpectedResourceCoordinate): ResourceRevision {
   const object = asObject(input, 'resource revision')
   const coordinate = stringRecord(object.coordinate, 'coordinate')
   const digest = requiredString(object.content_digest, 'content_digest')
-  if (!DIGEST_PATTERN.test(digest)) throw new ApiValidationError('content_digest is not a SHA-256 digest')
+  if (!isSha256Digest(digest)) throw new ApiValidationError('content_digest is not a SHA-256 digest')
+  if (expected?.contentDigest !== undefined && digest !== expected.contentDigest) {
+    throw new ApiValidationError(`content_digest does not match requested digest ${expected.contentDigest}`)
+  }
+  validateRequestedCoordinate(coordinate, expected)
   return {
     coordinate,
     content_digest: digest,
@@ -70,6 +85,20 @@ export function normalizeResourceRevision(input: unknown): ResourceRevision {
     findings: boundedUnknownArray(object.findings, 'findings'),
     provenance: boundedUnknownRecord(object.provenance, 'provenance'),
     revocation: boundedUnknownRecord(object.revocation, 'revocation'),
+  }
+}
+
+function validateRequestedCoordinate(coordinate: Record<string, string>, expected: ExpectedResourceCoordinate | undefined): void {
+  if (!expected) return
+  const coordinateSource = coordinate.source ?? coordinate.source_id ?? coordinate.source_slug
+  if (coordinateSource !== undefined && coordinateSource !== expected.source) {
+    throw new ApiValidationError(`coordinate.source does not match requested source ${expected.source}`)
+  }
+  if (coordinate.kind !== undefined && coordinate.kind !== expected.kind) {
+    throw new ApiValidationError(`coordinate.kind does not match requested kind ${expected.kind}`)
+  }
+  if (coordinate.name !== undefined && coordinate.name !== expected.name) {
+    throw new ApiValidationError(`coordinate.name does not match requested name ${expected.name}`)
   }
 }
 
