@@ -603,7 +603,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 
 	var materializeSpan telemetry.Span
 	if tel != nil {
-		_, materializeSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.materialization", map[string]string{
+		ctx, materializeSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.materialization", map[string]string{
 			"target.count":   strconv.Itoa(len(targets)),
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})

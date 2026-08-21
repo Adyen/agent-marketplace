@@ -212,8 +212,9 @@ const (
 	LockUnsupported LockEventKind = "unsupported"
 	// LockCASConflict means Apply's compare-and-swap precondition failed.
 	LockCASConflict LockEventKind = "cas-conflict"
-	// LockReleased: one depth level was released. The descriptor is closed, and
-	// the kernel therefore drops the lock, only at depth zero.
+	// LockReleased: one depth level is being released. At depth zero the observer
+	// runs immediately before the descriptor is unlocked and closed, so it can
+	// bracket the exact kernel-held section.
 	LockReleased LockEventKind = "released"
 )
 
@@ -239,7 +240,9 @@ type LockEvent struct {
 
 // LockObserver is notified of every lock transition. It must not block and must
 // be safe for concurrent use: two Stores for one root can report from two
-// goroutines.
+// goroutines. A LockReleased callback runs while this Store's acquisition mutex
+// is held; at depth zero, the kernel lock is also still held. It must not call
+// Lock or a mutating method on that Store.
 type LockObserver func(LockEvent)
 
 // WithLockTimeout bounds how long [Store.Lock] waits for a contended lock.
@@ -609,6 +612,9 @@ func (s *Store) releaser() func() {
 // The lock FILE is never removed. See the unlink race documented at the top of
 // this file.
 func (s *Store) releaseOne() {
+	s.acquireMu.Lock()
+	defer s.acquireMu.Unlock()
+
 	s.lockMu.Lock()
 	if s.session == nil {
 		s.lockMu.Unlock()
@@ -624,12 +630,14 @@ func (s *Store) releaseOne() {
 	s.lockMu.Unlock()
 
 	if f != nil {
-		// Closing the descriptor is what releases the kernel lock; the explicit
-		// LOCK_UN is belt and braces for the case where something else in this
-		// process still holds a dup of the descriptor.
-		dropHeldDescriptor(f)
-		_ = unlockFile(f)
-		_ = f.Close()
+		defer func() {
+			// Closing the descriptor is what releases the kernel lock; the explicit
+			// LOCK_UN is belt and braces for the case where something else in this
+			// process still holds a dup of the descriptor.
+			dropHeldDescriptor(f)
+			_ = unlockFile(f)
+			_ = f.Close()
+		}()
 	}
 	s.observeLock(LockEvent{Kind: LockReleased, Depth: depth})
 }
