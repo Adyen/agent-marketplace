@@ -175,7 +175,19 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 		return nil, err
 	}
 	state := &portableState{path: path, entries: make(map[string]portableManifestEntry)}
-	data, err := os.ReadFile(path)
+	// Read through the same confinement the write uses. The manifest directory
+	// is repository- or dotfile-controlled, so a symlink at .agents or at
+	// ~/.agent-marketplace would otherwise decide both which file we believe is
+	// our own state and which file we then rename over.
+	manifestFS, err := openConfinedFS(filepath.Dir(path), false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return state, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = manifestFS.Close() }()
+	data, err := manifestFS.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return state, nil
 	}
@@ -240,7 +252,15 @@ func (s *portableState) save(dryRun bool) error {
 		return nil
 	}
 	if len(s.entries) == 0 {
-		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		manifestFS, err := openConfinedFS(filepath.Dir(s.path), false)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		defer func() { _ = manifestFS.Close() }()
+		if err := manifestFS.Remove(s.path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		return nil
@@ -259,28 +279,18 @@ func (s *portableState) save(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".materialization-manifest-*")
+	manifestFS, err := openConfinedFS(filepath.Dir(s.path), true)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
+	defer func() { _ = manifestFS.Close() }()
+	if err := manifestFS.EnsureRoot(); err != nil {
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+	if _, err := manifestFS.AtomicWriteReconciling(s.path, data, 0o644); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return nil
 }
 
 // RunOption configures optional behavior for Run.
@@ -513,9 +523,20 @@ func sameOutputDir(a, b string) bool {
 	return os.SameFile(sa, sb)
 }
 
+// repoConfinementDirs names the single repository subdirectory that holds every
+// managed artifact of a target whose DECLARED repo root is the repository
+// itself. Windsurf is the only one: it declares "." because its artifact paths
+// are authored with a ".windsurf/" prefix.
+//
+// A target absent from this map and declaring "." has no canonical harness root,
+// and confinementRoot refuses it rather than confining to the whole checkout.
+var repoConfinementDirs = map[hcc.Target]string{
+	hcc.TargetWindsurf: windsurfDir,
+}
+
 func repoOutputDir(target hcc.Target, roots harness.Roots, repoRoot string) string {
-	if target == hcc.TargetWindsurf {
-		return filepath.Join(repoRoot, windsurfDir)
+	if dir, ok := repoConfinementDirs[target]; ok {
+		return filepath.Join(repoRoot, dir)
 	}
 	return roots.For(false, repoRoot)
 }
@@ -530,11 +551,46 @@ func repoOutputDir(target hcc.Target, roots harness.Roots, repoRoot string) stri
 // nothing that matters: every in-repo path — .git/hooks, .github/workflows —
 // would be a legal write and a legal prune target, reachable by a committed
 // `.windsurf` symlink or by a committed materialization-manifest entry.
-func confinementRoot(target hcc.Target, roots harness.Roots, repoRoot string, machineScope bool) string {
+//
+// The invariant is enforced here rather than left to review: a root that is the
+// repository (repo scope) or the home directory (machine scope), or an ancestor
+// of either, confines to nothing and is refused. A target definition added later
+// that resolves to one of those gets a diagnostic on its own output instead of
+// silently inheriting the whole tree as a legal write and prune surface.
+func confinementRoot(target hcc.Target, roots harness.Roots, repoRoot string, machineScope bool) (string, error) {
+	root := repoOutputDir(target, roots, repoRoot)
+	boundary, boundaryLabel := repoRoot, "repository root"
 	if machineScope {
-		return roots.For(true, repoRoot)
+		root = roots.For(true, repoRoot)
+		home, err := os.UserHomeDir()
+		if err != nil {
+			// Without a home directory there is no boundary to compare against,
+			// and MakeInstallRoots already substituted a placeholder for it.
+			return root, nil
+		}
+		boundary, boundaryLabel = home, "home directory"
 	}
-	return repoOutputDir(target, roots, repoRoot)
+	if root == "" {
+		return "", fmt.Errorf("target %q declares no output root for this scope", target)
+	}
+	if containsPath(root, boundary) {
+		return "", fmt.Errorf("target %q would confine managed writes to the %s (%s): it declares no harness root of its own", target, boundaryLabel, root)
+	}
+	return root, nil
+}
+
+// containsPath reports whether outer is inner or one of its ancestors.
+func containsPath(outer, inner string) bool {
+	absOuter, err := filepath.Abs(outer)
+	if err != nil {
+		return false
+	}
+	absInner, err := filepath.Abs(inner)
+	if err != nil {
+		return false
+	}
+	_, ok := relativeWithin(absOuter, absInner)
+	return ok
 }
 
 func outputDirExists(path string) bool {
@@ -845,82 +901,114 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		outDir := roots.For(key.machineScope, repoRoot)
-		outputFS, err := openConfinedFS(confinementRoot(key.target, roots, repoRoot, key.machineScope), !dryRun)
-		if err != nil {
-			if dryRun && errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			slog.Error("materialize output root rejected", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", err)
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("open output root %s: %v", outDir, err)})
+		var proceed bool
+		report, proceed = materializeOutputKey(report, key, roots, outDir, compileResult, dryRun, repoRoot, modes)
+		if !proceed {
 			continue
-		}
-
-		if !dryRun {
-			if err := outputFS.EnsureRoot(); err != nil {
-				_ = outputFS.Close()
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", outDir, err),
-				})
-				continue
-			}
-		}
-
-		tw := compileResult.byTarget[key]
-
-		var artifacts []artifact.Artifact
-		var targetDiags []diag.Diagnostic
-		if tw != nil {
-			merged, mergeErr := artifact.MergeFragments(tw.artifacts)
-			if mergeErr != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.merge.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("merge fragments for target %s: %v", key.target, mergeErr),
-				})
-				continue
-			}
-			artifacts = merged
-			targetDiags = tw.diags
-			// Aggregate compile diagnostics once at the report level so
-			// InSync() reflects compile errors. Per-plan TargetReport.Diags
-			// are left empty to avoid duplication across multiple plans.
-			report.Diags = append(report.Diags, targetDiags...)
-		}
-
-		mode := modes.Project
-		if key.machineScope {
-			mode = modes.Machine
-		}
-		// "There is no real-file fallback in this increment" (plan, target
-		// contract): a SymlinkOnly target refuses file-copy materialization
-		// outright instead of degrading to a shape Devin is not proven to read.
-		if info, ok := harness.TargetInfoMap[key.target]; ok && info.SymlinkOnly && mode == config.MaterializationModeFile {
-			slog.Error("refused file-copy materialization for a symlink-only target",
-				"target", key.target, "machine_scope", key.machineScope, "out_dir", outDir,
-				"code", diag.CodeMaterializeDevinSymlinkRequired)
-			report.Diags = append(report.Diags, diag.Diagnostic{
-				Code:     diag.CodeMaterializeDevinSymlinkRequired,
-				Severity: diag.SeverityError,
-				Target:   string(key.target),
-				Message: fmt.Sprintf("target %s materializes skills as directory symlinks and subagents as file symlinks and has no real-file fallback; file-copy materialization mode was refused for %s",
-					key.target, outDir),
-				Hint: "Devin has no real-file fallback; set the materialization mode back to symlink for this harness",
-			})
-			continue
-		}
-		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		report = executeTargetPlans(report, key, outputFS, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
-		if closeErr := outputFS.Close(); closeErr != nil {
-			slog.Error("materialize output root close failed", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", closeErr)
 		}
 		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
 	}
 
 	return report
+}
+
+// materializeOutputKey materializes one target/scope pair through a confinement
+// root it opens and closes itself.
+//
+// The open root is a directory file descriptor, and every refusal below is an
+// early return, so the close lives in a defer: the two refusals that used to
+// return without one (a fragment merge failure, a symlink-only target in file
+// mode) leaked a descriptor per target for the rest of the process.
+//
+// The bool reports whether the target got far enough for Devin's aggregate
+// reconciliation to be meaningful, which is what the refusals used to express by
+// skipping the rest of the loop body.
+func materializeOutputKey(report *Report, key outputKey, roots harness.Roots, outDir string, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) (*Report, bool) {
+	root, rootErr := confinementRoot(key.target, roots, repoRoot, key.machineScope)
+	if rootErr != nil {
+		slog.Error("materialize confinement root refused", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", rootErr)
+		report.Diags = append(report.Diags, diag.Diagnostic{
+			Code:     "materialize.root.unconfinable",
+			Severity: diag.SeverityError,
+			Target:   string(key.target),
+			Message:  rootErr.Error(),
+			Hint:     "declare the harness root this target writes under; agent-marketplace only manages paths beneath a per-target root",
+		})
+		return report, false
+	}
+	outputFS, err := openConfinedFS(root, !dryRun)
+	if err != nil {
+		if dryRun && errors.Is(err, os.ErrNotExist) {
+			return report, false
+		}
+		slog.Error("materialize output root rejected", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", err)
+		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("open output root %s: %v", outDir, err)})
+		return report, false
+	}
+	defer func() {
+		if closeErr := outputFS.Close(); closeErr != nil {
+			slog.Error("materialize output root close failed", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", closeErr)
+		}
+	}()
+
+	if !dryRun {
+		if err := outputFS.EnsureRoot(); err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{
+				Code:     "materialize.mkdir.error",
+				Severity: diag.SeverityError,
+				Target:   string(key.target),
+				Message:  fmt.Sprintf("create output directory %s: %v", outDir, err),
+			})
+			return report, false
+		}
+	}
+
+	tw := compileResult.byTarget[key]
+
+	var artifacts []artifact.Artifact
+	var targetDiags []diag.Diagnostic
+	if tw != nil {
+		merged, mergeErr := artifact.MergeFragments(tw.artifacts)
+		if mergeErr != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{
+				Code:     "materialize.merge.error",
+				Severity: diag.SeverityError,
+				Target:   string(key.target),
+				Message:  fmt.Sprintf("merge fragments for target %s: %v", key.target, mergeErr),
+			})
+			return report, false
+		}
+		artifacts = merged
+		targetDiags = tw.diags
+		// Aggregate compile diagnostics once at the report level so
+		// InSync() reflects compile errors. Per-plan TargetReport.Diags
+		// are left empty to avoid duplication across multiple plans.
+		report.Diags = append(report.Diags, targetDiags...)
+	}
+
+	mode := modes.Project
+	if key.machineScope {
+		mode = modes.Machine
+	}
+	// "There is no real-file fallback in this increment" (plan, target
+	// contract): a SymlinkOnly target refuses file-copy materialization
+	// outright instead of degrading to a shape Devin is not proven to read.
+	if info, ok := harness.TargetInfoMap[key.target]; ok && info.SymlinkOnly && mode == config.MaterializationModeFile {
+		slog.Error("refused file-copy materialization for a symlink-only target",
+			"target", key.target, "machine_scope", key.machineScope, "out_dir", outDir,
+			"code", diag.CodeMaterializeDevinSymlinkRequired)
+		report.Diags = append(report.Diags, diag.Diagnostic{
+			Code:     diag.CodeMaterializeDevinSymlinkRequired,
+			Severity: diag.SeverityError,
+			Target:   string(key.target),
+			Message: fmt.Sprintf("target %s materializes skills as directory symlinks and subagents as file symlinks and has no real-file fallback; file-copy materialization mode was refused for %s",
+				key.target, outDir),
+			Hint: "Devin has no real-file fallback; set the materialization mode back to symlink for this harness",
+		})
+		return report, false
+	}
+	slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
+	return executeTargetPlans(report, key, outputFS, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot), true
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
@@ -1863,6 +1951,11 @@ func materializeMergeInRoot(outputFS *confinedFS, outDir string, artifacts []art
 		return nil, nil, err
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
+	var diags []diag.Diagnostic
+	// refused holds artifact paths whose destination must be left exactly as it
+	// is. The refusal is PER FILE: one redirected mcp.json must not stop hooks
+	// from being reconciled in the same directory.
+	refused := make(map[string]bool)
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 		_, statErr := outputFS.Lstat(destPath)
@@ -1873,14 +1966,48 @@ func materializeMergeInRoot(outputFS *confinedFS, outDir string, artifacts []art
 			return nil, nil, statErr
 		}
 		existing, err := outputFS.readMergeSource(destPath)
-		if err != nil {
+		switch {
+		case errors.Is(err, errMergeSourceMissing):
+			// A symlink with nothing behind it: the previous sync's cache entry
+			// after the cache was deleted, or a link into a checkout that is
+			// gone. There is nothing to merge and nothing to preserve, so the
+			// write below replaces the link with a regular file instead of
+			// failing every merge artifact in this directory forever.
+			slog.Warn("materialize replaced a dangling merge symlink",
+				"path", destPath, "code", codeMergeSymlinkDangling)
+			diags = append(diags, diag.Diagnostic{
+				Code:     codeMergeSymlinkDangling,
+				Severity: diag.SeverityWarning,
+				Resource: filepath.ToSlash(a.Path),
+				Message:  fmt.Sprintf("%s was a symlink that resolves to nothing; replaced with a regular file", destPath),
+				Hint:     "shared harness configs are regular files so handwritten and generated entries can coexist",
+				Source:   diag.SourceRef{File: filepath.ToSlash(a.Path)},
+			})
+			continue
+		case err != nil:
+			var external *externalMergeSourceError
+			if errors.As(err, &external) {
+				logMaterializeOutputFailure("read-merge-source", destPath, err)
+				diags = append(diags, diag.Diagnostic{
+					Code:     "materialize.write.error",
+					Severity: diag.SeverityError,
+					Resource: filepath.ToSlash(a.Path),
+					Message:  err.Error(),
+					Hint:     "point the symlink inside the harness root, or replace it with a regular file; agent-marketplace will not merge content it cannot vouch for",
+					Source:   diag.SourceRef{File: filepath.ToSlash(a.Path)},
+				})
+				refused[a.Path] = true
+				continue
+			}
 			return nil, nil, fmt.Errorf("read existing merge artifact %s: %w", destPath, err)
 		}
 		stagePath := filepath.Join(stage, filepath.FromSlash(a.Path))
 		if err := os.MkdirAll(filepath.Dir(stagePath), 0o755); err != nil {
 			return nil, nil, err
 		}
-		if err := os.WriteFile(stagePath, existing, 0o644); err != nil {
+		// 0600: this copy of the destination is the user's mcp.json, headers,
+		// env values and OAuth tokens included, sitting in a shared temp tree.
+		if err := os.WriteFile(stagePath, existing, 0o600); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1890,27 +2017,54 @@ func materializeMergeInRoot(outputFS *confinedFS, outDir string, artifacts []art
 	}
 	writeReport, writeErr := hcc.Materialize(&hcc.Result{Artifacts: artifacts}, stage, options...)
 	if writeErr != nil {
-		return writeReport, nil, writeErr
+		return writeReport, diags, writeErr
 	}
 	writeReport.OutDir = outDir
 	if dryRun {
-		return writeReport, nil, nil
+		return dropMergeReportPaths(writeReport, refused), diags, nil
 	}
 	for _, a := range artifacts {
+		if refused[a.Path] {
+			continue
+		}
 		stagePath := filepath.Join(stage, filepath.FromSlash(a.Path))
 		data, readErr := os.ReadFile(stagePath)
 		if readErr != nil {
-			return writeReport, nil, readErr
+			return writeReport, diags, readErr
 		}
-		mode := portableArtifactMode(a.Mode)
-		if info, statErr := os.Stat(stagePath); statErr == nil {
-			mode = info.Mode().Perm()
-		}
-		if err := outputFS.AtomicWrite(filepath.Join(outDir, filepath.FromSlash(a.Path)), data, mode); err != nil {
-			return writeReport, nil, err
+		if _, err := outputFS.AtomicWriteReconciling(filepath.Join(outDir, filepath.FromSlash(a.Path)), data, portableArtifactMode(a.Mode)); err != nil {
+			return writeReport, diags, err
 		}
 	}
-	return writeReport, nil, nil
+	return dropMergeReportPaths(writeReport, refused), diags, nil
+}
+
+// codeMergeSymlinkDangling marks a shared harness config that was a symlink to
+// nothing and has been replaced by a regular file. It is a warning, not an
+// error: nothing was lost, and the run reconciled the file.
+const codeMergeSymlinkDangling = "materialize.merge.symlink-dangling"
+
+// dropMergeReportPaths removes refused artifacts from the write report. The
+// staging materialization wrote them (into the temp tree), so leaving them in
+// would report a file as written that the destination never received.
+func dropMergeReportPaths(report *hcc.WriteReport, refused map[string]bool) *hcc.WriteReport {
+	if report == nil || len(refused) == 0 {
+		return report
+	}
+	keep := func(paths []string) []string {
+		filtered := paths[:0]
+		for _, p := range paths {
+			if refused[filepath.ToSlash(p)] {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		return filtered
+	}
+	report.Written = keep(report.Written)
+	report.Skipped = keep(report.Skipped)
+	report.Removed = keep(report.Removed)
+	return report
 }
 
 // pruneUncoveredManagedMergeFiles walks outDir and its subdirectories for
@@ -2257,7 +2411,10 @@ func stripManagedEntriesFromFileInRoot(outputFS *confinedFS, path string, dryRun
 	}
 	result := doc.Bytes()
 	if !dryRun {
-		if writeErr := outputFS.AtomicWrite(path, result, 0o644); writeErr != nil {
+		// The file being written back is the USER's harness config, so it keeps
+		// its own permission bits: pruning our markers out of a 0600 mcp.json
+		// must not hand its credentials to every account on the machine.
+		if _, writeErr := outputFS.AtomicWriteReconciling(path, result, 0o644); writeErr != nil {
 			return nil, removed, writeErr
 		}
 	}

@@ -68,6 +68,93 @@ func BenchmarkConfinedFSAtomicWrite(b *testing.B) {
 	}
 }
 
+// BenchmarkConfinedFSAtomicWriteReconcilingUnchanged measures the shared-config
+// write-back path when the destination already holds the desired bytes, which is
+// what every sync after the first one does to mcp.json, hooks.json and
+// plugin.json.
+func BenchmarkConfinedFSAtomicWriteReconcilingUnchanged(b *testing.B) {
+	root := benchConfinedTree(b, 0)
+	fs, err := openConfinedFS(root, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = fs.Close() }()
+	target := filepath.Join(root, "mcp.json")
+	data := []byte(`{"mcpServers":{"alpha":{"command":"alpha"}}}`)
+	if _, err := fs.AtomicWriteReconciling(target, data, 0o600); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		wrote, err := fs.AtomicWriteReconciling(target, data, 0o600)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if wrote {
+			b.Fatal("unchanged destination was rewritten")
+		}
+	}
+}
+
+// BenchmarkConfinedFSAtomicWriteReconcilingChanged measures the same path when
+// the bytes really differ, i.e. the cost of the mode-preserving write plus the
+// comparison that decided it was needed.
+func BenchmarkConfinedFSAtomicWriteReconcilingChanged(b *testing.B) {
+	root := benchConfinedTree(b, 0)
+	fs, err := openConfinedFS(root, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = fs.Close() }()
+	target := filepath.Join(root, "mcp.json")
+	variants := [2][]byte{
+		[]byte(`{"mcpServers":{"alpha":{"command":"alpha"}}}`),
+		[]byte(`{"mcpServers":{"beta":{"command":"beta"}}}`),
+	}
+	if _, err := fs.AtomicWriteReconciling(target, variants[0], 0o600); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := range b.N {
+		wrote, err := fs.AtomicWriteReconciling(target, variants[i%2], 0o600)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !wrote && i > 0 {
+			b.Fatal("changed destination was skipped")
+		}
+	}
+}
+
+// BenchmarkConfinedFSReadDir measures the directory listing every prune decision
+// is derived from, including the sort that restores os.ReadDir's ordering.
+func BenchmarkConfinedFSReadDir(b *testing.B) {
+	const files = 256
+	root := benchConfinedTree(b, files)
+	fs, err := openConfinedFS(root, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = fs.Close() }()
+	dir := filepath.Join(root, "skills", "nested")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		entries, err := fs.ReadDir(dir)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(entries) != files {
+			b.Fatalf("got %d entries, want %d", len(entries), files)
+		}
+	}
+}
+
 // BenchmarkConfinedFSAtomicSymlink measures the per-skill cost of the symlink
 // materialization mode.
 func BenchmarkConfinedFSAtomicSymlink(b *testing.B) {

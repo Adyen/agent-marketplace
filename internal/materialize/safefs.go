@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -43,6 +44,10 @@ type confinedFS struct {
 	prefix           string
 	trustedReadRoots []trustedReadRoot
 	seq              atomic.Uint64
+
+	// closed keeps the open-root accounting in openConfinedRoots correct when
+	// Close is reached twice, e.g. explicitly and again through a defer.
+	closed atomic.Bool
 
 	// dirs caches one verified handle per root-relative directory, keyed by slash
 	// path. A sync writes many artifacts into a handful of directories, and
@@ -93,6 +98,13 @@ func newTrustedReadRoot(root *os.Root, spellings ...string) trustedReadRoot {
 	return trusted
 }
 
+// openConfinedRoots counts confinedFS values that have been opened and not yet
+// closed. A control-flow path that returns without closing leaks a directory
+// file descriptor for the rest of the process, which stays invisible until a
+// large sync exhausts the descriptor table; tests assert this returns to zero
+// after a run, including runs that refuse a target and exit early.
+var openConfinedRoots atomic.Int64
+
 func openConfinedFS(path string, create bool, trustedReadRoots ...string) (*confinedFS, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -104,6 +116,7 @@ func openConfinedFS(path string, create bool, trustedReadRoots ...string) (*conf
 		return nil, err
 	}
 	f := &confinedFS{root: root, abs: abs, prefix: prefix}
+	openConfinedRoots.Add(1)
 	roots := append([]string{cache.CacheDir()}, trustedReadRoots...)
 	seen := make(map[string]bool, len(roots))
 	for _, trustedPath := range roots {
@@ -249,6 +262,9 @@ func openTrustedReadRoot(abs string) (trustedReadRoot, bool) {
 
 func (f *confinedFS) Close() error {
 	var err error
+	if f.closed.CompareAndSwap(false, true) {
+		openConfinedRoots.Add(-1)
+	}
 	f.dirsMu.Lock()
 	for key, root := range f.dirs {
 		err = errors.Join(err, root.Close())
@@ -446,7 +462,16 @@ func (f *confinedFS) readDirRel(rel string) ([]os.DirEntry, error) {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
-	return file.ReadDir(-1)
+	entries, err := file.ReadDir(-1)
+	// os.ReadDir — which every caller here was written against — returns
+	// entries sorted by name, while File.ReadDir returns them in directory
+	// order. Callers derive report rows, prune decisions, and diagnostics from
+	// this slice, so unsorted output makes all three vary between machines and
+	// between runs on the same machine.
+	slices.SortFunc(entries, func(a, b os.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
+	return entries, err
 }
 
 func (f *confinedFS) readlinkRel(rel string) (string, error) {
@@ -471,6 +496,27 @@ func (f *confinedFS) ReadFile(p string) ([]byte, error) {
 		return nil, err
 	}
 	return dir.ReadFile(base)
+}
+
+// errMergeSourceMissing reports that there is nothing at a merge destination to
+// merge with: no file, or a symlink that resolves to no file at all. Callers
+// merge from empty content and write a fresh regular file over the link.
+var errMergeSourceMissing = errors.New("merge source does not exist")
+
+// externalMergeSourceError is a merge destination that is a symlink to a file
+// which does exist but is outside every root this process may read from.
+//
+// It is refused rather than replaced. Reading it would let repository-controlled
+// content seed the merged output with attacker-chosen entries; silently replacing
+// it would destroy a deliberate redirection (a user pointing mcp.json at their
+// dotfiles) whose content we can see is real.
+type externalMergeSourceError struct {
+	path   string
+	target string
+}
+
+func (e *externalMergeSourceError) Error() string {
+	return fmt.Sprintf("merge source symlink %q resolves to %q, outside the harness root and outside the registry cache", e.path, e.target)
 }
 
 func (f *confinedFS) readMergeSource(p string) ([]byte, error) {
@@ -510,7 +556,15 @@ func (f *confinedFS) readMergeSource(p string) ([]byte, error) {
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("merge source symlink %q does not resolve inside a trusted cache root", p)
+	// Metadata only, and only to classify: a link with a real file behind it is
+	// the user's and is refused, a link with nothing behind it is dead weight
+	// this run replaces. Nothing is read through the resolved path, and the
+	// write that follows renames over the LINK, so the file at the far end of a
+	// misclassified link is still never touched.
+	if _, statErr := os.Stat(candidate); statErr != nil {
+		return nil, errMergeSourceMissing
+	}
+	return nil, &externalMergeSourceError{path: p, target: candidate}
 }
 
 func relativeWithin(root, target string) (string, bool) {
@@ -688,6 +742,46 @@ func (f *confinedFS) AtomicWrite(p string, data []byte, mode fs.FileMode) error 
 	if err != nil {
 		return err
 	}
+	return f.atomicWriteAt(dir, base, data, mode, false)
+}
+
+// AtomicWriteReconciling writes data at p, but only when the bytes there differ,
+// and keeps the permission bits the destination already has. It reports whether
+// it wrote.
+//
+// It exists for the shared harness configs this package merges into rather than
+// generates — mcp.json, hooks.json, plugin.json, settings.json — which are the
+// files that carry MCP credentials:
+//
+//   - Mode is preserved exactly (fchmod on the temp file, so umask cannot widen
+//     it either). A 0600 credential file that came back 0644 after a sync was a
+//     silent permission downgrade of the user's secrets, applied on every run.
+//   - An unchanged file is not rewritten at all. Replacing the inode on a no-op
+//     sync churned mtime, invalidated anything watching the file, and briefly
+//     exposed a second copy of the credentials; and every sync is a no-op for
+//     these files once the desired entries are in place.
+//
+// fallback is used only when nothing is there yet.
+func (f *confinedFS) AtomicWriteReconciling(p string, data []byte, fallback fs.FileMode) (bool, error) {
+	dir, base, err := f.resolve(p, true)
+	if err != nil {
+		return false, err
+	}
+	mode, exact := fallback.Perm(), false
+	if info, statErr := dir.Lstat(base); statErr == nil && info.Mode().IsRegular() {
+		mode, exact = info.Mode().Perm(), true
+		if current, readErr := dir.ReadFile(base); readErr == nil && bytes.Equal(current, data) {
+			return false, nil
+		}
+	}
+	return true, f.atomicWriteAt(dir, base, data, mode, exact)
+}
+
+// atomicWriteAt writes data to base inside the already-verified dir handle via a
+// temporary file and a rename. When exact is set the temporary file's mode is
+// fchmod'ed to mode, which the O_CREAT perm argument alone cannot guarantee
+// because the process umask masks it.
+func (f *confinedFS) atomicWriteAt(dir *os.Root, base string, data []byte, mode fs.FileMode, exact bool) error {
 	for range 32 {
 		tmpName, err := f.tempName()
 		if err != nil {
@@ -699,6 +793,13 @@ func (f *confinedFS) AtomicWrite(p string, data []byte, mode fs.FileMode) error 
 				continue
 			}
 			return err
+		}
+		if exact {
+			if chmodErr := tmp.Chmod(mode.Perm()); chmodErr != nil {
+				_ = tmp.Close()
+				_ = dir.Remove(tmpName)
+				return chmodErr
+			}
 		}
 		if writeErr := writeAndClose(tmp, data); writeErr != nil {
 			_ = dir.Remove(tmpName)
