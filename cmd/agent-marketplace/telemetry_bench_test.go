@@ -15,6 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// BenchmarkTelemetryCommandPath measures the end-to-end command lifecycle,
+// including config reads and local OTLP/HTTP export during shutdown. It is not
+// a CPU-only telemetry microbenchmark.
 func BenchmarkTelemetryCommandPath(b *testing.B) {
 	home := b.TempDir()
 	b.Setenv("HOME", home)
