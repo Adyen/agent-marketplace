@@ -28,6 +28,27 @@ func discardBenchLogs(b *testing.B) {
 	b.Cleanup(func() { slog.SetDefault(previous) })
 }
 
+func BenchmarkRunRootedOutput(b *testing.B) {
+	discardBenchLogs(b)
+	b.Setenv("HOME", b.TempDir())
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "rooted-benchmark", Resource: ir.NewSkill("rooted-benchmark", "rooted benchmark", "Body", nil, nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		repoRoot := b.TempDir()
+		b.StartTimer()
+		if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkRunSupportFiles measures the materialize.Run hot-path cost
 // when skills have support files that must be copied into the cache.
 func BenchmarkRunSupportFiles(b *testing.B) {

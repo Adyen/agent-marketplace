@@ -40,6 +40,13 @@ import (
 
 const windsurfDir = ".windsurf"
 
+func logMaterializeOutputFailure(operation, path string, err error) {
+	if err == nil {
+		return
+	}
+	slog.Error("materialize output operation rejected", "operation", operation, "path", path, "error", err)
+}
+
 // Workspace-scoped Windsurf workflows live in .windsurf/workflows/, but
 // machine-scoped (global) workflows are only discovered by Windsurf under
 // ~/.codeium/windsurf/global_workflows/. That rename is declared once in
@@ -207,68 +214,6 @@ func (s *portableState) remove(target hcc.Target, path string) {
 	delete(s.entries, portableManifestKey(target, path))
 }
 
-func validateManagedOutputPath(root, path string, includeLeaf bool) error {
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve output root %q: %w", root, err)
-	}
-	pathAbs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve output path %q: %w", path, err)
-	}
-	rootAbs = filepath.Clean(rootAbs)
-	pathAbs = filepath.Clean(pathAbs)
-	if pathAbs != rootAbs && !strings.HasPrefix(pathAbs, rootAbs+string(filepath.Separator)) {
-		return fmt.Errorf("output path %q is outside root %q", path, root)
-	}
-
-	rootInfo, err := os.Lstat(rootAbs)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("inspect output root %q: %w", root, err)
-	}
-	if err == nil {
-		if rootInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("output root %q is a symlink", root)
-		}
-		if !rootInfo.IsDir() {
-			return fmt.Errorf("output root %q is not a directory", root)
-		}
-	}
-
-	checkPath := filepath.Dir(pathAbs)
-	if includeLeaf {
-		checkPath = pathAbs
-	}
-	rel, err := filepath.Rel(rootAbs, checkPath)
-	if err != nil {
-		return fmt.Errorf("resolve output path %q: %w", path, err)
-	}
-	if rel == "." {
-		return nil
-	}
-	current := rootAbs
-	for _, component := range strings.Split(rel, string(filepath.Separator)) {
-		if component == "" || component == "." {
-			continue
-		}
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("inspect output path component %q: %w", current, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("output path component %q is a symlink", current)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("output path component %q is not a directory", current)
-		}
-	}
-	return nil
-}
-
 // portableOutputPath returns a path below outDir only after verifying that no
 // existing parent component is a symlink. Portable manifests are committed
 // project input, so lexical validation alone is insufficient: an entry such as
@@ -287,44 +232,7 @@ func portableOutputPath(outDir, rel string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve portable output root %q: %w", outDir, err)
 	}
-	path := filepath.Join(root, clean)
-	if err := validateManagedOutputPath(root, path, false); err != nil {
-		return "", fmt.Errorf("unsafe portable output path %q: %w", rel, err)
-	}
-	return path, nil
-}
-
-// validatePortableOutputDir verifies that a portable output directory and all
-// of its existing parents are real directories. It is also used for dry runs,
-// because --check may hash existing output and must not follow a symlink either.
-func validatePortableOutputDir(outDir, rel string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(rel))
-	path, err := portableOutputPath(outDir, filepath.ToSlash(filepath.Join(clean, ".placeholder")))
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Dir(path)
-	info, err := os.Lstat(dir)
-	if err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return "", fmt.Errorf("unsafe portable output directory %q", dir)
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-	return dir, nil
-}
-
-// ensurePortableOutputDir creates a portable output directory only after
-// validatePortableOutputDir has confirmed no existing component is a symlink.
-func ensurePortableOutputDir(outDir, rel string) (string, error) {
-	dir, err := validatePortableOutputDir(outDir, rel)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	return dir, nil
+	return filepath.Join(root, clean), nil
 }
 
 func (s *portableState) save(dryRun bool) error {
@@ -920,9 +828,19 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		outDir := roots.For(key.machineScope, repoRoot)
+		outputFS, err := openConfinedFS(outDir, !dryRun)
+		if err != nil {
+			if dryRun && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			slog.Error("materialize output root rejected", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", err)
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("open output root %s: %v", outDir, err)})
+			continue
+		}
 
 		if !dryRun {
-			if err := os.MkdirAll(outDir, 0o755); err != nil {
+			if err := outputFS.MkdirAll(outDir, 0o755); err != nil {
+				_ = outputFS.Close()
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.mkdir.error",
 					Severity: diag.SeverityError,
@@ -978,7 +896,10 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
+		report = executeTargetPlans(report, key, outputFS, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
+		if closeErr := outputFS.Close(); closeErr != nil {
+			slog.Error("materialize output root close failed", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", closeErr)
+		}
 		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
 	}
 
@@ -986,12 +907,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string) *Report {
-	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
-		slog.Error("materialize output root rejected", "target", key.target, "machine_scope", key.machineScope, "out_dir", outDir, "error", err)
-		report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate output root %s: %v", outDir, err)})
-		return report
-	}
+func executeTargetPlans(report *Report, key outputKey, outputFS *confinedFS, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -1017,40 +933,13 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	}
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
-		if err := validateManagedOutputPath(outDir, plan.outDir, false); err != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate output directory %s: %v", plan.outDir, err)})
+		if err := outputFS.EnsureDir(plan.outDir, dryRun); err != nil {
+			logMaterializeOutputFailure("prepare-output-directory", plan.outDir, err)
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prepare output directory %s: %v", plan.outDir, err)})
 			continue
 		}
 		if mode == config.MaterializationModeFile {
-			rel, err := filepath.Rel(outDir, plan.outDir)
-			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
-				continue
-			}
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(outDir, rel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("validate portable output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 			portableCleanupDirs[plan.outDir] = plan.reportPrefix
-		} else if !dryRun {
-			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{
-					Code:     "materialize.mkdir.error",
-					Severity: diag.SeverityError,
-					Target:   string(key.target),
-					Message:  fmt.Sprintf("create output directory %s: %v", plan.outDir, err),
-				})
-				continue
-			}
 		}
 
 		cacheDir := cachedPlanDir(key.target, key.machineScope, outDir, plan.reportPrefix, plan.artifacts)
@@ -1092,11 +981,12 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		var writeDiags []diag.Diagnostic
 		var matErr error
 		if mode == config.MaterializationModeFile {
-			writeReport, writeDiags, matErr = syncPortableArtifactFiles(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
+			writeReport, writeDiags, matErr = syncPortableArtifactFilesInRoot(outputFS, plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, state, key.target, plan.reportPrefix, fileDesired)
 		} else {
-			writeReport, writeDiags, matErr = syncArtifactLinks(plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})
+			writeReport, writeDiags, matErr = syncArtifactLinksInRoot(outputFS, plan.outDir, regularArtifacts, cacheDir, dryRun, wantPrune, planCollisionMeta, portableSyncContext{state: state, target: key.target, reportPrefix: plan.reportPrefix, desired: fileDesired})
 		}
 		if matErr != nil {
+			logMaterializeOutputFailure("materialize-artifacts", plan.outDir, matErr)
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -1111,7 +1001,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 			report.Diags = append(report.Diags, writeDiags...)
 		}
-		mergeReport, mergeDiags, mergeErr := materializeMergeArtifacts(plan.outDir, mergeArtifacts, dryRun, wantPrune)
+		mergeReport, mergeDiags, mergeErr := materializeMergeArtifactsInRoot(outputFS, plan.outDir, mergeArtifacts, dryRun, wantPrune)
 		if len(mergeArtifacts) > 0 {
 			dirsCoveredByMergePlans[plan.outDir] = true
 		}
@@ -1119,6 +1009,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		// failed: each names a different file.
 		report.Diags = append(report.Diags, retargetPruneDiags(mergeDiags, key.target, plan.reportPrefix)...)
 		if mergeErr != nil {
+			logMaterializeOutputFailure("merge-artifacts", plan.outDir, mergeErr)
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -1156,12 +1047,10 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			for _, installDirRel := range info.ResourceDirs {
 				installDirRel = machineSkillInstallDirRel(key.target, key.machineScope, installDirRel)
 				dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
-				if outputDirExists(dir) {
-					if _, err := validatePortableOutputDir(outDir, installDirRel); err != nil {
-						report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource cleanup directory %s: %v", dir, err)})
-						continue
-					}
+				if info, err := outputFS.Stat(dir); err == nil && info.IsDir() {
 					portableCleanupDirs[dir] = filepath.ToSlash(installDirRel)
+				} else if err != nil && !os.IsNotExist(err) {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("inspect portable resource cleanup directory %s: %v", dir, err)})
 				}
 			}
 		}
@@ -1183,7 +1072,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// Root-level managed merge files belong to no component, so only the
 	// wildcard block reaches them.
 	if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, aggregateProtectedPaths(key.target, key.machineScope))
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFilesInRoot(outputFS, pruneOutDir, dirsCoveredByMergePlans, dryRun, aggregateProtectedPaths(key.target, key.machineScope))
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -1219,12 +1108,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	for _, group := range orderedSkillLinkGroups(skillLinks[key]) {
 		groupDir := filepath.Join(outDir, filepath.FromSlash(group.installDirRel))
 		if mode == config.MaterializationModeFile {
-			validate := validatePortableOutputDir
-			if !dryRun {
-				validate = ensurePortableOutputDir
-			}
-			if _, err := validate(outDir, group.installDirRel); err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate portable resource directory %s: %v", groupDir, err)})
+			if err := outputFS.EnsureDir(groupDir, dryRun); err != nil {
+				logMaterializeOutputFailure("prepare-resource-directory", groupDir, err)
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prepare portable resource directory %s: %v", groupDir, err)})
 				continue
 			}
 			portableCleanupDirs[groupDir] = group.reportPrefix
@@ -1244,9 +1130,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			var tr TargetReport
 			var err error
 			if mode == config.MaterializationModeFile {
-				tr, err = syncPortableSkillTrees(groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
+				tr, err = syncPortableSkillTrees(outputFS, groupDir, symlinkLinks, dryRun, state, key.target, group.reportPrefix, fileDesired)
 			} else {
-				tr, err = syncSkillLinks(groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired})
+				tr, err = syncSkillLinksInRoot(outputFS, groupDir, symlinkLinks, dryRun, !componentBlocked(blocked, group.installDirRel), portableSyncContext{state: state, target: key.target, reportPrefix: group.reportPrefix, desired: fileDesired})
 			}
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "materialize target %s to %s")
 			if err != nil {
@@ -1256,7 +1142,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 		if len(copyLinks) > 0 {
 			copyDirsCovered[groupDir] = true
-			tr, err := syncCommandFiles(groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel))
+			tr, err := syncCommandFiles(outputFS, groupDir, copyLinks, dryRun, !componentBlocked(blocked, group.installDirRel))
 			report = appendGroupReport(report, key, outDir, group.reportPrefix, tr, err, "copy command files for target %s to %s")
 		}
 	}
@@ -1266,20 +1152,20 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	// removal case where the resolved set no longer contains the resource.
 	// Regular files are never pruned by the symlink-oriented artifact plan,
 	// so they must be cleaned up here.
-	report = pruneUncoveredFileCopyDirs(report, key, outDir, copyDirsCovered, blocked, dryRun)
+	report = pruneUncoveredFileCopyDirs(report, key, outputFS, outDir, copyDirsCovered, blocked, dryRun)
 
 	// The two manifest-driven prune passes below walk the target's whole
 	// recorded state rather than one component directory, so they cannot be
 	// narrowed per component and stay suppressed by any skip.
 	if mode == config.MaterializationModeFile && !anyBlocked(blocked) {
-		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun)
+		report = prunePortableStaleSymlinks(report, key, outputFS, outDir, portableCleanupDirs, fileDesired, dryRun)
 	}
 
 	portableReport := &hcc.WriteReport{OutDir: outDir}
 	var portableDiags []diag.Diagnostic
 	var portableErr error
 	if !anyBlocked(blocked) {
-		portableReport, portableDiags, portableErr = prunePortableEntries(state, key.target, outDir, fileDesired, dryRun)
+		portableReport, portableDiags, portableErr = prunePortableEntries(outputFS, state, key.target, outDir, fileDesired, dryRun)
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
@@ -1307,7 +1193,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 
 // pruneUncoveredFileCopyDirs removes orphaned managed file-copy resources from
 // the target's file-copy install dirs that were not handled by any copy group.
-func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool) *Report {
+func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outputFS *confinedFS, outDir string, covered map[string]bool, blocked map[string]bool, dryRun bool) *Report {
 	info, ok := harness.TargetInfoMap[key.target]
 	if !ok || len(info.FileCopyKinds) == 0 {
 		return report
@@ -1322,16 +1208,21 @@ func pruneUncoveredFileCopyDirs(report *Report, key outputKey, outDir string, co
 			continue
 		}
 		dir := filepath.Join(outDir, filepath.FromSlash(installDirRel))
-		if err := validateManagedOutputPath(outDir, dir, true); err != nil {
-			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("validate file-copy output directory %s: %v", dir, err)})
+		if info, err := outputFS.Stat(dir); err != nil {
+			if !os.IsNotExist(err) {
+				logMaterializeOutputFailure("inspect-file-copy-directory", dir, err)
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("inspect file-copy output directory %s: %v", dir, err)})
+			}
+			continue
+		} else if !info.IsDir() {
 			continue
 		}
-		if covered[dir] || seen[dir] || !outputDirExists(dir) {
+		if covered[dir] || seen[dir] {
 			continue
 		}
 		seen[dir] = true
 		tr := TargetReport{OutDir: dir}
-		if err := pruneStaleCommandFiles(dir, nil, dryRun, &tr); err != nil {
+		if err := pruneStaleCommandFilesInRoot(outputFS, dir, nil, dryRun, &tr); err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
 				Severity: diag.SeverityError,
@@ -1896,14 +1787,20 @@ func splitMergeArtifacts(artifacts []artifact.Artifact) ([]artifact.Artifact, []
 }
 
 func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
-	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+	outputFS, err := openConfinedFS(outDir, !dryRun)
+	if err != nil {
 		return nil, nil, err
 	}
+	defer func() { _ = outputFS.Close() }()
+	return materializeMergeArtifactsInRoot(outputFS, outDir, artifacts, dryRun, pruneStaleEntries)
+}
+
+func materializeMergeArtifactsInRoot(outputFS *confinedFS, outDir string, artifacts []artifact.Artifact, dryRun bool, pruneStaleEntries bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	if len(artifacts) == 0 {
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
 		}
-		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun)
+		pruneReport, pruneDiags := pruneManagedMergeFilesInRoot(outputFS, outDir, dryRun)
 		return pruneReport, pruneDiags, nil
 	}
 	// Replace any existing symlinks at merge artifact paths with regular
@@ -1913,45 +1810,77 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 	// symlink target only contains managed entries; we read through it first
 	// so hcc.Materialize can merge from the real content, then replace the
 	// symlink with a regular file.
-	if !dryRun {
-		for _, a := range artifacts {
-			if err := a.Validate(); err != nil {
-				return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+	for _, a := range artifacts {
+		if err := a.Validate(); err != nil {
+			return nil, nil, fmt.Errorf("invalid merge artifact path %q: %w", a.Path, err)
+		}
+	}
+	return materializeMergeInRoot(outputFS, outDir, artifacts, dryRun)
+}
+
+func materializeMergeInRoot(outputFS *confinedFS, outDir string, artifacts []artifact.Artifact, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+	stage, err := os.MkdirTemp("", "agent-marketplace-merge-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
+	for _, a := range artifacts {
+		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
+		info, statErr := outputFS.Lstat(destPath)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil {
+			return nil, nil, statErr
+		}
+		var existing []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, readlinkErr := outputFS.Readlink(destPath)
+			if readlinkErr != nil {
+				return nil, nil, readlinkErr
 			}
-			destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-			if err := validateManagedOutputPath(outDir, destPath, false); err != nil {
-				return nil, nil, err
-			}
-			if info, err := os.Lstat(destPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-				existing, readErr := os.ReadFile(destPath) // follows symlink
-				if readErr != nil && !os.IsNotExist(readErr) {
-					return nil, nil, fmt.Errorf("read symlink target %s: %w", destPath, readErr)
-				}
-				targetInfo, statErr := os.Stat(destPath) // get target file info for permissions
-				if readErr == nil && len(existing) > 0 {
-					mode := fs.FileMode(0o644)
-					if statErr == nil {
-						mode = targetInfo.Mode().Perm()
-					}
-					if mode == 0 {
-						mode = 0o644
-					}
-					if err := atomicWriteFile(destPath, existing, mode); err != nil {
-						return nil, nil, fmt.Errorf("replace symlink %s: %w", destPath, err)
-					}
-				} else if err := os.Remove(destPath); err != nil {
-					return nil, nil, fmt.Errorf("remove symlink %s: %w", destPath, err)
-				}
-			}
+			existing, err = os.ReadFile(target)
+		} else {
+			existing, err = outputFS.ReadFile(destPath)
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read existing merge artifact %s: %w", destPath, err)
+		}
+		stagePath := filepath.Join(stage, filepath.FromSlash(a.Path))
+		if err := os.MkdirAll(filepath.Dir(stagePath), 0o755); err != nil {
+			return nil, nil, err
+		}
+		if err := os.WriteFile(stagePath, existing, 0o644); err != nil {
+			return nil, nil, err
 		}
 	}
 	options := []hcc.WriteOption{hcc.WithWriteMode(hcc.WriteModeOverwrite)}
 	if dryRun {
 		options = append(options, hcc.WithDryRun())
 	}
-	result := &hcc.Result{Artifacts: artifacts}
-	writeReport, writeErr := hcc.Materialize(result, outDir, options...)
-	return writeReport, nil, writeErr
+	writeReport, writeErr := hcc.Materialize(&hcc.Result{Artifacts: artifacts}, stage, options...)
+	if writeErr != nil {
+		return writeReport, nil, writeErr
+	}
+	writeReport.OutDir = outDir
+	if dryRun {
+		return writeReport, nil, nil
+	}
+	for _, a := range artifacts {
+		stagePath := filepath.Join(stage, filepath.FromSlash(a.Path))
+		data, readErr := os.ReadFile(stagePath)
+		if readErr != nil {
+			return writeReport, nil, readErr
+		}
+		mode := portableArtifactMode(a.Mode)
+		if info, statErr := os.Stat(stagePath); statErr == nil {
+			mode = info.Mode().Perm()
+		}
+		if err := outputFS.AtomicWrite(filepath.Join(outDir, filepath.FromSlash(a.Path)), data, mode); err != nil {
+			return writeReport, nil, err
+		}
+	}
+	return writeReport, nil, nil
 }
 
 // pruneUncoveredManagedMergeFiles walks outDir and its subdirectories for
@@ -1977,17 +1906,26 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 // decided for the refusal itself and bead .20 decided for skipped Devin
 // aggregate entries.
 func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
+	outputFS, err := openConfinedFS(outDir, false)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &hcc.WriteReport{OutDir: outDir}, nil
+		}
+		return &hcc.WriteReport{OutDir: outDir}, []diag.Diagnostic{{Code: "materialize.write.error", Severity: diag.SeverityError, Message: err.Error()}}
+	}
+	defer func() { _ = outputFS.Close() }()
+	return pruneUncoveredManagedMergeFilesInRoot(outputFS, outDir, dirsCoveredByMergePlans, dryRun, protected)
+}
+
+func pruneUncoveredManagedMergeFilesInRoot(outputFS *confinedFS, outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
-	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
-		return report, []diag.Diagnostic{{Code: "materialize.write.error", Severity: diag.SeverityError, Message: fmt.Sprintf("validate merge output root %s: %v", outDir, err)}}
-	}
-	info, err := os.Stat(outDir)
-	if err != nil || !info.IsDir() {
+	if info, err := outputFS.Stat(outDir); err != nil || !info.IsDir() {
 		return report, nil
 	}
 	// WalkDir visits lexically, so the diagnostic order is deterministic.
-	_ = filepath.WalkDir(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+	_ = outputFS.Walk(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+		path = outputFS.absPath(path)
 		if walkErr != nil {
 			// Permission denied or other walk errors: skip the entry
 			// rather than aborting the entire walk.
@@ -2022,11 +1960,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if pathErr := validateManagedOutputPath(outDir, path, false); pathErr != nil {
-			diags = append(diags, managedMergePruneDiag(relSlash, path, pathErr))
-			return nil
-		}
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFileInRoot(outputFS, path, dryRun)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -2157,6 +2091,10 @@ func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []dia
 	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil)
 }
 
+func pruneManagedMergeFilesInRoot(outputFS *confinedFS, outDir string, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic) {
+	return pruneUncoveredManagedMergeFilesInRoot(outputFS, outDir, nil, dryRun, nil)
+}
+
 // stripManagedEntriesFromFile reads a JSON file, removes all top-level
 // container entries that carry the _managed_by marker, and writes the
 // result back. Empty top-level containers are preserved so config files like
@@ -2190,7 +2128,16 @@ func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []dia
 // with no error: we never had a coherent view of that file, and failing a sync
 // over a file the user already has to fix by hand adds nothing.
 func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, removed []string, err error) {
-	data, readErr := os.ReadFile(path)
+	outputFS, openErr := openConfinedFS(filepath.Dir(path), !dryRun)
+	if openErr != nil {
+		return nil, nil, openErr
+	}
+	defer func() { _ = outputFS.Close() }()
+	return stripManagedEntriesFromFileInRoot(outputFS, path, dryRun)
+}
+
+func stripManagedEntriesFromFileInRoot(outputFS *confinedFS, path string, dryRun bool) (cleaned []byte, removed []string, err error) {
+	data, readErr := outputFS.ReadFile(path)
 	if readErr != nil {
 		return nil, nil, readErr
 	}
@@ -2280,7 +2227,7 @@ func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, remo
 	}
 	result := doc.Bytes()
 	if !dryRun {
-		if writeErr := atomicWriteFile(path, result, 0o644); writeErr != nil {
+		if writeErr := outputFS.AtomicWrite(path, result, 0o644); writeErr != nil {
 			return nil, removed, writeErr
 		}
 	}
@@ -2327,13 +2274,22 @@ func ensureSymlinkPath(linkPath, target string, dryRun bool) ensureSymlinkResult
 }
 
 func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manifestOwned bool) ensureSymlinkResult {
-	info, err := os.Lstat(linkPath)
+	outputFS, err := openConfinedFS(filepath.Dir(linkPath), !dryRun)
+	if err != nil {
+		return ensureSymlinkResult{err: err}
+	}
+	defer func() { _ = outputFS.Close() }()
+	return ensureSymlinkPathWithOwnershipInRoot(outputFS, linkPath, target, dryRun, manifestOwned)
+}
+
+func ensureSymlinkPathWithOwnershipInRoot(outputFS *confinedFS, linkPath, target string, dryRun bool, manifestOwned bool) ensureSymlinkResult {
+	info, err := outputFS.Lstat(linkPath)
 	switch {
 	case err == nil:
 		// Path already exists — check ownership before replacing.
 		if info.Mode()&os.ModeSymlink != 0 {
-			if isManagedSymlink(linkPath) {
-				currentTarget, err := os.Readlink(linkPath)
+			if outputFS.IsManagedSymlink(linkPath) {
+				currentTarget, err := outputFS.Readlink(linkPath)
 				if err != nil {
 					return ensureSymlinkResult{err: err}
 				}
@@ -2360,31 +2316,15 @@ func ensureSymlinkPathWithOwnership(linkPath, target string, dryRun bool, manife
 		return ensureSymlinkResult{}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+	if err := outputFS.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
 		return ensureSymlinkResult{err: err}
 	}
 	if info != nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		if err := os.RemoveAll(linkPath); err != nil && !os.IsNotExist(err) {
+		if err := outputFS.RemoveAll(linkPath); err != nil && !os.IsNotExist(err) {
 			return ensureSymlinkResult{err: err}
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(linkPath), ".agent-marketplace-link-*")
-	if err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return ensureSymlinkResult{err: err}
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Symlink(target, tmpPath); err != nil {
-		return ensureSymlinkResult{err: err}
-	}
-	if err := os.Rename(tmpPath, linkPath); err != nil {
+	if err := outputFS.AtomicSymlink(target, linkPath); err != nil {
 		return ensureSymlinkResult{err: err}
 	}
 	return ensureSymlinkResult{}
@@ -2432,6 +2372,15 @@ func portableOwnershipDecision(entry portableManifestEntry, currentDigest, desir
 // removal is driven exclusively by manifest entries (see prunePortableEntries).
 // Plan-level pruning here would delete user-authored files.
 func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+	outputFS, err := openConfinedFS(outDir, !dryRun)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = outputFS.Close() }()
+	return syncPortableArtifactFilesInRoot(outputFS, outDir, artifacts, cacheDir, dryRun, false, collisionMeta, state, target, reportPrefix, desired)
+}
+
+func syncPortableArtifactFilesInRoot(outputFS *confinedFS, outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, _ bool, collisionMeta map[string]skillLink, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	for _, a := range artifacts {
@@ -2443,23 +2392,24 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 		desiredDigest := portableArtifactDigest(a)
 		dst, err := portableOutputPath(outDir, a.Path)
 		if err != nil {
+			logMaterializeOutputFailure("validate-artifact-path", filepath.Join(outDir, filepath.FromSlash(a.Path)), err)
 			return report, diags, err
 		}
 		src := filepath.Join(cacheDir, filepath.FromSlash(a.Path))
-		info, err := os.Lstat(dst)
+		info, err := outputFS.Lstat(dst)
 		if err != nil && !os.IsNotExist(err) {
 			return report, diags, err
 		}
 		entry, owned := state.entry(target, path)
 		if err == nil {
-			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
+			managedLink := info.Mode()&os.ModeSymlink != 0 && outputFS.IsManagedSymlink(dst)
 			if !owned && !managedLink {
 				report.Skipped = append(report.Skipped, a.Path)
 				diags = append(diags, portableArtifactCollision(dst, a.Path, collisionMeta))
 				continue
 			}
 			if owned && !managedLink {
-				currentDigest, digestErr := portablePathDigest(dst)
+				currentDigest, digestErr := confinedPathDigest(outputFS, dst)
 				if digestErr != nil {
 					return report, diags, digestErr
 				}
@@ -2479,15 +2429,12 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 			}
 		}
 		if !dryRun {
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return report, diags, err
-			}
 			if info != nil && (info.Mode()&os.ModeSymlink != 0 || info.IsDir()) {
-				if err := os.RemoveAll(dst); err != nil {
+				if err := outputFS.RemoveAll(dst); err != nil {
 					return report, diags, err
 				}
 			}
-			if err := copyFile(src, dst); err != nil {
+			if err := copyFileToRoot(outputFS, src, dst); err != nil {
 				return report, diags, err
 			}
 			state.add(target, path, desiredDigest)
@@ -2605,12 +2552,10 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (TargetReport, error) {
+func syncPortableSkillTrees(outputFS *confinedFS, skillsDir string, links []skillLink, dryRun bool, state *portableState, target hcc.Target, reportPrefix string, desired map[string]bool) (TargetReport, error) {
 	report := TargetReport{OutDir: skillsDir}
-	if !dryRun {
-		if err := ensureDirectoryReplacingSymlink(skillsDir); err != nil {
-			return report, err
-		}
+	if err := outputFS.EnsureDir(skillsDir, dryRun); err != nil {
+		return report, err
 	}
 	for _, link := range links {
 		path := filepath.ToSlash(filepath.Join(reportPrefix, link.name))
@@ -2623,20 +2568,20 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 		if err != nil {
 			return report, err
 		}
-		info, err := os.Lstat(dst)
+		info, err := outputFS.Lstat(dst)
 		if err != nil && !os.IsNotExist(err) {
 			return report, err
 		}
 		entry, owned := state.entry(target, path)
 		if err == nil {
-			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
+			managedLink := info.Mode()&os.ModeSymlink != 0 && outputFS.IsManagedSymlink(dst)
 			if !owned && !managedLink {
 				report.Skipped = append(report.Skipped, link.name)
 				report.Diags = append(report.Diags, portableSkillCollision(dst, link))
 				continue
 			}
 			if owned && !managedLink {
-				currentDigest, digestErr := portablePathDigest(dst)
+				currentDigest, digestErr := confinedPathDigest(outputFS, dst)
 				if digestErr != nil {
 					return report, digestErr
 				}
@@ -2657,7 +2602,7 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 		}
 		if !dryRun {
 			if info != nil {
-				if err := os.RemoveAll(dst); err != nil {
+				if err := outputFS.RemoveAll(dst); err != nil {
 					return report, err
 				}
 			}
@@ -2666,10 +2611,10 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 				return report, err
 			}
 			if sourceInfo.IsDir() {
-				if err := copyDir(link.target, dst); err != nil {
+				if err := copyDirToRoot(outputFS, link.target, dst); err != nil {
 					return report, err
 				}
-			} else if err := copyFile(link.target, dst); err != nil {
+			} else if err := copyFileToRoot(outputFS, link.target, dst); err != nil {
 				return report, err
 			}
 			state.add(target, path, desiredDigest)
@@ -2685,7 +2630,7 @@ func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
 	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
 }
 
-func prunePortableEntries(state *portableState, target hcc.Target, outDir string, desired map[string]bool, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
+func prunePortableEntries(outputFS *confinedFS, state *portableState, target hcc.Target, outDir string, desired map[string]bool, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	keys := make([]string, 0, len(state.entries))
@@ -2700,14 +2645,15 @@ func prunePortableEntries(state *portableState, target hcc.Target, outDir string
 		}
 		path, err := portableOutputPath(outDir, entry.Path)
 		if err != nil {
+			logMaterializeOutputFailure("validate-prune-path", filepath.Join(outDir, filepath.FromSlash(entry.Path)), err)
 			return report, diags, err
 		}
-		_, err = os.Lstat(path)
+		_, err = outputFS.Lstat(path)
 		if err != nil && !os.IsNotExist(err) {
 			return report, diags, err
 		}
 		if err == nil {
-			currentDigest, digestErr := portablePathDigest(path)
+			currentDigest, digestErr := confinedPathDigest(outputFS, path)
 			if digestErr != nil {
 				return report, diags, digestErr
 			}
@@ -2721,10 +2667,10 @@ func prunePortableEntries(state *portableState, target hcc.Target, outDir string
 			}
 		}
 		if !dryRun {
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			if err := outputFS.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 				return report, diags, err
 			}
-			cleanEmptyPortableArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(entry.Path)))
+			cleanEmptyPortableArtifactDirs(outputFS, outDir, filepath.Dir(filepath.FromSlash(entry.Path)))
 			delete(state.entries, key)
 		}
 		report.Removed = append(report.Removed, entry.Path)
@@ -2738,7 +2684,7 @@ func prunePortableEntries(state *portableState, target hcc.Target, outDir string
 // links are not represented in its portable manifest. Restricting the scan to
 // known harness component and resource directories keeps project and target
 // scopes isolated while preserving user-owned symlinks.
-func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool) *Report {
+func prunePortableStaleSymlinks(report *Report, key outputKey, outputFS *confinedFS, outDir string, cleanupDirs map[string]string, desired map[string]bool, dryRun bool) *Report {
 	dirs := make([]string, 0, len(cleanupDirs))
 	for dir := range cleanupDirs {
 		dirs = append(dirs, dir)
@@ -2758,7 +2704,7 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 				desiredInDir[rel] = ""
 			}
 		}
-		stale, diags, err := staleArtifactLinks(dir, desiredInDir)
+		stale, diags, err := staleArtifactLinksInRoot(outputFS, dir, desiredInDir)
 		if err != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("prune stale portable symlinks in %s: %v", dir, err)})
 			continue
@@ -2766,16 +2712,12 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 		tr := TargetReport{OutDir: dir, Removed: stale, Diags: diags}
 		if !dryRun {
 			for _, rel := range stale {
-				path, pathErr := portableOutputPath(dir, rel)
-				if pathErr != nil {
-					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: pathErr.Error()})
-					continue
-				}
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				path := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := outputFS.Remove(path); err != nil && !os.IsNotExist(err) {
 					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("remove stale portable symlink %s: %v", path, err)})
 					continue
 				}
-				cleanEmptyPortableArtifactDirs(dir, filepath.Dir(filepath.FromSlash(rel)))
+				cleanEmptyPortableArtifactDirs(outputFS, dir, filepath.Dir(filepath.FromSlash(rel)))
 			}
 		}
 		report = appendGroupReport(report, key, outDir, prefix, tr, nil, "")
@@ -2784,6 +2726,15 @@ func prunePortableStaleSymlinks(report *Report, key outputKey, outDir string, cl
 }
 
 func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, pruneStaleEntries bool, collisionMeta map[string]skillLink, portable ...portableSyncContext) (*hcc.WriteReport, []diag.Diagnostic, error) {
+	outputFS, err := openConfinedFS(outDir, !dryRun)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = outputFS.Close() }()
+	return syncArtifactLinksInRoot(outputFS, outDir, artifacts, cacheDir, dryRun, pruneStaleEntries, collisionMeta, portable...)
+}
+
+func syncArtifactLinksInRoot(outputFS *confinedFS, outDir string, artifacts []artifact.Artifact, cacheDir string, dryRun bool, pruneStaleEntries bool, collisionMeta map[string]skillLink, portable ...portableSyncContext) (*hcc.WriteReport, []diag.Diagnostic, error) {
 	var state *portableState
 	var target hcc.Target
 	var reportPrefix string
@@ -2803,13 +2754,8 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		desiredDigests[a.Path] = portableArtifactDigest(a)
 	}
 
-	if err := validateManagedOutputPath(outDir, outDir, true); err != nil {
+	if err := outputFS.EnsureDir(outDir, dryRun); err != nil {
 		return report, diags, err
-	}
-	if !dryRun {
-		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			return report, diags, err
-		}
 	}
 
 	paths := make([]string, 0, len(desired))
@@ -2820,9 +2766,6 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	for _, path := range paths {
 		cacheTarget := desired[path]
 		linkPath := filepath.Join(outDir, filepath.FromSlash(path))
-		if err := validateManagedOutputPath(outDir, linkPath, false); err != nil {
-			return report, diags, err
-		}
 		manifestPath := filepath.ToSlash(filepath.Join(reportPrefix, path))
 		if portableDesired != nil {
 			portableDesired[manifestPath] = true
@@ -2833,8 +2776,8 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		}
 		migrationAllowed := false
 		if manifestOwned {
-			if info, err := os.Lstat(linkPath); err == nil && info.Mode()&os.ModeSymlink == 0 {
-				currentDigest, digestErr := portablePathDigest(linkPath)
+			if info, err := outputFS.Lstat(linkPath); err == nil && info.Mode()&os.ModeSymlink == 0 {
+				currentDigest, digestErr := confinedPathDigest(outputFS, linkPath)
 				if digestErr != nil {
 					return report, diags, digestErr
 				}
@@ -2846,8 +2789,9 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, cacheTarget, dryRun, migrationAllowed)
+		result := ensureSymlinkPathWithOwnershipInRoot(outputFS, linkPath, cacheTarget, dryRun, migrationAllowed)
 		if result.err != nil {
+			logMaterializeOutputFailure("materialize-symlink", linkPath, result.err)
 			return report, diags, result.err
 		}
 		if result.skippedUserOwned {
@@ -2887,7 +2831,7 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 	}
 
 	if pruneStaleEntries {
-		stale, staleDiags, err := staleArtifactLinks(outDir, desired)
+		stale, staleDiags, err := staleArtifactLinksInRoot(outputFS, outDir, desired)
 		if err != nil {
 			return report, diags, err
 		}
@@ -2896,13 +2840,10 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		if !dryRun {
 			for _, path := range stale {
 				stalePath := filepath.Join(outDir, filepath.FromSlash(path))
-				if err := validateManagedOutputPath(outDir, stalePath, false); err != nil {
+				if err := outputFS.RemoveAll(stalePath); err != nil && !os.IsNotExist(err) {
 					return report, diags, err
 				}
-				if err := os.RemoveAll(stalePath); err != nil && !os.IsNotExist(err) {
-					return report, diags, err
-				}
-				cleanEmptyArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(path)))
+				cleanEmptyArtifactDirs(outputFS, outDir, filepath.Dir(filepath.FromSlash(path)))
 			}
 		}
 	}
@@ -2914,30 +2855,43 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 }
 
 func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []diag.Diagnostic, error) {
+	outputFS, err := openConfinedFS(outDir, false)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	defer func() { _ = outputFS.Close() }()
+	return staleArtifactLinksInRoot(outputFS, outDir, desired)
+}
+
+func staleArtifactLinksInRoot(outputFS *confinedFS, outDir string, desired map[string]string) ([]string, []diag.Diagnostic, error) {
 	var stale []string
 	var diags []diag.Diagnostic
-	err := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+	err := outputFS.Walk(outDir, func(path string, d fs.DirEntry, err error) error {
+		pathAbs := outputFS.absPath(path)
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
-		// Only prune symlinks — regular files are user-owned.
 		if d.Type()&fs.ModeSymlink == 0 {
 			return nil
 		}
-		rel, err := filepath.Rel(outDir, path)
-		if err != nil {
-			return err
+		rel, relErr := filepath.Rel(outDir, pathAbs)
+		if relErr != nil {
+			return relErr
 		}
 		relSlash := filepath.ToSlash(rel)
+		if relSlash == "." {
+			return nil
+		}
 		if _, ok := desired[relSlash]; ok {
 			return nil
 		}
-		// Only mark managed symlinks as stale. User symlinks
-		// (pointing outside the cache dir) are preserved.
-		if !isManagedSymlink(path) {
+		if !outputFS.IsManagedSymlink(pathAbs) {
 			diags = append(diags, diag.Diagnostic{
 				Code:     "materialize.collision.user-owned",
 				Severity: diag.SeverityInfo,
@@ -2958,7 +2912,7 @@ func staleArtifactLinks(outDir string, desired map[string]string) ([]string, []d
 	return stale, diags, nil
 }
 
-func cleanEmptyArtifactDirs(outDir, relPath string) {
+func cleanEmptyArtifactDirs(outputFS *confinedFS, outDir, relPath string) {
 	if relPath == "." || relPath == "" {
 		return
 	}
@@ -2968,40 +2922,33 @@ func cleanEmptyArtifactDirs(outDir, relPath string) {
 		if dirPath == outDir {
 			break
 		}
-		entries, err := os.ReadDir(dirPath)
+		entries, err := outputFS.ReadDir(dirPath)
 		if err != nil || len(entries) > 0 {
 			break
 		}
-		_ = os.Remove(dirPath)
+		_ = outputFS.Remove(dirPath)
 	}
 }
 
 // cleanEmptyPortableArtifactDirs is the portable counterpart of
 // cleanEmptyArtifactDirs. Each directory is validated before reading or
 // removing it so cleanup never traverses an intermediate symlink.
-func cleanEmptyPortableArtifactDirs(outDir, relPath string) {
+func cleanEmptyPortableArtifactDirs(outputFS *confinedFS, outDir, relPath string) {
 	if relPath == "." || relPath == "" {
 		return
 	}
 	parts := strings.Split(filepath.ToSlash(relPath), "/")
 	for i := len(parts); i >= 1; i-- {
-		rel := filepath.FromSlash(strings.Join(parts[:i], "/"))
-		// Validate rel as a leaf by asking for a fictitious child. This checks
-		// rel and all of its parents without following rel if it is a symlink.
-		child, err := portableOutputPath(outDir, filepath.ToSlash(filepath.Join(rel, ".placeholder")))
-		if err != nil {
-			return
-		}
-		dirPath := filepath.Dir(child)
-		info, err := os.Lstat(dirPath)
+		dirPath := filepath.Join(outDir, filepath.FromSlash(strings.Join(parts[:i], "/")))
+		info, err := outputFS.Lstat(dirPath)
 		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 			return
 		}
-		entries, err := os.ReadDir(dirPath)
+		entries, err := outputFS.ReadDir(dirPath)
 		if err != nil || len(entries) > 0 {
 			return
 		}
-		_ = os.Remove(dirPath)
+		_ = outputFS.Remove(dirPath)
 	}
 }
 
@@ -3214,6 +3161,46 @@ func copyFile(src, dst string) error {
 	return atomicWriteFile(dst, data, srcInfo.Mode())
 }
 
+func copyFileToRoot(outputFS *confinedFS, src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return outputFS.AtomicWrite(dst, data, info.Mode())
+}
+
+func copyDirToRoot(outputFS *confinedFS, src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if err := outputFS.MkdirAll(dst, info.Mode()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := copyDirToRoot(outputFS, srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copyFileToRoot(outputFS, srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func atomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -3249,6 +3236,65 @@ func portablePathDigest(path string) (string, error) {
 		return "", err
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func confinedPathDigest(outputFS *confinedFS, path string) (string, error) {
+	rel, err := outputFS.rel(path)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	if err := writeConfinedDigestPath(h, outputFS, rel, ""); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeConfinedDigestPath(h io.Writer, outputFS *confinedFS, path, rel string) error {
+	info, err := outputFS.root.Lstat(path)
+	if err != nil {
+		return err
+	}
+	mode := info.Mode()
+	writeHeader := func(kind string) {
+		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%#o\x00", kind, filepath.ToSlash(rel), mode.Perm())
+	}
+	switch {
+	case mode.IsRegular():
+		writeHeader("file")
+		data, err := outputFS.root.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%d\x00", len(data))
+		_, _ = h.Write(data)
+		return nil
+	case mode.IsDir():
+		writeHeader("dir")
+		entries, err := fs.ReadDir(outputFS.root.FS(), path)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			child := filepath.ToSlash(filepath.Join(filepath.FromSlash(path), entry.Name()))
+			childRel := filepath.ToSlash(filepath.Join(filepath.FromSlash(rel), entry.Name()))
+			if err := writeConfinedDigestPath(h, outputFS, child, childRel); err != nil {
+				return err
+			}
+		}
+		return nil
+	case mode&os.ModeSymlink != 0:
+		writeHeader("symlink")
+		target, err := outputFS.root.Readlink(path)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%d\x00%s", len(target), target)
+		return nil
+	default:
+		writeHeader("other")
+		return nil
+	}
 }
 
 func writePortableDigestPath(h io.Writer, path, rel string) error {
@@ -3354,35 +3400,16 @@ func filesEqual(src, dst string) (_ bool, err error) {
 	}
 }
 
-func copyDir(src, dst string) error {
-	srcInfo, err := os.Stat(src)
+func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
+	outputFS, err := openConfinedFS(skillsDir, !dryRun)
 	if err != nil {
-		return err
+		return TargetReport{OutDir: skillsDir}, err
 	}
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		if entry.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	defer func() { _ = outputFS.Close() }()
+	return syncSkillLinksInRoot(outputFS, skillsDir, links, dryRun, pruneStaleEntries, portable...)
 }
 
-func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
+func syncSkillLinksInRoot(outputFS *confinedFS, skillsDir string, links []skillLink, dryRun bool, pruneStaleEntries bool, portable ...portableSyncContext) (TargetReport, error) {
 	var state *portableState
 	var target hcc.Target
 	var reportPrefix string
@@ -3413,24 +3440,12 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		linkMeta[link.name] = link
 	}
 
-	if dryRun {
-		if err := validateManagedOutputPath(skillsDir, skillsDir, true); err != nil {
-			return report, err
-		}
-	} else if err := validateManagedOutputPath(filepath.Dir(skillsDir), skillsDir, false); err != nil {
+	if err := outputFS.EnsureDir(skillsDir, dryRun); err != nil {
 		return report, err
-	}
-	if !dryRun {
-		if err := ensureDirectoryReplacingSymlink(skillsDir); err != nil {
-			return report, err
-		}
 	}
 
 	for name, targetPath := range desired {
 		linkPath := filepath.Join(skillsDir, name)
-		if err := validateManagedOutputPath(skillsDir, linkPath, false); err != nil {
-			return report, err
-		}
 		manifestPath := filepath.ToSlash(filepath.Join(reportPrefix, name))
 		if portableDesired != nil {
 			portableDesired[manifestPath] = true
@@ -3441,8 +3456,8 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 		migrationAllowed := false
 		if manifestOwned {
-			if info, err := os.Lstat(linkPath); err == nil && info.Mode()&os.ModeSymlink == 0 {
-				currentDigest, digestErr := portablePathDigest(linkPath)
+			if info, err := outputFS.Lstat(linkPath); err == nil && info.Mode()&os.ModeSymlink == 0 {
+				currentDigest, digestErr := confinedPathDigest(outputFS, linkPath)
 				if digestErr != nil {
 					return report, digestErr
 				}
@@ -3452,8 +3467,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				migrationAllowed = true
 			}
 		}
-		result := ensureSymlinkPathWithOwnership(linkPath, targetPath, dryRun, migrationAllowed)
+		result := ensureSymlinkPathWithOwnershipInRoot(outputFS, linkPath, targetPath, dryRun, migrationAllowed)
 		if result.err != nil {
+			logMaterializeOutputFailure("materialize-skill-symlink", linkPath, result.err)
 			return report, result.err
 		}
 		if result.skippedUserOwned {
@@ -3484,7 +3500,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		}
 	}
 
-	entries, err := os.ReadDir(skillsDir)
+	entries, err := outputFS.ReadDir(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) || dryRun {
 			return report, nil
@@ -3497,7 +3513,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			continue
 		}
 		path := filepath.Join(skillsDir, name)
-		if _, ok := existingSymlinkTarget(path); !ok {
+		if _, ok := outputFS.ExistingSymlinkTarget(path); !ok {
 			// Non-symlink directories are user-owned skill directories
 			// and must be preserved. Mirror the principle from
 			// staleArtifactLinks which also preserves user-owned content.
@@ -3520,7 +3536,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 			// must be preserved — managed resources in this directory are
 			// materialized as symlinks, so an unmarked regular file is always
 			// user-owned.
-			if !isManagedCommandFile(path) {
+			if !isManagedCommandFileInRoot(outputFS, path) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3528,21 +3544,18 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 				})
 				continue
 			}
-			report.Removed = append(report.Removed, staleSkillEntryReportPath(path, name))
+			report.Removed = append(report.Removed, staleSkillEntryReportPathInRoot(outputFS, path, name))
 			if dryRun {
 				continue
 			}
-			if err := validateManagedOutputPath(skillsDir, path, false); err != nil {
-				return report, err
-			}
-			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			if err := outputFS.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 				return report, err
 			}
 			continue
 		}
 		// Symlink — only prune if it points to our cache (managed).
 		// User symlinks (pointing outside the cache) are preserved.
-		if !isManagedSymlink(path) {
+		if !outputFS.IsManagedSymlink(path) {
 			if pruneStaleEntries {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
@@ -3556,25 +3569,12 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		if dryRun {
 			continue
 		}
-		if err := validateManagedOutputPath(skillsDir, path, false); err != nil {
-			return report, err
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := outputFS.Remove(path); err != nil && !os.IsNotExist(err) {
 			return report, err
 		}
 	}
 
 	return report, nil
-}
-
-func ensureDirectoryReplacingSymlink(path string) error {
-	info, err := os.Lstat(path)
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-	}
-	return os.MkdirAll(path, 0o755)
 }
 
 // syncCommandFiles materializes resource links as real files (not symlinks),
@@ -3584,7 +3584,7 @@ func ensureDirectoryReplacingSymlink(path string) error {
 // TEMPORARY WORKAROUND: this path exists only because Factory's droid CLI does
 // not follow symlinked command files. Remove it (and TargetInfo.FileCopyKinds)
 // once Factory resolves symlink loading for commands.
-func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries bool) (TargetReport, error) {
+func syncCommandFiles(outputFS *confinedFS, dir string, links []skillLink, dryRun, pruneStaleEntries bool) (TargetReport, error) {
 	report := TargetReport{OutDir: dir}
 	desired := make(map[string][]byte, len(links))
 	linkMeta := make(map[string]skillLink, len(links))
@@ -3596,13 +3596,8 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 		linkMeta[link.name] = link
 	}
 
-	if err := validateManagedOutputPath(dir, dir, true); err != nil {
+	if err := outputFS.EnsureDir(dir, dryRun); err != nil {
 		return report, err
-	}
-	if !dryRun {
-		if err := ensureDirectoryReplacingSymlink(dir); err != nil {
-			return report, err
-		}
 	}
 
 	names := make([]string, 0, len(desired))
@@ -3613,10 +3608,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 	for _, name := range names {
 		content := desired[name]
 		filePath := filepath.Join(dir, name)
-		if err := validateManagedOutputPath(dir, filePath, false); err != nil {
-			return report, err
-		}
-		info, err := os.Lstat(filePath)
+		info, err := outputFS.Lstat(filePath)
 		switch {
 		case os.IsNotExist(err):
 			// No existing entry — write it.
@@ -3625,7 +3617,7 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 		case info.Mode()&os.ModeSymlink != 0:
 			// Migrate a previously materialized managed symlink to a file.
 			// User-owned symlinks are preserved with a collision warning.
-			if !isManagedSymlink(filePath) {
+			if !outputFS.IsManagedSymlink(filePath) {
 				report.Skipped = append(report.Skipped, name)
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
@@ -3636,12 +3628,12 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 			continue
 		default:
 			// Regular file — only overwrite if it carries our marker.
-			if !isManagedCommandFile(filePath) {
+			if !isManagedCommandFileInRoot(outputFS, filePath) {
 				report.Skipped = append(report.Skipped, name)
 				report.Diags = append(report.Diags, userOwnedCommandDiag(filePath, name, linkMeta[name]))
 				continue
 			}
-			if existing, readErr := os.ReadFile(filePath); readErr == nil && bytes.Equal(existing, content) {
+			if existing, readErr := outputFS.ReadFile(filePath); readErr == nil && bytes.Equal(existing, content) {
 				report.Skipped = append(report.Skipped, name)
 				continue
 			}
@@ -3652,11 +3644,13 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 			continue
 		}
 		if info != nil && info.Mode()&os.ModeSymlink != 0 {
-			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			if err := outputFS.Remove(filePath); err != nil && !os.IsNotExist(err) {
+				logMaterializeOutputFailure("remove-command-symlink", filePath, err)
 				return report, err
 			}
 		}
-		if err := atomicWriteFile(filePath, content, 0o644); err != nil {
+		if err := outputFS.AtomicWrite(filePath, content, 0o644); err != nil {
+			logMaterializeOutputFailure("write-command", filePath, err)
 			return report, err
 		}
 	}
@@ -3676,10 +3670,19 @@ func syncCommandFiles(dir string, links []skillLink, dryRun, pruneStaleEntries b
 // pruneStaleCommandFiles removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
 func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
-	if err := validateManagedOutputPath(dir, dir, true); err != nil {
+	outputFS, err := openConfinedFS(dir, false)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
-	entries, err := os.ReadDir(dir)
+	defer func() { _ = outputFS.Close() }()
+	return pruneStaleCommandFilesInRoot(outputFS, dir, desired, dryRun, report)
+}
+
+func pruneStaleCommandFilesInRoot(outputFS *confinedFS, dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
+	entries, err := outputFS.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -3692,13 +3695,13 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 			continue
 		}
 		path := filepath.Join(dir, name)
-		info, lerr := os.Lstat(path)
+		info, lerr := outputFS.Lstat(path)
 		if lerr != nil {
 			continue
 		}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
-			if !isManagedSymlink(path) {
+			if !outputFS.IsManagedSymlink(path) {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.collision.user-owned",
 					Severity: diag.SeverityInfo,
@@ -3709,7 +3712,7 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		case info.IsDir():
 			continue
 		default:
-			if !isManagedCommandFile(path) {
+			if !isManagedCommandFileInRoot(outputFS, path) {
 				continue
 			}
 		}
@@ -3717,10 +3720,8 @@ func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, 
 		if dryRun {
 			continue
 		}
-		if err := validateManagedOutputPath(dir, path, false); err != nil {
-			return err
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err := outputFS.Remove(path); err != nil && !os.IsNotExist(err) {
+			logMaterializeOutputFailure("prune-command", path, err)
 			return err
 		}
 	}
@@ -3769,13 +3770,16 @@ func injectManagedByFrontmatter(content []byte) []byte {
 // leading frontmatter block.
 func isManagedCommandFile(path string) bool {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	if !bytes.Contains(data, []byte(managedByField)) {
-		return false
-	}
-	if !hasFrontmatter(data) {
+	return err == nil && isManagedCommandBytes(data)
+}
+
+func isManagedCommandFileInRoot(outputFS *confinedFS, path string) bool {
+	data, err := outputFS.ReadFile(path)
+	return err == nil && isManagedCommandBytes(data)
+}
+
+func isManagedCommandBytes(data []byte) bool {
+	if !bytes.Contains(data, []byte(managedByField)) || !hasFrontmatter(data) {
 		return false
 	}
 	trimmed := strings.TrimLeft(string(data), "\ufeff\n\r\t ")
@@ -3792,8 +3796,8 @@ func isManagedCommandFile(path string) bool {
 	return false
 }
 
-func staleSkillEntryReportPath(path, name string) string {
-	if _, err := os.Stat(filepath.Join(path, "SKILL.md")); err == nil {
+func staleSkillEntryReportPathInRoot(outputFS *confinedFS, path, name string) string {
+	if _, err := outputFS.Stat(filepath.Join(path, "SKILL.md")); err == nil {
 		return filepath.Join(name, "SKILL.md")
 	}
 	return name

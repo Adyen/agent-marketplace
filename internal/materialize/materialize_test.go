@@ -1564,7 +1564,7 @@ func TestRunIsIdempotentWhenRepoRootIsHomeDir(t *testing.T) {
 	}
 }
 
-func TestRunFactoryReplacesLegacySkillsRootSymlink(t *testing.T) {
+func TestRunFactoryRejectsLegacySkillsRootSymlink(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := t.TempDir()
@@ -1591,18 +1591,21 @@ func TestRunFactoryReplacesLegacySkillsRootSymlink(t *testing.T) {
 		},
 	}
 
-	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("expected report with diagnostic, got error %v", err)
+	}
+	if len(report.Diags) == 0 {
+		t.Fatal("expected a diagnostic for the legacy symlinked skills root")
 	}
 	skillsDir := filepath.Join(factoryDir, "skills")
 	info, err := os.Lstat(skillsDir)
 	if err != nil {
 		t.Fatalf("stat skills dir: %v", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("expected skills root to be replaced with directory, got symlink")
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected skills root symlink to remain unchanged")
 	}
-	assertSymlinkTargetUnderCache(t, filepath.Join(skillsDir, "factory-repo"), homeDir)
 }
 
 func assertSymlinkTargetUnderCache(t *testing.T, linkPath, homeDir string) string {
