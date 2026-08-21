@@ -1,0 +1,35 @@
+{
+  "name": "agent-marketplace-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "lint": "eslint .",
+    "check": "eslint . && nuxt typecheck && pnpm run api:drift && vitest run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "nuxt typecheck",
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:drift": "node scripts/generate-api.mjs --check"
+  },
+  "dependencies": {
+    "@nuxt/ui": "4.10.0",
+    "nuxt": "4.5.1",
+    "vue": "3.5.22",
+    "vue-router": "4.6.3"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "1.16.0",
+    "@vitejs/plugin-vue": "6.0.8",
+    "eslint": "10.8.0",
+    "@vue/test-utils": "2.4.11",
+    "happy-dom": "20.11.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.0.0"
+  }
+}
