@@ -173,7 +173,7 @@ useHead({
 
         <template v-else>
           <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            <ResourceCard v-for="item in results.items" :key="`${item.source_id}:${item.kind}:${item.name}:${item.revision}`" :item="item" :canonical-url="canonicalUrl" />
+            <ResourceCard v-for="item in results.items" :key="JSON.stringify([item.source_id, item.kind, item.name, item.revision, item.content_digest])" :item="item" :canonical-url="canonicalUrl" />
           </div>
 
           <nav v-if="totalPages > 1" class="mt-10 flex flex-col items-center justify-between gap-4 border-t border-default pt-6 sm:flex-row" aria-label="Search results pagination">

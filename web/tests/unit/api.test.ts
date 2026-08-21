@@ -61,6 +61,23 @@ describe('Marketplace API URL handling', () => {
     await expect(api.getResource('team/tools', 'skill', 'code review')).resolves.toMatchObject({ content_digest: digest })
   })
 
+  it('rejects a revision response whose digest or coordinate differs from the request', async () => {
+    const requestedDigest = 'sha256:' + 'd'.repeat(64)
+    const returnedDigest = 'sha256:' + 'e'.repeat(64)
+    const api = createMarketplaceApi(async () => ({
+      coordinate: { source: 'source', kind: 'skill', name: 'review' },
+      content_digest: returnedDigest,
+    }))
+
+    await expect(api.getResourceRevision('source', 'skill', 'review', requestedDigest)).rejects.toThrow(/does not match requested digest/)
+
+    const mismatchedCoordinateApi = createMarketplaceApi(async () => ({
+      coordinate: { source: 'other-source', kind: 'skill', name: 'review' },
+      content_digest: requestedDigest,
+    }))
+    await expect(mismatchedCoordinateApi.getResourceRevision('source', 'skill', 'review', requestedDigest)).rejects.toThrow(/coordinate.source does not match/)
+  })
+
   it('turns malformed discovery payloads into bounded validation errors', () => {
     expect(() => normalizeWellKnown({ instance_id: 'x' })).toThrow(ApiValidationError)
     expect(() => normalizeSearchResult({ items: [{ name: '<unbounded>' }], total: 0, offset: 0, limit: 10 })).toThrow(ApiValidationError)
