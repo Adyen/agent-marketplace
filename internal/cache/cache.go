@@ -103,8 +103,16 @@ func RegistryCachePath(url, ref string) string {
 	return filepath.Join(CacheDir(), HashURL(url), cacheRefComponent(ref))
 }
 
+const maxCacheRefComponentLength = 200
+
 func cacheRefComponent(ref string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(ref))
+	component := base64.RawURLEncoding.EncodeToString([]byte(ref))
+	if len(component) <= maxCacheRefComponentLength {
+		return component
+	}
+
+	sum := sha256.Sum256([]byte(ref))
+	return "@" + hex.EncodeToString(sum[:])
 }
 
 func HashURL(url string) string {

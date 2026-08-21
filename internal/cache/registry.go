@@ -27,42 +27,56 @@ func redactArgs(args []string) []string {
 }
 
 func CloneOrPull(url, ref string) (string, error) {
+	redactedURL := redactSecrets(url)
 	if strings.TrimSpace(url) == "" {
-		return "", errors.New("registry url is required")
+		err := errors.New("registry url is required")
+		slog.Error("registry validation failed", "field", "url", "error", err)
+		return "", err
 	}
 	if err := validateGitRef(ref); err != nil {
+		slog.Error("registry ref validation failed", "ref", ref, "error", err)
 		return "", fmt.Errorf("validate registry ref: %w", err)
 	}
 
 	cachePath := RegistryCachePath(url, ref)
-	cacheExists, err := dirExists(cachePath)
-	if err != nil {
+	cacheDirs, err := openCacheDirs(CacheDir(), HashURL(url))
+	if err == nil {
+		defer cacheDirs.close()
+		cacheEntry, entryErr := cacheDirs.openEntry(cacheRefComponent(ref))
+		switch {
+		case entryErr == nil:
+			defer func() { _ = cacheEntry.Close() }()
+			slog.Debug("registry cache hit; fetching", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+			if err := runGitAt(cacheEntry, "fetch", "--tags", "--prune", "origin"); err != nil {
+				slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
+				if checkoutErr := checkoutResolvedRefAt(cacheEntry, ref); checkoutErr != nil {
+					slog.Error("stale registry cache checkout failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", checkoutErr)
+					return "", fmt.Errorf("use stale cache at %q: %w", cachePath, checkoutErr)
+				}
+				return cachePath, nil
+			}
+
+			slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+			if err := checkoutResolvedRefAt(cacheEntry, ref); err != nil {
+				slog.Error("registry cache checkout failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+				return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
+			}
+			return cachePath, nil
+		case errors.Is(entryErr, os.ErrNotExist):
+		default:
+			slog.Error("registry cache entry validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", entryErr)
+			return "", fmt.Errorf("check cache path %q: %w", cachePath, entryErr)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		slog.Error("registry cache directory validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
 	}
 
-	redactedURL := redactSecrets(url)
-
-	if !cacheExists {
-		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		if err := cloneAndPublish(url, ref, cachePath); err != nil {
-			return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
-		}
-	} else {
-		slog.Debug("registry cache hit; fetching", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		if err := runGit(cachePath, "fetch", "--tags", "--prune", "origin"); err != nil {
-			slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "error", err)
-			if checkoutErr := checkoutResolvedRef(cachePath, ref); checkoutErr != nil {
-				return "", fmt.Errorf("use stale cache at %q: %w", cachePath, checkoutErr)
-			}
-			return cachePath, nil
-		}
-
-		slog.Debug("checking out registry ref", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		if err := checkoutResolvedRef(cachePath, ref); err != nil {
-			return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
-		}
+	slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+	if err := cloneAndPublish(url, ref, cachePath); err != nil {
+		slog.Error("registry cache clone failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+		return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
 	}
-
 	return cachePath, nil
 }
 
@@ -105,22 +119,17 @@ func validateGitRef(ref string) error {
 }
 
 func cloneAndPublish(url, ref, cachePath string) error {
-	cacheDir := filepath.Dir(cachePath)
-	cacheRoot := CacheDir()
-	cacheRootExisted, err := dirExists(cacheRoot)
+	cacheDirs, err := createCacheDirs(CacheDir(), HashURL(url))
 	if err != nil {
-		return fmt.Errorf("check cache root %q: %w", cacheRoot, err)
-	}
-	cacheDirExisted, err := dirExists(cacheDir)
-	if err != nil {
-		return fmt.Errorf("check cache parent %q: %w", cacheDir, err)
-	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		slog.Error("registry cache setup failed", "cache_path", cachePath, "ref", ref, "error", err)
 		return fmt.Errorf("create cache parent for %q: %w", cachePath, err)
 	}
+	defer cacheDirs.close()
 
-	tempPath, err := os.MkdirTemp(cacheDir, "."+filepath.Base(cachePath)+".tmp-")
+	tempName, err := cacheDirs.makeTemp("." + filepath.Base(cachePath) + ".tmp-")
 	if err != nil {
+		slog.Error("registry cache temporary directory setup failed", "cache_path", cachePath, "ref", ref, "error", err)
+		_ = cacheDirs.cleanupNew()
 		return fmt.Errorf("create temporary cache entry for %q: %w", cachePath, err)
 	}
 	published := false
@@ -128,24 +137,32 @@ func cloneAndPublish(url, ref, cachePath string) error {
 		if published {
 			return
 		}
-		if cleanupErr := os.RemoveAll(tempPath); cleanupErr != nil {
-			slog.Warn("remove failed temporary registry cache", "path", tempPath, "error", cleanupErr)
+		if cleanupErr := cacheDirs.removeTemp(tempName); cleanupErr != nil {
+			slog.Warn("remove failed temporary registry cache", "cache_path", cachePath, "error", cleanupErr)
 		}
-		if !cacheDirExisted {
-			_ = os.Remove(cacheDir)
-			if !cacheRootExisted {
-				_ = os.Remove(cacheRoot)
-			}
+		if cleanupErr := cacheDirs.cleanupNew(); cleanupErr != nil {
+			slog.Warn("remove failed new registry cache directories", "cache_path", cachePath, "error", cleanupErr)
 		}
 	}()
 
-	if err := runGit("", "clone", url, tempPath); err != nil {
+	if err := runGitAt(cacheDirs.hash, "clone", url, tempName); err != nil {
+		slog.Error("registry cache clone failed", "cache_path", cachePath, "ref", ref, "error", err)
 		return err
 	}
-	if err := checkoutResolvedRef(tempPath, ref); err != nil {
+	tempDir, err := cacheDirs.openEntry(tempName)
+	if err != nil {
+		slog.Error("registry cache checkout setup failed", "cache_path", cachePath, "ref", ref, "error", err)
+		return fmt.Errorf("open temporary cache entry: %w", err)
+	}
+	if err := checkoutResolvedRefAt(tempDir, ref); err != nil {
+		_ = tempDir.Close()
+		slog.Error("registry cache checkout failed", "cache_path", cachePath, "ref", ref, "error", err)
 		return err
 	}
-	if err := os.Rename(tempPath, cachePath); err != nil {
+	_ = tempDir.Close()
+
+	if err := cacheDirs.publish(tempName, filepath.Base(cachePath)); err != nil {
+		slog.Error("registry cache publication failed", "cache_path", cachePath, "ref", ref, "error", err)
 		return fmt.Errorf("publish cache entry: %w", err)
 	}
 	published = true
@@ -153,31 +170,20 @@ func cloneAndPublish(url, ref, cachePath string) error {
 	return nil
 }
 
-func checkoutResolvedRef(repoDir, ref string) error {
-	if !gitRefExists(repoDir, "refs/remotes/origin/"+ref) {
-		slog.Debug("checking out direct git ref", "repo_dir", repoDir, "ref", ref)
-		return runGit(repoDir, "checkout", "--force", ref)
+func checkoutResolvedRefAt(repoDir *os.File, ref string) error {
+	if !gitRefExistsAt(repoDir, "refs/remotes/origin/"+ref) {
+		slog.Debug("checking out direct git ref", "repo_dir", "cache-fd", "ref", ref)
+		return runGitAt(repoDir, "checkout", "--force", ref)
 	}
 
-	slog.Debug("checking out remote git ref", "repo_dir", repoDir, "ref", ref)
-	return runGit(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref)
+	slog.Debug("checking out remote git ref", "repo_dir", "cache-fd", "ref", ref)
+	return runGitAt(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref)
 }
 
-func gitRefExists(repoDir, ref string) bool {
+func gitRefExistsAt(repoDir *os.File, ref string) bool {
 	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
-	cmd.Dir = repoDir
+	cmd.Dir = repoDir.Name()
 	return cmd.Run() == nil
-}
-
-func dirExists(path string) (bool, error) {
-	info, err := os.Stat(path)
-	if err == nil {
-		return info.IsDir(), nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
 }
 
 func runGit(repoDir string, args ...string) error {
@@ -211,6 +217,10 @@ func runGit(repoDir string, args ...string) error {
 	}
 	firstLine = truncateGitError(firstLine)
 	return fmt.Errorf("git %s: %w: %s", redactedCmd, err, firstLine)
+}
+
+func runGitAt(repoDir *os.File, args ...string) error {
+	return runGit(repoDir.Name(), args...)
 }
 
 const maxGitErrorChars = 200

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,6 +303,154 @@ func TestRegistryCachePathEncodesRefAsOneContainedComponent(t *testing.T) {
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			t.Fatalf("RegistryCachePath(%q) escaped cache root: %q", ref, path)
 		}
+	}
+}
+
+func TestCloneOrPullSupportsLongValidRefs(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t)
+	ref := strings.Repeat("a", 200)
+	runGitCommand(t, working, "push", "origin", "HEAD:refs/heads/"+ref)
+
+	cachePath, err := CloneOrPull(origin, ref)
+	if err != nil {
+		t.Fatalf("expected long valid ref to succeed: %v", err)
+	}
+	if got := filepath.Base(cachePath); len(got) > 200 {
+		t.Fatalf("cache component is not bounded: %d bytes", len(got))
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheRoot(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, _ := createBareRepoWithWorkingClone(t)
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	if err := os.MkdirAll(filepath.Dir(CacheDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, CacheDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CloneOrPull(origin, "main")
+	if err == nil {
+		t.Fatal("expected symlinked cache root to be rejected")
+	}
+	assertFileContents(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	if _, statErr := os.Stat(filepath.Join(outside, HashURL(origin))); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("symlinked cache root was used outside CacheDir: %v", statErr)
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheHashDirectory(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, _ := createBareRepoWithWorkingClone(t)
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	hashDir := filepath.Join(CacheDir(), HashURL(origin))
+	if err := os.MkdirAll(filepath.Dir(hashDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, hashDir); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CloneOrPull(origin, "main")
+	if err == nil {
+		t.Fatal("expected symlinked cache hash directory to be rejected")
+	}
+	assertFileContents(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	if _, statErr := os.Stat(filepath.Join(outside, cacheRefComponent("main"))); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("symlinked cache hash directory was used outside CacheDir: %v", statErr)
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheParent(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, _ := createBareRepoWithWorkingClone(t)
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	cacheParent := filepath.Dir(CacheDir())
+	if err := os.MkdirAll(filepath.Dir(cacheParent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, cacheParent); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CloneOrPull(origin, "main")
+	if err == nil {
+		t.Fatal("expected symlinked cache parent to be rejected")
+	}
+	assertFileContents(t, filepath.Join(outside, "sentinel.txt"), "untouched\n")
+	if _, statErr := os.Stat(filepath.Join(outside, filepath.Base(CacheDir()))); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("symlinked cache parent was used outside CacheDir: %v", statErr)
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheAncestor(t *testing.T) {
+	realHome := t.TempDir()
+	homeDir := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(realHome, homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	origin, _ := createBareRepoWithWorkingClone(t)
+	writeFile(t, filepath.Join(realHome, "sentinel.txt"), "untouched\n")
+
+	_, err := CloneOrPull(origin, "main")
+	if err == nil {
+		t.Fatal("expected symlinked cache ancestor to be rejected")
+	}
+	assertFileContents(t, filepath.Join(realHome, "sentinel.txt"), "untouched\n")
+	if _, statErr := os.Stat(filepath.Join(realHome, ".cache")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("symlinked cache ancestor was used outside CacheDir: %v", statErr)
+	}
+}
+
+func TestCloneOrPullRejectsSymlinkedCacheEntry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t)
+	writeFile(t, filepath.Join(working, "sentinel.txt"), "external\n")
+	cachePath := RegistryCachePath(origin, "main")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(working, cachePath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CloneOrPull(origin, "main")
+	if err == nil {
+		t.Fatal("expected symlinked cache entry to be rejected")
+	}
+	assertFileContents(t, filepath.Join(working, "sentinel.txt"), "external\n")
+}
+
+func TestCloneOrPullLogsValidationErrors(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	_, err := CloneOrPull("https://example.com/registry.git", "../../outside")
+	if err == nil {
+		t.Fatal("expected unsafe ref to be rejected")
+	}
+	if !strings.Contains(logs.String(), "registry ref validation failed") || !strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("expected structured validation error log, got %q", logs.String())
 	}
 }
 
