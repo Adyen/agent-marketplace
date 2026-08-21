@@ -44,8 +44,8 @@ func executableResolveFixture(registries, perReg int, contested bool) (*config.C
 }
 
 // BenchmarkResolveExecutables measures Resolve over catalogs made entirely of
-// executable kinds, which is the shape that exercises the per-scope identity
-// grouping in refuseAmbiguousExecutables on every sync.
+// executable kinds, which is the shape that exercises the per-identity grouping
+// in refuseAmbiguousExecutables on every sync.
 func BenchmarkResolveExecutables(b *testing.B) {
 	cases := []struct {
 		name       string
@@ -61,6 +61,80 @@ func BenchmarkResolveExecutables(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			cfg, catalogs := executableResolveFixture(c.registries, c.perReg, c.contested)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = Resolve(cfg, catalogs, nil)
+			}
+		})
+	}
+}
+
+// executableCollectionFixture builds one registry per collection, each shipping
+// a collection whose members are executables the same registry provides. This is
+// the shape that pays for the per-source claim index in collection expansion:
+// every member needs its identity computed instead of being dropped by name.
+func executableCollectionFixture(registries, perCollection int) (*config.Config, map[string][]catalog.Entry) {
+	cfg := &config.Config{}
+	catalogs := map[string][]catalog.Entry{}
+	for r := 0; r < registries; r++ {
+		url := fmt.Sprintf("git@example.com:exec-pack-%02d.git", r)
+		ref := "main"
+		colName := fmt.Sprintf("pack-%02d", r)
+		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
+			URL:         url,
+			Ref:         ref,
+			Source:      config.UserPersonal,
+			Collections: config.KindSelector{Include: []string{colName}},
+		})
+
+		members := make([]ir.CollectionMember, 0, perCollection*2)
+		entries := make([]catalog.Entry, 0, perCollection*2+1)
+		for i := 0; i < perCollection; i++ {
+			hook := fmt.Sprintf("hook-reg%02d-%03d", r, i)
+			mcp := fmt.Sprintf("mcp-reg%02d-%03d", r, i)
+			members = append(members,
+				ir.CollectionMember{Name: hook, Kind: ir.KindHook},
+				ir.CollectionMember{Name: mcp, Kind: ir.KindMcpServer},
+			)
+			entries = append(entries,
+				catalog.Entry{Kind: ir.KindHook, Name: hook, Path: fmt.Sprintf("/cache/reg%02d/%s", r, hook)},
+				catalog.Entry{Kind: ir.KindMcpServer, Name: mcp, Path: fmt.Sprintf("/cache/reg%02d/%s", r, mcp)},
+			)
+		}
+		entries = append(entries, catalog.Entry{
+			Kind:     ir.KindCollection,
+			Name:     colName,
+			Resource: ir.NewCollection(colName, "", "", members, nil, nil, ir.SourceRef{}),
+			Path:     fmt.Sprintf("/cache/reg%02d/collections/%s", r, colName),
+		})
+		catalogs[cache.CatalogKeyForEntry(url, ref, "")] = entries
+	}
+	setCatalogKeys(cfg)
+	return cfg, catalogs
+}
+
+// BenchmarkResolveExecutableCollectionMembers measures the expansion path where
+// executable members are kept per source rather than deduplicated by name, so a
+// regression in the claim index shows up here rather than in a bug report.
+func BenchmarkResolveExecutableCollectionMembers(b *testing.B) {
+	for _, c := range []struct {
+		name          string
+		registries    int
+		perCollection int
+	}{
+		{"2reg_25exec", 2, 25},
+		{"5reg_100exec", 5, 100},
+	} {
+		b.Run(c.name, func(b *testing.B) {
+			cfg, catalogs := executableCollectionFixture(c.registries, c.perCollection)
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 {
+				b.Fatalf("fixture must resolve cleanly, got %v", errs)
+			}
+			if want := c.registries * c.perCollection * 2; len(resolved) != want {
+				b.Fatalf("fixture resolved %d artifacts, want %d", len(resolved), want)
+			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

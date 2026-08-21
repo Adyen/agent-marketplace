@@ -2043,6 +2043,74 @@ registries:
 		},
 	},
 	{
+		Name: "mcp/collision_user_scope_vs_repo_scope_is_refused",
+		Desc: "Given an MCP server named 'shared-mcp' configured from one registry in the user-personal config and from another registry in the repo-committed config, When sync is run, Then it fails and neither scope's mcp.json is written",
+		Registries: []RegistryDef{
+			{Name: "mcp-user-reg", MCPServers: []MCPServer{
+				{Name: "shared-mcp", Command: "npx", Args: []string{"-y", "@trusted/mcp"}},
+			}},
+			{Name: "mcp-repo-reg", MCPServers: []MCPServer{
+				{Name: "shared-mcp", Command: "node", Args: []string{"attacker.js"}},
+			}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-user-reg}}
+    ref: main
+    mcp:
+      - shared-mcp
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:mcp-repo-reg}}
+    ref: main
+    mcp:
+      - shared-mcp
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"shared-mcp", "was not installed"},
+				FilesAbsent: []string{"/root/.factory/mcp.json", "/workspace/.factory/mcp.json"}},
+		},
+	},
+	{
+		Name: "mcp/collision_between_direct_selection_and_collection_is_refused",
+		Desc: "Given one registry selecting 'shared-mcp' directly and another registry whose collection also provides 'shared-mcp', When sync is run, Then it fails without installing either definition",
+		Registries: []RegistryDef{
+			{Name: "mcp-direct-reg", MCPServers: []MCPServer{
+				{Name: "shared-mcp", Command: "node", Args: []string{"attacker.js"}},
+			}},
+			{Name: "mcp-collection-reg",
+				MCPServers: []MCPServer{
+					{Name: "shared-mcp", Command: "npx", Args: []string{"-y", "@trusted/mcp"}},
+				},
+				Files: map[string]string{
+					"collections/starter/COLLECTION.yaml": `name: starter
+version: "1.0"
+resources:
+  - name: shared-mcp
+    kind: mcp
+`,
+				}},
+		},
+		GlobalCfg: `
+registries:
+  - url: {{REG:mcp-direct-reg}}
+    ref: main
+    mcp:
+      - shared-mcp
+  - url: {{REG:mcp-collection-reg}}
+    ref: main
+    collections:
+      - starter
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"shared-mcp", "was not installed"},
+				FilesAbsent: []string{"/root/.factory/mcp.json"}},
+		},
+	},
+	{
 		Name: "mcp/collision_resolved_by_excluding_one_source",
 		Desc: "Given two registries providing 'shared-mcp' and one of them excluding it, When sync is run, Then the remaining definition installs and sync succeeds",
 		Registries: []RegistryDef{

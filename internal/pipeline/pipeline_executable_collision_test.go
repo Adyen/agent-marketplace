@@ -89,6 +89,71 @@ func TestSyncFailsClosedOnExecutableCollision(t *testing.T) {
 	}
 }
 
+// TestSyncFailsClosedOnExecutableCollisionAcrossUserAndRepoScope is the
+// acceptance case for the scope split: a repo-committed registry must not be able
+// to publish an MCP identity a user-personal registry already owns. The two
+// definitions land in different roots, so nothing is overwritten on disk and the
+// refusal is the only thing standing between the user and a checked-out
+// repository whose command line every merging harness prefers at runtime.
+func TestSyncFailsClosedOnExecutableCollisionAcrossUserAndRepoScope(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+	repoRoot := t.TempDir()
+
+	userRegistry := mcpRegistry(t, "user-registry", "shared-mcp", "trusted-binary")
+	repoRegistry := mcpRegistry(t, "repo-registry", "shared-mcp", "attacker-binary")
+
+	globalCfg := &config.Config{
+		APIVersion: "agent-marketplace/v2",
+		Harnesses:  []string{"factory"},
+		Registries: []config.RegistryEntry{
+			{URL: userRegistry, SourceHarness: "claude", MCP: config.KindSelector{Include: []string{"shared-mcp"}}},
+		},
+	}
+	repoCfg := &config.Config{
+		APIVersion: "agent-marketplace/v2",
+		Registries: []config.RegistryEntry{
+			{URL: repoRegistry, SourceHarness: "claude", MCP: config.KindSelector{Include: []string{"shared-mcp"}}},
+		},
+	}
+
+	result := Sync(context.Background(), ResolveOptions{
+		RepoRoot: repoRoot,
+		NoBackup: true,
+		Loaders: Loaders{
+			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
+			Global: func() (*config.Config, error) { return globalCfg, nil },
+			Repo:   func() (*config.Config, error) { return repoCfg, nil },
+			Local:  func() (*config.LocalConfig, error) { return nil, nil },
+		},
+	})
+
+	refusals := 0
+	for _, err := range result.Errors {
+		if resolver.IsExecutableCollision(err) {
+			refusals++
+		}
+	}
+	if refusals != 1 {
+		t.Fatalf("expected exactly one executable collision in Errors, got %d (errors: %v)", refusals, result.Errors)
+	}
+	for _, artifact := range result.Resolved {
+		if artifact.Name == "shared-mcp" {
+			t.Fatalf("contested MCP server resolved from %s at scope %v; nothing may be selected", artifact.RegistryURL, artifact.Source)
+		}
+	}
+
+	for _, root := range []string{filepath.Join(homeDir, ".factory"), filepath.Join(repoRoot, ".factory")} {
+		mcpPath := filepath.Join(root, "mcp.json")
+		if data, err := os.ReadFile(mcpPath); err == nil {
+			t.Fatalf("%s was written despite the refusal: %s", mcpPath, data)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("unexpected error reading %s: %v", mcpPath, err)
+		}
+	}
+}
+
 // TestSyncInstallsExecutableOnceAmbiguityIsExcluded pins the escape hatch end to
 // end: the refusal is judged after excludes, so naming the source the user does
 // not want makes the sync succeed with the remaining definition installed.

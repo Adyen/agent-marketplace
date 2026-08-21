@@ -828,21 +828,21 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 }
 
 // refuseAmbiguousExecutables removes every hook and MCP server whose identity is
-// claimed by more than one registry location that installs into the same scope,
-// and returns one ExecutableCollisionError per contested identity.
+// claimed by more than one registry location, and returns one
+// ExecutableCollisionError per contested identity.
 //
-// Scope is part of the grouping because a machine-scoped and a repo-scoped
-// artifact materialize into different roots: the same server configured at both
-// scopes is complementary, not contested. Both claimants are dropped rather than
-// ranked — a refusal that still installed one of them would be the precedence
-// selection it is meant to prevent.
+// Install scope is deliberately not part of the grouping. A machine-scoped and a
+// repo-scoped artifact do land in different roots, so nothing is overwritten on
+// disk, but every harness that reads both merges them by name at runtime and
+// prefers the project entry — so a repository a user merely checked out could
+// substitute the command line behind a server the user installed for themselves,
+// silently and with no report. Multiple scopes therefore survive only when every
+// claimant is the same source (same normalized URL, ref and path), which is the
+// complementary case the roots exist for.
+//
+// Both claimants are dropped rather than ranked — a refusal that still installed
+// one of them would be the precedence selection it is meant to prevent.
 func refuseAmbiguousExecutables(resolved []ResolvedArtifact) ([]ResolvedArtifact, []error) {
-	type scopedKey struct {
-		kind    ir.ResourceKind
-		name    string
-		machine bool
-	}
-
 	// Most catalogs carry no hook or MCP server at all; the pre-scan keeps that
 	// case free of the grouping maps below.
 	hasExecutable := false
@@ -856,23 +856,23 @@ func refuseAmbiguousExecutables(resolved []ResolvedArtifact) ([]ResolvedArtifact
 		return resolved, nil
 	}
 
-	identitiesByScope := make(map[scopedKey]map[string]struct{})
+	identities := make(map[resourceSelection]map[string]struct{})
 	for _, artifact := range resolved {
 		if !isExecutableKind(artifact.Kind) {
 			continue
 		}
-		key := scopedKey{kind: artifact.Kind, name: artifact.Name, machine: artifact.Source.IsMachineScope()}
-		identities, ok := identitiesByScope[key]
+		key := resourceSelection{kind: artifact.Kind, name: artifact.Name}
+		claimants, ok := identities[key]
 		if !ok {
-			identities = make(map[string]struct{}, 2)
-			identitiesByScope[key] = identities
+			claimants = make(map[string]struct{}, 2)
+			identities[key] = claimants
 		}
-		identities[executableSourceIdentity(artifact)] = struct{}{}
+		claimants[executableSourceIdentity(artifact)] = struct{}{}
 	}
 
 	contested := false
-	for _, identities := range identitiesByScope {
-		if len(identities) > 1 {
+	for _, claimants := range identities {
+		if len(claimants) > 1 {
 			contested = true
 			break
 		}
@@ -897,17 +897,16 @@ func refuseAmbiguousExecutables(resolved []ResolvedArtifact) ([]ResolvedArtifact
 			kept = append(kept, artifact)
 			continue
 		}
-		key := scopedKey{kind: artifact.Kind, name: artifact.Name, machine: artifact.Source.IsMachineScope()}
-		if len(identitiesByScope[key]) < 2 {
+		key := resourceSelection{kind: artifact.Kind, name: artifact.Name}
+		if len(identities[key]) < 2 {
 			kept = append(kept, artifact)
 			continue
 		}
 
-		refusalKey := resourceSelection{kind: artifact.Kind, name: artifact.Name}
-		entry, ok := refusals[refusalKey]
+		entry, ok := refusals[key]
 		if !ok {
 			entry = &refusal{kind: artifact.Kind, name: artifact.Name, seen: make(map[string]struct{}, 2)}
-			refusals[refusalKey] = entry
+			refusals[key] = entry
 		}
 		identity := executableSourceIdentity(artifact)
 		if _, dup := entry.seen[identity]; !dup {
@@ -951,6 +950,18 @@ func executableSourceIdentity(artifact ResolvedArtifact) string {
 		return "local\x00" + artifact.CatalogKey + "\x00" + artifact.RegistryPath
 	}
 	return config.NormalizeGitURL(artifact.RegistryURL) + "\x00" + artifact.Ref + "\x00" + artifact.RegistryPath
+}
+
+// claimExecutableIdentity records that memberKey is claimed by the registry
+// location identity, so a later claimant from the same location is a duplicate
+// while one from any other location is a contest.
+func claimExecutableIdentity(claims map[string]map[string]struct{}, memberKey, identity string) {
+	byIdentity, ok := claims[memberKey]
+	if !ok {
+		byIdentity = make(map[string]struct{}, 2)
+		claims[memberKey] = byIdentity
+	}
+	byIdentity[identity] = struct{}{}
 }
 
 func validateRequirements(resolved []ResolvedArtifact) []error {
@@ -1048,6 +1059,19 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
 func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+	// With nothing to expand, every index below would be built only to be
+	// discarded, so the common collection-free config pays for none of it.
+	hasCollection := false
+	for _, artifact := range resolved {
+		if artifact.Kind == ir.KindCollection {
+			hasCollection = true
+			break
+		}
+	}
+	if !hasCollection {
+		return resolved, nil
+	}
+
 	var out []ResolvedArtifact
 	var errs []error
 
@@ -1055,9 +1079,20 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 	// non-collection artifacts. Collection members that are already directly
 	// resolved should NOT be duplicated — the direct resolution takes precedence.
 	directResolved := make(map[string]struct{})
+	// Executable identities are tracked per source instead, because dropping a
+	// second claimant by name is exactly what hides an ambiguity from
+	// refuseAmbiguousExecutables: a collection that publishes a hook another
+	// registry already provides must reach the refusal, not lose silently to
+	// whichever registry happened to select it directly.
+	executableClaims := make(map[string]map[string]struct{})
 	for _, artifact := range resolved {
-		if artifact.Kind != ir.KindCollection {
-			directResolved[ViaMapKey(artifact.Kind, artifact.Name)] = struct{}{}
+		if artifact.Kind == ir.KindCollection {
+			continue
+		}
+		memberKey := ViaMapKey(artifact.Kind, artifact.Name)
+		directResolved[memberKey] = struct{}{}
+		if isExecutableKind(artifact.Kind) {
+			claimExecutableIdentity(executableClaims, memberKey, executableSourceIdentity(artifact))
 		}
 	}
 
@@ -1138,7 +1173,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, &out, &errs, targetSet)
+		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, executableClaims, excludedResources, visited, &out, &errs, targetSet)
 	}
 
 	return out, suppressResolvedMemberMisses(errs, directResolved)
@@ -1189,6 +1224,7 @@ func expandMembersRecursive(
 	malformed *malformedIndex,
 	allCollectionsByName map[string]collectionCatalogEntry,
 	directResolved map[string]struct{},
+	executableClaims map[string]map[string]struct{},
 	excludedResources map[string]struct{},
 	visited map[string]struct{},
 	out *[]ResolvedArtifact,
@@ -1378,9 +1414,12 @@ func expandMembersRecursive(
 		}
 
 		// Skip if already directly resolved (direct resolution takes
-		// precedence over collection expansion; no duplicates).
+		// precedence over collection expansion; no duplicates). An executable
+		// member is exempt: its claim is judged by source below, because
+		// name-level deduplication here would decide which command line runs.
 		memberKey := ViaMapKey(member.Kind, memberName)
-		if _, direct := directResolved[memberKey]; direct {
+		executable := isExecutableKind(member.Kind)
+		if _, direct := directResolved[memberKey]; direct && !executable {
 			continue
 		}
 
@@ -1389,10 +1428,7 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Mark as resolved to prevent duplicates from other collections.
-		directResolved[memberKey] = struct{}{}
-
-		*out = append(*out, ResolvedArtifact{
+		expanded := ResolvedArtifact{
 			Entry:        attachResource(catEntry, resources, memberCatalogKey),
 			RegistryURL:  memberRegistryURL,
 			RegistryPath: memberRegistryPath,
@@ -1402,7 +1438,26 @@ func expandMembersRecursive(
 			CatalogKey:   memberCatalogKey,
 			Via:          viaLabel,
 			Harnesses:    memberHarnesses,
-		})
+		}
+
+		if executable {
+			// Only an identical registry location is collapsed, so one source
+			// that both selects a hook directly and lists it in a collection
+			// still installs once and reports nothing, while a genuinely
+			// different location survives as a second claimant with its own
+			// provenance for refuseAmbiguousExecutables to name.
+			identity := executableSourceIdentity(expanded)
+			if _, claimed := executableClaims[memberKey][identity]; claimed {
+				continue
+			}
+			claimExecutableIdentity(executableClaims, memberKey, identity)
+		}
+
+		// Mark as resolved to prevent duplicates from other collections, and so
+		// a member miss reported elsewhere is recognized as resolved here.
+		directResolved[memberKey] = struct{}{}
+
+		*out = append(*out, expanded)
 	}
 
 	// Expand includes (nested collections) recursively.
@@ -1442,7 +1497,7 @@ func expandMembersRecursive(
 			CatalogKey:   includedEntry.catalogKey,
 			Harnesses:    artifact.Harnesses,
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, executableClaims, excludedResources, visited, out, errs, targetSet)
 	}
 }
 

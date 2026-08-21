@@ -128,9 +128,23 @@ registry location, the outcome depends on whether the resource is executable.
   the rest with `agent-marketplace remove <name> --from <url> [--path <path>]`.
   The refusal is evaluated after all excludes are applied, so an exclude at any
   layer resolves it.
-- Two configured locations are the same source (not a collision) when their
-  normalized URL, ref and path match. The same source selected at both machine
-  and repo scope stays complementary: those materialize into different roots.
+- Two configured locations are the same source (not a collision) only when their
+  normalized URL, ref and path all match. Two sub-directories or two refs of one
+  repository are different sources.
+- **Install scope does not separate the claim.** A user-personal (or
+  organization) definition and a repo-committed (or personal-local) definition of
+  one executable name are refused together, even though they materialize into
+  different roots. Nothing is overwritten on disk, but every harness that reads
+  both a user and a project configuration merges them by name and prefers the
+  project entry, so allowing this would let a repository you merely checked out
+  replace the command line behind a server you installed for yourself. Multiple
+  scopes survive only when every claimant is the same source.
+- **Collections do not launder the claim.** A `hook` or `mcp` contributed through
+  a collection is a claimant like any other. When it names an identity another
+  registry also provides — whether that registry selects it directly or ships it
+  in a collection of its own — the refusal fires and names both sources. A single
+  source that both selects an executable directly and lists it in its own
+  collection is not a collision: it installs once.
 
 The same name may exist across different kinds (e.g. a skill named `deploy` and a
 command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to

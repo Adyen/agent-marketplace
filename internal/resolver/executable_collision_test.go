@@ -271,6 +271,300 @@ func TestResolveExecutableCollisionResolvedByExclude(t *testing.T) {
 	}
 }
 
+// singleMemberCollection builds a collection with one member of the given kind,
+// optionally pinned to another registry URL.
+func singleMemberCollection(name string, kind ir.ResourceKind, member, registry string) *ir.Collection {
+	return ir.NewCollection(name, "", "", []ir.CollectionMember{
+		{Name: member, Kind: kind, Registry: registry},
+	}, nil, nil, ir.SourceRef{})
+}
+
+// TestResolveRefusesExecutableClaimedDirectlyAndByCollection pins the first
+// collection-expansion bypass. Collection expansion drops a member that is
+// already resolved directly, which is right for prose but silently awarded the
+// contested hook to whichever registry happened to select it directly: the
+// second claimant never reached the refusal, so the exploit reappeared through
+// a collection the user installed precisely because they trusted its source.
+func TestResolveRefusesExecutableClaimedDirectlyAndByCollection(t *testing.T) {
+	const (
+		attackerURL = "git@example.com:aaa-evil.git"
+		trustedURL  = "git@example.com:trusted.git"
+	)
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: attackerURL, Ref: "main", Hooks: ks("pre-commit-guard")},
+			{URL: trustedURL, Ref: "main", Collections: ks("starter-pack")},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(attackerURL, "main"): {
+			{Kind: ir.KindHook, Name: "pre-commit-guard", Path: "/cache/evil/pre-commit-guard"},
+		},
+		ck(trustedURL, "main"): {
+			{
+				Kind:     ir.KindCollection,
+				Name:     "starter-pack",
+				Resource: singleMemberCollection("starter-pack", ir.KindHook, "pre-commit-guard", ""),
+				Path:     "/cache/trusted/collections/starter-pack",
+			},
+			{Kind: ir.KindHook, Name: "pre-commit-guard", Path: "/cache/trusted/pre-commit-guard"},
+		},
+	}
+
+	got, errs := Resolve(cfg, catalogs, nil)
+	refusal := executableCollision(t, errs)
+	if refusal.Kind != ir.KindHook || refusal.Name != "pre-commit-guard" {
+		t.Fatalf("refusal identifies %v %q, want hook %q", refusal.Kind, refusal.Name, "pre-commit-guard")
+	}
+	if len(refusal.Sources) != 2 {
+		t.Fatalf("refusal must name the direct source and the collection's source, got %v", refusal.Sources)
+	}
+	joined := sourceLabels(refusal)
+	for _, want := range []string{"aaa-evil", "trusted"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("refusal must name source %q, got %v", want, refusal.Sources)
+		}
+	}
+	if _, installed := resolvedByKindName(got)["hook:pre-commit-guard"]; installed {
+		t.Fatalf("contested hook must not be installed from any source, resolved: %#v", got)
+	}
+}
+
+// TestResolveRefusesExecutableClaimedByTwoCollections pins the second
+// collection-expansion bypass: expansion marks a member resolved so no other
+// collection can contribute it again, which let the first collection walked
+// decide which MCP command line runs.
+func TestResolveRefusesExecutableClaimedByTwoCollections(t *testing.T) {
+	const (
+		urlA = "git@example.com:pack-a-host.git"
+		urlB = "git@example.com:pack-b-host.git"
+	)
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: urlA, Ref: "main", Collections: ks("pack-a")},
+			{URL: urlB, Ref: "main", Collections: ks("pack-b")},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(urlA, "main"): {
+			{
+				Kind:     ir.KindCollection,
+				Name:     "pack-a",
+				Resource: singleMemberCollection("pack-a", ir.KindMcpServer, "deploy", ""),
+				Path:     "/cache/a/collections/pack-a",
+			},
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/a/deploy"},
+		},
+		ck(urlB, "main"): {
+			{
+				Kind:     ir.KindCollection,
+				Name:     "pack-b",
+				Resource: singleMemberCollection("pack-b", ir.KindMcpServer, "deploy", ""),
+				Path:     "/cache/b/collections/pack-b",
+			},
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/b/deploy"},
+		},
+	}
+
+	got, errs := Resolve(cfg, catalogs, nil)
+	refusal := executableCollision(t, errs)
+	if refusal.Kind != ir.KindMcpServer || refusal.Name != "deploy" {
+		t.Fatalf("refusal identifies %v %q, want mcpserver %q", refusal.Kind, refusal.Name, "deploy")
+	}
+	if len(refusal.Sources) != 2 {
+		t.Fatalf("refusal must name both collections' sources, got %v", refusal.Sources)
+	}
+	if _, installed := resolvedByKindName(got)["mcpserver:deploy"]; installed {
+		t.Fatalf("contested MCP server must not be installed from any source, resolved: %#v", got)
+	}
+}
+
+// TestResolveRefusesExecutableCollisionAcrossUserAndRepoScope pins the scope
+// bypass. Grouping machine-scoped and repo-scoped claimants separately made a
+// repo-committed registry able to publish an MCP identity a user-personal
+// registry already owned: nothing was reported, and a harness that merges
+// project over user configuration at runtime then launches the repository's
+// command line. A checkout is not a trust boundary the user crossed
+// deliberately, so two different sources of one executable identity are refused
+// even when they install into different roots.
+func TestResolveRefusesExecutableCollisionAcrossUserAndRepoScope(t *testing.T) {
+	const (
+		userURL = "git@example.com:user-registry.git"
+		repoURL = "git@example.com:repo-registry.git"
+	)
+
+	global := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: userURL, Ref: "main", MCP: ks("deploy")},
+		},
+	}
+	repo := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: repoURL, Ref: "main", MCP: ks("deploy")},
+		},
+	}
+
+	merged := config.Merge(global, repo)
+	setCatalogKeys(merged)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(userURL, "main"): {
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/user/deploy"},
+		},
+		ck(repoURL, "main"): {
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/repo/deploy"},
+		},
+	}
+
+	got, errs := Resolve(merged, catalogs, nil)
+	refusal := executableCollision(t, errs)
+	joined := sourceLabels(refusal)
+	for _, want := range []string{"user-registry", "repo-registry"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("refusal must name source %q, got %v", want, refusal.Sources)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("contested MCP server must not be installed at either scope, resolved: %#v", got)
+	}
+}
+
+// TestResolveCrossScopeExecutableCollisionResolvedByExclude pins that the scope
+// refusal has the same way out as every other: excluding the source the user
+// does not want installs the remaining definition at its own scope.
+func TestResolveCrossScopeExecutableCollisionResolvedByExclude(t *testing.T) {
+	const (
+		userURL = "git@example.com:user-registry.git"
+		repoURL = "git@example.com:repo-registry.git"
+	)
+
+	global := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: userURL, Ref: "main", MCP: ks("deploy")},
+		},
+	}
+	repo := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: repoURL, Ref: "main", MCP: kse(nil, []string{"deploy"})},
+		},
+	}
+
+	merged := config.Merge(global, repo)
+	setCatalogKeys(merged)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(userURL, "main"): {
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/user/deploy"},
+		},
+		ck(repoURL, "main"): {
+			{Kind: ir.KindMcpServer, Name: "deploy", Path: "/cache/repo/deploy"},
+		},
+	}
+
+	got, errs := Resolve(merged, catalogs, nil)
+	for _, err := range errs {
+		if IsExecutableCollision(err) {
+			t.Fatalf("excluding the repo-scoped source must resolve the ambiguity, got %v", err)
+		}
+	}
+	installed, ok := resolvedByKindName(got)["mcpserver:deploy"]
+	if !ok {
+		t.Fatalf("expected the user-personal definition to install, resolved: %#v", got)
+	}
+	if installed.RegistryURL != userURL {
+		t.Fatalf("MCP server installed from %q, want the non-excluded source", installed.RegistryURL)
+	}
+}
+
+// TestResolveRefusesExecutableCollisionAcrossScopesWithDifferentPaths covers the
+// same-repository shape of the scope bypass: two sub-directories are different
+// content, so splitting them by scope cannot make them complementary.
+func TestResolveRefusesExecutableCollisionAcrossScopesWithDifferentPaths(t *testing.T) {
+	const monoURL = "git@example.com:mono.git"
+
+	global := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: monoURL, Ref: "main", Path: "teams/dev", Hooks: ks("format-on-save")},
+		},
+	}
+	repo := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: monoURL, Ref: "main", Path: "teams/pm", Hooks: ks("format-on-save")},
+		},
+	}
+
+	merged := config.Merge(global, repo)
+	setCatalogKeys(merged)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(monoURL, "main", "teams/dev"): {
+			{Kind: ir.KindHook, Name: "format-on-save", Path: "/cache/mono/dev/format-on-save"},
+		},
+		ck(monoURL, "main", "teams/pm"): {
+			{Kind: ir.KindHook, Name: "format-on-save", Path: "/cache/mono/pm/format-on-save"},
+		},
+	}
+
+	got, errs := Resolve(merged, catalogs, nil)
+	refusal := executableCollision(t, errs)
+	joined := sourceLabels(refusal)
+	for _, want := range []string{"teams/dev", "teams/pm"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("refusal must distinguish scopes by path, got %v", refusal.Sources)
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("contested hook must not be installed at either scope, resolved: %#v", got)
+	}
+}
+
+// TestResolveExecutableFromOneSourceDirectlyAndViaCollectionIsNotACollision
+// guards the blast radius of carrying every claimant forward: one registry that
+// both selects a hook directly and ships a collection listing it is a single
+// source, so it must still install exactly once and report nothing.
+func TestResolveExecutableFromOneSourceDirectlyAndViaCollectionIsNotACollision(t *testing.T) {
+	const soleURL = "git@example.com:sole.git"
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: soleURL, Ref: "main", Hooks: ks("pre-commit-guard"), Collections: ks("starter-pack")},
+		},
+	}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{
+		ck(soleURL, "main"): {
+			{
+				Kind:     ir.KindCollection,
+				Name:     "starter-pack",
+				Resource: singleMemberCollection("starter-pack", ir.KindHook, "pre-commit-guard", ""),
+				Path:     "/cache/sole/collections/starter-pack",
+			},
+			{Kind: ir.KindHook, Name: "pre-commit-guard", Path: "/cache/sole/pre-commit-guard"},
+		},
+	}
+
+	got, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("one source claiming an identity twice must not be refused, got %v", errs)
+	}
+	hooks := 0
+	for _, artifact := range got {
+		if artifact.Kind == ir.KindHook && artifact.Name == "pre-commit-guard" {
+			hooks++
+		}
+	}
+	if hooks != 1 {
+		t.Fatalf("expected the hook to resolve exactly once, got %d in %#v", hooks, got)
+	}
+}
+
 // TestResolveExecutableCrossScopeIsNotACollision guards against over-refusal:
 // the same executable from the same source configured at machine and repo
 // scope is complementary (two different install roots), not ambiguous.
