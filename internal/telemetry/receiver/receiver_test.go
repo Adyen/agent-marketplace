@@ -285,6 +285,22 @@ func TestServerCardinalityRejection(t *testing.T) {
 	}
 }
 
+func TestServerRejectsCorruptCardinalityBudget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, budgetFileName)
+	if err := os.WriteFile(path, []byte("{"), recordFilePerm); err != nil {
+		t.Fatalf("write corrupt budget: %v", err)
+	}
+
+	_, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err == nil {
+		t.Fatal("expected corrupt cardinality budget to reject server startup")
+	}
+	if !strings.Contains(err.Error(), "load cardinality budget") {
+		t.Fatalf("expected cardinality load error, got %v", err)
+	}
+}
+
 func TestServerHealth(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(Config{StorageDir: dir, Logger: discardLogger()})
