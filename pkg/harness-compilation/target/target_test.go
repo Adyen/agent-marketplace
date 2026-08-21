@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func TestCodexIdentityIsNotPubliclyDiscoverable(t *testing.T) {
@@ -15,6 +17,68 @@ func TestCodexIdentityIsNotPubliclyDiscoverable(t *testing.T) {
 	}
 	if slices.Contains(Targets(), TargetCodex) {
 		t.Fatal("Codex must remain absent from public target lists until promotion")
+	}
+}
+
+func TestCodexNativeLayoutIsAvailableBeforePromotion(t *testing.T) {
+	want := NativeLayout{Partitions: []NativePartition{
+		{
+			ID:         "agents",
+			Prefix:     ".agents",
+			Components: []string{"skills"},
+			ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:   "skills/%s/SKILL.md",
+				ir.KindCommand: "skills/%s/SKILL.md",
+			},
+			SkillDirKinds: map[ir.ResourceKind]bool{ir.KindCommand: true},
+		},
+		{
+			ID:                   "codex",
+			Prefix:               ".codex",
+			MachineRootEnv:       "CODEX_HOME",
+			InstallationEvidence: true,
+			Components:           []string{"agents"},
+			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
+			Aggregates: []NativeAggregate{
+				{Kind: ir.KindHook, Path: "hooks.json"},
+				{Kind: ir.KindMcpServer, Path: "config.toml"},
+			},
+		},
+	}}
+
+	got, ok := LookupNativeLayout(TargetCodex)
+	if !ok {
+		t.Fatal("Codex native layout is not registered")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LookupNativeLayout(codex) = %#v, want %#v", got, want)
+	}
+
+	got.Partitions[0].Components[0] = "changed"
+	again, _ := LookupNativeLayout(TargetCodex)
+	if again.Partitions[0].Components[0] != "skills" {
+		t.Fatal("LookupNativeLayout returned mutable registry state")
+	}
+
+	tests := []struct {
+		kind ir.ResourceKind
+		name string
+		want string
+	}{
+		{kind: ir.KindSkill, name: "review", want: ".agents/skills/review/SKILL.md"},
+		{kind: ir.KindCommand, name: "release", want: ".agents/skills/release/SKILL.md"},
+		{kind: ir.KindSubagent, name: "planner", want: ".codex/agents/planner.toml"},
+	}
+	for _, tt := range tests {
+		if got, ok := NativeResourcePath(TargetCodex, tt.kind, tt.name); !ok || got != tt.want {
+			t.Errorf("NativeResourcePath(codex, %s, %q) = %q, %v; want %q, true", tt.kind, tt.name, got, ok, tt.want)
+		}
+	}
+	if got, ok := NativeResourceRoot(TargetCodex, ir.KindSkill); !ok || got != ".agents/skills" {
+		t.Errorf("NativeResourceRoot(codex, skill) = %q, %v; want .agents/skills, true", got, ok)
+	}
+	if got, ok := NativeAggregatePath(TargetCodex, ir.KindHook); !ok || got != ".codex/hooks.json" {
+		t.Errorf("NativeAggregatePath(codex, hook) = %q, %v; want .codex/hooks.json, true", got, ok)
 	}
 }
 
