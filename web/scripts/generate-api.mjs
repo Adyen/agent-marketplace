@@ -6,8 +6,18 @@ const openapiPath = resolve(webRoot, '..', 'api', 'openapi.yaml')
 const contractPath = resolve(webRoot, 'app', 'types', 'marketplace.ts')
 const requiredPaths = [
   '/.well-known/agent-marketplace.json:',
+  '/api/v1/capabilities:',
+  '/api/v1/instance:',
   '/api/v1/search:',
+  '/api/v1/sources/{source}:',
+  '/api/v1/sources/{source}/history:',
   '/api/v1/resources/{source}/{kind}/{name}:',
+  '/api/v1/resources/{source}/{kind}/{name}/revisions:',
+  '/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}:',
+  '/api/v1/manifests/{source-revision}:',
+  '/api/v1/artifacts/sha256/{digest}:',
+  '/s/{source}/{kind}/{name}:',
+  '/healthz:',
 ]
 const requiredKinds = ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection']
 const requiredResponseFields = {
@@ -16,11 +26,17 @@ const requiredResponseFields = {
   SearchResult: ['items', 'total', 'offset', 'limit'],
   ResourceListItem: ['source_id', 'kind', 'name', 'revision', 'content_digest'],
   ResourceRevision: ['coordinate', 'content_digest'],
+  Source: ['id', 'slug', 'origins', 'ref', 'roots', 'acquisition', 'listed'],
+  SourceOccurrence: ['source_id', 'ref', 'source_revision_manifest_digest', 'acquisition', 'occurred_at'],
+}
+const requiredFieldAlternatives = {
+  SourceOccurrence: [['commit', 'revision_commit']],
 }
 const expectedGenerator = 'openapi-typescript@7.9.1'
 
 const openapi = (await readFile(openapiPath, 'utf8')).replaceAll('\r\n', '\n')
 const contract = (await readFile(contractPath, 'utf8')).replaceAll('\r\n', '\n')
+const missingServer = openapi.includes('  - url: /') ? [] : ['servers.url=/']
 const missingPaths = requiredPaths.filter(path => !openapi.includes(path))
 const missingKinds = requiredKinds.filter(kind => {
   const yamlKind = openapi.split('\n').some(line => line.trim() === `- ${kind}`)
@@ -34,17 +50,25 @@ const missingResponseFields = Object.entries(requiredResponseFields).flatMap(([s
     .filter(field => !openapiRequired.has(field) || !frontendRequired.has(field))
     .map(field => `${schema}.${field}`)
 })
+const missingFieldAlternatives = Object.entries(requiredFieldAlternatives).flatMap(([schema, alternatives]) => {
+  const openapiAlternatives = requiredAlternativesInSchema(openapi, schema)
+  return alternatives
+    .filter(fields => !fields.every(field => openapiAlternatives.some(candidate => candidate.includes(field))))
+    .map(fields => `${schema}.oneOf(${fields.join('|')})`)
+})
 
-if (missingPaths.length || missingKinds.length || missingResponseFields.length) {
+if (missingServer.length || missingPaths.length || missingKinds.length || missingResponseFields.length || missingFieldAlternatives.length) {
   console.error('OpenAPI contract drift detected.')
+  if (missingServer.length) console.error(`Missing server composition guard: ${missingServer.join(', ')}`)
   if (missingPaths.length) console.error(`Missing API paths: ${missingPaths.join(', ')}`)
   if (missingKinds.length) console.error(`Missing resource kinds: ${missingKinds.join(', ')}`)
   if (missingResponseFields.length) console.error(`Missing required response fields: ${missingResponseFields.join(', ')}`)
+  if (missingFieldAlternatives.length) console.error(`Missing compatible response fields: ${missingFieldAlternatives.join(', ')}`)
   process.exit(1)
 }
 
 if (process.argv.includes('--check')) {
-  console.log('OpenAPI structural contract check passed: paths, resource kinds, and frontend-required response fields are aligned.')
+  console.log('OpenAPI structural contract check passed: server composition, paths, resource kinds, compatibility fields, and frontend-required response fields are aligned.')
   process.exit(0)
 }
 
@@ -82,6 +106,12 @@ function requiredFieldsInInterface(document, interfaceName) {
   const end = document.indexOf('\n}', start)
   const section = document.slice(start, end === -1 ? document.length : end)
   return new Set([...section.matchAll(/^\s{2}([A-Za-z_][A-Za-z0-9_]*):/gm)].map(([, field]) => field))
+}
+
+function requiredAlternativesInSchema(document, schema) {
+  const section = sectionFor(document, `    ${schema}:`)
+  if (!/^\s{6}(?:oneOf|anyOf):/m.test(section)) return []
+  return [...section.matchAll(/required:\s*\n\s+- ([A-Za-z_][A-Za-z0-9_]*)/g)].map(([, field]) => [field])
 }
 
 function sectionFor(document, heading) {

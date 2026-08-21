@@ -66,13 +66,24 @@ func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurre
 	}
 	mirrored := string(occ.MirroredArtifactDigest)
 	_, err := s.q.ExecContext(ctx,
-		`INSERT OR REPLACE INTO source_occurrences
+		`INSERT OR IGNORE INTO source_occurrences
 		 (source_id, ref, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
 		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
 		occ.SourceID, occ.Ref, occ.Commit, occ.SourceRevisionManifestDigest,
 		occ.Acquisition, mirrored, timeToMicro(occ.OccurredAt),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	existing, err := s.GetSourceOccurrence(ctx, occ.SourceID, occ.Commit)
+	if err != nil {
+		return err
+	}
+	if !occ.Equal(existing) {
+		return fmt.Errorf("%w: source occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+	}
+	return nil
 }
 
 func (s *Store) LatestSourceOccurrence(ctx context.Context, source store.SourceID) (store.SourceOccurrence, error) {

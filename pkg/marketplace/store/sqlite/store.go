@@ -395,9 +395,10 @@ func (s *Store) GetSourceBySlug(ctx context.Context, slug string) (store.Source,
 
 func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.SourceOccurrence, error) {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT source_id, ref, revision_commit, manifest_digest, acquisition,
+		fmt.Sprintf(`SELECT source_id, ref, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, occurred_at
-		 FROM source_occurrences WHERE source_id=? ORDER BY occurred_at DESC`,
+		 FROM source_occurrences WHERE source_id=? ORDER BY occurred_at DESC, revision_commit DESC
+		 LIMIT %d`, store.MaxSourceHistoryEntries),
 		id,
 	)
 	if err != nil {
@@ -405,7 +406,7 @@ func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.S
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []store.SourceOccurrence
+	out := make([]store.SourceOccurrence, 0)
 	for rows.Next() {
 		occ, err := s.scanSourceOccurrence(rows)
 		if err != nil {

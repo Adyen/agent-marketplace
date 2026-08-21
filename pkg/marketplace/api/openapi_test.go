@@ -8,7 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
+func readOpenAPIDocument(t *testing.T) map[string]any {
+	t.Helper()
 	repoRoot, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -19,8 +20,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		repoRoot = filepath.Dir(repoRoot)
 	}
 
-	path := filepath.Join(repoRoot, "api", "openapi.yaml")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(repoRoot, "api", "openapi.yaml"))
 	if err != nil {
 		t.Fatalf("read openapi: %v", err)
 	}
@@ -29,7 +29,11 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("unmarshal openapi: %v", err)
 	}
+	return doc
+}
 
+func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
+	doc := readOpenAPIDocument(t)
 	paths, ok := doc["paths"].(map[string]any)
 	if !ok {
 		t.Fatalf("openapi paths missing or not a map")
@@ -64,10 +68,45 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "SearchResult", "ResourceListItem", "ResourceRevision"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
+	}
+}
+
+func TestOpenAPIUsesOriginServerAndCompatibleOccurrenceCommitFields(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	servers, ok := doc["servers"].([]any)
+	if !ok || len(servers) != 1 {
+		t.Fatalf("openapi servers = %#v, want one origin server", doc["servers"])
+	}
+	server, ok := servers[0].(map[string]any)
+	if !ok || server["url"] != "/" {
+		t.Fatalf("openapi server = %#v, want url / so paths are resolved from the public origin", servers[0])
+	}
+
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	occurrence := schemas["SourceOccurrence"].(map[string]any)
+	alternatives, ok := occurrence["anyOf"].([]any)
+	if !ok || len(alternatives) < 2 {
+		t.Fatalf("SourceOccurrence.anyOf = %#v, want commit compatibility alternatives", occurrence["anyOf"])
+	}
+	seen := map[string]bool{}
+	for _, alternative := range alternatives {
+		entry, ok := alternative.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range entry["required"].([]any) {
+			if name, ok := field.(string); ok {
+				seen[name] = true
+			}
+		}
+	}
+	if !seen["commit"] || !seen["revision_commit"] {
+		t.Fatalf("SourceOccurrence.anyOf required fields = %#v, want commit and revision_commit", seen)
 	}
 }
 

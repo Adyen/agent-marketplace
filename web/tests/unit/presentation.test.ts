@@ -9,6 +9,12 @@ describe('copy-only resource actions', () => {
     expect(installCommand(item, 'https://market.example')).toBe(`agent-marketplace install "${url}"`)
   })
 
+  it('does not generate a copy link for a source ID with an encoded slash', () => {
+    const item = { source_id: 'source/id', kind: 'skill' as const, name: 'review', revision: 'v1', content_digest: 'sha256:' + 'a'.repeat(64) }
+    expect(resourceLocator(item, 'https://market.example')).toBe('')
+    expect(installCommand(item, 'https://market.example')).toBe('')
+  })
+
   it.each([
     { source_id: 'source/id', source_slug: 'source-id' },
     { source_id: 'source-id', source_slug: 'source/team' },
