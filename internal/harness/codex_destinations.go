@@ -48,10 +48,11 @@ func resolveCodexDestinations(machineScope bool, repoRoot string) ([]Destination
 			return nil, err
 		}
 		destinations = append(destinations, Destination{
-			ID:     scope + partition.ID,
-			Root:   root,
-			Prefix: partition.Prefix,
-			Info:   codexTargetInfo(partition),
+			ID:                   scope + partition.ID,
+			Root:                 root,
+			Prefix:               partition.Prefix,
+			InstallationEvidence: partition.InstallationEvidence,
+			Info:                 codexTargetInfo(partition),
 		})
 	}
 	return destinations, nil

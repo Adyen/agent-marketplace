@@ -17,7 +17,7 @@ func TestResolveDestinationsExistingTargetUsesSingleRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != "default" || got[0].Root != filepath.Join(repo, ".factory") || got[0].Prefix != "" {
+	if len(got) != 1 || got[0].ID != "default" || got[0].Root != filepath.Join(repo, ".factory") || got[0].Prefix != "" || !got[0].InstallationEvidence {
 		t.Fatalf("ResolveDestinations(factory) = %#v", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 			name: "repository",
 			want: []Destination{
 				{ID: "repo-agents", Root: filepath.Join(repo, ".agents"), Prefix: ".agents"},
-				{ID: "repo-codex", Root: filepath.Join(repo, ".codex"), Prefix: ".codex"},
+				{ID: "repo-codex", Root: filepath.Join(repo, ".codex"), Prefix: ".codex", InstallationEvidence: true},
 			},
 		},
 		{
@@ -107,7 +107,7 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 			machineScope: true,
 			want: []Destination{
 				{ID: "machine-agents", Root: filepath.Join(home, ".agents"), Prefix: ".agents"},
-				{ID: "machine-codex", Root: customCodexHome, Prefix: ".codex"},
+				{ID: "machine-codex", Root: customCodexHome, Prefix: ".codex", InstallationEvidence: true},
 			},
 		},
 	}
@@ -121,7 +121,7 @@ func TestResolveDestinationsCodexScopes(t *testing.T) {
 				t.Fatalf("destinations = %#v, want %#v", got, tt.want)
 			}
 			for i := range got {
-				if got[i].ID != tt.want[i].ID || got[i].Root != tt.want[i].Root || got[i].Prefix != tt.want[i].Prefix {
+				if got[i].ID != tt.want[i].ID || got[i].Root != tt.want[i].Root || got[i].Prefix != tt.want[i].Prefix || got[i].InstallationEvidence != tt.want[i].InstallationEvidence {
 					t.Errorf("destination[%d] = %#v, want identity %#v", i, got[i], tt.want[i])
 				}
 			}
