@@ -110,6 +110,7 @@ func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
 			wantAggregates = append(wantAggregates, path.Join(partition.Prefix, aggregate.Path))
 		}
 	}
+	slices.Sort(wantAggregates)
 	if !reflect.DeepEqual(got.Components, wantComponents) || got.SkillPathPattern != wantSkillPath || got.ResourceDirs != nil || !reflect.DeepEqual(got.AggregateFilesForScope(false), wantAggregates) {
 		t.Fatalf("virtual Codex target info = %#v; want components=%v skill=%q no resource dirs aggregates=%v", got, wantComponents, wantSkillPath, wantAggregates)
 	}
