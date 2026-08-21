@@ -74,6 +74,8 @@ func TestCodexMaterializationCodesAreCatalogued(t *testing.T) {
 	for _, code := range []string{
 		CodeMaterializeCodexTrustReview,
 		CodeMaterializeCodexTrustReviewPending,
+		CodeMaterializeCodexHookSatisfiedByUnmanaged,
+		CodeMaterializeCodexAggregatePrunePostponed,
 		"materialize.codex.aggregate-malformed",
 		"materialize.codex.aggregate-unpatchable",
 		"materialize.destination.overlap",

@@ -9,11 +9,45 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
+
+func TestCodexAggregateReportsResolvedDestinationID(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	entries, err := codexHookFragmentEntries([]byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./managed"}]}]}}`), "managed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := &ownedJSONAggregateWork{}
+	for _, entry := range entries {
+		work.add(entry)
+	}
+	key := outputKey{target: targetmeta.TargetCodex}
+	state := ownedAggregateState{
+		codex:           map[outputKey]*ownedJSONAggregateWork{key: work},
+		codexMCP:        map[outputKey][]codexMCPEntry{},
+		codexMCPBlocked: map[outputKey]bool{},
+	}
+	report := &Report{PerTarget: map[targetmeta.Target]TargetReport{}}
+	destinations := []harness.Destination{{
+		ID:   "resolved-config-root",
+		Root: root,
+		Info: harness.TargetInfo{OwnershipReconciledAggregates: true},
+	}}
+
+	report = (codexOwnedAggregateHandler{}).reconcile(context.Background(), report, state, key, "", destinations, true)
+	if len(report.PerRoot) != 1 {
+		t.Fatalf("per-root reports = %#v, want one", report.PerRoot)
+	}
+	if got := report.PerRoot[0].RootID; got != destinations[0].ID {
+		t.Fatalf("root ID = %q, want resolved destination %q", got, destinations[0].ID)
+	}
+}
 
 func TestCodexHooksReconcileWithDurableOwnership(t *testing.T) {
 	repo := t.TempDir()
@@ -59,6 +93,32 @@ func TestCodexHooksReconcileWithDurableOwnership(t *testing.T) {
 	}
 	if strings.Contains(string(pruned), "./managed") || !strings.Contains(string(pruned), "./handwritten") {
 		t.Fatalf("ownership prune wrong:\n%s", pruned)
+	}
+}
+
+func TestCodexHookDiagnosticsDoNotUseDevinCodes(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hooksPath := filepath.Join(repo, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./managed"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
+	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: hook}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+
+	report, err := Run(context.Background(), repo, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeCodexHookSatisfiedByUnmanaged); !ok {
+		t.Fatalf("Codex satisfaction diagnostic missing: %#v", report.Diags)
+	}
+	if _, leaked := findDiag(report.Diags, diag.CodeMaterializeDevinHookSatisfiedByUnmanaged); leaked {
+		t.Fatalf("Codex emitted a Devin diagnostic: %#v", report.Diags)
 	}
 }
 

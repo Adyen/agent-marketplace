@@ -259,13 +259,15 @@ const (
 	// docs/plans/2026-08-06-ownership-locking-design.md section 4.
 	CodeOwnershipLockUnavailable = "ownership.lock-unavailable" // Advisory locking is unavailable here, so ownership mutations for this root are not serialized
 
-	// Devin MATERIALIZATION codes (work package D10). Emitted by
-	// internal/materialize's Devin aggregate reconciler. Like the ownership
+	// Owned aggregate MATERIALIZATION codes. Emitted by internal/materialize's
+	// target adapters over the shared reconciler. Like the ownership
 	// codes they are consumer-side, and they carry only the output-relative
 	// aggregate path, the non-secret entry identity (an MCP server object key or
 	// a hook event name), and resource names.
 	CodeMaterializeDevinHookSatisfiedByUnmanaged = "materialize.devin.hook-satisfied-by-unmanaged" // A semantically identical handwritten hook already exists; no entry was added
 	CodeMaterializeDevinAggregatePrunePostponed  = "materialize.devin.aggregate-prune-postponed"   // A resource was skipped this run, so stale owned entries were not pruned
+	CodeMaterializeCodexHookSatisfiedByUnmanaged = "materialize.codex.hook-satisfied-by-unmanaged" // A semantically identical handwritten hook already exists; no entry was added
+	CodeMaterializeCodexAggregatePrunePostponed  = "materialize.codex.aggregate-prune-postponed"   // A resource was skipped this run, so stale owned entries were not pruned
 	CodeMaterializeCodexAggregateMalformed       = "materialize.codex.aggregate-malformed"         // A Codex aggregate could not be parsed or safely reconciled
 	CodeMaterializeCodexAggregateUnpatchable     = "materialize.codex.aggregate-unpatchable"       // A Codex aggregate entry uses a native form that cannot be safely patched
 	CodeMaterializeDestinationOverlap            = "materialize.destination.overlap"               // Resolved Codex destinations overlap in a way that cannot be safely coalesced
@@ -539,6 +541,8 @@ var codeCatalog = []CodeDoc{
 	{CodeOwnershipLockUnavailable, SeverityWarning, "This filesystem or platform does not support advisory locking, so ownership mutations for this target root are not serialized against other processes", "Concurrent writers on this root can still race; move XDG_STATE_HOME to a local filesystem if two agent-marketplace processes ever run at once"},
 	{CodeMaterializeDevinHookSatisfiedByUnmanaged, SeverityWarning, "A handwritten Devin hook is semantically identical to a selected marketplace hook, so no generated entry was added", "No action needed; the existing handwritten entry already provides the behaviour and is neither adopted nor duplicated"},
 	{CodeMaterializeDevinAggregatePrunePostponed, SeverityWarning, "A resource was skipped this run, so stale owned aggregate entries were not pruned", "Fix the reported resource errors and re-run sync; a skipped resource is indistinguishable from a removed one, so pruning would delete valid output"},
+	{CodeMaterializeCodexHookSatisfiedByUnmanaged, SeverityWarning, "A handwritten Codex hook is semantically identical to a selected marketplace hook, so no generated entry was added", "No action needed; the existing handwritten entry already provides the behaviour and is neither adopted nor duplicated"},
+	{CodeMaterializeCodexAggregatePrunePostponed, SeverityWarning, "A Codex resource was skipped this run, so stale owned aggregate entries were not pruned", "Fix the reported resource errors and re-run sync; a skipped resource is indistinguishable from a removed one, so pruning would delete valid output"},
 	{CodeDoctorDevinVersionUnsupported, SeverityWarning, "The installed Devin CLI is older than the 3000.3 compatibility floor", "Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output"},
 	{CodeDoctorDevinVersionUnknown, SeverityWarning, "A Devin CLI is installed but its version could not be established", "The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed"},
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},

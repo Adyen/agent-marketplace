@@ -71,7 +71,7 @@ func TestDevinKillMidSectionChildProcess(t *testing.T) {
 
 	var mu sync.Mutex
 	releases := 0
-	devinLockAcquisitionHook = func(ev ownership.LockEvent) {
+	ownedAggregateLockAcquisitionHook = func(ev ownership.LockEvent) {
 		// Counted on RELEASE, not on acquisition, for two reasons. A release is
 		// unambiguously "a mutation just FINISHED", so the kill lands after a
 		// commit rather than somewhere inside one — the eight points inside one
@@ -111,11 +111,11 @@ func TestDevinKillMidSectionChildProcess(t *testing.T) {
 // devinHookDesired builds one desired hooks.v1.json entry.
 func devinHookDesired(t *testing.T, command string) ownedJSONEntry {
 	t.Helper()
-	raw, err := devinCanonicalJSON([]byte(`{"type":"command","command":"` + command + `"}`))
+	raw, err := canonicalOwnedJSON([]byte(`{"type":"command","command":"` + command + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := devinHookIdentity("PostToolUse", raw)
+	identity, err := ownedJSONHookIdentity("PostToolUse", raw)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -47,7 +47,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateW
 		if err != nil {
 			b.Fatal(err)
 		}
-		entries, err := ownedJSONFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, name)
+		entries, err := devinFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, name)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateW
 		if err != nil {
 			b.Fatal(err)
 		}
-		mcpEntries, err := ownedJSONFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, server)
+		mcpEntries, err := devinFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, server)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func BenchmarkDevinHookIdentity(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := devinHookIdentity("PostToolUse", rule); err != nil {
+		if _, err := ownedJSONHookIdentity("PostToolUse", rule); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -429,40 +429,6 @@ type targetWork struct {
 	diags     []diag.Diagnostic
 }
 
-// ownedAggregateState keeps the existing format-specific desired state behind
-// the small handler boundary. The concrete handlers deliberately retain their
-// native entry types: JSON hook arrays and TOML MCP tables do not share a safe
-// generic patch model.
-type ownedAggregateState struct {
-	devin           map[outputKey]*ownedJSONAggregateWork
-	codex           map[outputKey]*ownedJSONAggregateWork
-	codexMCP        map[outputKey][]codexMCPEntry
-	codexMCPBlocked map[outputKey]bool
-}
-
-// ownedAggregateHandler is the target-aware seam for ownership-reconciled
-// aggregate files. Shared orchestration dispatches resources and controls when
-// reconciliation runs; each concrete handler keeps its existing extraction,
-// identity, validation, and patching rules.
-type ownedAggregateHandler interface {
-	extract(ownedAggregateState, outputKey, []artifact.Artifact, string) ([]artifact.Artifact, error)
-	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
-	aggregateRels(ir.ResourceKind, bool) []string
-	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
-	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
-}
-
-func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
-	switch target {
-	case hcc.TargetDevin:
-		return devinOwnedAggregateHandler{}
-	case hcc.TargetCodex:
-		return codexOwnedAggregateHandler{}
-	default:
-		return nil
-	}
-}
-
 // compilePhaseResult holds the output of the compile phase.
 type compilePhaseResult struct {
 	allDiags   []diag.Diagnostic

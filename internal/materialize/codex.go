@@ -81,13 +81,28 @@ func (codexOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 
 func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
 	for _, destination := range destinations {
-		if destination.Prefix != ".codex" {
+		if !destination.Info.OwnershipReconciledAggregates {
 			continue
 		}
-		report = reconcileCodexHooks(ctx, report, key, destination.Root, state.codex[key], dryRun)
-		return reconcileCodexMCP(ctx, report, key, destination.Root, state.codexMCP[key], state.codexMCPBlocked[key], dryRun)
+		hookOptions := codexHookJSONOptions()
+		hookOptions.rootID = destination.ID
+		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
+		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: ownedHooksContainer, rawValueDigest: true}
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, state.codex[key], hookOptions, dryRun)
+		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, state.codexMCP[key], state.codexMCPBlocked[key], dryRun)
 	}
 	return report
+}
+
+func codexHookJSONOptions() ownedJSONReconcileOptions {
+	return ownedJSONReconcileOptions{
+		sessionName:        "reconcile-codex-hooks",
+		writeCode:          diag.CodeMaterializeCodexAggregateMalformed,
+		malformedCode:      diag.CodeMaterializeCodexAggregateMalformed,
+		shapeCode:          diag.CodeMaterializeCodexAggregateMalformed,
+		satisfiedCode:      diag.CodeMaterializeCodexHookSatisfiedByUnmanaged,
+		prunePostponedCode: diag.CodeMaterializeCodexAggregatePrunePostponed,
+	}
 }
 
 type codexMCPEntry struct {
@@ -118,7 +133,7 @@ func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([
 		}
 		switch candidate.Path {
 		case codexHooksArtifactPath:
-			parsed, err := ownedJSONFragmentEntries(codexHooksFile, candidate.Bytes, resource)
+			parsed, err := codexHookFragmentEntries(candidate.Bytes, resource)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("decode Codex hooks fragment: %w", err)
 			}
@@ -134,6 +149,14 @@ func splitCodexOwnedArtifacts(artifacts []artifact.Artifact, resource string) ([
 		}
 	}
 	return rest, hooks, mcps, nil
+}
+
+func codexHookFragmentEntries(data []byte, resource string) ([]ownedJSONEntry, error) {
+	var document map[string]map[string][]json.RawMessage
+	if err := ownedJSONDecode(data, &document); err != nil {
+		return nil, fmt.Errorf("decode %s fragment: %w", codexHooksFile, err)
+	}
+	return ownedJSONHookEntries(codexHooksFile, document[ownedHooksContainer], resource)
 }
 
 func mustCodexAggregatePath(kind ir.ResourceKind) string {
@@ -339,7 +362,7 @@ func lineEnd(raw []byte, offset int) int {
 	return len(raw)
 }
 
-func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
 	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
@@ -383,14 +406,14 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 			if readErr == nil && !dryRun {
 				if _, backupErr := store.BackupOnly(codexMCPFile, abs, ownership.ReasonSync); backupErr != nil {
 					slog.Error("Codex MCP malformed-file safety backup failed", "target", key.target, "machine_scope", key.machineScope, "file", abs, "error", backupErr)
-					report.Diags = append(report.Diags, devinAggregateCodedDiag(key, root, codexMCPFile, backupErr, diag.CodeOwnershipSafetyBackup))
+					report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, root, codexMCPFile, backupErr, diag.CodeOwnershipSafetyBackup))
 					return err
 				}
 			}
 			return err
 		}
 		proof, proofErr := store.Proof(codexMCPFile)
-		report.Diags = append(report.Diags, devinProofDiags(key, root, codexMCPFile, proofErr)...)
+		report.Diags = append(report.Diags, ownedAggregateProofDiags(key, root, codexMCPFile, proofErr)...)
 		desiredValues := make([]ownership.EntryValue, 0, len(desired))
 		byName := make(map[string]codexMCPEntry, len(desired))
 		for _, entry := range desired {
@@ -477,15 +500,15 @@ func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, root 
 			return nil
 		}
 		if dryRun {
-			codexMCPMarkWritten(report, key, root)
+			recordOwnedAggregateWrite(report, key, rootID, root, codexMCPFile)
 			appendCodexTrustReviewDiagnostic(report, key, codexMCPFile, true)
 			return nil
 		}
-		gen, digest := devinPriorForApply(raw, readErr, proof)
+		gen, digest := ownedAggregatePriorForApply(raw, readErr, proof)
 		_, err = store.Apply(ownership.Mutation{Rel: codexMCPFile, AbsFile: abs, NextBytes: next, Entries: owned, Reason: ownership.ReasonSync, ExpectPriorGeneration: gen, ExpectPriorDigest: digest})
 		if err == nil {
 			slog.Info("Codex MCP configuration reconciled", "target", key.target, "machine_scope", key.machineScope, "file", abs, "owned_entries", len(owned))
-			codexMCPMarkWritten(report, key, root)
+			recordOwnedAggregateWrite(report, key, rootID, root, codexMCPFile)
 			appendCodexTrustReviewDiagnostic(report, key, codexMCPFile, false)
 		}
 		return err
@@ -506,13 +529,13 @@ func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string,
 	if report == nil || key.target != targetmeta.TargetCodex || key.machineScope {
 		return
 	}
-	path := filepath.ToSlash(filepath.Join(".codex", rel))
+	nativePath := path.Join(path.Dir(codexHooksArtifactPath), filepath.ToSlash(rel))
 	code := diag.CodeMaterializeCodexTrustReview
-	message := fmt.Sprintf("Codex repository configuration %s changed and may require trust review", path)
+	message := fmt.Sprintf("Codex repository configuration %s changed and may require trust review", nativePath)
 	hint := "Review or re-approve this repository in Codex before using the changed configuration"
 	if dryRun {
 		code = diag.CodeMaterializeCodexTrustReviewPending
-		message = fmt.Sprintf("Codex repository configuration %s would change; --check did not modify files or trust state", path)
+		message = fmt.Sprintf("Codex repository configuration %s would change; --check did not modify files or trust state", nativePath)
 		hint = "A later sync may require reviewing or re-approving this repository in Codex"
 	}
 	report.Diags = append(report.Diags, diag.Diagnostic{
@@ -523,13 +546,7 @@ func appendCodexTrustReviewDiagnostic(report *Report, key outputKey, rel string,
 		Hint:     hint,
 	})
 	slog.Warn("Codex repository configuration requires trust review",
-		"target", key.target, "file", path, "dry_run", dryRun, "code", code)
-}
-
-func codexMCPMarkWritten(report *Report, key outputKey, root string) {
-	tr := TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: aggregateRootID(key), OutDir: root, Written: []string{codexMCPFile}}
-	report.PerRoot = append(report.PerRoot, tr)
-	report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
+		"target", key.target, "file", nativePath, "dry_run", dryRun, "code", code)
 }
 
 func codexMCPDiag(report *Report, key outputKey, err error) *Report {

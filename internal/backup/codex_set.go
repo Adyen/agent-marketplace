@@ -16,9 +16,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-const codexTargetName = "codex"
+const codexTargetName = string(targetmeta.TargetCodex)
 
 // CodexPartition is one independently rooted half of a machine Codex backup.
 type CodexPartition struct {
@@ -189,12 +191,16 @@ func RestoreCodexSet(partitions []CodexPartition) (operation string, err error) 
 }
 
 func validateCodexPartitions(partitions []CodexPartition) error {
-	if len(partitions) != 2 {
-		return fmt.Errorf("backup: Codex backup set requires exactly two partitions, got %d", len(partitions))
+	want := codexNativePartitionCount()
+	if want == 0 {
+		return errors.New("backup: Codex native layout is not registered")
 	}
-	seen := make(map[string]bool, 2)
+	if len(partitions) != want {
+		return fmt.Errorf("backup: Codex backup set requires exactly %d partitions, got %d", want, len(partitions))
+	}
+	seen := make(map[string]bool, want)
 	for _, partition := range partitions {
-		if partition.ID != "machine-agents" && partition.ID != "machine-codex" {
+		if !isCodexMachinePartitionID(partition.ID) {
 			return fmt.Errorf("backup: unknown Codex partition %q", partition.ID)
 		}
 		if seen[partition.ID] || partition.Root == "" {
@@ -292,12 +298,13 @@ func codexManifestMatches(manifest codexSetManifest, keys map[string]string) boo
 }
 
 func validCodexSetManifest(manifest codexSetManifest, filename string) bool {
-	if manifest.Version != 1 || len(manifest.Partitions) != 2 || manifest.Operation+".set.json" != filename {
+	want := codexNativePartitionCount()
+	if want == 0 || manifest.Version != 1 || len(manifest.Partitions) != want || manifest.Operation+".set.json" != filename {
 		return false
 	}
-	seen := make(map[string]bool, 2)
+	seen := make(map[string]bool, want)
 	for _, partition := range manifest.Partitions {
-		if (partition.ID != "machine-agents" && partition.ID != "machine-codex") || seen[partition.ID] || filepath.Base(partition.Archive) != partition.Archive {
+		if !isCodexMachinePartitionID(partition.ID) || seen[partition.ID] || filepath.Base(partition.Archive) != partition.Archive {
 			return false
 		}
 		managed := make([]string, 0, len(partition.RelPaths))
@@ -316,6 +323,21 @@ func validCodexSetManifest(manifest codexSetManifest, filename string) bool {
 		seen[partition.ID] = true
 	}
 	return true
+}
+
+func codexNativePartitionCount() int {
+	layout, _ := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	return len(layout.Partitions)
+}
+
+func isCodexMachinePartitionID(id string) bool {
+	layout, _ := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	for _, partition := range layout.Partitions {
+		if id == "machine-"+partition.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func validCodexManagedPath(rel string) bool {

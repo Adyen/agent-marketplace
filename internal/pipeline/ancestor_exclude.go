@@ -164,7 +164,7 @@ func skillDir(target hcc.Target, root, name string) string {
 			return ""
 		}
 		for _, destination := range destinations {
-			if destination.ID != "repo-agents" || destination.Info.SkillPathPattern == "" {
+			if destination.Info.SkillPathPattern == "" {
 				continue
 			}
 			skillRel := filepath.Dir(fmt.Sprintf(destination.Info.SkillPathPattern, name))

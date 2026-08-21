@@ -27,7 +27,7 @@ func TestCodexMCPDuplicateDesiredIdentityFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, root, append(first, second...), false, false)
+	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, "", root, append(first, second...), false, false)
 	if _, err := os.Stat(filepath.Join(root, codexMCPFile)); !os.IsNotExist(err) {
 		t.Fatalf("duplicate desired identity wrote config.toml: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestCodexMCPQuotedExistingIdentityUsesNormalCollisionRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, root, desired, false, false)
+	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, "", root, desired, false, false)
 	if !hasErrorDiagnostics(report.Diags) {
 		t.Fatal("expected unmanaged quoted identity collision")
 	}
@@ -87,7 +87,7 @@ func TestCodexMCPInlineExistingIdentityUsesNormalCollisionRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, root, desired, false, false)
+	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, "", root, desired, false, false)
 	if !hasErrorDiagnostics(report.Diags) {
 		t.Fatal("expected unmanaged inline identity collision")
 	}
@@ -124,7 +124,7 @@ func TestCodexMCPInlineOwnedUpdateFailsClosedWithoutAbsorbingSibling(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, root, desired, false, false)
+	report := reconcileCodexMCP(context.Background(), &Report{PerTarget: map[targetmeta.Target]TargetReport{}}, outputKey{target: targetmeta.TargetCodex}, "", root, desired, false, false)
 	if !hasErrorDiagnostics(report.Diags) {
 		t.Fatal("expected unpatchable inline diagnostic")
 	}

@@ -22,7 +22,7 @@ import (
 // destroyed by plain sync; that outcome is scoped to `doctor --repair`'s
 // conflict-replace."
 //
-// With the old lossy hook/v1 identity, devinHookIdentity consumed "type",
+// With the old lossy hook/v1 identity, ownedJSONHookIdentity consumed "type",
 // "matcher", "command", "prompt" and "timeout" by name and only used the payload
 // key matching the type. A hand-written element that differed from a managed one
 // only in a member the identity ignored could share the identity digest while
