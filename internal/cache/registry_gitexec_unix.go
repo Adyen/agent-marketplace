@@ -95,7 +95,7 @@ func gitCommand(dir *os.File, args []string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("locate own executable to anchor git: %w", err)
 	}
 	cmd := exec.Command(self, args...)
-	cmd.Env = append(os.Environ(), gitAnchorEnv+"="+gitAnchorValue)
+	cmd.Env = gitEnviron(dir, gitAnchorEnv+"="+gitAnchorValue)
 	cmd.ExtraFiles = []*os.File{dir}
 	return cmd, nil
 }

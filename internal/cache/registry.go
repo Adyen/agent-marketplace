@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,24 +101,37 @@ func cleanupCacheSkeleton(store *cacheStore, cachePath string) {
 
 func syncCacheEntry(store *cacheStore, url, ref, entryName, cachePath string) (string, error) {
 	redactedURL := redactSecrets(url)
-	entry, err := store.openEntry(entryName)
-	switch {
-	case err == nil:
-		defer func() { _ = entry.Close() }()
-		slog.Debug("registry cache hit; refreshing", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		return refreshCacheEntry(store, entry, url, ref, entryName, cachePath)
-	case errors.Is(err, os.ErrNotExist):
-		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
-		return createCacheEntry(store, url, ref, entryName, cachePath)
-	default:
+	state, err := store.classifyEntry(entryName)
+	if err != nil {
 		slog.Error("registry cache entry validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
 	}
+
+	switch state {
+	case entryMissing:
+		slog.Debug("registry cache miss; cloning", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		return createCacheEntry(store, url, ref, entryName, cachePath)
+	case entryCorrupt:
+		// Rebuilt rather than refreshed: git would answer "not a repository" by
+		// searching upwards, and rather than serve whatever it found there, the
+		// entry is replaced by a clone of the registry it is supposed to hold.
+		slog.Warn("registry cache entry is not a usable checkout; rebuilding", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+		return rebuildCacheEntry(store, url, ref, entryName, cachePath, nil)
+	}
+
+	entry, err := store.openEntry(entryName)
+	if err != nil {
+		slog.Error("registry cache entry validation failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
+		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
+	}
+	defer func() { _ = entry.Close() }()
+	slog.Debug("registry cache hit; refreshing", "url", redactedURL, "ref", ref, "cache_path", cachePath)
+	return refreshCacheEntry(store, entry, url, ref, entryName, cachePath)
 }
 
 func createCacheEntry(store *cacheStore, url, ref, entryName, cachePath string) (string, error) {
 	redactedURL := redactSecrets(url)
-	temp, err := buildCacheEntry(store, url, ref, entryName, "", "")
+	temp, err := buildCacheEntry(store, url, ref, entryName, nil)
 	if err != nil {
 		slog.Error("registry cache clone failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("clone registry %q into %q: %w", redactedURL, cachePath, err)
@@ -147,15 +162,33 @@ func createCacheEntry(store *cacheStore, url, ref, entryName, cachePath string) 
 func refreshCacheEntry(store *cacheStore, entry *os.File, url, ref, entryName, cachePath string) (string, error) {
 	redactedURL := redactSecrets(url)
 
+	pin, pinErr := store.readPin(entryName)
+	if pinErr != nil {
+		// A pin this package wrote and cannot read back means the entry is not
+		// reliably the checkout its name claims, so it is rebuilt rather than
+		// refreshed against a ref class nothing vouches for.
+		slog.Warn("registry cache pin unreadable; rebuilding entry", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", pinErr)
+		return rebuildCacheEntry(store, url, ref, entryName, cachePath, nil)
+	}
+
 	// Fetching mutates only the object store and the remote-tracking refs, never
 	// the worktree, so it is safe to do in the published entry: a reader of the
 	// checked-out files cannot observe it.
-	fetchErr := runGitIn(entry, "fetch", "--tags", "--prune", "origin")
+	fetchErr := runGitInRepo(entry, "fetch", "--tags", "--prune", "origin")
 	if fetchErr != nil {
 		slog.Warn("using stale cache after fetch failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", fetchErr)
+		// Offline, the entry is served as the exact commit the last successful run
+		// resolved, taken from the pin. Re-resolving the ref instead would decide
+		// what to serve from whatever refs the last fetch happened to leave
+		// behind, which is how a stale same-named tag gets promoted into a
+		// registry's content without anything upstream having changed.
+		if pin != nil && cacheEntryIsAt(entry, pin.commit) {
+			slog.Debug("serving pinned commit from stale registry cache", "url", redactedURL, "ref", ref, "cache_path", cachePath, "commit", pin.commit, "class", string(pin.class))
+			return cachePath, nil
+		}
 	}
 
-	target, resolveErr := resolveCommit(entry, ref)
+	target, class, resolveErr := resolveCommit(entry, ref, pin)
 	if resolveErr != nil {
 		if fetchErr != nil {
 			slog.Error("stale registry cache resolution failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", resolveErr)
@@ -164,14 +197,32 @@ func refreshCacheEntry(store *cacheStore, entry *os.File, url, ref, entryName, c
 		slog.Error("registry ref resolution failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", resolveErr)
 		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, resolveErr)
 	}
+	resolved := refPin{class: class, commit: target}
 
 	if cacheEntryIsAt(entry, target) {
+		// An entry from a release that predated pin recording, or one whose
+		// branch has moved back onto the commit it already holds, gets its pin
+		// written now: the record lives in .git, so writing it is invisible to a
+		// reader walking the worktree.
+		if pin == nil || *pin != resolved {
+			if err := store.writePin(entryName, resolved); err != nil {
+				slog.Warn("record registry cache pin", "cache_path", cachePath, "ref", ref, "error", err)
+			}
+		}
 		slog.Debug("registry cache entry already at target commit", "url", redactedURL, "ref", ref, "cache_path", cachePath, "commit", target)
 		return cachePath, nil
 	}
 
 	slog.Debug("rebuilding registry cache entry out of place", "url", redactedURL, "ref", ref, "cache_path", cachePath, "commit", target)
-	temp, err := buildCacheEntry(store, url, ref, entryName, entryName, target)
+	return rebuildCacheEntry(store, url, ref, entryName, cachePath, &localRebuild{name: entryName, dir: entry, pin: resolved})
+}
+
+// rebuildCacheEntry builds a replacement for an existing entry out of place and
+// swaps it in. from is nil when the existing entry cannot be reused as a local
+// clone source — which is the case for every entry that is not a valid repository.
+func rebuildCacheEntry(store *cacheStore, url, ref, entryName, cachePath string, from *localRebuild) (string, error) {
+	redactedURL := redactSecrets(url)
+	temp, err := buildCacheEntry(store, url, ref, entryName, from)
 	if err != nil {
 		slog.Error("registry cache rebuild failed", "url", redactedURL, "ref", ref, "cache_path", cachePath, "error", err)
 		return "", fmt.Errorf("checkout %q in %q: %w", ref, cachePath, err)
@@ -184,21 +235,29 @@ func refreshCacheEntry(store *cacheStore, entry *os.File, url, ref, entryName, c
 		return "", fmt.Errorf("publish cache entry %q: %w", cachePath, err)
 	}
 
-	slog.Debug("registry cache republished", "cache_path", cachePath, "ref", ref, "commit", target)
+	slog.Debug("registry cache republished", "cache_path", cachePath, "ref", ref)
 	return cachePath, nil
 }
 
+// localRebuild describes an existing published entry that a rebuild can be seeded
+// from: `git clone --local` hardlinks its object store, so a refresh costs neither
+// a second network transfer nor an object copy, and the hardlinks outlive the
+// entry the swap retires.
+type localRebuild struct {
+	// name is the sibling entry name, for the clone.
+	name string
+	// dir is an open descriptor on that entry, for reading its refs. Reading them
+	// through the descriptor rather than by name is what keeps the copy anchored.
+	dir *os.File
+	// pin is the commit and ref class already resolved against that entry.
+	pin refPin
+}
+
 // buildCacheEntry clones into a fresh scratch sibling of entryName, checks out
-// ref there, and returns the scratch name for the caller to publish or swap in.
-// The scratch directory is removed if anything fails, so a failed operation never
-// leaves a partial entry.
-//
-// localSource, when non-empty, names a sibling cache entry to clone from:
-// `git clone --local` hardlinks the object store, so a refresh costs neither a
-// second network transfer nor an object copy, and the hardlinks outlive the
-// source entry that the swap retires. target, when non-empty, is an
-// already-resolved commit to check out.
-func buildCacheEntry(store *cacheStore, url, ref, entryName, localSource, target string) (name string, err error) {
+// ref there, records the pin, and returns the scratch name for the caller to
+// publish or swap in. The scratch directory is removed if anything fails, so a
+// failed operation never leaves a partial entry.
+func buildCacheEntry(store *cacheStore, url, ref, entryName string, from *localRebuild) (name string, err error) {
 	temp, err := store.makeTemp(entryName, tempEntryInfix)
 	if err != nil {
 		return "", err
@@ -212,31 +271,32 @@ func buildCacheEntry(store *cacheStore, url, ref, entryName, localSource, target
 		}
 	}()
 
-	hashDir := store.dir()
-	if localSource != "" {
-		if cloneErr := runGitIn(hashDir, "clone", "--no-checkout", "--local", "--", localSource, temp); cloneErr != nil {
-			// A damaged local source must not wedge the cache: fall back to the
-			// registry and pay the network cost once. The resolved target is
-			// dropped with it, because it was resolved against that source.
-			slog.Warn("local registry cache clone failed; cloning from registry", "source", localSource, "error", cloneErr)
-			if rmErr := store.removeEntry(temp); rmErr != nil {
-				return "", rmErr
+	// requested carries the ref class the caller already established, so that a
+	// rebuild forced onto the registry keeps resolving the same *kind* of ref even
+	// though it has to resolve the commit again.
+	var requested *refPin
+	if from != nil {
+		established := from.pin
+		requested = &established
+
+		if seedErr := seedFromLocalEntry(store, temp, url, from); seedErr != nil {
+			// A damaged source must not wedge the cache: a deterministic failure
+			// here would otherwise fail every future sync until somebody deleted
+			// the cache. Fall back to the registry and pay the network cost once.
+			// The resolved commit is dropped with it, because it was resolved
+			// against that source.
+			slog.Warn("seeding the rebuilt registry cache entry from the existing one failed; cloning from the registry", "source", from.name, "error", seedErr)
+			if resetErr := resetScratchEntry(store, temp); resetErr != nil {
+				return "", resetErr
 			}
-			if mkErr := store.hash.Mkdir(temp, cacheDirPerm); mkErr != nil {
-				return "", mkErr
-			}
-			localSource, target = "", ""
+			from = nil
 		}
 	}
 
-	if localSource == "" {
-		if err = runGitIn(hashDir, "clone", "--no-checkout", "--", url, temp); err != nil {
+	if from == nil {
+		if err = runGitIn(store.dir(), "clone", "--no-checkout", "--", url, temp); err != nil {
 			return "", err
 		}
-	} else if err = runGitIn(hashDir, "-C", temp, "remote", "set-url", "origin", url); err != nil {
-		// A local clone inherits the source entry's path as its origin URL, which
-		// stops existing once the swap retires that entry.
-		return "", err
 	}
 
 	scratch, err := store.openEntry(temp)
@@ -245,38 +305,287 @@ func buildCacheEntry(store *cacheStore, url, ref, entryName, localSource, target
 	}
 	defer func() { _ = scratch.Close() }()
 
-	if target == "" {
-		if target, err = resolveCommit(scratch, ref); err != nil {
+	pin := refPin{}
+	if from != nil {
+		pin = from.pin
+	}
+	if pin.commit == "" {
+		if pin.commit, pin.class, err = resolveCommit(scratch, ref, requested); err != nil {
 			return "", err
 		}
 	}
-	if err = runGitIn(scratch, "-c", "advice.detachedHead=false", "checkout", "--force", "--detach", target); err != nil {
+	if err = runGitInRepo(scratch, "-c", "advice.detachedHead=false", "checkout", "--force", "--detach", pin.commit); err != nil {
+		return "", err
+	}
+	if err = store.writePin(temp, pin); err != nil {
 		return "", err
 	}
 	return temp, nil
 }
 
-// resolveCommit resolves ref to a full object name inside repo.
+// seedFromLocalEntry fills the scratch entry temp from the published entry a
+// rebuild replaces, so that the rebuild costs no network transfer and no object
+// copy: `git clone --local` hardlinks the object store, and the hardlinks outlive
+// the entry the swap retires.
+func seedFromLocalEntry(store *cacheStore, temp, url string, from *localRebuild) error {
+	if err := runGitIn(store.dir(), "clone", "--no-checkout", "--local", "--", from.name, temp); err != nil {
+		return err
+	}
+	scratch, err := store.openEntry(temp)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = scratch.Close() }()
+
+	// A local clone inherits the source entry's path as its origin URL, which
+	// stops existing once the swap retires that entry.
+	if err := runGitInRepo(scratch, "remote", "set-url", "origin", url); err != nil {
+		return err
+	}
+	return copyRemoteTrackingRefs(from.dir, scratch)
+}
+
+// resetScratchEntry empties a scratch entry so a failed seeding attempt can be
+// replaced by a clone from the registry.
+func resetScratchEntry(store *cacheStore, temp string) error {
+	if err := store.removeEntry(temp); err != nil {
+		return err
+	}
+	return store.hash.Mkdir(temp, cacheDirPerm)
+}
+
+// remoteTrackingPrefix is the only ref namespace a pinned ref is resolved
+// against, which is why it is also the only one a rebuild has to carry over.
+const remoteTrackingPrefix = "refs/remotes/origin/"
+
+// copyRemoteTrackingRefs makes target's remote-tracking refs identical to
+// source's.
 //
-// Resolution is explicit and ordered — remote-tracking ref, tag, then the ref as
-// written — and every candidate is suffixed with ^{commit} and passed after
-// --end-of-options. That is what stops a ref from being reinterpreted as
-// something else: `git checkout <ref>` falls back to treating its argument as a
-// *pathspec* when no such ref exists, so a registry pinned to a ref that does
-// not exist but that happens to name a tracked file "succeeds" and silently
-// serves the default branch's content. rev-parse has no pathspec fallback, and a
-// resolved object name checked out with --detach cannot be reinterpreted either.
-func resolveCommit(repo *os.File, ref string) (string, error) {
-	for _, candidate := range []string{"refs/remotes/origin/" + ref, "refs/tags/" + ref, ref} {
-		out, err := gitOutputIn(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
-		if err != nil {
+// `git clone` maps the *local* branches of the repository it clones into
+// refs/remotes/origin/*, so a clone of a cache entry — which has one local branch
+// left over from its own clone and a detached HEAD — comes out with almost none of
+// the remote-tracking refs the entry had. Losing them is not cosmetic: they are
+// what a pinned branch ref resolves against, so an offline refresh of a rebuilt
+// entry would find no branch and could only fall back to some other kind of ref
+// with the same name.
+//
+// Symbolic refs (refs/remotes/origin/HEAD) are skipped in both directions: they
+// are set by the clone, are not resolution candidates, and updating one through
+// update-ref would rewrite whatever it points at.
+func copyRemoteTrackingRefs(source, target *os.File) error {
+	want, err := remoteTrackingRefs(source)
+	if err != nil {
+		return fmt.Errorf("read remote-tracking refs of the cache entry being rebuilt: %w", err)
+	}
+	have, err := remoteTrackingRefs(target)
+	if err != nil {
+		return fmt.Errorf("read remote-tracking refs of the rebuilt cache entry: %w", err)
+	}
+
+	var updates strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		if have[name] == want[name] {
 			continue
 		}
-		if commit := strings.TrimSpace(out); isObjectName(commit) {
-			return commit, nil
+		fmt.Fprintf(&updates, "update %s %s\n", name, want[name])
+	}
+	for _, name := range slices.Sorted(maps.Keys(have)) {
+		if _, keep := want[name]; !keep {
+			fmt.Fprintf(&updates, "delete %s\n", name)
 		}
 	}
-	return "", fmt.Errorf("git ref %q does not resolve to a commit", ref)
+	if updates.Len() == 0 {
+		return nil
+	}
+	// One update-ref invocation is one transaction, so the rebuilt entry either
+	// has exactly the source's remote-tracking refs or has none of the changes and
+	// is discarded with the scratch directory. --no-deref keeps a symbolic ref on
+	// the target side from turning an update into an update of its target.
+	if err := gitStdinInRepo(target, updates.String(), "update-ref", "--no-deref", "--stdin"); err != nil {
+		return fmt.Errorf("copy remote-tracking refs into the rebuilt cache entry: %w", err)
+	}
+	return nil
+}
+
+func remoteTrackingRefs(repo *os.File) (map[string]string, error) {
+	out, err := gitOutputInRepo(repo, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", remoteTrackingPrefix)
+	if err != nil {
+		return nil, err
+	}
+	refs := make(map[string]string)
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		// Three fields means %(symref) was non-empty, i.e. a symbolic ref.
+		if len(fields) != 2 {
+			continue
+		}
+		if !strings.HasPrefix(fields[0], remoteTrackingPrefix) || !isObjectName(fields[1]) {
+			continue
+		}
+		refs[fields[0]] = fields[1]
+	}
+	return refs, nil
+}
+
+// refClass is the *kind* of ref a cache entry was built from. It is recorded with
+// the entry because the kind is part of what a config pinned, not an incidental
+// detail of how it was found: a ref that used to name a branch and now names a tag
+// names different content published by a different act.
+type refClass string
+
+const (
+	refClassBranch refClass = "branch"
+	refClassTag    refClass = "tag"
+	refClassObject refClass = "object"
+)
+
+func (c refClass) valid() bool {
+	switch c {
+	case refClassBranch, refClassTag, refClassObject:
+		return true
+	}
+	return false
+}
+
+// refPin is a resolved ref: the commit, and the kind of ref it came from.
+type refPin struct {
+	class  refClass
+	commit string
+}
+
+// refCandidates maps a configured ref onto the refs it may resolve against.
+// Either may be empty when the configured ref is already qualified, which is how
+// a user disambiguates a name that is both a branch and a tag.
+func refCandidates(ref string) (branchRef, tagRef string) {
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		return remoteTrackingPrefix + strings.TrimPrefix(ref, "refs/heads/"), ""
+	case strings.HasPrefix(ref, "refs/tags/"):
+		return "", ref
+	default:
+		return remoteTrackingPrefix + ref, "refs/tags/" + ref
+	}
+}
+
+// resolveCommit resolves ref to a full object name inside repo, and reports which
+// kind of ref it resolved against.
+//
+// Resolution is explicit, and every candidate is suffixed with ^{commit} and
+// passed after --end-of-options. That is what stops a ref from being reinterpreted
+// as something else: `git checkout <ref>` falls back to treating its argument as a
+// *pathspec* when no such ref exists, so a registry pinned to a ref that does not
+// exist but that happens to name a tracked file "succeeds" and silently serves the
+// default branch's content. rev-parse has no pathspec fallback, and a resolved
+// object name checked out with --detach cannot be reinterpreted either.
+//
+// pin, when non-nil, is what the entry currently holds, and it narrows resolution
+// to that one kind of ref. A pinned kind that has stopped resolving is an error
+// rather than a reason to try the others, because the others are exactly the
+// substitution worth preventing: a branch deleted upstream leaves a same-named tag
+// — which anyone who can push a tag controls — as the next candidate, and silently
+// promoting it changes the content a registry serves with nothing in the
+// configuration having changed.
+func resolveCommit(repo *os.File, ref string, pin *refPin) (string, refClass, error) {
+	branchRef, tagRef := refCandidates(ref)
+
+	if pin != nil {
+		pinned := ""
+		switch pin.class {
+		case refClassObject:
+			commit, err := resolveObjectRef(repo, ref)
+			if err != nil {
+				return "", "", err
+			}
+			return commit, refClassObject, nil
+		case refClassBranch:
+			pinned = branchRef
+		case refClassTag:
+			pinned = tagRef
+		}
+		if pinned != "" {
+			commit, err := resolveCommitish(repo, pinned)
+			if err != nil {
+				return "", "", fmt.Errorf("git ref %q was published from %s %q, which no longer resolves; refusing to substitute a different kind of ref (remove the cache entry to re-pin): %w", ref, pin.class, pinned, err)
+			}
+			return commit, pin.class, nil
+		}
+	}
+
+	branchCommit, branchErr := resolveCandidate(repo, branchRef)
+	tagCommit, tagErr := resolveCandidate(repo, tagRef)
+	switch {
+	case branchErr == nil && tagErr == nil && branchCommit != tagCommit:
+		// Git itself calls this ambiguous and picks one with a warning. Picking one
+		// here would mean the content served depends on a precedence rule nobody
+		// configured, so it is refused with the two qualified names that resolve it.
+		return "", "", fmt.Errorf("git ref %q is ambiguous: branch %q is %s and tag %q is %s; pin the ref as refs/heads/… or refs/tags/…", ref, branchRef, branchCommit, tagRef, tagCommit)
+	case branchErr == nil:
+		return branchCommit, refClassBranch, nil
+	case tagErr == nil:
+		return tagCommit, refClassTag, nil
+	}
+
+	commit, err := resolveObjectRef(repo, ref)
+	if err != nil {
+		return "", "", err
+	}
+	return commit, refClassObject, nil
+}
+
+// resolveCandidate resolves a fully qualified candidate, treating an empty
+// candidate as "does not apply".
+func resolveCandidate(repo *os.File, candidate string) (string, error) {
+	if candidate == "" {
+		return "", errors.New("no candidate ref")
+	}
+	return resolveCommitish(repo, candidate)
+}
+
+// resolveObjectRef resolves ref as an object expression — which is how a commit
+// pin works — and refuses anything that is still a ref name.
+//
+// The guard matters because the tracking candidates have already failed by this
+// point, so any *ref* that still resolves is one this cache created rather than
+// anything upstream: `git clone` leaves refs/heads/<default> behind, and serving
+// it would mean answering a request for a branch that no longer exists upstream
+// with a local leftover.
+func resolveObjectRef(repo *os.File, ref string) (string, error) {
+	commit, err := resolveCommitish(repo, ref)
+	if err != nil {
+		return "", fmt.Errorf("git ref %q does not resolve to a commit", ref)
+	}
+	if isObjectName(ref) {
+		return commit, nil
+	}
+	// No --end-of-options here: rev-parse echoes it into the output in this mode,
+	// which would make every argument look as though it had resolved to a ref. It
+	// is not needed either, because validateGitRef has already refused an
+	// option-like ref.
+	name, nameErr := gitOutputInRepo(repo, "rev-parse", "--quiet", "--symbolic-full-name", ref)
+	if nameErr != nil {
+		return commit, nil
+	}
+	// rev-parse prints nothing for an argument that resolved to an object rather
+	// than to a ref, so a printed ref name is the whole signal. It is matched by
+	// shape because rev-parse also echoes arguments it could not interpret.
+	for line := range strings.SplitSeq(name, "\n") {
+		if resolved := strings.TrimSpace(line); strings.HasPrefix(resolved, "refs/") || resolved == "HEAD" {
+			return "", fmt.Errorf("git ref %q does not resolve to a commit in the registry; it only names the local ref %q", ref, resolved)
+		}
+	}
+	return commit, nil
+}
+
+func resolveCommitish(repo *os.File, expression string) (string, error) {
+	out, err := gitOutputInRepo(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", expression+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	commit := strings.TrimSpace(out)
+	if !isObjectName(commit) {
+		return "", fmt.Errorf("git %q did not resolve to an object name", expression)
+	}
+	return commit, nil
 }
 
 // isObjectName reports whether s is a full git object name. Both hash lengths are
@@ -292,13 +601,13 @@ func isObjectName(s string) bool {
 // common refresh free of worktree writes — and therefore free of any window in
 // which a concurrent reader could see a half-updated tree.
 func cacheEntryIsAt(entry *os.File, target string) bool {
-	head, err := gitOutputIn(entry, "rev-parse", "--verify", "--quiet", "--end-of-options", "HEAD^{commit}")
+	head, err := gitOutputInRepo(entry, "rev-parse", "--verify", "--quiet", "--end-of-options", "HEAD^{commit}")
 	if err != nil || strings.TrimSpace(head) != target {
 		return false
 	}
 	// `diff --quiet` exits non-zero on any difference from HEAD. Every error is
 	// treated as "rebuild", so a damaged entry is replaced rather than served.
-	return runGitIn(entry, "diff", "--quiet", "HEAD") == nil
+	return runGitInRepo(entry, "diff", "--quiet", "HEAD") == nil
 }
 
 func validateGitURL(url string) error {
@@ -353,7 +662,21 @@ func validateGitRef(ref string) error {
 	return nil
 }
 
-// runGitIn runs git anchored to dir. Every path in args must be relative to dir.
+// repoScopeArgs pin git to the repository *in* the anchored directory.
+//
+// They are what stops upward repository discovery. Without an explicit --git-dir,
+// git answers "this is not a repository" by walking towards the filesystem root
+// looking for one, so an entry missing its .git would make `fetch`, `diff` and
+// `checkout --force` operate on whichever repository contains the cache — the
+// user's own checkout, when the cache sits under it. With it, the same situation
+// is a clean "not a git repository: '.git'".
+//
+// --work-tree is given too so that neither core.worktree nor a bare-repository
+// setting inside the entry can move the tree the checkout writes to.
+var repoScopeArgs = []string{"--git-dir=" + gitDirName, "--work-tree=."}
+
+// runGitIn runs git anchored to dir, without assuming dir is a repository. Every
+// path in args must be relative to dir.
 func runGitIn(dir *os.File, args ...string) error {
 	_, err := gitOutputIn(dir, args...)
 	return err
@@ -363,9 +686,40 @@ func runGitIn(dir *os.File, args ...string) error {
 // error is kept out of the returned value so that a warning on stderr cannot be
 // mistaken for output by a caller parsing it.
 func gitOutputIn(dir *os.File, args ...string) (string, error) {
+	return gitIn(dir, "", args)
+}
+
+// runGitInRepo runs git against the repository in the anchored directory repo.
+func runGitInRepo(repo *os.File, args ...string) error {
+	_, err := gitOutputInRepo(repo, args...)
+	return err
+}
+
+func gitOutputInRepo(repo *os.File, args ...string) (string, error) {
+	return gitIn(repo, "", scopedGitArgs(args))
+}
+
+// gitStdinInRepo runs git against the repository in repo, feeding it stdin. It
+// exists for `update-ref --stdin`, whose whole point is that one invocation is one
+// transaction.
+func gitStdinInRepo(repo *os.File, stdin string, args ...string) error {
+	_, err := gitIn(repo, stdin, scopedGitArgs(args))
+	return err
+}
+
+func scopedGitArgs(args []string) []string {
+	scoped := make([]string, 0, len(repoScopeArgs)+len(args))
+	scoped = append(scoped, repoScopeArgs...)
+	return append(scoped, args...)
+}
+
+func gitIn(dir *os.File, stdin string, args []string) (string, error) {
 	cmd, err := gitCommand(dir, args)
 	if err != nil {
 		return "", err
+	}
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
 	}
 	return runGitProcess(cmd, dir.Name(), args)
 }

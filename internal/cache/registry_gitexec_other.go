@@ -19,5 +19,6 @@ const gitExecutionIsAnchored = false
 func gitCommand(dir *os.File, args []string) (*exec.Cmd, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir.Name()
+	cmd.Env = gitEnviron(dir)
 	return cmd, nil
 }

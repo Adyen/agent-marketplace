@@ -14,6 +14,7 @@ single function.
 ~/.cache/agent-marketplace/                 cache root (the trusted root)
 └── <sha256(url)[:16]>/                     per-registry-URL directory
     ├── <encoded-ref>/                      published entry: a git worktree
+    │   └── .git/agent-marketplace-pin      the commit and ref class it was built from
     ├── .<encoded-ref>.new-<random>/        scratch: a clone in progress
     └── .<encoded-ref>.old-<random>/        scratch: an entry being retired
 ```
@@ -88,21 +89,90 @@ On platforms without `fchdir(2)` the working directory falls back to a path.
 `PLATFORMS` in the Makefile is darwin and linux only; the fallback exists so
 cross-platform analysis builds, not because the weaker guarantee ships.
 
-## Invariant 4 — a ref resolves to a commit, or the operation fails
+## Invariant 4 — git operates on the entry's repository and on no other
+
+Anchoring says *where* git starts. Two other things decide which repository it
+ends up on, and both default the wrong way.
+
+**Upward discovery.** Git's answer to "the current directory is not a
+repository" is to walk towards the filesystem root looking for one. So an entry
+that exists but holds no repository — an interrupted clone, a half-finished
+`rm -rf`, a directory somebody created by hand — used to make every git command
+in it operate on whichever repository *contains the cache*, which is routinely
+the user's own checkout: the cache lives under the home directory, and
+`CacheDir` falls back to a path under the working directory when there is no
+home directory. `fetch` then wrote that repository's refs and
+`checkout --force --detach` moved its HEAD; worse, the outer repository's HEAD
+*resolved the pinned ref*, so the entry looked up to date and an empty directory
+was published as a registry's content. Every operation on an entry therefore
+passes `--git-dir=.git --work-tree=.`, which makes the same situation a clean
+"not a git repository: '.git'", and `GIT_CEILING_DIRECTORIES` plus
+`GIT_DISCOVERY_ACROSS_FILESYSTEM=false` are set as defence in depth.
+
+**The inherited environment.** `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY`, `GIT_CONFIG_COUNT` and their relatives re-point git at a
+repository, index, object store or config of somebody else's choosing, which
+defeats descriptor anchoring from outside it. They are *removed* from every git
+subprocess's environment (`gitEnviron`), not overridden. This is the ordinary
+case rather than an exotic one: git sets `GIT_DIR` and `GIT_INDEX_FILE` for every
+hook it runs, so a `sync` from a hook carries them. Transport and authentication
+variables (`GIT_SSH_COMMAND`, `GIT_ASKPASS`, credential helpers, proxies) are
+deliberately kept — they are how a private registry is reached, and they cannot
+change which repository is written to.
+
+## Invariant 5 — an entry is a git worktree, or it is rebuilt
+
+Before any git command touches an entry, the name is classified with `Lstat`:
+
+- **A symlink is refused**, not repaired. `*os.Root` already refuses one that
+  leaves the cache, so a symlink here points at *another entry of this cache* —
+  two refs sharing one checkout, or tampering. Neither should be handled quietly.
+- **`.git` must be a real directory containing `HEAD` and `objects/`.** A `.git`
+  that is a symlink or a gitfile would let a name inside the cache designate a
+  repository outside it, and an empty `.git` is a repository to nothing.
+- **Anything else is corrupt**, and corrupt means *rebuilt from the registry and
+  swapped in*, never handed to git. Rebuilding is what closes the discovery hole
+  above: the entry is replaced by a clone of the registry it is supposed to hold.
+
+## Invariant 6 — a ref resolves to a commit of the kind it resolved to before
 
 `git checkout <name>` silently reinterprets its argument as a **pathspec** when
 no such ref exists. A registry pinned to a ref that does not exist, but that
 happens to match a tracked path, therefore used to "succeed": the checkout was a
 no-op, and the cache entry for that ref was published holding the *default
-branch's* content.
+branch's* content. `resolveCommit` resolves with `rev-parse`, which has no
+pathspec fallback, appends `^{commit}`, passes `--end-of-options`, validates the
+result to be a full object name, and checks it out with `--detach`, which takes a
+commit and nothing else. An unresolvable ref fails and publishes nothing.
 
-`resolveCommit` resolves explicitly and in order — `refs/remotes/origin/<ref>`,
-`refs/tags/<ref>`, then the ref as written — with `^{commit}` appended and
-`--end-of-options` in front. `rev-parse` has no pathspec fallback, the result is
-validated to be a full object name, and it is checked out with `--detach`, which
-takes a commit and nothing else. An unresolvable ref fails and publishes nothing.
+Which ref a name resolves *against* is the second half, and it is not incidental:
+a name can be a branch and a tag at once, and the two are published by different
+acts under different permissions — pushing a tag is a weaker permission than
+pushing a branch in every forge.
 
-## Invariant 5 — a published entry is never mutated in place
+- **Candidates are qualified.** A bare `<ref>` is looked up as
+  `refs/remotes/origin/<ref>` and as `refs/tags/<ref>`; `refs/heads/<x>` and
+  `refs/tags/<x>` name exactly one of the two, which is how a user disambiguates.
+- **A name that is both, disagreeing, is refused.** Git resolves it by precedence
+  with a warning; here the content served would depend on a rule nobody
+  configured.
+- **A bare name that only resolves *locally* is refused.** Every entry keeps a
+  `refs/heads/<default>` from its own clone, so a branch deleted upstream would
+  otherwise keep resolving out of the cache forever.
+- **The kind is recorded** in `.git/agent-marketplace-pin`, together with the
+  commit, and a refresh resolves *only* that kind. A pinned branch that has
+  stopped resolving is an error, not a reason to try the tag: the tag is exactly
+  the substitution worth preventing, and it needs nothing to change in any
+  configuration to take effect. The pin lives in `.git` because a file in the
+  worktree would differ from `HEAD` and make every entry look locally modified;
+  it is written by every build, and back-filled on the first refresh of an entry
+  from a release that predates it.
+- **Offline, the pin is what is served.** When `fetch` fails and the entry is
+  still at the pinned commit, that commit is served without re-resolving
+  anything, so what a stale cache hands out is what the last successful run
+  resolved rather than a function of whichever refs that fetch left behind.
+
+## Invariant 7 — a published entry is never mutated in place
 
 A reader of a cache entry holds no lock; it walks a directory it was handed by
 `CloneOrPull`. So an update that rewrote the worktree would let a reader see half
@@ -121,13 +191,21 @@ the old tree and half the new one.
   entry takes its place, and only then is the retired directory unlinked. A
   reader resolving the path sees either tree, complete; a reader that already
   opened the old tree keeps reading it.
+
+  The rebuilt entry's **remote-tracking refs are copied over explicitly**, in one
+  `update-ref --stdin` transaction. `git clone` maps the *local* branches of what
+  it clones into `refs/remotes/origin/*`, and a cache entry has a detached HEAD
+  and one leftover local branch, so a rebuild otherwise comes out with almost
+  none of the refs the entry it replaces had. Those refs are what a pinned branch
+  resolves against, so losing them surfaces one refresh later — offline, as a ref
+  that no longer resolves as a branch at all.
 - **A cold clone is published with a single rename**, which is atomic.
 
 A failed operation removes its scratch directory, and if it created the cache
 root or per-URL directory in the same call it removes those too, so a failure
 leaves neither a partial entry nor a cache skeleton.
 
-## Invariant 6 — writers are serialized, and unserialized writers still converge
+## Invariant 8 — writers are serialized, and unserialized writers still converge
 
 `CloneOrPull` takes an exclusive advisory lock for the duration of a mutation.
 The lock is `flock(2)` **on the per-URL directory itself**, not on a lock file:
@@ -160,3 +238,11 @@ process killed mid-publication gets cleaned up.
 - **Content-level trust.** Containment says a registry cannot write outside its
   cache entry. It says nothing about whether the registry's *content* should be
   installed; that is the selection and trust machinery's job.
+- **A moving ref is not a fixed one.** A pin records the *kind* of ref and the
+  commit it last resolved to; it does not freeze a branch. A branch that moves
+  upstream still moves the entry, which is what pinning a branch asks for. Only a
+  commit ref is immutable.
+- **A deliberate re-pin needs the entry gone.** Once an entry records that its
+  ref was a branch, a ref that has genuinely become a tag upstream fails until
+  the entry is removed (`agent-marketplace gc`, or deleting the cache). Failing
+  is the point: the alternative is a silent content change.

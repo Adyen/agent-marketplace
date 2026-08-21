@@ -12,7 +12,26 @@ import (
 	"strings"
 )
 
-const cacheDirPerm = 0o755
+const (
+	cacheDirPerm  = 0o755
+	cacheFilePerm = 0o644
+)
+
+// gitDirName is the repository directory inside a published entry. Every git
+// operation on an entry names it explicitly (--git-dir=.git) instead of letting
+// git discover a repository, so this is also what an entry is checked for before
+// it is used.
+const gitDirName = ".git"
+
+// pinFileName records the commit and the *kind* of ref a published entry was
+// built from.
+//
+// It lives inside .git rather than in the worktree for two reasons: the worktree
+// is compared against HEAD to detect tampering, so a file that is not in the
+// commit would make every entry look modified, and `git clone --local` does not
+// copy it — which is what forces the rebuild path to write a fresh, correct pin
+// rather than inheriting a stale one.
+const pinFileName = "agent-marketplace-pin"
 
 // Temporary and retired entries are named so that they can never be mistaken
 // for a published entry: a published entry is always an encoded ref (base32, or
@@ -179,6 +198,74 @@ func (s *cacheStore) unlock() {
 // git are relative to it, so git never resolves a cache path itself.
 func (s *cacheStore) dir() *os.File { return s.hashDir }
 
+// entryState is what a published entry name currently holds.
+type entryState int
+
+const (
+	// entryUnknown: the name could not be classified; the error says why.
+	entryUnknown entryState = iota
+	// entryMissing: nothing is at the name, so the entry has to be cloned.
+	entryMissing
+	// entryUsable: a directory holding a git repository, safe to refresh.
+	entryUsable
+	// entryCorrupt: something is at the name that is not a git worktree this
+	// package could have published, so it has to be rebuilt rather than used.
+	entryCorrupt
+)
+
+// classifyEntry reports what is at a published entry name, without following a
+// symlink and without running git.
+//
+// A symlink at the name is refused outright rather than rebuilt: *os.Root already
+// refuses one that leaves the cache, so a symlink here points at another entry of
+// this same cache, which means either the cache is being tampered with or two
+// entries would share one checkout. Neither is something to repair silently.
+//
+// Anything else that is not a plausible git worktree is corrupt, not usable. The
+// distinction matters because the alternative is handing the directory to git,
+// and git's response to "this is not a repository" is to walk towards the
+// filesystem root looking for one — at which point `fetch` and `checkout --force`
+// would operate on whichever repository contains the cache.
+func (s *cacheStore) classifyEntry(name string) (entryState, error) {
+	info, err := s.hash.Lstat(name)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return entryMissing, nil
+	case err != nil:
+		return entryUnknown, err
+	case info.Mode()&os.ModeSymlink != 0:
+		return entryUnknown, fmt.Errorf("cache entry %q is a symlink", name)
+	case !info.IsDir():
+		return entryCorrupt, nil
+	}
+
+	// A `.git` that is a symlink or a gitfile would let a name inside the cache
+	// designate a repository outside it, so only a real directory counts. HEAD
+	// and objects/ are checked because an empty or half-removed `.git` directory
+	// is a repository to nothing.
+	for _, required := range []struct {
+		path  string
+		isDir bool
+	}{
+		{path: gitDirName, isDir: true},
+		{path: filepath.Join(gitDirName, "HEAD"), isDir: false},
+		{path: filepath.Join(gitDirName, "objects"), isDir: true},
+	} {
+		info, err := s.hash.Lstat(filepath.Join(name, required.path))
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return entryCorrupt, nil
+		case err != nil:
+			return entryUnknown, err
+		case info.IsDir() != required.isDir:
+			return entryCorrupt, nil
+		case info.Mode()&os.ModeSymlink != 0:
+			return entryCorrupt, nil
+		}
+	}
+	return entryUsable, nil
+}
+
 // openEntry opens a cache entry by name. A name that resolves outside the cache
 // root — the interesting case being a planted symlink — fails here, before any
 // mutation.
@@ -187,16 +274,67 @@ func (s *cacheStore) openEntry(name string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := file.Stat()
+	opened, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	if !info.IsDir() {
+	if !opened.IsDir() {
 		_ = file.Close()
 		return nil, fmt.Errorf("cache entry %q is not a directory", name)
 	}
+	// Comparing the opened inode against the un-followed name is what makes this
+	// safe against a symlink planted between classification and open: Open
+	// follows the link (staying inside the root), Lstat does not, so a link makes
+	// the two disagree. A disagreement is refused rather than retried, because
+	// the only thing that produces one is somebody else mutating the cache.
+	linked, err := s.hash.Lstat(name)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if !os.SameFile(opened, linked) {
+		_ = file.Close()
+		return nil, fmt.Errorf("cache entry %q is a symlink", name)
+	}
 	return file, nil
+}
+
+// readPin returns the recorded pin for a published entry, or nil when the entry
+// predates pin recording. A malformed pin is an error: it is this package's own
+// bookkeeping, so garbage in it means the entry cannot be trusted to be what its
+// name claims.
+func (s *cacheStore) readPin(entryName string) (*refPin, error) {
+	data, err := s.hash.ReadFile(filepath.Join(entryName, gitDirName, pinFileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var pin refPin
+	for line := range strings.SplitSeq(string(data), "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		switch key {
+		case "class":
+			pin.class = refClass(value)
+		case "commit":
+			pin.commit = value
+		}
+	}
+	if !pin.class.valid() || !isObjectName(pin.commit) {
+		return nil, fmt.Errorf("cache entry %q has a malformed pin record", entryName)
+	}
+	return &pin, nil
+}
+
+func (s *cacheStore) writePin(entryName string, pin refPin) error {
+	record := fmt.Sprintf("class=%s\ncommit=%s\n", pin.class, pin.commit)
+	return s.hash.WriteFile(filepath.Join(entryName, gitDirName, pinFileName), []byte(record), cacheFilePerm)
 }
 
 // makeTemp creates a uniquely named scratch sibling of entryName and returns its

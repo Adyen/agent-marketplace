@@ -729,12 +729,36 @@ func swapLogOutput(dst *bytes.Buffer) func() {
 func runGitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 
+	output, err := tryGitCommand(dir, args...)
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return output
+}
+
+// tryGitCommand runs git against a test fixture and reports failure instead of
+// ending the test, for the cases where a failing git command is the expected
+// outcome (probing whether a branch exists).
+//
+// The environment is sanitized the same way the package sanitizes it for its own
+// git subprocesses, because a test that deliberately plants GIT_DIR or
+// GIT_WORK_TREE in the environment must not thereby redirect the fixture
+// repositories' own git commands.
+func tryGitCommand(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	environ := os.Environ()
+	sanitized := make([]string, 0, len(environ)+4)
+	for _, entry := range environ {
+		if name, _, ok := strings.Cut(entry, "="); ok && isGitScopingEnvName(name) {
+			continue
+		}
+		sanitized = append(sanitized, entry)
+	}
 	// Provide git identity via env vars so no config files are written.
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(sanitized,
 		"GIT_AUTHOR_NAME=Test User",
 		"GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test User",
@@ -742,9 +766,5 @@ func runGitCommand(t *testing.T, dir string, args ...string) string {
 	)
 
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
-	}
-
-	return string(output)
+	return string(output), err
 }
