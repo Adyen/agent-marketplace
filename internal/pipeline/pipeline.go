@@ -55,13 +55,16 @@ type ResolveOptions struct {
 	IgnoreBlockedRegistries bool
 	// SkipInventory suppresses recording for internal pre-mutation lookups. The
 	// post-mutation Resolve performed by sync remains the reported generation.
-	SkipInventory      bool
-	ReadOnlyExactLocks bool
+	SkipInventory               bool
+	ReadOnlyExactLocks          bool
 	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
 	// mutable registry cache for layers that have no lockfile. Present locks
 	// remain exact and malformed or stale locks still fail closed.
-	AllowMissingReadOnlyLocks bool
-	ExactLockLease            func(context.Context) (func(), error)
+	AllowMissingReadOnlyLocks   bool
+	ExactLockLease              func(context.Context) (func(), error)
+	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
+	MarketplaceMode             *resolver.MarketplaceResolveMode
+	MarketplaceSourceFilter     func(config.Source) bool
 }
 
 type ResolveResult struct {
@@ -505,17 +508,31 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	// Malformed resources are dropped from Entries by the ingesters, so the
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
-	mpMode := marketplaceResolveMode(opts.CatalogMode)
+	mpMode := marketplaceResolveMode(opts.CatalogMode, opts.Offline)
+	if opts.MarketplaceMode != nil {
+		mpMode = *opts.MarketplaceMode
+	}
 	marketplaceResolver := marketplace.NewResolver()
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
-	if opts.CatalogMode == catalog.LoadModeInspect && loadedCfg != nil {
+	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
 		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
 	}
+	marketplaceCfg := loadedCfg
+	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
+		filtered := *loadedCfg
+		filtered.Marketplaces = make([]config.MarketplaceEntry, 0, len(loadedCfg.Marketplaces))
+		for _, entry := range loadedCfg.Marketplaces {
+			if opts.MarketplaceSourceFilter(entry.Source) {
+				filtered.Marketplaces = append(filtered.Marketplaces, entry)
+			}
+		}
+		marketplaceCfg = &filtered
+	}
 	resolved, resolveErrs := resolver.Resolve(
-		loadedCfg,
+		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
 		result.LocalCfg,
 		resolver.WithResources(loadResult.ResourceCatalogs),
@@ -524,6 +541,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
+		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
@@ -549,12 +567,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	return result, releaseExactLease
 }
 
-func marketplaceResolveMode(mode catalog.LoadMode) resolver.MarketplaceResolveMode {
+func marketplaceResolveMode(mode catalog.LoadMode, offline bool) resolver.MarketplaceResolveMode {
+	if offline {
+		return resolver.MarketplaceResolveModeCachedNoFetch
+	}
 	switch mode {
 	case catalog.LoadModeRefresh:
 		return resolver.MarketplaceResolveModeRefresh
 	case catalog.LoadModeInspect:
 		return resolver.MarketplaceResolveModeInspect
+	case catalog.LoadModeCachedNoFetch:
+		return resolver.MarketplaceResolveModeCachedNoFetch
 	default:
 		return resolver.MarketplaceResolveModeCached
 	}

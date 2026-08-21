@@ -156,28 +156,34 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 			continue
 		}
 
-		client, clientErr := r.clientForEntry(entry)
-		if clientErr != nil {
-			slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", clientErr)
-			inspection.appendUnavailable(cache, entry, targetSet, clientErr)
-			continue
-		}
-
-		endpointErr := error(nil)
-		if err := ctx.Err(); err != nil {
-			endpointErr = err
+		var client *Client
+		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			slog.Debug("marketplace status inspection using cached state only", "url", entry.URL, "instance_id", entry.InstanceID)
 		} else {
-			wellKnown, err := client.WellKnown(ctx)
-			if err != nil {
-				endpointErr = err
-			} else if wellKnown.InstanceID != entry.InstanceID {
-				endpointErr = fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, entry.InstanceID)
+			var clientErr error
+			client, clientErr = r.clientForEntry(entry)
+			if clientErr != nil {
+				slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", clientErr)
+				inspection.appendUnavailable(cache, entry, targetSet, clientErr)
+				continue
 			}
-		}
-		if endpointErr != nil {
-			slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", endpointErr)
-			inspection.appendUnavailable(cache, entry, targetSet, endpointErr)
-			continue
+
+			endpointErr := error(nil)
+			if err := ctx.Err(); err != nil {
+				endpointErr = err
+			} else {
+				wellKnown, err := client.WellKnown(ctx)
+				if err != nil {
+					endpointErr = err
+				} else if wellKnown.InstanceID != entry.InstanceID {
+					endpointErr = fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, entry.InstanceID)
+				}
+			}
+			if endpointErr != nil {
+				slog.Warn("marketplace status endpoint unavailable", "url", entry.URL, "error", endpointErr)
+				inspection.appendUnavailable(cache, entry, targetSet, endpointErr)
+				continue
+			}
 		}
 
 		for _, pin := range entry.Resources {
@@ -201,7 +207,7 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				populateCacheFacts(&status, cache, entry, pin, cached)
 			}
 
-			if mode == resolver.MarketplaceResolveModeCached {
+			if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 				applyCachedState(&status, cached, metadataCached, cacheErr)
 				inspection.Pins = append(inspection.Pins, status)
 				inspection.Artifacts = append(inspection.Artifacts, artifact)
@@ -513,6 +519,8 @@ func marketplaceResolveModeName(mode resolver.MarketplaceResolveMode) string {
 		return "cached"
 	case resolver.MarketplaceResolveModeInspect:
 		return "inspect"
+	case resolver.MarketplaceResolveModeCachedNoFetch:
+		return "cached-no-fetch"
 	default:
 		return "unknown"
 	}

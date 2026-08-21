@@ -344,6 +344,7 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 }
 
 func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode catalog.LoadMode) ([]resolver.ResolvedArtifact, func(), error) {
+	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot:           repoRoot,
 		LocalConfigDir:     config.FindLocalConfigDir(),
@@ -351,6 +352,10 @@ func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode cat
 		RequireTargetSet:   true,
 		SkipInventory:      true,
 		ReadOnlyExactLocks: true,
+		MarketplaceMode:    &marketplaceMode,
+		MarketplaceSourceFilter: func(source config.Source) bool {
+			return source == config.Organization
+		},
 	}
 	res, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
