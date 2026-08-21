@@ -348,6 +348,45 @@ func TestEnsureMarketplacePinSnapshotWaitsForWriterHoldingPathLock(t *testing.T)
 	}
 }
 
+func TestUpdateMarketplacePinCompareAndSwap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	old := testMarketplacePin()
+	old.InstalledName = "chosen-review"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", old); err != nil {
+		t.Fatal(err)
+	}
+	updated := old
+	updated.Revision = "sha256:" + strings.Repeat("b", 64)
+	updated.Digest = updated.Revision
+	updated.SourceSlug = "renamed-source"
+	snapshot, commit, err := UpdateMarketplacePinInConfigWithSnapshotAndCommit(path, "HTTPS://MARKET.example/", "instance", old, updated)
+	if err != nil {
+		t.Fatalf("update pin: %v", err)
+	}
+	if snapshot == nil || len(commit.Bytes) == 0 || commit.Generation == "" {
+		t.Fatalf("update snapshot/commit = %#v/%#v", snapshot, commit)
+	}
+	if err := snapshot.RestoreIfCurrent(commit); err != nil {
+		t.Fatalf("restore update snapshot: %v", err)
+	}
+	if err := UpdateMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", old, updated); err != nil {
+		t.Fatalf("repeat update pin: %v", err)
+	}
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Marketplaces[0].Resources[0]
+	if got != updated || got.InstalledName != "chosen-review" {
+		t.Fatalf("updated pin = %#v, want %#v", got, updated)
+	}
+	conflict := updated
+	conflict.Revision = "sha256:" + strings.Repeat("c", 64)
+	if err := UpdateMarketplacePinInConfig(path, "https://market.example", "instance", old, conflict); err == nil || !strings.Contains(err.Error(), "compare-and-swap conflict") {
+		t.Fatalf("CAS conflict error = %v", err)
+	}
+}
+
 func TestEnsureMarketplacePinSerializesConcurrentDistinctAdds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	const count = 12

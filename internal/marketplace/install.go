@@ -62,6 +62,73 @@ func (p *PreparedInstall) Preview() InstallPreview {
 	}
 }
 
+// LatestRevision verifies the endpoint and source identity, then fetches the
+// latest metadata for an existing mirror pin. It does not fetch the artifact.
+func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.Source, store.ResourceRevision, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Source{}, store.ResourceRevision{}, err
+	}
+	canonical, err := canonicalMarketplaceEntry(entry)
+	if err != nil {
+		return store.Source{}, store.ResourceRevision{}, err
+	}
+	client, err := r.clientForEntry(canonical)
+	if err != nil {
+		return store.Source{}, store.ResourceRevision{}, err
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("well-known document: %w", err)
+	}
+	if wellKnown.InstanceID != canonical.InstanceID {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, canonical.InstanceID)
+	}
+	source, err := client.GetSource(ctx, marketplaceAPISource(pin))
+	if err != nil {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("resolve source %q: %w", pin.SourceID, err)
+	}
+	if source.ID != store.SourceID(pin.SourceID) {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("source identity mismatch: got %q, want %q", source.ID, pin.SourceID)
+	}
+	if source.Acquisition != store.AcquisitionMirror {
+		return source, store.ResourceRevision{}, nil
+	}
+	resourceSource := source.Slug
+	if resourceSource == "" {
+		resourceSource = string(source.ID)
+	}
+	latest, err := client.GetLatestResourceRevision(ctx, resourceSource, pin.Kind, pin.Name)
+	if err != nil {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("resolve latest resource revision: %w", err)
+	}
+	if err := validateLatestResourceRevision(canonical, pin, latest); err != nil {
+		return store.Source{}, store.ResourceRevision{}, err
+	}
+	if latest.Revocation != nil {
+		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("latest revision is revoked")
+	}
+	return source, latest, nil
+}
+
+func validateLocatorRevision(locator MarketplaceLocator, revision store.ResourceRevision) error {
+	expectedDigest := strings.TrimSpace(locator.Digest)
+	if expectedDigest != "" {
+		if err := validateSHA256Digest(expectedDigest); err != nil {
+			return fmt.Errorf("requested content digest %q: %w", locator.Digest, err)
+		}
+	}
+	if revisionDigest := digestForRevision(locator.Revision); revisionDigest != "" {
+		if expectedDigest != "" && expectedDigest != revisionDigest {
+			return fmt.Errorf("requested revision and digest disagree: revision %q, digest %q", locator.Revision, locator.Digest)
+		}
+		expectedDigest = revisionDigest
+	}
+	if expectedDigest != "" && revision.ContentDigest != store.RevisionDigest(expectedDigest) {
+		return fmt.Errorf("exact revision content digest mismatch: response %q, requested %q", revision.ContentDigest, expectedDigest)
+	}
+	return nil
+}
+
 // PrepareLocator resolves a user-facing locator and fully prefetches and
 // verifies its mirror artifact. It deliberately does not edit configuration.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
@@ -104,13 +171,26 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	}
 
 	var revision store.ResourceRevision
-	if locator.Revision != "" {
-		revision, err = client.GetResourceRevision(ctx, string(source.ID), locator.Kind, locator.Name, locator.Revision)
+	exactRevision := locator.Revision
+	if exactRevision == "" {
+		exactRevision = locator.Digest
+	}
+	resourceSource := locator.Source
+	if resourceSource == "" {
+		resourceSource = string(source.ID)
+	}
+	if exactRevision != "" {
+		revision, err = client.GetResourceRevision(ctx, resourceSource, locator.Kind, locator.Name, exactRevision)
 	} else {
-		revision, err = client.GetLatestResourceRevision(ctx, string(source.ID), locator.Kind, locator.Name)
+		revision, err = client.GetLatestResourceRevision(ctx, resourceSource, locator.Kind, locator.Name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve resource revision: %w", err)
+	}
+	if exactRevision != "" {
+		if err := validateLocatorRevision(locator, revision); err != nil {
+			return nil, err
+		}
 	}
 	pinRevision := locator.Revision
 	if pinRevision == "" {
