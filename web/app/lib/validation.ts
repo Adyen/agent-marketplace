@@ -1,5 +1,5 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, WellKnown } from '~/types/marketplace'
+import type { Capabilities, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
@@ -212,12 +212,12 @@ function dateTimeString(value: unknown, label: string): string {
   return result
 }
 
-function normalizeCapabilities(object: Record<string, unknown>) {
+function normalizeCapabilities(object: Record<string, unknown>): Capabilities {
   return {
-    api_versions: stringArray(object.api_versions, 'api_versions'),
-    artifact_schema_versions: stringArray(object.artifact_schema_versions, 'artifact_schema_versions'),
-    resource_kinds: stringArray(object.resource_kinds, 'resource_kinds'),
-    acquisition_modes: stringArray(object.acquisition_modes, 'acquisition_modes'),
+    api_versions: enumArray(object.api_versions, 'api_versions', ['v1'] as const),
+    artifact_schema_versions: enumArray(object.artifact_schema_versions, 'artifact_schema_versions', ['v1'] as const),
+    resource_kinds: enumArray(object.resource_kinds, 'resource_kinds', RESOURCE_KINDS),
+    acquisition_modes: enumArray(object.acquisition_modes, 'acquisition_modes', ['index-only', 'mirror'] as const),
     features: stringArray(object.features, 'features'),
   }
 }
@@ -246,6 +246,13 @@ function optionalString(object: Record<string, unknown>, key: string): Record<st
 
 function stringArray(value: unknown, label: string): string[] {
   return boundedArray(value, label).map((item, index) => boundedString(item, `${label}[${index}]`))
+}
+
+function enumArray<const Value extends string>(value: unknown, label: string, allowed: readonly Value[]): Value[] {
+  return stringArray(value, label).map((item, index) => {
+    if (!(allowed as readonly string[]).includes(item)) throw new ApiValidationError(`${label}[${index}] is unsupported`)
+    return item as Value
+  })
 }
 
 function boundedArray(value: unknown, label: string, maxLength = MAX_ARRAY_LENGTH): unknown[] {

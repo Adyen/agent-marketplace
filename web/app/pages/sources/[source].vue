@@ -32,7 +32,8 @@ useHead(() => ({
 </script>
 
 <template>
-  <div class="min-h-screen bg-muted/30 text-default">
+  <NuxtPage v-if="route.path === historyPath" />
+  <div v-else class="min-h-screen bg-muted/30 text-default">
     <a href="#source-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
     <header class="border-b border-default bg-default/90 backdrop-blur">
       <div class="mx-auto flex max-w-5xl items-center gap-3 px-4 py-4 sm:px-6 lg:px-8">

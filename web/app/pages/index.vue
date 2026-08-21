@@ -2,7 +2,7 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, SearchParams } from '~/types/marketplace'
 import { apiPath } from '~/lib/api'
-import { kindLabel, safeCanonicalUrl } from '~/lib/presentation'
+import { safeCanonicalUrl } from '~/lib/presentation'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
 
 const route = useRoute()
@@ -31,11 +31,6 @@ const supportedKinds = computed<ResourceKind[]>(() => {
   return RESOURCE_KINDS.filter(kind => knownMetadata.resource_kinds.includes(kind))
 })
 
-const kindOptions = computed(() => [
-  { label: 'All resource kinds', value: '' },
-  ...supportedKinds.value.map(kind => ({ label: kindLabel(kind), value: kind })),
-])
-
 const limitOptions = [
   { label: '12 per page', value: 12 },
   { label: '24 per page', value: 24 },
@@ -54,6 +49,7 @@ const canonicalUrl = computed(() => {
   return ''
 })
 const apiEndpoint = computed(() => apiPath(config.public.apiBase, '/search'))
+const mainContent = ref<HTMLElement | null>(null)
 const resultsHeading = ref<HTMLElement | null>(null)
 const resultStatus = computed(() => {
   if (pending.value) return 'Loading Marketplace resources.'
@@ -66,6 +62,10 @@ watch([pending, searchError, results], async () => {
   await nextTick()
   resultsHeading.value?.focus()
 }, { flush: 'post' })
+
+function focusMainContent() {
+  mainContent.value?.focus()
+}
 
 function submitSearch() {
   router.push({ query: toLocationQuery({ ...draft, offset: 0 }) })
@@ -94,7 +94,7 @@ useHead({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <a href="#main-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
+    <a href="#main-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4" @click.prevent="focusMainContent">Skip to content</a>
     <header class="border-b border-default bg-default/90 backdrop-blur">
       <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
         <NuxtLink to="/" class="flex items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
@@ -107,7 +107,7 @@ useHead({
       </div>
     </header>
 
-    <main id="main-content" tabindex="-1">
+    <main id="main-content" ref="mainContent" tabindex="-1">
       <section class="relative overflow-hidden border-b border-default bg-default">
         <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.14),transparent_34rem)]" aria-hidden="true" />
         <div class="relative mx-auto max-w-7xl px-4 pb-12 pt-16 sm:px-6 lg:px-8 lg:pb-16 lg:pt-24">
@@ -125,7 +125,7 @@ useHead({
               </div>
               <div class="w-full lg:w-52">
                 <label for="search-kind" class="mb-2 block text-sm font-medium text-highlighted">Resource kind</label>
-                <USelect id="search-kind" v-model="draft.kind" :items="kindOptions" value-key="value" size="xl" class="w-full" aria-label="Filter by resource kind" />
+                <SearchKindFilter id="search-kind" v-model="draft.kind" :kinds="supportedKinds" size="xl" class="w-full" aria-label="Filter by resource kind" />
               </div>
               <div class="w-full lg:w-56">
                 <label for="search-source" class="mb-2 block text-sm font-medium text-highlighted">Source</label>

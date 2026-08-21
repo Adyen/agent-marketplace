@@ -6,6 +6,7 @@ const relativeAppPort = process.env.E2E_RELATIVE_APP_PORT || '4322'
 const mockURL = `http://127.0.0.1:${mockPort}`
 const appURL = `http://127.0.0.1:${appPort}`
 const relativeAppURL = `http://127.0.0.1:${relativeAppPort}`
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.AGENT_BROWSER_EXECUTABLE_PATH
 
 export default defineConfig({
   testDir: '.',
@@ -17,25 +18,28 @@ export default defineConfig({
   use: {
     baseURL: appURL,
     trace: 'retain-on-failure',
+    launchOptions: chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : undefined,
   },
   webServer: [
     {
-      command: 'node tests/e2e/mock-marketplace.mjs',
+      command: 'node mock-marketplace.mjs',
       url: `${mockURL}/.well-known/agent-marketplace.json`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       env: { ...process.env, E2E_APP_ORIGIN: appURL },
     },
     {
-      command: `pnpm exec nuxt preview --host 127.0.0.1 --port ${appPort}`,
+      command: 'node .output/server/index.mjs',
+      cwd: '../..',
       url: appURL,
-      reuseExistingServer: !process.env.CI,
-      env: { ...process.env, NUXT_PUBLIC_API_BASE: mockURL, NUXT_API_BASE_INTERNAL: '' },
+      reuseExistingServer: false,
+      env: { ...process.env, HOST: '127.0.0.1', PORT: appPort, NUXT_PUBLIC_API_BASE: mockURL, NUXT_API_BASE_INTERNAL: '' },
     },
     {
-      command: `pnpm exec nuxt preview --host 127.0.0.1 --port ${relativeAppPort}`,
+      command: 'node .output/server/index.mjs',
+      cwd: '../..',
       url: relativeAppURL,
-      reuseExistingServer: !process.env.CI,
-      env: { ...process.env, NUXT_PUBLIC_API_BASE: '/', NUXT_API_BASE_INTERNAL: mockURL },
+      reuseExistingServer: false,
+      env: { ...process.env, HOST: '127.0.0.1', PORT: relativeAppPort, NUXT_PUBLIC_API_BASE: '/', NUXT_API_BASE_INTERNAL: mockURL },
     },
   ],
 })
