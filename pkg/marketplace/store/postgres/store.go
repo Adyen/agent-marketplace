@@ -78,8 +78,7 @@ func (s *Store) Open(ctx context.Context) error {
 	s.q = db
 
 	if s.schema != "" {
-		_, err = db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{s.schema}.Sanitize())
-		if err != nil {
+		if err = ensureSchema(ctx, db, s.schema); err != nil {
 			_ = db.Close()
 			return store.SanitizeDSNError(fmt.Errorf("create schema: %w", err), s.dsn)
 		}
@@ -95,6 +94,27 @@ func (s *Store) Open(ctx context.Context) error {
 		return store.SanitizeDSNError(fmt.Errorf("ping postgres: %w", err), s.dsn)
 	}
 	return nil
+}
+
+func ensureSchema(ctx context.Context, db *sql.DB, schema string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
+		"agent-marketplace:metadata-schema:"+schema,
+	); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		return rollback(err)
+	}
+	return tx.Commit()
 }
 
 // Close closes the underlying database connection.
