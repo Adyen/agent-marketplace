@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -2046,8 +2047,11 @@ func TestRunMcpServerReplacesExistingSymlinkWithMergedFile(t *testing.T) {
 	}
 
 	// Simulate a pre-existing symlink to a cached mcp.json (which can happen
-	// if a previous sync incorrectly symlinked the merge artifact).
-	cachedDir := filepath.Join(repoRoot, ".cache", "mcp")
+	// if a previous sync incorrectly symlinked the merge artifact). The target
+	// has to be the marketplace cache: that is what makes the link ours to
+	// read through and replace, and a link to anywhere else is refused (see
+	// TestRunRejectsMergeSymlinkOutsideTrustedCache).
+	cachedDir := filepath.Join(cache.CacheDir(), "mcp")
 	if err := os.MkdirAll(cachedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

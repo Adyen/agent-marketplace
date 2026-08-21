@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/cache"
 )
 
 func TestOpenConfinedFSRejectsSymlinkRoot(t *testing.T) {
@@ -16,6 +18,163 @@ func TestOpenConfinedFSRejectsSymlinkRoot(t *testing.T) {
 
 	if _, err := openConfinedFS(rootPath, true); err == nil {
 		t.Fatal("openConfinedFS accepted a symlinked output root")
+	}
+}
+
+// Verified directory handles are cached, so a directory this type deletes must
+// drop its cached handle: otherwise a path re-created as a symlink would still
+// be written through the handle to the directory that used to be there, and the
+// cache would have quietly re-introduced the escape it was meant to speed up.
+func TestConfinedFSRefusesSymlinkReplacingARemovedCachedDirectory(t *testing.T) {
+	rootPath := filepath.Join(t.TempDir(), ".factory")
+	external := t.TempDir()
+	f, err := openConfinedFS(rootPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	nested := filepath.Join(rootPath, "skills", "nested")
+	if err := f.AtomicWrite(filepath.Join(nested, "file.txt"), []byte("first"), 0o644); err != nil {
+		t.Fatalf("seed cached handles: %v", err)
+	}
+	if err := f.RemoveAll(nested); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.Symlink(external, nested); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.AtomicWrite(filepath.Join(nested, "escaped.txt"), []byte("escape"), 0o644); err == nil {
+		t.Fatal("AtomicWrite followed a symlink planted over a removed cached directory")
+	}
+	if _, err := os.Lstat(filepath.Join(external, "escaped.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write escaped through the stale cached handle: %v", err)
+	}
+}
+
+// A symlinked ancestor is canonicalized, not refused. Symlinked checkout
+// directories, symlinked $HOME, and macOS's /var alias are ordinary; refusing
+// them made sync unable to write anything on such a machine, while confinement
+// is unaffected because the boundary is the resolved harness root.
+func TestOpenConfinedFSCanonicalizesSymlinkedAncestor(t *testing.T) {
+	parent := t.TempDir()
+	external := t.TempDir()
+	ancestor := filepath.Join(parent, "linked")
+	if err := os.Symlink(external, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(ancestor, "output")
+
+	f, err := openConfinedFS(rootPath, true)
+	if err != nil {
+		t.Fatalf("openConfinedFS rejected a symlinked ancestor: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := f.AtomicWrite(filepath.Join(rootPath, "file.txt"), []byte("inside"), 0o644); err != nil {
+		t.Fatalf("AtomicWrite: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(external, "output", "file.txt"))
+	if err != nil {
+		t.Fatalf("read through canonical root: %v", err)
+	}
+	if string(got) != "inside" {
+		t.Fatalf("content = %q, want inside", got)
+	}
+	escape := filepath.Join(external, "escaped.txt")
+	if err := f.AtomicWrite(escape, []byte("escape"), 0o644); err == nil {
+		t.Fatal("AtomicWrite escaped the canonicalized root")
+	}
+	if _, err := os.Lstat(escape); !os.IsNotExist(err) {
+		t.Fatalf("path above the canonical root was written: %v", err)
+	}
+}
+
+// The last component is the boundary itself, so it is refused even though its
+// ancestors are followed.
+func TestOpenConfinedFSRejectsSymlinkedRootUnderSymlinkedAncestor(t *testing.T) {
+	parent := t.TempDir()
+	external := t.TempDir()
+	elsewhere := t.TempDir()
+	ancestor := filepath.Join(parent, "linked")
+	if err := os.Symlink(external, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(external, "output")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := openConfinedFS(filepath.Join(ancestor, "output"), true); err == nil {
+		t.Fatal("openConfinedFS accepted a symlinked output root")
+	}
+}
+
+func TestOpenConfinedFSRejectsSymlinkCycleAboveRoot(t *testing.T) {
+	parent := t.TempDir()
+	first := filepath.Join(parent, "a")
+	second := filepath.Join(parent, "b")
+	if err := os.Symlink(second, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(first, second); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := openConfinedFS(filepath.Join(first, "output"), true); err == nil {
+		t.Fatal("openConfinedFS accepted a symlink cycle above the root")
+	}
+}
+
+func TestConfinedFSRejectsCachePrefixLookalike(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheRoot := cache.CacheDir()
+	lookalike := cacheRoot + "-other"
+	if err := os.MkdirAll(lookalike, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(lookalike, "entry"), linkPath); err != nil {
+		t.Fatal(err)
+	}
+	outputFS, err := openConfinedFS(filepath.Dir(linkPath), true, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = outputFS.Close() }()
+
+	if outputFS.IsManagedSymlink(linkPath) {
+		t.Fatal("cache-prefix lookalike was classified as managed")
+	}
+}
+
+func TestConfinedFSReadsSymlinkFromOpenedTrustedRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheRoot := cache.CacheDir()
+	cacheFile := filepath.Join(cacheRoot, "compiled", "mcp.json")
+	want := []byte(`{"mcpServers":{"cached":{"command":"cached"}}}`)
+	if err := os.MkdirAll(filepath.Dir(cacheFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cacheFile, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.Symlink(cacheFile, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	outputFS, err := openConfinedFS(filepath.Dir(linkPath), true, cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = outputFS.Close() }()
+
+	got, err := outputFS.readMergeSource(linkPath)
+	if err != nil {
+		t.Fatalf("readMergeSource: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("readMergeSource = %q, want %q", got, want)
 	}
 }
 

@@ -520,6 +520,23 @@ func repoOutputDir(target hcc.Target, roots harness.Roots, repoRoot string) stri
 	return roots.For(false, repoRoot)
 }
 
+// confinementRoot returns the canonical harness root: the single directory that
+// contains every managed artifact for this target and scope, and therefore the
+// only correct boundary to open a confinedFS on.
+//
+// It is NOT roots.For. Windsurf declares its repo root as "." because its
+// artifact paths are authored with a ".windsurf/" prefix, so roots.For hands
+// back the repository itself. Confining to the repository would confine to
+// nothing that matters: every in-repo path — .git/hooks, .github/workflows —
+// would be a legal write and a legal prune target, reachable by a committed
+// `.windsurf` symlink or by a committed materialization-manifest entry.
+func confinementRoot(target hcc.Target, roots harness.Roots, repoRoot string, machineScope bool) string {
+	if machineScope {
+		return roots.For(true, repoRoot)
+	}
+	return repoOutputDir(target, roots, repoRoot)
+}
+
 func outputDirExists(path string) bool {
 	if path == "" {
 		return false
@@ -828,7 +845,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		outDir := roots.For(key.machineScope, repoRoot)
-		outputFS, err := openConfinedFS(outDir, !dryRun)
+		outputFS, err := openConfinedFS(confinementRoot(key.target, roots, repoRoot, key.machineScope), !dryRun)
 		if err != nil {
 			if dryRun && errors.Is(err, os.ErrNotExist) {
 				continue
@@ -839,7 +856,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		}
 
 		if !dryRun {
-			if err := outputFS.MkdirAll(outDir, 0o755); err != nil {
+			if err := outputFS.EnsureRoot(); err != nil {
 				_ = outputFS.Close()
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.mkdir.error",
@@ -931,7 +948,24 @@ func executeTargetPlans(report *Report, key outputKey, outputFS *confinedFS, out
 			plans[i].prune = false
 		}
 	}
+	existingByParent := make(map[string]map[string]bool)
+	loadedParents := make(map[string]bool)
 	for _, plan := range plans {
+		if len(plan.artifacts) == 0 {
+			parent := filepath.Dir(plan.outDir)
+			if !loadedParents[parent] {
+				entries, err := existingOutputDirEntries(outputFS, parent)
+				loadedParents[parent] = true
+				if err != nil {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("inspect output directory %s: %v", parent, err)})
+					continue
+				}
+				existingByParent[parent] = entries
+			}
+			if !existingByParent[parent][filepath.Base(plan.outDir)] {
+				continue
+			}
+		}
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
 		if err := outputFS.EnsureDir(plan.outDir, dryRun); err != nil {
 			logMaterializeOutputFailure("prepare-output-directory", plan.outDir, err)
@@ -1285,6 +1319,21 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 	return report
 }
 
+func existingOutputDirEntries(outputFS *confinedFS, dir string) (map[string]bool, error) {
+	entries, err := outputFS.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	existing := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		existing[entry.Name()] = true
+	}
+	return existing, nil
+}
+
 func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
@@ -1313,11 +1362,6 @@ func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, compo
 	var plans []materializePlan
 	for _, component := range orderedComponents(components, scoped) {
 		componentOutDir := filepath.Join(outDir, component)
-		if len(scoped[component]) == 0 {
-			if _, err := os.Stat(componentOutDir); err != nil {
-				continue
-			}
-		}
 		plans = append(plans, materializePlan{
 			outDir:       componentOutDir,
 			artifacts:    scoped[component],
@@ -1425,11 +1469,6 @@ func windsurfMaterializePlans(outDir string, artifacts []artifact.Artifact, mach
 			componentOutDir = filepath.Join(outDir, dirName)
 			reportPrefix = dirName
 			pruneKey = dirName
-		}
-		if len(componentArtifacts) == 0 {
-			if _, err := os.Stat(componentOutDir); err != nil {
-				continue
-			}
 		}
 		plans = append(plans, materializePlan{
 			outDir:       componentOutDir,
@@ -1826,23 +1865,14 @@ func materializeMergeInRoot(outputFS *confinedFS, outDir string, artifacts []art
 	defer func() { _ = os.RemoveAll(stage) }()
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-		info, statErr := outputFS.Lstat(destPath)
+		_, statErr := outputFS.Lstat(destPath)
 		if os.IsNotExist(statErr) {
 			continue
 		}
 		if statErr != nil {
 			return nil, nil, statErr
 		}
-		var existing []byte
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, readlinkErr := outputFS.Readlink(destPath)
-			if readlinkErr != nil {
-				return nil, nil, readlinkErr
-			}
-			existing, err = os.ReadFile(target)
-		} else {
-			existing, err = outputFS.ReadFile(destPath)
-		}
+		existing, err := outputFS.readMergeSource(destPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read existing merge artifact %s: %w", destPath, err)
 		}
@@ -2648,6 +2678,21 @@ func prunePortableEntries(outputFS *confinedFS, state *portableState, target hcc
 			logMaterializeOutputFailure("validate-prune-path", filepath.Join(outDir, filepath.FromSlash(entry.Path)), err)
 			return report, diags, err
 		}
+		// A project manifest is committed content, so its entries are untrusted
+		// input naming files to DELETE. Refuse the entry and keep going rather
+		// than failing the target: one poisoned line must not stop every other
+		// entry from being reconciled, and must not become a way to stall sync.
+		if !outputFS.Contains(path) {
+			outsideErr := fmt.Errorf("manifest entry %q resolves outside the managed root", entry.Path)
+			logMaterializeOutputFailure("validate-prune-path", path, outsideErr)
+			diags = append(diags, diag.Diagnostic{
+				Code:     "materialize.manifest.error",
+				Severity: diag.SeverityError,
+				Message:  outsideErr.Error(),
+				Hint:     "remove the entry from the materialization manifest; agent-marketplace only manages paths under the harness root",
+			})
+			continue
+		}
 		_, err = outputFS.Lstat(path)
 		if err != nil && !os.IsNotExist(err) {
 			return report, diags, err
@@ -3251,7 +3296,7 @@ func confinedPathDigest(outputFS *confinedFS, path string) (string, error) {
 }
 
 func writeConfinedDigestPath(h io.Writer, outputFS *confinedFS, path, rel string) error {
-	info, err := outputFS.root.Lstat(path)
+	info, err := outputFS.lstatRel(path)
 	if err != nil {
 		return err
 	}
@@ -3262,7 +3307,7 @@ func writeConfinedDigestPath(h io.Writer, outputFS *confinedFS, path, rel string
 	switch {
 	case mode.IsRegular():
 		writeHeader("file")
-		data, err := outputFS.root.ReadFile(path)
+		data, err := outputFS.readFileRel(path)
 		if err != nil {
 			return err
 		}
@@ -3271,10 +3316,13 @@ func writeConfinedDigestPath(h io.Writer, outputFS *confinedFS, path, rel string
 		return nil
 	case mode.IsDir():
 		writeHeader("dir")
-		entries, err := fs.ReadDir(outputFS.root.FS(), path)
+		entries, err := outputFS.readDirRel(path)
 		if err != nil {
 			return err
 		}
+		// Raw directory order is filesystem-dependent, and this digest is
+		// compared against one recorded on another machine.
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 		for _, entry := range entries {
 			child := filepath.ToSlash(filepath.Join(filepath.FromSlash(path), entry.Name()))
 			childRel := filepath.ToSlash(filepath.Join(filepath.FromSlash(rel), entry.Name()))
@@ -3285,7 +3333,7 @@ func writeConfinedDigestPath(h io.Writer, outputFS *confinedFS, path, rel string
 		return nil
 	case mode&os.ModeSymlink != 0:
 		writeHeader("symlink")
-		target, err := outputFS.root.Readlink(path)
+		target, err := outputFS.readlinkRel(path)
 		if err != nil {
 			return err
 		}
@@ -3656,7 +3704,11 @@ func syncCommandFiles(outputFS *confinedFS, dir string, links []skillLink, dryRu
 	}
 
 	if pruneStaleEntries {
-		if err := pruneStaleCommandFiles(dir, desired, dryRun, &report); err != nil {
+		// Deliberately the already-bound root rather than a fresh open of dir:
+		// re-opening would re-resolve a path this call has been mutating and
+		// would drop the caller's trusted read roots, which decide which
+		// symlinks here count as managed.
+		if err := pruneStaleCommandFilesInRoot(outputFS, dir, desired, dryRun, &report); err != nil {
 			return report, err
 		}
 	}
@@ -3667,20 +3719,8 @@ func syncCommandFiles(outputFS *confinedFS, dir string, links []skillLink, dryRu
 	return report, nil
 }
 
-// pruneStaleCommandFiles removes managed command files and stale managed
+// pruneStaleCommandFilesInRoot removes managed command files and stale managed
 // symlinks in dir that are no longer desired. User-owned entries are preserved.
-func pruneStaleCommandFiles(dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
-	outputFS, err := openConfinedFS(dir, false)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	defer func() { _ = outputFS.Close() }()
-	return pruneStaleCommandFilesInRoot(outputFS, dir, desired, dryRun, report)
-}
-
 func pruneStaleCommandFilesInRoot(outputFS *confinedFS, dir string, desired map[string][]byte, dryRun bool, report *TargetReport) error {
 	entries, err := outputFS.ReadDir(dir)
 	if err != nil {
