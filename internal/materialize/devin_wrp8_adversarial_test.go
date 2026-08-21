@@ -65,7 +65,7 @@ import (
 // whether the second one LOST the first one's entry or correctly PRUNED it as a
 // stale owned entry — the two outcomes are the same bytes. Every test here
 // therefore makes both racers PARTIAL runs, using a rule the plan already states
-// and devinPatchPlan already implements: "A partial run does not prune". With
+// and ownedJSONPatchPlan already implements: "A partial run does not prune". With
 // pruning off, the union is the only correct end state and a missing entry can
 // only be a lost update.
 
@@ -77,7 +77,7 @@ import (
 // bytes, so its digest is the same one the reconciler derives from the file.
 func devinMcpDesired(t *testing.T, key, command string) ownedJSONEntry {
 	t.Helper()
-	raw, err := devinCanonicalJSON([]byte(`{"command":"` + command + `"}`))
+	raw, err := canonicalOwnedJSON([]byte(`{"command":"` + command + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func newDevinReport() *Report {
 // long as pruning is on.
 //
 // The construction here turns pruning off, using a rule the plan already states
-// and devinPatchPlan already implements: "A partial run does not prune" — when
+// and ownedJSONPatchPlan already implements: "A partial run does not prune" — when
 // `incomplete` is set for a file, the prune list is emptied. Both racers are
 // partial runs against the same aggregate, so NEITHER of them is allowed to
 // remove the other's entry for any reason. The union is therefore the only
@@ -227,7 +227,7 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 	var mu sync.Mutex
 	released := false
 	var once sync.Once
-	devinLockAcquisitionHook = func(ev ownership.LockEvent) {
+	ownedAggregateLockAcquisitionHook = func(ev ownership.LockEvent) {
 		switch ev.Kind {
 		case ownership.LockReleased:
 			mu.Lock()
@@ -246,7 +246,7 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 		}
 		once.Do(func() { time.Sleep(widen) })
 	}
-	t.Cleanup(func() { devinLockAcquisitionHook = nil })
+	t.Cleanup(func() { ownedAggregateLockAcquisitionHook = nil })
 
 	// Build desired entries on the main test goroutine; devinMcpDesired uses
 	// t.Fatal, which only exits the calling goroutine and must not be called

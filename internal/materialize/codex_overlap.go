@@ -228,7 +228,7 @@ func coalesceCodexPartition(result *compilePhaseResult, group []codexDestination
 	}
 	coalesceCodexArtifactMeta(result, group)
 	coalesceCodexBlockedComponents(result, group)
-	if group[0].destination.Prefix != ".codex" {
+	if !group[0].destination.Info.OwnershipReconciledAggregates {
 		return nil
 	}
 	if d := coalesceCodexHooks(result, group); d != nil {
@@ -482,7 +482,7 @@ func coalesceCodexHooks(result *compilePhaseResult, group []codexDestinationBind
 			merged.markIncomplete(rel)
 		}
 		for _, entry := range work.entries {
-			identity := entry.rel + "\x00" + devinIDKey(entry.id())
+			identity := entry.rel + "\x00" + ownedAggregateIDKey(entry.id())
 			if previous, exists := seen[identity]; exists {
 				if !codexHookEntriesCompatible(previous, entry) {
 					d := codexDestinationDiagnostic(

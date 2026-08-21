@@ -15,22 +15,28 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 var (
-	conversionHarnesses = targetmeta.ConversionNames()
-)
-
-const (
-	codexConversionHooksPath = ".codex/hooks.json"
-	codexConversionMCPPath   = ".codex/config.toml"
+	conversionHarnesses      = targetmeta.ConversionNames()
+	codexConversionHooksPath = mustNativeAggregatePath(ir.KindHook)
+	codexConversionMCPPath   = mustNativeAggregatePath(ir.KindMcpServer)
 )
 
 var codexConversionSharedPaths = [...]string{
 	codexConversionHooksPath,
 	codexConversionMCPPath,
+}
+
+func mustNativeAggregatePath(kind ir.ResourceKind) string {
+	path, ok := targetmeta.NativeAggregatePath(targetmeta.TargetCodex, kind)
+	if !ok {
+		panic(fmt.Sprintf("Codex native aggregate path for %s is not registered", kind))
+	}
+	return path
 }
 
 func newConvertCmd() *cobra.Command {

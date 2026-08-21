@@ -44,7 +44,7 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 			continue
 		}
 		for _, destination := range destinations {
-			if destination.Prefix != ".codex" {
+			if !destination.Info.OwnershipReconciledAggregates {
 				continue
 			}
 			previewCodexRoot(preview, key, destination.Root, compiled.codexAggregates[key], compiled.codexMCP[key])
@@ -76,7 +76,7 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 		if _, err := os.Lstat(abs); err != nil {
 			exists = false
 			if !os.IsNotExist(err) {
-				diagnostic := devinAggregateCodedDiag(key, root, rel, err, codexRepairMalformedCode)
+				diagnostic := ownedAggregateCodedDiag(key, root, rel, err, codexRepairMalformedCode)
 				preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, []diag.Diagnostic{diagnostic})...)
 				continue
 			}
@@ -85,9 +85,9 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 			}
 		}
 		if store == nil {
-			opened, err := ownership.Open(root, ownership.WithLockObserver(observeDevinRepairLock))
+			opened, err := ownership.Open(root, ownership.WithLockObserver(observeRepairLock))
 			if err != nil {
-				diagnostic := devinAggregateCodedDiag(key, root, "", err, codexRepairMalformedCode)
+				diagnostic := ownedAggregateCodedDiag(key, root, "", err, codexRepairMalformedCode)
 				preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, []diag.Diagnostic{diagnostic})...)
 				return
 			}
@@ -95,14 +95,15 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 		}
 		if !exists {
 			_, proofErr := store.Proof(rel)
-			preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, devinProofDiags(key, root, rel, proofErr))...)
+			preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, ownedAggregateProofDiags(key, root, rel, proofErr))...)
 			continue
 		}
 		var file *RepairFile
 		var fileDiags []diag.Diagnostic
 		switch rel {
 		case codexHooksFile:
-			file, fileDiags = previewDevinAggregateFile(store, key, root, rel, desiredHooks)
+			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: ownedHooksContainer, rawValueDigest: true}
+			file, fileDiags = previewOwnedJSONAggregateFile(store, key, root, hookFile, codexHookJSONOptions(), true, desiredHooks)
 		case codexMCPFile:
 			file, fileDiags = previewCodexMCPFile(store, key, root, mcps)
 		}
@@ -115,16 +116,17 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 
 func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, desired []codexMCPEntry) (*RepairFile, []diag.Diagnostic) {
 	rel := codexMCPFile
-	state, diagnostics := readCodexMCPRepairState(store, key, root)
-	if state == nil {
+	adapter := codexMCPRepairAdapter{}
+	nativeState, diagnostics := readCodexMCPRepairState(store, key, root)
+	if nativeState == nil {
 		return nil, diagnostics
 	}
-	desiredValues := make([]ownership.EntryValue, 0, len(desired))
+	state := codexMCPAggregateState(nativeState)
+	desiredEntries := repairDesiredFromCodexMCP(desired)
+	desiredValues := repairDesiredValues(desiredEntries)
 	resourceByID := make(map[string]string, len(desired))
 	for _, entry := range desired {
-		value := ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest}
-		desiredValues = append(desiredValues, value)
-		resourceByID[devinIDKey(value.ID)] = entry.resource
+		resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
 	}
 	file := &RepairFile{
 		Target:          key.target,
@@ -134,30 +136,31 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 		ExistingEntries: len(state.existing),
 		DesiredEntries:  len(desiredValues),
 		store:           store,
-		codexMCPDesired: append([]codexMCPEntry(nil), desired...),
+		adapter:         adapter,
+		desired:         desiredEntries,
 	}
 	for _, candidate := range ownership.ExactAdoptionCandidates(state.proof, state.existing, desiredValues) {
-		file.Adoptions = append(file.Adoptions, AdoptionCandidate{Candidate: candidate, Resource: resourceByID[devinIDKey(candidate.EntryID())]})
+		file.Adoptions = append(file.Adoptions, AdoptionCandidate{Candidate: candidate, Resource: resourceByID[ownedAggregateIDKey(candidate.EntryID())]})
 	}
 	orphans, orphanErr := store.OrphanCandidates(state.proof, rel, state.existing, desiredValues)
 	if orphanErr != nil {
-		diagnostics = append(diagnostics, devinAggregateCodedDiag(key, root, rel, orphanErr, codexRepairMalformedCode))
+		diagnostics = append(diagnostics, ownedAggregateCodedDiag(key, root, rel, orphanErr, codexRepairMalformedCode))
 	}
 	for _, candidate := range orphans {
-		section, ok := state.sections[candidate.EntryID().Key]
+		section, ok := nativeState.sections[candidate.EntryID().Key]
 		if !ok || section.alternate {
 			continue
 		}
 		file.Orphans = append(file.Orphans, OrphanCandidate{Candidate: candidate})
 	}
 	for _, candidate := range ownership.ValueConflictCandidates(state.proof, state.existing, desiredValues) {
-		section, ok := state.sections[candidate.EntryID().Key]
+		section, ok := nativeState.sections[candidate.EntryID().Key]
 		if !ok || section.alternate {
 			continue
 		}
 		file.Conflicts = append(file.Conflicts, ConflictCandidate{
 			Candidate: candidate,
-			Resource:  resourceByID[devinIDKey(candidate.EntryID())],
+			Resource:  resourceByID[ownedAggregateIDKey(candidate.EntryID())],
 		})
 	}
 	slog.Debug("codex repair preview for aggregate",
@@ -173,6 +176,46 @@ type codexMCPRepairState struct {
 	sections map[string]codexMCPSection
 	existing []ownership.EntryValue
 	proof    ownership.Proof
+}
+
+type codexMCPRepairAdapter struct{}
+
+func (codexMCPRepairAdapter) read(store *ownership.Store, key outputKey, root, _ string) (*repairAggregateState, []diag.Diagnostic) {
+	state, diagnostics := readCodexMCPRepairState(store, key, root)
+	if state == nil {
+		return nil, diagnostics
+	}
+	return codexMCPAggregateState(state), diagnostics
+}
+
+func (codexMCPRepairAdapter) replaceable(id ownership.EntryID) bool {
+	return id.Kind == ownership.KindMcpServer && id.Key != ""
+}
+
+func (codexMCPRepairAdapter) diagnosticSummary(diagnostics []diag.Diagnostic) string {
+	return repairDiagnosticCodeSummary(diagnostics)
+}
+
+func codexMCPAggregateState(state *codexMCPRepairState) *repairAggregateState {
+	return &repairAggregateState{
+		raw:      state.raw,
+		existing: state.existing,
+		proof:    state.proof,
+		remove:   state.remove,
+		replace:  state.replace,
+	}
+}
+
+func repairDesiredFromCodexMCP(entries []codexMCPEntry) []repairDesiredEntry {
+	desired := make([]repairDesiredEntry, 0, len(entries))
+	for _, entry := range entries {
+		desired = append(desired, repairDesiredEntry{
+			value:    ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest},
+			raw:      entry.raw,
+			resource: entry.resource,
+		})
+	}
+	return desired
 }
 
 func (s *codexMCPRepairState) remove(id ownership.EntryID, valueDigest string) ([]byte, error) {
@@ -211,14 +254,14 @@ func readCodexMCPRepairState(store *ownership.Store, key outputKey, root string)
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, []diag.Diagnostic{devinAggregateCodedDiag(key, root, rel, err, codexRepairMalformedCode)}
+		return nil, []diag.Diagnostic{ownedAggregateCodedDiag(key, root, rel, err, codexRepairMalformedCode)}
 	}
 	sections, existing, err := codexMCPSections(raw)
 	if err != nil {
 		return nil, []diag.Diagnostic{codexRepairFileDiag(key, root, rel, codexRepairMalformedCode)}
 	}
 	proof, proofErr := store.Proof(rel)
-	return &codexMCPRepairState{raw: raw, sections: sections, existing: existing, proof: proof}, redactCodexRepairDiags(root, devinProofDiags(key, root, rel, proofErr))
+	return &codexMCPRepairState{raw: raw, sections: sections, existing: existing, proof: proof}, redactCodexRepairDiags(root, ownedAggregateProofDiags(key, root, rel, proofErr))
 }
 
 func redactCodexRepairDiags(root string, diagnostics []diag.Diagnostic) []diag.Diagnostic {
@@ -236,13 +279,13 @@ func redactCodexRepairDiags(root string, diagnostics []diag.Diagnostic) []diag.D
 		if strings.HasPrefix(diagnostic.Code, "ownership.") {
 			message = "Codex ownership state is missing, corrupt, or belongs to another root; no repair was attempted"
 		}
-		diagnostic.Message = devinAggregateMessage(root, rel, message)
+		diagnostic.Message = ownedAggregateMessage(root, rel, message)
 		redacted = append(redacted, diagnostic)
 	}
 	return redacted
 }
 
 func codexRepairFileDiag(key outputKey, root, rel, code string) diag.Diagnostic {
-	return devinDiag(code, key, rel, devinAggregateMessage(root, rel,
+	return ownedAggregateDiag(code, key, rel, ownedAggregateMessage(root, rel,
 		"Codex shared configuration is malformed or unsupported; it was left unchanged"))
 }

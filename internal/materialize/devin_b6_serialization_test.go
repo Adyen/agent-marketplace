@@ -39,11 +39,11 @@ import (
 // a different (single-argument) signature.
 func devinB6HookDesired(t *testing.T, event, command string) ownedJSONEntry {
 	t.Helper()
-	raw, err := devinCanonicalJSON([]byte(`{"type":"command","command":"` + command + `"}`))
+	raw, err := canonicalOwnedJSON([]byte(`{"type":"command","command":"` + command + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := devinHookIdentity(event, raw)
+	identity, err := ownedJSONHookIdentity(event, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,8 @@ func TestDevinB6SerializationChildProcess(t *testing.T) {
 	t.Setenv(ownership.LockTimeoutEnvVar, timeout)
 
 	witness := &sectionWitness{path: witnessPath}
-	devinLockAcquisitionHook = witness.observe
-	defer func() { devinLockAcquisitionHook = nil }()
+	ownedAggregateLockAcquisitionHook = witness.observe
+	defer func() { ownedAggregateLockAcquisitionHook = nil }()
 
 	entry := b6ChildEntry(t, idx)
 	work := &ownedJSONAggregateWork{}
