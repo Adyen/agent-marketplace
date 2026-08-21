@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseSearchQuery, toLocationQuery } from '../../app/composables/useSearchQuery'
+import { fromResourceKindFilter, parseSearchQuery, toLocationQuery, toResourceKindFilter } from '../../app/composables/useSearchQuery'
+import { ALL_RESOURCE_KINDS } from '../../app/types/marketplace'
 
 describe('URL-backed search state', () => {
   it('parses bounded pagination and supported kinds', () => {
@@ -22,6 +23,13 @@ describe('URL-backed search state', () => {
     })
   })
 
+  it('uses a non-empty UI sentinel while preserving empty as the public all-kinds value', () => {
+    expect(toResourceKindFilter(parseSearchQuery({}).kind)).toBe(ALL_RESOURCE_KINDS)
+    expect(toResourceKindFilter(parseSearchQuery({ kind: '' }).kind)).toBe(ALL_RESOURCE_KINDS)
+    expect(fromResourceKindFilter(ALL_RESOURCE_KINDS)).toBe('')
+    expect(fromResourceKindFilter('command')).toBe('command')
+  })
+
   it('writes all user-visible search state back to the URL', () => {
     expect(toLocationQuery({ q: 'review', kind: 'skill', source: 'core', offset: 12, limit: 24 })).toEqual({
       q: 'review',
@@ -30,5 +38,6 @@ describe('URL-backed search state', () => {
       offset: '12',
       limit: '24',
     })
+    expect(toLocationQuery({ q: '', kind: fromResourceKindFilter(ALL_RESOURCE_KINDS), source: '', offset: 0, limit: 12 })).toEqual({ limit: '12' })
   })
 })
