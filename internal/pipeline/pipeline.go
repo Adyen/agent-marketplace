@@ -53,24 +53,26 @@ type ResolveOptions struct {
 }
 
 type ResolveResult struct {
-	OrgCfg               *config.Config
-	GlobalCfg            *config.Config
-	RepoCfg              *config.Config
-	LocalCfg             *config.LocalConfig
-	MergedCfg            *config.Config
-	LoadedCfg            *config.Config
-	MaterializationModes config.MaterializationModes
-	CatalogLoad          catalog.LoadResult
-	Resolved             []resolver.ResolvedArtifact
-	ConfigErrors         []error
-	CatalogErrors        []error
-	ResolveErrors        []error
-	Errors               []error
-	Warnings             []error
-	TargetHarnesses      []hcc.Target
-	TargetHarnessSource  config.Source
-	Managed              bool
-	Diagnostics          config.ManagedInstallationDiagnostics
+	OrgCfg                *config.Config
+	GlobalCfg             *config.Config
+	RepoCfg               *config.Config
+	LocalCfg              *config.LocalConfig
+	MergedCfg             *config.Config
+	LoadedCfg             *config.Config
+	MaterializationModes  config.MaterializationModes
+	CatalogLoad           catalog.LoadResult
+	Resolved              []resolver.ResolvedArtifact
+	MarketplaceStatuses   []marketplace.PinStatus
+	MarketplaceInspection *marketplace.Inspection
+	ConfigErrors          []error
+	CatalogErrors         []error
+	ResolveErrors         []error
+	Errors                []error
+	Warnings              []error
+	TargetHarnesses       []hcc.Target
+	TargetHarnessSource   config.Source
+	Managed               bool
+	Diagnostics           config.ManagedInstallationDiagnostics
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -450,6 +452,14 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
 	mpMode := marketplaceResolveMode(opts.CatalogMode)
+	marketplaceResolver := marketplace.NewResolver()
+	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
+	if opts.CatalogMode == catalog.LoadModeInspect && loadedCfg != nil {
+		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
+		result.MarketplaceStatuses = inspection.Pins
+		result.MarketplaceInspection = &inspection
+		mpResolver = inspection
+	}
 	resolved, resolveErrs := resolver.Resolve(
 		loadedCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
@@ -458,7 +468,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
-		resolver.WithMarketplaceResolver(marketplace.NewResolver()),
+		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 	)
 	result.LoadedCfg = loadedCfg
