@@ -248,7 +248,7 @@ func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := promptTelemetryConsent(&out, bufio.NewReader(strings.NewReader("y")), configPath); err != nil {
+	if err := promptTelemetryConsent(&out, bufio.NewReader(strings.NewReader("")), configPath); err != nil {
 		t.Fatalf("EOF should decline consent without failing: %v", err)
 	}
 
@@ -258,6 +258,29 @@ func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
 	}
 	if strings.Contains(string(data), "telemetry:") {
 		t.Fatalf("expected EOF to leave telemetry disabled, got:\n%s", data)
+	}
+}
+
+func TestPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configPath, err := config.InitializeUserPersonal([]string{"factory"})
+	if err != nil {
+		t.Fatalf("initialize config: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := promptTelemetryConsent(&out, bufio.NewReader(strings.NewReader("y")), configPath); err != nil {
+		t.Fatalf("non-empty EOF reply should be processed: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), "telemetry:\n  level: basic") {
+		t.Fatalf("expected non-empty EOF reply to enable telemetry, got:\n%s", data)
 	}
 }
 

@@ -398,6 +398,35 @@ func TestResolveAuthAndCA(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsDisabledUserTransportSettingsWhenOrganizationEnablesTelemetry(t *testing.T) {
+	setStateRoot(t)
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	caFile := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caFile, []byte("cert\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(caFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	org := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic},
+	}
+	user := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:    tmcfg.LevelOff,
+			Endpoint: "https://user.example.com",
+			CAFile:   caFile,
+		},
+	}
+	if _, err := ResolveTelemetryConfig(org, user, "", ""); err == nil {
+		t.Fatal("expected disabled user transport settings to be validated when organization enables telemetry")
+	}
+}
+
 func TestResolveOrganizationRequiresRetention(t *testing.T) {
 	setStateRoot(t)
 	org := &amconfig.Config{
