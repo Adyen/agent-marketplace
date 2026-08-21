@@ -28,9 +28,16 @@ type ConfigFileCommit struct {
 	Generation string
 }
 
-func newConfigFileCommit(data []byte) ConfigFileCommit {
+// NewConfigFileCommit returns a compare-and-swap token for committed config
+// bytes. Callers that perform an edit through an older config API can use this
+// to guard a later rollback with FileSnapshot.RestoreIfCurrent.
+func NewConfigFileCommit(data []byte) ConfigFileCommit {
 	sum := sha256.Sum256(data)
 	return ConfigFileCommit{Bytes: bytes.Clone(data), Generation: "sha256:" + hex.EncodeToString(sum[:])}
+}
+
+func newConfigFileCommit(data []byte) ConfigFileCommit {
+	return NewConfigFileCommit(data)
 }
 
 func (c ConfigFileCommit) matches(data []byte) bool {
