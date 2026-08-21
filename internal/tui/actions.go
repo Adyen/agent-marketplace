@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -712,18 +712,13 @@ func sameStringSet(a, b []string) bool {
 }
 
 // ReadSkillMarkdown reads the SKILL.md content for a given resolved skill path.
-func ReadSkillMarkdown(path string) (string, error) {
-	if info, err := os.Stat(path); err == nil && !info.IsDir() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read resource source: %w", err)
-		}
-		return string(data), nil
-	}
-	mdPath := filepath.Join(path, "SKILL.md")
-	data, err := os.ReadFile(mdPath)
+// The read is confined to registryRoot (the registry the resource was
+// discovered in), so previewing a resource cannot render host content that a
+// registry symlinked into place, and cannot block the TUI on a special file.
+func ReadSkillMarkdown(registryRoot, path string) (string, error) {
+	data, sourceFile, err := registryfs.ReadResourceFile(registryRoot, path)
 	if err != nil {
-		return "", fmt.Errorf("read SKILL.md: %w", err)
+		return "", fmt.Errorf("read resource source %s: %w", filepath.Base(sourceFile), err)
 	}
 	return string(data), nil
 }

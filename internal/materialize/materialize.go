@@ -70,11 +70,14 @@ type materializePlan struct {
 }
 
 type skillLink struct {
-	name         string
-	target       string
-	cacheDir     string
-	artifacts    []artifact.Artifact
-	sourceDir    string          // absolute path to the original skill directory on disk
+	name      string
+	target    string
+	cacheDir  string
+	artifacts []artifact.Artifact
+	sourceDir string // absolute path to the original skill directory on disk
+	// sourceRoot is the registry root sourceDir was discovered in. Support-file
+	// reads are confined to it; empty means "confine to sourceDir itself".
+	sourceRoot   string
 	kind         ir.ResourceKind // kind of the resource (skill, subagent, command, …)
 	resourceName string          // canonical resource name without file extension
 	machineScope bool            // true when installed to machine-wide (user) scope
@@ -740,10 +743,11 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					sourceDir = filepath.Dir(sourceDir)
 				}
 				addSkillLink(skillLinks, key, installDirRel, skillLink{
-					name:      w.skill.Name,
-					target:    cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
-					artifacts: compiledSkillArtifacts,
-					sourceDir: sourceDir,
+					name:       w.skill.Name,
+					target:     cachedSkillDir(w.target, w.skill, compiledSkillArtifacts),
+					artifacts:  compiledSkillArtifacts,
+					sourceDir:  sourceDir,
+					sourceRoot: w.skill.SourceRoot,
 					// The link records the real resource kind, so a `remove`
 					// hint for a colliding Devin command says --kind command
 					// even though the output shape is a skill directory.
@@ -768,7 +772,9 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			// (which only removes symlinks, never the regular hooks.json file)
 			// when a hook is excluded.
 			if resourceKind == ir.KindHook {
-				result.Artifacts = append(result.Artifacts, collectHookSupportFiles(w.skill.Path, w.target)...)
+				supportArtifacts, supportDiags := collectHookSupportFiles(w.skill.SourceRoot, w.skill.Path, w.target)
+				result.Artifacts = append(result.Artifacts, supportArtifacts...)
+				result.Diagnostics = append(result.Diagnostics, supportDiags...)
 			}
 			var linked []compiledResourceLink
 			result.Artifacts, linked = splitResourceArtifacts(w.target, resourceKind, w.skill.Name, result.Artifacts)
@@ -2497,49 +2503,67 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
 	}
-	var addSupport func(string, string) error
-	addSupport = func(root, rel string) error {
-		entries, err := os.ReadDir(root)
+	// The dry-run digest describes the cache tree a real sync would produce, so
+	// it must read the source through exactly the same confined view — otherwise
+	// `sync --check` would report a clean plan for content the real run refuses,
+	// and would itself read escaping content just to hash it.
+	var addSupport func(*sourceTree, string) error
+	addSupport = func(tree *sourceTree, rel string) error {
+		entries, err := tree.ReadDir(rel)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if isNotExist(err) {
 				return nil
 			}
 			return err
 		}
 		for _, entry := range entries {
-			childRel := filepath.ToSlash(filepath.Join(rel, entry.Name()))
-			if childRel == "SKILL.md" {
+			child := childRel(rel, entry.Name())
+			if child == "SKILL.md" {
 				continue
 			}
-			childPath := filepath.Join(root, entry.Name())
-			info, err := os.Stat(childPath) // copyFile/copyDir follows source links.
-			if err != nil {
-				return err
+			isDir := entry.IsDir()
+			if !isDir && entry.Type()&fs.ModeSymlink != 0 {
+				isDir, err = tree.IsDir(child)
+				if err != nil {
+					return supportReadError(tree.dir, child, err)
+				}
 			}
-			if info.IsDir() {
-				ensureParents(childRel)
+			if isDir {
+				info, err := tree.fsys.Stat(tree.name(child))
+				if err != nil {
+					return supportReadError(tree.dir, child, err)
+				}
+				ensureParents(child)
 				// copyDir does not chmod an already-created directory, so an
 				// artifact-created parent keeps its existing 0755 mode.
-				if _, exists := nodes[childRel]; !exists {
-					nodes[childRel] = portableVirtualNode{dir: true, mode: info.Mode().Perm()}
+				if _, exists := nodes[child]; !exists {
+					nodes[child] = portableVirtualNode{dir: true, mode: info.Mode().Perm()}
 				}
-				if err := addSupport(childPath, childRel); err != nil {
+				if err := addSupport(tree, child); err != nil {
 					return err
 				}
 				continue
 			}
-			data, err := os.ReadFile(childPath)
+			data, mode, err := tree.ReadFile(child)
 			if err != nil {
-				return err
+				return supportReadError(tree.dir, child, err)
 			}
-			ensureParents(childRel)
-			nodes[childRel] = portableVirtualNode{mode: info.Mode().Perm(), content: data}
+			ensureParents(child)
+			nodes[child] = portableVirtualNode{mode: mode.Perm(), content: data}
 		}
 		return nil
 	}
 	if link.sourceDir != "" {
-		if err := addSupport(link.sourceDir, ""); err != nil {
-			return "", err
+		tree, err := openSourceTree(link.sourceRoot, link.sourceDir)
+		if err != nil {
+			if !isNotExist(err) {
+				return "", err
+			}
+		} else {
+			defer tree.Close()
+			if err := addSupport(tree, "."); err != nil {
+				return "", err
+			}
 		}
 	}
 	paths := make([]string, 0, len(nodes))
@@ -2994,7 +3018,7 @@ func prepareSkillLinkCache(link skillLink) error {
 		if err := pruneSkillCacheSupportFiles(cacheDir, compiled); err != nil {
 			return err
 		}
-		if copyErr := copySupportFilesExcluding(link.sourceDir, cacheDir, compiled, ""); copyErr != nil {
+		if copyErr := copySupportFilesExcluding(link.sourceRoot, link.sourceDir, cacheDir, compiled); copyErr != nil {
 			return copyErr
 		}
 	}
@@ -3046,42 +3070,96 @@ func pruneSkillCacheSupportFiles(cacheDir string, compiled map[string]bool) erro
 
 // copySupportFiles copies all files from srcDir to dstDir except the compiled
 // SKILL.md artifact. It remains a small convenience wrapper for callers that
-// do not need to protect additional compiled artifact paths.
+// do not need to protect additional compiled artifact paths; with no registry
+// provenance to offer, reads are confined to srcDir itself.
 func copySupportFiles(srcDir, dstDir string) error {
-	return copySupportFilesExcluding(srcDir, dstDir, nil, "")
+	return copySupportFilesExcluding("", srcDir, dstDir, nil)
 }
 
-func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, rel string) error {
-	entries, err := os.ReadDir(srcDir)
+// copySupportFilesExcluding copies a resource's support tree into dstDir,
+// reading every byte through a confined view of the registry. A support entry
+// that escapes the registry root, or that is not a regular file or directory,
+// fails the copy instead of being written: the cache is a directory the user's
+// harness reads, so smuggling host content into it is the disclosure this
+// guards against.
+func copySupportFilesExcluding(registryRoot, srcDir, dstDir string, compiled map[string]bool) error {
+	tree, err := openSourceTree(registryRoot, srcDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("read source skill dir %s: %w", srcDir, err)
 	}
+	defer tree.Close()
+	return copySupportTree(tree, dstDir, compiled, ".")
+}
+
+func copySupportTree(tree *sourceTree, dstDir string, compiled map[string]bool, rel string) error {
+	entries, err := tree.ReadDir(rel)
+	if err != nil {
+		if isNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read source skill dir %s: %w", tree.dir, err)
+	}
 	for _, entry := range entries {
 		name := entry.Name()
-		childRel := filepath.ToSlash(filepath.Join(rel, name))
-		if childRel == "SKILL.md" || compiled[childRel] {
+		child := childRel(rel, name)
+		if child == "SKILL.md" || compiled[child] {
 			continue
 		}
-		srcPath := filepath.Join(srcDir, name)
 		dstPath := filepath.Join(dstDir, name)
 
-		if entry.IsDir() {
-			if err := os.MkdirAll(dstPath, 0o755); err != nil {
-				return fmt.Errorf("create support dir %s: %w", childRel, err)
+		isDir := entry.IsDir()
+		if !isDir && entry.Type()&fs.ModeSymlink != 0 {
+			// A contained symlink to a directory is a normal way to share one
+			// support tree between resources; resolving it here keeps that
+			// working while the resolution itself stays inside the root.
+			isDir, err = tree.IsDir(child)
+			if err != nil {
+				return supportReadError(tree.dir, child, err)
 			}
-			if err := copySupportFilesExcluding(srcPath, dstPath, compiled, childRel); err != nil {
-				return fmt.Errorf("copy support dir %s: %w", childRel, err)
+		}
+		if isDir {
+			if err := os.MkdirAll(dstPath, 0o755); err != nil {
+				return fmt.Errorf("create support dir %s: %w", child, err)
+			}
+			if err := copySupportTree(tree, dstPath, compiled, child); err != nil {
+				return err
 			}
 			continue
 		}
-		if err := copyFile(srcPath, dstPath); err != nil {
-			return fmt.Errorf("copy support file %s: %w", childRel, err)
+		data, mode, err := tree.ReadFile(child)
+		if err != nil {
+			return supportReadError(tree.dir, child, err)
+		}
+		if err := writeSupportFile(dstPath, data, mode); err != nil {
+			return fmt.Errorf("copy support file %s: %w", child, err)
 		}
 	}
 	return nil
+}
+
+// writeSupportFile installs support bytes that were read from a confined
+// registry view. It keeps copyFile's behaviour of leaving an identical
+// destination untouched (so a read-only support file is not rewritten on every
+// sync) and of refusing to write through a symlink in the output.
+func writeSupportFile(dstPath string, data []byte, mode fs.FileMode) error {
+	if dstInfo, err := os.Lstat(dstPath); err == nil {
+		if dstInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination %s is a symlink; refusing to follow or overwrite it", dstPath)
+		}
+		if dstInfo.Mode().IsRegular() && dstInfo.Size() == int64(len(data)) {
+			existing, err := os.ReadFile(dstPath)
+			if err == nil && bytes.Equal(existing, data) {
+				if dstInfo.Mode() != mode {
+					return os.Chmod(dstPath, mode)
+				}
+				return nil
+			}
+		}
+	}
+	return atomicWriteFile(dstPath, data, mode)
 }
 
 // collectHookSupportFiles scans the directory containing the source hooks.json
@@ -3089,41 +3167,72 @@ func copySupportFilesExcluding(srcDir, dstDir string, compiled map[string]bool, 
 // These artifacts are symlinked into the hooks output directory alongside the
 // merged hooks.json, and are automatically pruned by staleArtifactLinks when
 // a hook is excluded (only symlinks are pruned, never the regular hooks.json).
-func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Artifact {
+//
+// The bytes are read through a confined view of the registry: these artifacts
+// are written into the generated output verbatim, so following a symlink out of
+// the registry here published host content into a harness directory. A refused
+// entry is skipped with a diagnostic rather than failing the whole sync — the
+// hook itself still materializes, and the operator is told which file was left
+// behind and why.
+func collectHookSupportFiles(registryRoot, sourcePath string, target hcc.Target) ([]artifact.Artifact, []diag.Diagnostic) {
 	if sourcePath == "" {
-		return nil
-	}
-	sourceDir := filepath.Dir(sourcePath)
-	entries, err := os.ReadDir(sourceDir)
-	if err != nil {
-		return nil
+		return nil, nil
 	}
 	hooksDirRel := resourceInstallDirRel(target, ir.KindHook)
 	if hooksDirRel == "" {
-		return nil
+		return nil, nil
+	}
+	sourceDir := filepath.Dir(sourcePath)
+	tree, err := openSourceTree(registryRoot, sourceDir)
+	if err != nil {
+		if isNotExist(err) {
+			return nil, nil
+		}
+		return nil, []diag.Diagnostic{hookSupportRefused(target, sourceDir, err)}
+	}
+	defer tree.Close()
+	entries, refused, err := tree.ReadDirLenient(".")
+	if err != nil {
+		if isNotExist(err) {
+			return nil, nil
+		}
+		return nil, []diag.Diagnostic{hookSupportRefused(target, sourceDir, err)}
 	}
 	var artifacts []artifact.Artifact
+	var diags []diag.Diagnostic
+	for _, refusal := range refused {
+		diags = append(diags, hookSupportRefused(target, sourceDir, refusal))
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "hooks.json" || entry.IsDir() {
 			continue
 		}
-		srcPath := filepath.Join(sourceDir, name)
-		data, err := os.ReadFile(srcPath)
+		data, mode, err := tree.ReadFile(name)
 		if err != nil {
-			continue
-		}
-		info, err := os.Stat(srcPath)
-		if err != nil {
+			if isNotExist(err) {
+				continue
+			}
+			diags = append(diags, hookSupportRefused(target, filepath.Join(sourceDir, name), err))
 			continue
 		}
 		artifacts = append(artifacts, artifact.Artifact{
 			Path:  hooksDirRel + "/" + name,
 			Bytes: data,
-			Mode:  info.Mode(),
+			Mode:  mode,
 		})
 	}
-	return artifacts
+	return artifacts, diags
+}
+
+func hookSupportRefused(target hcc.Target, path string, err error) diag.Diagnostic {
+	slog.Warn("registry support file refused", "target", target, "path", path, "error", err)
+	return diag.Diagnostic{
+		Code:     diag.CodeMaterializeRegistrySourceRefused,
+		Severity: diag.SeverityWarning,
+		Target:   string(target),
+		Message:  fmt.Sprintf("registry support file %q was not materialized: %v", path, err),
+	}
 }
 
 func copyFile(src, dst string) error {

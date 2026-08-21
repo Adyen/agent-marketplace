@@ -212,7 +212,7 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// frontmatter `name:`, so a config selecting the authored name can only
 		// be correlated with this failure through the recovered name. Without
 		// it, a name/directory mismatch looks exactly like an upstream rename.
-		if declared := skill.DeclaredNameFromFile(pReal); declared != "" && declared != malformed[i].DirName {
+		if declared := skill.DeclaredNameFromFile(rootReal, pReal); declared != "" && declared != malformed[i].DirName {
 			malformed[i].DeclaredName = declared
 		}
 	}
@@ -322,8 +322,10 @@ func subPathRel(path, prefix string) bool {
 func scanForSubBundles(dir string) []string {
 	secure, err := registryfs.New(dir, false)
 	if err != nil {
+		slog.Debug("sub-bundle scan skipped", "dir", dir, "error", err)
 		return nil
 	}
+	defer func() { _ = secure.Close() }()
 	var bundles []string
 	scanSubBundlesWalk(secure, dir, ".", &bundles)
 	sort.Strings(bundles)
@@ -333,6 +335,10 @@ func scanForSubBundles(dir string) []string {
 func scanSubBundlesWalk(src fs.FS, root, relative string, bundles *[]string) {
 	entries, err := fs.ReadDir(src, relative)
 	if err != nil {
+		// A refused directory (escaping symlink, special file, unreadable) stops
+		// this branch of the scan; it is not a sync failure, but the reason must
+		// not vanish.
+		slog.Debug("sub-bundle scan stopped", "root", root, "path", relative, "error", err)
 		return
 	}
 	for _, entry := range entries {
@@ -733,26 +739,30 @@ func IsOverlapWarning(err error) bool {
 	return errors.As(err, &w)
 }
 
+// validateRegistrySelection checks the configured sub-path of a registry before
+// discovery reads it. It is an eager diagnostic, not the containment mechanism:
+// every read performed later goes through registryfs regardless of what this
+// reports.
+//
+// A remote registry is additionally validated as a whole tree, because all of
+// its content is untrusted and an operator should learn about a refused entry
+// from one clear message rather than from whichever file ingestion happened to
+// open first. Local registries are not walked eagerly: the tree is the user's
+// own working copy, and pre-walking it would make every command pay for content
+// it never reads.
 func validateRegistrySelection(root, selected string, rejectSymlinks bool) error {
 	relative, err := filepath.Rel(root, selected)
 	if err != nil {
 		return fmt.Errorf("resolve selected registry path: %w", err)
 	}
-	if !rejectSymlinks && relative == "." {
-		return nil
-	}
-	if _, err := os.Stat(selected); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
+	exists, err := registryfs.ValidateSelection(root, filepath.ToSlash(relative), rejectSymlinks)
+	if err != nil {
 		return err
 	}
-	if rejectSymlinks {
-		if err := registryfs.ValidatePath(root, filepath.ToSlash(relative), true); err != nil {
-			return err
-		}
-		return registryfs.ValidateTree(selected, true)
+	if !exists || !rejectSymlinks {
+		return nil
 	}
-	return registryfs.ValidatePath(root, filepath.ToSlash(relative), false)
+	return registryfs.ValidateTree(selected, true)
 }
 
 // discoverAll runs skill discovery on all loaded requests and populates the result.
@@ -805,13 +815,13 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			}
 			continue
 		}
-		if !entry.IsLocal() || entry.Path != "" {
-			if err := validateRegistrySelection(basePath, skillDir, !entry.IsLocal()); err != nil {
-				result.Config.Registries = append(result.Config.Registries, entry)
-				result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): validate registry files: %w", entry.URL, entry.Ref, entry.Path, err))
-				slog.Warn("registry rejected before discovery", "url", redact.URL(entry.URL), "ref", entry.Ref, "path", entry.Path, "error", err)
-				continue
-			}
+		if err := validateRegistrySelection(basePath, skillDir, !entry.IsLocal()); err != nil {
+			result.Config.Registries = append(result.Config.Registries, entry)
+			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): validate registry files: %w", entry.URL, entry.Ref, entry.Path, err))
+			slog.Warn("registry rejected before discovery",
+				"url", redact.URL(entry.URL), "ref", entry.Ref, "path", entry.Path,
+				"remote", !entry.IsLocal(), "error", err)
+			continue
 		}
 
 		scannedDirs[skillDir] = struct{}{}
@@ -821,6 +831,9 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		if err != nil {
 			result.Config.Registries = append(result.Config.Registries, entry)
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
+			slog.Warn("registry discovery failed",
+				"url", redact.URL(entry.URL), "ref", entry.Ref, "path", entry.Path,
+				"remote", !entry.IsLocal(), "error", err)
 			continue
 		}
 

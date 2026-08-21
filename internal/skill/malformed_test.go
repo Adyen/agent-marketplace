@@ -128,12 +128,12 @@ func TestDeclaredNameFromFileRecoversNameFromUnparsableFrontmatter(t *testing.T)
 
 	// Both a directory and the manifest itself resolve to the same name.
 	for _, path := range []string{skillDir, manifest} {
-		if got := DeclaredNameFromFile(path); got != "bubble-tea" {
+		if got := DeclaredNameFromFile("", path); got != "bubble-tea" {
 			t.Fatalf("DeclaredNameFromFile(%q) = %q, want %q", path, got, "bubble-tea")
 		}
 	}
 
-	if got := DeclaredNameFromFile(filepath.Join(dir, "missing")); got != "" {
+	if got := DeclaredNameFromFile("", filepath.Join(dir, "missing")); got != "" {
 		t.Fatalf("expected empty declared name for a missing file, got %q", got)
 	}
 
@@ -141,7 +141,7 @@ func TestDeclaredNameFromFileRecoversNameFromUnparsableFrontmatter(t *testing.T)
 	if err := os.WriteFile(noFrontmatter, []byte("# Just a document\nname: nope\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := DeclaredNameFromFile(noFrontmatter); got != "" {
+	if got := DeclaredNameFromFile("", noFrontmatter); got != "" {
 		t.Fatalf("expected empty declared name without a frontmatter block, got %q", got)
 	}
 }

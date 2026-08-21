@@ -17,10 +17,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/registryfs"
 )
 
 // maxFrontmatterLines bounds the best-effort frontmatter scan in
@@ -268,14 +269,14 @@ func ParseFailure(m MalformedSkill) string {
 //
 // path may be a resource file or a resource directory (in which case its
 // SKILL.md is read). Returns "" when nothing usable is found.
-func DeclaredNameFromFile(path string) string {
-	file := path
-	if info, err := os.Stat(file); err == nil && info.IsDir() {
-		file = filepath.Join(file, "SKILL.md")
-	}
-	// #nosec G304 -- file comes from an ingest diagnostic path inside the
-	// local cache, not from untrusted input.
-	f, err := os.Open(file)
+//
+// The read is confined to registryRoot (or to path's own directory when the
+// caller has no registry root to offer). The path reaching this function comes
+// from a registry-authored ingest diagnostic, so it is exactly as untrusted as
+// the registry: without confinement, naming an escaping symlink here reads host
+// content, and naming a FIFO blocks the command forever.
+func DeclaredNameFromFile(registryRoot, path string) string {
+	f, err := registryfs.OpenResourceFile(registryRoot, path)
 	if err != nil {
 		return ""
 	}

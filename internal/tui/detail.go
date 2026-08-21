@@ -144,7 +144,7 @@ func renderDetailFullContent(r row) string {
 		return "No content available"
 	}
 
-	content, err := ReadSkillMarkdown(r.Artifact.Path)
+	content, err := ReadSkillMarkdown(r.Artifact.SourceRoot, r.Artifact.Path)
 	if err != nil {
 		return fmt.Sprintf("Error reading resource: %v", err)
 	}

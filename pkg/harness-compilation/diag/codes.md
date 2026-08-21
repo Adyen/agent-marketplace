@@ -98,6 +98,7 @@ comparison in non-test code.
 | `ownership.lock-unavailable` | This filesystem or platform does not support advisory locking, so ownership mutations for this target root are not serialized against other processes | Concurrent writers on this root can still race; move XDG_STATE_HOME to a local filesystem if two agent-marketplace processes ever run at once |
 | `materialize.devin.hook-satisfied-by-unmanaged` | A handwritten Devin hook is semantically identical to a selected marketplace hook, so no generated entry was added | No action needed; the existing handwritten entry already provides the behaviour and is neither adopted nor duplicated |
 | `materialize.devin.aggregate-prune-postponed` | A resource was skipped this run, so stale owned aggregate entries were not pruned | Fix the reported resource errors and re-run sync; a skipped resource is indistinguishable from a removed one, so pruning would delete valid output |
+| `materialize.registry-source-refused` | A registry support file could not be read inside the registry root, or is not a regular file, so it was not materialized | Registry content must stay inside the registry: replace an absolute or escaping symlink with a relative one that stays under the registry root, and remove FIFOs, sockets, and device nodes from the resource directory |
 | `doctor.devin.version-unsupported` | The installed Devin CLI is older than the 3000.3 compatibility floor | Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output |
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
@@ -485,6 +486,18 @@ partial run does not prune: a resource skipped this run is indistinguishable
 from a resource that was removed". It is scoped to the ONE aggregate file whose
 desired entry set was incomplete, so an erroring hook cannot suppress pruning of
 `mcp_config.json` or of the `skills/` directory.
+
+### `materialize.registry-source-refused` skips one file, not the run
+
+Hook support files are read from the registry and written into the generated
+output verbatim, so a symlink pointing out of the registry would publish host
+content into a harness directory, and a FIFO would stall the sync in `open(2)`.
+Reads are therefore confined to the registry root the resource was discovered in
+(see [`docs/registry-containment.md`](../../../docs/registry-containment.md)), and
+a refused entry is skipped with this warning: the hook itself still materializes,
+and the operator learns which file was left behind and why. A skill's support
+tree is stricter — a refused entry there fails the sync — because those bytes
+land in the skill cache the harness reads as one unit.
 
 No `materialize.devin.*` message, hint, or log attribute ever contains a hook
 payload, matcher, timeout value, MCP env value, header value, OAuth

@@ -4,9 +4,10 @@
 package collection
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
-	"os"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -92,20 +93,21 @@ type CollectionInclude struct {
 // stamped on each discovered collection for provenance tracking.
 func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([]Collection, error) {
 	collectionsDir := filepath.Join(skillDir, "collections")
-	if _, err := os.Stat(skillDir); os.IsNotExist(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("stat registry root %q: %w", skillDir, err)
-	}
 	secure, err := registryfs.New(skillDir, false)
 	if err != nil {
-		return nil, fmt.Errorf("validate registry root %q: %w", skillDir, err)
-	}
-	entries, err := fs.ReadDir(secure, "collections")
-	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
+		slog.Warn("collection discovery rejected registry root", "dir", skillDir, "error", err)
+		return nil, fmt.Errorf("validate registry root %q: %w", skillDir, err)
+	}
+	defer func() { _ = secure.Close() }()
+	entries, err := secure.ReadDir("collections")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		slog.Warn("collection discovery rejected collections directory", "dir", collectionsDir, "error", err)
 		return nil, fmt.Errorf("read collections directory %q: %w", collectionsDir, err)
 	}
 
@@ -120,11 +122,12 @@ func DiscoverCollections(skillDir, catalogKey, registryURL, ref, path string) ([
 
 		relPath := filepath.ToSlash(filepath.Join("collections", entry.Name(), collectionFileName))
 		yamlPath := filepath.Join(collectionsDir, entry.Name(), collectionFileName)
-		data, err := fs.ReadFile(secure, relPath)
+		data, err := secure.ReadFile(relPath)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
+			slog.Warn("collection file rejected", "path", yamlPath, "error", err)
 			return nil, fmt.Errorf("read collection file %q: %w", yamlPath, err)
 		}
 		col, err := parseCollectionData(yamlPath, data)

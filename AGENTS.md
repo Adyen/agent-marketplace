@@ -36,6 +36,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Devin aggregate updates are serialized per canonical root by advisory `flock(2)`, with compare-and-swap as a degraded-filesystem backstop | Two real processes cannot patch the same Devin aggregate concurrently; `flock` is owned by the open file description so it survives crashes without stale-lock heuristics, and `Store.Apply` refuses with `ownership.generation-conflict` rather than corrupting when advisory locking is unavailable |
 | `doctor --repair` never removes or overwrites an entry without interactive confirmation | Adoption is byte-neutral and safe to batch with `--yes`; deleting a user-visible entry, or replacing its value, is not — so both need per-entry consent plus a fresh backup |
 | `doctor --repair` offers three classes: adopt an exact match, remove an evidence-backed orphan, or replace an unmanaged entry whose key matches but whose value differs | A collision needs only key equality, adoption needs value equality, and orphan nomination needs evidence only a completed mutation produces — so such an entry was reported by every sync and repairable by nothing |
+| Every registry read goes through `internal/registryfs` (an `os.Root` view), never `os.ReadFile` on a registry path | A registry controls its own bytes and we copy them into directories a harness reads, so a planted symlink was a file-disclosure primitive and a FIFO was a hang. Confining at the point of use also removes the check-then-use window a `git pull` can drive; see [`docs/registry-containment.md`](./docs/registry-containment.md) |
 
 ## CLI Commands
 
@@ -162,6 +163,7 @@ agent-marketplace/
 ├── docs/
 │   ├── adoption-guide.md         ← v3 onboarding guide
 │   ├── PRECEDENCE.md             ← selection & precedence reference
+│   ├── registry-containment.md   ← registry read confinement model & policy
 │   └── plans/                    ← phased implementation plans
 ├── e2e/              ← declarative E2E test suite (local-only; see above)
 ├── internal/
@@ -173,6 +175,7 @@ agent-marketplace/
 │   ├── harness/       ← install roots, per-target aggregate files and capabilities
 │   ├── devincli/      ← non-blocking Devin CLI version detection for doctor
 │   ├── collection/    ← collection discovery and expansion
+│   ├── registryfs/    ← confined (os.Root) read-only access to registry trees
 │   ├── tui/           ← Bubble Tea interactive UI
 │   └── cache/         ← registry clone/pull cache management
 ├── cmd/agent-marketplace/  ← Cobra CLI subcommands
