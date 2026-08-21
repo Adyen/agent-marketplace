@@ -379,7 +379,7 @@ func (t *Telemetry) LastDeliveryFailure() error {
 		return nil
 	}
 	df, rerr := ReadLastDeliveryFailure(t.failurePath)
-	if rerr != nil {
+	if rerr != nil || df.Error == "" {
 		return nil
 	}
 	return fmt.Errorf("%s: %s", df.Time.Format(time.RFC3339), df.Error)

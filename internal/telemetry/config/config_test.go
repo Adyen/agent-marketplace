@@ -117,7 +117,7 @@ func TestValidateEndpoint(t *testing.T) {
 		{"http private hostname allowed", "http://private.local", true, false},
 		{"http private hostname public", "http://public.local", true, true},
 		{"http private hostname mixed", "http://mixed.local", true, true},
-		{"http private hostname unresolved", "http://unresolvable.local", true, true},
+		{"http private hostname unresolved", "http://unresolvable.local", true, false},
 		{"http link-local hostname allowed", "http://linklocal.local", true, false},
 		{"http loopback hostname allowed", "http://loopback.local", true, false},
 		{"http hostname without allow insecure", "http://private.local", false, true},
@@ -129,6 +129,21 @@ func TestValidateEndpoint(t *testing.T) {
 				t.Fatalf("ValidateEndpoint(%q, %v) error = %v, wantErr %v", tc.endpoint, tc.allowInsecure, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateEndpointForDeliveryRejectsUnresolvedHostname(t *testing.T) {
+	old := LookupIP
+	defer func() { LookupIP = old }()
+	LookupIP = func(host string) ([]net.IP, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+
+	if err := ValidateEndpoint("http://unresolvable.local", true); err != nil {
+		t.Fatalf("configuration validation should defer DNS failure: %v", err)
+	}
+	if err := ValidateEndpointForDelivery("http://unresolvable.local", true); err == nil {
+		t.Fatal("delivery validation should reject an unresolved insecure hostname")
 	}
 }
 

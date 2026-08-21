@@ -514,6 +514,32 @@ func TestResolveOrganizationPrivateHostnameEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveOrganizationPrivateHostnameOffline(t *testing.T) {
+	setStateRoot(t)
+
+	old := tmcfg.LookupIP
+	tmcfg.LookupIP = func(host string) ([]net.IP, error) {
+		return nil, &net.DNSError{Err: "network is unreachable", Name: host}
+	}
+	defer func() { tmcfg.LookupIP = old }()
+
+	org := &amconfig.Config{
+		Telemetry: &tmcfg.TelemetryConfig{
+			Level:           tmcfg.LevelBasic,
+			Endpoint:        "http://private.example.com",
+			RetentionPolicy: "https://example.com/retention",
+			AllowInsecure:   true,
+		},
+	}
+	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	if err != nil {
+		t.Fatalf("offline DNS failure should not reject valid configuration: %v", err)
+	}
+	if state.PrimaryEndpoint != "http://private.example.com" {
+		t.Fatalf("primary endpoint = %q", state.PrimaryEndpoint)
+	}
+}
+
 func TestResolveOrganizationPrivateHostnamePublicIP(t *testing.T) {
 	setStateRoot(t)
 
