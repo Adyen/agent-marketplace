@@ -116,9 +116,29 @@ _Avoid_: Resource artifact
 An immutable, content-addressed canonical representation of one resource revision and its contained supporting files.
 _Avoid_: Source repository, source revision manifest
 
+**Collection revision**:
+An immutable set of exact resource revisions selected by one collection at publication time. A collection revision is virtual and never materializes directly.
+_Avoid_: Resource artifact, mutable collection selection
+
+**Collection manifest**:
+The content-addressed canonical representation of one collection revision, preserving exact direct collection includes and a deduplicated expansion of exact, non-collection member revisions.
+_Avoid_: Resource artifact, collection installation
+
+**Effective revocation**:
+The revocation outcome for a resource revision when any active revision-, coordinate-, or source-level operator declaration matches it. Specificity selects the primary reason but cannot exempt it from a broader declaration.
+_Avoid_: Deleted resource, stored revision metadata
+
+**Inspection projection**:
+A bounded, immutable representation of a resource revision that exposes every textual file, contained raster previews, binary-file identity, and security findings before installation.
+_Avoid_: Resource artifact, live preview, safety certification
+
 **Marketplace installation**:
-A consumer configuration record that pins a resource coordinate to an exact Marketplace instance, resource revision, canonical content digest, optional mirrored artifact digest, and optional installed name.
+A consumer configuration record that pins a resource coordinate to an exact Marketplace instance, resource revision, canonical content digest, acquisition mode, optional mirrored artifact digest, exact source occurrence for index-only acquisition, and optional installed name.
 _Avoid_: Search result, Marketplace alias
+
+**Installation selector**:
+A reason a resource pin remains installed: either direct user selection or selection by an exact collection revision. A pin is removable only when it has no remaining selectors.
+_Avoid_: Resource dependency, duplicate pin
 
 **Security finding**:
 A versioned analyzer observation about potentially dangerous or hidden resource content. A finding communicates evidence and policy outcome; it is not a claim that a resource is safe or malicious.
