@@ -91,7 +91,7 @@ func TestOpenAPISourceSchemaIsPublicMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestOpenAPIUsesOriginServerAndCompatibleOccurrenceCommitFields(t *testing.T) {
+func TestOpenAPIUsesOriginServerAndCanonicalOccurrenceFields(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	servers, ok := doc["servers"].([]any)
 	if !ok || len(servers) != 1 {
@@ -105,24 +105,69 @@ func TestOpenAPIUsesOriginServerAndCompatibleOccurrenceCommitFields(t *testing.T
 	components := doc["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
 	occurrence := schemas["SourceOccurrence"].(map[string]any)
-	alternatives, ok := occurrence["anyOf"].([]any)
-	if !ok || len(alternatives) < 2 {
-		t.Fatalf("SourceOccurrence.anyOf = %#v, want commit compatibility alternatives", occurrence["anyOf"])
+	if _, ok := occurrence["anyOf"]; ok {
+		t.Fatal("SourceOccurrence must not expose compatibility alternatives")
 	}
+	required := occurrence["required"].([]any)
 	seen := map[string]bool{}
-	for _, alternative := range alternatives {
-		entry, ok := alternative.(map[string]any)
-		if !ok {
-			continue
+	for _, field := range required {
+		if name, ok := field.(string); ok {
+			seen[name] = true
 		}
-		for _, field := range entry["required"].([]any) {
-			if name, ok := field.(string); ok {
-				seen[name] = true
+	}
+	if !seen["commit"] || seen["revision_commit"] {
+		t.Fatalf("SourceOccurrence required fields = %#v, want canonical commit only", seen)
+	}
+	properties := occurrence["properties"].(map[string]any)
+	if _, ok := properties["revision_commit"]; ok {
+		t.Fatal("SourceOccurrence must not expose revision_commit")
+	}
+	commit := properties["commit"].(map[string]any)
+	if commit["pattern"] != "^[0-9a-f]{40}$" {
+		t.Fatalf("commit pattern = %#v, want full lowercase Git object ID", commit["pattern"])
+	}
+	for _, field := range []string{"source_revision_manifest_digest", "mirrored_artifact_digest"} {
+		property := properties[field].(map[string]any)
+		if property["pattern"] != "^sha256:[0-9a-f]{64}$" {
+			t.Fatalf("%s pattern = %#v, want strict lowercase SHA-256", field, property["pattern"])
+		}
+	}
+}
+
+func TestOpenAPIResourceListRevisionUsesCanonicalDigest(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	item := schemas["ResourceListItem"].(map[string]any)
+	properties := item["properties"].(map[string]any)
+	for _, field := range []string{"revision", "content_digest"} {
+		property := properties[field].(map[string]any)
+		if property["pattern"] != "^sha256:[0-9a-f]{64}$" {
+			t.Fatalf("%s pattern = %#v, want strict lowercase SHA-256", field, property["pattern"])
+		}
+	}
+}
+
+func TestOpenAPIResourceRevisionRequiresCompleteCoordinate(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	revision := schemas["ResourceRevision"].(map[string]any)
+	coordinate := revision["properties"].(map[string]any)["coordinate"].(map[string]any)
+	required := coordinate["required"].([]any)
+	if len(required) != 4 {
+		t.Fatalf("ResourceRevision.coordinate required fields = %#v, want all four identity fields", required)
+	}
+	for _, field := range []string{"marketplace", "source", "kind", "name"} {
+		found := false
+		for _, value := range required {
+			if value == field {
+				found = true
 			}
 		}
-	}
-	if !seen["commit"] || !seen["revision_commit"] {
-		t.Fatalf("SourceOccurrence.anyOf required fields = %#v, want commit and revision_commit", seen)
+		if !found {
+			t.Errorf("ResourceRevision.coordinate missing required field %q", field)
+		}
 	}
 }
 

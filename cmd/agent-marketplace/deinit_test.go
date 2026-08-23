@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -699,7 +700,7 @@ func TestDeinitUserPreservesCachedOrganizationMarketplaceWithoutNetwork(t *testi
 		}
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "deinit-marketplace"})
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("deinit-marketplace", "https://example.com"))
 		case strings.Contains(r.URL.Path, "/revisions/"+orgPin.Digest):
 			_ = json.NewEncoder(w).Encode(orgRevision)
 		case strings.Contains(r.URL.Path, "/revisions/"+userPin.Digest):
@@ -862,7 +863,7 @@ func setupDeinitOrganizationMarketplace(t *testing.T) deinitMarketplaceScenario 
 		}
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "deinit-marketplace"})
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("deinit-marketplace", "https://example.com"))
 		case strings.Contains(r.URL.Path, "/revisions/"+pin.Digest):
 			_ = json.NewEncoder(w).Encode(revision)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") && strings.HasSuffix(r.URL.Path, strings.TrimPrefix(string(revision.ArchiveDigest), "sha256:")):

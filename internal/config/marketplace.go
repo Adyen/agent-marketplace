@@ -25,17 +25,15 @@ type MarketplaceResourcePin struct {
 	Kind          string `yaml:"kind"`
 	Name          string `yaml:"name"`
 	Revision      string `yaml:"revision"`
-	Digest        string `yaml:"digest"`                // "sha256:<hex>"
-	Acquisition   string `yaml:"acquisition,omitempty"` // "mirror" or "index"
+	Digest        string `yaml:"digest"`                // "sha256:<64 lowercase hex>"
+	Acquisition   string `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
 	InstalledName string `yaml:"installed_name,omitempty"`
 }
 
 const (
-	MarketplaceAcquisitionMirror = "mirror"
-	MarketplaceAcquisitionIndex  = "index"
+	MarketplaceAcquisitionMirror    = "mirror"
+	MarketplaceAcquisitionIndexOnly = "index-only"
 )
-
-var contentDigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // validateAllowedMarketplacePatterns validates that every allowlist entry is a
 // valid regular expression.
@@ -112,11 +110,11 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 	if err := validateMarketplaceSegment("revision", p.Revision); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
-	if !contentDigestRE.MatchString(p.Digest) {
+	if !api.IsCanonicalSHA256Digest(p.Digest) {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].digest must be sha256:<64-hex>", entryIdx, pinIdx))
 	}
-	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndex {
-		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].acquisition must be %q or %q", entryIdx, pinIdx, MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndex))
+	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndexOnly {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].acquisition must be %q or %q", entryIdx, pinIdx, MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly))
 	}
 	if err := ValidateMarketplaceInstalledName(p.InstalledName); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))

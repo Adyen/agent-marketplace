@@ -45,8 +45,8 @@ const (
 type AcquisitionMode string
 
 const (
-	AcquisitionMirror AcquisitionMode = config.MarketplaceAcquisitionMirror
-	AcquisitionIndex  AcquisitionMode = config.MarketplaceAcquisitionIndex
+	AcquisitionMirror    AcquisitionMode = config.MarketplaceAcquisitionMirror
+	AcquisitionIndexOnly AcquisitionMode = config.MarketplaceAcquisitionIndexOnly
 )
 
 type PinStatus struct {
@@ -349,7 +349,7 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 	if status.Cache == CacheStateError {
 		return
 	}
-	if status.Acquisition == AcquisitionIndex {
+	if status.Acquisition == AcquisitionIndexOnly {
 		status.Cache = CacheStateNotApplicable
 	} else if !status.MetadataCached {
 		status.Cache = CacheStateMissing
@@ -399,7 +399,7 @@ func applyCachedState(status *PinStatus, rev store.ResourceRevision, metadataCac
 		status.State = PinStateRevoked
 	} else if status.Cache == CacheStateStale {
 		status.State = PinStateStale
-	} else if status.Acquisition == AcquisitionIndex || status.ArtifactVerified {
+	} else if status.Acquisition == AcquisitionIndexOnly || status.ArtifactVerified {
 		status.State = PinStateCached
 	} else {
 		status.State = PinStateMissing

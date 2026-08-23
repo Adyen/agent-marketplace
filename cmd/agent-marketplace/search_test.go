@@ -24,7 +24,7 @@ func searchCommandServerWithInstance(t *testing.T, instanceID string, fail bool)
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": instanceID})
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
 			return
 		}
 		if r.URL.Path != "/api/v1/search" {
@@ -39,8 +39,9 @@ func searchCommandServerWithInstance(t *testing.T, instanceID string, fail bool)
 		}
 		resp := marketplaceSearchResponse{
 			Items: []mpapi.ResourceListItem{
-				{SourceSlug: "src", Kind: "skill", Name: "review", Score: 1.0, Description: "Review skill"},
+				{SourceID: "src", SourceSlug: "src", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0, Description: "Review skill"},
 			},
+			Total: 1, Offset: 0, Limit: 100,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
@@ -49,8 +50,10 @@ func searchCommandServerWithInstance(t *testing.T, instanceID string, fail bool)
 }
 
 type marketplaceSearchResponse struct {
-	Items []mpapi.ResourceListItem `json:"items"`
-	Total int                      `json:"total"`
+	Items  []mpapi.ResourceListItem `json:"items"`
+	Total  int                      `json:"total"`
+	Offset int                      `json:"offset"`
+	Limit  int                      `json:"limit"`
 }
 
 func TestSearchCommandJSONOutput(t *testing.T) {

@@ -12,7 +12,20 @@ import (
 	"time"
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+func writeTestWellKnown(w http.ResponseWriter, instanceID string) {
+	_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
+}
+
+func writeTestSource(w http.ResponseWriter, src store.Source) {
+	_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{
+		ID: src.ID, Slug: src.Slug, Aliases: src.Aliases, Origins: src.Origins,
+		Ref: src.Ref, Roots: src.Roots, Acquisition: src.Acquisition,
+		License: src.License, Listed: src.Listed,
+	})
+}
 
 func TestNewClientValidatesBaseURL(t *testing.T) {
 	tests := []struct {
@@ -39,6 +52,7 @@ func TestClientWellKnown(t *testing.T) {
 		InstanceID:   "mp-test",
 		CanonicalURL: "https://example.com",
 		APIBase:      "/api/v1",
+		BrowserRoute: "/s/{source}/{kind}/{name}",
 		Capabilities: mpapi.DefaultCapabilities(),
 	}
 
@@ -69,10 +83,71 @@ func TestClientWellKnown(t *testing.T) {
 	}
 }
 
+func TestClientRejectsNullAndIncompleteEnvelopes(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "well-known null", path: "/.well-known/agent-marketplace.json", body: "null"},
+		{name: "well-known incomplete", path: "/.well-known/agent-marketplace.json", body: `{"instance_id":"mp"}`},
+		{name: "search null", path: "/api/v1/search", body: "null"},
+		{name: "search incomplete", path: "/api/v1/search", body: `{"items":[],"total":0,"offset":0}`},
+		{name: "search null items", path: "/api/v1/search", body: `{"items":null,"total":0,"offset":0,"limit":100}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			c, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			if tc.path == "/.well-known/agent-marketplace.json" {
+				if _, err := c.WellKnown(context.Background()); err == nil {
+					t.Fatal("WellKnown accepted an invalid envelope")
+				}
+			} else if _, err := c.Search(context.Background(), SearchRequest{}); err == nil {
+				t.Fatal("Search accepted an invalid envelope")
+			}
+		})
+	}
+}
+
+func TestClientRejectsPrivateAndLegacySourceFields(t *testing.T) {
+	for _, field := range []string{"revision_commit", "credentials_ref", "refresh_error", "policy_overrides"} {
+		t.Run(field, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				payload := map[string]any{
+					"id": "source", "slug": "source", "origins": []string{"https://example.com/repo"},
+					"ref": "main", "roots": []map[string]string{{"path": ".agents"}},
+					"acquisition": "index-only", "listed": true, field: "must not cross boundary",
+				}
+				_ = json.NewEncoder(w).Encode(payload)
+			}))
+			defer server.Close()
+			c, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			if _, err := c.GetSource(context.Background(), "source"); err == nil {
+				t.Fatalf("GetSource accepted private field %q", field)
+			}
+		})
+	}
+}
+
 func TestClientSearch(t *testing.T) {
 	resp := SearchResponse{
 		Items: []mpapi.ResourceListItem{
-			{SourceID: "src-test", SourceSlug: "test-source", Kind: "skill", Name: "review", Score: 1.0},
+			{SourceID: "src-test", SourceSlug: "test-source", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0},
 		},
 		Total:  1,
 		Offset: 0,
@@ -209,7 +284,7 @@ func TestNewClientRejectsUnsafeBaseURL(t *testing.T) {
 
 func TestClientEscapesDynamicPathSegments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.EscapedPath(), "/src%2Fwith%20space/skill%2Fpart/name%2Fpart/revisions/") {
+		if !strings.Contains(r.URL.EscapedPath(), "/src%2Fwith%20space/skill/name%2Fpart/revisions/") {
 			t.Fatalf("request path = %q, want escaped dynamic segments", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -217,7 +292,7 @@ func TestClientEscapesDynamicPathSegments(t *testing.T) {
 			"coordinate": map[string]string{
 				"marketplace": "mp",
 				"source":      "src/with space",
-				"kind":        "skill/part",
+				"kind":        "skill",
 				"name":        "name/part",
 			},
 			"content_digest": "sha256:" + strings.Repeat("a", 64),
@@ -229,8 +304,73 @@ func TestClientEscapesDynamicPathSegments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetResourceRevision(context.Background(), "src/with space", "skill/part", "name/part", "sha256:"+strings.Repeat("a", 64)); err != nil {
+	if _, err := c.GetResourceRevision(context.Background(), "src/with space", "skill", "name/part", "sha256:"+strings.Repeat("a", 64)); err != nil {
 		t.Fatalf("GetResourceRevision: %v", err)
+	}
+}
+
+func TestClientBindsResourceResponsesToRequestedCoordinate(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "other"},
+			ContentDigest: store.RevisionDigest(digest),
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetLatestResourceRevision(context.Background(), "source", "skill", "review"); err == nil || !strings.Contains(err.Error(), "coordinate.name") {
+		t.Fatalf("GetLatestResourceRevision error = %v, want coordinate mismatch", err)
+	}
+	if _, err := c.GetResourceRevision(context.Background(), "source", "skill", "review", digest); err == nil || !strings.Contains(err.Error(), "coordinate.name") {
+		t.Fatalf("GetResourceRevision error = %v, want coordinate mismatch", err)
+	}
+}
+
+func TestClientBindsResourceSourceAfterSourceResolution(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sources/source-slug":
+			writeTestSource(w, store.Source{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		default:
+			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "other-source", Kind: "skill", Name: "review"},
+				ContentDigest: store.RevisionDigest(digest),
+			})
+		}
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetSource(context.Background(), "source-slug"); err != nil {
+		t.Fatalf("GetSource: %v", err)
+	}
+	if _, err := c.GetLatestResourceRevision(context.Background(), "source-slug", "skill", "review"); err == nil || !strings.Contains(err.Error(), "coordinate.source") {
+		t.Fatalf("GetLatestResourceRevision error = %v, want source mismatch", err)
+	}
+}
+
+func TestClientRejectsNonCanonicalResourceMetadata(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest),
+		Provenance:    &store.Provenance{Commit: "abc123", ManifestDigest: store.RevisionDigest(digest)},
+	}
+	if err := validateAPIResourceRevision(revision); err == nil {
+		t.Fatal("resource revision accepted a development provenance commit")
+	}
+	item := mpapi.ResourceListItem{SourceID: "source", Kind: "skill", Name: "review", Revision: "refs/heads/main", ContentDigest: digest}
+	if err := validateAPIResourceListItem(item); err == nil {
+		t.Fatal("resource list item accepted a symbolic revision")
 	}
 }
 
@@ -323,12 +463,7 @@ func BenchmarkClientSearch(b *testing.B) {
 		Total: 50,
 	}
 	for i := range resp.Items {
-		resp.Items[i] = mpapi.ResourceListItem{
-			SourceID: fmt.Sprintf("src-%d", i),
-			Kind:     "skill",
-			Name:     fmt.Sprintf("skill-%d", i),
-			Score:    0.5,
-		}
+		resp.Items[i] = canonicalSearchItem(fmt.Sprintf("src-%d", i), "skill", fmt.Sprintf("skill-%d", i), 0.5)
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

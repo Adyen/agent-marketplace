@@ -31,7 +31,7 @@ func TestCanonicalMarketplaceEntryNormalizesIdentityURL(t *testing.T) {
 }
 
 func TestMarketplaceCatalogKeyIncludesInstanceID(t *testing.T) {
-	pin := config.MarketplaceResourcePin{SourceID: "source", Digest: "sha256:digest", Revision: "v1"}
+	pin := config.MarketplaceResourcePin{SourceID: "source", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Revision: "v1"}
 	first := marketplaceCatalogKey(config.MarketplaceEntry{URL: "https://market.example", InstanceID: "instance-one"}, pin)
 	second := marketplaceCatalogKey(config.MarketplaceEntry{URL: "https://market.example", InstanceID: "instance-two"}, pin)
 	if first == second {
@@ -95,11 +95,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	})
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"instance_id":   "mp",
-			"canonical_url": "",
-			"api_base":      "",
-		})
+		writeTestWellKnown(w, "mp")
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -645,7 +641,7 @@ func TestResolverRejectsMarketplaceInstanceMismatchBeforePins(t *testing.T) {
 
 func serveWellKnown(mux *http.ServeMux, instanceID string) {
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": instanceID})
+		writeTestWellKnown(w, instanceID)
 	})
 }
 
@@ -715,7 +711,7 @@ func TestLatestRevisionUsesSourceSlugRoute(t *testing.T) {
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "resolved-source-slug", Acquisition: store.AcquisitionMirror})
+		writeTestSource(w, store.Source{ID: "src", Slug: "resolved-source-slug", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
 	mux.HandleFunc("/api/v1/resources/resolved-source-slug/skill/review", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(revision)
@@ -745,7 +741,7 @@ func TestPrepareLocatorRejectsExactRevisionDigestMismatch(t *testing.T) {
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "source-slug", Acquisition: store.AcquisitionMirror})
+		writeTestSource(w, store.Source{ID: "src", Slug: "source-slug", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
 	mux.HandleFunc("/api/v1/resources/source-slug/skill/review/revisions/"+requestedDigest, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(revision)
@@ -790,7 +786,7 @@ func TestPrepareLocatorPrefetchesMirrorArtifact(t *testing.T) {
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "source", Acquisition: store.AcquisitionMirror})
+		writeTestSource(w, store.Source{ID: "src", Slug: "source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(rev)

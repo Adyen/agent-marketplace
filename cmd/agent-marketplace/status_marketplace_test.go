@@ -12,7 +12,7 @@ func TestMarketplaceStatusRowsQuoteControlledValues(t *testing.T) {
 	rows := marketplaceStatusRowsToCells([]marketplace.PinStatus{{
 		Alias: "alias\t\x1b[31m", URL: "https://example.test/\r\n", InstanceID: "instance",
 		SourceID: "source", SourceSlug: "slug", Kind: "skill", Name: "name",
-		Revision: "refs/heads/main", ContentDigest: "sha256:abc", Acquisition: marketplace.AcquisitionMirror,
+		Revision: "refs/heads/main", ContentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Acquisition: marketplace.AcquisitionMirror,
 		Source: config.RepoCommitted, State: marketplace.PinStateUnavailable, Cache: marketplace.CacheStateMissing,
 		Detail: "controlled\u202evalue",
 	}})

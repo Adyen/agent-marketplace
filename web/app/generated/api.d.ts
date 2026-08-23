@@ -277,15 +277,22 @@ export interface components {
             archive_digest?: string;
             content_digest: string;
             coordinate: {
-                kind?: string;
-                marketplace?: string;
-                name?: string;
-                source?: string;
+                /** @enum {string} */
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+                marketplace: string;
+                name: string;
+                source: string;
             };
-            findings?: Record<string, never>[];
+            findings?: {
+                [key: string]: unknown;
+            }[];
             license?: string;
-            provenance?: Record<string, never>;
-            revocation?: Record<string, never>;
+            provenance?: {
+                [key: string]: unknown;
+            };
+            revocation?: {
+                [key: string]: unknown;
+            };
         };
         SearchResult: {
             items: components["schemas"]["ResourceListItem"][];
@@ -308,30 +315,19 @@ export interface components {
             roots: components["schemas"]["SourceRoot"][];
             slug: string;
         };
-        /** @description An immutable source observation. Current Go servers emit `commit`;
-         *     `revision_commit` is accepted as a legacy wire alias. At least one of
-         *     these fields is required, and clients must reject conflicting values
-         *     when both are present. History digest values retain the bounded opaque
-         *     `sha256:` token form used by legacy stores for compatibility; the token
-         *     excludes slashes and control characters. Routeable source manifests
-         *     require the canonical 64-character lowercase form.
-         *      */
+        /** @description Immutable source observation with an exact source commit and canonical SHA-256 digests. */
         SourceOccurrence: {
             /** @enum {string} */
             acquisition: "index-only" | "mirror";
-            commit?: string;
+            /** @description Exact full-length lowercase Git commit identifier. */
+            commit: string;
             mirrored_artifact_digest?: string;
             /** Format: date-time */
             occurred_at: string;
             ref: string;
-            /**
-             * @deprecated
-             * @description Compatibility alias for commit.
-             */
-            revision_commit?: string;
             source_id: string;
             source_revision_manifest_digest: string;
-        } | unknown | unknown;
+        };
         SourceRoot: {
             path: string;
             source_harness?: string;
