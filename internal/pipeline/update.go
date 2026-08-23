@@ -225,7 +225,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			switch {
 			case entry.Source == config.Organization:
 				item.Reason = "organization pin is required and managed externally"
-			case pin.Acquisition == config.MarketplaceAcquisitionIndex:
+			case pin.Acquisition == config.MarketplaceAcquisitionIndexOnly:
 				item.Reason = "index-only pin updates are not supported"
 			case pin.Kind == "collection":
 				item.Reason = "collection pin updates are not supported"

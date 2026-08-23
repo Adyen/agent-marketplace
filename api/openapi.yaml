@@ -251,6 +251,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
       responses:
         "200":
           description: Resource revision
@@ -500,25 +501,15 @@ components:
 
     SourceOccurrence:
       type: object
-      description: |
-        An immutable source observation. Current Go servers emit `commit`;
-        `revision_commit` is accepted as a legacy wire alias. At least one of
-        these fields is required, and clients must reject conflicting values
-        when both are present. History digest values retain the bounded opaque
-        `sha256:` token form used by legacy stores for compatibility; the token
-        excludes slashes and control characters. Routeable source manifests
-        require the canonical 64-character lowercase form.
+      additionalProperties: false
+      description: Immutable source observation with an exact source commit and canonical SHA-256 digests.
       required:
         - source_id
         - ref
+        - commit
         - source_revision_manifest_digest
         - acquisition
         - occurred_at
-      anyOf:
-        - required:
-            - commit
-        - required:
-            - revision_commit
       properties:
         source_id:
           type: string
@@ -526,13 +517,11 @@ components:
           type: string
         commit:
           type: string
-        revision_commit:
-          type: string
-          deprecated: true
-          description: Compatibility alias for commit.
+          pattern: "^[0-9a-f]{40}$"
+          description: Exact full-length lowercase Git commit identifier.
         source_revision_manifest_digest:
           type: string
-          pattern: "^sha256:[A-Za-z0-9._~-]{1,256}$"
+          pattern: "^sha256:[0-9a-f]{64}$"
         acquisition:
           type: string
           enum:
@@ -540,7 +529,7 @@ components:
             - mirror
         mirrored_artifact_digest:
           type: string
-          pattern: "^sha256:[A-Za-z0-9._~-]{1,256}$"
+          pattern: "^sha256:[0-9a-f]{64}$"
         occurred_at:
           type: string
           format: date-time
@@ -590,6 +579,7 @@ components:
           type: string
         revision:
           type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
         content_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
@@ -611,6 +601,11 @@ components:
       properties:
         coordinate:
           type: object
+          required:
+            - marketplace
+            - source
+            - kind
+            - name
           properties:
             marketplace:
               type: string
@@ -618,21 +613,33 @@ components:
               type: string
             kind:
               type: string
+              enum:
+                - skill
+                - command
+                - subagent
+                - hook
+                - mcpserver
+                - collection
             name:
               type: string
         content_digest:
           type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
         archive_digest:
           type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
         analyzer_version:
           type: string
         findings:
           type: array
           items:
             type: object
+            additionalProperties: true
         license:
           type: string
         provenance:
           type: object
+          additionalProperties: true
         revocation:
           type: object
+          additionalProperties: true

@@ -24,7 +24,7 @@ func TestInspectPreservesPinStates(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "revoked"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 			return
 		}
 		if strings.Contains(r.URL.Path, "/missing/") {
@@ -94,7 +94,7 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 	archiveDigest := "sha256:" + strings.Repeat("d", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 			return
 		}
 		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
@@ -230,7 +230,7 @@ func TestInspectMalformedMetadataRemainsCacheError(t *testing.T) {
 	archiveDigest := "sha256:" + strings.Repeat("f", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 			return
 		}
 		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
@@ -269,7 +269,7 @@ func TestInspectQueriesLatestAndPreservesExactStateOnLatestFailure(t *testing.T)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + oldDigest:
 			_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(oldDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)})
 		case "/api/v1/resources/source-slug/skill/review":
@@ -306,7 +306,7 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + pinnedDigest:
 			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
@@ -358,7 +358,7 @@ func TestInspectRendersCollectionAsVirtualPin(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("4", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 			return
 		}
 		_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)})

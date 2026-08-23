@@ -7,7 +7,7 @@ const (
 	APIVersionV1            = "v1"
 	ArtifactSchemaVersionV1 = "v1"
 	AcquisitionMirror       = "mirror"
-	AcquisitionIndex        = "index-only"
+	AcquisitionIndexOnly    = "index-only"
 )
 
 // DefaultCapabilities returns the capability block advertised by this version
@@ -18,7 +18,7 @@ func DefaultCapabilities() Capabilities {
 		APIVersions:            []string{APIVersionV1},
 		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV1},
 		ResourceKinds:          SupportedResourceKinds,
-		AcquisitionModes:       []string{AcquisitionIndex, AcquisitionMirror},
+		AcquisitionModes:       []string{AcquisitionIndexOnly, AcquisitionMirror},
 		Features:               []string{},
 	}
 }

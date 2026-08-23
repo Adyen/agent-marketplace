@@ -81,7 +81,7 @@ func TestServerRoutes(t *testing.T) {
 		License:         "MIT",
 		Provenance: &store.Provenance{
 			SourceID:       src.ID,
-			Commit:         "abc123",
+			Commit:         strings.Repeat("a", 40),
 			ManifestDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
 		},
 	}
@@ -128,7 +128,7 @@ func TestServerRoutes(t *testing.T) {
 		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{
 			SourceID:                     boundedSource.ID,
 			Ref:                          boundedSource.Ref,
-			Commit:                       fmt.Sprintf("commit-%04d", i),
+			Commit:                       fmt.Sprintf("%040x", i+1),
 			SourceRevisionManifestDigest: rev.Provenance.ManifestDigest,
 			Acquisition:                  boundedSource.Acquisition,
 			OccurredAt:                   time.Unix(int64(i+1), 0).UTC(),
@@ -207,7 +207,7 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("history status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `"commit":"abc123"`) {
+	if !strings.Contains(body, `"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`) {
 		t.Fatalf("history missing commit: %s", body)
 	}
 
@@ -234,7 +234,7 @@ func TestServerRoutes(t *testing.T) {
 	if len(boundedHistory) != MaxSourceHistoryEntries {
 		t.Fatalf("bounded history entries = %d, want %d", len(boundedHistory), MaxSourceHistoryEntries)
 	}
-	if boundedHistory[0].Commit != "commit-1000" || boundedHistory[len(boundedHistory)-1].Commit != "commit-0001" {
+	if boundedHistory[0].Commit != fmt.Sprintf("%040x", MaxSourceHistoryEntries+1) || boundedHistory[len(boundedHistory)-1].Commit != fmt.Sprintf("%040x", 2) {
 		t.Fatalf("bounded history ordering/truncation = first %q last %q", boundedHistory[0].Commit, boundedHistory[len(boundedHistory)-1].Commit)
 	}
 
@@ -299,6 +299,7 @@ func TestServerRoutes(t *testing.T) {
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 63),
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("A", 64),
 		public.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("a", 64) + "/extra",
+		public.URL + "/api/v1/resources/test-source/skill/review/revisions/sha256:" + strings.Repeat("A", 64),
 	}
 	for _, url := range invalidDigestURLs {
 		resp = mustGet(t, url)
@@ -377,6 +378,136 @@ func TestServerSanitizesLegacyCanonicalURLInPublicResponses(t *testing.T) {
 			t.Fatalf("%s retained unsafe canonical URL components: %s", path, body)
 		}
 	}
+}
+
+func TestPublicDTOValidationRequiresDomainInvariantFields(t *testing.T) {
+	validSource := SourceDTO{
+		ID: "source", Slug: "source", Origins: []string{"https://example.com/repo.git"},
+		Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly,
+	}
+	if err := validatePublicSource(validSource); err != nil {
+		t.Fatalf("canonical source DTO rejected: %v", err)
+	}
+	for _, invalid := range []SourceDTO{
+		{ID: validSource.ID, Slug: validSource.Slug, Origins: validSource.Origins, Ref: validSource.Ref, Acquisition: validSource.Acquisition},
+		{ID: validSource.ID, Slug: validSource.Slug, Origins: validSource.Origins, Roots: validSource.Roots, Ref: validSource.Ref, Acquisition: "index"},
+	} {
+		if err := validatePublicSource(invalid); err == nil {
+			t.Fatalf("invalid source DTO accepted: %#v", invalid)
+		}
+	}
+
+	if err := validatePublicMarketplace(store.Marketplace{ID: "marketplace", Name: "Marketplace", CanonicalURL: "https://example.com"}); err != nil {
+		t.Fatalf("canonical Marketplace DTO rejected: %v", err)
+	}
+	if err := validatePublicMarketplace(store.Marketplace{ID: "marketplace", Name: "Marketplace"}); err == nil {
+		t.Fatal("Marketplace DTO without canonical URL accepted")
+	}
+}
+
+func TestPublicBoundaryValidationRejectsDevelopmentFormats(t *testing.T) {
+	validDigest := "sha256:" + strings.Repeat("a", 64)
+	occurrence := store.SourceOccurrence{
+		SourceID:                     "source",
+		Ref:                          "main",
+		Commit:                       strings.Repeat("a", 40),
+		SourceRevisionManifestDigest: store.RevisionDigest(validDigest),
+		Acquisition:                  store.AcquisitionIndexOnly,
+		OccurredAt:                   time.Now().UTC(),
+	}
+	if err := validatePublicSourceOccurrence(occurrence); err != nil {
+		t.Fatalf("canonical source occurrence rejected: %v", err)
+	}
+	for _, invalid := range []store.SourceOccurrence{
+		{SourceID: "source", Ref: "main", Commit: strings.Repeat("a", 40), SourceRevisionManifestDigest: "sha256:opaque", Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
+		{SourceID: "source", Ref: "main", Commit: strings.Repeat("a", 40), SourceRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: "index", OccurredAt: time.Now().UTC()},
+		{SourceID: "source", Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
+	} {
+		if err := validatePublicSourceOccurrence(invalid); err == nil {
+			t.Fatalf("non-canonical source occurrence accepted: %#v", invalid)
+		}
+	}
+
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: "source", Kind: KindSkill, Name: "review"},
+		ContentDigest: store.RevisionDigest(validDigest),
+	}
+	if err := validatePublicResourceRevision(revision); err != nil {
+		t.Fatalf("canonical resource revision rejected: %v", err)
+	}
+	revision.Coordinate.Name = ""
+	if err := validatePublicResourceRevision(revision); err == nil {
+		t.Fatal("resource revision with incomplete coordinate accepted")
+	}
+	revision.Coordinate.Name = "review"
+	revision.Provenance = &store.Provenance{Commit: "refs/heads/main"}
+	if err := validatePublicResourceRevision(revision); err == nil {
+		t.Fatal("resource revision with symbolic provenance commit accepted")
+	}
+}
+
+func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = meta.Close() }()
+
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := meta.PutSource(ctx, store.Source{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}); err != nil {
+		t.Fatalf("put source: %v", err)
+	}
+	cfg := config.Config{Instance: config.Instance{ID: "marketplace"}}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: KindSkill, Name: "review"},
+		ContentDigest: digest,
+	}
+
+	badCoordinate := revision
+	badCoordinate.Coordinate.Name = "other"
+	badDigest := revision
+	badDigest.ContentDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	for _, tc := range []struct {
+		name string
+		path string
+		meta store.MetadataStore
+	}{
+		{name: "latest", path: "/api/v1/resources/source-slug/skill/review", meta: &mismatchedResourceStore{MetadataStore: meta, latest: badCoordinate}},
+		{name: "list", path: "/api/v1/resources/source-slug/skill/review/revisions", meta: &mismatchedResourceStore{MetadataStore: meta, revisions: []store.ResourceRevision{badCoordinate}}},
+		{name: "exact coordinate", path: "/api/v1/resources/source-slug/skill/review/revisions/" + digest, meta: &mismatchedResourceStore{MetadataStore: meta, exact: badCoordinate}},
+		{name: "exact digest", path: "/api/v1/resources/source-slug/skill/review/revisions/" + digest, meta: &mismatchedResourceStore{MetadataStore: meta, exact: badDigest}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(NewServer(cfg, tc.meta, fsblob.New(t.TempDir())).PublicHandler())
+			defer server.Close()
+			resp := mustGet(t, server.URL+tc.path)
+			body := mustRead(t, resp)
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusInternalServerError, body)
+			}
+		})
+	}
+}
+
+type mismatchedResourceStore struct {
+	store.MetadataStore
+	latest    store.ResourceRevision
+	exact     store.ResourceRevision
+	revisions []store.ResourceRevision
+}
+
+func (s *mismatchedResourceStore) GetLatestResourceRevision(context.Context, store.ResourceCoordinate) (store.ResourceRevision, error) {
+	return s.latest, nil
+}
+
+func (s *mismatchedResourceStore) GetResourceRevision(context.Context, store.ResourceCoordinate, store.RevisionDigest) (store.ResourceRevision, error) {
+	return s.exact, nil
+}
+
+func (s *mismatchedResourceStore) ListResourceRevisions(context.Context, store.ResourceCoordinate) ([]store.ResourceRevision, error) {
+	return s.revisions, nil
 }
 
 func mustGet(t *testing.T, url string) *http.Response {

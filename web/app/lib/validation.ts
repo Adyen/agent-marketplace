@@ -5,10 +5,7 @@ const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
-// Older stores used bounded, opaque digest fixtures such as
-// `sha256:manifest123`. Keep accepting that wire form for source history only;
-// routeable resource revisions still require canonical 64-character digests.
-const LEGACY_HISTORY_DIGEST_PATTERN = /^sha256:[A-Za-z0-9._~-]{1,256}$/
+const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
 
 /**
  * Maximum number of source occurrences accepted from one response. The Go
@@ -22,8 +19,8 @@ export function isSha256Digest(value: string): boolean {
   return DIGEST_PATTERN.test(value)
 }
 
-function isHistoryDigest(value: string): boolean {
-  return LEGACY_HISTORY_DIGEST_PATTERN.test(value)
+function isCanonicalGitCommit(value: string): boolean {
+  return GIT_COMMIT_PATTERN.test(value)
 }
 
 export class ApiValidationError extends Error {
@@ -63,9 +60,9 @@ export function normalizeSource(input: unknown): Source {
     id: requiredString(object.id, 'id'),
     slug: requiredString(object.slug, 'slug'),
     ...(aliases === undefined ? {} : { aliases }),
-    origins: stringArray(object.origins, 'origins'),
+    origins: requiredStringArray(object.origins, 'origins'),
     ref: requiredString(object.ref, 'ref'),
-    roots: boundedArray(object.roots, 'roots').map((root, index) => normalizeSourceRoot(root, `roots[${index}]`)),
+    roots: requiredArray(object.roots, 'roots').map((root, index) => normalizeSourceRoot(root, `roots[${index}]`)),
     acquisition,
     ...(publisher === undefined ? {} : { publisher }),
     ...(object.license === undefined ? {} : { license: boundedString(object.license, 'license') }),
@@ -79,17 +76,14 @@ export function normalizeSourceHistory(input: unknown): SourceOccurrence[] {
 
 export function normalizeSourceOccurrence(input: unknown, label = 'source occurrence'): SourceOccurrence {
   const object = asObject(input, label)
-  const commit = object.commit === undefined ? boundedString(object.revision_commit, `${label}.revision_commit`) : boundedString(object.commit, `${label}.commit`)
-  if (object.commit !== undefined && object.revision_commit !== undefined && boundedString(object.revision_commit, `${label}.revision_commit`) !== commit) {
-    throw new ApiValidationError(`${label}.commit and revision_commit do not match`)
-  }
+  if (object.revision_commit !== undefined) throw new ApiValidationError(`${label}.revision_commit is unsupported`)
   return {
     source_id: requiredString(object.source_id, `${label}.source_id`),
     ref: requiredString(object.ref, `${label}.ref`),
-    commit: requiredString(commit, `${label}.commit`),
-    source_revision_manifest_digest: requiredHistoryDigest(object.source_revision_manifest_digest, `${label}.source_revision_manifest_digest`),
+    commit: requiredCommit(object.commit, `${label}.commit`),
+    source_revision_manifest_digest: requiredDigest(object.source_revision_manifest_digest, `${label}.source_revision_manifest_digest`),
     acquisition: requiredAcquisition(object.acquisition, `${label}.acquisition`),
-    ...(object.mirrored_artifact_digest === undefined ? {} : { mirrored_artifact_digest: requiredHistoryDigest(object.mirrored_artifact_digest, `${label}.mirrored_artifact_digest`) }),
+    ...(object.mirrored_artifact_digest === undefined ? {} : { mirrored_artifact_digest: requiredDigest(object.mirrored_artifact_digest, `${label}.mirrored_artifact_digest`) }),
     occurred_at: dateTimeString(object.occurred_at, `${label}.occurred_at`),
   }
 }
@@ -109,15 +103,16 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   const object = asObject(input, label)
   const kind = requiredString(object.kind, `${label}.kind`)
   if (!isResourceKind(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
-  const digest = requiredString(object.content_digest, `${label}.content_digest`)
-  if (!isSha256Digest(digest)) throw new ApiValidationError(`${label}.content_digest is not a SHA-256 digest`)
+  const digest = requiredDigest(object.content_digest, `${label}.content_digest`)
+  const revision = requiredDigest(object.revision, `${label}.revision`)
+  if (revision !== digest) throw new ApiValidationError(`${label}.revision and content_digest do not match`)
   const metadata = object.metadata === undefined ? undefined : stringRecord(object.metadata, `${label}.metadata`)
   return {
     source_id: requiredString(object.source_id, `${label}.source_id`),
     ...(object.source_slug === undefined ? {} : { source_slug: boundedString(object.source_slug, `${label}.source_slug`) }),
     kind,
     name: requiredString(object.name, `${label}.name`),
-    revision: requiredString(object.revision, `${label}.revision`),
+    revision,
     content_digest: digest,
     ...(object.description === undefined ? {} : { description: boundedString(object.description, `${label}.description`) }),
     ...(metadata === undefined ? {} : { metadata }),
@@ -126,7 +121,10 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
 }
 
 export type ExpectedResourceCoordinate = {
-  source: string
+  // source is the route token and may be a slug or an ID. sourceId is used
+  // when the caller has already resolved that token to the canonical ID.
+  source?: string
+  sourceId?: string
   kind: ResourceKind
   name: string
   contentDigest?: string
@@ -135,6 +133,11 @@ export type ExpectedResourceCoordinate = {
 export function normalizeResourceRevision(input: unknown, expected?: ExpectedResourceCoordinate): ResourceRevision {
   const object = asObject(input, 'resource revision')
   const coordinate = stringRecord(object.coordinate, 'coordinate')
+  for (const field of ['marketplace', 'source', 'name']) {
+    requiredString(coordinate[field], `coordinate.${field}`)
+  }
+  const coordinateKind = requiredString(coordinate.kind, 'coordinate.kind')
+  if (!isResourceKind(coordinateKind)) throw new ApiValidationError('coordinate.kind is unsupported')
   const digest = requiredDigest(object.content_digest, 'content_digest')
   if (expected?.contentDigest !== undefined && digest !== expected.contentDigest) {
     throw new ApiValidationError(`content_digest does not match requested digest ${expected.contentDigest}`)
@@ -143,10 +146,10 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
   return {
     coordinate,
     content_digest: digest,
-    ...optionalString(object, 'archive_digest'),
+    ...(object.archive_digest === undefined ? {} : { archive_digest: requiredDigest(object.archive_digest, 'archive_digest') }),
     ...optionalString(object, 'analyzer_version'),
     ...optionalString(object, 'license'),
-    ...optionalString(object, 'acquisition'),
+    ...optionalAcquisition(object),
     findings: boundedUnknownArray(object.findings, 'findings'),
     provenance: boundedUnknownRecord(object.provenance, 'provenance'),
     revocation: boundedUnknownRecord(object.revocation, 'revocation'),
@@ -155,9 +158,8 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
 
 function validateRequestedCoordinate(coordinate: Record<string, string>, expected: ExpectedResourceCoordinate | undefined): void {
   if (!expected) return
-  const coordinateSource = coordinate.source ?? coordinate.source_id ?? coordinate.source_slug
-  if (coordinateSource !== undefined && coordinateSource !== expected.source) {
-    throw new ApiValidationError(`coordinate.source does not match requested source ${expected.source}`)
+  if (expected.sourceId !== undefined && coordinate.source !== expected.sourceId) {
+    throw new ApiValidationError(`coordinate.source does not match requested source ${expected.sourceId}`)
   }
   if (coordinate.kind !== undefined && coordinate.kind !== expected.kind) {
     throw new ApiValidationError(`coordinate.kind does not match requested kind ${expected.kind}`)
@@ -189,10 +191,10 @@ function requiredDigest(value: unknown, label: string): string {
   return digest
 }
 
-function requiredHistoryDigest(value: unknown, label: string): string {
-  const digest = requiredString(value, label)
-  if (!isHistoryDigest(digest)) throw new ApiValidationError(`${label} is not a supported bounded digest`)
-  return digest
+function requiredCommit(value: unknown, label: string): string {
+  const commit = requiredString(value, label)
+  if (!isCanonicalGitCommit(commit)) throw new ApiValidationError(`${label} is not a canonical Git commit`)
+  return commit
 }
 
 function requiredAcquisition(value: unknown, label: string): Source['acquisition'] {
@@ -214,10 +216,10 @@ function dateTimeString(value: unknown, label: string): string {
 
 function normalizeCapabilities(object: Record<string, unknown>): Capabilities {
   return {
-    api_versions: enumArray(object.api_versions, 'api_versions', ['v1'] as const),
-    artifact_schema_versions: enumArray(object.artifact_schema_versions, 'artifact_schema_versions', ['v1'] as const),
-    resource_kinds: enumArray(object.resource_kinds, 'resource_kinds', RESOURCE_KINDS),
-    acquisition_modes: enumArray(object.acquisition_modes, 'acquisition_modes', ['index-only', 'mirror'] as const),
+    api_versions: requiredEnumArray(object.api_versions, 'api_versions', ['v1'] as const),
+    artifact_schema_versions: requiredEnumArray(object.artifact_schema_versions, 'artifact_schema_versions', ['v1'] as const),
+    resource_kinds: requiredEnumArray(object.resource_kinds, 'resource_kinds', RESOURCE_KINDS),
+    acquisition_modes: requiredEnumArray(object.acquisition_modes, 'acquisition_modes', ['index-only', 'mirror'] as const),
     features: stringArray(object.features, 'features'),
   }
 }
@@ -244,8 +246,25 @@ function optionalString(object: Record<string, unknown>, key: string): Record<st
   return object[key] === undefined ? {} : { [key]: boundedString(object[key], key) }
 }
 
+function optionalAcquisition(object: Record<string, unknown>): Record<string, Source['acquisition']> {
+  if (object.acquisition === undefined) return {}
+  return { acquisition: requiredAcquisition(object.acquisition, 'acquisition') }
+}
+
 function stringArray(value: unknown, label: string): string[] {
   return boundedArray(value, label).map((item, index) => boundedString(item, `${label}[${index}]`))
+}
+
+function requiredStringArray(value: unknown, label: string): string[] {
+  const values = stringArray(value, label)
+  if (values.length === 0) throw new ApiValidationError(`${label} must not be empty`)
+  return values
+}
+
+function requiredArray(value: unknown, label: string): unknown[] {
+  const values = boundedArray(value, label)
+  if (values.length === 0) throw new ApiValidationError(`${label} must not be empty`)
+  return values
 }
 
 function enumArray<const Value extends string>(value: unknown, label: string, allowed: readonly Value[]): Value[] {
@@ -253,6 +272,12 @@ function enumArray<const Value extends string>(value: unknown, label: string, al
     if (!(allowed as readonly string[]).includes(item)) throw new ApiValidationError(`${label}[${index}] is unsupported`)
     return item as Value
   })
+}
+
+function requiredEnumArray<const Value extends string>(value: unknown, label: string, allowed: readonly Value[]): Value[] {
+  const values = enumArray(value, label, allowed)
+  if (values.length === 0) throw new ApiValidationError(`${label} must not be empty`)
+  return values
 }
 
 function boundedArray(value: unknown, label: string, maxLength = MAX_ARRAY_LENGTH): unknown[] {

@@ -21,18 +21,7 @@ export type SourcePublisher = Schemas['Publisher']
 // internals, and refresh diagnostics; origins are already sanitized server-side.
 export type Source = JsonResponse<'getSource'>
 
-// openapi-typescript conservatively emits `unknown` for the schema's
-// commit/revision_commit anyOf. Runtime validation resolves that wire
-// compatibility shape into this canonical form with a required commit.
-export interface SourceOccurrence {
-  source_id: string
-  ref: string
-  commit: string
-  source_revision_manifest_digest: string
-  acquisition: Source['acquisition']
-  mirrored_artifact_digest?: string
-  occurred_at: string
-}
+export type SourceOccurrence = Schemas['SourceOccurrence']
 
 export type ResourceListItem = Schemas['ResourceListItem']
 export type SearchResult = JsonResponse<'searchResources'>

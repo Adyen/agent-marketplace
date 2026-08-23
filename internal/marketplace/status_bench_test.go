@@ -19,7 +19,7 @@ func BenchmarkMarketplaceStatusInspection(b *testing.B) {
 	archiveDigest := "sha256:" + strings.Repeat("b", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			writeTestWellKnown(w, "mp")
 			return
 		}
 		_ = json.NewEncoder(w).Encode(store.ResourceRevision{

@@ -11,7 +11,7 @@ const items = [
     source_slug: 'team-tools',
     kind: 'skill',
     name: 'secure-review',
-    revision: 'main',
+    revision: digest,
     content_digest: digest,
     description: hostileDescription,
     metadata: { owner: 'platform' },
@@ -21,7 +21,7 @@ const items = [
     source_slug: 'team-tools',
     kind: 'command',
     name: 'deploy-preview',
-    revision: 'main',
+    revision: `sha256:${'b'.repeat(64)}`,
     content_digest: `sha256:${'b'.repeat(64)}`,
     description: 'Deploy a preview environment.',
   },
@@ -54,7 +54,7 @@ const wellKnown = {
 
 function resource(item) {
   return {
-    coordinate: { source: item.source_id, kind: item.kind, name: item.name },
+    coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name },
     content_digest: item.content_digest,
     archive_digest: `sha256:${'c'.repeat(64)}`,
     analyzer_version: 'e2e-analyzer-1',

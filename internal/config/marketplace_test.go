@@ -72,6 +72,15 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 			}},
 			wantErr: "acquisition",
 		},
+		{
+			name: "development acquisition alias",
+			entries: []MarketplaceEntry{{
+				URL:        "https://market.example",
+				InstanceID: "x",
+				Resources:  []MarketplaceResourcePin{{SourceID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Acquisition: "index"}},
+			}},
+			wantErr: "acquisition",
+		},
 	}
 
 	for _, tc := range tests {

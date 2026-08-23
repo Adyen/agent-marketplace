@@ -21,6 +21,35 @@ registries: []
 	}
 }
 
+func TestV3MarketplaceRejectsDevelopmentAliasesEvenWithOtherConfigErrors(t *testing.T) {
+	data := []byte(`apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+unknown_field: value
+marketplaces:
+  - url: https://market.example
+    instance_id: market
+    resources:
+      - source_id: source
+        kind: skill
+        name: review
+        revision: revision
+        digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        acquisition: index
+        revision_commit: legacy-commit
+`)
+	_, errs := loadV3Config(data, userLayer, true)
+	if len(errs) == 0 {
+		t.Fatal("expected invalid Marketplace aliases to be rejected")
+	}
+	combined := errorsJoin(errs)
+	for _, want := range []string{"revision_commit", "acquisition"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("expected error to mention %q, got: %v", want, combined)
+		}
+	}
+}
+
 func TestV3UserRejectsForbiddenFields(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v3
 harnesses:

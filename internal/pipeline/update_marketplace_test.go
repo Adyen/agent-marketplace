@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -195,7 +196,7 @@ func TestUpdateSkipsSyncForOnlyUnsupportedMarketplacePins(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - source_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - source_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n"
 	if err := os.WriteFile(configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -308,10 +309,10 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	fixture.latest = store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 	})
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.Source{ID: "src", Slug: "renamed-source", Acquisition: store.AcquisitionMirror})
+		_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{ID: "src", Slug: "renamed-source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
 	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
 	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
