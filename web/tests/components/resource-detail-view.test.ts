@@ -12,11 +12,11 @@ const stubs = {
 const digest = 'sha256:' + 'c'.repeat(64)
 
 const resource = {
-  coordinate: { source: 'team/tools', kind: 'skill', name: 'review' },
+  coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'review' },
   content_digest: digest,
   acquisition: 'mirror',
   license: 'Apache-2.0',
-  provenance: { repository: 'https://example.test/repo', commit: 'abc123' },
+  provenance: { repository: 'https://example.test/repo', commit: 'a'.repeat(40) },
   findings: [{ severity: 'low', message: '<script>not markup</script>' }],
 }
 

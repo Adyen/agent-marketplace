@@ -18,7 +18,7 @@ func searchServer(tb testing.TB, name string, fail bool, items ...mpapi.Resource
 	tb.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-" + name})
+			writeTestWellKnown(w, "mp-"+name)
 			return
 		}
 		if r.URL.Path != "/api/v1/search" {
@@ -50,9 +50,14 @@ func searchServer(tb testing.TB, name string, fail bool, items ...mpapi.Resource
 	}))
 }
 
+func canonicalSearchItem(source, kind, name string, score float64) mpapi.ResourceListItem {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	return mpapi.ResourceListItem{SourceID: source, SourceSlug: source, Kind: kind, Name: name, Revision: digest, ContentDigest: digest, Score: score}
+}
+
 func TestFederatedSearchAllConfigured(t *testing.T) {
-	alpha := searchServer(t, "alpha", false, mpapi.ResourceListItem{SourceSlug: "src-a", Kind: "skill", Name: "review", Score: 1.0})
-	beta := searchServer(t, "beta", false, mpapi.ResourceListItem{SourceSlug: "src-b", Kind: "command", Name: "deploy", Score: 0.5})
+	alpha := searchServer(t, "alpha", false, canonicalSearchItem("src-a", "skill", "review", 1.0))
+	beta := searchServer(t, "beta", false, canonicalSearchItem("src-b", "command", "deploy", 0.5))
 	defer alpha.Close()
 	defer beta.Close()
 
@@ -129,8 +134,8 @@ func TestResolveMarketplaceEndpointsCanonicalURLSelectionPreservesVerification(t
 }
 
 func TestFederatedSearchSingleAlias(t *testing.T) {
-	alpha := searchServer(t, "alpha", false, mpapi.ResourceListItem{SourceSlug: "src-a", Kind: "skill", Name: "review", Score: 1.0})
-	beta := searchServer(t, "beta", false, mpapi.ResourceListItem{SourceSlug: "src-b", Kind: "skill", Name: "other", Score: 1.0})
+	alpha := searchServer(t, "alpha", false, canonicalSearchItem("src-a", "skill", "review", 1.0))
+	beta := searchServer(t, "beta", false, canonicalSearchItem("src-b", "skill", "other", 1.0))
 	defer alpha.Close()
 	defer beta.Close()
 
@@ -156,7 +161,7 @@ func TestFederatedSearchSingleAlias(t *testing.T) {
 }
 
 func TestFederatedSearchAdHocURL(t *testing.T) {
-	alpha := searchServer(t, "alpha", false, mpapi.ResourceListItem{SourceSlug: "src-a", Kind: "skill", Name: "review", Score: 1.0})
+	alpha := searchServer(t, "alpha", false, canonicalSearchItem("src-a", "skill", "review", 1.0))
 	defer alpha.Close()
 
 	ec := config.EffectiveConfig{Merged: &config.Config{}}
@@ -178,7 +183,7 @@ func TestFederatedSearchCancellationWhileSlotsAreBusy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-cancel"})
+			writeTestWellKnown(w, "mp-cancel")
 		case "/api/v1/search":
 			searchStarted <- struct{}{}
 			<-r.Context().Done()
@@ -240,7 +245,7 @@ func TestFederatedSearchInstanceIDMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp-actual"})
+			writeTestWellKnown(w, "mp-actual")
 		case "/api/v1/search":
 			searchRequests++
 			_ = json.NewEncoder(w).Encode(SearchResponse{})
@@ -293,7 +298,7 @@ func TestFederatedSearchAllowlistBlock(t *testing.T) {
 }
 
 func TestFederatedSearchPartialFailure(t *testing.T) {
-	alpha := searchServer(t, "alpha", false, mpapi.ResourceListItem{SourceSlug: "src-a", Kind: "skill", Name: "review", Score: 1.0})
+	alpha := searchServer(t, "alpha", false, canonicalSearchItem("src-a", "skill", "review", 1.0))
 	beta := searchServer(t, "beta", true)
 	defer alpha.Close()
 	defer beta.Close()
@@ -343,7 +348,7 @@ func TestFederatedSearchAllFailure(t *testing.T) {
 func TestFederatedSearchLimitOffset(t *testing.T) {
 	items := make([]mpapi.ResourceListItem, 10)
 	for i := range items {
-		items[i] = mpapi.ResourceListItem{SourceSlug: "src", Kind: "skill", Name: fmt.Sprintf("skill-%02d", i), Score: 1.0}
+		items[i] = canonicalSearchItem("src", "skill", fmt.Sprintf("skill-%02d", i), 1.0)
 	}
 	server := searchServer(t, "single", false, items...)
 	defer server.Close()
@@ -371,7 +376,7 @@ func TestFederatedSearchLimitOffset(t *testing.T) {
 func BenchmarkFederatedSearch(b *testing.B) {
 	items := make([]mpapi.ResourceListItem, 100)
 	for i := range items {
-		items[i] = mpapi.ResourceListItem{SourceSlug: "src", Kind: "skill", Name: fmt.Sprintf("skill-%d", i), Score: 0.5}
+		items[i] = canonicalSearchItem("src", "skill", fmt.Sprintf("skill-%d", i), 0.5)
 	}
 	server := searchServer(b, "bench", false, items...)
 	defer server.Close()

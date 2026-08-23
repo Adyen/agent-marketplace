@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -16,7 +17,7 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
-			_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": "mp"})
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 			return
 		}
 		_ = json.NewEncoder(w).Encode(store.ResourceRevision{

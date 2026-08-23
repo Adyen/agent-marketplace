@@ -279,8 +279,12 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 			continue
 		}
 
-		if key == "registries" && i+1 < len(root.Content) {
-			valNode := resolveAlias(root.Content[i+1])
+		if i+1 >= len(root.Content) {
+			continue
+		}
+		valNode := resolveAlias(root.Content[i+1])
+		switch key {
+		case "registries":
 			if valNode.Kind == yaml.SequenceNode {
 				for _, rawItem := range valNode.Content {
 					item := resolveAlias(rawItem)
@@ -289,9 +293,51 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 					}
 				}
 			}
+		case "marketplaces":
+			errs = append(errs, validateV3MarketplaceNodes(valNode)...)
 		}
 	}
 
+	return errs
+}
+
+func validateV3MarketplaceNodes(node *yaml.Node) []error {
+	if node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	var errs []error
+	for i, rawEntry := range node.Content {
+		entry := resolveAlias(rawEntry)
+		path := fmt.Sprintf("marketplaces[%d]", i)
+		if entry == nil || entry.Kind != yaml.MappingNode {
+			errs = append(errs, fmt.Errorf("%s must be a mapping", path))
+			continue
+		}
+		if err := validateMarketplaceMapping(entry, path, marketplaceEntryFields); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		resources := findMappingValue(entry, "resources")
+		if resources == nil {
+			continue
+		}
+		resources = resolveAlias(resources)
+		if resources.Kind != yaml.SequenceNode {
+			errs = append(errs, fmt.Errorf("%s.resources must be a sequence", path))
+			continue
+		}
+		for j, rawPin := range resources.Content {
+			pin := resolveAlias(rawPin)
+			pinPath := fmt.Sprintf("%s.resources[%d]", path, j)
+			if pin == nil || pin.Kind != yaml.MappingNode {
+				errs = append(errs, fmt.Errorf("%s must be a mapping", pinPath))
+				continue
+			}
+			if err := validateMarketplaceMapping(pin, pinPath, marketplacePinFields); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	return errs
 }
 

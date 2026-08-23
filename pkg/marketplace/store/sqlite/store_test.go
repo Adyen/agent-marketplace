@@ -198,8 +198,8 @@ func TestResourceRevisionCRUD(t *testing.T) {
 	}
 	rev := store.ResourceRevision{
 		Coordinate:      coord,
-		ContentDigest:   store.RevisionDigest("sha256:content123"),
-		ArchiveDigest:   store.ArchiveDigest("sha256:archive123"),
+		ContentDigest:   store.RevisionDigest("sha256:1111111111111111111111111111111111111111111111111111111111111111"),
+		ArchiveDigest:   store.ArchiveDigest("sha256:2222222222222222222222222222222222222222222222222222222222222222"),
 		AnalyzerVersion: "analyzer/v1",
 		Findings: []store.Finding{
 			{Code: "hidden-control", Severity: "warning", Policy: "flag", Message: "found control"},
@@ -238,9 +238,9 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 		SourceID:                     store.SourceID("src-1"),
 		Ref:                          "main",
 		Commit:                       "abc123",
-		SourceRevisionManifestDigest: store.RevisionDigest("sha256:manifest123"),
+		SourceRevisionManifestDigest: store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333"),
 		Acquisition:                  store.AcquisitionMirror,
-		MirroredArtifactDigest:       store.ArchiveDigest("sha256:artifact123"),
+		MirroredArtifactDigest:       store.ArchiveDigest("sha256:4444444444444444444444444444444444444444444444444444444444444444"),
 		OccurredAt:                   time.Now().UTC().Add(-time.Hour),
 	}
 	if err := s.PutSourceOccurrence(ctx, occ); err != nil {
@@ -301,9 +301,9 @@ func TestSourceOccurrenceConcurrentDuplicates(t *testing.T) {
 		SourceID:                     store.SourceID("src-concurrent"),
 		Ref:                          "main",
 		Commit:                       "concurrent-commit",
-		SourceRevisionManifestDigest: store.RevisionDigest("sha256:manifest-concurrent"),
+		SourceRevisionManifestDigest: store.RevisionDigest("sha256:6666666666666666666666666666666666666666666666666666666666666666"),
 		Acquisition:                  store.AcquisitionMirror,
-		MirroredArtifactDigest:       store.ArchiveDigest("sha256:artifact-concurrent"),
+		MirroredArtifactDigest:       store.ArchiveDigest("sha256:7777777777777777777777777777777777777777777777777777777777777777"),
 	}
 
 	const publishers = 16
@@ -361,7 +361,7 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	cr := store.CollectionRevision{
 		ID:             "coll-1",
 		SourceID:       store.SourceID("src-1"),
-		ManifestDigest: store.RevisionDigest("sha256:collmanifest"),
+		ManifestDigest: store.RevisionDigest("sha256:5555555555555555555555555555555555555555555555555555555555555555"),
 		Members: []store.ResourceCoordinate{
 			{Marketplace: store.MarketplaceID("mp"), Source: store.SourceID("src-1"), Kind: "skill", Name: "member"},
 		},

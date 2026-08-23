@@ -1,5 +1,34 @@
 package api
 
+func IsCanonicalSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || value[:len("sha256:")] != "sha256:" {
+		return false
+	}
+	for i := len("sha256:"); i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// IsCanonicalGitCommit reports whether value is the full, lowercase hexadecimal
+// object ID emitted by git for a commit. Short IDs and symbolic/development
+// labels are intentionally not valid public provenance.
+func IsCanonicalGitCommit(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for i := range value {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // Capabilities is the well-known capability block returned by a Marketplace
 // instance. Clients use it to negotiate API version, artifact schema version,
 // supported resource kinds, and acquisition modes.

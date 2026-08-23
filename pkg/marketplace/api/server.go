@@ -182,6 +182,11 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 	// Marketplace rows may predate public URL validation. Sanitize at the
 	// response boundary so legacy canonical URLs cannot leak credentials.
 	mp.CanonicalURL = publicurl.Sanitize(mp.CanonicalURL)
+	if err := validatePublicMarketplace(mp); err != nil {
+		slog.Error("instance contains invalid public metadata", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
+		return
+	}
 	writeJSON(w, http.StatusOK, mp)
 }
 
@@ -230,6 +235,18 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, rev := range revs {
+		if err := validatePublicResourceRevision(rev); err != nil {
+			slog.Error("search returned invalid resource revision", "err", err)
+			writeError(w, http.StatusInternalServerError, "search failed")
+			return
+		}
+		if rev.Coordinate.Marketplace != s.mpID {
+			slog.Error("search returned resource from another Marketplace", "resource_marketplace", rev.Coordinate.Marketplace, "marketplace", s.mpID)
+			writeError(w, http.StatusInternalServerError, "search failed")
+			return
+		}
+	}
 	total := len(revs)
 	sort.Slice(revs, func(i, j int) bool {
 		si := relevanceScore(revs[i].Coordinate.Name, searchQ)
@@ -296,7 +313,13 @@ func (s *Server) handleSourceDetail(w http.ResponseWriter, r *http.Request, slug
 	}
 	// Convert through the public DTO: the store model contains credentials and
 	// refresh diagnostics that must never cross the API boundary.
-	writeJSON(w, http.StatusOK, sourceDTO(src))
+	public := sourceDTO(src)
+	if err := validatePublicSource(public); err != nil {
+		slog.Error("source contains invalid public metadata", "source", slugOrID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load source")
+		return
+	}
+	writeJSON(w, http.StatusOK, public)
 }
 
 func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slugOrID string) {
@@ -317,6 +340,13 @@ func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slu
 		return
 	}
 	history = boundSourceHistory(history)
+	for _, occurrence := range history {
+		if err := validatePublicSourceOccurrence(occurrence); err != nil {
+			slog.Error("source history contains invalid occurrence", "source", src.ID, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to load source history")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, history)
 }
 
@@ -371,6 +401,11 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, so
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
+	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+		slog.Error("resource detail contains invalid revision", "coord", coord, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load resource")
+		return
+	}
 	writeJSON(w, http.StatusOK, rev)
 }
 
@@ -396,10 +431,21 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "failed to load revisions")
 		return
 	}
+	for _, rev := range revs {
+		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+			slog.Error("resource revisions contain invalid revision", "coord", coord, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to load revisions")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, revs)
 }
 
 func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest string) {
+	if !isCanonicalSHA256Digest(digest) {
+		writeError(w, http.StatusBadRequest, "invalid revision digest")
+		return
+	}
 	if !IsMarketplaceKind(kind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
@@ -422,6 +468,11 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		slog.Error("revision detail failed", "coord", coord, "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load revision")
+		return
+	}
+	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
+		slog.Error("revision detail contains invalid revision", "coord", coord, "digest", digest, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
@@ -595,7 +646,95 @@ func boundSourceHistory(history []store.SourceOccurrence) []store.SourceOccurren
 }
 
 func isCanonicalSHA256Digest(value string) bool {
-	return strings.HasPrefix(value, "sha256:") && isLowerHexDigest(value[len("sha256:"):])
+	return IsCanonicalSHA256Digest(value)
+}
+
+func validatePublicMarketplace(mp store.Marketplace) error {
+	if strings.TrimSpace(string(mp.ID)) == "" || strings.TrimSpace(mp.Name) == "" || strings.TrimSpace(mp.CanonicalURL) == "" {
+		return errors.New("marketplace identity is incomplete")
+	}
+	if err := publicurl.Validate(mp.CanonicalURL); err != nil {
+		return fmt.Errorf("canonical URL: %w", err)
+	}
+	return nil
+}
+
+func validatePublicSource(src SourceDTO) error {
+	if strings.TrimSpace(string(src.ID)) == "" || strings.TrimSpace(src.Slug) == "" || strings.TrimSpace(src.Ref) == "" {
+		return errors.New("source identity is incomplete")
+	}
+	if len(src.Origins) == 0 || len(src.Roots) == 0 {
+		return errors.New("source domain fields are incomplete")
+	}
+	if err := src.Acquisition.Validate(); err != nil {
+		return err
+	}
+	for i, root := range src.Roots {
+		if strings.TrimSpace(root.Path) == "" {
+			return fmt.Errorf("source root %d has no path", i)
+		}
+	}
+	return nil
+}
+
+func validatePublicSourceOccurrence(occ store.SourceOccurrence) error {
+	if strings.TrimSpace(string(occ.SourceID)) == "" || strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.Commit) == "" {
+		return errors.New("source occurrence identity is incomplete")
+	}
+	if !IsCanonicalGitCommit(occ.Commit) {
+		return errors.New("source occurrence commit is not canonical")
+	}
+	if !isCanonicalSHA256Digest(string(occ.SourceRevisionManifestDigest)) {
+		return errors.New("source occurrence manifest digest is not canonical")
+	}
+	if err := occ.Acquisition.Validate(); err != nil {
+		return err
+	}
+	if occ.MirroredArtifactDigest != "" && !isCanonicalSHA256Digest(string(occ.MirroredArtifactDigest)) {
+		return errors.New("source occurrence artifact digest is not canonical")
+	}
+	if occ.OccurredAt.IsZero() {
+		return errors.New("source occurrence timestamp is missing")
+	}
+	return nil
+}
+
+func validatePublicResourceRevision(rev store.ResourceRevision) error {
+	coord := rev.Coordinate
+	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Source)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
+		return errors.New("resource coordinate is incomplete")
+	}
+	if !IsMarketplaceKind(coord.Kind) {
+		return fmt.Errorf("resource coordinate kind %q is invalid", coord.Kind)
+	}
+	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
+		return errors.New("resource content digest is not canonical")
+	}
+	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
+		return errors.New("resource archive digest is not canonical")
+	}
+	if rev.Provenance != nil {
+		if rev.Provenance.Commit != "" && !IsCanonicalGitCommit(rev.Provenance.Commit) {
+			return errors.New("resource provenance commit is not canonical")
+		}
+		if rev.Provenance.ManifestDigest != "" && !isCanonicalSHA256Digest(string(rev.Provenance.ManifestDigest)) {
+			return errors.New("resource provenance manifest digest is not canonical")
+		}
+	}
+	return nil
+}
+
+func validatePublicResourceRevisionMatches(rev store.ResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
+	if err := validatePublicResourceRevision(rev); err != nil {
+		return err
+	}
+	if rev.Coordinate != expected {
+		return fmt.Errorf("resource coordinate %q does not match requested %q", rev.Coordinate, expected)
+	}
+	if expectedDigest != "" && string(rev.ContentDigest) != expectedDigest {
+		return fmt.Errorf("resource content digest %q does not match requested %q", rev.ContentDigest, expectedDigest)
+	}
+	return nil
 }
 
 func isLowerHexDigest(value string) bool {

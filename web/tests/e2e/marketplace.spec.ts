@@ -12,7 +12,7 @@ function searchResult() {
       source_slug: 'team-tools',
       kind: 'skill',
       name: 'secure-review',
-      revision: 'main',
+      revision: digest,
       content_digest: digest,
       description: hostileDescription,
     }],

@@ -405,7 +405,7 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if err := validateMarketplaceSegment("revision", pin.Revision); err != nil {
 		return err
 	}
-	if !contentDigestRE.MatchString(pin.Digest) {
+	if !api.IsCanonicalSHA256Digest(pin.Digest) {
 		return fmt.Errorf("digest must be sha256:<64-hex>")
 	}
 	if pin.SourceSlug != "" {
@@ -413,8 +413,8 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 			return err
 		}
 	}
-	if pin.Acquisition != "" && pin.Acquisition != MarketplaceAcquisitionMirror && pin.Acquisition != MarketplaceAcquisitionIndex {
-		return fmt.Errorf("acquisition must be %q or %q", MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndex)
+	if pin.Acquisition != "" && pin.Acquisition != MarketplaceAcquisitionMirror && pin.Acquisition != MarketplaceAcquisitionIndexOnly {
+		return fmt.Errorf("acquisition must be %q or %q", MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly)
 	}
 	return ValidateMarketplaceInstalledName(pin.InstalledName)
 }
