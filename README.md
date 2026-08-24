@@ -82,9 +82,8 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The commands above assume a machine-wide target harness set is already
-configured (usually `harnesses: [factory]` in `~/.agents/config.yaml` or
-`/etc/agent-marketplace/config.yaml`).
+The commands above use the target harness set from the project config when
+present, otherwise from `~/.agents/config.yaml` or `/etc/agent-marketplace/config.yaml`.
 
 To install just one resource instead of the whole bundle, name it. Because the
 name alone can be ambiguous, the registry it comes from is always recorded:
@@ -163,13 +162,13 @@ How it works from a user's point of view:
 
 A minimal committed repo config looks like this — note that the resource
 selection lives **inside** the registry entry, namespaced by `url` + `ref`
-(+ optional `path`). The target harness set is machine-wide
-(`~/.agents/config.yaml` or `/etc/agent-marketplace/config.yaml`), so repo
-configs do **not** declare a top-level `harnesses:` block:
+(+ optional `path`). A project may also declare a top-level `harnesses:` list;
+when omitted, the target set falls back to `~/.agents/config.yaml` or
+`/etc/agent-marketplace/config.yaml`:
 
 ```yaml
 # .agents/config.yaml  (committed)
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 
 registries:
   - url: git@gitlab.example.com:example-org/infra-skills.git

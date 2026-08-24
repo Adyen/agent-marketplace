@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -564,18 +563,13 @@ func addValuesToRegistrySubSequence(configPath, registryURL, registryPath, topKe
 }
 
 func SetHarnessesInConfig(configPath string, harnesses []string) error {
-	globalPath, err := GlobalConfigPath()
-	if err != nil {
-		return fmt.Errorf("harnesses can only be set in the user-personal (global) config; cannot resolve global path: %w", err)
-	}
-	if !isGlobalConfigPath(configPath) {
-		slog.Warn("rejected harnesses write to non-global config", "config_path", configPath, "global_path", globalPath)
-		return fmt.Errorf("harnesses can only be set in the user-personal (global) config (%s), not in %q", globalPath, configPath)
+	if isLocalConfigPath(configPath) {
+		return fmt.Errorf("harnesses cannot be set in repository personal config %q", configPath)
 	}
 
 	// Normalize, dedupe, and reject unknown or non-compiler targets before any
-	// file is written, so a typo cannot land in the machine-wide target set.
-	harnesses, err = canonicalCompilerHarnesses("harnesses", harnesses)
+	// file is written, so a typo cannot land in the target harness set.
+	harnesses, err := canonicalCompilerHarnesses("harnesses", harnesses)
 	if err != nil {
 		return err
 	}

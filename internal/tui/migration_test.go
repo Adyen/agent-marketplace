@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
+func TestSnapshotV2ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	writeV2Config(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
@@ -38,17 +39,11 @@ func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(repoRoot, homeDir, catalogLoadCached))
+	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
-	if m.pane != paneMigrationModal {
-		t.Fatalf("expected migration modal, got pane=%v", m.pane)
-	}
-	if len(m.migrationPrompt.configs) != 1 {
-		t.Fatalf("expected one pending migration, got %d", len(m.migrationPrompt.configs))
-	}
-	if got := m.migrationPrompt.configs[0].path; got != filepath.Join(repoRoot, ".agents", "config.yaml") {
-		t.Fatalf("expected repo config path, got %q", got)
+	if m.pane != paneList {
+		t.Fatalf("expected list pane for v2 config, got pane=%v", m.pane)
 	}
 }
 
@@ -78,7 +73,7 @@ func TestSnapshotV1ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(repoRoot, homeDir, catalogLoadCached))
+	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
 	if m.pane == paneMigrationModal {
@@ -156,16 +151,16 @@ func TestMigrationModalRunMigratesConfig(t *testing.T) {
 	if done.err != nil {
 		t.Fatalf("migration failed: %v", done.err)
 	}
-	if done.count != 2 {
-		t.Fatalf("expected two migrated configs, got %d", done.count)
+	if done.count != 1 {
+		t.Fatalf("expected only the incomplete user config to be remediated, got %d migrations", done.count)
 	}
 
 	repoCfg, err := config.LoadConfigFromPath(configPath)
 	if err != nil {
 		t.Fatalf("load migrated repo config: %v", err)
 	}
-	if repoCfg.APIVersion != config.APIVersionV3 {
-		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV3, repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV2 {
+		t.Fatalf("expected repo apiVersion %q, got %q", config.APIVersionV2, repoCfg.APIVersion)
 	}
 	if len(repoCfg.Harnesses) != 0 {
 		t.Fatalf("expected repo config to have no harnesses, got %v", repoCfg.Harnesses)
@@ -191,10 +186,10 @@ func TestRenderMigrationModalIncludesActions(t *testing.T) {
 
 	out := renderMigrationModal(m)
 	for _, want := range []string{
-		"Config migration required",
+		"Config remediation required",
 		"Project",
 		"agent-marketplace migrate --harnesses " + harnessesFlag,
-		"apiVersion: agent-marketplace/v3",
+		"apiVersion: agent-marketplace/v2",
 		"Existing registries, selected skills, excludes, and comments are preserved",
 		"harnesses: " + harnessesList,
 		"[m]",

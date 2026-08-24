@@ -6,7 +6,7 @@ import (
 )
 
 // TestDoctorReportsManagedInstallationDiagnostics verifies that `doctor`
-// surfaces the v3 organization config path, managed state, validation result,
+// surfaces the organization config path, managed state, validation result,
 // filesystem metadata, and trust warnings even when the org config is writable.
 func TestDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
 	env := newEnv(t)
@@ -23,7 +23,7 @@ registries: []
 	}
 
 	for _, needle := range []string{
-		"v3 org managed: true",
+		"org managed: true",
 		"MANAGED INSTALLATION",
 		"state: managed",
 		"validation: valid",

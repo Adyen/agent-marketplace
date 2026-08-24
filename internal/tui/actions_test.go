@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -612,7 +613,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap.errs) > 0 {
 		t.Fatalf("snapshot errors: %v", snap.errs)
 	}
@@ -623,7 +624,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("resolved skill Resource is nil; TUI sync would prune without writing")
 	}
 
-	msg := runSyncCmd(repoRoot)()
+	msg := runSyncCmd(context.Background(), repoRoot)()
 	done, ok := msg.(syncDoneMsg)
 	if !ok {
 		t.Fatalf("runSyncCmd returned %T, want syncDoneMsg", msg)
@@ -705,7 +706,7 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap.errs) > 0 {
 		t.Fatalf("snapshot errors: %v", snap.errs)
 	}
@@ -782,7 +783,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(repoRoot, homeDir)()
+	msg := runUpdateCmd(context.Background(), repoRoot, homeDir)()
 	if _, ok := msg.(reloadMsg); !ok {
 		t.Fatalf("runUpdateCmd returned %T, want reloadMsg", msg)
 	}

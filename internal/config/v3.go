@@ -8,7 +8,7 @@ import (
 )
 
 // layerKind identifies which Configuration Layer is being loaded so that
-// strict v3 validation can reject forbidden fields per ADR 0002.
+// strict layer-aware validation can reject forbidden fields.
 type layerKind int
 
 const (
@@ -33,7 +33,7 @@ func (k layerKind) name() string {
 	}
 }
 
-// topLevelAllowed lists the keys permitted at the root of a v3 config for
+// topLevelAllowed lists the keys permitted at the root of a config for
 // each Configuration Layer. Fields not in the allowlist are rejected before
 // decoding, so unknown keys are also caught.
 var topLevelAllowed = map[layerKind]map[string]bool{
@@ -51,6 +51,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":               true,
 		"backup":             true,
 		"logging":            true,
+		"telemetry":          true,
 	},
 	userLayer: {
 		"apiVersion":         true,
@@ -66,9 +67,11 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":               true,
 		"backup":             true,
 		"logging":            true,
+		"telemetry":          true,
 	},
 	repoLayer: {
 		"apiVersion":         true,
+		"harnesses":          true,
 		"allowed_registries": true,
 		"registries":         true,
 		"collections":        true,
@@ -94,8 +97,6 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 }
 
 // registryEntryAllowed is the set of keys permitted on every registry entry.
-// required and default are validated separately because they are forbidden
-// only in the repository personal layer.
 var registryEntryAllowed = map[string]bool{
 	"url":            true,
 	"ref":            true,
@@ -124,61 +125,105 @@ func resolveAlias(n *yaml.Node) *yaml.Node {
 	return n
 }
 
-// loadV3Config loads a strict agent-marketplace/v3 Config from raw YAML.
-// It validates the YAML node against the per-layer allowlist, decodes with
+// loadV3Config loads a strict agent-marketplace/v2 or /v3 Config from raw
+// YAML. v2 is canonical; v3 is accepted as a compatibility alias. It
+// validates the YAML node against the per-layer allowlist, decodes with
 // KnownFields, and then runs structural validation.
 func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, []error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		var cfg Config
+		if err := cfg.validate(requireHarnesses, kind != localLayer, kind.name()); err != nil {
+			return nil, []error{fmt.Errorf("validate empty %s config: %w", kind.name(), err)}
+		}
+		return &cfg, nil
+	}
+
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
-		return nil, []error{fmt.Errorf("parse %s config: %w", kind.name(), err)}
+		return nil, []error{fmt.Errorf("parse config: %w", err)}
 	}
 
-	if errs := validateV3ConfigNode(&node, kind); len(errs) > 0 {
-		return nil, errs
-	}
+	nodeErrs := validateV3ConfigNode(&node, kind)
 
+	// When the node has structural or unknown-key errors, strict KnownFields
+	// decoding would duplicate those errors. Decode leniently so we can still
+	// run value-level validation (e.g. unknown harness targets) on the rest of
+	// the document. Use strict decoding only when the node is clean.
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
+	if len(nodeErrs) == 0 {
+		decoder.KnownFields(true)
+	}
 	var cfg Config
 	if err := decoder.Decode(&cfg); err != nil {
-		return nil, []error{fmt.Errorf("decode %s config: %w", kind.name(), err)}
+		if len(nodeErrs) > 0 {
+			return nil, append(nodeErrs, fmt.Errorf("parse config: %w", err))
+		}
+		return nil, []error{fmt.Errorf("parse config: %w", err)}
 	}
 	// Canonicalize target names before validating them, so a harness written
 	// with stray whitespace is trimmed rather than reported as unknown.
 	normalizeConfigHarnessTargets(&cfg)
 
-	if err := cfg.validate(requireHarnesses, false); err != nil {
-		return nil, []error{fmt.Errorf("validate %s config: %w", kind.name(), err)}
+	// If the document has structural node errors, do not also require a
+	// harnesses list; reporting missing harnesses on top of structural problems
+	// is noisy. Value-level validation (unknown harness targets, etc.) still
+	// runs so callers see the specific invalid values.
+	validateRequireHarnesses := requireHarnesses
+	if len(nodeErrs) > 0 {
+		validateRequireHarnesses = false
 	}
 
+	// apiVersion is required for Config-schema files (org/user/repo) but
+	// optional for local configs, which are generated without it.
+	requireAPIVersion := kind != localLayer
+	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion, kind.name()); err != nil {
+		nodeErrs = append(nodeErrs, err)
+	}
+
+	if len(nodeErrs) > 0 {
+		return &cfg, nodeErrs
+	}
 	return &cfg, nil
 }
 
-// loadV3LocalConfig loads a strict agent-marketplace/v3 LocalConfig from raw
-// YAML. It validates the YAML node against the repository personal allowlist
-// and then runs structural validation.
+// loadV3LocalConfig loads a strict repository personal config from raw YAML.
+// It validates the YAML node against the repository personal allowlist and
+// then runs structural validation.
 func loadV3LocalConfig(data []byte) (*LocalConfig, []error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return &LocalConfig{}, nil
+	}
+
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
-		return nil, []error{fmt.Errorf("parse repository personal config: %w", err)}
+		return nil, []error{fmt.Errorf("parse config: %w", err)}
 	}
 
-	if errs := validateV3ConfigNode(&node, localLayer); len(errs) > 0 {
-		return nil, errs
-	}
+	nodeErrs := validateV3ConfigNode(&node, localLayer)
 
+	// See loadV3Config for the rationale: avoid duplicating node-level errors
+	// with strict decoding, but still validate values when the document has
+	// layer-forbidden keys.
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
+	if len(nodeErrs) == 0 {
+		decoder.KnownFields(true)
+	}
 	var cfg LocalConfig
 	if err := decoder.Decode(&cfg); err != nil {
-		return nil, []error{fmt.Errorf("decode repository personal config: %w", err)}
+		if len(nodeErrs) > 0 {
+			return nil, append(nodeErrs, fmt.Errorf("parse config: %w", err))
+		}
+		return nil, []error{fmt.Errorf("parse config: %w", err)}
 	}
 	normalizeLocalConfigHarnessTargets(&cfg)
 
 	if err := cfg.ValidateBasic(); err != nil {
-		return nil, []error{fmt.Errorf("validate repository personal config: %w", err)}
+		nodeErrs = append(nodeErrs, err)
 	}
 
+	if len(nodeErrs) > 0 {
+		return &cfg, nodeErrs
+	}
 	return &cfg, nil
 }
 
@@ -241,11 +286,6 @@ func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 		key := keyNode.Value
 		if !registryEntryAllowed[key] {
 			errs = append(errs, fmt.Errorf("forbidden or unknown registry entry field %q in %s configuration", key, kind.name()))
-			continue
-		}
-
-		if kind == localLayer && (key == "required" || key == "default") {
-			errs = append(errs, fmt.Errorf("forbidden registry entry field %q in repository personal configuration", key))
 		}
 	}
 

@@ -3629,6 +3629,31 @@ harnesses:
 				}},
 		},
 	},
+	// ===== telemetry =====
+	{
+		Name: "telemetry/commands",
+		Desc: "Given a minimal user personal config, When the telemetry control commands are exercised, Then status, enable, preview, disable, and purge behave as expected",
+		GlobalCfg: `
+harnesses:
+  - factory
+`,
+		Steps: []Step{
+			{Args: []string{"telemetry", "status"}, MustPass: true,
+				OutContains: []string{"Telemetry status", "Effective level:"}},
+			{Args: []string{"telemetry", "enable", "--level", "basic"}, MustPass: true,
+				OutContains: []string{"Telemetry enabled", "basic"}},
+			{Args: []string{"telemetry", "status"}, MustPass: true,
+				OutContains: []string{"Effective level:", "basic", "(user)"}},
+			{Args: []string{"telemetry", "preview", "--level", "basic"}, MustPass: true,
+				OutContains: []string{"Preview payload written to", "level:", "basic"}},
+			{Args: []string{"telemetry", "disable"}, MustPass: true,
+				OutContains: []string{"Telemetry disabled"}},
+			{Args: []string{"telemetry", "status"}, MustPass: true,
+				OutContains:    []string{"Effective level:", "off"},
+				OutNotContains: []string{"basic"}},
+			{Args: []string{"telemetry", "purge"}, MustPass: true},
+		},
+	},
 }
 
 // ---------- parallelism configuration ----------

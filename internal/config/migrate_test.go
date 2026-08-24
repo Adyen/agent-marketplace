@@ -24,7 +24,7 @@ func readConfigString(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestMigrateV2ToV3UserAndRepo(t *testing.T) {
+func TestMigrateV2UserAndRepo(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -53,28 +53,31 @@ registries:
 	if err != nil {
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
-	if !result.UserMigrated || !result.RepoMigrated {
-		t.Fatalf("expected both user and repo to be migrated: %+v", result)
+	if result.UserMigrated {
+		t.Fatalf("expected valid user config to be unchanged: %+v", result)
+	}
+	if result.RepoMigrated {
+		t.Fatalf("expected valid repository config to be unchanged: %+v", result)
 	}
 
 	userData := readConfigString(t, userPath)
-	if !strings.Contains(userData, "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("expected user config to be v3, got:\n%s", userData)
+	if !strings.Contains(userData, "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("expected user config to remain v2, got:\n%s", userData)
 	}
 	if !strings.Contains(userData, "harnesses:") {
 		t.Fatalf("expected user harnesses to be preserved, got:\n%s", userData)
 	}
 
 	repoData := readConfigString(t, repoPath)
-	if !strings.Contains(repoData, "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("expected repo config to be v3, got:\n%s", repoData)
+	if !strings.Contains(repoData, "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("expected repo config to remain v2, got:\n%s", repoData)
 	}
-	if strings.Contains(repoData, "harnesses:") {
-		t.Fatalf("expected repo harnesses to be removed, got:\n%s", repoData)
+	if !strings.Contains(repoData, "harnesses:") || !strings.Contains(repoData, "- factory") {
+		t.Fatalf("expected repo harnesses to be preserved, got:\n%s", repoData)
 	}
 }
 
-func TestMigratePreservesUserHarnessesAndRemovesRepoHarnesses(t *testing.T) {
+func TestMigratePreservesUserAndRepoHarnesses(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -112,8 +115,8 @@ registries:
 	if len(errs) > 0 {
 		t.Fatalf("expected valid migrated repo config: %v", errors.Join(errs...))
 	}
-	if len(repoCfg.Harnesses) != 0 {
-		t.Fatalf("expected repo harnesses removed, got %v", repoCfg.Harnesses)
+	if !equalStrings(repoCfg.Harnesses, []string{"claude"}) {
+		t.Fatalf("expected repo harnesses preserved as [claude], got %v", repoCfg.Harnesses)
 	}
 }
 
@@ -137,16 +140,14 @@ registries:
 	if err != nil {
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
-	if !result.UserMigrated || !result.RepoMigrated {
-		t.Fatalf("expected user created and repo migrated: %+v", result)
+	if result.UserMigrated || result.RepoMigrated {
+		t.Fatalf("expected project-only config to remain unchanged: %+v", result)
 	}
-
-	userCfg, errs := loadV3Config([]byte(readConfigString(t, userPath)), userLayer, true)
-	if len(errs) > 0 {
-		t.Fatalf("expected valid user config: %v", errors.Join(errs...))
+	if _, err := os.Stat(userPath); !os.IsNotExist(err) {
+		t.Fatalf("expected project harnesses not to create a user config, stat error: %v", err)
 	}
-	if !equalStrings(userCfg.Harnesses, []string{"windsurf"}) {
-		t.Fatalf("expected user harnesses [windsurf] from repo, got %v", userCfg.Harnesses)
+	if !strings.Contains(readConfigString(t, repoPath), "- windsurf") {
+		t.Fatalf("expected project harnesses to be preserved")
 	}
 }
 
@@ -278,6 +279,8 @@ registries: []
 	writeV2Config(t, repoPath, `apiVersion: agent-marketplace/v3
 registries: []
 `)
+	originalUser := readConfigString(t, userPath)
+	originalRepo := readConfigString(t, repoPath)
 
 	result, err := MigrateConfigFiles(MigratePaths{User: userPath, Repo: repoPath}, nil)
 	if err != nil {
@@ -285,6 +288,12 @@ registries: []
 	}
 	if result.UserMigrated || result.RepoMigrated {
 		t.Fatalf("expected no files to be modified for already-v3 configs: %+v", result)
+	}
+	if got := readConfigString(t, userPath); got != originalUser {
+		t.Fatalf("expected v3 user config bytes to remain unchanged, got:\n%s", got)
+	}
+	if got := readConfigString(t, repoPath); got != originalRepo {
+		t.Fatalf("expected v3 repo config bytes to remain unchanged, got:\n%s", got)
 	}
 }
 
@@ -350,15 +359,15 @@ skills:
 	}
 
 	localData := readConfigString(t, localPath)
-	if !strings.Contains(localData, "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("expected local config to be v3, got:\n%s", localData)
+	if !strings.Contains(localData, "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("expected local config to be v2, got:\n%s", localData)
 	}
 	if strings.Contains(localData, "harnesses:") {
 		t.Fatalf("expected local harnesses to be removed, got:\n%s", localData)
 	}
 
 	if _, errs := loadV3LocalConfig([]byte(localData)); len(errs) > 0 {
-		t.Fatalf("expected migrated local config to be valid v3: %v", errors.Join(errs...))
+		t.Fatalf("expected migrated local config to be valid: %v", errors.Join(errs...))
 	}
 }
 
@@ -416,8 +425,8 @@ registries:
 	if err != nil {
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
-	if !result.UserMigrated || !result.RepoMigrated {
-		t.Fatalf("expected user and repo to migrate on first run: %+v", result)
+	if result.UserMigrated || result.RepoMigrated {
+		t.Fatalf("expected valid v2 configs to remain unchanged: %+v", result)
 	}
 
 	repoCfg, errs := loadV3Config([]byte(readConfigString(t, repoPath)), repoLayer, false)
@@ -563,8 +572,8 @@ skills:
 	if err != nil {
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
-	if !result.UserMigrated {
-		t.Fatalf("expected user to be migrated")
+	if result.UserMigrated {
+		t.Fatalf("expected user config to remain unchanged")
 	}
 	if result.RepoMigrated {
 		t.Fatalf("expected repo to be skipped because it shares the user path")
@@ -574,8 +583,8 @@ skills:
 	}
 
 	userData := readConfigString(t, userPath)
-	if !strings.Contains(userData, "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("expected user config to be v3, got:\n%s", userData)
+	if !strings.Contains(userData, "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("expected user config to remain v2, got:\n%s", userData)
 	}
 	if !strings.Contains(userData, "harnesses:") {
 		t.Fatalf("expected user harnesses to be preserved, got:\n%s", userData)
@@ -585,8 +594,8 @@ skills:
 	if strings.Contains(localData, "harnesses:") {
 		t.Fatalf("expected local harnesses to be removed, got:\n%s", localData)
 	}
-	if !strings.Contains(localData, "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("expected local config to be v3, got:\n%s", localData)
+	if !strings.Contains(localData, "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("expected local config to be v2, got:\n%s", localData)
 	}
 }
 
@@ -611,6 +620,8 @@ harnesses:
 	writeV2Config(t, repoPath, `apiVersion: agent-marketplace/v2
 harnesses:
   - claude
+backup:
+  enabled: true
 registries:
   - url: git@example.com:repo.git
     ref: main
