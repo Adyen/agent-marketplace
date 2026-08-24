@@ -73,6 +73,52 @@ func ParseResourceCoordinate(s string) (ResourceCoordinate, error) {
 	}, nil
 }
 
+// RevisionRevocationTarget is the exact coordinate-plus-content-digest identity
+// used by operator revision revocations.
+type RevisionRevocationTarget struct {
+	Coordinate    ResourceCoordinate
+	ContentDigest RevisionDigest
+}
+
+// ParseRevisionRevocationTarget parses marketplace/source/kind/name@sha256:<64
+// lowercase hexadecimal characters>. A digest without its coordinate is not an
+// exact identity and is intentionally rejected.
+func ParseRevisionRevocationTarget(raw string) (RevisionRevocationTarget, error) {
+	input := strings.TrimSpace(raw)
+	if strings.Count(input, "@") != 1 {
+		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: expected marketplace/source/kind/name@sha256:<64 lowercase hex>", raw)
+	}
+	at := strings.LastIndexByte(input, '@')
+	coordinate, err := ParseResourceCoordinate(input[:at])
+	if err != nil {
+		return RevisionRevocationTarget{}, err
+	}
+	for label, value := range map[string]string{
+		"marketplace": string(coordinate.Marketplace), "source": string(coordinate.Source),
+		"kind": coordinate.Kind, "name": coordinate.Name,
+	} {
+		if value == "" || strings.ContainsAny(value, "/@") {
+			return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: %s must be a non-empty route token", raw, label)
+		}
+	}
+	digest := input[at+1:]
+	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: content digest must be sha256:<64 lowercase hex>", raw)
+	}
+	for i := len("sha256:"); i < len(digest); i++ {
+		c := digest[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: content digest must be sha256:<64 lowercase hex>", raw)
+		}
+	}
+	return RevisionRevocationTarget{Coordinate: coordinate, ContentDigest: RevisionDigest(digest)}, nil
+}
+
+// String returns the canonical exact revision revocation target.
+func (t RevisionRevocationTarget) String() string {
+	return t.Coordinate.String() + "@" + string(t.ContentDigest)
+}
+
 // AcquisitionMode describes how a source's artifacts are handled.
 type AcquisitionMode string
 

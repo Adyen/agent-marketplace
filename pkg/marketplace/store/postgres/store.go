@@ -504,6 +504,31 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 	return out, rows.Err()
 }
 
+func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.ArchiveDigest) ([]store.ResourceRevision, error) {
+	rows, err := s.q.QueryContext(ctx,
+		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		        analyzer_version, findings, license, provenance, revocation
+		 FROM resource_revisions
+		 WHERE marketplace_id=$1 AND archive_digest=$2
+		 ORDER BY source_id, kind, name, content_digest`,
+		marketplace, digest,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []store.ResourceRevision
+	for rows.Next() {
+		rev, err := s.scanResourceRevision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.ResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
@@ -519,7 +544,7 @@ func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.Resou
 
 func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.ResourceRevision, error) {
 	args := []any{string(filter.Marketplace)}
-	where := "rr.marketplace_id=$1 AND s.listed AND rr.revocation IS NULL"
+	where := "rr.marketplace_id=$1 AND s.listed"
 
 	if filter.Source != "" {
 		where += fmt.Sprintf(" AND (rr.source_id=$%d OR s.slug=$%d)", len(args)+1, len(args)+2)
@@ -535,18 +560,12 @@ func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.Resour
 	}
 
 	query := fmt.Sprintf(`
-		WITH ranked AS (
-			SELECT rr.*,
-				ROW_NUMBER() OVER (PARTITION BY rr.source_id, rr.kind, rr.name ORDER BY rr.created_at DESC, rr.content_digest DESC) AS rn
-			FROM resource_revisions rr
-			JOIN sources s ON s.id = rr.source_id
-			WHERE %s
-		)
-		SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		       analyzer_version, findings, license, provenance, revocation
-		FROM ranked
-		WHERE rn = 1
-		ORDER BY source_id, kind, name`, where)
+		SELECT rr.marketplace_id, rr.source_id, rr.kind, rr.name, rr.content_digest, rr.archive_digest,
+		       rr.analyzer_version, rr.findings, rr.license, rr.provenance, rr.revocation
+		FROM resource_revisions rr
+		JOIN sources s ON s.id = rr.source_id
+		WHERE %s
+		ORDER BY rr.source_id, rr.kind, rr.name, rr.created_at DESC, rr.content_digest DESC`, where)
 
 	rows, err := s.q.QueryContext(ctx, query, args...)
 	if err != nil {

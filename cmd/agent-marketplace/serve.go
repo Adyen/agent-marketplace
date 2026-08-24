@@ -59,6 +59,13 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				slog.Error("serve failed", "reason", "ensure marketplace", "error", err)
 				return fmt.Errorf("ensure marketplace: %w", err)
 			}
+			// Apply live exact revocations before either role can announce or
+			// serve readiness. The API overlays the same declarations on reads;
+			// this preflight also covers API-only deployments.
+			if err := worker.EnsureRevocations(ctx, deps); err != nil {
+				slog.Error("serve failed", "reason", "ensure revocations", "error", err)
+				return fmt.Errorf("ensure revocations: %w", err)
+			}
 
 			slog.Info("serve running", "marketplace", cfg.Instance.ID, "role", role, "sources", len(cfg.Sources))
 
