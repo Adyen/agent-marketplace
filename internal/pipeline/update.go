@@ -65,7 +65,9 @@ type UpdateResult struct {
 
 type marketplaceUpdatePlan struct {
 	MarketplacePinUpdate
-	ConfigPath string
+	ConfigPath       string
+	ReplacementPins  []config.MarketplaceResourcePin
+	CollectionUpdate bool
 }
 
 type configMutation struct {
@@ -154,7 +156,13 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		if plan.Skipped {
 			continue
 		}
-		snapshot, commit, err := config.UpdateMarketplacePinInConfigWithSnapshotAndCommit(plan.ConfigPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.NewPin)
+		var snapshot *config.FileSnapshot
+		var commit config.ConfigFileCommit
+		if plan.CollectionUpdate {
+			snapshot, commit, err = config.EnsureMarketplaceCollectionWithSnapshotAndCommit(plan.ConfigPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.ReplacementPins)
+		} else {
+			snapshot, commit, err = config.UpdateMarketplacePinInConfigWithSnapshotAndCommit(plan.ConfigPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.NewPin)
+		}
 		if err != nil {
 			updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.SourceID, plan.OldPin.Kind, plan.OldPin.Name, err)
 			slog.Error("update aborted on Marketplace config conflict", "config_path", plan.ConfigPath, "source_id", plan.OldPin.SourceID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
@@ -212,6 +220,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	}
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))
+	collectionLeaves := make(map[string]struct{})
 	for _, entry := range ec.Merged.Marketplaces {
 		configPath := ""
 		if entry.Source.IsWritable() {
@@ -222,57 +231,92 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			}
 		}
 		for _, pin := range entry.Resources {
+			if pin.Kind != "collection" {
+				continue
+			}
 			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Source == config.Organization, Skipped: true}
-			switch {
-			case entry.Source == config.Organization:
+			if entry.Source == config.Organization {
 				item.Reason = "organization pin is required and managed externally"
-			case pin.Kind == "collection":
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+				continue
+			}
+			expanded := false
+			for _, leaf := range entry.Resources {
+				for _, selector := range leaf.SelectedBy.List() {
+					if selector.SourceID == pin.SourceID && selector.Name == pin.Name && selector.Revision == pin.Revision {
+						expanded = true
+						collectionLeaves[marketplaceUpdateKey(entry, leaf)] = struct{}{}
+					}
+				}
+			}
+			if !expanded {
 				item.Reason = "collection pin updates are not supported"
-			default:
-				item.Skipped = false
-			}
-			if item.Skipped {
-				slog.Debug("marketplace update skipped", "url", entry.URL, "instance_id", entry.InstanceID, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "required", item.Required, "reason", item.Reason)
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			// Preparing an index-only update also prepares a materializable
-			// occurrence. Preserve the pre-existing zero-target diagnostic rather
-			// than contacting an endpoint before sync can run.
-			if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly && len(targets) == 0 {
-				item.Skipped = true
-				item.Reason = "index-only pin updates are not supported"
-				slog.Debug("marketplace update skipped", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "reason", item.Reason)
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 			if err != nil {
 				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err)
 			}
-			if string(source.Acquisition) != config.MarketplaceAcquisitionMirror && string(source.Acquisition) != config.MarketplaceAcquisitionIndexOnly {
-				item.Skipped = true
+			if string(latest.ContentDigest) == pin.Digest {
+				item.Reason = "content digest unchanged"
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+				continue
+			}
+			if len(targets) == 0 {
+				return nil, &TargetHarnessSetMissingError{}
+			}
+			locator := marketplace.MarketplaceLocator{Source: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
+			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
+			if err != nil {
+				return nil, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, err)
+			}
+			for _, leaf := range prepared.CollectionMembers {
+				if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
+					return nil, fmt.Errorf("validate Marketplace collection leaf: %w", err)
+				}
+			}
+			newPins := marketplaceInstallPins(prepared)
+			item.Skipped = false
+			item.NewPin = prepared.Pin
+			item.ArchiveDigest = prepared.ArchiveDigest
+			plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: newPins, CollectionUpdate: true})
+		}
+		for _, pin := range entry.Resources {
+			if pin.Kind == "collection" {
+				continue
+			}
+			if entry.Source == config.Organization {
+				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"}
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+				continue
+			}
+			if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly && len(targets) == 0 {
+				item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: "index-only pin updates are not supported"}
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+				continue
+			}
+			if _, selected := collectionLeaves[marketplaceUpdateKey(entry, pin)]; selected {
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: "leaf is pinned by a collection revision"}, ConfigPath: configPath})
+				continue
+			}
+			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
+			if err != nil {
+				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err)
+			}
+			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true}
+			if source.Acquisition != "" && string(source.Acquisition) != config.MarketplaceAcquisitionMirror && string(source.Acquisition) != config.MarketplaceAcquisitionIndexOnly {
 				item.Reason = "source uses unsupported acquisition"
-				slog.Debug("marketplace update skipped", "url", entry.URL, "instance_id", entry.InstanceID, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "required", item.Required, "reason", item.Reason)
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
 			if string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest) {
-				item.Skipped = true
 				item.Reason = "content digest unchanged"
-				slog.Debug("marketplace update skipped unchanged pin", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name)
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-
-			// LatestRevision is only the metadata probe needed to distinguish an
-			// unchanged pin from one that will be prepared. Require targets before
-			// fetching and preparing the changed artifact.
 			if len(targets) == 0 {
-				err := &TargetHarnessSetMissingError{}
-				slog.Error("update requires target harness set for Marketplace preparation", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "error", err)
-				return nil, err
+				return nil, &TargetHarnessSetMissingError{}
 			}
 			locator := marketplace.MarketplaceLocator{Source: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
 			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
@@ -282,15 +326,27 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if err := validateMarketplaceUpdateArtifact(prepared); err != nil {
 				return nil, fmt.Errorf("validate Marketplace pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, err)
 			}
-			newPin := prepared.Pin
-			newPin.InstalledName = pin.InstalledName
-			item.NewPin = newPin
+			prepared.Pin.InstalledName = pin.InstalledName
+			prepared.Pin.Direct = pin.Direct
+			prepared.Pin.SelectedBy = pin.SelectedBy
+			item.Skipped = false
+			item.NewPin = prepared.Pin
 			item.ArchiveDigest = prepared.ArchiveDigest
 			plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-			slog.Info("marketplace update prepared", "url", entry.URL, "instance_id", entry.InstanceID, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "old_digest", pin.Digest, "new_digest", newPin.Digest, "archive_digest", prepared.ArchiveDigest)
 		}
 	}
 	return plans, nil
+}
+
+func marketplaceUpdateKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
+	return entry.URL + "\x00" + entry.InstanceID + "\x00" + pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
+}
+
+func validatePreparedMarketplaceUpdate(plan *marketplace.PreparedInstall) error {
+	if plan == nil {
+		return fmt.Errorf("prepared Marketplace leaf is nil")
+	}
+	return validateMarketplaceUpdateArtifact(plan)
 }
 
 func marketplaceConfigPath(opts UpdateOptions, ec *config.EffectiveConfig, source config.Source) (string, error) {

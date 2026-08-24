@@ -55,9 +55,28 @@ func (s MarketplaceSelections) List() []MarketplaceSelection {
 	return values
 }
 
+func validateMarketplaceSelections(selections MarketplaceSelections) error {
+	if selections == "" {
+		return nil
+	}
+	for index, part := range strings.Split(string(selections), "\n") {
+		fields := strings.Split(part, "\x00")
+		if len(fields) != 3 {
+			return fmt.Errorf("selected_by[%d] is malformed", index)
+		}
+		if err := validateMarketplaceSelection(MarketplaceSelection{SourceID: fields[0], Name: fields[1], Revision: fields[2]}); err != nil {
+			return fmt.Errorf("selected_by[%d]: %w", index, err)
+		}
+	}
+	return nil
+}
+
 func (s MarketplaceSelections) MarshalYAML() (any, error) { return s.List(), nil }
 
 func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
+	if err := validateMarketplaceSelectedByNode(node, "selected_by"); err != nil {
+		return err
+	}
 	var values []MarketplaceSelection
 	if err := node.Decode(&values); err != nil {
 		return err
@@ -77,6 +96,7 @@ type MarketplaceResourcePin struct {
 	SourceCommit         string                `yaml:"source_commit,omitempty"`
 	SourceManifestDigest string                `yaml:"source_manifest_digest,omitempty"`
 	InstalledName        string                `yaml:"installed_name,omitempty"`
+	Direct               bool                  `yaml:"direct,omitempty"`
 	SelectedBy           MarketplaceSelections `yaml:"selected_by,omitempty"`
 }
 

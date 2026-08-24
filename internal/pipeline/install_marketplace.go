@@ -120,7 +120,7 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 
 func marketplaceInstallPins(plan *marketplace.PreparedInstall) []config.MarketplaceResourcePin {
 	if len(plan.CollectionMembers) == 0 {
-		return []config.MarketplaceResourcePin{plan.Pin}
+		return []config.MarketplaceResourcePin{config.EnsureMarketplaceDirectPin(plan.Pin)}
 	}
 	pins := make([]config.MarketplaceResourcePin, 0, len(plan.CollectionMembers)+1)
 	pins = append(pins, plan.Pin)

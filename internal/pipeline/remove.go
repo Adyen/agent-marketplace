@@ -1,9 +1,11 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -93,11 +95,65 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 
-	// Check if the arg refers to a collection in the merged config.
+	if collection, entry, ok := marketplaceCollectionByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			return nil, fmt.Errorf("collection %q is required and managed externally", name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, fmt.Errorf("resolve config path: %w", err)
+		}
+		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+			return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, collection)
+		}); err != nil {
+			return nil, err
+		}
+		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
+	}
+
+	if pin, entry, ok := marketplaceDirectPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
+			return nil, err
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, fmt.Errorf("resolve config path: %w", err)
+		}
+		if err := removeMarketplaceAndSync(ctx, opts.RepoRoot, configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
+			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, pin)
+		}); err != nil {
+			return nil, err
+		}
+		return &RemoveResult{RemovedName: name}, nil
+	}
+
+	// A collection leaf is not a registry resource and has no safe legacy
+	// removal operation. Stop here instead of allowing the resolver to fall
+	// through to a same-named legacy registry resource.
+	if pin, ok := marketplaceCollectionOnlyPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
+		collectionName := "an explicitly selected collection"
+		if selections := pin.SelectedBy.List(); len(selections) > 0 {
+			collectionName = selections[0].Name
+		}
+		return nil, fmt.Errorf("marketplace %s %q is selected only through collection %s; remove that collection instead", pin.Kind, name, collectionName)
+	}
+
+	// Check if the arg refers to a legacy registry collection in the merged config.
 	if isCollectionInstalled(mergedCfg, name) {
 		effective := opts.Scope
 		if !opts.ScopeSpecified {
-			effective = ScopeRepo // collections are repo-scoped by default
+			effective = ScopeRepo
 		}
 		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
 		if err != nil {
@@ -779,6 +835,103 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil
+}
+
+func removeMarketplaceAndSync(ctx context.Context, repoRoot, configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error)) (retErr error) {
+	snapshot, commit, err := mutate()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
+		}
+	}()
+	if err := silentSync(ctx, repoRoot); err != nil {
+		return err
+	}
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read Marketplace config after remove: %w", err)
+	}
+	if !bytes.Equal(current, commit.Bytes) {
+		return fmt.Errorf("marketplace config changed concurrently during remove")
+	}
+	return nil
+}
+
+func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	if cfg == nil || (hasKind && marketplaceProtocolKind(kind) != "collection") {
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+	}
+	var found config.MarketplaceResourcePin
+	var foundEntry config.MarketplaceEntry
+	count := 0
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind == "collection" && pin.Name == strings.TrimSpace(name) {
+				found, foundEntry, count = pin, entry, count+1
+			}
+		}
+	}
+	return found, foundEntry, count == 1
+}
+
+func marketplaceDirectPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
+	if cfg == nil {
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
+	}
+	var found config.MarketplaceResourcePin
+	var foundEntry config.MarketplaceEntry
+	count := 0
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+				continue
+			}
+			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
+				continue
+			}
+			if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
+				continue
+			}
+			found, foundEntry, count = pin, entry, count+1
+		}
+	}
+	return found, foundEntry, count == 1
+}
+
+func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, bool) {
+	if cfg == nil {
+		return config.MarketplaceResourcePin{}, false
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind == "collection" || pin.Name != strings.TrimSpace(name) {
+				continue
+			}
+			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
+				continue
+			}
+			if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
+				return pin, true
+			}
+		}
+	}
+	return config.MarketplaceResourcePin{}, false
+}
+
+func inferMarketplaceRemoveScope(source config.Source) Scope {
+	if source == config.UserPersonal || source == config.Organization {
+		return ScopeUser
+	}
+	if source == config.RepoPersonal {
+		return ScopeLocal
+	}
+	return ScopeRepo
 }
 
 // isCollectionInstalled reports whether any layer of the merged config
