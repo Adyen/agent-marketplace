@@ -137,14 +137,14 @@ func runDoctor(opts doctorOptions) error {
 	if _, err := fmt.Fprintf(out, "detected harness: %s\n", detected); err != nil {
 		return err
 	}
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{})
+	ec := config.LoadEffective(opts.ctx, config.LoadEffectiveOptions{})
 	config.LogManagedDiagnostics(ec.Diagnostics)
 
 	managed := "false"
 	if ec.Managed {
 		managed = "true"
 	}
-	if _, err := fmt.Fprintf(out, "v3 org managed: %s\n", managed); err != nil {
+	if _, err := fmt.Fprintf(out, "org managed: %s\n", managed); err != nil {
 		return err
 	}
 	if err := writeDoctorManagedSection(out, ec); err != nil {

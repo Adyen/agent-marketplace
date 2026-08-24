@@ -60,9 +60,9 @@ func newListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			errOut := cmd.ErrOrStderr()
 			if fromURL != "" {
-				return runListFrom(cmd.OutOrStdout(), errOut, fromURL, fromRef, fromPath, kindFilter)
+				return runListFrom(cmd.Context(), cmd.OutOrStdout(), errOut, fromURL, fromRef, fromPath, kindFilter)
 			}
-			return runList(cmd.OutOrStdout(), errOut, kindFilter)
+			return runList(cmd.Context(), cmd.OutOrStdout(), errOut, kindFilter)
 		},
 	}
 
@@ -74,17 +74,17 @@ func newListCmd() *cobra.Command {
 	return cmd
 }
 
-func runList(out io.Writer, errOut io.Writer, kindFilter string) error {
+func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot})
+	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot})
 
 	if len(result.TargetHarnesses) == 0 {
-		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; run `agent-marketplace migrate` or add `harnesses` to your user config.\n"); err != nil {
+		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; add `harnesses` to your user config.\n"); err != nil {
 			return err
 		}
 	}
@@ -160,7 +160,7 @@ func runList(out io.Writer, errOut io.Writer, kindFilter string) error {
 
 // runListFrom lists resources available at an ad-hoc registry URL without
 // writing to any config. This is a browse-before-you-install feature.
-func runListFrom(out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, kindFilter string) error {
+func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, kindFilter string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
@@ -172,7 +172,7 @@ func runListFrom(out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, ki
 	// Validate the ad-hoc URL against the effective allowlist before any
 	// network access. LoadEffective also validates the existing configured
 	// layers and returns their resolved allowlist.
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{})
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
 	config.LogManagedDiagnostics(ec.Diagnostics)
 	for _, w := range ec.Warnings {
 		fmt.Fprintf(errOut, "warning: %v\n", w) //nolint:errcheck // best-effort warning on stderr
@@ -189,7 +189,7 @@ func runListFrom(out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, ki
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result := catalog.LoadRegistries(syntheticCfg, repoRoot, catalog.LoadModeRefresh)
+	result := catalog.LoadRegistriesWithContext(ctx, syntheticCfg, repoRoot, catalog.LoadModeRefresh)
 	// Separate overlap warnings (soft) from hard catalog errors.
 	var hardCatalogErrs []error
 	for _, err := range result.Errors {

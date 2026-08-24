@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 // noopSyncCmd replaces runSyncCmd in tests so that anyCmdProducesQuitMsg
 // does not execute real sync I/O when it calls commands to inspect their
 // output.
-var noopSyncCmd = func(repoRoot string) tea.Cmd {
+var noopSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
 		return syncDoneMsg{err: nil}
 	}

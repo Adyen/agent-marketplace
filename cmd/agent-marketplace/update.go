@@ -19,7 +19,7 @@ func newUpdateCmd() *cobra.Command {
 		Short: "Refresh pinned registries and sync enabled skills",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUpdate(cmd.OutOrStdout(), bump)
+			return runUpdate(cmd.Context(), cmd.OutOrStdout(), bump)
 		},
 	}
 
@@ -28,9 +28,9 @@ func newUpdateCmd() *cobra.Command {
 	return cmd
 }
 
-func runUpdate(out io.Writer, bump bool) error {
+func runUpdate(ctx context.Context, out io.Writer, bump bool) error {
 	repoRoot := config.FindRepoRoot()
-	result, err := pipeline.Update(context.Background(), pipeline.UpdateOptions{
+	result, err := pipeline.Update(ctx, pipeline.UpdateOptions{
 		RepoRoot: repoRoot,
 		Bump:     bump,
 	})

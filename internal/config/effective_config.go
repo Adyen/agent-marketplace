@@ -11,43 +11,44 @@ import (
 	"testing"
 )
 
-const defaultV3OrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
+const defaultOrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
 
-// testV3OrganizationConfigPath is a test-only override for the externally
-// managed v3 organization config path. Production code always uses
-// defaultV3OrganizationConfigPath.
-var testV3OrganizationConfigPath string
+// testOrganizationConfigPath is a test-only override for the externally
+// managed organization config path. Production code always uses
+// defaultOrganizationConfigPath.
+var testOrganizationConfigPath string
 
-// SetTestV3OrganizationConfigPath overrides the v3 organization config path
-// for the duration of a test. It panics if called outside a test binary.
+// SetTestV3OrganizationConfigPath overrides the organization config path for
+// the duration of a test. The name is retained for test compatibility. It
+// panics if called outside a test binary.
 // Pass nil as the testing.TB when calling from TestMain.
 func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
 	if !testing.Testing() {
 		panic("SetTestV3OrganizationConfigPath: not in tests")
 	}
-	old := testV3OrganizationConfigPath
-	testV3OrganizationConfigPath = path
+	old := testOrganizationConfigPath
+	testOrganizationConfigPath = path
 	if t != nil {
-		t.Cleanup(func() { testV3OrganizationConfigPath = old })
+		t.Cleanup(func() { testOrganizationConfigPath = old })
 	}
 }
 
 // OrganizationConfigPath returns the fixed filesystem path of the externally
-// managed v3 organization configuration.
+// managed organization configuration.
 func OrganizationConfigPath() string {
-	return v3OrganizationConfigPath("")
+	return organizationConfigPath("")
 }
 
-// v3OrganizationConfigPath returns the fixed v3 organization config path,
-// honoring the explicit override and the test-only package-level override.
-func v3OrganizationConfigPath(override string) string {
+// organizationConfigPath returns the fixed organization config path, honoring
+// the explicit override and the test-only package-level override.
+func organizationConfigPath(override string) string {
 	if override != "" {
 		return override
 	}
-	if testV3OrganizationConfigPath != "" {
-		return testV3OrganizationConfigPath
+	if testOrganizationConfigPath != "" {
+		return testOrganizationConfigPath
 	}
-	return defaultV3OrganizationConfigPath
+	return defaultOrganizationConfigPath
 }
 
 // LayerResult carries one Configuration Layer's provenance, parsed config, and
@@ -81,7 +82,7 @@ type EffectiveConfig struct {
 	Warnings            []error
 	Managed             bool
 	// Diagnostics is the filesystem and trust state of the externally managed
-	// v3 organization config at the fixed path.
+	// organization config at the fixed path.
 	Diagnostics ManagedInstallationDiagnostics
 }
 
@@ -121,8 +122,8 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 
 	ec := EffectiveConfig{}
 
-	v3Path := v3OrganizationConfigPath(opts.OrganizationPath)
-	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(v3Path)
+	orgPath := organizationConfigPath(opts.OrganizationPath)
+	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath)
 	ec.Managed = ec.Diagnostics.Managed()
 	ec.Warnings = append(ec.Warnings, ec.Diagnostics.Warnings...)
 	LogManagedDiagnostics(ec.Diagnostics)
@@ -141,9 +142,13 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 		slog.Error("effective config layer error", "error", err)
 	}
 
-	// Resolve the machine-wide target harness set. User-personal wins over
-	// organization; repo and local layers are not allowed to declare harnesses.
-	if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
+	// Resolve the target harness set. Project-level harnesses take precedence
+	// for project operations; user-personal harnesses apply when the project
+	// does not specify its own, and organization harnesses remain the fallback.
+	if ec.Repo.Config != nil && len(ec.Repo.Config.Harnesses) > 0 {
+		ec.TargetHarnesses = append([]string(nil), ec.Repo.Config.Harnesses...)
+		ec.TargetHarnessSource = RepoCommitted
+	} else if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
 		ec.TargetHarnesses = append([]string(nil), ec.User.Config.Harnesses...)
 		ec.TargetHarnessSource = UserPersonal
 	} else if ec.Organization.Config != nil && len(ec.Organization.Config.Harnesses) > 0 {
@@ -211,42 +216,37 @@ func globalConfigPath() (string, error) {
 	return p, nil
 }
 
-// loadEffectiveOrganization reads the externally managed v3 organization config
-// at v3Path. If the file declares apiVersion agent-marketplace/v3, it is loaded
-// with strict v3 rules and stamped Organization. Windows is always treated as
-// unmanaged. A missing file is valid (unmanaged). A present file whose
-// apiVersion is not agent-marketplace/v3 is a hard error. Any other read error
-// is a hard error.
-func loadEffectiveOrganization(v3Path string) (LayerResult, ManagedInstallationDiagnostics) {
+// loadEffectiveOrganization reads the externally managed organization config
+// at path. It accepts the canonical v2 schema and the v3 compatibility alias,
+// loading both with strict per-layer rules. Windows is always treated as
+// unmanaged. A missing file is valid (unmanaged). Any other read error is a
+// hard error.
+func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
-		lr := LayerResult{Source: SourceUnset, Path: v3Path}
-		return lr, inspectManagedConfig(v3Path, fs.ErrNotExist, nil, SourceUnset, nil)
+		lr := LayerResult{Source: SourceUnset, Path: path}
+		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
 	}
 
-	data, readErr := os.ReadFile(v3Path)
+	data, readErr := os.ReadFile(path)
 	if readErr == nil {
-		if PeekAPIVersion(data) == APIVersionV3 {
-			lr := loadV3OrganizationConfig(v3Path, data)
-			return lr, inspectManagedConfig(v3Path, nil, lr.Config, lr.Source, lr.Errors)
-		}
-		lr := LayerResult{Source: SourceUnset, Path: v3Path, Errors: []error{fmt.Errorf("organization config %q: apiVersion must be %q", v3Path, APIVersionV3)}}
-		return lr, inspectManagedConfig(v3Path, nil, nil, SourceUnset, lr.Errors)
+		lr := loadOrganizationConfig(path, data)
+		return lr, inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
 	}
 	if !errors.Is(readErr, os.ErrNotExist) {
-		lr := LayerResult{Source: Organization, Path: v3Path, Errors: []error{fmt.Errorf("read organization config %q: %w", v3Path, readErr)}}
-		return lr, inspectManagedConfig(v3Path, readErr, nil, Organization, lr.Errors)
+		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
+		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
 	}
 
-	lr := LayerResult{Source: SourceUnset, Path: v3Path}
-	return lr, inspectManagedConfig(v3Path, readErr, nil, SourceUnset, nil)
+	lr := LayerResult{Source: SourceUnset, Path: path}
+	return lr, inspectManagedConfig(path, readErr, nil, SourceUnset, nil)
 }
 
-// LoadOrganizationConfig reads the externally managed v3 organization config
-// at the default path. It returns nil when the file is missing. It returns an
-// error when the file is present but cannot be read or does not declare
-// apiVersion agent-marketplace/v3.
+// LoadOrganizationConfig reads the externally managed organization config at
+// the default path. It returns nil when the file is missing. It returns an
+// error when the file is present but cannot be read or declares an unsupported
+// apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
-	path := v3OrganizationConfigPath("")
+	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)
 	if len(lr.Errors) > 0 {
 		return nil, errors.Join(lr.Errors...)
@@ -254,7 +254,7 @@ func LoadOrganizationConfig() (*Config, error) {
 	return lr.Config, nil
 }
 
-func loadV3OrganizationConfig(path string, data []byte) LayerResult {
+func loadOrganizationConfig(path string, data []byte) LayerResult {
 	cfg, errs := loadV3Config(data, organizationLayer, false)
 	if cfg != nil {
 		if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
@@ -282,25 +282,10 @@ func loadEffectiveUser(override string) LayerResult {
 		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{fmt.Errorf("read user config %q: %w", path, readErr)}}
 	}
 
-	if PeekAPIVersion(data) == APIVersionV3 {
-		cfg, errs := loadV3Config(data, userLayer, false)
-		if len(errs) > 0 {
-			return LayerResult{Source: UserPersonal, Path: path, Errors: errs}
-		}
-		if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-			errs = append(errs, logErrs...)
-		}
+	cfg, errs := loadV3Config(data, userLayer, false)
+	if len(errs) > 0 {
 		return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
 	}
-
-	cfg, err := loadConfigGated(path, false, true)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return LayerResult{Source: UserPersonal, Path: path}
-		}
-		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
-	}
-	var errs []error
 	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
 		errs = append(errs, logErrs...)
 	}
@@ -324,24 +309,8 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{fmt.Errorf("read repo config %q: %w", path, readErr)}}
 	}
 
-	if PeekAPIVersion(data) == APIVersionV3 {
-		cfg, errs := loadV3Config(data, repoLayer, false)
-		if len(errs) > 0 {
-			return LayerResult{Source: RepoCommitted, Path: path, Errors: errs}
-		}
-		return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
-	}
-
-	cfg, err := loadConfigGated(path, false, true)
-	if err != nil {
-		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
-	}
-	if cfg != nil && len(cfg.Harnesses) > 0 {
-		err := fmt.Errorf("repository committed config cannot declare top-level harnesses; the target harness set is machine-wide")
-		cfg.Harnesses = nil
-		return LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Errors: []error{err}}
-	}
-	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
+	cfg, errs := loadV3Config(data, repoLayer, false)
+	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Errors: errs}
 }
 
 func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
@@ -361,14 +330,6 @@ func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
 		return nil, []error{fmt.Errorf("read local config %q: %w", path, readErr)}
 	}
 
-	if PeekAPIVersion(data) == APIVersionV3 {
-		cfg, errs := loadV3LocalConfig(data)
-		return cfg, errs
-	}
-
-	cfg, err := loadLocalConfig(path)
-	if err != nil {
-		return nil, []error{err}
-	}
-	return cfg, nil
+	cfg, errs := loadV3LocalConfig(data)
+	return cfg, errs
 }

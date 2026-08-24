@@ -214,7 +214,7 @@ tags:
 	}
 }
 
-func TestLoadRepoConfigRejectsTopLevelHarnesses(t *testing.T) {
+func TestLoadRepoConfigAllowsTopLevelHarnesses(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -234,12 +234,12 @@ registries:
 	mustMkdirAll(t, nestedDir)
 	withWorkingDir(t, nestedDir)
 
-	_, err := LoadRepoConfig()
-	if err == nil {
-		t.Fatalf("expected repo config with top-level harnesses to be rejected")
+	cfg, err := LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config with top-level harnesses to load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "cannot declare top-level harnesses") {
-		t.Fatalf("expected top-level harnesses error, got: %v", err)
+	if !equalStrings(cfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses [factory], got %v", cfg.Harnesses)
 	}
 }
 
@@ -472,7 +472,7 @@ func TestLoadConfigFromPathReturnsParseError(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromPathRejectsRepoHarnesses(t *testing.T) {
+func TestLoadConfigFromPathAllowsRepoHarnesses(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
@@ -485,15 +485,15 @@ registries:
     ref: main
 `))
 
-	_, err := LoadConfigFromPath(configPath)
-	if err == nil {
-		t.Fatalf("expected repo config with top-level harnesses to be rejected")
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("expected repo config with top-level harnesses to load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "cannot declare top-level harnesses") {
-		t.Fatalf("expected top-level harnesses error, got: %v", err)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses [factory], got %v", cfg.Harnesses)
 	}
 
-	// Global and local configs should still load without the repo restriction.
+	// Global and local configs should still load.
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
@@ -599,7 +599,7 @@ harnesses: [factory]
 //     but a mismatched one is still rejected;
 //   - a local path loaded through the full Config loader (LoadConfigFromPath,
 //     the editor / remove --from path) does NOT require apiVersion, while a
-//     non-local path still does (migration-required).
+//     non-local path still does.
 func TestConfigAPIVersionPolicy(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -608,7 +608,6 @@ func TestConfigAPIVersionPolicy(t *testing.T) {
 		useLocal    bool   // true → LoadLocalConfigFromPath; false → LoadConfigFromPath
 		wantErr     bool   // expect a load error
 		errSubstr   string // when wantErr, error must contain this substring
-		wantMigrate bool   // when wantErr, IsMigrationRequired(err) must be true
 		verifyLocal func(t *testing.T, cfg *LocalConfig)
 		verifyCfg   func(t *testing.T, cfg *Config)
 	}{
@@ -680,8 +679,7 @@ registries:
   - url: /repo/skills
     ref: main
 `,
-			wantErr:     true,
-			wantMigrate: false,
+			wantErr: true,
 		},
 	}
 
@@ -707,12 +705,6 @@ registries:
 				}
 				if tc.errSubstr != "" && !strings.Contains(err.Error(), tc.errSubstr) {
 					t.Fatalf("expected error to contain %q, got %v", tc.errSubstr, err)
-				}
-				// Both the wrong-apiVersion local case and the missing-apiVersion
-				// non-local case must stay NON-migration-required: only v2 configs
-				// are eligible for migration.
-				if got := IsMigrationRequired(err); got != tc.wantMigrate {
-					t.Fatalf("expected migration-required=%t, got %t (%v)", tc.wantMigrate, got, err)
 				}
 				return
 			}
@@ -856,7 +848,7 @@ registries:
 	}
 }
 
-func TestLoadConfigFromPathRejectsV3RepoHarnesses(t *testing.T) {
+func TestLoadConfigFromPathAllowsV3RepoHarnesses(t *testing.T) {
 	// A config.yaml that is not the global path is treated as a repo config.
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v3
@@ -864,11 +856,11 @@ harnesses:
   - factory
 `))
 
-	_, err := LoadConfigFromPath(configPath)
-	if err == nil {
-		t.Fatal("expected v3 repo config with harnesses to fail")
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("expected v3 repo config with harnesses to load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected harnesses error, got: %v", err)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected v3 repo harnesses [factory], got %#v", cfg.Harnesses)
 	}
 }

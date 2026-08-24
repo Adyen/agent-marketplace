@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestInitCreatesV3UserPersonalConfig(t *testing.T) {
+func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 	env := newEnv(t)
 
 	// Ensure no user personal config exists; newEnv does not write one.
@@ -32,8 +32,8 @@ func TestInitCreatesV3UserPersonalConfig(t *testing.T) {
 	if !env.CheckFileExists("/root/.agents/config.yaml") {
 		t.Fatal("user personal config was not created")
 	}
-	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v3") {
-		t.Fatalf("config does not declare v3 apiVersion:\n%s", env.ReadFile("/root/.agents/config.yaml"))
+	if !env.CheckFileContains("/root/.agents/config.yaml", "apiVersion: agent-marketplace/v2") {
+		t.Fatalf("config does not declare v2 apiVersion:\n%s", env.ReadFile("/root/.agents/config.yaml"))
 	}
 	if !env.CheckFileContains("/root/.agents/config.yaml", "harnesses:") {
 		t.Fatalf("config does not contain harnesses:\n%s", env.ReadFile("/root/.agents/config.yaml"))
