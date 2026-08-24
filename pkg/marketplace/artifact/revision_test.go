@@ -34,6 +34,9 @@ func TestSourceRevisionManifestRoundTrip(t *testing.T) {
 	if got.RevisionDigest != digest {
 		t.Fatalf("digest mismatch: %s vs %s", got.RevisionDigest, digest)
 	}
+	if got.SourceURL != "" || got.Ref != "" || got.Path != "" {
+		t.Fatalf("wire manifest exposed mutable source metadata: %#v", got)
+	}
 
 	if err := VerifySourceRevisionManifest(got, payload2); err != nil {
 		t.Fatalf("VerifySourceRevisionManifest: %v", err)
@@ -64,6 +67,35 @@ func TestSourceRevisionManifestDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(payload1, payload2) {
 		t.Fatalf("revision payload not deterministic")
+	}
+}
+
+func TestSourceRevisionManifestDigestIgnoresMutableSourceMetadata(t *testing.T) {
+	base := SourceRevisionManifest{
+		SchemaVersion: SourceRevisionSchemaV1,
+		Generator:     "test",
+		Resources:     []RevisionResource{{Kind: "skill", Name: "review", ContentDigest: "sha256:" + strings.Repeat("a", 64)}},
+	}
+	withSourceMetadata := base
+	withSourceMetadata.SourceURL = "https://user:secret@example.com/repo.git"
+	withSourceMetadata.Ref = "refs/heads/main"
+	withSourceMetadata.Path = "skills"
+
+	basePayload, baseDigest, err := EncodeSourceRevisionManifest(base)
+	if err != nil {
+		t.Fatalf("encode base: %v", err)
+	}
+	metadataPayload, metadataDigest, err := EncodeSourceRevisionManifest(withSourceMetadata)
+	if err != nil {
+		t.Fatalf("encode metadata: %v", err)
+	}
+	if baseDigest != metadataDigest || !bytes.Equal(basePayload, metadataPayload) {
+		t.Fatalf("mutable source metadata changed canonical manifest: %s/%s\n%s\n%s", baseDigest, metadataDigest, basePayload, metadataPayload)
+	}
+	for _, field := range []string{"source_url", "ref", "path", "secret"} {
+		if bytes.Contains(metadataPayload, []byte(field)) {
+			t.Fatalf("canonical manifest exposed %q: %s", field, metadataPayload)
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,14 @@ func TestBuildSourceRevision(t *testing.T) {
 	if rev.Occurrence.SourceRevisionManifestDigest != rev.ManifestDigest {
 		t.Fatalf("occurrence manifest digest mismatch")
 	}
+	if rev.Occurrence.Ref != source.Ref {
+		t.Fatalf("occurrence ref = %q, want %q", rev.Occurrence.Ref, source.Ref)
+	}
+	for _, field := range []string{"source_url", "ref", "path", repoDir} {
+		if strings.Contains(string(rev.ManifestPayload), field) {
+			t.Fatalf("source revision manifest exposed %q: %s", field, rev.ManifestPayload)
+		}
+	}
 }
 
 func TestBuildSourceRevisionIndexOnly(t *testing.T) {
@@ -108,6 +117,10 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 	}
 	if skill.ArchiveDigest != "" {
 		t.Fatalf("index-only resource should not have an archive digest")
+	}
+	key := "skill/review"
+	if len(rev.ResourceArchives[key]) == 0 || rev.ResourceArchiveDigest[key] == "" {
+		t.Fatalf("index-only revision should retain a local archive for consumer materialization")
 	}
 }
 

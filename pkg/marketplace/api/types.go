@@ -1,5 +1,11 @@
 package api
 
+import (
+	"time"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
 func IsCanonicalSHA256Digest(value string) bool {
 	if len(value) != len("sha256:")+64 || value[:len("sha256:")] != "sha256:" {
 		return false
@@ -47,6 +53,19 @@ type WellKnown struct {
 	APIBase      string `json:"api_base"`
 	BrowserRoute string `json:"browser_route_template"`
 	Capabilities `json:",inline"`
+}
+
+// ExactSourceOccurrence is the immutable source occurrence selected for an
+// index-only install. AcquisitionOrigin is the current operator-approved Git
+// origin; clients must apply their local allowed_registries policy before use.
+type ExactSourceOccurrence struct {
+	SourceID                     store.SourceID        `json:"source_id"`
+	Ref                          string                `json:"ref"`
+	Commit                       string                `json:"commit"`
+	SourceRevisionManifestDigest store.RevisionDigest  `json:"source_revision_manifest_digest"`
+	Acquisition                  store.AcquisitionMode `json:"acquisition"`
+	AcquisitionOrigin            string                `json:"acquisition_origin"`
+	OccurredAt                   time.Time             `json:"occurred_at"`
 }
 
 // Instance describes a Marketplace endpoint as configured by a consumer.

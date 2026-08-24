@@ -55,6 +55,20 @@ func (r *Result) Release() error {
 // the ref to an exact commit, and enforces repository bounds. The caller must
 // call Result.Release to clean up the workspace.
 func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
+	return clone(ctx, origin, ref, "", cred, limits, timeout)
+}
+
+// CloneAtCommit fetches origin and checks out exactly commit. It never falls
+// back to the ref's current tip; the commit must be present in the clone and
+// must remain the checked-out HEAD.
+func CloneAtCommit(ctx context.Context, origin, ref, commit string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
+	if !isFullCommit(commit) {
+		return nil, fmt.Errorf("validate commit: %q is not a full lowercase Git commit", commit)
+	}
+	return clone(ctx, origin, ref, commit, cred, limits, timeout)
+}
+
+func clone(ctx context.Context, origin, ref, exactCommit string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
 	if err := cache.ValidateGitURL(origin); err != nil {
 		return nil, fmt.Errorf("validate origin: %w", err)
 	}
@@ -94,9 +108,16 @@ func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Lim
 		return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
 	}
 
-	commit, err := cache.ResolveRemoteRef(dir, ref)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ref %q in %q: %w", ref, redactedOrigin, err)
+	commit := exactCommit
+	if commit == "" {
+		commit, err = cache.ResolveRemoteRef(dir, ref)
+		if err != nil {
+			return nil, fmt.Errorf("resolve ref %q in %q: %w", ref, redactedOrigin, err)
+		}
+	} else {
+		if _, err := runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "cat-file", "-e", commit+"^{commit}")); err != nil {
+			return nil, fmt.Errorf("exact commit %q is unavailable in %q: %w", commit, redactedOrigin, err)
+		}
 	}
 
 	if err := enforceTreeLimits(cloneCtx, workspace.env(), dir, commit, limits); err != nil {
@@ -106,6 +127,15 @@ func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Lim
 	checkoutArgs := append(hardenedGitArgs(), "checkout", "--force", commit)
 	if _, err := runGit(cloneCtx, workspace.env(), dir, checkoutArgs); err != nil {
 		return nil, fmt.Errorf("checkout %q in %q: %w", commit, redactedOrigin, err)
+	}
+	if exactCommit != "" {
+		head, err := runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "rev-parse", "--verify", "HEAD"))
+		if err != nil {
+			return nil, fmt.Errorf("verify checked-out HEAD for %q in %q: %w", commit, redactedOrigin, err)
+		}
+		if got := strings.TrimSpace(string(head)); got != commit {
+			return nil, fmt.Errorf("checked-out HEAD mismatch in %q: got %q, want %q", redactedOrigin, got, commit)
+		}
 	}
 
 	if err := enforceLimits(dir, limits); err != nil {
@@ -347,6 +377,18 @@ func enforceLimits(dir string, limits Limits) error {
 		return fmt.Errorf("enforce repository limits: %w", err)
 	}
 	return nil
+}
+
+func isFullCommit(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for i := range value {
+		if (value[i] < '0' || value[i] > '9') && (value[i] < 'a' || value[i] > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func shQuote(s string) string {

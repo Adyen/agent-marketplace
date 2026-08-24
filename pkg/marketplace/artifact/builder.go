@@ -180,9 +180,6 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	if len(memberResults) > 0 {
 		revManifest := SourceRevisionManifest{
 			SchemaVersion: SourceRevisionSchemaV1,
-			SourceURL:     opts.Source.RegistryURL,
-			Ref:           opts.Source.Ref,
-			Path:          opts.Source.Path,
 			Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
 		}
 		for _, mr := range memberResults {
@@ -246,9 +243,6 @@ func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, opt
 	}
 	rev := SourceRevisionManifest{
 		SchemaVersion: SourceRevisionSchemaV1,
-		SourceURL:     opts.Source.RegistryURL,
-		Ref:           opts.Source.Ref,
-		Path:          opts.Source.Path,
 		Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
 		Resources: []RevisionResource{{
 			Kind:          r.Kind().String(),

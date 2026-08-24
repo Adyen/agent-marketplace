@@ -25,6 +25,67 @@ func testMarketplacePin() MarketplaceResourcePin {
 	}
 }
 
+func TestEnsureMarketplacePinPersistsExactIndexOnlyOccurrence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	pin := testMarketplacePin()
+	pin.Acquisition = MarketplaceAcquisitionIndexOnly
+	pin.SourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	pin.SourceManifestDigest = testMarketplaceDigest
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Marketplaces[0].Resources[0]
+	if got.Acquisition != pin.Acquisition || got.SourceCommit != pin.SourceCommit || got.SourceManifestDigest != pin.SourceManifestDigest {
+		t.Fatalf("persisted index-only pin = %#v", got)
+	}
+}
+
+func TestEnsureMarketplacePinRejectsInvalidIndexOnlyOccurrenceBeforeMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	original := []byte("apiVersion: agent-marketplace/v2\n# preserve this byte\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pin := testMarketplacePin()
+	pin.Acquisition = MarketplaceAcquisitionIndexOnly
+	pin.SourceCommit = "not-a-commit"
+	pin.SourceManifestDigest = "not-a-digest"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "source_commit") {
+		t.Fatalf("invalid index-only pin error = %v, want source_commit validation", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("config mutated before index-only validation: got %q, want %q", got, original)
+	}
+
+	pin = testMarketplacePin()
+	pin.SourceCommit = strings.Repeat("a", 40)
+	pin.SourceManifestDigest = "bad"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "source_manifest_digest") {
+		t.Fatalf("invalid source manifest digest error = %v, want validation", err)
+	}
+
+	pin = testMarketplacePin()
+	pin.SourceCommit = "not-a-commit"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "require acquisition") {
+		t.Fatalf("mirror occurrence fields error = %v, want acquisition validation", err)
+	}
+}
+
 func TestEnsureMarketplacePinInConfigTargetsSelectedLayersAndIsIdempotent(t *testing.T) {
 	for _, filename := range []string{"config.yaml", "config.local.yaml"} {
 		t.Run(filename, func(t *testing.T) {

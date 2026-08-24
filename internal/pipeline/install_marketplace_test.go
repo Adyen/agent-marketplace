@@ -16,6 +16,41 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactSource(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifestDigest := "sha256:" + strings.Repeat("b", 64)
+	plan := &marketplace.PreparedInstall{
+		Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
+		Pin: config.MarketplaceResourcePin{
+			SourceID: "source-id", SourceSlug: "source", Kind: "skill", Name: "review",
+			Revision: "sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("d", 64),
+			Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+		},
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{
+			License: "MIT", Provenance: hccartifact.CanonicalProvenance{Generator: "test"},
+		}},
+	}
+	preview, err := marketplaceInstallPreview(plan)
+	if err != nil {
+		t.Fatalf("marketplaceInstallPreview: %v", err)
+	}
+	typed := plan.Preview()
+	if typed.Acquisition != config.MarketplaceAcquisitionIndexOnly || typed.SourceCommit != commit || typed.SourceManifestDigest != manifestDigest {
+		t.Fatalf("typed preview lost exact index-only acquisition: %#v", typed)
+	}
+	for _, want := range []string{
+		`acquisition: "index-only"`, `source_commit: "` + commit + `"`,
+		`source_manifest_digest: "` + manifestDigest + `"`,
+	} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview missing %q:\n%s", want, preview)
+		}
+	}
+	if strings.Contains(preview, "acquisition: mirror") {
+		t.Fatalf("preview hardcoded mirror:\n%s", preview)
+	}
+}
+
 func TestMarketplaceLocatorWithSelectorSupportsAllNonCollectionKinds(t *testing.T) {
 	for _, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver"} {
 		t.Run(kind, func(t *testing.T) {

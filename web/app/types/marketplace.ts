@@ -22,6 +22,7 @@ export type SourcePublisher = Schemas['Publisher']
 export type Source = JsonResponse<'getSource'>
 
 export type SourceOccurrence = Schemas['SourceOccurrence']
+export type ExactSourceOccurrence = Schemas['ExactSourceOccurrence']
 
 export type ResourceListItem = Schemas['ResourceListItem']
 export type SearchResult = JsonResponse<'searchResources'>

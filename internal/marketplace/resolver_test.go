@@ -187,6 +187,46 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 
 }
 
+func TestResolverDoesNotMarkArtifactVerifiedBeforeResourceDecode(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	payload := []byte(`{"name":"review"`)
+	contentDigest := hccartifact.ContentDigest(payload)
+	canonical := hccartifact.CanonicalArtifact{
+		Manifest: hccartifact.CanonicalManifest{
+			SchemaVersion: hccartifact.CanonicalArtifactSchemaV1, ArtifactVersion: hccartifact.CanonicalArtifactSchemaV1,
+			Kind: "skill", Name: "review", SourceID: "src", Revision: contentDigest, ContentDigest: contentDigest,
+			Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example", Ref: "main", Generator: "test"},
+		},
+		Payload: payload,
+	}
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	rev := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(rev) })
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(raw) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+	}}}}}
+	if resolved, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh); len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "decode resource") {
+		t.Fatalf("malformed resource resolve = %d artifacts, errors %v", len(resolved), errs)
+	}
+	if _, verified, err := cache.ReadArtifact(archiveDigest); err != nil {
+		t.Fatalf("ReadArtifact: %v", err)
+	} else if verified {
+		t.Fatal("artifact was marked verified before resource decode completed")
+	}
+}
+
 func TestResolverCachedNoFetchFailsClosedBeforeHTTP(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	requests := 0

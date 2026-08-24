@@ -454,12 +454,16 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		return result
 	}
 	result.MaterializationModes = materializationModes
+	registryCount := 0
+	if mergedCfg != nil {
+		registryCount = len(mergedCfg.Registries)
+	}
 	slog.Debug("config layers merged",
 		"org", result.OrgCfg != nil,
 		"user", result.GlobalCfg != nil,
 		"repo", result.RepoCfg != nil,
 		"local", result.LocalCfg != nil,
-		"registries", len(mergedCfg.Registries),
+		"registries", registryCount,
 	)
 
 	var selectionSpan telemetry.Span
@@ -493,6 +497,12 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		mpMode = *opts.MarketplaceMode
 	}
 	marketplaceResolver := marketplace.NewResolver()
+	// Keep the effective registry origin policy on the Marketplace resolver as
+	// well as on the loaded config. PrepareLocator uses the resolver directly,
+	// while normal sync passes the loaded config through the generic resolver.
+	if mergedCfg != nil && mergedCfg.AllowedRegistries != nil {
+		marketplaceResolver.AllowedRegistries = *mergedCfg.AllowedRegistries
+	}
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
 	// Status inspection is deliberately metadata-only. A caller may retain Git
 	// LoadModeInspect's hard-fail behavior while requesting a materializable,

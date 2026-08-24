@@ -182,7 +182,7 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 }
 
 func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
-	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.InstalledName == b.InstalledName
+	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName
 }
 
 func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
@@ -197,6 +197,16 @@ func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
 	setMappingValue(node, "revision", scalarNode(pin.Revision))
 	setMappingValue(node, "digest", scalarNode(pin.Digest))
 	setMappingValue(node, "acquisition", scalarNode(pin.Acquisition))
+	if pin.SourceCommit == "" {
+		removeMappingKeyByName(node, "source_commit")
+	} else {
+		setMappingValue(node, "source_commit", scalarNode(pin.SourceCommit))
+	}
+	if pin.SourceManifestDigest == "" {
+		removeMappingKeyByName(node, "source_manifest_digest")
+	} else {
+		setMappingValue(node, "source_manifest_digest", scalarNode(pin.SourceManifestDigest))
+	}
 	if pin.InstalledName == "" {
 		removeMappingKeyByName(node, "installed_name")
 	} else {
@@ -416,6 +426,9 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if pin.Acquisition != "" && pin.Acquisition != MarketplaceAcquisitionMirror && pin.Acquisition != MarketplaceAcquisitionIndexOnly {
 		return fmt.Errorf("acquisition must be %q or %q", MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly)
 	}
+	if err := validateMarketplaceOccurrenceFields(pin.Acquisition, pin.SourceCommit, pin.SourceManifestDigest); err != nil {
+		return err
+	}
 	return ValidateMarketplaceInstalledName(pin.InstalledName)
 }
 
@@ -431,7 +444,7 @@ var marketplaceEntryFields = map[string]struct{}{
 
 var marketplacePinFields = map[string]struct{}{
 	"source_id": {}, "source_slug": {}, "kind": {}, "name": {},
-	"revision": {}, "digest": {}, "acquisition": {}, "installed_name": {},
+	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {},
 }
 
 // validateMarketplaceMapping validates only the Marketplace-specific AST. The
@@ -628,7 +641,7 @@ func sameMarketplacePinContent(a, b MarketplaceResourcePin) bool {
 		}
 		return pin.Acquisition
 	}
-	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b)
+	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b) && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest
 }
 
 func marketplaceEntryNode(endpointURL, instanceID, alias string) *yaml.Node {
@@ -662,6 +675,8 @@ func marketplacePinNode(pin MarketplaceResourcePin) *yaml.Node {
 	add("revision", pin.Revision, false)
 	add("digest", pin.Digest, false)
 	add("acquisition", pin.Acquisition, true)
+	add("source_commit", pin.SourceCommit, true)
+	add("source_manifest_digest", pin.SourceManifestDigest, true)
 	add("installed_name", pin.InstalledName, true)
 	return entry
 }

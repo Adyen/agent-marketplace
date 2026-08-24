@@ -196,7 +196,7 @@ func TestUpdateSkipsSyncForOnlyUnsupportedMarketplacePins(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - source_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - source_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n        source_commit: " + strings.Repeat("c", 40) + "\n        source_manifest_digest: sha256:" + strings.Repeat("d", 64) + "\n"
 	if err := os.WriteFile(configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
