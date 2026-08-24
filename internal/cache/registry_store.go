@@ -75,8 +75,14 @@ type cacheStore struct {
 // openCacheStore opens — creating if necessary — the cache root and the
 // per-URL hash directory beneath it, and returns a handle anchored to both.
 func openCacheStore(cacheRoot, hashName string) (*cacheStore, error) {
-	cacheParent := filepath.Dir(cacheRoot)
-	rootName := filepath.Base(cacheRoot)
+	cacheRootWasRelative := !filepath.IsAbs(cacheRoot)
+	relativeCacheParent := filepath.Dir(cacheRoot)
+	absoluteCacheRoot, err := filepath.Abs(cacheRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve cache root %q: %w", cacheRoot, err)
+	}
+	cacheParent := filepath.Dir(absoluteCacheRoot)
+	rootName := filepath.Base(absoluteCacheRoot)
 
 	if err := os.MkdirAll(cacheParent, cacheDirPerm); err != nil {
 		return nil, fmt.Errorf("create cache parent %q: %w", cacheParent, err)
@@ -88,9 +94,9 @@ func openCacheStore(cacheRoot, hashName string) (*cacheStore, error) {
 	// moved to another volume) when that parent sits inside a home directory, so
 	// refuse it here. Everything below the anchored root stays protected by
 	// *os.Root either way.
-	if !filepath.IsAbs(cacheRoot) {
+	if cacheRootWasRelative {
 		if info, statErr := os.Lstat(cacheParent); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("refusing symlinked cache parent %q outside a home directory", cacheParent)
+			return nil, fmt.Errorf("refusing symlinked cache parent %q outside a home directory", relativeCacheParent)
 		}
 	}
 	parent, err := os.OpenRoot(cacheParent)
