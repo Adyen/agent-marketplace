@@ -82,6 +82,22 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(new RegExp(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Inspection preview', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Safe review', exact: true })).toBeVisible()
+    await expect(page.locator('[data-testid="safe-markdown"] img')).toHaveCount(0)
+    await expect(page.locator('[data-testid="safe-markdown"] script')).toHaveCount(0)
+    await expect(page.locator('[data-testid="escaped-raw"]')).toContainText('<script>alert("xss")</script>')
+  })
+
+  test('keeps revoked revision metadata visible but disables install command actions', async ({ page }) => {
+    const revokedDigest = `sha256:${'b'.repeat(64)}`
+    await page.goto(`/s/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
+
+    await expect(page.getByRole('heading', { name: 'deploy-preview', exact: true })).toBeVisible()
+    await expect(page.getByRole('alert')).toContainText('This revision is revoked')
+    await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
+    await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
   })
 
   test('shows the source history empty state', async ({ page }) => {

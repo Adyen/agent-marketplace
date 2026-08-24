@@ -357,6 +357,25 @@ func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	}
 }
 
+func TestSupportFilePathSafety(t *testing.T) {
+	for _, name := range []string{"../escape", "nested/../escape", "./notes", "nested//notes", ""} {
+		if _, err := validateSupportRelativePath(name); err == nil {
+			t.Fatalf("unsafe support path accepted: %q", name)
+		}
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "link.txt")
+	if err := os.WriteFile(filepath.Join(root, "real.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", target); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := rejectSymlinkPath(root, target); err == nil {
+		t.Fatal("symlink support file accepted")
+	}
+}
+
 func createIngestRepo(tb testing.TB) string {
 	tb.Helper()
 	dir := tb.TempDir()

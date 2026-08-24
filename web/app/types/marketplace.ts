@@ -25,6 +25,9 @@ export type SourceOccurrence = Schemas['SourceOccurrence']
 export type ExactSourceOccurrence = Schemas['ExactSourceOccurrence']
 
 export type ResourceListItem = Schemas['ResourceListItem']
+export type InspectionManifest = Schemas['InspectionManifest']
+export type InspectionFile = Schemas['InspectionFile']
+export type InspectionFinding = Schemas['InspectionFinding']
 export type SearchResult = JsonResponse<'searchResources'>
 
 type GeneratedResourceRevision = JsonResponse<'getResource'>

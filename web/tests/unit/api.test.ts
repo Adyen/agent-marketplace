@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, normalizeApiBase, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
-import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
+import { apiPath, createMarketplaceApi, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 const params: SearchParams = {
@@ -148,6 +148,20 @@ describe('Marketplace API URL handling', () => {
       content_digest: requestedDigest,
       acquisition: 'index',
     })).toThrow(/acquisition is unsupported/)
+  })
+
+  it('builds exact inspection paths and validates bounded projection metadata', async () => {
+    const digest = 'sha256:' + 'f'.repeat(64)
+    expect(resourceInspectionPath('/api/v1', 'source', 'skill', 'review', digest)).toBe('/api/v1/resources/source/skill/review/revisions/sha256%3A' + 'f'.repeat(64) + '/inspection')
+    expect(resourceInspectionContentPath('/api/v1', 'source', 'skill', 'review', digest)).toContain('/inspection/content')
+    const payload = {
+      schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+      files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 10, inspection_class: 'text' }],
+      findings: [{ code: 'warn', severity: 'warn', path: 'SKILL.md', start_byte: 1, end_byte: 2 }],
+    }
+    const api = createMarketplaceApi(async () => payload)
+    await expect(api.getResourceInspection('source', 'skill', 'review', digest)).resolves.toMatchObject({ primary_path: 'SKILL.md' })
+    expect(() => normalizeInspectionManifest({ ...payload, findings: [{ code: 'warn', severity: 'warn', start_byte: 3, end_byte: 2 }] })).toThrow(/inverted byte range/)
   })
 
   it('accepts API-only well-known metadata without browser templates', () => {
