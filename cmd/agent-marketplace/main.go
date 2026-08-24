@@ -393,7 +393,7 @@ func newRemoveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, or mcp")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Remove from an ad-hoc registry (git URL or GitLab/GitHub web URL)")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")

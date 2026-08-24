@@ -182,7 +182,7 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 }
 
 func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
-	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName && a.SelectedBy == b.SelectedBy
+	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName && a.Direct == b.Direct && a.SelectedBy == b.SelectedBy
 }
 
 func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
@@ -211,6 +211,11 @@ func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
 		removeMappingKeyByName(node, "installed_name")
 	} else {
 		setMappingValue(node, "installed_name", scalarNode(pin.InstalledName))
+	}
+	if pin.Direct {
+		setMappingValue(node, "direct", boolNode(true))
+	} else {
+		removeMappingKeyByName(node, "direct")
 	}
 	if len(pin.SelectedBy.List()) == 0 {
 		removeMappingKeyByName(node, "selected_by")
@@ -470,10 +475,8 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if err := validateMarketplaceOccurrenceFields(pin.Acquisition, pin.SourceCommit, pin.SourceManifestDigest); err != nil {
 		return err
 	}
-	for _, selection := range pin.SelectedBy.List() {
-		if err := validateMarketplaceSelection(selection); err != nil {
-			return err
-		}
+	if err := validateMarketplaceSelections(pin.SelectedBy); err != nil {
+		return err
 	}
 	return ValidateMarketplaceInstalledName(pin.InstalledName)
 }
@@ -490,7 +493,7 @@ var marketplaceEntryFields = map[string]struct{}{
 
 var marketplacePinFields = map[string]struct{}{
 	"source_id": {}, "source_slug": {}, "kind": {}, "name": {},
-	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {}, "selected_by": {},
+	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {}, "direct": {}, "selected_by": {},
 }
 
 // validateMarketplaceMapping validates only the Marketplace-specific AST. The
@@ -540,6 +543,20 @@ func validateMarketplaceScalarFields(node *yaml.Node, path string, fields map[st
 	return nil
 }
 
+func validateMarketplaceStringFields(node *yaml.Node, path string, fields map[string]struct{}) error {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if _, ok := fields[key.Value]; !ok {
+			continue
+		}
+		value := node.Content[i+1]
+		if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+			return fmt.Errorf("%s.%s must be a string value", path, key.Value)
+		}
+	}
+	return nil
+}
+
 func validateMarketplaceEntryNode(node *yaml.Node, index int) error {
 	path := fmt.Sprintf("marketplaces[%d]", index)
 	if err := validateMarketplaceMapping(node, path, marketplaceEntryFields); err != nil {
@@ -559,10 +576,7 @@ func validateMarketplaceEntryNode(node *yaml.Node, index int) error {
 	}
 	for i, resource := range resources.Content {
 		resourcePath := fmt.Sprintf("%s.resources[%d]", path, i)
-		if err := validateMarketplaceMapping(resource, resourcePath, marketplacePinFields); err != nil {
-			return err
-		}
-		if err := validateMarketplaceScalarFields(resource, resourcePath, marketplacePinFields); err != nil {
+		if err := validateMarketplacePinNode(resource, resourcePath); err != nil {
 			return err
 		}
 	}
@@ -667,6 +681,15 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 		}
 		merged := append([]MarketplaceSelection(nil), existing.SelectedBy.List()...)
 		changed := false
+		if len(merged) == 0 && !existing.Direct {
+			existing.Direct = true
+			setMappingValue(found, "direct", boolNode(true))
+			changed = true
+		}
+		if wanted.Direct && !existing.Direct {
+			setMappingValue(found, "direct", boolNode(true))
+			changed = true
+		}
 		for _, selection := range wanted.SelectedBy.List() {
 			if !containsMarketplaceSelection(merged, selection) {
 				merged = append(merged, selection)
@@ -675,6 +698,16 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 		}
 		if changed {
 			setMappingValue(found, "selected_by", marketplaceSelectionsNode(merged))
+			return true, nil
+		}
+	}
+	if wanted.Direct {
+		existing, err := decodeMarketplacePin(found)
+		if err != nil {
+			return false, err
+		}
+		if !existing.Direct {
+			setMappingValue(found, "direct", boolNode(true))
 			return true, nil
 		}
 	}
@@ -818,6 +851,11 @@ func marketplacePinNode(pin MarketplaceResourcePin) *yaml.Node {
 	add("source_commit", pin.SourceCommit, true)
 	add("source_manifest_digest", pin.SourceManifestDigest, true)
 	add("installed_name", pin.InstalledName, true)
+	if pin.Direct {
+		entry.Content = append(entry.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "direct"}, boolNode(true),
+		)
+	}
 	if len(pin.SelectedBy) > 0 {
 		entry.Content = append(entry.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "selected_by"}, marketplaceSelectionsNode(pin.SelectedBy.List()),
@@ -840,6 +878,13 @@ func marketplaceSelectionsNode(selections []MarketplaceSelection) *yaml.Node {
 
 func scalarNode(value string) *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+}
+
+func boolNode(value bool) *yaml.Node {
+	if value {
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"}
+	}
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"}
 }
 
 func validateMarketplaceAlias(label, value string) error {

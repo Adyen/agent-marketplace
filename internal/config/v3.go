@@ -327,18 +327,64 @@ func validateV3MarketplaceNodes(node *yaml.Node) []error {
 			continue
 		}
 		for j, rawPin := range resources.Content {
-			pin := resolveAlias(rawPin)
 			pinPath := fmt.Sprintf("%s.resources[%d]", path, j)
-			if pin == nil || pin.Kind != yaml.MappingNode {
-				errs = append(errs, fmt.Errorf("%s must be a mapping", pinPath))
-				continue
-			}
-			if err := validateMarketplaceMapping(pin, pinPath, marketplacePinFields); err != nil {
+			if err := validateMarketplacePinNode(rawPin, pinPath); err != nil {
 				errs = append(errs, err)
 			}
 		}
 	}
 	return errs
+}
+
+func validateMarketplacePinNode(rawPin *yaml.Node, path string) error {
+	pin := resolveAlias(rawPin)
+	if pin == nil || pin.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must be a mapping", path)
+	}
+	if err := validateMarketplaceMapping(pin, path, marketplacePinFields); err != nil {
+		return err
+	}
+	if err := validateMarketplaceScalarFields(pin, path, map[string]struct{}{
+		"source_id": {}, "source_slug": {}, "kind": {}, "name": {}, "revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {},
+	}); err != nil {
+		return err
+	}
+	if direct := findMappingValue(pin, "direct"); direct != nil && (direct.Kind != yaml.ScalarNode || direct.Tag != "!!bool") {
+		return fmt.Errorf("%s.direct must be a boolean", path)
+	}
+	if selectedBy := findMappingValue(pin, "selected_by"); selectedBy != nil {
+		if err := validateMarketplaceSelectedByNode(selectedBy, path+".selected_by"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMarketplaceSelectedByNode(rawNode *yaml.Node, path string) error {
+	node := resolveAlias(rawNode)
+	if node == nil || node.Kind != yaml.SequenceNode || node.Tag == "!!null" {
+		return fmt.Errorf("%s must be a non-null sequence", path)
+	}
+	selectionFields := map[string]struct{}{"source_id": {}, "name": {}, "revision": {}}
+	for i, rawSelection := range node.Content {
+		selectionPath := fmt.Sprintf("%s[%d]", path, i)
+		selection := resolveAlias(rawSelection)
+		if selection == nil || selection.Kind != yaml.MappingNode {
+			return fmt.Errorf("%s must be an exact mapping with source_id, name, and revision", selectionPath)
+		}
+		if err := validateMarketplaceMapping(selection, selectionPath, selectionFields); err != nil {
+			return err
+		}
+		for _, field := range []string{"source_id", "name", "revision"} {
+			if findMappingValue(selection, field) == nil {
+				return fmt.Errorf("%s.%s is required", selectionPath, field)
+			}
+		}
+		if err := validateMarketplaceStringFields(selection, selectionPath, selectionFields); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateV3RegistryEntryNode validates one registry entry mapping. It checks
