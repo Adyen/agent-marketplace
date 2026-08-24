@@ -32,6 +32,20 @@ func TestDefaultCapabilitiesListsAcquisitionModes(t *testing.T) {
 	}
 }
 
+func TestDefaultWellKnownAdvertisesBrowserTemplatesOnlyWhenConfigured(t *testing.T) {
+	withoutBrowser := DefaultWellKnown("mp", "https://api.example")
+	if withoutBrowser.BrowserBase != "" || withoutBrowser.BrowserLatestRoute != "" || withoutBrowser.BrowserExactRoute != "" {
+		t.Fatalf("well-known without browser base = %+v, want no browser fields", withoutBrowser)
+	}
+
+	withBrowser := DefaultWellKnown("mp", "https://api.example", "https://market.example/")
+	if withBrowser.BrowserBase != "https://market.example" ||
+		withBrowser.BrowserLatestRoute != "https://market.example/s/{source}/{kind}/{name}" ||
+		withBrowser.BrowserExactRoute != "https://market.example/s/{source}/{kind}/{name}/revisions/{revision}" {
+		t.Fatalf("well-known with browser base = %+v", withBrowser)
+	}
+}
+
 func TestIsCanonicalSHA256Digest(t *testing.T) {
 	valid := "sha256:" + strings.Repeat("a", 64)
 	if !IsCanonicalSHA256Digest(valid) {

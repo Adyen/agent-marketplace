@@ -188,6 +188,8 @@ instance:
   id: 01JMARKETPLACEEXAMPLE
   name: Example Marketplace
   canonical_url: https://marketplace.example
+  # Optional; omit for API-only deployments.
+  browser_base: https://marketplace.example
 
 listen: 127.0.0.1:8080
 

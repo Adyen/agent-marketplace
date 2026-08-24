@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -489,12 +490,23 @@ func readResponseBody(resp *http.Response, limit int64) ([]byte, error) {
 }
 
 func validateAPIWellKnown(wk mpapi.WellKnown) error {
-	if strings.TrimSpace(wk.InstanceID) == "" || strings.TrimSpace(wk.CanonicalURL) == "" ||
-		strings.TrimSpace(wk.APIBase) == "" || strings.TrimSpace(wk.BrowserRoute) == "" {
+	if strings.TrimSpace(wk.InstanceID) == "" || strings.TrimSpace(wk.CanonicalURL) == "" || strings.TrimSpace(wk.APIBase) == "" {
 		return fmt.Errorf("well-known identity fields are incomplete")
 	}
 	if err := publicurl.Validate(wk.CanonicalURL); err != nil {
 		return fmt.Errorf("canonical URL: %w", err)
+	}
+	browserFields := []string{wk.BrowserBase, wk.BrowserLatestRoute, wk.BrowserExactRoute}
+	if slices.ContainsFunc(browserFields, func(value string) bool { return strings.TrimSpace(value) != "" }) {
+		if slices.ContainsFunc(browserFields, func(value string) bool { return strings.TrimSpace(value) == "" }) {
+			return fmt.Errorf("well-known browser fields are incomplete")
+		}
+		if err := publicurl.Validate(wk.BrowserBase); err != nil {
+			return fmt.Errorf("browser base: %w", err)
+		}
+		if wk.BrowserLatestRoute != wk.BrowserBase+"/s/{source}/{kind}/{name}" || wk.BrowserExactRoute != wk.BrowserBase+"/s/{source}/{kind}/{name}/revisions/{revision}" {
+			return fmt.Errorf("well-known browser route templates are invalid")
+		}
 	}
 	caps := wk.Capabilities
 	if caps.APIVersions == nil || caps.ArtifactSchemaVersions == nil || caps.ResourceKinds == nil ||

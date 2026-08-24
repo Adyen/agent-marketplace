@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { installCommand, kindIcon, kindLabel, resourceLocator, sourceLabel } from '~/lib/presentation'
+import { installCommand, kindIcon, kindLabel, resourceLatestLocator, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import type { ResourceListItem } from '~/types/marketplace'
 
@@ -13,6 +13,7 @@ const props = defineProps<Props>()
 const { copied, copyError, copy } = useCopyText()
 
 const browserUrl = computed(() => resourceLocator(props.item, props.canonicalUrl))
+const latestBrowserUrl = computed(() => resourceLatestLocator(props.item, props.canonicalUrl))
 const command = computed(() => installCommand(props.item, props.canonicalUrl))
 const actionsAvailable = computed(() => Boolean(browserUrl.value && command.value))
 </script>
@@ -27,7 +28,7 @@ const actionsAvailable = computed(() => Boolean(browserUrl.value && command.valu
         <div class="min-w-0">
           <p class="truncate text-sm font-medium text-muted">{{ sourceLabel(item) }}</p>
           <h2 class="truncate text-lg font-semibold text-highlighted" :title="item.name">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" class="rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.name }}</NuxtLink>
+            <NuxtLink v-if="latestBrowserUrl" :to="latestBrowserUrl" class="rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ item.name }}</NuxtLink>
             <span v-else>{{ item.name }}</span>
           </h2>
         </div>

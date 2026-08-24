@@ -32,6 +32,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('Apache-2.0')
     expect(wrapper.text()).toContain('<script>not markup</script>')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
+    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.find('[aria-live="polite"]').exists()).toBe(true)

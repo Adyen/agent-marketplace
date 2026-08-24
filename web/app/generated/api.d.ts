@@ -79,7 +79,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download a source revision manifest */
+        /** Download a content-addressed source or collection manifest */
         get: operations["getManifest"];
         put?: never;
         post?: never;
@@ -232,8 +232,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stable browser route for a resource */
-        get: operations["getBrowserResource"];
+        /**
+         * Stable Nuxt-owned browser route for the latest resource revision
+         * @description This HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
+         */
+        get: operations["getBrowserResourceLatest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/{source}/{kind}/{name}/revisions/{revision}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stable Nuxt-owned browser route for an exact resource revision
+         * @description This immutable HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
+         */
+        get: operations["getBrowserResourceRevision"];
         put?: never;
         post?: never;
         delete?: never;
@@ -363,7 +386,15 @@ export interface components {
         };
         WellKnown: components["schemas"]["Capabilities"] & {
             api_base: string;
-            browser_route_template: string;
+            /**
+             * Format: uri
+             * @description Optional safe HTTP(S) base URL for the Nuxt browser frontend.
+             */
+            browser_base?: string;
+            /** @description Present only when browser_base is configured; revision is an exact SHA-256 content digest. */
+            browser_exact_route_template?: string;
+            /** @description Present only when browser_base is configured. */
+            browser_latest_route_template?: string;
             /**
              * Format: uri
              * @description Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
@@ -678,29 +709,68 @@ export interface operations {
             };
         };
     };
-    getBrowserResource: {
+    getBrowserResourceLatest: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                /** @description Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators. */
+                /** @description Route-safe source-local name. */
                 name: string;
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                /** @description Route-safe source slug or ID. */
                 source: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Resource revision */
+            /** @description HTML latest-revision browser page */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResourceRevision"];
+                    "text/html": string;
                 };
+            };
+            /** @description Browser frontend is not deployed or the resource is unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBrowserResourceRevision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+                name: string;
+                revision: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description HTML exact-revision browser page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Browser frontend is not deployed or the revision is unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

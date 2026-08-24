@@ -62,17 +62,26 @@ test.describe('Marketplace browser discovery', () => {
     await expect(card.getByText(hostileDescription, { exact: true })).toBeVisible()
     await expect(card.locator('script')).toHaveCount(0)
     await expect(card.locator('[onerror]')).toHaveCount(0)
-    await expect(card.getByRole('link', { name: 'secure-review', exact: true })).toHaveAttribute('href', new RegExp(`/revisions/${encodeURIComponent(digest)}$`))
+    await expect(card.getByRole('link', { name: 'secure-review', exact: true })).toHaveAttribute('href', /\/s\/team-tools\/skill\/secure-review$/)
   })
 
-  test('follows a digest-pinned resource link to verified detail', async ({ page }) => {
+  test('follows a latest resource link and exposes an exact install pin', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('link', { name: 'secure-review', exact: true }).click()
+
+    await expect(page).toHaveURL(/\/s\/team-tools\/skill\/secure-review$/)
+    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
+    await expect(page.locator('code')).toContainText(`/revisions/${encodeURIComponent(digest)}`)
+    await expect(page.getByText('No findings were reported for this revision.', { exact: true })).toBeVisible()
+  })
+
+  test('follows an exact digest-pinned browser route to verified detail', async ({ page }) => {
+    await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
     await expect(page).toHaveURL(new RegExp(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('No findings were reported for this revision.', { exact: true })).toBeVisible()
   })
 
   test('shows the source history empty state', async ({ page }) => {

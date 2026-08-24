@@ -1,6 +1,10 @@
 package api
 
-import "github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
+import (
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
+)
 
 // Marketplace API and artifact schema version constants.
 const (
@@ -24,12 +28,19 @@ func DefaultCapabilities() Capabilities {
 }
 
 // DefaultWellKnown returns the well-known response for a Marketplace instance.
-func DefaultWellKnown(instanceID, canonicalURL string) WellKnown {
-	return WellKnown{
+func DefaultWellKnown(instanceID, canonicalURL string, browserBase ...string) WellKnown {
+	wellKnown := WellKnown{
 		InstanceID:   instanceID,
 		CanonicalURL: publicurl.Sanitize(canonicalURL),
 		APIBase:      "/api/v1",
-		BrowserRoute: "/s/{source}/{kind}/{name}",
 		Capabilities: DefaultCapabilities(),
 	}
+	if len(browserBase) > 0 {
+		wellKnown.BrowserBase = strings.TrimRight(publicurl.Sanitize(browserBase[0]), "/")
+	}
+	if wellKnown.BrowserBase != "" {
+		wellKnown.BrowserLatestRoute = wellKnown.BrowserBase + "/s/{source}/{kind}/{name}"
+		wellKnown.BrowserExactRoute = wellKnown.BrowserBase + "/s/{source}/{kind}/{name}/revisions/{revision}"
+	}
+	return wellKnown
 }

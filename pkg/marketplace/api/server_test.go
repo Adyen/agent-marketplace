@@ -332,6 +332,17 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("healthz status %d: %s", resp.StatusCode, body)
 	}
 
+	for _, path := range []string{
+		"/s/test-source/skill/review",
+		"/s/test-source/skill/review/revisions/sha256%3A1111111111111111111111111111111111111111111111111111111111111111",
+	} {
+		resp = mustGet(t, public.URL+path)
+		body = mustRead(t, resp)
+		if resp.StatusCode != http.StatusNotFound || strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+			t.Fatalf("public browser %s status/content-type/body = %d/%s/%s", path, resp.StatusCode, resp.Header.Get("Content-Type"), body)
+		}
+	}
+
 	// Operations endpoints are never available on the public listener.
 	for _, path := range []string{"/readyz", "/metrics"} {
 		resp = mustGet(t, public.URL+path)

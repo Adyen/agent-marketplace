@@ -150,9 +150,29 @@ describe('Marketplace API URL handling', () => {
     })).toThrow(/acquisition is unsupported/)
   })
 
+  it('accepts API-only well-known metadata without browser templates', () => {
+    const metadata = normalizeWellKnown({
+      instance_id: 'api-only', canonical_url: 'https://api.example', api_base: '/api/v1',
+      api_versions: ['v1'], artifact_schema_versions: ['v1'], resource_kinds: ['skill'],
+      acquisition_modes: ['mirror'], features: [],
+    })
+    expect(metadata.browser_base).toBeUndefined()
+    expect(metadata.browser_latest_route_template).toBeUndefined()
+    expect(metadata.browser_exact_route_template).toBeUndefined()
+    expect(() => normalizeWellKnown({
+      instance_id: 'partial', canonical_url: 'https://api.example', api_base: '/api/v1', browser_base: 'https://web.example',
+      api_versions: ['v1'], artifact_schema_versions: ['v1'], resource_kinds: ['skill'], acquisition_modes: ['mirror'], features: [],
+    })).toThrow(/browser fields must be provided together/)
+    expect(() => normalizeWellKnown({
+      instance_id: 'mismatch', canonical_url: 'https://api.example', api_base: '/api/v1', browser_base: 'https://web.example',
+      browser_latest_route_template: 'https://other.example/s/{source}/{kind}/{name}', browser_exact_route_template: 'https://web.example/s/{source}/{kind}/{name}/revisions/{revision}',
+      api_versions: ['v1'], artifact_schema_versions: ['v1'], resource_kinds: ['skill'], acquisition_modes: ['mirror'], features: [],
+    })).toThrow(/route templates do not match/)
+  })
+
   it('turns malformed discovery payloads into bounded validation errors', () => {
     expect(() => normalizeWellKnown({ instance_id: 'x' })).toThrow(ApiValidationError)
-    expect(() => normalizeWellKnown({ instance_id: 'x', canonical_url: 'https://example.com', api_base: '/api/v1', browser_route_template: '/s/{source}/{kind}/{name}', api_versions: [], artifact_schema_versions: ['v1'], resource_kinds: ['skill'], acquisition_modes: ['mirror'], features: [] })).toThrow(/api_versions must not be empty/)
+    expect(() => normalizeWellKnown({ instance_id: 'x', canonical_url: 'https://example.com', api_base: '/api/v1', browser_base: 'https://example.com', browser_latest_route_template: 'https://example.com/s/{source}/{kind}/{name}', browser_exact_route_template: 'https://example.com/s/{source}/{kind}/{name}/revisions/{revision}', api_versions: [], artifact_schema_versions: ['v1'], resource_kinds: ['skill'], acquisition_modes: ['mirror'], features: [] })).toThrow(/api_versions must not be empty/)
     expect(() => normalizeSearchResult({ items: [{ name: '<unbounded>' }], total: 0, offset: 0, limit: 10 })).toThrow(ApiValidationError)
     expect(() => normalizeSearchResult({ items: [{ source_id: 'source', kind: 'skill', name: 'review', revision: 'refs/heads/main', content_digest: 'sha256:' + 'a'.repeat(64) }], total: 1, offset: 0, limit: 10 })).toThrow(/revision.*SHA-256 digest/)
     expect(() => normalizeSource({ id: 'id', slug: 'slug', origins: ['https://example.com/repo'], ref: 'main', roots: [], acquisition: 'mirror', listed: true })).toThrow(/roots must not be empty/)

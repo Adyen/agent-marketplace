@@ -106,6 +106,7 @@ type Instance struct {
 	ID           string `yaml:"id"`
 	Name         string `yaml:"name"`
 	CanonicalURL string `yaml:"canonical_url"`
+	BrowserBase  string `yaml:"browser_base,omitempty"`
 }
 
 // Storage configures the metadata and blob stores.
@@ -377,6 +378,14 @@ func validateInstance(inst Instance) error {
 	}
 	if strings.Contains(inst.CanonicalURL, "..") {
 		return errors.New("instance.canonical_url must not contain path traversal")
+	}
+	if strings.TrimSpace(inst.BrowserBase) != "" {
+		if err := publicurl.ErrorForField("instance.browser_base", inst.BrowserBase); err != nil {
+			return err
+		}
+		if strings.Contains(inst.BrowserBase, "..") {
+			return errors.New("instance.browser_base must not contain path traversal")
+		}
 	}
 	return nil
 }
