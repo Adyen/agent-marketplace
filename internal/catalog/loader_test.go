@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -630,6 +631,110 @@ func TestDiscover_SubBundlesIgnoredSuppressedWhenCatalogCoversThem(t *testing.T)
 	}
 }
 
+// TestDiscover_BareSkillsContainerWithRulesDoesNotWarn verifies that rules
+// directories inside individual bare skills do not make those skill
+// directories look like independent sub-bundles.
+func TestDiscover_BareSkillsContainerWithRulesDoesNotWarn(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		skillDir := filepath.Join(dir, name)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(skillDir, "SKILL.md"), fmt.Sprintf("---\nname: %s\ndescription: %s skill\n---\nBody\n", name, name))
+	}
+	for _, name := range []string{"alpha", "gamma"} {
+		rulesDir := filepath.Join(dir, name, "rules")
+		if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(rulesDir, "conventions.md"), "# Conventions\n")
+		examplesDir := filepath.Join(rulesDir, "examples")
+		if err := os.MkdirAll(examplesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(examplesDir, "SKILL.md"), fmt.Sprintf("---\nname: %s-rules-example\ndescription: Nested rules example\n---\nNested skill\n", name))
+	}
+
+	detected, ok := ingest.Autodetect(os.DirFS(dir))
+	if !ok || detected != ingest.HarnessClaude {
+		t.Fatalf("ingest.Autodetect(%q) = (%q, %v), want (%q, true)", dir, detected, ok, ingest.HarnessClaude)
+	}
+
+	result, err := Discover(dir, "")
+	if err != nil {
+		t.Fatalf("Discover(%q, autodetect) = _, %v", dir, err)
+	}
+	if len(result.SubBundles) != 0 {
+		t.Fatalf("expected no sub-bundles, got %#v", result.SubBundles)
+	}
+	if len(result.Entries) != 3 {
+		t.Fatalf("expected 3 skills, got %d: %#v", len(result.Entries), result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Fatalf("unexpected sub-bundles-ignored warning: %v", malformed.Error)
+		}
+	}
+}
+
+// TestHasBundleRoot_RootSkillPreservesExplicitMarkers verifies that a root
+// skill is not promoted by an ambiguous bare asset directory, while explicit
+// plugin and workspace markers still take precedence.
+func TestHasBundleRoot_RootSkillPreservesExplicitMarkers(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, dir string)
+		wantBundle bool
+	}{
+		{
+			name: "nested bare rules directory",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(dir, "rules"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(dir, "rules", "conventions.md"), "# Conventions\n")
+			},
+			wantBundle: false,
+		},
+		{
+			name: "explicit plugin manifest",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(dir, ".claude-plugin", "plugin.json"), "{}\n")
+			},
+			wantBundle: true,
+		},
+		{
+			name: "canonical workspace marker",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				workspaceSkill := filepath.Join(dir, ".claude", "skills", "workspace-skill")
+				if err := os.MkdirAll(workspaceSkill, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(workspaceSkill, "SKILL.md"), "---\nname: workspace-skill\n---\nBody\n")
+			},
+			wantBundle: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "SKILL.md"), "---\nname: root-skill\n---\nBody\n")
+			test.setup(t, dir)
+			if got := hasBundleRoot(dir); got != test.wantBundle {
+				t.Fatalf("hasBundleRoot() = %v, want %v", got, test.wantBundle)
+			}
+		})
+	}
+}
+
 // TestCatalogCoversSubBundles verifies the catalogCoversSubBundles helper.
 func TestCatalogCoversSubBundles(t *testing.T) {
 	dir := t.TempDir()
@@ -663,6 +768,85 @@ func TestCatalogCoversSubBundles(t *testing.T) {
 	// No sub-bundles should return true.
 	if !catalogCoversSubBundles(entries, dir, nil) {
 		t.Fatal("expected catalogCoversSubBundles to return true for no sub-bundles")
+	}
+}
+
+func TestCatalogCoversSubBundlesSupportsPathFormsAndRejectsEscapes(t *testing.T) {
+	dir := t.TempDir()
+	goDir := filepath.Join(dir, "go")
+	pythonDir := filepath.Join(dir, "python")
+
+	relativeEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "go-review", Path: "go/go-review/SKILL.md"},
+		{Kind: ir.KindSkill, Name: "python-review", Path: "python/python-review/SKILL.md"},
+	}
+	absoluteEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "go-review", Path: filepath.Join(goDir, "go-review", "SKILL.md")},
+		{Kind: ir.KindSkill, Name: "python-review", Path: filepath.Join(pythonDir, "python-review", "SKILL.md")},
+	}
+
+	tests := []struct {
+		name        string
+		entries     []Entry
+		subBundles  []string
+		wantCovered bool
+	}{
+		{
+			name:        "relative entries and relative sub-bundles",
+			entries:     relativeEntries,
+			subBundles:  []string{"go", "python"},
+			wantCovered: true,
+		},
+		{
+			name:        "absolute entries and absolute sub-bundles",
+			entries:     absoluteEntries,
+			subBundles:  []string{goDir, pythonDir},
+			wantCovered: true,
+		},
+		{
+			name:        "absolute entries and relative sub-bundles",
+			entries:     absoluteEntries,
+			subBundles:  []string{"go", "python"},
+			wantCovered: true,
+		},
+		{
+			name:        "relative entries and absolute sub-bundles",
+			entries:     relativeEntries,
+			subBundles:  []string{goDir, pythonDir},
+			wantCovered: true,
+		},
+		{
+			name:        "component boundary",
+			entries:     []Entry{{Kind: ir.KindSkill, Name: "go-other", Path: "go-other/SKILL.md"}},
+			subBundles:  []string{"go"},
+			wantCovered: false,
+		},
+		{
+			name:        "entry outside root",
+			entries:     []Entry{{Kind: ir.KindSkill, Name: "outside", Path: filepath.Join(dir, "..", "outside", "SKILL.md")}},
+			subBundles:  []string{"go"},
+			wantCovered: false,
+		},
+		{
+			name:        "sub-bundle outside root",
+			entries:     relativeEntries,
+			subBundles:  []string{filepath.Join(dir, "..", "outside")},
+			wantCovered: false,
+		},
+		{
+			name:        "relative sub-bundle escape",
+			entries:     relativeEntries,
+			subBundles:  []string{"../outside"},
+			wantCovered: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := catalogCoversSubBundles(test.entries, dir, test.subBundles); got != test.wantCovered {
+				t.Fatalf("catalogCoversSubBundles() = %v, want %v", got, test.wantCovered)
+			}
+		})
 	}
 }
 
@@ -710,6 +894,18 @@ func TestScanForSubBundles_SkipsHarnessWorkspaceDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "other", "SKILL.md"), "---\nname: other\n---\nO\n")
+
+	// .devin/ with skills inside — also workspace form.
+	if err := os.MkdirAll(filepath.Join(dir, ".devin", "skills", "devin-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".devin", "skills", "devin-skill", "SKILL.md"), "---\nname: devin-skill\n---\nD\n")
+
+	// .agents/ with skills inside — also workspace form.
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills", "agents-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".agents", "skills", "agents-skill", "SKILL.md"), "---\nname: agents-skill\n---\nA\n")
 
 	// A real sub-bundle should still be found.
 	if err := os.MkdirAll(filepath.Join(dir, "my-plugin", "skills", "x"), 0o755); err != nil {

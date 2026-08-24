@@ -281,14 +281,18 @@ func markdownBody(content string) string {
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
 func Load(dir string, sourceHarness string) (*Catalog, error) {
-	srcFS := os.DirFS(dir)
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
+	}
+	srcFS := os.DirFS(root)
 	cat, err := LoadFS(srcFS, sourceHarness)
 	if err != nil {
 		return nil, err
 	}
 	for i := range cat.Entries {
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
-			cat.Entries[i].Path = filepath.Join(dir, cat.Entries[i].Path)
+			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
 		}
 	}
 	return cat, nil
