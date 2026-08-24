@@ -20,7 +20,7 @@ func newTUICmd() *cobra.Command {
 				return err
 			}
 
-			return tui.Run(repoRoot, homeDir)
+			return tui.Run(cmd.Context(), repoRoot, homeDir)
 		},
 	}
 }

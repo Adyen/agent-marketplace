@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -226,6 +228,13 @@ type Model struct {
 	// failed sync+quit flows surface the error to the caller instead of
 	// exiting cleanly.
 	syncQuitErr error
+
+	// ctx carries the command/root span context through the TUI lifecycle.
+	// It is set by Run and used by action and session span instrumentation.
+	ctx context.Context
+
+	// sessionSpan is the TUI session span; it is ended when Run returns.
+	sessionSpan telemetry.Span
 
 	// keys is the centralized keymap; the single source of truth for all
 	// key bindings and their help text. Both the footer hint line and the

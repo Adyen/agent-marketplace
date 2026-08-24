@@ -95,15 +95,16 @@ func gitRootFor(dir string) string {
 
 	// Slow path: obtain the per-directory lock so only one goroutine probes
 	// for this directory. Other goroutines for the same dir block here; callers
-	// for other dirs can proceed in parallel.
+	// for other dirs can proceed in parallel. Release the cache mutex before
+	// waiting so the probing goroutine can publish its result.
 	mu, ok := gitRootLocks[dir]
 	if !ok {
 		mu = &sync.Mutex{}
 		gitRootLocks[dir] = mu
 	}
-	mu.Lock()
 	gitRootMu.Unlock()
 
+	mu.Lock()
 	defer mu.Unlock()
 
 	// Double-check the cache now that we hold the per-directory lock.
@@ -266,7 +267,7 @@ func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Conf
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	normalizeConfigHarnessTargets(&cfg)
-	if err := cfg.validate(requireHarnesses, true); err != nil {
+	if err := cfg.validate(requireHarnesses, true, kind.name()); err != nil {
 		if IsMigrationRequired(err) {
 			slog.Warn("config needs migration", "path", path, "error", err)
 		}
@@ -335,7 +336,7 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 // here keeps remove/exclude operations working against local configs.
 func LoadConfigFromPath(path string) (*Config, error) {
 	if isLocalConfigPath(path) {
-		cfg, err := loadConfigGated(path, false, false)
+		cfg, err := loadConfigGated(path, false, false, localLayer.name())
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				slog.Debug("config skipped", "path", path, "reason", "not_found")
@@ -458,14 +459,18 @@ func IsHomeDir(path string) bool {
 }
 
 func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	return loadConfigGated(path, requireHarnesses, true)
+	layer := "repository committed"
+	if requireHarnesses {
+		layer = "user personal"
+	}
+	return loadConfigGated(path, requireHarnesses, true, layer)
 }
 
 // loadConfigGated reads and validates a Config, with independent control over
 // whether harnesses and apiVersion are required. Local config files
 // (config.local.yaml) are loaded with requireAPIVersion=false because they use
 // the LocalConfig schema and are generated without an apiVersion field.
-func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool) (*Config, error) {
+func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, layer string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -477,7 +482,7 @@ func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool) (*Co
 	}
 	normalizeConfigHarnessTargets(&cfg)
 
-	if err := cfg.validate(requireHarnesses, requireAPIVersion); err != nil {
+	if err := cfg.validate(requireHarnesses, requireAPIVersion, layer); err != nil {
 		if IsMigrationRequired(err) {
 			slog.Warn("config needs migration", "path", path, "error", err)
 		}

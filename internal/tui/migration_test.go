@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,7 +39,7 @@ func TestSnapshotV2ConfigOpensMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(repoRoot, homeDir, catalogLoadCached))
+	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
 	if m.pane != paneMigrationModal {
@@ -78,7 +79,7 @@ func TestSnapshotV1ConfigDoesNotOpenMigrationModal(t *testing.T) {
 	defer restoreLocal()
 
 	m := NewModel(repoRoot, homeDir)
-	mi, _ := m.Update(readSnapshot(repoRoot, homeDir, catalogLoadCached))
+	mi, _ := m.Update(readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached))
 	m = mi.(Model)
 
 	if m.pane == paneMigrationModal {

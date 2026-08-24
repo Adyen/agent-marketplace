@@ -1,14 +1,17 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -124,7 +127,7 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), m.spinner.Tick)
+	return tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -194,7 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshing = true
 			m.nextRefreshToken++
 			m.refreshToken = m.nextRefreshToken
-			return m, tea.Batch(refreshSnapshot(m.repoRoot, m.homeDir, m.refreshToken), m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(m.ctx, m.repoRoot, m.homeDir, m.refreshToken), m.spinner.Tick)
 		}
 		m.refreshing = false
 		m.refreshToken = 0
@@ -267,6 +270,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("config write failed", "resource", msg.skillName, "enabled", msg.enabled, "err", msg.err)
+			action := "remove"
+			if msg.enabled {
+				action = "install"
+			}
+			recordControlledErrorSpan(m.ctx, action, msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		action := "Enabled"
@@ -285,11 +293,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			exclCmd := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act)
 			// Re-load snapshot to reflect the config change, then
 			// the exclude cmd runs concurrently.
-			return m, tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), exclCmd, toastExpiryCmd(2*time.Second))
+			return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), exclCmd, toastExpiryCmd(2*time.Second))
 		}
 		m.pendingExcludeAction = nil
 		// Re-load snapshot to reflect the config change
-		return m, tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
 		if msg.err != nil {
@@ -297,13 +305,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
+			recordControlledErrorSpan(m.ctx, "harness", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
 		m.refreshToken = 0
-		return m, tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
 		m.syncing = false
@@ -314,6 +323,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("sync error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("sync failed", "err", msg.err)
+			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
@@ -328,7 +338,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		// Re-load to pick up on-disk changes
-		return m, tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), toastExpiryCmd(5*time.Second))
+		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(5*time.Second))
 
 	case updateDoneMsg:
 		m.syncing = false
@@ -340,6 +350,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("update error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("update failed", "err", msg.err)
+			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		} else {
 			m.toast = "Update complete"
@@ -353,12 +364,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("migration error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("migration failed", "count", msg.count, "err", msg.err)
+			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
-		return m, tea.Batch(loadSnapshot(m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
 		if msg.err != nil {
@@ -366,10 +378,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = fmt.Sprintf("editor error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("config editor result handled", "path", msg.path, "reload", false, "err", msg.err)
+			recordControlledErrorSpan(m.ctx, "edit_config", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
-		return m, loadSnapshot(m.repoRoot, m.homeDir)
+		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
 
 	case detailContentMsg:
 		// The background glamour render completed; fill the viewport.
@@ -549,6 +562,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if r, ok := m.selectedRow(); ok {
 			m.enterDetailPane()
+			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
 			return m, loadDetailContent(r)
 		}
 		return m, nil
@@ -573,26 +587,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Reload):
 		m.refreshing = false
 		m.refreshToken = 0
-		return m, loadSnapshot(m.repoRoot, m.homeDir)
+		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
 
 	case key.Matches(msg, m.keys.Tab1):
 		m.switchTab(tabScope)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabScope)})
 		return m, nil
 
 	case key.Matches(msg, m.keys.Tab2):
 		m.switchTab(tabRegistry)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabRegistry)})
 		return m, nil
 
 	case key.Matches(msg, m.keys.Tab3):
 		m.switchTab(tabStatus)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(tabStatus)})
 		return m, nil
 
 	case key.Matches(msg, m.keys.NextTab):
-		m.switchTab(nextTab(m.activeTab))
+		next := nextTab(m.activeTab)
+		m.switchTab(next)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(next)})
 		return m, nil
 
 	case key.Matches(msg, m.keys.PrevTab):
-		m.switchTab(prevTab(m.activeTab))
+		prev := prevTab(m.activeTab)
+		m.switchTab(prev)
+		recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(prev)})
 		return m, nil
 
 	case key.Matches(msg, m.keys.Space):
@@ -631,6 +652,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.driftReport.InSync() {
+			recordActionSpan(m.ctx, "sync", map[string]string{"skipped": "in_sync"})
 			return m, func() tea.Msg {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
@@ -638,7 +660,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.refreshToken = 0
 		m.syncing = true
-		return m, tea.Batch(runSyncCmd(m.repoRoot), m.spinner.Tick)
+		recordActionSpan(m.ctx, "sync", nil)
+		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
 
 	case key.Matches(msg, m.keys.Update):
 		if m.syncing {
@@ -647,7 +670,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.refreshToken = 0
 		m.syncing = true
-		return m, tea.Batch(runUpdateCmd(m.repoRoot, m.homeDir), m.spinner.Tick)
+		recordActionSpan(m.ctx, "update", nil)
+		return m, tea.Batch(runUpdateCmd(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -661,11 +685,13 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.searchInput.Blur()
 		m.recomputeView()
+		recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
 		return m, nil
 
 	case key.Matches(msg, m.keys.SearchConfirm):
 		m.filterActive = false
 		m.searchInput.Blur()
+		recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
 		return m, nil
 
 	default:
@@ -737,14 +763,16 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.quitAfterSync = true
 		slog.Debug("sync+quit confirmed, deferring quit until sync completes")
-		return m, tea.Batch(runSyncCmd(m.repoRoot), m.spinner.Tick)
+		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
 	case key.Matches(msg, m.keys.ConfirmNo):
 		m.pane = paneList
 		m.quitAfterSync = false
+		recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.ConfirmCancel):
 		m.pane = paneList
 		m.quitAfterSync = false
+		recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
 		return m, nil
 	}
 	return m, nil
@@ -964,7 +992,7 @@ func (m Model) listVisibleHeight() int {
 	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
 }
 
-func Run(repoRoot, homeDir string) error {
+func Run(ctx context.Context, repoRoot, homeDir string) error {
 	// Initialise the glamour renderer while we still own the terminal
 	// (before tea.WithAltScreen swaps to the alt buffer).  WithAutoStyle
 	// sends an OSC 11 query to detect dark/light background; inside
@@ -972,8 +1000,18 @@ func Run(repoRoot, homeDir string) error {
 	initRenderer()
 
 	m := NewModel(repoRoot, homeDir)
+	m.ctx = ctxOrBackground(ctx)
+
+	tel := telemetry.TelemetryFromContext(m.ctx)
+	if tel != nil {
+		m.ctx, m.sessionSpan = tel.StartSpan(m.ctx, "agent_marketplace.tui.session", nil)
+	}
+
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := p.Run()
+
+	m.sessionSpan.End()
+
 	// An interrupt (e.g. external SIGINT) is a legitimate exit path,
 	// not an error worth reporting to the user.
 	if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {

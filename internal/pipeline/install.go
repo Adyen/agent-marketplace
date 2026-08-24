@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -74,6 +75,18 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and single-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	tel := telemetry.TelemetryFromContext(ctx)
+	var installSpan telemetry.Span
+	if tel != nil {
+		ctx, installSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.install", installOptionAttrs(opts))
+	}
+	defer func() {
+		if installSpan != (telemetry.Span{}) {
+			installSpan.SetAttributes(installResultAttrs(result, retErr))
+			installSpan.End()
+		}
+	}()
+
 	kind, hasKind := opts.Kind, opts.HasKind
 	repoRoot := opts.RepoRoot
 
@@ -223,7 +236,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, fmt.Errorf("no registries configured; add at least one registry to the config")
 	}
 
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(discoveryCfg, opts.LocalConfigDir)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}
@@ -488,13 +501,13 @@ func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *co
 	return ec.Merged, nil
 }
 
-func loadCatalogsForInstall(cfg *config.Config, localConfigDir string) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
+func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfigDir string) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
 	repoRoot := config.FindRepoRoot()
 	var opts []catalog.LoadOption
 	if localConfigDir != "" && localConfigDir != repoRoot {
 		opts = append(opts, catalog.WithLocalConfigDir(localConfigDir))
 	}
-	result := catalog.LoadRegistries(cfg, repoRoot, catalog.LoadModeRefresh, opts...)
+	result := catalog.LoadRegistriesWithContext(ctx, cfg, repoRoot, catalog.LoadModeRefresh, opts...)
 	if len(result.Errors) > 0 {
 		return result.Catalogs, result.Collections, errors.Join(result.Errors...)
 	}
@@ -804,7 +817,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(discoveryCfg, opts.LocalConfigDir)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}
