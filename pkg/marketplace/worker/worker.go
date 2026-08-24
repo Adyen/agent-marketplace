@@ -125,40 +125,44 @@ func EnsureMarketplace(ctx context.Context, deps *Deps) error {
 // EnsureRevocations writes operator-configured revocations to the store.
 func EnsureRevocations(ctx context.Context, deps Deps) error {
 	now := time.Now().UTC()
-	for _, id := range deps.Config.Revocations.SourceIDs {
-		err := deps.MetadataStore.PutRevocation(ctx, store.Revocation{
-			Kind:      store.RevocationSource,
-			TargetID:  id,
-			Reason:    "operator configured",
-			AppliedAt: now,
-		})
-		if err != nil {
-			return fmt.Errorf("revoke source %q: %w", id, err)
+	return deps.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		for _, id := range deps.Config.Revocations.SourceIDs {
+			if err := tx.PutRevocation(txCtx, store.Revocation{
+				Kind:      store.RevocationSource,
+				TargetID:  id,
+				Reason:    "operator configured",
+				AppliedAt: now,
+			}); err != nil {
+				return fmt.Errorf("revoke source %q: %w", id, err)
+			}
 		}
-	}
-	for _, coord := range deps.Config.Revocations.Coordinates {
-		err := deps.MetadataStore.PutRevocation(ctx, store.Revocation{
-			Kind:      store.RevocationCoordinate,
-			TargetID:  coord,
-			Reason:    "operator configured",
-			AppliedAt: now,
-		})
-		if err != nil {
-			return fmt.Errorf("revoke coordinate %q: %w", coord, err)
+		for _, coord := range deps.Config.Revocations.Coordinates {
+			if err := tx.PutRevocation(txCtx, store.Revocation{
+				Kind:      store.RevocationCoordinate,
+				TargetID:  coord,
+				Reason:    "operator configured",
+				AppliedAt: now,
+			}); err != nil {
+				return fmt.Errorf("revoke coordinate %q: %w", coord, err)
+			}
 		}
-	}
-	for _, rev := range deps.Config.Revocations.Revisions {
-		err := deps.MetadataStore.PutRevocation(ctx, store.Revocation{
-			Kind:      store.RevocationRevision,
-			TargetID:  rev,
-			Reason:    "operator configured",
-			AppliedAt: now,
-		})
-		if err != nil {
-			return fmt.Errorf("revoke revision %q: %w", rev, err)
+		for _, raw := range deps.Config.Revocations.Revisions {
+			target, err := store.ParseRevisionRevocationTarget(raw)
+			if err != nil {
+				return fmt.Errorf("parse revision revocation %q: %w", raw, err)
+			}
+			revocation := store.Revocation{
+				Kind:      store.RevocationRevision,
+				TargetID:  target.String(),
+				Reason:    "operator configured",
+				AppliedAt: now,
+			}
+			if err := tx.PutRevocation(txCtx, revocation); err != nil {
+				return fmt.Errorf("revoke revision %q: %w", revocation.TargetID, err)
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // Run starts the background indexing worker. It enqueues an initial refresh for
@@ -170,6 +174,7 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 	}
 	if err := EnsureRevocations(ctx, deps); err != nil {
 		slog.Error("failed to apply revocations", "err", err)
+		return err
 	}
 
 	for _, src := range cfg.Sources {

@@ -20,6 +20,7 @@ import (
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -30,12 +31,14 @@ const MaxSourceHistoryEntries = store.MaxSourceHistoryEntries
 
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
-	cfg    config.Config
-	meta   store.MetadataStore
-	blobs  store.BlobStore
-	mpID   store.MarketplaceID
-	public *http.Server
-	ops    *http.Server
+	cfg           config.Config
+	meta          store.MetadataStore
+	blobs         store.BlobStore
+	mpID          store.MarketplaceID
+	revocations   *revocation.Evaluator
+	revocationErr error
+	public        *http.Server
+	ops           *http.Server
 
 	requestsTotal  atomic.Int64
 	activeRequests atomic.Int64
@@ -50,11 +53,14 @@ func (s *Server) OpsHandler() http.Handler { return s.ops.Handler }
 // NewServer creates an API server for the given Marketplace configuration and
 // stores. It does not start listeners; call Start.
 func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStore) *Server {
+	evaluator, evaluatorErr := revocation.New(cfg)
 	s := &Server{
-		cfg:   cfg,
-		meta:  meta,
-		blobs: blobs,
-		mpID:  store.MarketplaceID(cfg.Instance.ID),
+		cfg:           cfg,
+		meta:          meta,
+		blobs:         blobs,
+		mpID:          store.MarketplaceID(cfg.Instance.ID),
+		revocations:   evaluator,
+		revocationErr: evaluatorErr,
 	}
 
 	publicMux := http.NewServeMux()
@@ -250,6 +256,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	revs = latestEffectiveRevisions(revs, s.revocations)
 	total := len(revs)
 	sort.Slice(revs, func(i, j int) bool {
 		si := relevanceScore(revs[i].Coordinate.Name, searchQ)
@@ -464,7 +471,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, so
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	writeJSON(w, http.StatusOK, rev)
+	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name string) {
@@ -489,12 +496,13 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "failed to load revisions")
 		return
 	}
-	for _, rev := range revs {
+	for i, rev := range revs {
 		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
 			slog.Error("resource revisions contain invalid revision", "coord", coord, "err", err)
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
+		revs[i] = s.applyEffectiveRevocation(rev)
 	}
 	writeJSON(w, http.StatusOK, revs)
 }
@@ -534,7 +542,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
-	writeJSON(w, http.StatusOK, rev)
+	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
 }
 
 func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +552,16 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	revoked, err := s.manifestEffectivelyRevoked(r.Context(), store.RevisionDigest(digest))
+	if err != nil {
+		slog.Error("manifest revocation lookup failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+		return
+	}
+	if revoked {
+		writeError(w, http.StatusGone, "manifest is revoked")
+		return
+	}
 	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -585,6 +603,16 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	digest := store.ArchiveDigest("sha256:" + parts[1])
+	revoked, err := s.artifactEffectivelyRevoked(r.Context(), digest)
+	if err != nil {
+		slog.Error("artifact revocation lookup failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
+		return
+	}
+	if revoked {
+		writeError(w, http.StatusGone, "artifact is revoked")
+		return
+	}
 	data, err := s.blobs.Get(r.Context(), digest)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -626,6 +654,11 @@ func (s *Server) handlePublicOperationsNotFound(w http.ResponseWriter, _ *http.R
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if err := s.revocationsReady(ctx); err != nil {
+		slog.Error("readyz failed: live revocations are not reconciled", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "not ready")
+		return
+	}
 	if _, err := s.meta.GetMarketplace(ctx, s.mpID); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
@@ -657,6 +690,83 @@ func (s *Server) resolveSource(ctx context.Context, slugOrID string) (store.Sour
 		return store.Source{}, err
 	}
 	return s.meta.GetSource(ctx, store.SourceID(slugOrID))
+}
+
+func (s *Server) revocationsReady(ctx context.Context) error {
+	if s.revocationErr != nil {
+		return s.revocationErr
+	}
+	if s.revocations == nil {
+		return errors.New("effective revocation evaluator is unavailable")
+	}
+	for _, target := range s.revocations.Targets() {
+		if _, err := s.meta.GetRevocation(ctx, store.RevocationRevision, target.String()); err != nil {
+			return fmt.Errorf("exact revision revocation %q is not reconciled: %w", target.String(), err)
+		}
+	}
+	return nil
+}
+
+func (s *Server) applyEffectiveRevocation(rev store.ResourceRevision) store.ResourceRevision {
+	if s.revocations == nil {
+		return rev
+	}
+	return s.revocations.Apply(rev)
+}
+
+// latestEffectiveRevisions expects revisions grouped by coordinate with the
+// latest revision first. It preserves the store's latest non-revoked selection
+// while evaluating revocations from the live operator configuration.
+func latestEffectiveRevisions(revs []store.ResourceRevision, evaluator *revocation.Evaluator) []store.ResourceRevision {
+	selected := make([]store.ResourceRevision, 0, len(revs))
+	seen := make(map[store.ResourceCoordinate]struct{}, len(revs))
+	for _, revision := range revs {
+		if _, ok := seen[revision.Coordinate]; ok {
+			continue
+		}
+		if evaluator != nil {
+			revision = evaluator.Apply(revision)
+		}
+		if revision.Revocation != nil {
+			continue
+		}
+		seen[revision.Coordinate] = struct{}{}
+		selected = append(selected, revision)
+	}
+	return selected
+}
+
+// artifactEffectivelyRevoked maps an archive digest back to every published
+// revision that references it. An artifact is withheld when any exact revision
+// using those bytes is effectively revoked; direct digest lookup has no
+// coordinate in its URL and therefore cannot safely make a narrower decision.
+func (s *Server) artifactEffectivelyRevoked(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
+	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(ctx, s.mpID, digest)
+	if err != nil {
+		return false, err
+	}
+	for _, revision := range revisions {
+		if s.applyEffectiveRevocation(revision).Revocation != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Collection manifests use the collection revision's content digest rather
+// than an archive digest. Only exact declarations with that content identity
+// can make this immutable manifest unavailable. The live declaration is
+// authoritative even when its metadata row is absent.
+func (s *Server) manifestEffectivelyRevoked(ctx context.Context, digest store.RevisionDigest) (bool, error) {
+	if s.revocations == nil {
+		return false, s.revocationErr
+	}
+	for _, target := range s.revocations.Targets() {
+		if target.Coordinate.Marketplace == s.mpID && target.Coordinate.Kind == "collection" && target.ContentDigest == digest {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) sourceSlugs(ctx context.Context) (map[store.SourceID]string, error) {

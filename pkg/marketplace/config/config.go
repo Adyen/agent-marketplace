@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -241,7 +242,8 @@ type TokenCredential struct {
 	Value string `yaml:"value"`
 }
 
-// Revocations lists operator-configured revocations.
+// Revocations lists operator-configured revocations. Revisions use the exact
+// marketplace/source/kind/name@sha256:<64 lowercase hex> identity.
 type Revocations struct {
 	SourceIDs   []string `yaml:"source_ids"`
 	Coordinates []string `yaml:"coordinates"`
@@ -647,15 +649,14 @@ func (r Revocations) Validate() []error {
 		}
 	}
 	for i, rev := range r.Revisions {
-		if !digestRE.MatchString(rev) {
-			errs = append(errs, fmt.Errorf("revocations.revisions[%d] %q must be sha256:<64-hex>", i, rev))
+		if _, err := store.ParseRevisionRevocationTarget(rev); err != nil {
+			errs = append(errs, fmt.Errorf("revocations.revisions[%d] %q: %w", i, rev, err))
 		}
 	}
 	return errs
 }
 
 var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
-var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func parseCoordinate(s string) (string, error) {
 	parts := strings.Split(s, "/")

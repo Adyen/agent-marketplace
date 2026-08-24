@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// ResourceSearchFilter selects the latest non-revoked resource revisions for
-// Marketplace discovery endpoints.
+// ResourceSearchFilter selects resource revisions for Marketplace discovery
+// endpoints.
 type ResourceSearchFilter struct {
 	// Marketplace restricts results to one Marketplace instance.
 	Marketplace MarketplaceID
@@ -56,13 +56,18 @@ type MetadataStore interface {
 	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (ResourceRevision, error)
 	PutResourceRevision(ctx context.Context, rev ResourceRevision) error
 	ListResourceRevisions(ctx context.Context, coord ResourceCoordinate) ([]ResourceRevision, error)
+	// ListResourceRevisionsByArchiveDigest returns every revision in this
+	// Marketplace that references one immutable artifact digest.
+	ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace MarketplaceID, digest ArchiveDigest) ([]ResourceRevision, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.
 	GetLatestResourceRevision(ctx context.Context, coord ResourceCoordinate) (ResourceRevision, error)
 
-	// SearchResourceRevisions returns the latest non-revoked revision for each
-	// listed-source coordinate, optionally filtered by source, kind, and name.
+	// SearchResourceRevisions returns revisions for listed-source coordinates,
+	// ordered with the latest revision first within each coordinate, optionally
+	// filtered by source, kind, and name. Callers apply live revocation policy
+	// and select the latest effective revision.
 	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]ResourceRevision, error)
 
 	// Source occurrences.

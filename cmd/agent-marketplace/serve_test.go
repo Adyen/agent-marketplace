@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 )
 
 func TestServeRequiresConfig(t *testing.T) {
@@ -41,6 +43,29 @@ func TestServeRejectsUnsupportedRole(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("expected unsupported role error, got %v", err)
+	}
+}
+
+func TestServeRejectsDigestOnlyRevisionRevocation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	contents := minimalMarketplaceConfig() + `
+revocations:
+  revisions:
+    - sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := mpconfig.LoadConfig(path); err == nil || !strings.Contains(err.Error(), "revocations.revisions") {
+		t.Fatalf("digest-only revocation validation error = %v", err)
+	}
+	cmd := newServeCmd()
+	cmd.SetArgs([]string{"--config", path, "--role", "invalid"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("serve unexpectedly accepted invalid role")
 	}
 }
 

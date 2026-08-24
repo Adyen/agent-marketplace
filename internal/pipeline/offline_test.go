@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -79,6 +81,97 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 	}
 	if len(result.Warnings) == 0 {
 		t.Fatal("offline sync did not emit revocation freshness warning")
+	}
+}
+
+func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	repoRoot := t.TempDir()
+
+	resource := ir.NewSkill("review", "Review code", "Review the code carefully.", nil, nil, ir.SourceRef{})
+	artifact, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafDigest := artifact.Manifest.ContentDigest
+	artifact.Manifest.SourceID = "src"
+	artifact.Manifest.Revision = leafDigest
+	artifactRaw, archiveDigest, err := hccartifact.Encode(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestRaw, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion:    hccartifact.CollectionSchemaV1,
+		Name:             "bundle",
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootRevision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(rootDigest),
+	}
+	leafRevision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(leafDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://market.example"))
+		case "/api/v1/sources/src":
+			_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/resources/src/collection/bundle":
+			_ = json.NewEncoder(w).Encode(rootRevision)
+		case "/api/v1/manifests/" + rootDigest:
+			_, _ = w.Write(manifestRaw)
+		case "/api/v1/resources/src/skill/review/revisions/" + leafDigest:
+			_ = json.NewEncoder(w).Encode(leafRevision)
+		case "/api/v1/artifacts/sha256/" + strings.TrimPrefix(archiveDigest, "sha256:"):
+			_, _ = w.Write(artifactRaw)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	entry := config.MarketplaceEntry{URL: server.URL + "/", InstanceID: "mp"}
+	plan, err := (&marketplace.Resolver{HTTPClient: server.Client()}).PrepareLocator(context.Background(), entry, marketplace.MarketplaceLocator{Source: "src", Kind: "collection", Name: "bundle"}, nil)
+	if err != nil {
+		server.Close()
+		t.Fatalf("PrepareLocator: %v", err)
+	}
+	entry = plan.Entry
+	entry.Resources = marketplaceInstallPins(plan)
+	server.Close()
+
+	result := Sync(context.Background(), ResolveOptions{
+		RepoRoot: repoRoot,
+		NoBackup: true,
+		Offline:  true,
+		Loaders: Loaders{
+			Org: func() (*config.Config, error) { return &config.Config{}, nil },
+			Global: func() (*config.Config, error) {
+				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+			},
+			Repo: func() (*config.Config, error) {
+				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil
+			},
+			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+		},
+	})
+	if len(result.Errors) != 0 {
+		t.Fatalf("offline collection sync errors = %v", result.Errors)
+	}
+	if result.Report == nil || result.Report.TotalWritten() == 0 {
+		t.Fatalf("offline collection sync report = %#v, want materialized output", result.Report)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("materialized collection leaf missing: %v", err)
 	}
 }
 

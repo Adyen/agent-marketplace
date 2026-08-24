@@ -539,3 +539,75 @@ func mustRead(t *testing.T, resp *http.Response) string {
 	}
 	return string(b)
 }
+
+func TestServerAppliesLiveExactRevocationToDiscoveryAndArtifacts(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	blobs := fsblob.New(t.TempDir())
+	digest := "sha256:" + strings.Repeat("a", 64)
+	archive := store.ArchiveDigest("sha256:" + strings.Repeat("b", 64))
+	cfg := config.Config{
+		Instance:    config.Instance{ID: "mp", Name: "Marketplace", CanonicalURL: "https://example.com"},
+		Revocations: config.Revocations{Revisions: []string{"mp/src/skill/review@" + digest}},
+	}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace", CanonicalURL: cfg.Instance.CanonicalURL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "source", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+		t.Fatal(err)
+	}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: "review"},
+		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: archive,
+	}
+	if err := meta.PutResourceRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := blobs.Put(ctx, archive, []byte("artifact")); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(cfg, meta, blobs).PublicHandler())
+	defer server.Close()
+
+	for _, path := range []string{
+		"/api/v1/resources/source/skill/review",
+		"/api/v1/resources/source/skill/review/revisions/" + digest,
+		"/api/v1/resources/source/skill/review/revisions",
+	} {
+		resp := mustGet(t, server.URL+path)
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"target_id":"mp/src/skill/review@`+digest+`"`) {
+			t.Fatalf("%s status/body = %d/%s", path, resp.StatusCode, body)
+		}
+	}
+	resp := mustGet(t, server.URL+"/api/v1/search?q=review")
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"total":0`) {
+		t.Fatalf("search status/body = %d/%s", resp.StatusCode, body)
+	}
+	resp = mustGet(t, server.URL+"/api/v1/artifacts/sha256/"+strings.Repeat("b", 64))
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusGone || !strings.Contains(body, "revoked") {
+		t.Fatalf("artifact status/body = %d/%s", resp.StatusCode, body)
+	}
+
+	ops := httptest.NewServer(NewServer(cfg, meta, blobs).OpsHandler())
+	defer ops.Close()
+	resp = mustGet(t, ops.URL+"/readyz")
+	_ = mustRead(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unreconciled readyz status = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationRevision, TargetID: "mp/src/skill/review@" + digest}); err != nil {
+		t.Fatal(err)
+	}
+	resp = mustGet(t, ops.URL+"/readyz")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reconciled readyz status/body = %d/%s", resp.StatusCode, body)
+	}
+}
