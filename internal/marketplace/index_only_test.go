@@ -1,8 +1,12 @@
 package marketplace
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	marketplaceconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/ingest"
@@ -116,6 +121,16 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	})
 	if len(leaked) != 0 {
 		t.Fatalf("cache internals leaked into materialized skill: %v", leaked)
+	}
+
+	// Cached-no-fetch must use only the occurrence-scoped verified state. The
+	// resolver must not construct or contact the still-running Marketplace endpoint.
+	offlineResolved, offlineErrs := r.ResolveWithPolicy(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeCachedNoFetch, policy)
+	if len(offlineErrs) != 0 || len(offlineResolved) != 1 || offlineResolved[0].Resource == nil {
+		t.Fatalf("offline index-only resolve = %d artifacts, errors %v", len(offlineResolved), offlineErrs)
+	}
+	if _, err := os.Stat(filepath.Join(offlineResolved[0].Path, "docs", "support.txt")); err != nil {
+		t.Fatalf("offline reconstructed support file missing: %v", err)
 	}
 
 	badDigest := "sha256:" + strings.Repeat("f", 64)
@@ -238,13 +253,23 @@ func TestIndexOnlyResolverRejectsDisallowedOriginBeforeGit(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	allowed := []string{`trusted\\.example/`}
-	cfg := &config.Config{AllowedRegistries: &allowed, Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{SourceID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}}}}}
-	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
+	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+	cfg := &config.Config{AllowedRegistries: &allowed, Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
+	cache := NewCache(t.TempDir())
+	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifest}
+	if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
+		t.Fatal(err)
+	}
+	_, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "allowed_registries") {
 		t.Fatalf("disallowed origin errors = %v", errs)
 	}
 	if sourceRequests != 1 {
 		t.Fatalf("source occurrence requests = %d, want 1 and no Git access", sourceRequests)
+	}
+	markerPath := filepath.Join(filepath.Dir(cache.IndexOnlyArtifactPath(identity, pin.Digest)), "verified.marker")
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("refresh failure left occurrence marker present: %v", err)
 	}
 }
 
@@ -321,9 +346,179 @@ func TestStageReconstructedResourceRejectsSymlinkedSupportParent(t *testing.T) {
 	}
 
 	source := store.Source{Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := stageReconstructedResource(NewCache(t.TempDir()), "sha256:"+strings.Repeat("a", 64), checkout, source, "skill", "review", []string{"docs/secret.txt"})
+	_, err := stageReconstructedResource(NewCache(t.TempDir()), IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, source, "skill", "review", []string{"docs/secret.txt"})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("stage symlinked support parent error = %v, want symlink rejection", err)
+	}
+}
+
+func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
+	resource := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.Revision = contentDigest
+	validRaw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("a", 40)
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifest}
+	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+
+	cases := []struct {
+		name       string
+		artifact   func() []byte
+		stageFault bool
+	}{
+		{name: "decode", artifact: func() []byte { return []byte("not an archive") }},
+		{name: "identity", artifact: func() []byte {
+			bad := canonical
+			bad.Manifest.SourceID = "other"
+			raw, _, _ := hccartifact.Encode(bad)
+			return raw
+		}},
+		{name: "content", artifact: func() []byte {
+			bad := canonical
+			bad.Manifest.ContentDigest = "sha256:" + strings.Repeat("c", 64)
+			raw, _, _ := hccartifact.Encode(bad)
+			return raw
+		}},
+		{name: "archive", artifact: func() []byte {
+			return tamperCanonicalArchiveDigest(t, validRaw)
+		}},
+		{name: "staging", artifact: func() []byte { return validRaw }, stageFault: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := NewCache(t.TempDir())
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+				Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifest)},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cache.WriteIndexOnlyArtifact(identity, pin.Digest, tc.artifact()); err != nil {
+				t.Fatal(err)
+			}
+			if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
+				t.Fatal(err)
+			}
+			stagedDir := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+			if tc.stageFault {
+				outside := t.TempDir()
+				if err := os.Symlink(outside, filepath.Join(cache.root, "compiled")); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(stagedDir, 0o755); err != nil {
+				t.Fatal(err)
+			} else if err := os.WriteFile(filepath.Join(stagedDir, "SKILL.md"), []byte("cached"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			shared := NewCache(cache.root)
+			if _, err := shared.WriteArtifact(archiveDigest, validRaw); err != nil {
+				t.Fatal(err)
+			}
+			if err := shared.MarkArtifactVerified(archiveDigest); err != nil {
+				t.Fatal(err)
+			}
+			if _, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeCachedNoFetch); len(errs) == 0 {
+				t.Fatal("cached invalid index-only artifact unexpectedly resolved")
+			}
+			marker := filepath.Join(filepath.Dir(cache.IndexOnlyArtifactPath(identity, pin.Digest)), "verified.marker")
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("occurrence marker still present after %s failure: %v", tc.name, err)
+			}
+			if _, verified, err := cache.ReadArtifact(archiveDigest); err != nil || !verified {
+				t.Fatalf("shared mirror marker changed after %s failure: verified=%t err=%v", tc.name, verified, err)
+			}
+		})
+	}
+}
+
+func tamperCanonicalArchiveDigest(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	var output bytes.Buffer
+	writer := gzip.NewWriter(&output)
+	tarWriter := tar.NewWriter(writer)
+	tr := tar.NewReader(reader)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == hccartifact.CanonicalManifestPath {
+			var manifest map[string]any
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			manifest["archive_digest"] = "sha256:" + strings.Repeat("d", 64)
+			data, err = json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			header.Size = int64(len(data))
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
+}
+
+func TestStageReconstructedResourceRejectsSymlinkedCacheAncestor(t *testing.T) {
+	checkout := t.TempDir()
+	skillDir := filepath.Join(checkout, ".agents", "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: Review\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cacheRoot := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(cacheRoot, "compiled")); err != nil {
+		t.Fatal(err)
+	}
+	source := store.Source{Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	_, err := stageReconstructedResource(NewCache(cacheRoot), IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, source, "skill", "review", nil)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("stage symlinked cache ancestor error = %v, want symlink rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("staging wrote outside cache root: %v", entries)
 	}
 }
 

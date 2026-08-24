@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	cachefs "github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/redact"
@@ -123,7 +124,11 @@ func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.Marketplac
 // endpoint and pin. The instance ID matters because an endpoint URL can host
 // different Marketplace instances over time or behind different deployments.
 func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
-	return fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.SourceID, pin.Digest, pin.Revision)
+	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", entry.URL, entry.InstanceID, pin.SourceID, pin.Digest, pin.Revision)
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		key += fmt.Sprintf(":occurrence:%s:%s", pin.SourceCommit, pin.SourceManifestDigest)
+	}
+	return key
 }
 
 // marketplacePinRequired derives the resolver policy for an exact pin from the
@@ -249,7 +254,6 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		InstalledName:         pin.InstalledName,
 		Revoked:               rev.Revocation != nil,
 	}
-
 	if err := enforceMarketplaceRevocation(rev, entry, pin, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
@@ -325,25 +329,37 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	return artifact, ca, nil
 }
 
-func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, hccartifact.CanonicalArtifact, error) {
+func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (artifact resolver.ResolvedArtifact, canonical hccartifact.CanonicalArtifact, retErr error) {
 	if pin.Kind == "collection" {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only collection resolution is not supported yet")
 	}
-	if client == nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only resolution requires a Marketplace client")
+	identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, SourceID: pin.SourceID, Commit: pin.SourceCommit, ManifestDigest: pin.SourceManifestDigest}
+	cacheDigest := pin.Digest
+	if mode != resolver.MarketplaceResolveModeInspect {
+		defer func() {
+			if retErr != nil {
+				// An occurrence marker is a trust decision for this exact source
+				// occurrence. Any failed materialization attempt must not leave it
+				// trusted, and must never touch the shared mirror marker.
+				cache.InvalidateIndexOnlyArtifactVerified(identity, cacheDigest)
+			}
+		}()
 	}
-	rev, err := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+	rev, err := r.getIndexOnlyResourceRevision(ctx, client, cache, entry, pin, identity, mode)
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
+	if mode != resolver.MarketplaceResolveModeRefresh && (rev.Provenance == nil || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != pin.SourceCommit || rev.Provenance.ManifestDigest != store.RevisionDigest(pin.SourceManifestDigest)) {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached source occurrence digest mismatch: revision provenance does not match pinned source occurrence")
+	}
 	name := pin.Name
 	if pin.InstalledName != "" {
 		name = pin.InstalledName
 	}
-	artifact := resolver.ResolvedArtifact{
+	artifact = resolver.ResolvedArtifact{
 		Entry:       catalog.Entry{Kind: mustIRKind(pin.Kind), Name: name},
 		RegistryURL: entry.URL, RegistryPath: pin.SourceID, Ref: pin.Revision,
 		Source: entry.Source, Required: marketplacePinRequired(entry.Source),
@@ -352,70 +368,94 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		MarketplaceAlias: entry.Alias, MarketplaceSourceID: pin.SourceID,
 		InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
 	}
+	artifact.Ref = pin.SourceCommit
 	if err := enforceMarketplaceRevocation(rev, entry, pin, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
-	occ, err := client.GetSourceOccurrence(ctx, pin.SourceID, pin.SourceCommit)
-	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch exact source occurrence: %w", err)
-	}
-	if occ.SourceID != store.SourceID(pin.SourceID) || occ.Commit != pin.SourceCommit || occ.Acquisition != store.AcquisitionIndexOnly {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source occurrence identity or acquisition mismatch")
-	}
-	if occ.SourceRevisionManifestDigest != store.RevisionDigest(pin.SourceManifestDigest) {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source manifest digest mismatch: occurrence %q, pin %q", occ.SourceRevisionManifestDigest, pin.SourceManifestDigest)
-	}
-	if rev.Provenance == nil || rev.Provenance.SourceID != occ.SourceID || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != occ.Commit || rev.Provenance.ManifestDigest != occ.SourceRevisionManifestDigest {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("resource revision provenance does not match exact source occurrence")
-	}
-	origin := strings.TrimSpace(occ.AcquisitionOrigin)
-	if err := validateAcquisitionOrigin(origin); err != nil {
-		slog.Warn("index-only acquisition origin rejected before allowed_registries", "origin", redact.URL(origin), "source_id", pin.SourceID, "error", err)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("invalid acquisition origin before allowed_registries: %w", err)
-	}
-	if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: origin, Ref: occ.Ref}}, allowedRegistries); err != nil {
-		slog.Warn("index-only acquisition origin rejected before Git access", "origin", redact.URL(origin), "source_id", pin.SourceID, "error", err)
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("acquisition origin rejected by allowed_registries before Git access: %w", err)
-	}
-	slog.Info("index-only exact source acquisition approved", "origin", redact.URL(origin), "source_id", pin.SourceID, "commit", occ.Commit, "manifest_digest", occ.SourceRevisionManifestDigest)
-	artifact.RegistryURL = origin
-	artifact.Ref = occ.Commit
-	if mode == resolver.MarketplaceResolveModeInspect {
-		artifact.Unresolved = true
-		return artifact, hccartifact.CanonicalArtifact{}, nil
-	}
+	var origin string
+	var archiveDigest string
+	var raw []byte
+	var source store.Source
+	var checkoutDir string
+	if mode == resolver.MarketplaceResolveModeRefresh || mode == resolver.MarketplaceResolveModeInspect {
+		if client == nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
+		}
+		occ, err := client.GetSourceOccurrence(ctx, pin.SourceID, pin.SourceCommit)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("exact source commit unavailable: %w", err)
+		}
+		if occ.SourceID != store.SourceID(pin.SourceID) || occ.Commit != pin.SourceCommit || occ.Acquisition != store.AcquisitionIndexOnly {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source occurrence identity or acquisition mismatch")
+		}
+		if occ.SourceRevisionManifestDigest != store.RevisionDigest(pin.SourceManifestDigest) {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source manifest digest mismatch: occurrence %q, pin %q", occ.SourceRevisionManifestDigest, pin.SourceManifestDigest)
+		}
+		if rev.Provenance == nil || rev.Provenance.SourceID != occ.SourceID || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != occ.Commit || rev.Provenance.ManifestDigest != occ.SourceRevisionManifestDigest {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("resource revision provenance does not match exact source occurrence")
+		}
+		origin = strings.TrimSpace(occ.AcquisitionOrigin)
+		if err := validateAcquisitionOrigin(origin); err != nil {
+			slog.Warn("index-only acquisition origin rejected before allowed_registries", "origin", redact.URL(origin), "source_id", pin.SourceID, "error", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("policy rejection: invalid acquisition origin before allowed_registries: %w", err)
+		}
+		if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: origin, Ref: occ.Ref}}, allowedRegistries); err != nil {
+			slog.Warn("index-only acquisition origin rejected before Git access", "origin", redact.URL(origin), "source_id", pin.SourceID, "error", err)
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries before Git access: %w", err)
+		}
+		slog.Info("index-only exact source acquisition approved", "origin", redact.URL(origin), "source_id", pin.SourceID, "commit", occ.Commit, "manifest_digest", occ.SourceRevisionManifestDigest)
+		artifact.RegistryURL = origin
+		artifact.Ref = occ.Commit
+		if mode == resolver.MarketplaceResolveModeInspect {
+			artifact.Unresolved = true
+			return artifact, hccartifact.CanonicalArtifact{}, nil
+		}
 
-	source, err := client.GetSource(ctx, pin.SourceID)
-	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch source for exact acquisition: %w", err)
-	}
-	if source.ID != store.SourceID(pin.SourceID) || source.ID != occ.SourceID {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source metadata identity does not match exact source occurrence")
-	}
-	source.Origins = []string{origin}
-	source.Ref = occ.Ref
-	source.Acquisition = store.AcquisitionIndexOnly
-	acquired, err := acquire.CloneAtCommit(ctx, origin, occ.Ref, occ.Commit, acquire.Credentials{}, acquire.Limits{RepositoryBytes: 100 * 1024 * 1024, FileCount: 1024, FileBytes: 2 * 1024 * 1024}, 5*time.Minute)
-	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("acquire exact source commit: %w", err)
-	}
-	defer func() { _ = acquired.Release() }()
-	buildCfg := marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute), ArtifactBytes: 16 * 1024 * 1024}}}
-	built, err := ingest.BuildSourceRevision(ctx, buildCfg, store.MarketplaceID(entry.InstanceID), source, acquired.Dir, occ.Commit)
-	if err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("re-ingest exact source commit: %w", err)
-	}
-	if built.ManifestDigest != occ.SourceRevisionManifestDigest {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source manifest digest mismatch after re-ingestion: got %q, want %q", built.ManifestDigest, occ.SourceRevisionManifestDigest)
-	}
-	key := pin.Kind + "/" + pin.Name
-	raw := built.ResourceArchives[key]
-	if len(raw) == 0 {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("exact source commit did not contain an accepted %s %q", pin.Kind, pin.Name)
-	}
-	archiveDigest := built.ResourceArchiveDigest[key]
-	if archiveDigest == "" {
-		archiveDigest = hccartifact.ArchiveDigest(raw)
+		source, err = client.GetSource(ctx, pin.SourceID)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("fetch source for exact acquisition: %w", err)
+		}
+		if source.ID != store.SourceID(pin.SourceID) || source.ID != occ.SourceID {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source metadata identity does not match exact source occurrence")
+		}
+		source.Origins = []string{origin}
+		source.Ref = occ.Ref
+		source.Acquisition = store.AcquisitionIndexOnly
+		acquired, err := acquire.CloneAtCommit(ctx, origin, occ.Ref, occ.Commit, acquire.Credentials{}, acquire.Limits{RepositoryBytes: 100 * 1024 * 1024, FileCount: 1024, FileBytes: 2 * 1024 * 1024}, 5*time.Minute)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("unavailable exact source commit: %w", err)
+		}
+		defer func() { _ = acquired.Release() }()
+		checkoutDir = acquired.Dir
+		buildCfg := marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute), ArtifactBytes: 16 * 1024 * 1024}}}
+		built, err := ingest.BuildSourceRevision(ctx, buildCfg, store.MarketplaceID(entry.InstanceID), source, acquired.Dir, occ.Commit)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("re-ingest exact source commit: %w", err)
+		}
+		if built.ManifestDigest != occ.SourceRevisionManifestDigest {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source manifest digest mismatch after re-ingestion: got %q, want %q", built.ManifestDigest, occ.SourceRevisionManifestDigest)
+		}
+		key := pin.Kind + "/" + pin.Name
+		raw = built.ResourceArchives[key]
+		if len(raw) == 0 {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("exact source commit did not contain an accepted %s %q", pin.Kind, pin.Name)
+		}
+		archiveDigest = built.ResourceArchiveDigest[key]
+		if archiveDigest == "" {
+			archiveDigest = hccartifact.ArchiveDigest(raw)
+		}
+	} else {
+		var verified bool
+		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, cacheDigest)
+		if err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("read cached index-only artifact: %w", err)
+		}
+		if raw == nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("missing cached index-only artifact for exact source occurrence")
+		}
+		if !verified {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached index-only artifact is not verified")
+		}
 	}
 	ca, caRaw, err := hccartifact.Decode(bytes.NewReader(raw))
 	if err != nil {
@@ -427,38 +467,50 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if err := ca.VerifyArchiveDigest(caRaw); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify re-ingested archive: %w", err)
 	}
+	if archiveDigest != "" && ca.Manifest.ArchiveDigest != archiveDigest {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached index-only artifact digest mismatch: metadata %q, archive %q", archiveDigest, ca.Manifest.ArchiveDigest)
+	}
 	if err := ca.VerifyContentDigest(); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("verify re-ingested content: %w", err)
 	}
 	if err := validateReconstructedArtifactIdentity(pin, ca); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
-	if _, err := cache.WriteArtifact(archiveDigest, raw); err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("write reconstructed index-only artifact cache: %w", err)
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		if _, err := cache.WriteIndexOnlyArtifact(identity, cacheDigest, raw); err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("write reconstructed index-only artifact cache: %w", err)
+		}
 	}
 	// Keep the cache untrusted until the payload has been decoded as the
 	// requested resource. Archive/content digests alone do not prove that the
 	// payload is a usable resource or that its identity matches this pin.
 	resource, err := hccartifact.DecodeResource(pin.Kind, ca.Payload)
 	if err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decode re-ingested resource: %w", err)
 	}
 	if resource.Kind().String() != pin.Kind || resource.Name() != pin.Name {
-		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("decoded resource identity does not match pin: got %s/%q, want %s/%q", resource.Kind(), resource.Name(), pin.Kind, pin.Name)
 	}
 	var supportFiles []string
 	if skill, ok := resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
 	}
-	resourcePath, err := stageReconstructedResource(cache, archiveDigest, acquired.Dir, source, pin.Kind, pin.Name, supportFiles)
+	var resourcePath string
+	if checkoutDir != "" {
+		resourcePath, err = stageReconstructedResource(cache, identity, checkoutDir, source, pin.Kind, pin.Name, supportFiles)
+	} else {
+		resourcePath = cachedReconstructedResourcePath(cache, identity, pin.Kind)
+		if err = validateCachedReconstructedResource(cache, resourcePath); err != nil {
+			err = fmt.Errorf("cached reconstructed source is not within the Marketplace cache: %w", err)
+		}
+	}
 	if err != nil {
-		cache.InvalidateArtifactVerified(archiveDigest)
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("stage reconstructed resource support files: %w", err)
 	}
-	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark index-only artifact verified: %w", err)
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		if err := cache.MarkIndexOnlyArtifactVerified(identity, cacheDigest); err != nil {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("mark index-only artifact verified: %w", err)
+		}
 	}
 	artifact.Resource = resource
 	artifact.Description = descriptionFromResource(resource)
@@ -471,7 +523,7 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 // from the checked-out commit; the artifact cache directory itself is never used
 // as a source tree, so artifact.tar.gz and verified.marker cannot leak into an
 // installed skill directory.
-func stageReconstructedResource(cache *Cache, archiveDigest, checkoutDir string, source store.Source, kind, name string, supportFiles []string) (string, error) {
+func stageReconstructedResource(cache *Cache, identity IndexOnlyIdentity, checkoutDir string, source store.Source, kind, name string, supportFiles []string) (string, error) {
 	var sourceDir string
 	for _, root := range source.Roots {
 		rootDir := filepath.Join(checkoutDir, filepath.Clean(root.Path))
@@ -516,49 +568,96 @@ func stageReconstructedResource(cache *Cache, archiveDigest, checkoutDir string,
 		return "", fmt.Errorf("resource %s/%q was not found in exact source checkout", kind, name)
 	}
 
-	stagedDir := filepath.Join(filepath.Dir(cache.root), "compiled", "marketplace-sources", safeDigest(archiveDigest))
+	stagedDir := cachedReconstructedResourcePath(cache, identity, kind)
+	if err := validateCacheDirectory(cache.root, stagedDir); err != nil {
+		return "", fmt.Errorf("validate reconstructed staging path: %w", err)
+	}
 	if err := os.RemoveAll(stagedDir); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(stagedDir, 0o755); err != nil {
+	if err := ensureCacheDirectory(cache.root, stagedDir); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(stagedDir, "SKILL.md"), nil, 0o644); err != nil {
+	if err := copyReconstructedTree(checkoutDir, sourceDir, stagedDir); err != nil {
 		return "", err
 	}
+	// Skill support files are explicitly listed by the canonical IR. Copying
+	// the source tree also preserves the original SKILL.md and gives hooks a
+	// durable directory for their scripts when the next run is offline.
 	for _, supportFile := range supportFiles {
 		clean := filepath.Clean(filepath.FromSlash(supportFile))
 		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) || clean == "SKILL.md" {
 			return "", fmt.Errorf("unsafe reconstructed support path %q", supportFile)
 		}
-		sourcePath := filepath.Join(sourceDir, clean)
-		if err := validateCheckoutPath(checkoutDir, sourcePath, true); err != nil {
+		if err := validateCheckoutPath(checkoutDir, filepath.Join(sourceDir, clean), true); err != nil {
 			return "", fmt.Errorf("unsafe support file %q: %w", supportFile, err)
 		}
-		info, err := os.Lstat(sourcePath)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("unsupported support file %q", supportFile)
-		}
-		data, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return "", err
-		}
-		destinationPath := filepath.Join(stagedDir, clean)
-		if err := os.MkdirAll(filepath.Dir(destinationPath), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(destinationPath, data, info.Mode().Perm()); err != nil {
-			return "", err
+	}
+	slog.Debug("staged reconstructed resource support files", "source_dir", sourceDir, "files", len(supportFiles), "path", stagedDir)
+	if kind == "hook" {
+		if _, err := os.Stat(filepath.Join(stagedDir, "hooks.json")); err == nil {
+			return filepath.Join(stagedDir, "hooks.json"), nil
 		}
 	}
-	slog.Debug("staged reconstructed resource support files", "archive_digest", archiveDigest, "source_dir", sourceDir, "files", len(supportFiles), "path", stagedDir)
 	return filepath.Join(stagedDir, "SKILL.md"), nil
+}
+
+func cachedReconstructedResourcePath(cache *Cache, identity IndexOnlyIdentity, kind string) string {
+	return filepath.Join(cache.root, "compiled", "marketplace-sources", IndexOnlyKey(identity), kind)
+}
+
+func validateCachedReconstructedResource(cache *Cache, resourcePath string) error {
+	if err := cachefs.ValidateDirectoryAncestry(cache.root, resourcePath); err != nil {
+		return err
+	}
+	info, err := os.Lstat(resourcePath)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("staged resource directory is not a regular directory")
+	}
+	return nil
+}
+
+func copyReconstructedTree(checkoutDir, sourceDir, stagedDir string) error {
+	return filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source tree contains symlink %q", path)
+		}
+		if path == sourceDir {
+			return nil
+		}
+		if err := validateCheckoutPath(checkoutDir, path, false); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(sourceDir, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("staged source path escapes resource directory")
+		}
+		dst := filepath.Join(stagedDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(dst, 0o755)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported source file %q", rel)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, info.Mode().Perm())
+	})
 }
 
 func validateCheckoutPath(checkoutDir, target string, allowMissing bool) error {
@@ -605,6 +704,39 @@ func validateCheckoutPath(checkoutDir, target string, allowMissing bool) error {
 func mustIRKind(kind string) ir.ResourceKind {
 	value, _ := irKind(kind)
 	return value
+}
+
+func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, identity IndexOnlyIdentity, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
+	if err := ctx.Err(); err != nil {
+		return store.ResourceRevision{}, err
+	}
+	if mode != resolver.MarketplaceResolveModeRefresh && mode != resolver.MarketplaceResolveModeInspect {
+		rev, ok, err := cache.ReadIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+		if err != nil {
+			return store.ResourceRevision{}, fmt.Errorf("read cached index-only revision: %w", err)
+		}
+		if ok {
+			return rev, nil
+		}
+		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
+			return store.ResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact source occurrence")
+		}
+		return store.ResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
+	}
+	if client == nil {
+		return store.ResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
+	}
+	rev, err := client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+	if err != nil {
+		return store.ResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
+	}
+	if err := validateResourceRevision(entry, pin, rev); err != nil {
+		return store.ResourceRevision{}, err
+	}
+	if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
+		return store.ResourceRevision{}, fmt.Errorf("write index-only revision cache: %w", err)
+	}
+	return rev, nil
 }
 
 func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {

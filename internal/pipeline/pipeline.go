@@ -63,8 +63,13 @@ type ResolveOptions struct {
 	AllowMissingReadOnlyLocks   bool
 	ExactLockLease              func(context.Context) (func(), error)
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
-	MarketplaceMode             *resolver.MarketplaceResolveMode
-	MarketplaceSourceFilter     func(config.Source) bool
+	// MarketplaceMode overrides the mode derived from CatalogMode when set,
+	// except that Offline always forces CachedNoFetch.
+	MarketplaceMode *resolver.MarketplaceResolveMode
+	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
+	// the selected sources. It is applied only to the resolver's view and does
+	// not change the effective configuration returned to callers.
+	MarketplaceSourceFilter func(config.Source) bool
 }
 
 type ResolveResult struct {
@@ -513,8 +518,14 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	// resolver needs them separately to tell "failed validation" apart from
 	// "removed upstream" for a selection it cannot find.
 	mpMode := marketplaceResolveMode(opts.CatalogMode, opts.Offline)
-	if opts.MarketplaceMode != nil {
+	if opts.MarketplaceMode != nil && !opts.Offline {
 		mpMode = *opts.MarketplaceMode
+	}
+	if opts.Offline {
+		if opts.MarketplaceMode != nil && mpMode != resolver.MarketplaceResolveModeCachedNoFetch {
+			slog.Debug("offline Marketplace resolution overrides explicit mode", "requested_mode", mpMode, "effective_mode", resolver.MarketplaceResolveModeCachedNoFetch)
+		}
+		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	marketplaceResolver := marketplace.NewResolver()
 	// Keep the effective registry origin policy on the Marketplace resolver as
