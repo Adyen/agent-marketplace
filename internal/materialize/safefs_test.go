@@ -329,3 +329,61 @@ func TestConfinedFSRootHandleSurvivesRootPathReplacement(t *testing.T) {
 	}
 	assertUnchangedFile(t, sentinel, []byte("must survive"), 0o600)
 }
+
+func TestCopyDirToRootPreservesDirectoryPermissions(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	nested := filepath.Join(source, "sensitive")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outputRoot := filepath.Join(t.TempDir(), "output")
+	f, err := openConfinedFS(outputRoot, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	destination := filepath.Join(outputRoot, "copied")
+	if err := copyDirToRoot(f, source, destination); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{destination, filepath.Join(destination, "sensitive")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Errorf("%s mode = %o, want 0700", path, got)
+		}
+	}
+}
+
+func TestConfinedFSDirRootDefaultsDirectoryPermissions(t *testing.T) {
+	outputRoot := filepath.Join(t.TempDir(), "output")
+	f, err := openConfinedFS(outputRoot, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.dirRoot("defaulted", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.dirRoot("explicit", true, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaulted, err := os.Stat(filepath.Join(outputRoot, "defaulted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit, err := os.Stat(filepath.Join(outputRoot, "explicit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaulted.Mode().Perm() != explicit.Mode().Perm() {
+		t.Fatalf("defaulted mode = %o, explicit mode = %o", defaulted.Mode().Perm(), explicit.Mode().Perm())
+	}
+}

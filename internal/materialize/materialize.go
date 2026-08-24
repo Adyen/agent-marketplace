@@ -1043,11 +1043,11 @@ func executeTargetPlans(report *Report, key outputKey, outputFS *confinedFS, out
 			parent := filepath.Dir(plan.outDir)
 			if !loadedParents[parent] {
 				entries, err := existingOutputDirEntries(outputFS, parent)
-				loadedParents[parent] = true
 				if err != nil {
 					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.write.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("inspect output directory %s: %v", parent, err)})
 					continue
 				}
+				loadedParents[parent] = true
 				existingByParent[parent] = entries
 			}
 			if !existingByParent[parent][filepath.Base(plan.outDir)] {

@@ -322,7 +322,10 @@ func (f *confinedFS) Contains(p string) bool {
 // dirRoot resolves a slash-separated directory path below the root to an open
 // handle, refusing every symlinked component on the way down. Handles are owned
 // by the cache, so callers must not close what they get back.
-func (f *confinedFS) dirRoot(relDir string, create bool) (*os.Root, error) {
+func (f *confinedFS) dirRoot(relDir string, create bool, perm fs.FileMode) (*os.Root, error) {
+	if perm == 0 {
+		perm = 0o755
+	}
 	relDir = path.Clean(relDir)
 	if relDir == "" || relDir == "." {
 		return f.root, nil
@@ -348,7 +351,7 @@ func (f *confinedFS) dirRoot(relDir string, create bool) (*os.Root, error) {
 		if component == "" || component == "." {
 			continue
 		}
-		next, err := openDirChild(current, component, create)
+		next, err := openDirChild(current, component, create, perm)
 		if err != nil {
 			return nil, err
 		}
@@ -363,10 +366,10 @@ func (f *confinedFS) dirRoot(relDir string, create bool) (*os.Root, error) {
 }
 
 // openDirChild opens one directory component, refusing a symlink there.
-func openDirChild(parent *os.Root, component string, create bool) (*os.Root, error) {
+func openDirChild(parent *os.Root, component string, create bool, perm fs.FileMode) (*os.Root, error) {
 	info, err := parent.Lstat(component)
 	if os.IsNotExist(err) && create {
-		if mkdirErr := parent.Mkdir(component, 0o755); mkdirErr != nil && !os.IsExist(mkdirErr) {
+		if mkdirErr := parent.Mkdir(component, perm.Perm()); mkdirErr != nil && !os.IsExist(mkdirErr) {
 			return nil, mkdirErr
 		}
 		info, err = parent.Lstat(component)
@@ -408,7 +411,7 @@ func (f *confinedFS) resolveRel(rel string, create bool) (*os.Root, string, erro
 	if base == "" {
 		base = "."
 	}
-	dir, err := f.dirRoot(dirRel, create)
+	dir, err := f.dirRoot(dirRel, create, 0o755)
 	if err != nil {
 		return nil, "", err
 	}
@@ -453,7 +456,7 @@ func (f *confinedFS) readFileRel(rel string) ([]byte, error) {
 }
 
 func (f *confinedFS) readDirRel(rel string) ([]os.DirEntry, error) {
-	dir, err := f.dirRoot(rel, false)
+	dir, err := f.dirRoot(rel, false, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +625,7 @@ func (f *confinedFS) MkdirAll(p string, perm fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.dirRoot(rel, true); err != nil {
+	if _, err := f.dirRoot(rel, true, perm); err != nil {
 		return err
 	}
 	return nil
@@ -635,7 +638,7 @@ func (f *confinedFS) EnsureRoot() error {
 	if f.prefix == "" {
 		return nil
 	}
-	if _, err := f.dirRoot(filepath.ToSlash(f.prefix), true); err != nil {
+	if _, err := f.dirRoot(filepath.ToSlash(f.prefix), true, 0o755); err != nil {
 		return err
 	}
 	return nil
@@ -841,7 +844,7 @@ func (f *confinedFS) Walk(p string, fn fs.WalkDirFunc) error {
 	if err != nil {
 		return err
 	}
-	if _, err := f.dirRoot(rel, false); err != nil {
+	if _, err := f.dirRoot(rel, false, 0); err != nil {
 		return err
 	}
 	return fs.WalkDir(f.root.FS(), rel, fn)
