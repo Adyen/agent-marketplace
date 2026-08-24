@@ -293,7 +293,7 @@ func loadEffectiveUser(override string) LayerResult {
 		return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
 	}
 
-	cfg, err := loadConfigGated(path, false, true)
+	cfg, err := loadConfigGated(path, false, true, userLayer.name())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return LayerResult{Source: UserPersonal, Path: path}
@@ -332,7 +332,7 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 		return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
 	}
 
-	cfg, err := loadConfigGated(path, false, true)
+	cfg, err := loadConfigGated(path, false, true, repoLayer.name())
 	if err != nil {
 		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
 	}

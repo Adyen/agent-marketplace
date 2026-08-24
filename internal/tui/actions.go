@@ -96,24 +96,24 @@ var (
 	discoverCatalog  = catalog.Discover
 )
 
-func loadSnapshot(repoRoot, homeDir string) tea.Cmd {
+func loadSnapshot(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
 	return func() tea.Msg {
-		return readSnapshot(repoRoot, homeDir, catalogLoadCached)
+		return readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
 	}
 }
 
-func refreshSnapshot(repoRoot, homeDir string, refreshToken int) tea.Cmd {
+func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, refreshToken int) tea.Cmd {
 	return func() tea.Msg {
 		return refreshLoadedMsg{
-			snapshotLoadedMsg: readSnapshot(repoRoot, homeDir, catalogLoadRefresh),
+			snapshotLoadedMsg: readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh),
 			refreshToken:      refreshToken,
 		}
 	}
 }
 
-func readSnapshot(repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
 	var catalogOverlapWarnings []error
-	resolvedResult := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{
+	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
 		RepoRoot:    repoRoot,
 		CatalogMode: tuiCatalogLoadMode(mode),
 		Loaders: pipeline.Loaders{
@@ -159,7 +159,7 @@ func readSnapshot(repoRoot, homeDir string, mode catalogLoadMode) snapshotLoaded
 	for _, r := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(r.Kind, r.Name))
 	}
-	dryRunReport, _ := materialize.Run(context.Background(), repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	dryRunReport, _ := materialize.Run(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
 
 	rows := buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
@@ -740,9 +740,9 @@ func loadDetailContent(r row) tea.Cmd {
 // runSyncCmd runs the authoritative sync pipeline as a tea.Cmd.
 // It is a package-level var so tests can override it with a no-op to
 // avoid real I/O when inspecting command composition in assertions.
-var runSyncCmd = func(repoRoot string) tea.Cmd {
+var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
-		result := pipeline.Sync(context.Background(), pipeline.ResolveOptions{
+		result := pipeline.Sync(ctx, pipeline.ResolveOptions{
 			RepoRoot: repoRoot,
 			Loaders: pipeline.Loaders{
 				Org:    loadOrgConfig,
@@ -760,13 +760,13 @@ var runSyncCmd = func(repoRoot string) tea.Cmd {
 }
 
 // runUpdateCmd reloads catalogs (clone/pull), materializes refreshed resources, and reloads state.
-func runUpdateCmd(repoRoot, homeDir string) tea.Cmd {
+func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
 	return func() tea.Msg {
-		snap := readSnapshot(repoRoot, homeDir, catalogLoadRefresh)
+		snap := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
 		if snap.mergedCfg == nil && len(snap.errs) > 0 {
 			return updateDoneMsg{err: errors.Join(snap.errs...)}
 		}
-		report, err := materialize.Run(context.Background(), repoRoot, snap.resolved, materialize.WithMaterializationModes(snap.materializationModes))
+		report, err := materialize.Run(ctx, repoRoot, snap.resolved, materialize.WithMaterializationModes(snap.materializationModes))
 		var errs []error
 		errs = append(errs, snap.errs...)
 		errs = append(errs, promoteReportErrors(report)...)

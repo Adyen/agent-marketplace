@@ -40,7 +40,7 @@ Use --purge-config to also delete the config file(s) for the target scope.`,
 			if err != nil {
 				return err
 			}
-			return runDeinit(cmd.OutOrStdout(), scope, purgeConfig, dryRun)
+			return runDeinit(cmd.Context(), cmd.OutOrStdout(), scope, purgeConfig, dryRun)
 		},
 	}
 
@@ -85,7 +85,7 @@ func parseDeinitScope(s string) (deinitScope, error) {
 	}
 }
 
-func runDeinit(out io.Writer, scope deinitScope, purgeConfig bool, dryRun bool) error {
+func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfig bool, dryRun bool) error {
 	repoRoot := config.FindRepoRoot()
 	// deinit is the recovery command users reach for when their config is
 	// broken, so an unreadable or invalid config must not block teardown.
@@ -123,7 +123,7 @@ func runDeinit(out io.Writer, scope deinitScope, purgeConfig bool, dryRun bool) 
 	switch scope {
 	case deinitScopeUser:
 		opts = append(opts, materialize.WithMachineScopeOnly())
-		orgArtifacts, err := resolveOrgOwnedArtifacts(repoRoot)
+		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
 		if err != nil {
 			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
 			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
@@ -266,14 +266,14 @@ func removeEmptyDir(dir string) {
 // harness set is configured, there is no org-owned output to preserve, so the
 // function returns an empty slice rather than defaulting artifacts to a target
 // the user never requested.
-func resolveOrgOwnedArtifacts(repoRoot string) ([]resolver.ResolvedArtifact, error) {
+func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot:         repoRoot,
 		LocalConfigDir:   config.FindLocalConfigDir(),
 		CatalogMode:      catalog.LoadModeCachedNoFetch,
 		RequireTargetSet: true,
 	}
-	res := pipeline.Resolve(context.Background(), resolveOpts)
+	res := pipeline.Resolve(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
 		var missingErr *pipeline.TargetHarnessSetMissingError
 		if len(res.Errors) == 1 && errors.As(res.Errors[0], &missingErr) {

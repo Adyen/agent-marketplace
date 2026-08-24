@@ -72,6 +72,19 @@ linux-amd64:
 
 release: $(PLATFORMS)
 
+# Release build that injects the community telemetry endpoint and retention
+# policy URL at link time. Set AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT
+# and AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL to publish values;
+# leaving them empty produces a build with the same defaults as `make build`.
+RELEASE_TELEMETRY_ENDPOINT ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT)
+RELEASE_TELEMETRY_RETENTION_URL ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL)
+RELEASE_EXTRA_LDFLAGS := -X main.version=$(VERSION) \
+	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectEndpoint=$(RELEASE_TELEMETRY_ENDPOINT) \
+	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectRetentionURL=$(RELEASE_TELEMETRY_RETENTION_URL)
+
+build-release:
+	CGO_ENABLED=0 $(GO) build -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(BINARY) $(CMD)
+
 clean:
 	rm -rf $(DIST_DIR) $(BINARY)
 

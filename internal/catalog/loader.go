@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -31,6 +33,20 @@ const (
 	// cache, so it is safe for read-only/teardown paths such as deinit --dry-run.
 	LoadModeCachedNoFetch
 )
+
+func (m LoadMode) String() string {
+	switch m {
+	case LoadModeRefresh:
+		return "refresh"
+	case LoadModeCached:
+		return "cached"
+	case LoadModeInspect:
+		return "inspect"
+	case LoadModeCachedNoFetch:
+		return "cached_no_fetch"
+	}
+	return "unknown"
+}
 
 type LoadedCatalog struct {
 	Entries     []Entry
@@ -631,6 +647,10 @@ func discoverSubBundles(subBundles []string, sourceHarness string) (LoadedCatalo
 }
 
 func LoadRegistries(cfg *config.Config, repoRoot string, mode LoadMode, opts ...LoadOption) LoadResult {
+	return LoadRegistriesWithContext(context.Background(), cfg, repoRoot, mode, opts...)
+}
+
+func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot string, mode LoadMode, opts ...LoadOption) LoadResult {
 	lc := loadConfig{cloneOrPull: cache.CloneOrPull, discover: Discover}
 	for _, opt := range opts {
 		opt(&lc)
@@ -649,11 +669,32 @@ func LoadRegistries(cfg *config.Config, repoRoot string, mode LoadMode, opts ...
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)
 	result.Errors = append(result.Errors, err...)
 
+	tel := telemetry.TelemetryFromContext(ctx)
+	var cacheSpan telemetry.Span
+	if tel != nil {
+		_, cacheSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.registry_cache", registryCacheAttrs(cfg, jobs, mode))
+	}
+
 	// Phase 2: Execute fetch jobs (git clone/pull).
 	runFetches(jobs, mode, lc.cloneOrPull)
 
+	if cacheSpan != (telemetry.Span{}) {
+		cacheSpan.SetAttributes(registryCacheResultAttrs(jobs))
+		cacheSpan.End()
+	}
+
+	var ingestSpan telemetry.Span
+	if tel != nil {
+		_, ingestSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.catalog_ingest", nil)
+	}
+
 	// Phase 3: Discover skills in fetched registries.
 	discoverAll(&result, requests, lc.discover)
+
+	if ingestSpan != (telemetry.Span{}) {
+		ingestSpan.SetAttributes(catalogIngestAttrs(result))
+		ingestSpan.End()
+	}
 
 	return result
 }
