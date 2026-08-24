@@ -108,6 +108,39 @@ func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte
 	return nil
 }
 
+// PutImmutable stores data only if the address is empty or already contains
+// the same bytes. The conditional request protects the first-writer invariant
+// when multiple Marketplace refreshes race.
+func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	if existing, err := s.Get(ctx, digest); err == nil {
+		if bytes.Equal(existing, data) {
+			return nil
+		}
+		return fmt.Errorf("%w: blob %s already contains different data", store.ErrConflict, digest)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(string(digest)),
+		Body: bytes.NewReader(data), ContentLength: aws.Int64(int64(len(data))),
+		IfNoneMatch: aws.String("*"),
+	})
+	if err == nil {
+		return nil
+	}
+	// A concurrent publisher may have won the conditional write. Treat an
+	// identical winner as an idempotent retry and a different winner as a
+	// conflict; preserve other storage errors.
+	if existing, getErr := s.Get(ctx, digest); getErr == nil {
+		if bytes.Equal(existing, data) {
+			return nil
+		}
+		return fmt.Errorf("%w: blob %s already contains different data", store.ErrConflict, digest)
+	}
+	return fmt.Errorf("put immutable blob %s: %w", digest, err)
+}
+
 // Exists reports whether a blob exists for the given digest.
 func (s *Store) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
 	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{

@@ -86,6 +86,67 @@ func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte
 	return nil
 }
 
+// PutImmutable stores data only when the digest address is empty or already
+// contains the same bytes. Unlike Put, it never replaces a different first
+// writer; this is used for immutable collection manifests.
+func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	p := s.path(digest)
+	if existing, err := os.ReadFile(p); err == nil {
+		if string(existing) == string(data) {
+			return nil
+		}
+		return fmt.Errorf("%w: blob %s already contains different data", store.ErrConflict, digest)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read existing blob %s: %w", digest, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create blob directory: %w", err)
+	}
+
+	suffix, err := randomSuffix()
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp." + suffix
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("create temp blob: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(tmp) }
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		cleanup()
+		return fmt.Errorf("write temp blob: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		cleanup()
+		return fmt.Errorf("sync temp blob: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close temp blob: %w", err)
+	}
+	// Linking, rather than renaming, makes the destination creation
+	// non-overwriting even when another publisher wins the race.
+	if err := os.Link(tmp, p); err != nil {
+		cleanup()
+		if os.IsExist(err) {
+			existing, readErr := os.ReadFile(p)
+			if readErr == nil && string(existing) == string(data) {
+				return nil
+			}
+			if readErr != nil {
+				return fmt.Errorf("read concurrently published blob %s: %w", digest, readErr)
+			}
+			return fmt.Errorf("%w: blob %s already contains different data", store.ErrConflict, digest)
+		}
+		return fmt.Errorf("create immutable blob %s: %w", digest, err)
+	}
+	cleanup()
+	return nil
+}
+
 // Exists reports whether a blob exists for digest.
 func (s *Store) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
 	_, err := os.Stat(s.path(digest))

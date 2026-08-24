@@ -1,10 +1,12 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -100,13 +102,42 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	requirementWarnings, err := ensureMarketplacePinAndSync(configPath, plan, func() ([]error, error) {
-		return syncAfterInstall(ctx, opts.RepoRoot, []resourceIdentity{{kind: plan.Resolved.Kind, name: plan.Pin.Name}}, silentSyncOptsForInstall(opts)...)
+	pins := marketplaceInstallPins(plan)
+	identities := marketplaceInstallIdentities(plan)
+	requirementWarnings, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, pins, func() ([]error, error) {
+		return syncAfterInstall(ctx, opts.RepoRoot, identities, silentSyncOptsForInstall(opts)...)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &InstallResult{Installed: []string{plan.Pin.Name}, MarketplacePreview: preview, RequirementWarnings: requirementWarnings}, nil
+	installed := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		installed = append(installed, identity.name)
+	}
+	return &InstallResult{Installed: installed, IsCollection: len(plan.CollectionMembers) > 0, CollectionLabel: plan.Pin.Name, MarketplacePreview: preview, RequirementWarnings: requirementWarnings}, nil
+}
+
+func marketplaceInstallPins(plan *marketplace.PreparedInstall) []config.MarketplaceResourcePin {
+	if len(plan.CollectionMembers) == 0 {
+		return []config.MarketplaceResourcePin{plan.Pin}
+	}
+	pins := make([]config.MarketplaceResourcePin, 0, len(plan.CollectionMembers)+1)
+	pins = append(pins, plan.Pin)
+	for _, member := range plan.CollectionMembers {
+		pins = append(pins, member.Pin)
+	}
+	return pins
+}
+
+func marketplaceInstallIdentities(plan *marketplace.PreparedInstall) []resourceIdentity {
+	if len(plan.CollectionMembers) == 0 {
+		return []resourceIdentity{{kind: plan.Resolved.Kind, name: plan.Pin.Name}}
+	}
+	identities := make([]resourceIdentity, 0, len(plan.CollectionMembers))
+	for _, member := range plan.CollectionMembers {
+		identities = append(identities, resourceIdentity{kind: member.Resolved.Kind, name: member.Pin.Name})
+	}
+	return identities
 }
 
 // ensureMarketplacePinAndSync makes the pin mutation transactional with
@@ -117,7 +148,11 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 // and could also obscure the original sync error. The config rollback remains
 // byte-precise and transactional.
 func ensureMarketplacePinAndSync(configPath string, plan *marketplace.PreparedInstall, sync func() ([]error, error)) (warnings []error, retErr error) {
-	snapshot, commit, err := config.EnsureMarketplacePinInConfigWithSnapshotAndCommit(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.Entry.Alias, plan.Pin)
+	return ensureMarketplacePinsAndSync(configPath, plan.Entry, []config.MarketplaceResourcePin{plan.Pin}, sync)
+}
+
+func ensureMarketplacePinsAndSync(configPath string, entry config.MarketplaceEntry, pins []config.MarketplaceResourcePin, sync func() ([]error, error)) (warnings []error, retErr error) {
+	snapshot, commit, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, entry.Alias, pins)
 	if err != nil {
 		return nil, fmt.Errorf("write Marketplace pin: %w", err)
 	}
@@ -133,6 +168,13 @@ func ensureMarketplacePinAndSync(configPath string, plan *marketplace.PreparedIn
 	warnings, err = sync()
 	if err != nil {
 		return nil, err
+	}
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Marketplace config after sync: %w", err)
+	}
+	if !bytes.Equal(current, commit.Bytes) {
+		return nil, fmt.Errorf("marketplace config changed concurrently during install")
 	}
 	return warnings, nil
 }
@@ -208,6 +250,14 @@ func resolveMarketplaceEntry(locator marketplace.MarketplaceLocator, selector st
 }
 
 func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall) error {
+	if len(plan.CollectionMembers) > 0 {
+		for _, member := range plan.CollectionMembers {
+			if err := checkMarketplaceInstallCollision(ctx, opts, ec, member); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	installed := marketplaceInstalledName(plan.Pin)
 	if ec.Merged != nil {
 		for _, entry := range ec.Merged.Marketplaces {
@@ -287,6 +337,14 @@ func marketplaceInstalledName(pin config.MarketplaceResourcePin) string {
 }
 
 func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) error {
+	if len(plan.CollectionMembers) > 0 {
+		for _, member := range plan.CollectionMembers {
+			if err := evaluateMarketplaceConsent(member, accept); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	for _, finding := range plan.Artifact.Manifest.Findings {
 		outcome := strings.ToLower(strings.TrimSpace(finding.PolicyOutcome))
 		switch outcome {

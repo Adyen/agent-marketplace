@@ -120,6 +120,28 @@ func TestCollectionFromIRAllKinds(t *testing.T) {
 	}
 }
 
+func TestVerifyCollectionManifestRejectsTrailingWhitespace(t *testing.T) {
+	payload, _, err := EncodeCollectionManifest(CollectionManifest{
+		SchemaVersion:    CollectionSchemaV1,
+		Name:             "bundle",
+		Members:          []CollectionMemberEntry{{Kind: "skill", Name: "review"}},
+		SupportedSchemas: []string{CollectionSchemaV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, _, err := DecodeCollectionManifest(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range [][]byte{{'\n'}, {' ', '\n'}} {
+		tampered := append(append([]byte(nil), payload...), suffix...)
+		if err := VerifyCollectionManifest(manifest, tampered); err == nil || !strings.Contains(err.Error(), "not canonical") {
+			t.Fatalf("VerifyCollectionManifest suffix %q error = %v, want strict canonical rejection", suffix, err)
+		}
+	}
+}
+
 func TestCollectionManifestContentDigestExcludesDigest(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
@@ -162,5 +184,36 @@ func TestCollectionManifestRejectsDuplicateMembers(t *testing.T) {
 	}
 	if _, _, err := EncodeCollectionManifest(m); err == nil || !strings.Contains(err.Error(), "duplicate collection member") {
 		t.Fatalf("expected duplicate member error, got %v", err)
+	}
+}
+
+func TestValidateFlatMirrorManifestRequiresExactLeaves(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	base := CollectionManifest{
+		SchemaVersion:    CollectionSchemaV1,
+		Name:             "bundle",
+		SupportedSchemas: []string{CollectionSchemaV1},
+		Members:          []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "source", Revision: digest}},
+	}
+	cases := []struct {
+		name   string
+		mutate func(*CollectionManifest)
+		want   string
+	}{
+		{"missing source", func(m *CollectionManifest) { m.Members[0].SourceID = "" }, "source_id"},
+		{"missing revision", func(m *CollectionManifest) { m.Members[0].Revision = "" }, "revision"},
+		{"nested member", func(m *CollectionManifest) { m.Members[0].Kind = "collection" }, "nested"},
+		{"includes", func(m *CollectionManifest) { m.Includes = []string{"base"} }, "includes"},
+		{"duplicate", func(m *CollectionManifest) { m.Members = append(m.Members, m.Members[0]) }, "duplicate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := base
+			m.Members = append([]CollectionMemberEntry(nil), base.Members...)
+			tc.mutate(&m)
+			if err := ValidateFlatMirrorManifest(m); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateFlatMirrorManifest error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

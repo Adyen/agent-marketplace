@@ -182,7 +182,7 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 }
 
 func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
-	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName
+	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName && a.SelectedBy == b.SelectedBy
 }
 
 func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
@@ -212,9 +212,43 @@ func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
 	} else {
 		setMappingValue(node, "installed_name", scalarNode(pin.InstalledName))
 	}
+	if len(pin.SelectedBy.List()) == 0 {
+		removeMappingKeyByName(node, "selected_by")
+	} else {
+		setMappingValue(node, "selected_by", marketplaceSelectionsNode(pin.SelectedBy.List()))
+	}
 }
 
 func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
+	return ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias, []MarketplaceResourcePin{pin})
+}
+
+// EnsureMarketplacePinsInConfigWithSnapshotAndCommit applies a group of exact
+// pins in one AST write. All pins are validated and collision-checked before
+// the document is written, so a collection can never leave a partial leaf set.
+func EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, marketplaceURL, instanceID, alias string, pins []MarketplaceResourcePin) (*FileSnapshot, ConfigFileCommit, error) {
+	var snapshot *FileSnapshot
+	var commit ConfigFileCommit
+	err := withConfigPathLock(configPath, func() error {
+		var err error
+		snapshot, err = SnapshotConfigFile(configPath)
+		if err != nil {
+			return err
+		}
+		if err := ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias, pins); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read committed config %q: %w", configPath, err)
+		}
+		commit = newConfigFileCommit(data)
+		return nil
+	})
+	return snapshot, commit, err
+}
+
+func ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias string, pins []MarketplaceResourcePin) error {
 	canonicalURL, err := NormalizeMarketplaceURL(marketplaceURL)
 	if err != nil {
 		return err
@@ -222,7 +256,15 @@ func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias 
 	if err := validateMarketplaceSegment("marketplace instance_id", instanceID); err != nil {
 		return err
 	}
-	if err := ValidateMarketplaceResourcePin(pin); err != nil {
+	if len(pins) == 0 {
+		return fmt.Errorf("at least one Marketplace pin is required")
+	}
+	for _, pin := range pins {
+		if err := ValidateMarketplaceResourcePin(pin); err != nil {
+			return err
+		}
+	}
+	if err := validateIncomingMarketplacePins(pins); err != nil {
 		return err
 	}
 	if alias != "" {
@@ -231,7 +273,7 @@ func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias 
 		}
 	}
 
-	slog.Debug("ensuring marketplace pin", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name)
+	slog.Debug("ensuring Marketplace pins", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID, "pins", len(pins))
 	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
@@ -247,7 +289,6 @@ func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias 
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
-
 	entries, err := decodeMarketplaceEntries(marketplaces)
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
@@ -262,26 +303,29 @@ func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias 
 		}
 		match = candidate.node
 	}
-
 	if match == nil {
 		entry := marketplaceEntryNode(canonicalURL, instanceID, alias)
 		resources := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		resources.Content = append(resources.Content, marketplacePinNode(pin))
-		entry.Content = append(entry.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "resources"}, resources,
-		)
-		marketplaces.Content = append(marketplaces.Content, entry)
-		if err := writeConfigDocument(configPath, mode, doc); err != nil {
-			return err
+		for _, pin := range pins {
+			resources.Content = append(resources.Content, marketplacePinNode(pin))
 		}
-		slog.Debug("marketplace pin added", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID)
-		return nil
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "resources"}, resources)
+		marketplaces.Content = append(marketplaces.Content, entry)
+		return writeConfigDocument(configPath, mode, doc)
+	}
+
+	// Validate all existing target identities before changing the AST. The later
+	// add loop remains defensive, but no earlier pin may make a subsequent
+	// conflicting member appear to have been accepted.
+	existingResources := findMappingValue(match, "resources")
+	if existingResources != nil && existingResources.Kind != yaml.SequenceNode {
+		return fmt.Errorf("update config %q: marketplace entry resources must be a sequence", configPath)
+	}
+	if err := validateMarketplacePinBatchAgainstExisting(existingResources, pins); err != nil {
+		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
 
 	changed := false
-	// An existing non-empty alias is authoritative. If the entry predates
-	// aliases, adding the caller's alias is safe and avoids leaving a newly
-	// ensured endpoint nameless; a later call can never overwrite it.
 	if alias != "" {
 		aliasNode := findMappingValue(match, "alias")
 		if aliasNode == nil || strings.TrimSpace(aliasNode.Value) == "" {
@@ -293,20 +337,17 @@ func ensureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias 
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
-	pinChanged, err := addMarketplacePinNode(resources, pin)
-	if err != nil {
-		return fmt.Errorf("update config %q: %w", configPath, err)
+	for _, pin := range pins {
+		pinChanged, err := addMarketplacePinNode(resources, pin)
+		if err != nil {
+			return fmt.Errorf("update config %q: %w", configPath, err)
+		}
+		changed = changed || pinChanged
 	}
-	changed = changed || pinChanged
 	if !changed {
-		slog.Debug("marketplace pin already present", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID)
 		return nil
 	}
-	if err := writeConfigDocument(configPath, mode, doc); err != nil {
-		return err
-	}
-	slog.Debug("marketplace pin added", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID)
-	return nil
+	return writeConfigDocument(configPath, mode, doc)
 }
 
 // AddMarketplacePinToConfig is a descriptive alias for
@@ -429,6 +470,11 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if err := validateMarketplaceOccurrenceFields(pin.Acquisition, pin.SourceCommit, pin.SourceManifestDigest); err != nil {
 		return err
 	}
+	for _, selection := range pin.SelectedBy.List() {
+		if err := validateMarketplaceSelection(selection); err != nil {
+			return err
+		}
+	}
 	return ValidateMarketplaceInstalledName(pin.InstalledName)
 }
 
@@ -444,7 +490,7 @@ var marketplaceEntryFields = map[string]struct{}{
 
 var marketplacePinFields = map[string]struct{}{
 	"source_id": {}, "source_slug": {}, "kind": {}, "name": {},
-	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {},
+	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {}, "selected_by": {},
 }
 
 // validateMarketplaceMapping validates only the Marketplace-specific AST. The
@@ -614,7 +660,101 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 			return false, fmt.Errorf("conflicting installed_name for Marketplace resource pin %s/%s/%s: existing %q, requested %q", wanted.SourceID, wanted.Kind, wanted.Name, existing.Value, wanted.InstalledName)
 		}
 	}
+	if len(wanted.SelectedBy.List()) > 0 {
+		existing, err := decodeMarketplacePin(found)
+		if err != nil {
+			return false, err
+		}
+		merged := append([]MarketplaceSelection(nil), existing.SelectedBy.List()...)
+		changed := false
+		for _, selection := range wanted.SelectedBy.List() {
+			if !containsMarketplaceSelection(merged, selection) {
+				merged = append(merged, selection)
+				changed = true
+			}
+		}
+		if changed {
+			setMappingValue(found, "selected_by", marketplaceSelectionsNode(merged))
+			return true, nil
+		}
+	}
 	return false, nil
+}
+
+func validateIncomingMarketplacePins(pins []MarketplaceResourcePin) error {
+	type pinIdentity struct {
+		sourceID string
+		kind     string
+		name     string
+	}
+	seen := make(map[pinIdentity]MarketplaceResourcePin, len(pins))
+	for _, pin := range pins {
+		identity := pinIdentity{sourceID: pin.SourceID, kind: pin.Kind, name: pin.Name}
+		previous, ok := seen[identity]
+		if !ok {
+			seen[identity] = pin
+			continue
+		}
+		if !sameMarketplaceIncomingPin(previous, pin) {
+			return fmt.Errorf("conflicting duplicate Marketplace resource pin identity %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+		}
+		return fmt.Errorf("duplicate Marketplace resource pin identity %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+	}
+	return nil
+}
+
+// Incoming collection members must agree on every pin value that affects
+// resolution. Selection edges are deliberately excluded: multiple collection
+// selections for one leaf are merged into selected_by below.
+func sameMarketplaceIncomingPin(a, b MarketplaceResourcePin) bool {
+	acquisition := func(pin MarketplaceResourcePin) string {
+		if pin.Acquisition == "" {
+			return MarketplaceAcquisitionMirror
+		}
+		return pin.Acquisition
+	}
+	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name &&
+		a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b) &&
+		a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest &&
+		a.InstalledName == b.InstalledName
+}
+
+func validateMarketplacePinBatchAgainstExisting(resources *yaml.Node, pins []MarketplaceResourcePin) error {
+	if resources == nil {
+		return nil
+	}
+	existing := make(map[string]MarketplaceResourcePin, len(resources.Content))
+	for _, node := range resources.Content {
+		pin, err := decodeMarketplacePin(node)
+		if err != nil {
+			return err
+		}
+		key := pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
+		if _, duplicate := existing[key]; duplicate {
+			for _, wanted := range pins {
+				if sameMarketplacePinIdentity(pin, wanted) {
+					return fmt.Errorf("config contains duplicate Marketplace resource pin identity %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+				}
+			}
+		}
+		existing[key] = pin
+	}
+	for _, wanted := range pins {
+		key := wanted.SourceID + "\x00" + wanted.Kind + "\x00" + wanted.Name
+		if got, ok := existing[key]; ok && !sameMarketplacePinContent(got, wanted) {
+			return fmt.Errorf("conflicting Marketplace resource pin for %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+		}
+	}
+	return nil
+}
+
+func containsMarketplaceSelection(selections []MarketplaceSelection, wanted MarketplaceSelection) bool {
+	for _, selection := range selections {
+		if selection == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeMarketplacePin(node *yaml.Node) (MarketplaceResourcePin, error) {
@@ -678,7 +818,24 @@ func marketplacePinNode(pin MarketplaceResourcePin) *yaml.Node {
 	add("source_commit", pin.SourceCommit, true)
 	add("source_manifest_digest", pin.SourceManifestDigest, true)
 	add("installed_name", pin.InstalledName, true)
+	if len(pin.SelectedBy) > 0 {
+		entry.Content = append(entry.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "selected_by"}, marketplaceSelectionsNode(pin.SelectedBy.List()),
+		)
+	}
 	return entry
+}
+
+func marketplaceSelectionsNode(selections []MarketplaceSelection) *yaml.Node {
+	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, selection := range selections {
+		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "source_id"}, scalarNode(selection.SourceID),
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"}, scalarNode(selection.Name),
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "revision"}, scalarNode(selection.Revision),
+		}})
+	}
+	return sequence
 }
 
 func scalarNode(value string) *yaml.Node {

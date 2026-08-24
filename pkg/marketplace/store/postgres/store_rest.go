@@ -122,14 +122,20 @@ func (s *Store) PutCollectionRevision(ctx context.Context, cr store.CollectionRe
 		`INSERT INTO collection_revisions
 		 (id, source_id, manifest_digest, members, created_at)
 		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (id) DO UPDATE SET
-		   source_id = EXCLUDED.source_id,
-		   manifest_digest = EXCLUDED.manifest_digest,
-		   members = EXCLUDED.members,
-		   created_at = EXCLUDED.created_at`,
+		 ON CONFLICT (id) DO NOTHING`,
 		cr.ID, cr.SourceID, cr.ManifestDigest, membersJSON, timeToMicro(cr.CreatedAt),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	existing, err := s.GetCollectionRevision(ctx, cr.ID)
+	if err != nil {
+		return err
+	}
+	if !cr.Equal(existing) {
+		return fmt.Errorf("%w: collection revision %q already has different immutable metadata", store.ErrConflict, cr.ID)
+	}
+	return nil
 }
 
 func (s *Store) ListCollectionRevisions(ctx context.Context, source store.SourceID) ([]store.CollectionRevision, error) {
@@ -509,7 +515,11 @@ func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 		UNION
 		 SELECT DISTINCT mirrored_artifact_digest AS digest
 		 FROM source_occurrences
-		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''`,
+		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''
+		UNION
+		 SELECT DISTINCT manifest_digest AS digest
+		 FROM collection_revisions
+		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''`,
 	)
 	if err != nil {
 		return err
