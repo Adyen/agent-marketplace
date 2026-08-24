@@ -469,7 +469,7 @@ func TestCommandFieldMatrix(t *testing.T) {
 // allowed-tools", which fields.go records as false.
 //
 // Gemini and Cursor still fail closed on their own tool-unknown codes; this test
-// is Devin-only on purpose.
+// is only Devin and Factory on purpose.
 func TestUnrepresentableAllowedToolsOmitTheKey(t *testing.T) {
 	const skillBytes = "---\n" +
 		"name: demo\n" +
