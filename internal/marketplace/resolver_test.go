@@ -20,6 +20,17 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+func TestResolverRejectsCachedBroadRevocationWithoutOverride(t *testing.T) {
+	err := enforceMarketplaceRevocation(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+		Revocation:    &store.Revocation{Kind: store.RevocationSource, TargetID: "src"},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("broad cached revocation error = %v, want revoked error", err)
+	}
+}
+
 func TestCanonicalMarketplaceEntryNormalizesIdentityURL(t *testing.T) {
 	entry, err := canonicalMarketplaceEntry(config.MarketplaceEntry{URL: "HTTPS://MARKET.example/"})
 	if err != nil {

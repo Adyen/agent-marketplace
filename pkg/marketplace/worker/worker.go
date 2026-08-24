@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -122,51 +123,47 @@ func EnsureMarketplace(ctx context.Context, deps *Deps) error {
 	return nil
 }
 
-// EnsureRevocations writes operator-configured revocations to the store.
+// EnsureRevocations reconciles the complete configured desired set. The active
+// table is deliberately separate from immutable resource revisions: withdrawal
+// removes only the active declaration and never edits revision/history rows.
 func EnsureRevocations(ctx context.Context, deps Deps) error {
+	evaluator, err := revocation.New(deps.Config)
+	if err != nil {
+		return fmt.Errorf("build revocation evaluator: %w", err)
+	}
+	desired := evaluator.Declarations()
+	desiredByKey := make(map[string]struct{}, len(desired))
+	for _, item := range desired {
+		desiredByKey[revocationStoreKey(item)] = struct{}{}
+	}
 	now := time.Now().UTC()
+	slog.Info("reconciling Marketplace revocations", "desired", len(desired))
 	return deps.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
-		for _, id := range deps.Config.Revocations.SourceIDs {
-			if err := tx.PutRevocation(txCtx, store.Revocation{
-				Kind:      store.RevocationSource,
-				TargetID:  id,
-				Reason:    "operator configured",
-				AppliedAt: now,
-			}); err != nil {
-				return fmt.Errorf("revoke source %q: %w", id, err)
+		for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+			active, listErr := tx.ListRevocations(txCtx, kind)
+			if listErr != nil {
+				return fmt.Errorf("list active %s revocations: %w", kind, listErr)
+			}
+			for _, current := range active {
+				if _, wanted := desiredByKey[revocationStoreKey(current)]; wanted {
+					continue
+				}
+				if deleteErr := tx.DeleteRevocation(txCtx, current.Kind, current.TargetID); deleteErr != nil {
+					return fmt.Errorf("withdraw %s revocation %q: %w", current.Kind, current.TargetID, deleteErr)
+				}
 			}
 		}
-		for _, coord := range deps.Config.Revocations.Coordinates {
-			if err := tx.PutRevocation(txCtx, store.Revocation{
-				Kind:      store.RevocationCoordinate,
-				TargetID:  coord,
-				Reason:    "operator configured",
-				AppliedAt: now,
-			}); err != nil {
-				return fmt.Errorf("revoke coordinate %q: %w", coord, err)
-			}
-		}
-		for _, raw := range deps.Config.Revocations.Revisions {
-			target, err := store.ParseRevisionRevocationTarget(raw)
-			if err != nil {
-				return fmt.Errorf("parse revision revocation %q: %w", raw, err)
-			}
-			if configured := deps.Config.Instance.ID; configured != "" && string(target.Coordinate.Marketplace) != configured {
-				return fmt.Errorf("revision revocation %q targets Marketplace %q, configured instance is %q", raw, target.Coordinate.Marketplace, configured)
-			}
-			revocation := store.Revocation{
-				Kind:      store.RevocationRevision,
-				TargetID:  target.String(),
-				Reason:    "operator configured",
-				AppliedAt: now,
-			}
-			if err := tx.PutRevocation(txCtx, revocation); err != nil {
-				return fmt.Errorf("revoke revision %q: %w", revocation.TargetID, err)
+		for _, item := range desired {
+			item.AppliedAt = now
+			if putErr := tx.PutRevocation(txCtx, item); putErr != nil {
+				return fmt.Errorf("apply %s revocation %q: %w", item.Kind, item.TargetID, putErr)
 			}
 		}
 		return nil
 	})
 }
+
+func revocationStoreKey(r store.Revocation) string { return string(r.Kind) + "\x00" + r.TargetID }
 
 // Run starts the background indexing worker. It enqueues an initial refresh for
 // every configured source and then runs a scheduler loop that leases refresh

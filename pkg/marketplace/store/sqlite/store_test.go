@@ -420,6 +420,12 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	if len(revocations) != 1 {
 		t.Fatalf("ListRevocations returned %d, want 1", len(revocations))
 	}
+	if err := s.DeleteRevocation(ctx, r.Kind, r.TargetID); err != nil {
+		t.Fatalf("DeleteRevocation: %v", err)
+	}
+	if _, err := s.GetRevocation(ctx, r.Kind, r.TargetID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetRevocation after delete = %v, want ErrNotFound", err)
+	}
 }
 
 func TestJobCRUD(t *testing.T) {

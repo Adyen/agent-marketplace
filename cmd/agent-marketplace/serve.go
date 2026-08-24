@@ -155,6 +155,12 @@ source is provided, all configured sources are reindexed.`,
 				MetadataStore: meta,
 				BlobStore:     blobs,
 			}
+			// Reindex is a worker-role operation too: do not perform source
+			// acquisition while the live revocation desired set is stale.
+			if err := worker.EnsureRevocations(ctx, deps); err != nil {
+				slog.Error("reindex failed", "reason", "ensure revocations", "error", err)
+				return fmt.Errorf("ensure revocations: %w", err)
+			}
 
 			ctx, cancel := context.WithTimeout(ctx, time.Hour)
 			defer cancel()

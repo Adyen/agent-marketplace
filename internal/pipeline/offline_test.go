@@ -82,6 +82,15 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 	if len(result.Warnings) == 0 {
 		t.Fatal("offline sync did not emit revocation freshness warning")
 	}
+	var freshnessWarning bool
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning.Error(), "cannot observe newer revocations") {
+			freshnessWarning = true
+		}
+	}
+	if !freshnessWarning {
+		t.Fatalf("offline warnings = %v, want cached revocation freshness warning", result.Warnings)
+	}
 }
 
 func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
