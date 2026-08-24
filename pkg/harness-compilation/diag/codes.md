@@ -81,6 +81,7 @@ comparison in non-test code.
 | `subagent.devin.effort-dropped` | Devin does not represent subagent effort | Remove effort or use a target that supports it |
 | `skill.devin.tool-unknown` | An explicitly allowed skill or command tool has no Devin equivalent; the `allowed-tools` key was omitted and the resource was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource |
 | `subagent.devin.tool-unknown` | An explicitly allowed subagent tool has no Devin equivalent; the `allowed-tools` key was omitted and the profile was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent |
+| `subagent.factory.tool-unknown` | An explicitly allowed subagent tool has no Factory equivalent; the `tools` key was omitted and the droid was still emitted | Use a tool the Factory mapping table knows, or accept Factory's default tool set for this subagent |
 | `hook.devin.payload-dropped` | The hook carries the payload its type does not select; that payload was dropped | Split the hook into one command hook and one prompt hook if both payloads are required |
 | `hook.devin.plugin-root-unresolved` | The hook command references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the command resolves, or use an absolute command path |
 | `mcp.devin.field-dropped` | A modeled MCP field belongs to the documented server form this server did not select and was dropped | Move the field to a server of the form that documents it |
@@ -238,17 +239,12 @@ skill usable, whereas `allowed-tools: []` means the resource may use **no** tool
 at all, and `openspec-apply-change` needs `exec` to run `openspec`. That trades a
 loud absence for a silent, inert install, which is worse.
 
-**Devin now diverges from Factory, and the divergence is accepted rather than
-accidental.** `subagent.factory.tool-unknown` is still an error that suppresses
-the artifact, as are `subagent.gemini.tool-unknown` and
-`subagent.cursor.tool-unknown`. Factory's fail-closed contract is pinned by bead
-`agent-marketplace-r2zr`'s acceptance criteria and must not be relaxed to match
-Devin. The difference that justifies the split is evidence, not taste: Devin is
-the one target whose tool vocabulary has been probed at runtime, so it is the one
-target where "the restriction cannot be represented, and what *is* written is
-honest about what will happen" is an observation rather than an assumption. Do not
-harmonize the four codes in either direction without comparable evidence for the
-target you are changing.
+**Factory now follows the same reversal for `subagent.factory.tool-unknown`,
+and only Gemini and Cursor still fail closed.** Factory's droid frontmatter
+rejects unknown tool identifiers, while omitting the `tools` key has a documented
+meaning: Factory's default tool set applies. The droid is therefore emitted with
+the key omitted and sync exits zero. `disallowedTools` and `isolation` remain
+fail-closed errors because they have no safe omission semantics.
 
 **The ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
@@ -498,7 +494,6 @@ key or a hook event name), the resource name, and content digests are reported.
 |------|---------|------|
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
-| `subagent.factory.tool-unknown` | Factory tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
 | `subagent.cursor.tool-unknown` | Cursor tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
 | `subagent.security-restriction-unsupported` | Unsupported subagent security restriction suppresses the artifact | Use a target that represents the restriction or remove it explicitly |
@@ -606,7 +601,13 @@ Suppression is **per resource**, never bundle-wide. A resource that emits any er
 
 `bundle.conflict.duplicate-artifact-path` and `bundle.conflict.cross-kind-artifact-path` are the only error codes not attributable to a single resource: neither producer is wrong on its own. They suppress **both** named producers as whole resources, for the same fragment reason — a manifest must never advertise an entry whose file was not written. Load/ingest failures (`ingest.*.load-*-failed`) describe a resource that never reached the compiler, so they suppress nothing beyond the resource they already lost. Any future bundle-level error code must state its own suppression rule explicitly.
 
-**`skill.devin.tool-unknown` and `subagent.devin.tool-unknown` are no longer in this set.** They suppressed the whole resource until bead `agent-marketplace-pu6b`; they are now warnings that omit the `allowed-tools` key and publish the artifact, so on Devin an unrepresentable tool restriction costs one frontmatter key rather than the resource, and `sync` exits zero. The section above explains why, and why the identically named Factory, Gemini, and Cursor codes are unchanged and still listed here. Nothing else about suppression changed: it is still per resource, and every remaining error code still contributes no artifacts at all.
+**`skill.devin.tool-unknown`, `subagent.devin.tool-unknown`, and
+`subagent.factory.tool-unknown` are no longer in this set.** They are warnings
+that omit the target-specific tools key and publish the artifact, so an
+unrepresentable tool restriction costs one frontmatter key rather than the
+resource, and `sync` exits zero. Gemini and Cursor unknown-tool diagnostics still
+suppress their artifacts. Nothing else about suppression changed: it is still per
+resource, and every remaining error code still contributes no artifacts at all.
 
 ## Examples
 
