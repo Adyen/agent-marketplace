@@ -151,6 +151,9 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 			if err != nil {
 				return fmt.Errorf("parse revision revocation %q: %w", raw, err)
 			}
+			if configured := deps.Config.Instance.ID; configured != "" && string(target.Coordinate.Marketplace) != configured {
+				return fmt.Errorf("revision revocation %q targets Marketplace %q, configured instance is %q", raw, target.Coordinate.Marketplace, configured)
+			}
 			revocation := store.Revocation{
 				Kind:      store.RevocationRevision,
 				TargetID:  target.String(),

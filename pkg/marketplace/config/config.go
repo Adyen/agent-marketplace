@@ -358,7 +358,7 @@ func (cfg Config) Validate() error {
 		}
 		seenSlugs[src.Slug] = true
 	}
-	errs = append(errs, cfg.Revocations.Validate()...)
+	errs = append(errs, cfg.Revocations.ValidateForMarketplace(cfg.Instance.ID)...)
 	return errors.Join(errs...)
 }
 
@@ -632,8 +632,21 @@ func validateCredentials(idx int, cred Credentials) []error {
 	return errs
 }
 
-// Validate validates revocation entries.
+// Validate validates revocation entries without an expected Marketplace
+// identity. Config.ValidateForMarketplace should be preferred for a complete
+// operator config because exact revision declarations are instance-scoped.
 func (r Revocations) Validate() []error {
+	return r.validate("")
+}
+
+// ValidateForMarketplace validates revocation entries against the configured
+// Marketplace instance. An exact revision declaration for another instance is
+// never meaningful to this operator and is rejected rather than stored.
+func (r Revocations) ValidateForMarketplace(instanceID string) []error {
+	return r.validate(strings.TrimSpace(instanceID))
+}
+
+func (r Revocations) validate(instanceID string) []error {
 	var errs []error
 	for i, id := range r.SourceIDs {
 		if strings.TrimSpace(id) == "" {
@@ -649,8 +662,13 @@ func (r Revocations) Validate() []error {
 		}
 	}
 	for i, rev := range r.Revisions {
-		if _, err := store.ParseRevisionRevocationTarget(rev); err != nil {
+		target, err := store.ParseRevisionRevocationTarget(rev)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("revocations.revisions[%d] %q: %w", i, rev, err))
+			continue
+		}
+		if instanceID != "" && string(target.Coordinate.Marketplace) != instanceID {
+			errs = append(errs, fmt.Errorf("revocations.revisions[%d] %q: marketplace %q does not match instance.id %q", i, rev, target.Coordinate.Marketplace, instanceID))
 		}
 	}
 	return errs
