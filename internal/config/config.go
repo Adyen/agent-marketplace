@@ -24,7 +24,7 @@ const (
 	// every registry entry it produces; SourceUnset only appears in config
 	// structs that were not passed through Merge (e.g. in unit tests).
 	SourceUnset Source = iota
-	// Organization is the externally managed v3 organization config
+	// Organization is the externally managed organization config
 	// (/etc/agent-marketplace/config.yaml).
 	Organization
 	// UserPersonal is the user's own machine-wide config (~/.agents/config.yaml).
@@ -291,10 +291,10 @@ type LoggingConfig struct {
 }
 
 type Config struct {
-	// APIVersion is the schema version sentinel. v3 configs must set
-	// "agent-marketplace/v3"; v2 configs set "agent-marketplace/v2"; v1
-	// configs have no apiVersion field. The loader rejects configs that
-	// are missing or mismatched and suggests running `agent-marketplace migrate`.
+	// APIVersion is the schema version sentinel. The canonical version is
+	// "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
+	// compatibility alias. v1 configs have no apiVersion field and are
+	// rejected by the loader.
 	APIVersion string `yaml:"apiVersion,omitempty"`
 
 	// Harnesses lists the target harnesses to materialize into (e.g.
@@ -381,10 +381,10 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 type LocalConfig struct {
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
-	// "agent-marketplace/v2" by hand (or copy it from a sibling config).
-	// It is accepted but not required; when present it must match
-	// APIVersionV2. Without this field the strict (KnownFields) decoder
-	// rejects any hand-added apiVersion line.
+	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
+	// from a sibling config). It is accepted but not required; when present it
+	// must match one of the supported API versions. Without this field the strict
+	// (KnownFields) decoder rejects any hand-added apiVersion line.
 	APIVersion  string          `yaml:"apiVersion,omitempty"`
 	Registries  []RegistryEntry `yaml:"registries,omitempty"`
 	Skills      KindSelector    `yaml:"skills,omitempty"`
@@ -718,17 +718,12 @@ func (e *ScopeBoundaryError) Error() string {
 }
 
 const (
-	// APIVersionV2 is the required apiVersion sentinel for v2 configs.
+	// APIVersionV2 is the canonical apiVersion sentinel.
 	APIVersionV2 = "agent-marketplace/v2"
-	// APIVersionV3 is the required apiVersion sentinel for v3 configs.
+	// APIVersionV3 is an alias accepted for reading but not emitted by
+	// generators or documentation.
 	APIVersionV3 = "agent-marketplace/v3"
 )
-
-var errConfigNeedsMigration = errors.New("config needs migration")
-
-func IsMigrationRequired(err error) bool {
-	return errors.Is(err, errConfigNeedsMigration)
-}
 
 // Validate performs full structural validation of the config, including
 // requiring that harnesses is non-empty. This should be used for global
@@ -748,21 +743,20 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
-	// v2/v3 schema gating: apiVersion must be present when required and, if
-	// present, must be one of the supported versions. v3 is the current
-	// schema; v2 is accepted for backward compatibility and is rewritten
-	// to v3 by `agent-marketplace migrate`.
+	// v2 is canonical; v3 is retained as a compatibility alias. apiVersion is
+	// required on Config-schema files (global/repo/org) but optional on local
+	// configs, which are generated without it.
 	if v := strings.TrimSpace(c.APIVersion); v == "" {
 		if requireAPIVersion {
-			errs = append(errs, fmt.Errorf("missing apiVersion: add %q or %q", APIVersionV2, APIVersionV3))
+			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))
 		}
 	} else if v != APIVersionV2 && v != APIVersionV3 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q; run `agent-marketplace migrate`", v, APIVersionV2, APIVersionV3))
+		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q", v, APIVersionV2, APIVersionV3))
 	}
 
-	// v2/v3 schema gating: harnesses is required on user-personal configs and
-	// must not be empty. Organization/project/local configs may omit it and
-	// inherit from the user layer during merge.
+	// harnesses is required on user-personal configs and must not be empty.
+	// Organization/project/local configs may omit it and inherit from the
+	// user layer during merge.
 	if requireHarnesses && len(c.Harnesses) == 0 {
 		errs = append(errs, fmt.Errorf("harnesses is required: add a harnesses list (e.g. harnesses: [factory])"))
 	}
@@ -926,14 +920,14 @@ func (c LocalConfig) AllExcludes() []string {
 // enforcing v2 schema gating (apiVersion, harnesses). At minimum it ensures
 // every registry entry has a non-empty URL and no path-traversal in Path.
 // apiVersion is optional on local configs, but if present it must match
-// APIVersionV2 or APIVersionV3 so typos/stale versions are caught.
+// APIVersionV2 or APIVersionV3 so typos and stale versions are caught.
 func (c LocalConfig) ValidateBasic() error {
 	var errs []error
 
 	errs = append(errs, validateRegistryHarnessTargets(c.Registries)...)
 
 	if v := strings.TrimSpace(c.APIVersion); v != "" && v != APIVersionV2 && v != APIVersionV3 {
-		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q; run `agent-marketplace migrate`", v, APIVersionV2, APIVersionV3))
+		errs = append(errs, fmt.Errorf("unsupported apiVersion %q: expected %q or %q", v, APIVersionV2, APIVersionV3))
 	}
 
 	errs = append(errs, validateRegistryEntries(c.Registries)...)

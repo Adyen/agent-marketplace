@@ -128,8 +128,8 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		},
 	})
 
-	// Surface a v2 migration prompt when any config file still declares the
-	// v2 schema. The modal must not pop for v1/empty/unknown API versions.
+	// v2 is canonical and v3 is a compatibility alias; schema versions do not
+	// trigger a migration prompt in the TUI.
 	pendingMigration := pendingMigrationFor(repoRoot, homeDir)
 
 	if len(resolvedResult.ConfigErrors) > 0 {

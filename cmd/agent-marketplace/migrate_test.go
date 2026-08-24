@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandV2ToV3UserAndRepo(t *testing.T) {
+func TestMigrateCommandPreservesValidV2UserAndRepo(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -57,11 +57,11 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated repo config to load: %v", err)
 	}
-	if repoCfg.APIVersion != "agent-marketplace/v3" {
-		t.Fatalf("expected repo apiVersion v3, got %q", repoCfg.APIVersion)
+	if repoCfg.APIVersion != config.APIVersionV2 {
+		t.Fatalf("expected repo apiVersion v2, got %q", repoCfg.APIVersion)
 	}
-	if len(repoCfg.Harnesses) != 0 {
-		t.Fatalf("expected repo config to have no harnesses, got %v", repoCfg.Harnesses)
+	if !equalStrings(repoCfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses to be preserved, got %v", repoCfg.Harnesses)
 	}
 	if !equalStrings(repoCfg.Tags, []string{"k8s"}) {
 		t.Fatalf("expected tags preserved, got %v", repoCfg.Tags)
@@ -79,8 +79,8 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated global config to load: %v", err)
 	}
-	if globalCfg.APIVersion != "agent-marketplace/v3" {
-		t.Fatalf("expected global apiVersion v3, got %q", globalCfg.APIVersion)
+	if globalCfg.APIVersion != config.APIVersionV2 {
+		t.Fatalf("expected global apiVersion v2, got %q", globalCfg.APIVersion)
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {
 		t.Fatalf("expected global harnesses [factory], got %v", globalCfg.Harnesses)

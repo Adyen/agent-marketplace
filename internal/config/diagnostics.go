@@ -9,7 +9,7 @@ import (
 )
 
 // ManagedInstallationState is the high-level managed/unmanaged state of the
-// externally managed v3 organization config.
+// externally managed organization config.
 type ManagedInstallationState int
 
 const (
@@ -31,7 +31,7 @@ func (s ManagedInstallationState) String() string {
 }
 
 // ManagedInstallationDiagnostics describes the filesystem and trust state of
-// the fixed v3 organization config path. It is intentionally independent of
+// the fixed organization config path. It is intentionally independent of
 // the parsed config contents so diagnostics can be reported even when the
 // file is unreadable or invalid.
 type ManagedInstallationDiagnostics struct {
@@ -158,14 +158,15 @@ func inspectManagedConfig(path string, readErr error, cfg *Config, source Source
 	}
 
 	if cfg != nil {
+		validVersion := cfg.APIVersion == APIVersionV2 || cfg.APIVersion == APIVersionV3
 		switch {
-		case source == Organization && cfg.APIVersion == APIVersionV3:
+		case source == Organization && validVersion:
 			d.State = ManagedInstallationManaged
 			d.Validation = "valid"
-		case cfg.APIVersion == APIVersionV3:
+		case validVersion:
 			d.Validation = "untrusted-source"
 		default:
-			d.Validation = "non-v3"
+			d.Validation = "unsupported-version"
 		}
 	}
 

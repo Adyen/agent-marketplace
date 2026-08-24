@@ -113,8 +113,8 @@ func UserPersonalConfigExists() (bool, error) {
 
 // InitializeUserPersonal creates the user personal config file with the
 // provided harnesses if it does not already exist. The written config uses
-// apiVersion agent-marketplace/v3 and contains only the apiVersion and
-// harnesses fields. It returns ErrAlreadyInitialized if the file exists.
+// the canonical apiVersion agent-marketplace/v2 and contains only the
+// apiVersion and harnesses fields. It returns ErrAlreadyInitialized if the file exists.
 func InitializeUserPersonal(harnesses []string) (string, error) {
 	path, err := GlobalConfigPath()
 	if err != nil {
@@ -151,7 +151,7 @@ func InitializeUserPersonalAtPath(path string, harnesses []string) (string, erro
 				Tag:  "!!map",
 				Content: []*yaml.Node{
 					{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-					{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV3},
+					{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
 					{Kind: yaml.ScalarNode, Tag: "!!str", Value: "harnesses"},
 					{Kind: yaml.SequenceNode, Tag: "!!seq", Content: harnessNodes},
 				},

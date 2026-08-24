@@ -2,25 +2,25 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-All configs use the **v3 schema** (`apiVersion: agent-marketplace/v3`). The loader rejects v1 configs (no `apiVersion`). v2 configs can be rewritten to v3 with `agent-marketplace migrate`.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs (no `apiVersion`). `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
 
 ## 30-second setup
 
-The target harness set is machine-wide: it lives in `~/.agents/config.yaml` (or `/etc/agent-marketplace/config.yaml`). Repo and local configs only select resources.
+Project configs may declare their target harness set. When they do not, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
 
 ```bash
 mkdir -p ~/.agents .agents
 
 # Machine-wide target harness set
 cat > ~/.agents/config.yaml << 'EOF_CONFIG'
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory]
 registries: []
 EOF_CONFIG
 
 # Repo config selects resources from registries
 cat > .agents/config.yaml << 'EOF_CONFIG'
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 registries:
   - url: git@gitlab.example.com:example-user/infra-skills.git
     ref: main
@@ -36,7 +36,7 @@ git add .agents/config.yaml
 git commit -m "Add shared infrastructure skills"
 ```
 
-Factory output is generated at `.factory/skills/<name>/SKILL.md`. Other harnesses get their own native layouts when listed in your machine-wide `harnesses:`.
+Factory output is generated at `.factory/skills/<name>/SKILL.md`. Other harnesses get their own native layouts when listed in the effective `harnesses:`.
 
 ## Registry allowlist
 
@@ -48,9 +48,9 @@ allowed_registries:
   - "^gitlab\.example\.com/"
 ```
 
-## Migrating a legacy v1 repo
+## Remediating a legacy config
 
-v1 configs (no `apiVersion`) are rejected by the loader. If you have an old v2 config, `migrate` rewrites it to v3:
+v1 configs (no `apiVersion`) are rejected by the loader. Use `migrate` for structural issues such as legacy collection syntax; it preserves the canonical v2 apiVersion:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
@@ -67,10 +67,10 @@ skills:
   - vm-lifecycle
 ```
 
-After (v3 repo config):
+After (v2 repo config):
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 registries:
   - url: git@gitlab.example.com:example-user/infra-skills.git
     ref: main
@@ -78,7 +78,7 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` writes the machine-wide `harnesses:` list to `~/.agents/config.yaml` and removes top-level `harnesses` from repo and local configs.
+`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config.
 
 Remove old `.agents/skills/` gitignore entries when they are no longer needed. Do not commit generated `.factory`, `.cursor`, `.claude`, `.gemini`, or `.windsurf` outputs unless your repo intentionally tracks harness config.
 

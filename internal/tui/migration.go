@@ -69,12 +69,13 @@ func pendingMigrationFor(repoRoot, homeDir string) migrationPrompt {
 	return migrationPrompt{configs: configs}
 }
 
+// configPathNeedsMigration is retained for compatibility with the migration
+// helpers, but schema versions are no longer a reason for the TUI to prompt.
+// Structural remediation remains available through the explicit migrate
+// command.
 func configPathNeedsMigration(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return config.PeekAPIVersion(data) == config.APIVersionV2
+	_ = path
+	return false
 }
 
 func (m Model) runMigrationCmd() tea.Cmd {
@@ -145,7 +146,7 @@ func renderMigrationModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"}).
-		Render("Config migration required")
+		Render("Config remediation required")
 
 	keyStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -163,21 +164,21 @@ func renderMigrationModal(m Model) string {
 
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	b.WriteString("This config uses the v2 agent-marketplace schema.\n")
-	b.WriteString("The TUI requires a strict v3 config.\n\n")
+	b.WriteString("This config has structural issues that must be fixed.\n")
+	b.WriteString("Valid agent-marketplace/v3 files are accepted as a compatibility alias.\n\n")
 	b.WriteString("Runs the in-process equivalent of:\n")
 	fmt.Fprintf(&b, "```sh\nagent-marketplace migrate --harnesses %s\n```\n\n", harnessesFlag)
 	b.WriteString("Adds or updates these top-level lines before your existing config:\n")
-	fmt.Fprintf(&b, "```yaml\napiVersion: agent-marketplace/v3\nharnesses:\n%s```\n\n", harnessesYAML)
+	fmt.Fprintf(&b, "```yaml\napiVersion: agent-marketplace/v2\nharnesses:\n%s```\n\n", harnessesYAML)
 	b.WriteString("Existing registries, selected skills, excludes, and comments are preserved.\n\n")
-	b.WriteString("Detected pending migration in:\n")
+	b.WriteString("Detected pending remediation in:\n")
 	for _, cfg := range m.migrationPrompt.configs {
 		fmt.Fprintf(&b, "  • %s: %s\n", cfg.label, cfg.path)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "%s", dim.Render(fmt.Sprintf("Running migration uses the same default as `agent-marketplace migrate`: harnesses: %v.", defaultHarnesses)))
+	fmt.Fprintf(&b, "%s", dim.Render(fmt.Sprintf("Running remediation uses the same default as `agent-marketplace migrate`: harnesses: %v.", defaultHarnesses)))
 	b.WriteString("\n\n")
-	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  run migration\n")
+	b.WriteString("  " + keyStyle.Render("[enter]") + " or " + keyStyle.Render("[m]") + "  run remediation\n")
 	b.WriteString("  " + keyStyle.Render("[l]") + " or " + keyStyle.Render("[esc]") + "  leave config unchanged")
 
 	return styleMigrationModal.Render(b.String())
