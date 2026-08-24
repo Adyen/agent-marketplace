@@ -38,7 +38,7 @@ registries: []
 	}
 }
 
-func TestV3RepoRejectsHarnessesAndBackup(t *testing.T) {
+func TestV3RepoAllowsHarnessesAndRejectsBackup(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v3
 harnesses:
   - factory
@@ -47,19 +47,15 @@ backup:
 registries: []
 `)
 	_, errs := loadV3Config(data, repoLayer, false)
-	if len(errs) != 2 {
-		t.Fatalf("expected 2 forbidden field errors, got %d: %v", len(errs), errs)
+	if len(errs) != 1 {
+		t.Fatalf("expected one forbidden field error, got %d: %v", len(errs), errs)
 	}
-	combined := errorsJoin(errs)
-	if !strings.Contains(combined, "harnesses") {
-		t.Fatalf("expected error to mention harnesses, got: %v", combined)
-	}
-	if !strings.Contains(combined, "backup") {
-		t.Fatalf("expected error to mention backup, got: %v", combined)
+	if !strings.Contains(errorsJoin(errs), "backup") {
+		t.Fatalf("expected error to mention backup, got: %v", errs)
 	}
 }
 
-func TestV3LocalRejectsRequiredAndDefault(t *testing.T) {
+func TestV3LocalAllowsRequiredAndDefault(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v3
 registries:
   - url: git@example.com:repo.git
@@ -68,15 +64,8 @@ registries:
     default: true
 `)
 	_, errs := loadV3LocalConfig(data)
-	if len(errs) != 2 {
-		t.Fatalf("expected 2 forbidden registry entry errors, got %d: %v", len(errs), errs)
-	}
-	combined := errorsJoin(errs)
-	if !strings.Contains(combined, "required") {
-		t.Fatalf("expected error to mention required, got: %v", combined)
-	}
-	if !strings.Contains(combined, "default") {
-		t.Fatalf("expected error to mention default, got: %v", combined)
+	if len(errs) != 0 {
+		t.Fatalf("expected local config to accept required/default, got: %v", errs)
 	}
 }
 
@@ -207,7 +196,7 @@ skills:
 	}
 }
 
-func TestV3LocalRejectsAliasedRequiredAndDefault(t *testing.T) {
+func TestV3LocalAllowsAliasedRequiredAndDefault(t *testing.T) {
 	data := []byte(`apiVersion: agent-marketplace/v3
 registries:
   - &entry
@@ -218,15 +207,8 @@ registries:
   - *entry
 `)
 	_, errs := loadV3LocalConfig(data)
-	if len(errs) == 0 {
-		t.Fatal("expected errors for required/default in repository personal config")
-	}
-	combined := errorsJoin(errs)
-	if !strings.Contains(combined, "required") {
-		t.Fatalf("expected error to mention required, got: %v", combined)
-	}
-	if !strings.Contains(combined, "default") {
-		t.Fatalf("expected error to mention default, got: %v", combined)
+	if len(errs) != 0 {
+		t.Fatalf("expected aliased required/default to be accepted, got: %v", errs)
 	}
 }
 

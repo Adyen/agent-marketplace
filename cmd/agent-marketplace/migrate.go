@@ -19,15 +19,17 @@ func newMigrateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Migrate v2 config files to the v3 schema",
+		Short: "Remediate structural issues in config files",
 		Args:  cobra.NoArgs,
-		Long: `Migrate rewrites user, repository, and repository-personal config files from the
-v2 schema to the strict agent-marketplace/v3 schema.
+		Long: `Migrate performs structural remediation on user, repository, and
+repository-personal config files. It preserves valid v2 and v3 apiVersion
+values, accepts v3 as a compatibility alias, and only changes files when
+structural remediation is needed.
 
-The machine-wide target harness set is preserved from the user personal config
-when present. If it is not present, migration uses the --harnesses flag in
-non-interactive mode, or prompts when running in a terminal. Repository-level
-harness declarations are always removed.
+Existing user-personal harnesses are preserved. If a user config needs a
+harness set, migration uses the --harnesses flag in non-interactive mode, or
+prompts when running in a terminal. Project-level harnesses remain in the
+project config.
 
 Migration is transactional: all inputs are validated before any file is
 written. Configs that contain legacy identity or team_profiles fields are
@@ -38,7 +40,7 @@ refused without modification.`,
 	}
 
 	cmd.Flags().StringSliceVar(&harnesses, "harnesses", nil,
-		"Target harnesses for the migrated user personal config")
+		"Target harnesses for the remediated user personal config")
 
 	return cmd
 }
@@ -102,22 +104,22 @@ func promptMigrateHarnesses(out io.Writer, in io.Reader) ([]string, error) {
 
 func reportMigrateResult(out io.Writer, result *config.MigrateResult) error {
 	if result.UserMigrated {
-		if _, err := fmt.Fprintf(out, "Migrated user personal config: %s\n", result.UserPath); err != nil {
+		if _, err := fmt.Fprintf(out, "Remediated user personal config: %s\n", result.UserPath); err != nil {
 			return err
 		}
 	}
 	if result.RepoMigrated {
-		if _, err := fmt.Fprintf(out, "Migrated repository config: %s\n", result.RepoPath); err != nil {
+		if _, err := fmt.Fprintf(out, "Remediated repository config: %s\n", result.RepoPath); err != nil {
 			return err
 		}
 	}
 	if result.LocalMigrated {
-		if _, err := fmt.Fprintf(out, "Migrated repository personal config: %s\n", result.LocalPath); err != nil {
+		if _, err := fmt.Fprintf(out, "Remediated repository personal config: %s\n", result.LocalPath); err != nil {
 			return err
 		}
 	}
 	if !result.UserMigrated && !result.RepoMigrated && !result.LocalMigrated {
-		if _, err := fmt.Fprintln(out, "No migration needed; config files are already at apiVersion agent-marketplace/v3"); err != nil {
+		if _, err := fmt.Fprintln(out, "No structural remediation needed; config files are already valid"); err != nil {
 			return err
 		}
 	}

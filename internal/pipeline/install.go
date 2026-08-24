@@ -179,7 +179,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
-	// Load the effective configuration once to detect v3 configs and resolve
+	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
