@@ -26,9 +26,9 @@ func TestRunUpdateCmdSucceedsWithWarningOnlyDiagnostics(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	// repoV2Header, not v2Header: a repository config may not declare a
-	// top-level harnesses list, which is machine-wide. The target set for this
-	// test comes from the global config written below.
+	// repoV2Header, not v2Header: this test exercises a project config without
+	// its own target harness list, so the target set comes from the global config
+	// written below.
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}

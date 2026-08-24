@@ -25,8 +25,8 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a minimal v3 User Personal config with an explicit target harness set",
-		Long: "init creates the ~/.agents/config.yaml file using the v3 schema and an explicit " +
+		Short: "Initialize a minimal v2 User Personal config with an explicit target harness set",
+		Long: "init creates the ~/.agents/config.yaml file using the v2 schema and an explicit " +
 			"harnesses list. It does not install resources, add registries, or configure a marketplace.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

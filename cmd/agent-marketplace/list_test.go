@@ -362,13 +362,7 @@ func writeConfig(t *testing.T, path, content string) {
 				content = insertAfterFirstLine(content, harnessesBlock)
 			}
 		} else if isRepoConfigPath(path) {
-			// Project configs cannot declare a top-level target harness set;
-			// migrate any harness list to the machine-wide user config.
-			var harnesses []string
-			content, harnesses = extractAndStripHarnesses(content)
-			if len(harnesses) > 0 {
-				mergeGlobalHarnesses(t, harnesses)
-			} else {
+			if !strings.Contains(content, "harnesses:") {
 				ensureGlobalConfig(t)
 			}
 			if !strings.Contains(content, "apiVersion:") {

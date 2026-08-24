@@ -610,7 +610,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		return err
 	}
 	if len(targetHarnesses) == 0 {
-		if _, err := fmt.Fprintln(out, "  -> add harnesses to ~/.agents/config.yaml or run 'agent-marketplace migrate'"); err != nil {
+		if _, err := fmt.Fprintln(out, "  -> add harnesses to ~/.agents/config.yaml"); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {

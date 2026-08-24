@@ -244,36 +244,20 @@ func DefaultHarnesses() []string {
 	return []string{"factory", "windsurf"}
 }
 
-// loadV3OrV2Config reads a Config from path, dispatching to the strict v3
-// loader when the file declares apiVersion agent-marketplace/v3. The layer
-// kind controls which top-level fields are allowed in v3 mode; for v2 files
-// the standard validation path is used.
+// loadV3OrV2Config reads a Config from path using the strict layer-aware
+// loader. v2 is the canonical schema and v3 is accepted as a compatibility
+// alias; neither version is rewritten while loading.
 func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	if PeekAPIVersion(data) == APIVersionV3 {
-		cfg, errs := loadV3Config(data, kind, requireHarnesses)
-		if len(errs) > 0 {
-			return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
-		}
-		return cfg, nil
+	cfg, errs := loadV3Config(data, kind, requireHarnesses)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
 	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeConfigHarnessTargets(&cfg)
-	if err := cfg.validate(requireHarnesses, true, kind.name()); err != nil {
-		if IsMigrationRequired(err) {
-			slog.Warn("config needs migration", "path", path, "error", err)
-		}
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 func LoadGlobalConfig() (*Config, error) {
@@ -365,10 +349,6 @@ func LoadConfigFromPath(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if cfg != nil && kind == repoLayer && len(cfg.Harnesses) > 0 {
-		return nil, fmt.Errorf("repository config at %q cannot declare top-level harnesses; the target harness set is machine-wide", path)
-	}
-
 	slog.Debug("config loaded", "path", path, "registries", len(cfg.Registries))
 	return cfg, nil
 }
@@ -408,9 +388,6 @@ func LoadRepoConfig() (*Config, error) {
 			return nil, nil
 		}
 		return nil, err
-	}
-	if cfg != nil && len(cfg.Harnesses) > 0 {
-		return nil, fmt.Errorf("repository config at %q cannot declare top-level harnesses; the target harness set is machine-wide", configPath)
 	}
 	slog.Debug("config loaded", "layer", "repo", "path", configPath, "registries", len(cfg.Registries))
 	return cfg, nil
@@ -483,9 +460,6 @@ func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, laye
 	normalizeConfigHarnessTargets(&cfg)
 
 	if err := cfg.validate(requireHarnesses, requireAPIVersion, layer); err != nil {
-		if IsMigrationRequired(err) {
-			slog.Warn("config needs migration", "path", path, "error", err)
-		}
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
 	}
 
