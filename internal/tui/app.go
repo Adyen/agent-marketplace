@@ -130,10 +130,15 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		oldWidth, oldHeight := m.width, m.height
 		m.width = msg.Width
 		m.height = msg.Height
 		m.detailViewport.Width = msg.Width
 		m.detailViewport.Height = msg.Height
+		m.clampListOffset()
+		layout := screenLayoutFor(m.height, m.filterActive)
+		listWidth, detailWidth := paneWidths(m.width)
+		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -762,77 +767,107 @@ func (m Model) View() string {
 
 	// paneToggleModal renders as an overlay on top of the normal two-pane
 	// layout so the user can still see the list behind the modal.
-	if m.pane == paneToggleModal {
-		modal := renderToggleModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
+	var modal string
+	switch m.pane {
+	case paneToggleModal:
+		modal = renderToggleModal(m)
+	case paneInitModal:
+		modal = renderInitModal(m)
+	case paneMigrationModal:
+		modal = renderMigrationModal(m)
+	case paneHarnessModal:
+		modal = renderHarnessModal(m)
+	case paneEditConfigModal:
+		modal = renderEditConfigModal(m)
 	}
-
-	if m.pane == paneInitModal {
-		modal := renderInitModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
+	if modal == "" {
+		return base
 	}
-
-	if m.pane == paneMigrationModal {
-		modal := renderMigrationModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	if m.pane == paneHarnessModal {
-		modal := renderHarnessModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	if m.pane == paneEditConfigModal {
-		modal := renderEditConfigModal(m)
-		return centerOverlay(base, modal, m.width, m.height)
-	}
-
-	return base
+	return fitTerminal(centerOverlay(base, modal, m.width, m.height), m.width, m.height)
 }
 
 // renderBaseScreen renders the standard header + tabs + two-pane layout +
 // footer without any overlay. Extracted so overlays can composite on top.
 func (m Model) renderBaseScreen() string {
-	header := renderHeader(m)
-	tabBar := renderTabBar(m.activeTab)
-	footer := renderFooter(m)
-
-	mainHeight := m.height - lipgloss.Height(header) - lipgloss.Height(tabBar) - lipgloss.Height(footer)
-	if mainHeight < 1 {
-		mainHeight = 1
+	layout := screenLayoutFor(m.height, m.filterActive)
+	if !layout.header {
+		return ""
 	}
 
-	listWidth := m.width * 2 / 5
-	if listWidth < 20 {
+	parts := []string{renderHeader(m)}
+	if layout.tabs {
+		parts = append(parts, renderTabBar(m.activeTab))
+	}
+	if layout.search {
+		parts = append(parts, m.searchInput.View())
+	}
+	if layout.mainHeight > 0 {
+		listWidth, detailWidth := paneWidths(m.width)
+		listBox := lipgloss.NewStyle().
+			Width(listWidth).
+			Height(layout.mainHeight).
+			MaxHeight(layout.mainHeight).
+			Render(renderList(m, layout.mainHeight))
+
+		detailBox := lipgloss.NewStyle().
+			Width(detailWidth).
+			Height(layout.mainHeight).
+			MaxHeight(layout.mainHeight).
+			PaddingLeft(1).
+			Render(renderDetail(m))
+
+		parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox))
+	}
+	if layout.footer {
+		parts = append(parts, renderFooter(m))
+	}
+	return fitTerminal(strings.Join(parts, "\n"), m.width, m.height)
+}
+
+type screenLayout struct {
+	header     bool
+	tabs       bool
+	search     bool
+	footer     bool
+	mainHeight int
+}
+
+func screenLayoutFor(height int, filterActive bool) screenLayout {
+	if height < 1 {
+		return screenLayout{}
+	}
+	layout := screenLayout{header: true}
+	if height == 1 {
+		return layout
+	}
+	layout.footer = true
+	remaining := height - 2
+	if filterActive && remaining > 0 {
+		layout.search = true
+		remaining--
+	}
+	if remaining > 0 {
+		layout.tabs = true
+		remaining--
+	}
+	layout.mainHeight = remaining
+	return layout
+}
+
+func fitTerminal(content string, width, height int) string {
+	if width < 1 || height < 1 {
+		return ""
+	}
+	return lipgloss.NewStyle().MaxWidth(width).MaxHeight(height).Render(content)
+}
+
+func paneWidths(totalWidth int) (listWidth, detailWidth int) {
+	totalWidth = max(0, totalWidth)
+	listWidth = totalWidth * 2 / 5
+	if totalWidth >= 40 && listWidth < 20 {
 		listWidth = 20
 	}
-	detailWidth := m.width - listWidth
-	if detailWidth < 20 {
-		detailWidth = 20
-	}
-
-	listContent := renderList(m, mainHeight)
-	detailContent := renderDetail(m)
-
-	listBox := lipgloss.NewStyle().
-		Width(listWidth).
-		Height(mainHeight).
-		Render(listContent)
-
-	detailBox := lipgloss.NewStyle().
-		Width(detailWidth).
-		Height(mainHeight).
-		PaddingLeft(1).
-		Render(detailContent)
-
-	panes := lipgloss.JoinHorizontal(lipgloss.Top, listBox, detailBox)
-
-	searchLine := ""
-	if m.filterActive {
-		searchLine = m.searchInput.View() + "\n"
-	}
-
-	return header + "\n" + tabBar + "\n" + searchLine + panes + "\n" + footer
+	return listWidth, totalWidth - listWidth
 }
 
 func renderHeader(m Model) string {
@@ -874,44 +909,59 @@ func (m *Model) applyFilter() []row {
 // clampListOffset adjusts listOffset so the cursor stays visible in the
 // left pane. Must be called after any change to cursor or filteredRows.
 func (m *Model) clampListOffset() {
-	vh := m.listVisibleHeight()
-	if vh < 1 {
-		vh = 1
+	if len(m.flatItems) == 0 {
+		m.cursor = 0
+		m.listOffset = 0
+		return
 	}
+	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
+	m.listOffset = min(max(0, m.listOffset), len(m.flatItems)-1)
 
 	// Cursor above the visible window
 	if m.cursor < m.listOffset {
 		m.listOffset = m.cursor
 	}
-	// Cursor below the visible window
-	if m.cursor >= m.listOffset+vh {
-		m.listOffset = m.cursor - vh + 1
-	}
 
-	// Clamp to valid range
-	maxOffset := max(0, len(m.flatItems)-vh)
-	if m.listOffset > maxOffset {
-		m.listOffset = maxOffset
+	listWidth, _ := paneWidths(m.width)
+	visibleHeight := m.listVisibleHeight()
+	heights := m.listHeightOffsets(listWidth)
+	cursorBottom := heights[m.cursor+1]
+	if cursorBottom-heights[m.listOffset] <= visibleHeight {
+		return
 	}
-	if m.listOffset < 0 {
-		m.listOffset = 0
+	low, high := m.listOffset, m.cursor
+	for low < high {
+		mid := low + (high-low)/2
+		if cursorBottom-heights[mid] <= visibleHeight {
+			high = mid
+		} else {
+			low = mid + 1
+		}
 	}
+	m.listOffset = low
+}
+
+func (m *Model) listHeightOffsets(width int) []int {
+	if m.listHeightWidth == width && len(m.listHeightPrefix) == len(m.flatItems)+1 {
+		return m.listHeightPrefix
+	}
+	if cap(m.listHeightPrefix) < len(m.flatItems)+1 {
+		m.listHeightPrefix = make([]int, len(m.flatItems)+1)
+	} else {
+		m.listHeightPrefix = m.listHeightPrefix[:len(m.flatItems)+1]
+		m.listHeightPrefix[0] = 0
+	}
+	for i := range m.flatItems {
+		m.listHeightPrefix[i+1] = m.listHeightPrefix[i] + flatItemHeight(m.flatItems[i], width)
+	}
+	m.listHeightWidth = width
+	return m.listHeightPrefix
 }
 
 // listVisibleHeight computes how many rows fit in the left pane,
 // mirroring the same calculation used in View().
 func (m Model) listVisibleHeight() int {
-	header := renderHeader(m)
-	tabBar := renderTabBar(m.activeTab)
-	footer := renderFooter(m)
-	h := m.height - lipgloss.Height(header) - lipgloss.Height(tabBar) - lipgloss.Height(footer)
-	if m.filterActive {
-		h-- // search line
-	}
-	if h < 1 {
-		h = 1
-	}
-	return h
+	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
 }
 
 func Run(repoRoot, homeDir string) error {
