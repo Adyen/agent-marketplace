@@ -468,9 +468,8 @@ func TestCommandFieldMatrix(t *testing.T) {
 // Devin cannot REPRESENT that restriction at all — not "Devin does not enforce
 // allowed-tools", which fields.go records as false.
 //
-// Factory, Gemini, and Cursor still fail closed on their own tool-unknown codes
-// (bead agent-marketplace-r2zr pins Factory's); this test is Devin-only on
-// purpose.
+// Gemini and Cursor still fail closed on their own tool-unknown codes; this test
+// is only Devin and Factory on purpose.
 func TestUnrepresentableAllowedToolsOmitTheKey(t *testing.T) {
 	const skillBytes = "---\n" +
 		"name: demo\n" +

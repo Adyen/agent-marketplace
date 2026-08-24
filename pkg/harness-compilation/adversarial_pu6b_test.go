@@ -10,18 +10,18 @@ import (
 )
 
 // Adversarial coverage for bead agent-marketplace-pu6b at the package boundary:
-// the reversal is Devin-only by design, so the two things to prove here are that
-// no other target moved and that the Devin widening cannot escape Devin.
+// the reversal originally covered Devin only. Factory now has the same explicit
+// tool policy, so the remaining targets must not move and Devin's widening cannot
+// escape to an enforcing target.
 
 var pu6bSource = ir.SourceRef{File: "skills/demo/SKILL.md", Line: 1}
 
-// TestOnlyDevinStoppedFailingClosedOnUnrepresentableTools pins the divergence
-// the bead accepted. Factory's fail-closed contract is pinned by
-// agent-marketplace-r2zr's acceptance criteria, and Cursor, Windsurf and Gemini
-// were never in scope, so for the exact inputs Devin now waves through, every
-// other target must behave as it did before: either it represents the tool or it
-// errors and emits nothing.
-func TestOnlyDevinStoppedFailingClosedOnUnrepresentableTools(t *testing.T) {
+// TestDevinAndFactoryStoppedFailingClosedOnUnrepresentableTools pins the
+// divergence the bead accepted. Cursor, Windsurf and Gemini were never in scope,
+// so for the exact inputs Devin and Factory now wave through, every enforcing
+// target must behave as it did before: either it represents the tool or it errors
+// and emits nothing.
+func TestDevinAndFactoryStoppedFailingClosedOnUnrepresentableTools(t *testing.T) {
 	unrepresentable := [][]string{
 		{"Bash(openspec:*)"},
 		{"Read", "Bash(openspec:*)"},
@@ -31,7 +31,7 @@ func TestOnlyDevinStoppedFailingClosedOnUnrepresentableTools(t *testing.T) {
 	}
 
 	for _, target := range Targets() {
-		if target == TargetDevin {
+		if target == TargetDevin || target == TargetFactory {
 			continue
 		}
 		for _, tools := range unrepresentable {
