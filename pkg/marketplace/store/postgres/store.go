@@ -529,6 +529,28 @@ func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, market
 	return out, rows.Err()
 }
 
+func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.ResourceRevision, error) {
+	rows, err := s.q.QueryContext(ctx,
+		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
+		        analyzer_version, findings, license, provenance, revocation
+		 FROM resource_revisions
+		 WHERE marketplace_id=$1 AND content_digest=$2
+		 ORDER BY source_id, kind, name`, marketplace, digest)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []store.ResourceRevision
+	for rows.Next() {
+		rev, scanErr := s.scanResourceRevision(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, rev)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.ResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,

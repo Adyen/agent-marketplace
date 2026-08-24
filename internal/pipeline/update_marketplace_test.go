@@ -238,7 +238,7 @@ func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 
 func TestPlanMarketplaceUpdateRejectsRevokedLatestWithoutMutation(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
-	fixture.latest.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: fixture.latestDigest, Reason: "withdrawn"}
+	fixture.latest.Revocation = &store.Revocation{Kind: store.RevocationSource, TargetID: fixture.pin.SourceID, Reason: "withdrawn"}
 	before := []byte("apiVersion: agent-marketplace/v2\nmarketplaces: []\n")
 	if err := os.WriteFile(fixture.configPath, before, 0o644); err != nil {
 		t.Fatal(err)

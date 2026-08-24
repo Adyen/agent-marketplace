@@ -199,6 +199,11 @@ func (s *Store) PutRevocation(ctx context.Context, r store.Revocation) error {
 	return err
 }
 
+func (s *Store) DeleteRevocation(ctx context.Context, kind store.RevocationKind, targetID string) error {
+	_, err := s.q.ExecContext(ctx, `DELETE FROM revocations WHERE kind=$1 AND target_id=$2`, kind, targetID)
+	return err
+}
+
 func (s *Store) ListRevocations(ctx context.Context, kind store.RevocationKind) ([]store.Revocation, error) {
 	rows, err := s.q.QueryContext(ctx,
 		`SELECT kind, target_id, reason, applied_at FROM revocations WHERE kind=$1 ORDER BY applied_at DESC`,

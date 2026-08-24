@@ -699,12 +699,30 @@ func (s *Server) revocationsReady(ctx context.Context) error {
 	if s.revocations == nil {
 		return errors.New("effective revocation evaluator is unavailable")
 	}
-	for _, target := range s.revocations.Targets() {
-		if _, err := s.meta.GetRevocation(ctx, store.RevocationRevision, target.String()); err != nil {
-			return fmt.Errorf("exact revision revocation %q is not reconciled: %w", target.String(), err)
+	desired := s.revocations.Declarations()
+	actual := make(map[string]struct{}, len(desired))
+	for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+		rows, err := s.meta.ListRevocations(ctx, kind)
+		if err != nil {
+			return fmt.Errorf("list active %s revocations: %w", kind, err)
+		}
+		for _, row := range rows {
+			actual[revocationKey(row.Kind, row.TargetID)] = struct{}{}
+		}
+	}
+	if len(actual) != len(desired) {
+		return fmt.Errorf("active revocation set is not reconciled: have %d declarations, want %d", len(actual), len(desired))
+	}
+	for _, wanted := range desired {
+		if _, ok := actual[revocationKey(wanted.Kind, wanted.TargetID)]; !ok {
+			return fmt.Errorf("%s revocation %q is not reconciled", wanted.Kind, wanted.TargetID)
 		}
 	}
 	return nil
+}
+
+func revocationKey(kind store.RevocationKind, targetID string) string {
+	return string(kind) + "\x00" + targetID
 }
 
 func (s *Server) applyEffectiveRevocation(rev store.ResourceRevision) store.ResourceRevision {
@@ -754,13 +772,24 @@ func (s *Server) artifactEffectivelyRevoked(ctx context.Context, digest store.Ar
 }
 
 // Collection manifests use the collection revision's content digest rather
-// than an archive digest. Only exact declarations with that content identity
-// can make this immutable manifest unavailable. The live declaration is
-// authoritative even when its metadata row is absent.
+// than an archive digest. Resolve every immutable revision carrying that digest
+// so source and coordinate declarations are enforced as well as exact ones.
 func (s *Server) manifestEffectivelyRevoked(ctx context.Context, digest store.RevisionDigest) (bool, error) {
 	if s.revocations == nil {
 		return false, s.revocationErr
 	}
+	revisions, err := s.meta.ListResourceRevisionsByContentDigest(ctx, s.mpID, digest)
+	if err != nil {
+		return false, err
+	}
+	for _, revision := range revisions {
+		if revision.Coordinate.Kind == "collection" && s.applyEffectiveRevocation(revision).Revocation != nil {
+			return true, nil
+		}
+	}
+	// A published collection manifest can be addressed before its metadata row
+	// is present in a test/imported store. Exact declarations remain authoritative
+	// in that case, just as they were before the broader lookup existed.
 	for _, target := range s.revocations.Targets() {
 		if target.Coordinate.Marketplace == s.mpID && target.Coordinate.Kind == "collection" && target.ContentDigest == digest {
 			return true, nil

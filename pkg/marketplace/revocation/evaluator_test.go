@@ -89,3 +89,59 @@ func TestEvaluatorRejectsUnsupportedRevisionKind(t *testing.T) {
 		t.Fatalf("New error = %v, want unsupported resource kind", err)
 	}
 }
+
+func TestEvaluatorSpecificityMatrixBroaderDeclarationsStillRevoke(t *testing.T) {
+	digestA := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	digestB := store.RevisionDigest("sha256:" + strings.Repeat("b", 64))
+	cfg := config.Config{Instance: config.Instance{ID: "mp"}, Revocations: config.Revocations{
+		SourceIDs:   []string{"src"},
+		Coordinates: []string{"mp/src/skill/review"},
+		Revisions:   []string{"mp/src/skill/review@" + digestA.String()},
+	}}
+	evaluator, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}
+	for _, test := range []struct {
+		name, marketplace, digest, kind, source, resourceName, wantKind string
+	}{
+		{"exact", "mp", digestA.String(), "skill", "src", "review", string(store.RevocationRevision)},
+		{"coordinate other revision", "mp", digestB.String(), "skill", "src", "review", string(store.RevocationCoordinate)},
+		{"source other coordinate", "mp", digestB.String(), "command", "src", "other", string(store.RevocationSource)},
+		{"unrelated source", "mp", digestB.String(), "skill", "other", "review", ""},
+		{"other marketplace source", "other", digestB.String(), "skill", "src", "review", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(test.digest)}
+			rev.Coordinate.Marketplace = store.MarketplaceID(test.marketplace)
+			rev.Coordinate.Source = store.SourceID(test.source)
+			rev.Coordinate.Kind = test.kind
+			rev.Coordinate.Name = test.resourceName
+			got := evaluator.Effective(rev)
+			if test.wantKind == "" {
+				if got != nil {
+					t.Fatalf("effective revocation = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil || string(got.Kind) != test.wantKind {
+				t.Fatalf("effective revocation = %#v, want kind %s", got, test.wantKind)
+			}
+		})
+	}
+}
+
+func TestEvaluatorDeclarationsContainsCompleteDesiredSet(t *testing.T) {
+	evaluator, err := New(config.Config{Instance: config.Instance{ID: "mp"}, Revocations: config.Revocations{
+		SourceIDs: []string{"src"}, Coordinates: []string{"mp/src/skill/review"},
+		Revisions: []string{"mp/src/skill/review@sha256:" + strings.Repeat("a", 64)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	declarations := evaluator.Declarations()
+	if len(declarations) != 3 {
+		t.Fatalf("declarations = %d, want 3: %#v", len(declarations), declarations)
+	}
+}

@@ -59,6 +59,10 @@ type MetadataStore interface {
 	// ListResourceRevisionsByArchiveDigest returns every revision in this
 	// Marketplace that references one immutable artifact digest.
 	ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace MarketplaceID, digest ArchiveDigest) ([]ResourceRevision, error)
+	// ListResourceRevisionsByContentDigest returns all immutable revisions with
+	// one content digest. It is used for digest-addressed collection manifests,
+	// whose route has no coordinate.
+	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]ResourceRevision, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.
@@ -83,6 +87,7 @@ type MetadataStore interface {
 	// Revocations.
 	GetRevocation(ctx context.Context, kind RevocationKind, targetID string) (Revocation, error)
 	PutRevocation(ctx context.Context, r Revocation) error
+	DeleteRevocation(ctx context.Context, kind RevocationKind, targetID string) error
 	ListRevocations(ctx context.Context, kind RevocationKind) ([]Revocation, error)
 
 	// Durable jobs.
