@@ -214,7 +214,17 @@ func (r *FS) ReadFileMode(name string) ([]byte, fs.FileMode, error) {
 	if info.IsDir() {
 		return nil, 0, r.record(fmt.Errorf("registry path %q is a directory, not a file", name))
 	}
-	buf := make([]byte, 0, info.Size())
+	size := info.Size()
+	if size < 0 {
+		size = 0
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if size < maxInt {
+		size++
+	} else {
+		size = maxInt
+	}
+	buf := make([]byte, 0, int(size))
 	data, err := readAll(file, buf)
 	if err != nil {
 		return nil, 0, r.record(err)
