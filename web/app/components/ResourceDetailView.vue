@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { installCommand, kindIcon, kindLabel, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
-import type { ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
+import { escapeRawText, renderSafeMarkdown } from '~/lib/markdown'
+import type { InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
   resource: ResourceRevision
@@ -10,6 +11,8 @@ type Props = {
   kind: ResourceKind
   name: string
   canonicalUrl: string
+  inspection?: InspectionManifest
+  primaryContent?: string
 }
 
 const props = defineProps<Props>()
@@ -24,10 +27,14 @@ const listItem = computed<ResourceListItem>(() => ({
 }))
 const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
-const actionsAvailable = computed(() => Boolean(browserUrl.value && command.value))
 const revoked = computed(() => Boolean(props.resource.revocation && Object.keys(props.resource.revocation).length))
+const commandAvailable = computed(() => !revoked.value && Boolean(command.value))
+const browserAvailable = computed(() => Boolean(browserUrl.value))
 const acquisition = computed(() => props.resource.acquisition || valueFromRecord(props.resource.provenance, 'acquisition') || 'Not specified')
 const provenanceEntries = computed(() => Object.entries(props.resource.provenance ?? {}))
+const inspectionFindings = computed(() => props.inspection?.findings ?? [])
+const renderedContent = computed(() => props.primaryContent === undefined ? '' : renderSafeMarkdown(props.primaryContent))
+const escapedContent = computed(() => props.primaryContent === undefined ? '' : escapeRawText(props.primaryContent))
 
 function valueFromRecord(record: Record<string, unknown> | undefined, key: string): string {
   const value = record?.[key]
@@ -86,6 +93,27 @@ function formatValue(value: unknown): string {
       <p class="mt-3 break-words font-mono text-xs text-dimmed">{{ formatValue(resource.revocation) }}</p>
     </section>
 
+    <section v-if="kind === 'skill' && inspection" class="border-b border-default py-6" aria-labelledby="inspection-heading">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 id="inspection-heading" class="text-lg font-semibold text-highlighted">Inspection preview</h2>
+        <span class="font-mono text-xs text-muted">{{ inspection.primary_path }} · {{ inspection.files.length }} file{{ inspection.files.length === 1 ? '' : 's' }}</span>
+      </div>
+      <div v-if="primaryContent !== undefined" class="mt-4 rounded-xl border border-default bg-default p-5">
+        <div class="prose prose-sm max-w-none text-default" data-testid="safe-markdown" v-html="renderedContent" />
+      </div>
+      <p v-else class="mt-4 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning" role="status">Primary Markdown is unavailable for this revision.</p>
+      <details v-if="primaryContent !== undefined" class="mt-4 rounded-xl border border-default bg-muted/30">
+        <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-highlighted">View escaped raw text</summary>
+        <pre data-testid="escaped-raw" class="max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-xs text-highlighted" v-html="escapedContent" />
+      </details>
+      <ul v-if="inspectionFindings.length" class="mt-4 space-y-3" aria-label="Inspection findings">
+        <li v-for="(finding, index) in inspectionFindings" :key="`${finding.code}-${index}`" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
+          <span class="font-semibold">{{ finding.code }}</span><span v-if="finding.path" class="ml-2 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.start_byte ?? 0 }}-{{ finding.end_byte ?? finding.start_byte ?? 0 }}</span>
+          <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
+        </li>
+      </ul>
+    </section>
+
     <section class="border-b border-default py-6" aria-labelledby="provenance-heading">
       <h2 id="provenance-heading" class="text-lg font-semibold text-highlighted">Provenance</h2>
       <dl v-if="provenanceEntries.length" class="mt-4 divide-y divide-default rounded-xl border border-default">
@@ -111,17 +139,18 @@ function formatValue(value: unknown): string {
       <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Copy exact pin</h2>
       <p class="mt-2 text-sm leading-6 text-muted">The command and browser URL include this revision's content digest. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
-        <code v-if="actionsAvailable" class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
-        <p v-if="!actionsAvailable" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.</p>
+        <code v-if="commandAvailable" class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
+        <p v-if="revoked" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Installation is disabled because this revision is revoked. Metadata and inspection remain available.</p>
+        <p v-else-if="!commandAvailable" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.</p>
         <div class="flex flex-wrap gap-2">
-          <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" :disabled="!actionsAvailable" @click="copy(command, 'command')">
+          <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" :disabled="!commandAvailable" @click="copy(command, 'command')">
             {{ copied === 'command' ? 'Copied command' : 'Copy pinned command' }}
           </UButton>
-          <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" :disabled="!actionsAvailable" @click="copy(browserUrl, 'url')">
+          <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" :disabled="!browserAvailable" @click="copy(browserUrl, 'url')">
             {{ copied === 'url' ? 'Copied URL' : 'Copy pinned URL' }}
           </UButton>
         </div>
-        <p v-if="actionsAvailable && copyError" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
+        <p v-if="(commandAvailable || browserAvailable) && copyError" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
         <p class="sr-only" aria-live="polite">{{ copied === 'command' ? 'Pinned CLI install command copied.' : copied === 'url' ? 'Pinned browser URL copied.' : '' }}</p>
       </div>
     </section>

@@ -4,6 +4,9 @@ const port = Number(process.env.E2E_MOCK_PORT || 4311)
 const appOrigin = process.env.E2E_APP_ORIGIN || 'http://127.0.0.1:4321'
 const digest = `sha256:${'a'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
+const inspectionDigest = `sha256:${'d'.repeat(64)}`
+const primaryDigest = `sha256:${'e'.repeat(64)}`
+const primaryContent = '# Safe review\n\n![remote image](https://evil.invalid/pixel.png)\n\n<script>alert("xss")</script>\n'
 
 const items = [
   {
@@ -51,7 +54,7 @@ const wellKnown = {
   artifact_schema_versions: ['v1'],
   resource_kinds: ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'],
   acquisition_modes: ['index-only', 'mirror'],
-  features: ['search', 'source-history'],
+  features: ['search', 'source-history', 'inspection'],
 }
 
 function resource(item) {
@@ -61,9 +64,10 @@ function resource(item) {
     archive_digest: `sha256:${'c'.repeat(64)}`,
     analyzer_version: 'e2e-analyzer-1',
     acquisition: 'mirror',
-    provenance: { observed_from: 'mock-marketplace' },
+    provenance: { observed_from: 'mock-marketplace', inspection_manifest_digest: inspectionDigest },
     findings: [],
     license: 'MIT',
+    ...(item.name === 'deploy-preview' ? { revocation: { reason: 'security review' } } : {}),
   }
 }
 
@@ -126,6 +130,13 @@ const server = createServer((request, response) => {
     const item = items.find(candidate => candidate.source_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
     if (!item) return sendJson(response, 404, { error: 'resource not found' })
     if (parts[6] === 'revisions' && parts[7] !== item.content_digest) return sendJson(response, 404, { error: 'revision not found' })
+    if (parts[8] === 'inspection') {
+      if (parts[9] === 'content') {
+        response.writeHead(200, { 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
+        return response.end(primaryContent)
+      }
+      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: item.content_digest, primary_path: 'SKILL.md', files: [{ path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' }], findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 0, end_byte: 1 }] })
+    }
     return sendJson(response, 200, resource(item))
   }
   sendJson(response, 404, { error: 'not found' })

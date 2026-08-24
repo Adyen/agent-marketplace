@@ -1,5 +1,5 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Capabilities, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, WellKnown } from '~/types/marketplace'
+import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
@@ -166,7 +166,57 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
   }
 }
 
-function validateRequestedCoordinate(coordinate: Record<string, string>, expected: ExpectedResourceCoordinate | undefined): void {
+export function normalizeInspectionManifest(input: unknown, expected?: ExpectedResourceCoordinate): InspectionManifest {
+  const object = asObject(input, 'inspection manifest')
+  if (requiredString(object.schema_version, 'schema_version') !== 'v1') throw new ApiValidationError('unsupported inspection schema')
+  const coordinate = stringRecord(object.coordinate, 'coordinate') as InspectionManifest['coordinate']
+  for (const [field, value] of Object.entries(coordinate)) requiredString(value, `coordinate.${field}`)
+  if (coordinate.kind !== 'skill') throw new ApiValidationError('inspection kind must be skill')
+  const revision = requiredDigest(object.revision_digest, 'revision_digest')
+  if (expected?.contentDigest !== undefined && revision !== expected.contentDigest) throw new ApiValidationError('inspection revision does not match request')
+  validateRequestedCoordinate(coordinate, expected)
+  const primaryPath = requiredString(object.primary_path, 'primary_path')
+  if (primaryPath !== 'SKILL.md') throw new ApiValidationError('inspection primary path is invalid')
+  const files = boundedArray(object.files, 'files').map((value, index) => {
+    const file = asObject(value, `files[${index}]`)
+    const size = boundedInteger(file.size, `files[${index}].size`)
+    if (size < 0) throw new ApiValidationError(`files[${index}].size is negative`)
+    const inspectionClass = requiredString(file.inspection_class, `files[${index}].inspection_class`)
+    if (!['text', 'image', 'metadata'].includes(inspectionClass)) throw new ApiValidationError(`files[${index}].inspection_class is invalid`)
+    const mediaType = requiredString(file.media_type, `files[${index}].media_type`)
+    const allowedMediaTypes = ['text/markdown', 'text/plain', 'application/json', 'application/yaml', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream']
+    if (!allowedMediaTypes.includes(mediaType)) throw new ApiValidationError(`files[${index}].media_type is invalid`)
+    return {
+      path: requiredString(file.path, `files[${index}].path`),
+      content_digest: requiredDigest(file.content_digest, `files[${index}].content_digest`),
+      media_type: mediaType as InspectionFile['media_type'],
+      size,
+      inspection_class: inspectionClass as InspectionFile['inspection_class'],
+    }
+  })
+  const rawFindings = object.findings
+  const findings = rawFindings === undefined ? undefined : boundedUnknownArray(rawFindings!, 'findings')!.map((value, index) => {
+    const finding = asObject(value, `findings[${index}]`)
+    const start = finding.start_byte === undefined ? undefined : boundedInteger(finding.start_byte, `findings[${index}].start_byte`)
+    const end = finding.end_byte === undefined ? undefined : boundedInteger(finding.end_byte, `findings[${index}].end_byte`)
+    if (start !== undefined && end !== undefined && start > end) throw new ApiValidationError(`findings[${index}] has an inverted byte range`)
+    return {
+      code: requiredString(finding.code, `findings[${index}].code`),
+      severity: requiredString(finding.severity, `findings[${index}].severity`),
+      ...(finding.policy === undefined ? {} : { policy: boundedString(finding.policy, `findings[${index}].policy`) }),
+      ...(finding.message === undefined ? {} : { message: boundedString(finding.message, `findings[${index}].message`) }),
+      ...(finding.path === undefined ? {} : { path: boundedString(finding.path, `findings[${index}].path`) }),
+      ...(start === undefined ? {} : { start_byte: start }),
+      ...(end === undefined ? {} : { end_byte: end }),
+    }
+  })
+  return {
+    schema_version: 'v1', coordinate, revision_digest: revision, primary_path: 'SKILL.md', files,
+    ...(findings === undefined ? {} : { findings }),
+  }
+}
+
+function validateRequestedCoordinate(coordinate: { source?: string; kind?: string; name?: string }, expected: ExpectedResourceCoordinate | undefined): void {
   if (!expected) return
   if (expected.sourceId !== undefined && coordinate.source !== expected.sourceId) {
     throw new ApiValidationError(`coordinate.source does not match requested source ${expected.sourceId}`)

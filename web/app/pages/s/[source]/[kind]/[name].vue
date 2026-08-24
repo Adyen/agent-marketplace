@@ -18,6 +18,17 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   resourceAsyncDataKey(source, kind, name),
   () => api.getResource(source, kind, name),
 )
+const revision = computed(() => resource.value?.content_digest ?? '')
+const { data: inspection } = await useAsyncData(
+  `marketplace-inspection:${source}:${kind}:${name}:${revision.value}`,
+  () => api.getResourceInspection(source, kind, name, revision.value),
+  { immediate: kind === 'skill' && Boolean(revision.value) },
+)
+const { data: primaryContent } = await useAsyncData(
+  `marketplace-inspection-content:${source}:${kind}:${name}:${revision.value}`,
+  () => api.getResourceInspectionContent(source, kind, name, revision.value),
+  { immediate: kind === 'skill' && Boolean(revision.value) },
+)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
 function retry() {
@@ -51,7 +62,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :inspection="inspection" :primary-content="primaryContent" />
     </main>
   </div>
 </template>

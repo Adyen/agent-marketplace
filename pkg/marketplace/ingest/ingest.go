@@ -23,6 +23,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -31,6 +32,7 @@ type Revision struct {
 	Occurrence      store.SourceOccurrence
 	Resources       []store.ResourceRevision
 	ExtraBlobs      []store.BlobUpload
+	InspectionBlobs []store.BlobUpload
 	ManifestPayload []byte
 	ManifestDigest  store.RevisionDigest
 	// CollectionManifests contains standalone canonical collection manifests.
@@ -80,6 +82,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	resourceResults := make(map[string]processed)
 	resourceArchives := make(map[string][]byte)
 	resourceArchiveDigests := make(map[string]string)
+	inspectionDigests := make(map[string]string)
+	var inspectionBlobs []store.BlobUpload
 	var collectionEntries []catalog.Entry
 	seen := make(map[string]bool)
 
@@ -156,6 +160,25 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
 			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
+			if entry.Kind == hccir.KindSkill && !r.Rejected {
+				skill, ok := entry.Resource.(*hccir.Skill)
+				if !ok {
+					return rev, fmt.Errorf("skill %q has unexpected resource type %T", entry.Name, entry.Resource)
+				}
+				projection, err := inspection.Build(
+					store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: kind, Name: entry.Name},
+					r.ContentDigest, skillBodyBytes(skill), files, r.Findings,
+					limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+				)
+				if err != nil {
+					return rev, fmt.Errorf("inspection projection for skill %q: %w", entry.Name, err)
+				}
+				inspectionDigests[key] = projection.Manifest.ManifestDigest
+				inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
+				for digest, data := range projection.Bodies {
+					inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
+				}
+			}
 			processedResults = append(processedResults, p)
 			resourceResults[key] = p
 		}
@@ -409,9 +432,10 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			Findings:        toStoreFindings(p.result.Findings),
 			License:         p.result.License,
 			Provenance: &store.Provenance{
-				SourceID:       source.ID,
-				Commit:         commit,
-				ManifestDigest: store.RevisionDigest(digest),
+				InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
+				SourceID:                 source.ID,
+				Commit:                   commit,
+				ManifestDigest:           store.RevisionDigest(digest),
 			},
 		}
 		if p.result.Rejected {
@@ -456,6 +480,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		Occurrence:            occ,
 		Resources:             resources,
 		ExtraBlobs:            append(extraBlobs, collectionManifests...),
+		InspectionBlobs:       inspectionBlobs,
 		CollectionManifests:   collectionManifests,
 		Collections:           collections,
 		ManifestPayload:       payload,
@@ -514,6 +539,13 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 	}
 }
 
+func skillBodyBytes(skill *hccir.Skill) []byte {
+	if skill == nil {
+		return nil
+	}
+	return []byte(skill.Body)
+}
+
 func supportFileDigests(files analyze.FileSet) map[string]string {
 	if len(files) == 0 {
 		return nil
@@ -545,19 +577,28 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error
 	if err != nil {
 		return nil, err
 	}
+	seen := make(map[string]struct{}, len(supportFiles))
 	for _, rel := range supportFiles {
-		if strings.Contains(rel, "..") || filepath.IsAbs(rel) {
-			return nil, fmt.Errorf("support file path traversal: %q", rel)
+		normalized, err := validateSupportRelativePath(rel)
+		if err != nil {
+			return nil, err
 		}
-		path := filepath.Join(resRoot, filepath.Clean(rel))
-		data, err := readBoundedFile(path, 2*1024*1024)
+		if _, exists := seen[normalized]; exists {
+			return nil, fmt.Errorf("duplicate support file path: %q", rel)
+		}
+		seen[normalized] = struct{}{}
+		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
+		if err := rejectSymlinkPath(resRoot, filePath); err != nil {
+			return nil, fmt.Errorf("support file %q: %w", rel, err)
+		}
+		data, err := readBoundedFile(filePath, 2*1024*1024)
 		if err != nil {
 			if os.IsNotExist(err) {
-				continue
+				return nil, fmt.Errorf("support file %q is missing", rel)
 			}
 			return nil, fmt.Errorf("read support file %q: %w", rel, err)
 		}
-		files[rel] = data
+		files[normalized] = data
 	}
 	return files, nil
 }
@@ -586,6 +627,41 @@ func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string
 func supportFilesFor(r hccir.Resource) ([]string, error) {
 	_, supportFiles, err := resourceInfo(r)
 	return supportFiles, err
+}
+
+func validateSupportRelativePath(name string) (string, error) {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if name == "" || filepath.IsAbs(name) {
+		return "", fmt.Errorf("invalid support file path: %q", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("unsafe support file path: %q", name)
+		}
+	}
+	return name, nil
+}
+
+func rejectSymlinkPath(root, target string) error {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes resource root")
+	}
+	current := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlink support files are not allowed")
+		}
+	}
+	return nil
 }
 
 func readBoundedFile(path string, maxBytes int64) ([]byte, error) {

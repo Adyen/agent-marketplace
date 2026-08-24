@@ -3,7 +3,7 @@ import type {
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
-import { normalizeMarketplace, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '~/lib/validation'
+import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '~/lib/validation'
 
 const API_VERSION_PATH = '/api/v1'
 const WELL_KNOWN_PATH = '/.well-known/agent-marketplace.json'
@@ -81,6 +81,10 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
       fetcher<unknown>(resourcePath(apiBase, source, kind, name)).then(payload => normalizeResourceRevision(payload, { source, kind, name })),
     getResourceRevision: (source: string, kind: ResourceKind, name: string, revision: string) =>
       fetcher<unknown>(resourceRevisionPath(apiBase, source, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { source, kind, name, contentDigest: revision })),
+    getResourceInspection: (source: string, kind: ResourceKind, name: string, revision: string) =>
+      fetcher<unknown>(resourceInspectionPath(apiBase, source, kind, name, revision)).then(payload => normalizeInspectionManifest(payload, { source, kind, name, contentDigest: revision })),
+    getResourceInspectionContent: (source: string, kind: ResourceKind, name: string, revision: string) =>
+      fetcher<string>(resourceInspectionContentPath(apiBase, source, kind, name, revision)),
   }
 }
 
@@ -102,6 +106,14 @@ export function resourcePath(apiBase: string | undefined, source: string, kind: 
 
 export function resourceRevisionPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
   return apiPath(apiBase, `/resources/${encodeURIComponent(source)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions/${encodeURIComponent(revision)}`)
+}
+
+export function resourceInspectionPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
+  return `${resourceRevisionPath(apiBase, source, kind, name, revision)}/inspection`
+}
+
+export function resourceInspectionContentPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
+  return `${resourceInspectionPath(apiBase, source, kind, name, revision)}/content`
 }
 
 function hasUnsafeURLCharacters(value: string): boolean {

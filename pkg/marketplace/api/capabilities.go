@@ -23,7 +23,7 @@ func DefaultCapabilities() Capabilities {
 		ArtifactSchemaVersions: []string{ArtifactSchemaVersionV1},
 		ResourceKinds:          SupportedResourceKinds,
 		AcquisitionModes:       []string{AcquisitionIndexOnly, AcquisitionMirror},
-		Features:               []string{},
+		Features:               []string{"inspection"},
 	}
 }
 

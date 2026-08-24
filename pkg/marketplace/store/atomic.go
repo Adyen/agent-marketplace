@@ -44,6 +44,8 @@ type SourceRevisionPublication struct {
 	// ExtraBlobs contains any additional blobs that must be uploaded first, such
 	// as resource and collection archives.
 	ExtraBlobs []BlobUpload
+
+	InspectionBlobs []BlobUpload
 }
 
 // PublishSourceRevision uploads all required blobs, then writes the metadata in
@@ -177,7 +179,7 @@ func prepareUploads(req SourceRevisionPublication) ([]BlobUpload, error) {
 		}
 	}
 
-	for _, b := range req.ExtraBlobs {
+	for _, b := range append(req.ExtraBlobs, req.InspectionBlobs...) {
 		if err := add(b); err != nil {
 			return nil, err
 		}
