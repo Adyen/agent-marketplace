@@ -256,7 +256,7 @@ func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, stri
 	if err != nil {
 		t.Fatalf("open git config %q: %v", gitConfig, err)
 	}
-	if _, err := fmt.Fprintf(config, "\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", origin); err != nil {
+	if _, err := fmt.Fprintf(config, "\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", filepath.ToSlash(origin)); err != nil {
 		_ = config.Close()
 		t.Fatalf("write git config %q: %v", gitConfig, err)
 	}
