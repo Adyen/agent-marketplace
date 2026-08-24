@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 func TestResolveStopsOnV3ConfigErrors(t *testing.T) {
@@ -109,7 +111,7 @@ registries:
 	}
 }
 
-func TestSync_NoLegacyOrgFallbackInvalidOrgBlocksBeforeCatalog(t *testing.T) {
+func TestSync_AcceptsV2OrganizationConfig(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -132,14 +134,11 @@ registries: []
 		},
 	})
 
-	if len(result.Errors) == 0 {
-		t.Fatalf("expected sync to fail on invalid v3 organization config")
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected sync to accept v2 organization config, got: %v", result.Errors)
 	}
-	if !strings.Contains(joinErrors(result.Errors), "apiVersion must be") {
-		t.Fatalf("expected apiVersion error, got: %v", result.Errors)
-	}
-	if len(result.CatalogLoad.Catalogs) != 0 {
-		t.Fatalf("expected no catalog load when config validation fails, got %d", len(result.CatalogLoad.Catalogs))
+	if !reflect.DeepEqual(result.TargetHarnesses, []hcc.Target{hcc.TargetFactory}) {
+		t.Fatalf("expected v2 organization target harness [factory], got %v", result.TargetHarnesses)
 	}
 }
 

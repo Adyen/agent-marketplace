@@ -52,7 +52,7 @@ Add a `logging:` block to `~/.agents/config.yaml`. Every key is optional;
 omitted keys fall back to the code default above.
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses:
   - factory
 logging:

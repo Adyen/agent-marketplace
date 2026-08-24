@@ -68,17 +68,17 @@ type ResolveResult struct {
 	Diagnostics          config.ManagedInstallationDiagnostics
 }
 
-// TargetHarnessSetMissingError is returned by Resolve/Sync when the machine-wide
-// target harness set is required but not configured.
+// TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
+// target harness set is configured.
 type TargetHarnessSetMissingError struct{}
 
 func (e *TargetHarnessSetMissingError) Error() string {
-	return "no machine-wide target harness set configured; add harnesses to ~/.agents/config.yaml or run 'agent-marketplace migrate'"
+	return "no machine-wide target harness set configured; add harnesses to ~/.agents/config.yaml"
 }
 
 // Remediation returns a user-facing hint about how to configure the target set.
 func (e *TargetHarnessSetMissingError) Remediation() string {
-	return "run 'agent-marketplace migrate' or add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml"
+	return "add 'harnesses: [factory, claude, ...]' to ~/.agents/config.yaml"
 }
 
 type SyncResult struct {
@@ -119,11 +119,14 @@ func hccTargetsFromStrings(targets []string) []hcc.Target {
 }
 
 // targetHarnessSetFromEC returns the effective target harness set and its
-// source from an EffectiveConfig. The user-personal layer wins over the
-// organization layer; repo and local layers are ignored.
+// source from an EffectiveConfig. Project-level harnesses win, followed by
+// user-personal and organization defaults.
 func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Source) {
 	if len(ec.TargetHarnesses) > 0 {
 		return hccTargetsFromStrings(ec.TargetHarnesses), ec.TargetHarnessSource
+	}
+	if ec.Repo.Config != nil && len(ec.Repo.Config.Harnesses) > 0 {
+		return hccTargetsFromStrings(ec.Repo.Config.Harnesses), config.RepoCommitted
 	}
 	if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
 		return hccTargetsFromStrings(ec.User.Config.Harnesses), config.UserPersonal

@@ -194,7 +194,7 @@ registries:
 	}
 }
 
-func TestLoadEffectiveRejectsV3RepoHarnesses(t *testing.T) {
+func TestLoadEffectiveAllowsRepoHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "repo.yaml")
 	writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
@@ -210,11 +210,14 @@ registries: []
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
 	})
 
-	if len(ec.Errors) == 0 {
-		t.Fatalf("expected repo harnesses to be rejected in v3")
+	if len(ec.Errors) != 0 {
+		t.Fatalf("expected repo harnesses to be accepted, got: %v", ec.Errors)
 	}
-	if !strings.Contains(ec.Errors[0].Error(), "harnesses") {
-		t.Fatalf("expected error to mention harnesses, got: %v", ec.Errors[0])
+	if !equalStrings(ec.TargetHarnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses to be the effective target set, got %v", ec.TargetHarnesses)
+	}
+	if ec.TargetHarnessSource != RepoCommitted {
+		t.Fatalf("expected repo harness source %v, got %v", RepoCommitted, ec.TargetHarnessSource)
 	}
 }
 
@@ -273,7 +276,7 @@ registries: []
 	}
 }
 
-func TestLoadEffectiveNoLegacyOrgFallbackRejectsNonV3Org(t *testing.T) {
+func TestLoadEffectiveOrganizationAcceptsV2Org(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
 	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
@@ -289,17 +292,20 @@ registries: []
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
 	})
 
-	if ec.Organization.Config != nil {
-		t.Fatalf("expected no organization config for non-v3 file")
+	if ec.Organization.Config == nil {
+		t.Fatalf("expected v2 organization config to load")
 	}
-	if len(ec.Errors) == 0 {
-		t.Fatalf("expected an error for non-v3 organization config")
+	if len(ec.Errors) != 0 {
+		t.Fatalf("expected no errors for valid v2 organization config, got: %v", ec.Errors)
 	}
-	if !strings.Contains(ec.Errors[0].Error(), "apiVersion must be") {
-		t.Fatalf("expected apiVersion error, got: %v", ec.Errors[0])
+	if !ec.Managed {
+		t.Fatalf("expected valid v2 organization config to be managed")
 	}
-	if ec.Managed {
-		t.Fatalf("expected unmanaged when organization config is invalid")
+	if ec.Organization.Source != Organization {
+		t.Fatalf("expected organization source %v, got %v", Organization, ec.Organization.Source)
+	}
+	if !equalStrings(ec.Organization.Config.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected org harnesses [factory], got %v", ec.Organization.Config.Harnesses)
 	}
 }
 
@@ -470,7 +476,7 @@ registries:
 	}
 }
 
-func TestLoadEffectiveRejectsV2RepoHarnesses(t *testing.T) {
+func TestLoadEffectiveAllowsV2RepoHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "repo.yaml")
 	writeFile(t, repoPath, `apiVersion: agent-marketplace/v2
@@ -490,18 +496,14 @@ registries:
 	if ec.Repo.Config == nil {
 		t.Fatalf("expected repo config to load")
 	}
-	if len(ec.Repo.Config.Harnesses) != 0 {
-		t.Fatalf("expected repo harnesses to be cleared, got %v", ec.Repo.Config.Harnesses)
+	if len(ec.Errors) != 0 {
+		t.Fatalf("expected repo harnesses to be accepted, got: %v", ec.Errors)
 	}
-	found := false
-	for _, err := range ec.Errors {
-		if strings.Contains(err.Error(), "top-level harnesses") {
-			found = true
-			break
-		}
+	if !equalStrings(ec.Repo.Config.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses to be preserved, got %v", ec.Repo.Config.Harnesses)
 	}
-	if !found {
-		t.Fatalf("expected repo top-level harnesses error, got: %v", ec.Errors)
+	if !equalStrings(ec.TargetHarnesses, []string{"factory"}) {
+		t.Fatalf("expected repo harnesses to be effective, got %v", ec.TargetHarnesses)
 	}
 }
 
