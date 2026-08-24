@@ -329,6 +329,9 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		if manifest.Name != locator.Name {
 			return nil, fmt.Errorf("collection manifest name mismatch: got %q, want %q", manifest.Name, locator.Name)
 		}
+		if err := cache.MarkCollectionVerified(string(revision.ContentDigest)); err != nil {
+			return nil, fmt.Errorf("mark collection manifest verified: %w", err)
+		}
 		nestedManifests := make(map[string]hccartifact.CollectionManifest)
 		if err := r.verifyNestedCollectionManifests(ctx, client, manifest, map[string]bool{string(revision.ContentDigest): true}, nestedManifests); err != nil {
 			return nil, err
@@ -409,6 +412,9 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		}
 		if _, err := r.cache().WriteCollectionManifest(member.Revision, payload); err != nil {
 			return fmt.Errorf("cache nested collection %q: %w", member.Name, err)
+		}
+		if err := r.cache().MarkCollectionVerified(member.Revision); err != nil {
+			return fmt.Errorf("mark nested collection %q manifest verified: %w", member.Name, err)
 		}
 		nestedManifests[member.Revision] = nested
 		visiting[member.Revision] = true

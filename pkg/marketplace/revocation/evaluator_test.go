@@ -70,3 +70,22 @@ func TestEvaluatorRejectsDigestOnlyRevisionDeclaration(t *testing.T) {
 		t.Fatal("digest-only declaration unexpectedly accepted")
 	}
 }
+
+func TestEvaluatorRejectsDifferentMarketplaceRevisionDeclaration(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	_, err := New(config.Config{
+		Instance:    config.Instance{ID: "configured-mp"},
+		Revocations: config.Revocations{Revisions: []string{"other-mp/src/skill/review@" + digest}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "configured instance") {
+		t.Fatalf("New error = %v, want configured Marketplace mismatch", err)
+	}
+}
+
+func TestEvaluatorRejectsUnsupportedRevisionKind(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	_, err := New(config.Config{Revocations: config.Revocations{Revisions: []string{"mp/src/rule/review@" + digest}}})
+	if err == nil || !strings.Contains(err.Error(), "unsupported resource kind") {
+		t.Fatalf("New error = %v, want unsupported resource kind", err)
+	}
+}

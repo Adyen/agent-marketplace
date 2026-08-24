@@ -3,6 +3,8 @@
 package revocation
 
 import (
+	"fmt"
+
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -23,6 +25,9 @@ func New(cfg config.Config) (*Evaluator, error) {
 		target, err := store.ParseRevisionRevocationTarget(raw)
 		if err != nil {
 			return nil, err
+		}
+		if configured := cfg.Instance.ID; configured != "" && string(target.Coordinate.Marketplace) != configured {
+			return nil, fmt.Errorf("revision revocation %q targets Marketplace %q, configured instance is %q", raw, target.Coordinate.Marketplace, configured)
 		}
 		e.exact[target.String()] = store.Revocation{
 			Kind:     store.RevocationRevision,
