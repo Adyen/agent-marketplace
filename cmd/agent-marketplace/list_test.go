@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -244,17 +244,25 @@ func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, stri
 	t.Helper()
 
 	baseDir := t.TempDir()
-	source := filepath.Join(baseDir, "source")
 	origin := filepath.Join(baseDir, bareName)
 	working := filepath.Join(baseDir, "working")
 
-	runGit(t, "", "init", "--initial-branch=main", source)
-	writeFile(t, filepath.Join(source, ".gitkeep"), "seed\n")
-	runGit(t, source, "add", ".gitkeep")
-	runGit(t, source, "commit", "-m", "seed")
+	runGit(t, "", "init", "--initial-branch=main", working)
+	runGit(t, working, "commit", "--allow-empty", "-m", "seed")
+	runGit(t, "", "clone", "--bare", working, origin)
 
-	runGit(t, "", "clone", "--bare", source, origin)
-	runGit(t, "", "clone", origin, working)
+	gitConfig := filepath.Join(working, ".git", "config")
+	config, err := os.OpenFile(gitConfig, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open git config %q: %v", gitConfig, err)
+	}
+	if _, err := fmt.Fprintf(config, "\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", origin); err != nil {
+		_ = config.Close()
+		t.Fatalf("write git config %q: %v", gitConfig, err)
+	}
+	if err := config.Close(); err != nil {
+		t.Fatalf("close git config %q: %v", gitConfig, err)
+	}
 
 	return origin, working
 }
@@ -419,28 +427,6 @@ func extractAndStripHarnesses(content string) (string, []string) {
 	content = harnessesRegex.ReplaceAllString(content, "")
 	content = strings.TrimSpace(content)
 	return content, parsed.Harnesses
-}
-
-func mergeGlobalHarnesses(t *testing.T, harnesses []string) {
-	t.Helper()
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("user home dir: %v", err)
-	}
-	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	var cfg config.Config
-	if data, err := os.ReadFile(globalPath); err == nil {
-		_ = yaml.Unmarshal(data, &cfg)
-	}
-	if cfg.APIVersion == "" {
-		cfg.APIVersion = config.APIVersionV2
-	}
-	cfg.Harnesses = harnesses
-	out, err := yaml.Marshal(&cfg)
-	if err != nil {
-		t.Fatalf("marshal global config: %v", err)
-	}
-	writeFile(t, globalPath, string(out))
 }
 
 func ensureGlobalConfig(t *testing.T) {
