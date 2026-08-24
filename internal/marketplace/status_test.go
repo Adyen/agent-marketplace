@@ -10,11 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -299,6 +302,63 @@ func TestInspectQueriesLatestAndPreservesExactStateOnLatestFailure(t *testing.T)
 	}
 }
 
+func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("5", 64)
+	manifestDigest := "sha256:" + strings.Repeat("6", 64)
+	commit := strings.Repeat("a", 40)
+	cases := []struct {
+		name       string
+		latestProv *store.Provenance
+	}{
+		{name: "commit", latestProv: &store.Provenance{SourceID: "src", Commit: strings.Repeat("b", 40), ManifestDigest: store.RevisionDigest(manifestDigest)}},
+		{name: "manifest", latestProv: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("7", 64))}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pin := config.MarketplaceResourcePin{
+				SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "review",
+				Revision: commit, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly,
+				SourceCommit: commit, SourceManifestDigest: manifestDigest,
+			}
+			pinned := store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				ContentDigest: store.RevisionDigest(contentDigest), Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)},
+			}
+			latest := pinned
+			latest.Provenance = tc.latestProv
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/.well-known/agent-marketplace.json":
+					writeTestWellKnown(w, "mp")
+				case strings.HasSuffix(r.URL.Path, "/revisions/"+contentDigest):
+					_ = json.NewEncoder(w).Encode(pinned)
+				case strings.HasSuffix(r.URL.Path, "/occurrences/"+commit):
+					_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
+						SourceID: "src", Ref: "main", Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifestDigest),
+						Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://git.example/repo.git", OccurredAt: time.Now().UTC(),
+					})
+				case r.URL.Path == "/api/v1/resources/source-slug/skill/review":
+					_ = json.NewEncoder(w).Encode(latest)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}
+			inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
+			if len(inspection.Pins) != 1 {
+				t.Fatalf("pins = %d, want 1", len(inspection.Pins))
+			}
+			got := inspection.Pins[0]
+			if !got.LatestQueried || !got.UpdateAvailable || got.State != PinStateUpdateAvailable {
+				t.Fatalf("index-only unchanged-content pin = %#v, want queried/update-available", got)
+			}
+		})
+	}
+}
+
 func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 	pinnedDigest := "sha256:" + strings.Repeat("5", 64)
 	latestDigest := "sha256:" + strings.Repeat("6", 64)
@@ -385,5 +445,104 @@ func TestInspectionResolvePropagatesCancellation(t *testing.T) {
 	_, errs := inspection.Resolve(ctx, nil, nil, resolver.MarketplaceResolveModeInspect)
 	if len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
 		t.Fatalf("cancellation errors = %v, want context.Canceled", errs)
+	}
+}
+
+func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
+	resource := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{})
+	canonical, err := hccartifact.FromIR(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest := canonical.Manifest.ContentDigest
+	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.Revision = contentDigest
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("a", 40)
+	manifestDigest := "sha256:" + strings.Repeat("b", 64)
+	pin := config.MarketplaceResourcePin{
+		SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+	}
+	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifestDigest}
+
+	for _, tc := range []struct {
+		name      string
+		wantError bool
+		stage     func(t *testing.T, cache *Cache, path string)
+	}{
+		{name: "valid", stage: func(t *testing.T, _ *Cache, path string) {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("cached"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "missing", wantError: true},
+		{name: "corrupt", wantError: true, stage: func(t *testing.T, _ *Cache, path string) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("not a directory"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink", wantError: true, stage: func(t *testing.T, _ *Cache, path string) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := NewCache(t.TempDir())
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+				Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cache.WriteIndexOnlyArtifact(identity, pin.Digest, raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
+				t.Fatal(err)
+			}
+			stagedPath := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+			if tc.stage != nil {
+				tc.stage(t, cache, stagedPath)
+			}
+
+			inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{
+				URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin},
+			}}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+			if len(inspection.Pins) != 1 {
+				t.Fatalf("pins = %d, want 1", len(inspection.Pins))
+			}
+			got := inspection.Pins[0]
+			if !tc.wantError {
+				if got.Cache != CacheStateArtifactVerified || got.State != PinStateCached || !got.ArtifactVerified {
+					t.Fatalf("valid staging pin = %#v, want cached/verified", got)
+				}
+				return
+			}
+			if got.Cache != CacheStateError || got.State != PinStateUnavailable {
+				t.Fatalf("%s staging pin = %#v, want cache error/unavailable", tc.name, got)
+			}
+			if !strings.Contains(got.Detail, "occurrence-scoped reconstructed source") {
+				t.Fatalf("%s staging detail = %q, want occurrence-scoped validation detail", tc.name, got.Detail)
+			}
+			marker := filepath.Join(filepath.Dir(cache.IndexOnlyArtifactPath(identity, pin.Digest)), "verified.marker")
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("%s occurrence marker = %v, want invalidated", tc.name, err)
+			}
+		})
 	}
 }

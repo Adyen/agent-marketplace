@@ -67,6 +67,29 @@ func TestCacheArtifactRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIndexOnlyCacheSeparatesOccurrences(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	identityA := IndexOnlyIdentity{Marketplace: "marketplace", SourceID: "source", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("1", 64)}
+	identityB := identityA
+	identityB.ManifestDigest = "sha256:" + strings.Repeat("2", 64)
+	contentDigest := "sha256:" + strings.Repeat("3", 64)
+	if IndexOnlyKey(identityA) == IndexOnlyKey(identityB) {
+		t.Fatal("different source occurrence identities share a cache key")
+	}
+	if _, err := cache.WriteIndexOnlyArtifact(identityA, contentDigest, []byte("A")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteIndexOnlyArtifact(identityB, contentDigest, []byte("B")); err != nil {
+		t.Fatal(err)
+	}
+	for identity, want := range map[IndexOnlyIdentity]string{identityA: "A", identityB: "B"} {
+		got, _, err := cache.ReadIndexOnlyArtifact(identity, contentDigest)
+		if err != nil || string(got) != want {
+			t.Fatalf("occurrence cache read = %q/%v, want %q", got, err, want)
+		}
+	}
+}
+
 func TestCacheArtifactMissing(t *testing.T) {
 	tmp := t.TempDir()
 	c := NewCache(tmp)

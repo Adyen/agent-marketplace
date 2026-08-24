@@ -75,8 +75,8 @@ type configMutation struct {
 }
 
 // Update refreshes pinned registries, explicitly advances eligible Marketplace
-// mirror pins, and syncs enabled resources. Marketplace plans are completely
-// prepared before any config mutation.
+// pins, and syncs enabled resources. Marketplace plans are completely prepared
+// before any config mutation.
 func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
@@ -208,6 +208,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	resolverMP := opts.MarketplaceResolver
 	if resolverMP == nil {
 		resolverMP = marketplace.NewResolver()
+		resolverMP.AllowedRegistries = ec.Allowed
 	}
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))
@@ -225,8 +226,6 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			switch {
 			case entry.Source == config.Organization:
 				item.Reason = "organization pin is required and managed externally"
-			case pin.Acquisition == config.MarketplaceAcquisitionIndexOnly:
-				item.Reason = "index-only pin updates are not supported"
 			case pin.Kind == "collection":
 				item.Reason = "collection pin updates are not supported"
 			default:
@@ -237,19 +236,29 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
+			// Preparing an index-only update also prepares a materializable
+			// occurrence. Preserve the pre-existing zero-target diagnostic rather
+			// than contacting an endpoint before sync can run.
+			if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly && len(targets) == 0 {
+				item.Skipped = true
+				item.Reason = "index-only pin updates are not supported"
+				slog.Debug("marketplace update skipped", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "reason", item.Reason)
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+				continue
+			}
 
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 			if err != nil {
 				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err)
 			}
-			if string(source.Acquisition) != config.MarketplaceAcquisitionMirror {
+			if string(source.Acquisition) != config.MarketplaceAcquisitionMirror && string(source.Acquisition) != config.MarketplaceAcquisitionIndexOnly {
 				item.Skipped = true
-				item.Reason = "source is index-only"
+				item.Reason = "source uses unsupported acquisition"
 				slog.Debug("marketplace update skipped", "url", entry.URL, "instance_id", entry.InstanceID, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "required", item.Required, "reason", item.Reason)
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			if string(latest.ContentDigest) == pin.Digest {
+			if string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest) {
 				item.Skipped = true
 				item.Reason = "content digest unchanged"
 				slog.Debug("marketplace update skipped unchanged pin", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name)
