@@ -18,7 +18,7 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   resourceAsyncDataKey(source, kind, name),
   () => api.getResource(source, kind, name),
 )
-const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.canonical_url) || (import.meta.client ? window.location.origin : ''))
+const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
 function retry() {
   refresh()

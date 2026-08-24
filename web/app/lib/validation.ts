@@ -32,11 +32,21 @@ export class ApiValidationError extends Error {
 
 export function normalizeWellKnown(input: unknown): WellKnown {
   const object = asObject(input, 'metadata')
+  const browserBase = object.browser_base === undefined ? undefined : requiredString(object.browser_base, 'browser_base')
+  const browserLatestRoute = object.browser_latest_route_template === undefined ? undefined : requiredString(object.browser_latest_route_template, 'browser_latest_route_template')
+  const browserExactRoute = object.browser_exact_route_template === undefined ? undefined : requiredString(object.browser_exact_route_template, 'browser_exact_route_template')
+  const browserFields = [browserBase, browserLatestRoute, browserExactRoute]
+  if (browserFields.some(value => value !== undefined) && browserFields.some(value => value === undefined)) {
+    throw new ApiValidationError('browser fields must be provided together')
+  }
+  if (browserBase !== undefined && (browserLatestRoute !== `${browserBase}/s/{source}/{kind}/{name}` || browserExactRoute !== `${browserBase}/s/{source}/{kind}/{name}/revisions/{revision}`)) {
+    throw new ApiValidationError('browser route templates do not match browser_base')
+  }
   return {
     instance_id: requiredString(object.instance_id, 'instance_id'),
     canonical_url: requiredString(object.canonical_url, 'canonical_url'),
     api_base: requiredString(object.api_base, 'api_base'),
-    browser_route_template: requiredString(object.browser_route_template, 'browser_route_template'),
+    ...(browserBase === undefined ? {} : { browser_base: browserBase, browser_latest_route_template: browserLatestRoute, browser_exact_route_template: browserExactRoute }),
     ...normalizeCapabilities(object),
   }
 }

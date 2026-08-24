@@ -72,7 +72,6 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
 	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
 	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
-	publicMux.HandleFunc("/s/", s.methodGet(s.handleBrowser))
 	publicMux.HandleFunc("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -169,7 +168,7 @@ func (s *Server) withMetrics(next http.Handler) http.Handler {
 }
 
 func (s *Server) handleWellKnown(w http.ResponseWriter, r *http.Request) {
-	wk := DefaultWellKnown(s.cfg.Instance.ID, s.cfg.Instance.CanonicalURL)
+	wk := DefaultWellKnown(s.cfg.Instance.ID, s.cfg.Instance.CanonicalURL, s.cfg.Instance.BrowserBase)
 	writeJSON(w, http.StatusOK, wk)
 }
 
@@ -627,21 +626,6 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
 	setImmutableCache(w)
 	_, _ = w.Write(data)
-}
-
-func (s *Server) handleBrowser(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/s/")
-	path = strings.Trim(path, "/")
-	parts := strings.Split(path, "/")
-	if len(parts) != 3 {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if !IsMarketplaceKind(parts[1]) {
-		writeError(w, http.StatusBadRequest, "invalid kind")
-		return
-	}
-	s.handleResourceDetail(w, r, parts[0], parts[1], parts[2])
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

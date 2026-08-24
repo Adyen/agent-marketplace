@@ -218,6 +218,32 @@ func TestLoadConfigRejectsUnsafeCanonicalURL(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsOptionalBrowserBase(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://api.marketplace.test\n  browser_base: https://marketplace.test", 1)))
+	if err != nil {
+		t.Fatalf("LoadConfig with browser base: %v", err)
+	}
+	if cfg.Instance.BrowserBase != "https://marketplace.test" {
+		t.Fatalf("browser base = %q", cfg.Instance.BrowserBase)
+	}
+}
+
+func TestLoadConfigRejectsUnsafeBrowserBase(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:browser-secret@example.com",
+		"https://marketplace.example/browser#fragment",
+		"https://marketplace.example/browser?oauth_token=browser-secret",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			yaml := strings.Replace(validConfigYAML(), "canonical_url: https://marketplace.test", "canonical_url: https://marketplace.test\n  browser_base: "+raw, 1)
+			_, err := LoadConfig(writeConfig(t, yaml))
+			if err == nil || strings.Contains(err.Error(), "browser-secret") {
+				t.Fatalf("LoadConfig browser base %q error = %v", raw, err)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsUnsafePublisherURL(t *testing.T) {
 	for _, raw := range []string{
 		"https://publisher.example#fragment",
