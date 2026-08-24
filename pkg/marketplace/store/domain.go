@@ -287,6 +287,8 @@ type Provenance struct {
 
 	// ManifestDigest is the digest of the source revision manifest.
 	ManifestDigest RevisionDigest `json:"manifest_digest,omitempty"`
+
+	InspectionManifestDigest RevisionDigest `json:"inspection_manifest_digest,omitempty"`
 }
 
 // Revocation records a control-plane revocation decision.

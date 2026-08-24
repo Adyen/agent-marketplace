@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/content/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download an allowlisted inspection file by digest */
+        get: operations["getInspectionContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inspection/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download an immutable skill inspection manifest by digest */
+        get: operations["getInspectionManifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instance": {
         parameters: {
             query?: never;
@@ -132,6 +166,57 @@ export interface paths {
         };
         /** Get a specific resource revision */
         get: operations["getResourceRevision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the exact textual skill inspection manifest */
+        get: operations["getResourceInspection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the primary canonical skill Markdown */
+        get: operations["getResourceInspectionContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one allowlisted inspection file by digest */
+        get: operations["getResourceInspectionFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -288,6 +373,37 @@ export interface components {
             source_id: string;
             source_revision_manifest_digest: string;
         };
+        InspectionFile: {
+            content_digest: string;
+            /** @enum {string} */
+            inspection_class: "text" | "image" | "metadata";
+            /** @enum {string} */
+            media_type: "text/markdown" | "text/plain" | "application/json" | "application/yaml" | "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "application/octet-stream";
+            path: string;
+            /** Format: int64 */
+            size: number;
+        };
+        InspectionFinding: {
+            code: string;
+            /** Format: int64 */
+            end_byte?: number;
+            message?: string;
+            path?: string;
+            policy?: string;
+            severity: string;
+            /** Format: int64 */
+            start_byte?: number;
+        };
+        InspectionManifest: {
+            coordinate: components["schemas"]["ResourceCoordinate"];
+            files: components["schemas"]["InspectionFile"][];
+            findings?: components["schemas"]["InspectionFinding"][];
+            /** @enum {string} */
+            primary_path: "SKILL.md";
+            revision_digest: string;
+            /** @enum {string} */
+            schema_version: "v1";
+        };
         Marketplace: {
             /**
              * Format: uri
@@ -308,6 +424,12 @@ export interface components {
              * @description Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
              */
             url?: string;
+        };
+        ResourceCoordinate: {
+            kind: string;
+            marketplace: string;
+            name: string;
+            source: string;
         };
         ResourceListItem: {
             content_digest: string;
@@ -474,6 +596,55 @@ export interface operations {
             };
         };
     };
+    getInspectionContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded text or permitted raster content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/gif": string;
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
+                    "text/markdown": string;
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getInspectionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable inspection manifest */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InspectionManifest"];
+                };
+            };
+        };
+    };
     getInstance: {
         parameters: {
             query?: never;
@@ -592,6 +763,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceRevision"];
+                };
+            };
+        };
+    };
+    getResourceInspection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "skill";
+                name: string;
+                revision: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact immutable inspection projection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InspectionManifest"];
+                };
+            };
+        };
+    };
+    getResourceInspectionContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "skill";
+                name: string;
+                revision: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Canonical skill Markdown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+        };
+    };
+    getResourceInspectionFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+                kind: "skill";
+                name: string;
+                revision: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Allowlisted inspection file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/gif": string;
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
+                    "text/plain": string;
                 };
             };
         };

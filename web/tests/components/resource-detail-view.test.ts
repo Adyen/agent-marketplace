@@ -40,6 +40,29 @@ describe('ResourceDetailView', () => {
     expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
   })
 
+  it('renders only sanitized Markdown and an escaped raw view from the inspection projection', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
+          findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: '<script>finding</script>' }],
+        },
+        primaryContent: '# Hello\n\n[remote](javascript:alert(1))\n\n<script>alert(1)</script>',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('<h1>Hello</h1>')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<script>')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('href="javascript:')
+    expect(wrapper.get('[data-testid="escaped-raw"]').html()).toContain('&lt;script&gt;')
+    expect(wrapper.text()).toContain('remote-reference')
+    expect(wrapper.text()).toContain('SKILL.md:1-2')
+  })
+
   it('announces revoked content and keeps copy controls keyboard accessible', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
@@ -52,6 +75,8 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('This revision is revoked')
     expect(wrapper.get('[role="alert"]').text()).toContain('This revision is revoked')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').exists()).toBe(true)
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
+    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
   })
 })

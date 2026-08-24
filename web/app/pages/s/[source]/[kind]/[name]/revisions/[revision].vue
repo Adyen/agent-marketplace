@@ -21,6 +21,17 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   revisionAsyncDataKey(source, kind, name, revision),
   () => api.getResourceRevision(source, kind, name, revision),
 )
+const inspectionKey = `${revisionAsyncDataKey(source, kind, name, revision)}:inspection`
+const { data: inspection } = await useAsyncData(
+  inspectionKey,
+  () => api.getResourceInspection(source, kind, name, revision),
+  { immediate: kind === 'skill' },
+)
+const { data: primaryContent } = await useAsyncData(
+  `${inspectionKey}:content`,
+  () => api.getResourceInspectionContent(source, kind, name, revision),
+  { immediate: kind === 'skill' },
+)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
 function retry() {
@@ -54,7 +65,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :inspection="inspection" :primary-content="primaryContent" />
     </main>
   </div>
 </template>

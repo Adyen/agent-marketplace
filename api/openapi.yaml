@@ -304,6 +304,106 @@ paths:
               schema:
                 type: object
 
+  /api/v1/inspection/sha256/{digest}:
+    get:
+      operationId: getInspectionManifest
+      summary: Download an immutable skill inspection manifest by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Immutable inspection manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionManifest"
+
+  /api/v1/content/sha256/{digest}:
+    get:
+      operationId: getInspectionContent
+      summary: Download an allowlisted inspection file by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Bounded text or permitted raster content
+          content:
+            text/markdown:
+              schema: { type: string }
+            text/plain:
+              schema: { type: string }
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/gif:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+
+  /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection:
+    get:
+      operationId: getResourceInspection
+      summary: Get the exact textual skill inspection manifest
+      parameters:
+        - { in: path, name: source, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Exact immutable inspection projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionManifest"
+
+  /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content:
+    get:
+      operationId: getResourceInspectionContent
+      summary: Get the primary canonical skill Markdown
+      parameters:
+        - { in: path, name: source, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Canonical skill Markdown
+          content:
+            text/markdown:
+              schema: { type: string }
+
+  /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}:
+    get:
+      operationId: getResourceInspectionFile
+      summary: Get one allowlisted inspection file by digest
+      parameters:
+        - { in: path, name: source, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+        - { in: path, name: digest, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Allowlisted inspection file
+          content:
+            text/plain: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+
   /api/v1/artifacts/sha256/{digest}:
     get:
       operationId: getArtifact
@@ -743,3 +843,55 @@ components:
         revocation:
           type: object
           additionalProperties: true
+
+    InspectionManifest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, coordinate, revision_digest, primary_path, files]
+      properties:
+        schema_version: { type: string, enum: [v1] }
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        revision_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        primary_path: { type: string, enum: [SKILL.md] }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/InspectionFile" }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/InspectionFinding" }
+
+    InspectionFile:
+      type: object
+      additionalProperties: false
+      required: [path, content_digest, media_type, size, inspection_class]
+      properties:
+        path: { type: string }
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        media_type: { type: string, enum: [text/markdown, text/plain, application/json, application/yaml, image/png, image/jpeg, image/gif, image/webp, application/octet-stream] }
+        size: { type: integer, format: int64, minimum: 0 }
+        inspection_class: { type: string, enum: [text, image, metadata] }
+
+    InspectionFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity]
+      properties:
+        code: { type: string }
+        severity: { type: string }
+        policy: { type: string }
+        message: { type: string }
+        path: { type: string }
+        start_byte: { type: integer, format: int64, minimum: 0 }
+        end_byte: { type: integer, format: int64, minimum: 0 }
+
+    ResourceCoordinate:
+      type: object
+      required: [marketplace, source, kind, name]
+      properties:
+        marketplace: { type: string }
+        source: { type: string }
+        kind: { type: string }
+        name: { type: string }

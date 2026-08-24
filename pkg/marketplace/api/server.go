@@ -19,6 +19,7 @@ import (
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -71,6 +72,8 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/sources/", s.methodGet(s.handleSources))
 	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
 	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
+	publicMux.HandleFunc("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
+	publicMux.HandleFunc("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
 	publicMux.HandleFunc("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
@@ -434,6 +437,28 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleResourceRevision(w, r, parts[0], parts[1], parts[2], parts[4])
+	case 6:
+		if parts[3] != "revisions" || parts[5] != "inspection" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		s.handleResourceInspection(w, r, parts[0], parts[1], parts[2], parts[4])
+	case 7:
+		if parts[3] != "revisions" || parts[5] != "inspection" || parts[6] != "content" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		s.handleResourceInspectionContent(w, r, parts[0], parts[1], parts[2], parts[4], "")
+	case 8:
+		if parts[3] != "revisions" || parts[5] != "inspection" || parts[6] != "content" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if !isCanonicalSHA256Digest(parts[7]) {
+			writeError(w, http.StatusBadRequest, "invalid inspection content digest")
+			return
+		}
+		s.handleResourceInspectionContent(w, r, parts[0], parts[1], parts[2], parts[4], parts[7])
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -542,6 +567,234 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
+}
+
+func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest string) {
+	_, payload, err := s.getResourceInspection(r.Context(), sourceSlug, kind, name, digest)
+	if err != nil {
+		s.writeInspectionError(w, err)
+		return
+	}
+	writeImmutable(w, "application/json", payload)
+}
+
+func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest, fileDigest string) {
+	manifest, _, err := s.getResourceInspection(r.Context(), sourceSlug, kind, name, digest)
+	if err != nil {
+		s.writeInspectionError(w, err)
+		return
+	}
+	var file *inspection.File
+	for i := range manifest.Files {
+		if (fileDigest == "" && manifest.Files[i].Path == manifest.PrimaryPath) || (fileDigest != "" && manifest.Files[i].ContentDigest == fileDigest) {
+			file = &manifest.Files[i]
+			break
+		}
+	}
+	if file == nil || file.InspectionClass == inspection.ClassMetadata || !allowedInspectionMediaType(file.MediaType, file.InspectionClass) {
+		writeError(w, http.StatusNotFound, "inspection content not available")
+		return
+	}
+	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(file.ContentDigest))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "inspection content not found")
+			return
+		}
+		slog.Error("inspection content fetch failed", "digest", file.ContentDigest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch inspection content")
+		return
+	}
+	if s.cfg.Policy.Limits.FileBytes > 0 && int64(len(data)) > s.cfg.Policy.Limits.FileBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
+		return
+	}
+	if inspectionDigestOf(data) != file.ContentDigest || int64(len(data)) != file.Size || !contentMatchesInspectionMedia(file.MediaType, file.InspectionClass, data) {
+		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
+		return
+	}
+	writeImmutable(w, file.MediaType, data)
+}
+
+func (s *Server) getResourceInspection(ctx context.Context, sourceSlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
+	if !isCanonicalSHA256Digest(digest) {
+		return inspection.Manifest{}, nil, errInvalidInspectionRevision
+	}
+	if kind != KindSkill {
+		return inspection.Manifest{}, nil, errInspectionUnavailable
+	}
+	src, err := s.resolveSource(ctx, sourceSlug)
+	if err != nil {
+		return inspection.Manifest{}, nil, err
+	}
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Source: src.ID, Kind: kind, Name: name}
+	rev, err := s.meta.GetResourceRevision(ctx, coord, store.RevisionDigest(digest))
+	if err != nil {
+		return inspection.Manifest{}, nil, err
+	}
+	if rev.Provenance == nil || !isCanonicalSHA256Digest(string(rev.Provenance.InspectionManifestDigest)) {
+		return inspection.Manifest{}, nil, errInspectionUnavailable
+	}
+	manifestDigest := string(rev.Provenance.InspectionManifestDigest)
+	payload, err := s.blobs.Get(ctx, store.ArchiveDigest(manifestDigest))
+	if err != nil {
+		return inspection.Manifest{}, nil, err
+	}
+	if !inspectionWithinLimit(len(payload), inspection.MaxManifestBytes) {
+		return inspection.Manifest{}, nil, fmt.Errorf("inspection manifest exceeds serialized limit %d", inspection.MaxManifestBytes)
+	}
+	var manifest inspection.Manifest
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		return inspection.Manifest{}, nil, fmt.Errorf("decode inspection manifest: %w", err)
+	}
+	if err := inspection.Verify(manifest, payload, manifestDigest); err != nil {
+		return inspection.Manifest{}, nil, err
+	}
+	if manifest.Coordinate != coord || manifest.RevisionDigest != string(rev.ContentDigest) {
+		return inspection.Manifest{}, nil, errors.New("inspection manifest identity mismatch")
+	}
+	return manifest, payload, nil
+}
+
+func (s *Server) writeInspectionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, errInspectionUnavailable) {
+		writeError(w, http.StatusNotFound, "inspection not found")
+		return
+	}
+	if errors.Is(err, errInvalidInspectionRevision) {
+		writeError(w, http.StatusBadRequest, "invalid inspection revision")
+		return
+	}
+	slog.Error("inspection request failed", "err", err)
+	writeError(w, http.StatusInternalServerError, "failed to load inspection")
+}
+
+var (
+	errInvalidInspectionRevision = errors.New("invalid inspection revision")
+	errInspectionUnavailable     = errors.New("inspection unavailable")
+)
+
+func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) {
+	digest, ok := digestPath(r.URL.Path, "/api/v1/inspection/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid inspection digest")
+		return
+	}
+	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "inspection not found")
+			return
+		}
+		slog.Error("inspection manifest fetch failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch inspection")
+		return
+	}
+	if !inspectionWithinLimit(len(data), inspection.MaxManifestBytes) {
+		writeError(w, http.StatusRequestEntityTooLarge, "inspection manifest exceeds size limit")
+		return
+	}
+	var manifest inspection.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil || inspection.Verify(manifest, data, digest) != nil {
+		writeError(w, http.StatusInternalServerError, "invalid inspection manifest")
+		return
+	}
+	writeImmutable(w, "application/json", data)
+}
+
+func (s *Server) handleContentDigest(w http.ResponseWriter, r *http.Request) {
+	digest, ok := digestPath(r.URL.Path, "/api/v1/content/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid content digest")
+		return
+	}
+	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "content not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to fetch content")
+		return
+	}
+	if s.cfg.Policy.Limits.FileBytes > 0 && int64(len(data)) > s.cfg.Policy.Limits.FileBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "content exceeds size limit")
+		return
+	}
+	if inspectionDigestOf(data) != digest {
+		writeError(w, http.StatusInternalServerError, "content digest mismatch")
+		return
+	}
+	media, allowed := fixedContentMediaType(data)
+	if !allowed {
+		writeError(w, http.StatusUnsupportedMediaType, "content media type is not allowed")
+		return
+	}
+	writeImmutable(w, media, data)
+}
+
+func writeImmutable(w http.ResponseWriter, mediaType string, data []byte) {
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	setImmutableCache(w)
+	_, _ = w.Write(data)
+}
+
+func allowedInspectionMediaType(mediaType, class string) bool {
+	return inspection.AllowedMediaType(mediaType, class) && class != inspection.ClassMetadata
+}
+
+func fixedContentMediaType(data []byte) (string, bool) {
+	if media := http.DetectContentType(data); media == "image/png" || media == "image/jpeg" || media == "image/gif" || media == "image/webp" {
+		return media, true
+	}
+	if !inspection.IsSafeText(data) {
+		return "", false
+	}
+	if json.Valid(data) {
+		return "application/json", true
+	}
+	return "text/plain", true
+}
+
+func contentMatchesInspectionMedia(mediaType, class string, data []byte) bool {
+	if !allowedInspectionMediaType(mediaType, class) {
+		return false
+	}
+	switch class {
+	case inspection.ClassImage:
+		return http.DetectContentType(data) == mediaType
+	case inspection.ClassText:
+		if !inspection.IsSafeText(data) {
+			return false
+		}
+		if mediaType == "application/json" {
+			return json.Valid(data)
+		}
+		return mediaType == "text/plain" || mediaType == "text/markdown" || mediaType == "application/yaml"
+	default:
+		return false
+	}
+}
+
+func inspectionDigestOf(data []byte) string { return inspection.Digest(data) }
+
+func inspectionWithinLimit(size int, limit int64) bool {
+	return limit <= 0 || int64(size) <= limit
+}
+
+// digestPath accepts only the URL spelling used by immutable digest routes:
+// /sha256/<64 lowercase hexadecimal characters>. The storage spelling remains
+// sha256:<hex>.
+func digestPath(requestPath, prefix string) (string, bool) {
+	if !strings.HasPrefix(requestPath, prefix) {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(requestPath, prefix), "/")
+	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
+		return "", false
+	}
+	return "sha256:" + parts[1], true
 }
 
 func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {

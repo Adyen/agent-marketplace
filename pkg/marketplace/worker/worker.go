@@ -83,6 +83,7 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 		Collections:     rev.Collections,
 		ManifestPayload: rev.ManifestPayload,
 		ExtraBlobs:      rev.ExtraBlobs,
+		InspectionBlobs: rev.InspectionBlobs,
 	}
 	if err := store.PublishSourceRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
