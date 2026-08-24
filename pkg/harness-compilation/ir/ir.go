@@ -1,7 +1,7 @@
 // Package ir defines the intermediate representation for compilable AI-agent
 // configuration resources. Each resource type (Skill, Command, Subagent, Hook,
-// McpServer) implements the Resource interface so it can be uniformly processed
-// by the compilation pipeline.
+// McpServer, Rule) implements the Resource interface so it can be uniformly
+// processed by the compilation pipeline.
 package ir
 
 import (

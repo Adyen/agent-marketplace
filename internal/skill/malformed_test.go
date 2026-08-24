@@ -52,6 +52,12 @@ func TestMatchMalformedCoversEveryWayASelectionCanNameADroppedResource(t *testin
 			wantMatch: true,
 		},
 		{
+			name:      "Cursor rule file name matches through its stem",
+			malformed: MalformedSkill{DirName: "secure-coding.mdc", Kind: "rule", Path: "/cache/reg/rules/secure-coding.mdc"},
+			selection: "secure-coding",
+			wantMatch: true,
+		},
+		{
 			name:      "unrelated selection does not match",
 			malformed: MalformedSkill{DirName: "broken-skill", Path: "/cache/reg/skills/broken-skill"},
 			selection: "beads",
@@ -90,6 +96,7 @@ func TestMalformedSourceFileNamesTheFileToOpen(t *testing.T) {
 		{path: "/cache/reg/skills/broken-skill", want: filepath.Join("/cache/reg/skills/broken-skill", "SKILL.md")},
 		{path: "/cache/reg/skills/broken-skill/SKILL.md", want: "/cache/reg/skills/broken-skill/SKILL.md"},
 		{path: "/cache/reg/commands/deploy.md", want: "/cache/reg/commands/deploy.md"},
+		{path: "/cache/reg/rules/secure-coding.mdc", want: "/cache/reg/rules/secure-coding.mdc"},
 		{path: "", want: ""},
 	}
 	for _, tc := range tests {

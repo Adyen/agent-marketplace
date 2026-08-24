@@ -2183,6 +2183,7 @@ var kindSelectorKey = map[ir.ResourceKind]string{
 	ir.KindSubagent:   "subagents",
 	ir.KindHook:       "hooks",
 	ir.KindMcpServer:  "mcp",
+	ir.KindRule:       "rules",
 	ir.KindCollection: "collections",
 }
 

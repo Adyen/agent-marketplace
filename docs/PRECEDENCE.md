@@ -1,6 +1,6 @@
 # Selection & Precedence Reference
 
-This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All resource kinds (skills, commands, subagents, hooks, MCP servers) follow the same rules.
+This document describes how `agent-marketplace` decides which resources are enabled, where they are sourced from, and which excludes/removals win. All resource kinds (skills, commands, subagents, hooks, rules, MCP servers) follow the same rules.
 
 ## Schema requirement
 
@@ -33,11 +33,11 @@ list narrows the effective target list for that entry.
 
 For each registry entry, selection works per resource kind:
 
-- top-level `skills/commands/subagents/hooks/mcp/tags/exclude` in that config are defaults for entries that do not set their own values
+- top-level `skills/commands/subagents/hooks/rules/mcp/tags/exclude` in that config are defaults for entries that do not set their own values
 - if entry sets its own kind-specific list (e.g. `skills`), entry values replace (not merge with) top-level defaults for that entry and kind
 - selected names = union of:
   - auto-select all when `(required || default) && no kind-specific selections && tags == nil`
-  - explicit per-kind selections (`skills`, `commands`, `subagents`, `hooks`, `mcp`)
+  - explicit per-kind selections (`skills`, `commands`, `subagents`, `hooks`, `rules`, `mcp`)
   - resources matching `tags`
 - then per-kind `exclude` removes from selected names, except when `required: true` (required is immune)
 - per-kind `exclude_all: true` removes ALL resources of that kind from the entry's selection (except when `required: true`)
@@ -109,7 +109,7 @@ needed. `kind` defaults to `skill`.
 - If the same resource name (within the same kind) is selected from multiple different registries, resolution errors.
 - The CLI does not auto-pick a winner across different registries.
 - Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one source.
-- The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp|rule` to disambiguate.
 
 ## Practical examples
 

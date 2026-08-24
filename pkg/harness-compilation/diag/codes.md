@@ -65,7 +65,7 @@ comparison in non-test code.
 | `mcp.interpolation-unsupported` | One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted | Replace the interpolated value with a literal value, or use an interpolation style the target documents |
 | `rule.claude.no-primitive` | Claude Code has no rules directory primitive; rule dropped | Claude reads project guidance from CLAUDE.md; reference the rule content there instead |
 | `rule.gemini.no-primitive` | Gemini CLI has no rules directory primitive; rule dropped | Gemini reads project guidance from GEMINI.md; reference the rule content there instead |
-| `rule.devin.unsupported` | Rules are out of scope for the Devin target; no rule artifact was emitted | This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
+| `rule.devin.unsupported` | Rules are marketplace-selectable generally, but Devin emits a warning and no rule artifact | This is a target-scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the selected rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
@@ -107,11 +107,13 @@ comparison in non-test code.
 
 `rule.claude.no-primitive` and `rule.gemini.no-primitive` say what their names
 say: those harnesses have no rules directory at all, so a rule can only be
-dropped. `rule.devin.unsupported` shares their severity and their outcome but
-**not** their reason, and the difference is deliberate.
+dropped. `rule.devin.unsupported` shares their severity and its no-artifact
+outcome but **not** their reason, and the difference is deliberate.
 
-The claim this code used to carry — "Devin has no rules directory primitive" —
-is false on Devin 3000.3.27. The D12 runtime probe
+Rules are marketplace-selectable generally (`internal/config.AllKinds` includes
+`ir.KindRule`) and materialize for targets with a rules primitive. Devin's target
+contract is the exception in this increment: it emits a warning and no rule
+artifact. The D12 runtime probe
 (`internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots`, reproduced
 independently of the suite) observed both halves of the situation:
 
@@ -120,31 +122,28 @@ independently of the suite) observed both halves of the situation:
 - A file written to `.devin/rules/<name>.md` **is** discovered: `devin rules
   list` reports it as `<name> [Devin] manual`.
 
-Emitting nothing is still correct, for two reasons that no runtime observation
-can falsify. First, rules are not marketplace-selectable at all
-(`internal/config.AllKinds` has no rule kind) and "marketplace-selectable rules"
-is an explicit non-goal of the promoted Devin plan; that non-goal is about the
-selection model, not about Devin. Second, `.devin/rules` is undocumented and
+Emitting nothing is still correct because `.devin/rules` is undocumented and
 unadvertised, and this target's standing rule is to refuse dependence on
-undocumented Devin behaviour — the same reason `mcp.devin.transport-unsupported`
-skips an undocumented transport instead of accepting Devin's silent default, and
-the same reason `ingest.devin.tool-unreversible` refuses an unenforced tool
-restriction.
+undocumented Devin behaviour — the same reason
+`mcp.devin.transport-unsupported` skips an undocumented transport instead of
+accepting Devin's silent default, and the same reason
+`ingest.devin.tool-unreversible` refuses an unenforced tool restriction.
 
 Severity is a **warning**, matching the Claude and Gemini siblings, because the
-outcome is the same class of loss: one rule is dropped, nothing unsafe is
-written, no aggregate entry is at risk, and every other resource compiles. It
-does *not* belong to the Devin error family below, every member of which marks
-output that would be actively wrong if emitted (a hook that runs something else,
-a server contacted without authorization, a restriction advertised through a
-field Devin does not have, a silent transport fallback, a shadowed built-in).
-"A broadened privilege" used to be the first item in that list; since bead
-`agent-marketplace-pu6b` it is not, because the two Devin `allowed-tools` codes
-broaden the emitted restriction and are warnings (see their section below).
-Failing a whole `sync` or `convert` over a scope decision would also overstate
-the situation, given that a user can place the same file by hand and Devin will
-read it. If Devin ever starts advertising a `.devin` rules path, the probe fails
-loudly and this decision must be revisited as rule support.
+outcome is the same class of loss: one selected rule is dropped for Devin,
+nothing unsafe is written, no aggregate entry is at risk, and every other
+resource compiles. It does *not* belong to the Devin error family below, every
+member of which marks output that would be actively wrong if emitted (a hook
+that runs something else, a server contacted without authorization, a
+restriction advertised through a field Devin does not have, a silent transport
+fallback, a shadowed built-in). "A broadened privilege" used to be the first
+item in that list; since bead `agent-marketplace-pu6b` it is not, because the
+two Devin `allowed-tools` codes broaden the emitted restriction and are
+warnings (see their section below). Failing a whole `sync` or `convert` over
+this target-specific scope decision would also overstate the situation, given
+that a user can place the same file by hand and Devin will read it. If Devin
+ever starts advertising a `.devin` rules path, the probe fails loudly and this
+decision must be revisited as rule support.
 
 ### `skill.devin.tool-unknown` / `subagent.devin.tool-unknown` omit the key instead of suppressing the resource
 

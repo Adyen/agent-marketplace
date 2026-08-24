@@ -24,7 +24,7 @@ func newInstallCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "install [resource-name]",
-		Short: "Add a resource or tag to the repo config and sync it",
+		Short: "Add a resource or tag to config and sync it",
 		Args: func(cmd *cobra.Command, args []string) error {
 			tag = strings.TrimSpace(tag)
 			registry = strings.TrimSpace(registry)
@@ -37,7 +37,7 @@ func newInstallCmd() *cobra.Command {
 			case installAll && tag != "":
 				return fmt.Errorf("cannot specify both --all and --tag")
 			case installAll && len(args) > 0:
-				return fmt.Errorf("accepts only --all without a skill name argument")
+				return fmt.Errorf("accepts only --all without a resource name argument")
 			case registry != "" && !installAll:
 				return fmt.Errorf("cannot specify --registry without --all")
 			case fromURL != "" && tag != "":
@@ -56,13 +56,13 @@ func newInstallCmd() *cobra.Command {
 				// --from with name installs one resource; without name installs all from that URL
 				return nil
 			case tag != "" && len(args) > 0:
-				return fmt.Errorf("cannot specify both a skill name and --tag")
+				return fmt.Errorf("cannot specify both a resource name and --tag")
 			case tag == "" && len(args) != 1:
-				return fmt.Errorf("accepts exactly one skill name argument, --tag, --all, or --from")
+				return fmt.Errorf("accepts exactly one resource name argument, --tag, --all, or --from")
 			case tag == "" && len(args) == 1 && looksLikeRegistryURL(args[0]):
 				return fmt.Errorf("argument %q looks like a registry URL; use --from %q instead", args[0], args[0])
 			case tag != "" && len(args) != 0:
-				return fmt.Errorf("accepts only --tag without a skill name argument")
+				return fmt.Errorf("accepts only --tag without a resource name argument")
 			default:
 				return nil
 			}
@@ -76,11 +76,11 @@ func newInstallCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&tag, "tag", "", "Install all skills matching a tag")
-	cmd.Flags().BoolVar(&installAll, "all", false, "Install every discovered skill from the configured registries")
+	cmd.Flags().StringVar(&tag, "tag", "", "Install all resources matching a tag")
+	cmd.Flags().BoolVar(&installAll, "all", false, "Install every discovered resource from the configured registries")
 	cmd.Flags().StringVar(&registry, "registry", "", "Limit --all to one configured registry URL")
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, or mcp")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, rule, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Install directly from a registry URL; skill name is inferred from web URLs pointing to a specific resource")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")

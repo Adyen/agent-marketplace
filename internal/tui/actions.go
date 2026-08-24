@@ -169,12 +169,20 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 
 	// Surface overlap warnings from catalog loading.
 	warnings = append(warnings, catalogOverlapWarnings...)
+	// Rule materialization diagnostics are not resolver diagnostics. Keep them
+	// in both the initial and refreshed snapshot so the errors overlay and
+	// warning footer explain target-specific Rule loss.
+	warnings = append(warnings, pipeline.RuleMaterializationWarnings(dryRunReport)...)
 
-	// Surface malformed skills as warnings in the errors overlay so the
+	// Surface malformed resources as warnings in the errors overlay so the
 	// user can see them when pressing 'e' without scrolling to the bottom
-	// of the scope tree.
+	// of the scope tree. Keep the resource kind and source path intact.
 	for _, m := range resolvedResult.CatalogLoad.Malformed {
-		warnings = append(warnings, fmt.Errorf("malformed skill %q (%s): %w", m.DirName, m.Path, m.Error))
+		kind := ir.KindSkill
+		if parsed, ok := skill.ParseKind(m.Kind); ok && strings.TrimSpace(m.Kind) != "" {
+			kind = parsed
+		}
+		warnings = append(warnings, fmt.Errorf("malformed %s %q (%s): %w", skill.KindLabel(kind), m.DirName, m.Path, m.Error))
 	}
 
 	for _, err := range resolvedResult.ResolveErrors {
@@ -310,8 +318,11 @@ func localSelectorCounts(cfg *config.LocalConfig) (enabledCount int, excludedCou
 	if cfg == nil {
 		return 0, 0
 	}
-	enabledCount += len(cfg.Skills.Include) + len(cfg.Commands.Include) + len(cfg.Subagents.Include) + len(cfg.Hooks.Include) + len(cfg.MCP.Include)
-	excludedCount += len(cfg.Skills.Exclude) + len(cfg.Commands.Exclude) + len(cfg.Subagents.Exclude) + len(cfg.Hooks.Exclude) + len(cfg.MCP.Exclude)
+	for _, kind := range config.AllKinds {
+		sel := cfg.SelectorForKind(kind)
+		enabledCount += len(sel.Include)
+		excludedCount += len(sel.Exclude)
+	}
 	return enabledCount, excludedCount
 }
 
@@ -423,16 +434,11 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		// Top-level local selectors are not registry-scoped: they apply to
 		// whichever registry provides the resource, so track them in the *Any
 		// sets (matched against any catalog key).
-		addLocalKindSelections(localEnabledAny, ir.KindSkill, localCfg.Skills.Include)
-		addLocalKindSelections(localEnabledAny, ir.KindCommand, localCfg.Commands.Include)
-		addLocalKindSelections(localEnabledAny, ir.KindSubagent, localCfg.Subagents.Include)
-		addLocalKindSelections(localEnabledAny, ir.KindHook, localCfg.Hooks.Include)
-		addLocalKindSelections(localEnabledAny, ir.KindMcpServer, localCfg.MCP.Include)
-		addLocalKindSelections(localExcludedAny, ir.KindSkill, localCfg.Skills.Exclude)
-		addLocalKindSelections(localExcludedAny, ir.KindCommand, localCfg.Commands.Exclude)
-		addLocalKindSelections(localExcludedAny, ir.KindSubagent, localCfg.Subagents.Exclude)
-		addLocalKindSelections(localExcludedAny, ir.KindHook, localCfg.Hooks.Exclude)
-		addLocalKindSelections(localExcludedAny, ir.KindMcpServer, localCfg.MCP.Exclude)
+		for _, kind := range config.AllKinds {
+			sel := localCfg.SelectorForKind(kind)
+			addLocalKindSelections(localEnabledAny, kind, sel.Include)
+			addLocalKindSelections(localExcludedAny, kind, sel.Exclude)
+		}
 
 		// Registry-scoped local selections (install --scope local and the TUI
 		// now write these instead of the top-level selector). Key them by the
@@ -587,12 +593,16 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
-	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
-	// same-name malformed entries from different catalogs each appear.
+	// Add malformed resources. Deduplicate by (catalogKey, kind, identity) so
+	// same-name malformed entries from different catalogs or kinds each appear.
 	for catalogKey, cat := range catalogs {
 		for _, m := range cat.Malformed {
 			name := m.DirName
-			seenKey := name + "\x01" + catalogKey
+			kind := ir.KindSkill
+			if parsed, ok := skill.ParseKind(m.Kind); ok && strings.TrimSpace(m.Kind) != "" {
+				kind = parsed
+			}
+			seenKey := skill.ResourceKey(kind, name) + "\x01" + catalogKey
 			if _, dup := seen[seenKey]; dup {
 				continue
 			}
@@ -602,7 +612,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 				IsMalformed:  true,
 				MalformedMsg: m.Error.Error(),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry: catalog.Entry{Kind: kind, Name: name, Path: m.Path},
 				},
 			})
 		}
@@ -780,7 +790,7 @@ func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
 		// tests can observe that a warning-only update really did emit a warning.
 		if report != nil {
 			for _, d := range report.Diags {
-				if !d.IsError() {
+				if !d.IsError() && !pipeline.IsDroppedRuleWarning(d) {
 					snap.warnings = append(snap.warnings, pipeline.PromoteDiagnostic(d))
 				}
 			}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
@@ -250,5 +251,41 @@ func TestDiagIssueDedupKeyKeepsResourcelessDiagnosticsApart(t *testing.T) {
 	repeat := shape
 	if newDiagIssue(shape).DedupKey() != newDiagIssue(repeat).DedupKey() {
 		t.Fatalf("an identical resource-less diagnostic must still collapse")
+	}
+}
+
+func TestRuleMaterializationWarningsIncludesAllRuleWarnings(t *testing.T) {
+	report := &materialize.Report{Diags: []diag.Diagnostic{
+		{Code: diag.CodeRuleClaudeNoPrimitive, Severity: diag.SeverityWarning, Resource: "claude-rule", Message: "Claude dropped rule"},
+		{Code: diag.CodeRuleGeminiNoPrimitive, Severity: diag.SeverityWarning, Resource: "gemini-rule", Message: "Gemini dropped rule"},
+		{Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning, Resource: "devin-rule", Message: "Devin dropped rule"},
+		{Code: diag.CodeRuleFactoryMetadataDropped, Severity: diag.SeverityWarning, Resource: "factory-rule", Message: "metadata dropped"},
+		{Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityInfo, Resource: "info-rule", Message: "not a warning"},
+		{Code: "other.warning", Severity: diag.SeverityWarning, Resource: "other", Message: "unrelated"},
+	}}
+
+	warnings := RuleMaterializationWarnings(report)
+	if len(warnings) != 4 {
+		t.Fatalf("got %d warnings, want all four warning-severity Rule diagnostics: %v", len(warnings), warnings)
+	}
+	for _, want := range []string{
+		diag.CodeRuleClaudeNoPrimitive,
+		diag.CodeRuleGeminiNoPrimitive,
+		diag.CodeRuleDevinUnsupported,
+		diag.CodeRuleFactoryMetadataDropped,
+	} {
+		found := false
+		for _, warning := range warnings {
+			if strings.Contains(warning.Error(), want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %s from converted warnings: %v", want, warnings)
+		}
+	}
+	if got := RuleMaterializationWarnings(nil); got != nil {
+		t.Fatalf("nil report warnings = %v, want nil", got)
 	}
 }

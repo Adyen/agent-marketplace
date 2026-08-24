@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -133,7 +134,7 @@ func resourceKeyForPath(path string, resolvedByName map[string]string) string {
 	}
 	kind := filePathResourceKind(path)
 	switch kind {
-	case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer:
+	case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule:
 		return skill.ResourceKey(kind, name)
 	default:
 		return name
@@ -162,6 +163,13 @@ func filePathResourceKind(path string) ir.ResourceKind {
 		return ir.KindSubagent
 	case "hooks":
 		return ir.KindHook
+	case "rules":
+		return ir.KindRule
+	case ".windsurf":
+		if len(parts) > 1 && parts[1] == "rules" {
+			return ir.KindRule
+		}
+		return -1
 	default:
 		return -1
 	}
@@ -175,10 +183,13 @@ func filePathToSkillName(path string) string {
 	if len(parts) >= 2 {
 		// If the path starts with a known directory like "skills/",
 		// return the next component.
-		for _, prefix := range []string{"skills", "agents", "commands"} {
+		for _, prefix := range []string{"skills", "agents", "commands", "rules"} {
 			if parts[0] == prefix {
-				return parts[1]
+				return strings.TrimSuffix(parts[1], filepath.Ext(parts[1]))
 			}
+		}
+		if parts[0] == ".windsurf" && len(parts) >= 3 && parts[1] == "rules" {
+			return strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
 		}
 	}
 	if len(parts) >= 1 {

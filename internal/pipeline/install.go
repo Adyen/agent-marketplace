@@ -257,14 +257,14 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			}
 			installedResources = resourceIdentities(kind, installed)
 		} else {
-			installed = matchingResourceNamesByTag(catalogs, trimmedTag, ir.KindSkill)
-			if len(installed) == 0 {
+			installedResources = matchingAllResourceIdentitiesByTag(catalogs, trimmedTag)
+			if len(installedResources) == 0 {
 				return nil, fmt.Errorf("tag %q not found in configured registries", trimmedTag)
 			}
+			installed = resourceIdentityNames(installedResources)
 			if err := config.AddTagToConfig(configPath, trimmedTag); err != nil {
 				return nil, err
 			}
-			installedResources = resourceIdentities(ir.KindSkill, installed)
 		}
 	} else if opts.InstallAll {
 		if opts.Scope != ScopeRepo {
@@ -322,8 +322,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			return nil, fmt.Errorf("resource name is required when not using --tag or --all")
 		}
 		arg := strings.TrimSpace(opts.Args[0])
-		// Detect collection install.
-		if col := collection.Find(discoveredCollections, arg); col != nil {
+		// Detect collection install unless an explicit non-collection kind was
+		// supplied. A rule and collection may legitimately share a name.
+		if col := collection.Find(discoveredCollections, arg); (!hasKind || kind == ir.KindCollection) && col != nil {
 			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
@@ -343,7 +344,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 
 		resourceName := arg
-		if malformedErr := malformedSkillInstallError(catalogs, resourceName); malformedErr != nil {
+		if malformedErr := malformedSkillInstallError(catalogs, resourceName, kind, hasKind); malformedErr != nil {
 			return nil, malformedErr
 		}
 		match, err := findCatalogResource(catalogs, resourceName, kind, hasKind)
@@ -412,6 +413,42 @@ func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity
 	for _, name := range names {
 		resources = append(resources, resourceIdentity{kind: kind, name: strings.TrimSpace(name)})
 	}
+	return resources
+}
+
+func resourceIdentityNames(resources []resourceIdentity) []string {
+	seen := make(map[string]struct{}, len(resources))
+	names := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		if _, ok := seen[resource.name]; ok {
+			continue
+		}
+		seen[resource.name] = struct{}{}
+		names = append(names, resource.name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func matchingAllResourceIdentitiesByTag(catalogs map[string]catalog.LoadedCatalog, tag string) []resourceIdentity {
+	matches := make(map[resourceIdentity]struct{})
+	for _, catalogForEntry := range catalogs {
+		for _, candidate := range catalogForEntry.Entries {
+			if config.HasMatchingTag(candidate.Tags, []string{tag}) {
+				matches[resourceIdentity{kind: candidate.Kind, name: strings.TrimSpace(candidate.Name)}] = struct{}{}
+			}
+		}
+	}
+	resources := make([]resourceIdentity, 0, len(matches))
+	for resource := range matches {
+		resources = append(resources, resource)
+	}
+	slices.SortFunc(resources, func(a, b resourceIdentity) int {
+		if a.kind != b.kind {
+			return int(a.kind) - int(b.kind)
+		}
+		return strings.Compare(a.name, b.name)
+	})
 	return resources
 }
 
@@ -716,20 +753,30 @@ func matchingResourceNamesByTag(catalogs map[string]catalog.LoadedCatalog, tag s
 // registry but failed ingest validation, so it was dropped from the catalog and
 // cannot be installed.
 //
-// The correlation itself lives in skill.MatchMalformed, which resolver.Resolve
+// The correlation itself lives in skill.MatchMalformedForKind, which resolver
 // also calls for the sync path (resolver.SelectedMalformedError). Keeping both
 // paths on one matcher is deliberate: they diagnose the same condition, and when
 // install and sync disagree about whether a selection is malformed or missing,
-// the user is told to delete a selection that install just refused to re-add.
-func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted string) error {
+// the user is told to repair the source rather than retry the install.
+func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted string, kind ir.ResourceKind, hasKind bool) error {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
 		return nil
 	}
+	wantKind := ""
+	if hasKind {
+		wantKind = kind.String()
+	}
 
 	for _, catalogForEntry := range catalogs {
-		if match, found := skill.MatchMalformed(catalogForEntry.Malformed, wanted); found {
-			return fmt.Errorf("skill %q cannot be installed: %s: %w", wanted, skill.ParseFailure(match), match.Error)
+		if match, found := skill.MatchMalformedForKind(catalogForEntry.Malformed, wantKind, wanted); found {
+			label := skill.KindLabel(kind)
+			if !hasKind {
+				if parsed, ok := skill.ParseKind(match.Kind); ok && strings.TrimSpace(match.Kind) != "" {
+					label = skill.KindLabel(parsed)
+				}
+			}
+			return fmt.Errorf("%s %q cannot be installed: %s: %w", label, wanted, skill.ParseFailure(match), match.Error)
 		}
 	}
 
@@ -845,8 +892,8 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if len(opts.Args) > 0 {
 		resourceName := strings.TrimSpace(opts.Args[0])
 
-		// Check collections.
-		if col := collection.Find(discoveredCollections, resourceName); col != nil {
+		// Check collections only when no non-collection kind was requested.
+		if col := collection.Find(discoveredCollections, resourceName); (!hasKind || kind == ir.KindCollection) && col != nil {
 			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
@@ -865,7 +912,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}, nil
 		}
 
-		if malformedErr := malformedSkillInstallError(catalogs, resourceName); malformedErr != nil {
+		if malformedErr := malformedSkillInstallError(catalogs, resourceName, kind, hasKind); malformedErr != nil {
 			return nil, malformedErr
 		}
 		match, err := findCatalogResource(catalogs, resourceName, kind, hasKind)
@@ -905,7 +952,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if inferredName != "" {
 		// Try to find the inferred name in the catalog.
 		if _, ok := catalogs[catalogKey]; ok {
-			if malformedErr := malformedSkillInstallError(catalogs, inferredName); malformedErr != nil {
+			if malformedErr := malformedSkillInstallError(catalogs, inferredName, kind, hasKind); malformedErr != nil {
 				return nil, malformedErr
 			}
 			match, err := findCatalogResource(catalogs, inferredName, kind, hasKind)

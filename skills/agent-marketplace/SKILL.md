@@ -4,7 +4,7 @@ description: >
   How to use the agent-marketplace CLI to install shared AI agent resources
   from Git-based or local registries and materialize them into native harness
   layouts. Use when setting up a repo, installing/removing skills, commands,
-  subagents, hooks, or MCP servers, checking sync state, migrating v2 configs,
+  subagents, rules, hooks, or MCP servers, checking sync state, migrating v2 configs,
   or updating pinned registry refs.
 metadata:
   tags:
@@ -45,7 +45,7 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of truth; native harness output is generated, disposable, and recreated by `agent-marketplace sync`. Keep generated harness output out of source control:
+The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, rules, hooks, and MCP servers. Configuration is the source of truth; native harness output is generated, disposable, and recreated by `agent-marketplace sync`. Keep generated harness output out of source control:
 
 ```gitignore
 .factory/
@@ -60,7 +60,7 @@ The canonical v2 schema materializes native harness files instead of the old def
 
 - **Layered target harness set** — project-level `harnesses:` takes precedence; when absent, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
 - **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin]` to compile resources into each harness' layout.
-- **Multi-resource selection** — select `skills`, `commands`, `subagents`, `hooks`, and `mcp` entries from the same registry catalog.
+- **Multi-resource selection** — select `skills`, `commands`, `subagents`, `rules`, `hooks`, and `mcp` entries from the same registry catalog.
 - **Source harness ingestion** — use `source_harness: claude` when autodetection is not enough; registries are ingested through `harness-compilation`.
 - **Repo and machine scope outputs** — repo config materializes under repo roots like `.factory/`; global config materializes under machine roots like `~/.factory/`.
 - **Dry-run drift reporting** — `status` and `sync --check` report the same native files that `sync` writes or prunes.
@@ -72,9 +72,10 @@ Typical native outputs:
 - **Factory Droid** — `.factory/skills/<skill>/SKILL.md`
 - **Factory Droid commands** — `.factory/commands/<command>.md`
 - **Claude Code** — `.claude/skills/<skill>/<skill>.md`
-- **Cursor** — `.cursor/rules/<skill>.md`
+- **Cursor** — `.cursor/rules/<rule>.mdc`
 - **Gemini CLI** — `.gemini/skills/<skill>/SKILL.md`
-- **Windsurf** — files under `.windsurf/`
+- **Windsurf** — `.windsurf/rules/<rule>.mdc` and other native files
+- **Rules** — selected rules materialize for Factory, Cursor, and Windsurf; Claude Code and Gemini CLI report warning-only drops because they have no rules primitive, and Devin reports the intentional scope warning `rule.devin.unsupported` without emitting an artifact
 - **Devin CLI** — `.devin/skills/<skill>/SKILL.md` (repo) and `~/.config/devin/skills/<skill>/SKILL.md` (machine)
 
 ## Devin
@@ -90,8 +91,9 @@ Roots are `<repo>/.devin` and `~/.config/devin`. Outputs:
 | Subagent | `agents/<name>.md` (file symlink) |
 | Hook | repo `hooks.v1.json`; machine `config.json` → `hooks` member |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
+| Rule | dropped with warning `rule.devin.unsupported`; no rule artifact is emitted |
 
-Rules are not a selectable kind and are unsupported by this target. Devin is symlink-only: `materialization.mode: file` is refused for it (`materialize.devin.symlink-required`) instead of falling back to regular files.
+Rules are marketplace-selectable for Factory, Cursor, and Windsurf. They are dropped with a warning when Devin is selected: this is an intentional scope decision, not a Devin capability claim. Devin is symlink-only: `materialization.mode: file` is refused for it (`materialize.devin.symlink-required`) instead of falling back to regular files.
 
 Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
 
@@ -109,7 +111,7 @@ Devin is also a full conversion target: `convert --from devin`, `convert --to de
 
 ```bash
 agent-marketplace list                         # Browse resources and collections
-agent-marketplace list --kind command          # Browse commands, subagents, hooks, or mcp
+agent-marketplace list --kind command          # Browse commands, subagents, hooks, mcp, or rules
 agent-marketplace install <skill>              # Add a skill and sync
 agent-marketplace install --kind command X     # Add a non-skill resource and sync
 agent-marketplace install <collection>         # Add a collection and sync
@@ -188,8 +190,8 @@ tags:
 - **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` remains accepted as a compatibility alias.
 - **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, and `devin`.
 - **`source_harness`** is optional per registry entry; empty means autodetect.
-- **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
-- **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
+- **`skills`**, **`commands`**, **`subagents`**, **`rules`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
+- **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `rules`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
 - **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
 - **Local registries** can use `/absolute`, `~/home-relative`, or `./relative` paths with no `ref`. Relative paths must remain inside the directory containing the local config.
 

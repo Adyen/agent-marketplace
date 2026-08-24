@@ -1,4 +1,4 @@
-// Package catalog provides skill discovery via the harness-compilation (HCC)
+// Package catalog provides resource discovery via the harness-compilation (HCC)
 // IngestBundle pipeline.
 //
 // It replaces internal/skill.DiscoverSkills for list/TUI usage while keeping
@@ -231,8 +231,10 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "rule", "rules":
+		return ir.KindRule, nil
 	default:
-		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp)", s)
+		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp, rule)", s)
 	}
 }
 
@@ -274,9 +276,9 @@ func markdownBody(content string) string {
 	return content
 }
 
-// Load discovers resources from a directory on disk using HCC IngestBundle,
-// filtered to KindSkill. The sourceHarness parameter controls the ingest
-// format; empty string triggers autodetection via ingest.Autodetect.
+// Load discovers resources from a directory on disk using HCC IngestBundle.
+// The sourceHarness parameter controls the ingest format; empty string triggers
+// autodetection via ingest.Autodetect.
 //
 // On autodetect failure, Load falls back to HarnessClaude and records
 // a diagnostic.
@@ -489,6 +491,8 @@ func descriptionFromResource(r ir.Resource) string {
 		return v.Event + " " + v.Type
 	case *ir.McpServer:
 		return v.Command
+	case *ir.Rule:
+		return v.Description
 	case *ir.Collection:
 		return v.Description
 	default:
@@ -515,6 +519,8 @@ func extraFromResource(r ir.Resource) map[string]any {
 	case *ir.Hook:
 		return v.Extra
 	case *ir.McpServer:
+		return v.Extra
+	case *ir.Rule:
 		return v.Extra
 	case *ir.Collection:
 		return v.Extra
@@ -551,6 +557,10 @@ func sourceRefFromResource(r ir.Resource) (string, bool) {
 	case ir.KindMcpServer:
 		if mcp, ok := r.(*ir.McpServer); ok && mcp.Source.File != "" {
 			return mcp.Source.File, true
+		}
+	case ir.KindRule:
+		if rule, ok := r.(*ir.Rule); ok && rule.Source.File != "" {
+			return rule.Source.File, true
 		}
 	case ir.KindCollection:
 		if col, ok := r.(*ir.Collection); ok && col.Source.File != "" {

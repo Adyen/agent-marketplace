@@ -195,6 +195,32 @@ func SoftWarnings(resolved ResolveResult) []error {
 	return warnings
 }
 
+// IsDroppedRuleWarning identifies warning-severity Rule diagnostics emitted by
+// materialization, including loss of Rule metadata on a target that still emits
+// the Rule artifact. Keep this predicate narrow so unrelated materialization
+// warnings are not duplicated or newly exposed.
+func IsDroppedRuleWarning(d diag.Diagnostic) bool {
+	return d.Severity == diag.SeverityWarning && strings.HasPrefix(d.Code, "rule.")
+}
+
+// RuleMaterializationWarnings converts warning-severity Rule diagnostics into
+// the same warning values used by sync. These diagnostics are emitted by the
+// materializer rather than the resolver, so catalog-only consumers and the TUI
+// must explicitly carry them forward. Warning values do not affect InSync or an
+// operation's exit status.
+func RuleMaterializationWarnings(report *materialize.Report) []error {
+	if report == nil {
+		return nil
+	}
+	warnings := make([]error, 0, len(report.Diags))
+	for _, d := range report.Diags {
+		if IsDroppedRuleWarning(d) {
+			warnings = append(warnings, PromoteDiagnostic(d))
+		}
+	}
+	return DedupIssues(warnings)
+}
+
 func DefaultLoaders() Loaders {
 	return Loaders{Org: config.LoadOrganizationConfig, Global: config.LoadGlobalConfig, Repo: config.LoadRepoConfig, Local: config.LoadLocalConfig}
 }

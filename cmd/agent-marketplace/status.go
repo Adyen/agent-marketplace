@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -91,7 +92,7 @@ type statusView struct {
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show the current sync state for enabled skills",
+		Short: "Show the current sync state for enabled resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStatus(cmd.Context(), cmd.OutOrStdout(), time.Now())
 		},
@@ -151,6 +152,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			len(localCfg.Subagents.Exclude) > 0 ||
 			len(localCfg.Hooks.Exclude) > 0 ||
 			len(localCfg.MCP.Exclude) > 0 ||
+			len(localCfg.Rules.Exclude) > 0 ||
 			len(localCfg.Collections.Exclude) > 0
 		if anyExcludes && result.LoadedCfg != nil {
 			// Re-resolve keeping local Skills but dropping Excludes to compute the diff.
@@ -160,6 +162,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				Subagents:   config.KindSelector{Include: localCfg.Subagents.Include},
 				Hooks:       config.KindSelector{Include: localCfg.Hooks.Include},
 				MCP:         config.KindSelector{Include: localCfg.MCP.Include},
+				Rules:       config.KindSelector{Include: localCfg.Rules.Include},
 				Collections: config.KindSelector{Include: localCfg.Collections.Include},
 			}
 			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude,
@@ -195,6 +198,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		}
 	}
 
+	warnings := append([]error(nil), result.Warnings...)
+	warnings = append(warnings, pipeline.RuleMaterializationWarnings(dryRunReport)...)
+
 	statusRows := buildStatusRows(repoRoot, result.Resolved, cacheFreshness, dryRunReport)
 	requirementRows, resolveErrs := splitRequirementWarnings(result.ResolveErrors)
 	collisionRows := splitResolveErrors(resolveErrs)
@@ -222,7 +228,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	if err := writeStatusSections(out, statusView{
 		diag:            result.Diagnostics,
-		warnings:        result.Warnings,
+		warnings:        warnings,
 		statusRows:      statusRows,
 		locallyExcluded: locallyExcluded,
 		localRegistries: localRegistries,
@@ -292,7 +298,18 @@ const staleCacheThreshold = 24 * time.Hour
 func malformedSkillErrors(skills []skill.MalformedSkill) []error {
 	errs := make([]error, 0, len(skills))
 	for _, malformed := range skills {
-		errs = append(errs, fmt.Errorf("malformed skill %q (%s/SKILL.md): %w", malformed.DirName, malformed.Path, malformed.Error))
+		kind := skill.KindLabel(ir.KindSkill)
+		if parsed, ok := skill.ParseKind(malformed.Kind); ok && strings.TrimSpace(malformed.Kind) != "" {
+			kind = skill.KindLabel(parsed)
+		}
+		resourcePath := malformed.Path
+		if resourcePath == "" {
+			resourcePath = malformed.DirName
+		}
+		if kind == skill.KindLabel(ir.KindSkill) && !strings.HasSuffix(resourcePath, "SKILL.md") {
+			resourcePath = filepath.Join(resourcePath, "SKILL.md")
+		}
+		errs = append(errs, fmt.Errorf("malformed %s %q (%s): %w", kind, malformed.DirName, resourcePath, malformed.Error))
 	}
 	return errs
 }
@@ -383,6 +400,9 @@ func artifactName(path string) string {
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	if len(parts) >= 3 && parts[0] == "skills" {
 		return parts[1]
+	}
+	if len(parts) >= 2 && (parts[0] == "rules" || (parts[0] == ".windsurf" && parts[1] == "rules")) {
+		return strings.TrimSuffix(filepath.Base(path), filepath.Ext(filepath.Base(path)))
 	}
 	return filepath.Base(path)
 }

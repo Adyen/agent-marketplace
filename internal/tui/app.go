@@ -222,6 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
 		m.errs = msg.errs
+		m.warnings = msg.warnings
 		m.mergedCfg = msg.mergedCfg
 		m.resolved = msg.resolved
 		m.localExcludes = msg.localExcludes

@@ -20,12 +20,12 @@ This is a new plan. It does not modify or inherit authority from any earlier wor
 
 Add `devin` as a bidirectional harness-compilation and Agent Marketplace materialization target. It must use canonical Devin paths, preserve representable semantics, report loss explicitly, coexist safely with handwritten aggregate configuration, and require no Windsurf target or compatibility import.
 
-The Devin target covers the marketplace-selectable resource kinds: skill, command, subagent, hook, and MCP server. Rules remain outside the marketplace selection model and are explicitly unsupported by this target in this increment.
+The Devin target covers the marketplace-selectable resource kinds: skill, command, subagent, hook, MCP server, and Rule. Rules are marketplace-selectable generally; Devin explicitly emits a warning and no Rule artifact in this increment.
 
 ## Non-goals
 
 - Devin plugin installation or plugin bundles
-- Marketplace-selectable rules
+- Devin Rule materialization in this increment (selected Rules emit a warning and no artifact)
 - The Windsurf `.mdc` to `.md` rule-renderer correction
 - Windows `%APPDATA%\devin` roots
 - Adding Devin to default harness lists
@@ -54,21 +54,21 @@ Sync does not require a Devin binary. `doctor` detects an installed binary and w
 | Subagent | `agents/<name>.md` | Native flat custom-subagent profile |
 | Hook | Project: `hooks.v1.json`; user: `config.json#hooks` | Command or prompt hook merged into a shared file |
 | MCP server | `mcp_config.json` | Stdio or HTTP server merged into a shared file |
-| Rule | none | Stable out-of-scope warning diagnostic (see the amendment below) |
+| Rule | none | Warning diagnostic; no artifact is emitted (target scope decision; see the amendment below) |
 
 **Amendment, 2026-08-05 (bead `agent-marketplace-5exj.22`).** This row originally
 read "Stable unsupported *error* diagnostic", and the evidence snapshot justified
 it with "there is no canonical `.devin/rules` project path". The D12 runtime
 probe falsified that premise on Devin 3000.3.27: `devin rules paths` advertises
 only `.windsurf/rules` and `.cursor/rules`, but a file written to
-`.devin/rules/<name>.md` **is** discovered. The plan's own non-goal —
-"marketplace-selectable rules" — is about the selection model and does not rest
-on that premise, so the decision to emit nothing stands; rules are still not
-selectable in Agent Marketplace at all. What changed is the justification and, in
-consequence, the severity: `rule.devin.unsupported` is now a WARNING, matching
-`rule.claude.no-primitive` and `rule.gemini.no-primitive`, because dropping an
-out-of-scope rule writes nothing unsafe and must not fail an otherwise-complete
-sync or conversion. See `pkg/harness-compilation/diag/codes.md`.
+`.devin/rules/<name>.md` **is** discovered. Rules are marketplace-selectable
+generally, but Devin's target contract still emits nothing in this increment;
+the decision is target scope, not a limitation of Devin's reader. What changed
+is the justification and, in consequence, the severity:
+`rule.devin.unsupported` is now a WARNING, matching `rule.claude.no-primitive`
+and `rule.gemini.no-primitive`, because dropping a selected rule writes nothing
+unsafe and must not fail an otherwise-complete sync or conversion. See
+`pkg/harness-compilation/diag/codes.md`.
 
 User-scope paths are relative to the user root. User hook reconciliation patches only the `hooks` member of `~/.config/devin/config.json` and preserves unrelated settings.
 
@@ -344,7 +344,7 @@ Integrated quality gates include:
 **Certification:** [`docs/devin-verification-2026-08-04.md`](../devin-verification-2026-08-04.md) records the D12 verdict for each criterion below, the probes still awaiting a live 3000.3 run, and the releasability decision.
 
 1. `devin` is accepted and validated everywhere targets are exposed, without changing defaults.
-2. All five marketplace-selectable kinds compile to their scope-specific canonical Devin 3000.3+ paths, including user hooks in `config.json#hooks`.
+2. The five artifact-producing marketplace kinds compile to their scope-specific canonical Devin 3000.3+ paths, including user hooks in `config.json#hooks`; selected Rules remain marketplace-visible, while Devin emits a warning and no artifact.
 3. One explicit canonical Devin source root ingests and semantically round-trips without runtime ancestor/nested discovery; user roots require an explicit source harness.
 4. Versioned Skill/Hook/MCP field-by-target matrices specify expected artifact, diagnostic severity/code, and skip behavior for every modeled field and event.
 5. Rules and every unsupported/lossy field produce documented diagnostics; canonical fields win extra-field conflicts with warnings.

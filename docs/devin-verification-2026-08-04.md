@@ -487,16 +487,14 @@ certification.
 Bead `agent-marketplace-5exj.22` closed this. Both branches its acceptance
 criteria offered were considered, and restating won:
 
-- **Implementing rule support was rejected.** It would have been the right call
-  only if the sole reason for excluding rules had been the belief that Devin
-  cannot read them. It was not. The plan's non-goal is "marketplace-selectable
-  rules" (line 28) — a statement about the *selection model*, corroborated by
-  `internal/config.AllKinds`, which carries no rule kind for **any** harness. No
-  user can select a rule for sync on Claude, Cursor, Windsurf, Factory, or Gemini
-  either. That non-goal cannot be falsified by anything `devin rules list`
-  prints. Implementing would also have meant materializing into `.devin/rules`,
-  a path Devin does not advertise — the exact undocumented dependency this
-  target refuses elsewhere (`mcp.devin.transport-unsupported`,
+- **Implementing Devin rule emission was rejected.** Rules are
+  marketplace-selectable generally; Devin is the deliberate target-specific
+  exception. Its compiler intentionally emits the `rule.devin.unsupported`
+  warning and no artifact. This decision is not based on a belief that Devin
+  cannot read Rules: the runtime evidence below shows that it can. Implementing
+  emission would also have meant materializing into `.devin/rules`, a path Devin
+  does not advertise — the exact undocumented dependency this target refuses
+  elsewhere (`mcp.devin.transport-unsupported`,
   `ingest.devin.tool-unreversible`).
 - **What *did* rest on the falsified claim** was the evidence snapshot's Rules
   section, which said "there is no canonical `.devin/rules` project path … the

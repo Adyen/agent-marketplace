@@ -30,8 +30,8 @@ func TestComponentsForScope(t *testing.T) {
 		machineScope bool
 		want         []string
 	}{
-		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hooks"}},
-		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hooks"}},
+		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hooks", "rules"}},
+		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hooks", "rules"}},
 		{"claude machine scope unchanged", hcc.TargetClaude, true, []string{"skills", "commands", "agents", "hooks", ".claude-plugin"}},
 		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands"}},
 	}

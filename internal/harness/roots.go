@@ -379,13 +379,14 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetFactory: {
 			Roots:            roots[hcc.TargetFactory],
-			Components:       []string{"skills", "commands", "droids", "hooks", ".factory-plugin"},
+			Components:       []string{"skills", "commands", "droids", "hooks", "rules", ".factory-plugin"},
 			PlanStrategy:     PlanSubtree,
 			SkillPathPattern: "skills/%s/SKILL.md",
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand:  "commands",
 				ir.KindSubagent: "droids",
 				ir.KindHook:     "hooks",
+				ir.KindRule:     "rules",
 			},
 			// TEMPORARY WORKAROUND: Factory's droid CLI does not follow
 			// symlinked command files, so commands must be materialized as
@@ -405,13 +406,14 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetCursor: {
 			Roots:            roots[hcc.TargetCursor],
-			Components:       []string{"skills", "commands", "agents", "hooks"},
+			Components:       []string{"skills", "commands", "agents", "hooks", "rules"},
 			PlanStrategy:     PlanSubtree,
 			SkillPathPattern: "skills/%s/SKILL.md",
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand:  "commands",
 				ir.KindSubagent: "agents",
 				ir.KindHook:     "hooks",
+				ir.KindRule:     "rules",
 			},
 			AggregateFiles: AggregateFileSet{
 				Project: []string{"hooks/hooks.json", "mcp.json"},
@@ -420,7 +422,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		},
 		hcc.TargetWindsurf: {
 			Roots:            roots[hcc.TargetWindsurf],
-			Components:       []string{"skills", "workflows", "hooks"},
+			Components:       []string{"skills", "workflows", "hooks", "rules"},
 			PlanStrategy:     PlanWindsurf,
 			SkillPathPattern: ".windsurf/skills/%s/SKILL.md",
 			// Windsurf only discovers machine-wide slash commands under
@@ -432,6 +434,7 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			ResourceDirs: map[ir.ResourceKind]string{
 				ir.KindCommand: ".windsurf/workflows",
 				ir.KindHook:    ".windsurf/hooks",
+				ir.KindRule:    ".windsurf/rules",
 			},
 			// Windsurf's aggregate path is genuinely scope-dependent, like its
 			// component directories: the repo-scope install root is the

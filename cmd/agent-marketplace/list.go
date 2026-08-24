@@ -66,7 +66,7 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, or collection")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, rule, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "List resources from an ad-hoc registry URL (git URL or GitLab/GitHub web URL)")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
@@ -148,6 +148,17 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 			return err
 		}
 	}
+	for _, warning := range pipeline.RuleMaterializationWarnings(dryRunReport) {
+		if _, err := fmt.Fprintf(errOut, "warning: %v\n", warning); err != nil {
+			return err
+		}
+		var remediable resolver.Remediable
+		if errors.As(warning, &remediable) {
+			if _, err := fmt.Fprintf(errOut, "  → %s\n", remediable.Remediation()); err != nil {
+				return err
+			}
+		}
+	}
 	if dryRunReport != nil && !dryRunReport.InSync() {
 		pending := dryRunReport.TotalWritten() + dryRunReport.TotalRemoved()
 		if _, err := fmt.Fprintf(out, "%d resources out of sync — run 'agent-marketplace sync'\n", pending); err != nil {
@@ -222,7 +233,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		for _, malformed := range catalogForEntry.Malformed {
 			rows = append(rows, listRow{
 				Registry: displayName,
-				Kind:     "skill",
+				Kind:     malformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -349,7 +360,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		for _, malformed := range catalog.Malformed {
 			rows = append(rows, listRow{
 				Registry: merged.displayName,
-				Kind:     "skill",
+				Kind:     malformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -391,6 +402,13 @@ func writeListTable(out io.Writer, rows []listRow) error {
 	return writer.Flush()
 }
 
+func malformedKindLabel(malformed skill.MalformedSkill) string {
+	if kind, ok := skill.ParseKind(malformed.Kind); ok && strings.TrimSpace(malformed.Kind) != "" {
+		return skill.KindLabel(kind)
+	}
+	return skill.KindLabel(ir.KindSkill)
+}
+
 func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -398,7 +416,7 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	}
 	kind, ok := skill.ParseKind(value)
 	if !ok {
-		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, collection", value)
+		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, rule, collection", value)
 	}
 	return kind, true, nil
 }

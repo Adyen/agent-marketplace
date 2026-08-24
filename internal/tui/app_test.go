@@ -7,7 +7,9 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
@@ -139,6 +141,33 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 
 	if finalModel.rows[0].Artifact.Name != "new-state" {
 		t.Fatalf("expected stale refresh to be ignored, got %q", finalModel.rows[0].Artifact.Name)
+	}
+}
+
+func TestRefreshLoadedMsgPreservesRuleWarnings(t *testing.T) {
+	warning := pipeline.PromoteDiagnostic(diag.Diagnostic{
+		Code:     diag.CodeRuleDevinUnsupported,
+		Severity: diag.SeverityWarning,
+		Resource: "coding-rules",
+		Message:  "Rules are out of scope for the Devin target; no rule artifact was emitted",
+	})
+	m := Model{
+		refreshing:   true,
+		refreshToken: 1,
+		keys:         defaultKeyMap,
+		help:         newHelpModel(),
+	}
+
+	updated, _ := m.Update(refreshLoadedMsg{
+		snapshotLoadedMsg: snapshotLoadedMsg{warnings: []error{warning}},
+		refreshToken:      1,
+	})
+	got := updated.(Model)
+	if len(got.warnings) != 1 || got.warnings[0].Error() != warning.Error() {
+		t.Fatalf("refresh warnings = %v, want %v", got.warnings, []error{warning})
+	}
+	if rendered := renderErrors(got); !strings.Contains(rendered, diag.CodeRuleDevinUnsupported) {
+		t.Fatalf("refresh warning is not visible in the errors overlay: %q", rendered)
 	}
 }
 

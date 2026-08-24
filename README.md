@@ -1,7 +1,7 @@
 # agent-marketplace
 
 `agent-marketplace` is a single Go binary that distributes shared AI agent
-resources — skills, commands, subagents, and MCP servers — from **registries**
+resources — skills, commands, subagents, rules, and MCP servers — from **registries**
 into the native layout of whichever AI coding harness you use (Factory Droid,
 Claude Code, Cursor, Windsurf, Gemini CLI, and Devin CLI).
 
@@ -181,6 +181,8 @@ registries:
       include: [deploy-service]
     subagents:
       include: [incident-responder]
+    rules:
+      include: [secure-coding]
 ```
 
 The full precedence and selection rules — including edge cases and error
@@ -373,8 +375,8 @@ harnesses: [factory, devin]
 ```
 
 Devin writes to its canonical roots — `<repo>/.devin` for repo scope and
-`~/.config/devin` for machine scope — and covers all five selectable resource
-kinds:
+`~/.config/devin` for machine scope — and covers the five representable
+resource kinds:
 
 | Resource kind | Devin output |
 |---------------|--------------|
@@ -384,8 +386,10 @@ kinds:
 | Hook | repo: `hooks.v1.json`; machine: the `hooks` member of `config.json` |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
 
-Rules are not a marketplace-selectable kind and are not supported by this
-target; a rule produces a diagnostic instead of an artifact.
+Rules are marketplace-selectable for targets with a rules primitive, but remain
+out of scope for Devin: selecting `devin` reports a warning and emits no rule
+artifact. This preserves the Devin scope decision without preventing a rule
+from being installed into Factory, Cursor, or Windsurf.
 
 Devin is also a full **conversion** target, so `agent-marketplace convert --from
 devin`, `convert --to devin`, and `source_harness: devin` on a registry entry
@@ -508,6 +512,7 @@ target harness on `sync`.
 | **Command** | Supported |
 | **Subagent** | Supported (dropped on harnesses with no equivalent, e.g. Windsurf, with a diagnostic) |
 | **MCP server** | Supported |
+| **Rule** | Supported on Factory, Cursor, and Windsurf; dropped with a warning on Claude, Gemini, and Devin |
 | **Hook** | Experimental — materializes, but output fidelity is still being finalized |
 | **Collection** | Supported (not a resource itself — a named bundle of the kinds above) |
 
@@ -524,7 +529,7 @@ silently dropping it.
 ### Collections
 
 A collection is **not a resource itself** — it is a named bundle that points at
-a set of skills, commands, subagents, and/or MCP servers (possibly spanning
+a set of skills, commands, subagents, rules, and/or MCP servers (possibly spanning
 multiple registries). Think of it as a curated install list: enabling a
 collection enables all of its members, and the members are still the real
 resources that get materialized.
@@ -567,7 +572,7 @@ from `update`, and show `local` as their cache freshness in `status`.
 
 ```
 agent-marketplace list                          Browse resources from configured registries
-agent-marketplace list --kind command           Browse one kind: skill, command, subagent, mcp, collection
+agent-marketplace list --kind command           Browse one kind: skill, command, subagent, hook, mcp, rule, collection
 agent-marketplace list --from <url> --ref <ref>  Browse an ad-hoc registry (nothing written)
 
 agent-marketplace install <name> --from <url> --ref <ref>   Install one resource from a registry

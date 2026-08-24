@@ -249,25 +249,21 @@ func TestProbeMcpAggregate(t *testing.T) {
 
 // TestProbeRulesDiscoveryUnderDevinRoots is probe 10.
 //
-// It was written to verify that "rules remain absent from canonical `.devin`
-// paths", which the plan treats as the runtime justification for the
-// compiler's stable unsupported-rule diagnostic. **That assumption is false on
-// 3000.3.27.** `devin rules paths` advertises only `.windsurf/rules` and
-// `.cursor/rules`, but a rule file written to `.devin/rules/<name>.md` IS
-// discovered and listed.
+// It records Devin's rule-path advertisement separately from discovery. Rules
+// are marketplace-selectable generally, but the Devin target contract emits a
+// warning and no rule artifact in this increment. **The runtime observation is
+// intentionally not used to change that scope decision.** `devin rules paths`
+// advertises only `.windsurf/rules` and `.cursor/rules`, but a rule file written
+// to `.devin/rules/<name>.md` IS discovered and listed.
 //
-// The probe therefore records what Devin actually does rather than asserting
-// the falsified expectation. No emitted artifact is wrong today — rules are an
-// explicit non-goal of the promoted plan, so the compiler emitting nothing is
-// still correct behaviour — but the diagnostic's stated RATIONALE ("Devin has
-// no rule primitive") is not what the runtime shows. Bead
-// agent-marketplace-5exj.22 owns restating it as a scope decision, or adding
+// The probe therefore records what Devin actually does rather than asserting a
+// falsified no-discovery expectation. The compiler's no-artifact behavior is
+// still correct for the target contract; the diagnostic rationale is the
+// target-specific scope, not a claim that Devin cannot read a rule.
+//
+// The probe fails only if Devin starts advertising a `.devin` rules path — at
+// which point the target's warning/no-artifact decision has to be revisited as
 // rule support.
-//
-// The probe fails only if the advertised paths and the discovery behaviour
-// agree again in the other direction, i.e. if Devin starts advertising a
-// `.devin` rules path — at which point rule support is unambiguously expected
-// and the scope decision has to be revisited.
 func TestProbeRulesDiscoveryUnderDevinRoots(t *testing.T) {
 	probe := requireDevin(t)
 	s := newSandbox(t, probe)
@@ -280,9 +276,9 @@ func TestProbeRulesDiscoveryUnderDevinRoots(t *testing.T) {
 
 	switch {
 	case advertised:
-		t.Fatalf("Devin now ADVERTISES a canonical rules path under a .devin root, so rules are a first-class Devin primitive and the target must gain rule support instead of emitting rule.devin.unsupported (bead agent-marketplace-5exj.22):\n%s", paths)
+		t.Fatalf("Devin now ADVERTISES a canonical rules path under a .devin root, so the target's warning/no-artifact Rule decision must be revisited as rule support (bead agent-marketplace-5exj.22):\n%s", paths)
 	case discovered:
-		t.Logf("PROBE OBSERVED rules: .devin/rules is not advertised by `rules paths` but a rule placed there IS discovered; rule.devin.unsupported remains a scope decision, not a capability limit (bead agent-marketplace-5exj.22)")
+		t.Logf("PROBE OBSERVED rules: .devin/rules is not advertised by `rules paths` but a rule placed there IS discovered; Rule remains marketplace-selectable generally while Devin emits rule.devin.unsupported as a warning with no artifact (bead agent-marketplace-5exj.22)")
 	default:
 		t.Logf("PROBE PASS rules: .devin/rules is neither advertised nor discovered")
 	}

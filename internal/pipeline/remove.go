@@ -93,8 +93,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 
-	// Check if the arg refers to a collection in the merged config.
-	if isCollectionInstalled(mergedCfg, name) {
+	// Check if the arg refers to a collection unless an explicit non-collection
+	// kind was supplied. A rule and collection may share a name.
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && isCollectionInstalled(mergedCfg, name) {
 		effective := opts.Scope
 		if !opts.ScopeSpecified {
 			effective = ScopeRepo // collections are repo-scoped by default
@@ -237,8 +238,8 @@ func removeResource(repoRoot string, scope Scope, repoCfg *config.Config, target
 			if err := config.RemoveKindExcludeFromLocalConfig(repoRoot, target.Kind, name); err != nil {
 				return fmt.Errorf("clear stale exclude from local config: %w", err)
 			}
-			if err := config.RemoveSkillFromLocalConfig(repoRoot, name); err != nil {
-				return fmt.Errorf("remove skill from local config include: %w", err)
+			if err := config.RemoveResourceFromConfig(localCfgPath, target.Kind, name); err != nil {
+				return fmt.Errorf("remove %s from local config include: %w", skill.KindLabel(target.Kind), err)
 			}
 			return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 		}
@@ -719,8 +720,8 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config", fromURL, fromPath)
 	}
 
-	// Check if it's a collection.
-	if isCollectionInstalled(mergedCfg, name) {
+	// Check if it's a collection only when no non-collection kind was requested.
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && isCollectionInstalled(mergedCfg, name) {
 		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
 			return nil, err
 		}

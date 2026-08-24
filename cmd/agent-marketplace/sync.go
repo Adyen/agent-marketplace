@@ -339,7 +339,11 @@ func runSyncCheck(ctx context.Context, out io.Writer) error {
 	// Warnings do not affect drift detection or the --check exit code.
 	// Concat, not append: appending to resolvedResult.Warnings could write into
 	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	allWarnings := slices.Concat(
+		resolvedResult.Warnings,
+		pipeline.SoftWarnings(resolvedResult),
+		pipeline.RuleMaterializationWarnings(report),
+	)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err

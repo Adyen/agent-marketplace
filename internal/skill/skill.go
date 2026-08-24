@@ -57,6 +57,8 @@ func KindLabel(kind ir.ResourceKind) string {
 		return "mcp"
 	case ir.KindCollection:
 		return "collection"
+	case ir.KindRule:
+		return "rule"
 	default:
 		return kind.String()
 	}
@@ -78,6 +80,8 @@ func ParseKind(value string) (ir.ResourceKind, bool) {
 		return ir.KindMcpServer, true
 	case "collection", "collections":
 		return ir.KindCollection, true
+	case "rule", "rules":
+		return ir.KindRule, true
 	default:
 		return 0, false
 	}
@@ -97,6 +101,8 @@ func ConfigKeyForKind(kind ir.ResourceKind) string {
 		return "mcp"
 	case ir.KindCollection:
 		return "collections"
+	case ir.KindRule:
+		return "rules"
 	default:
 		return ""
 	}

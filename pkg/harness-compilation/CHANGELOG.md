@@ -416,16 +416,16 @@ falsified the premise on Devin 3000.3.27 and it was reproduced independently:
 `.devin/rules/<name>.md` **is** discovered — `devin rules list` prints
 `probe-rule [Devin] manual`.
 
-**Why rule support was still not implemented.** The exclusion never rested on
-that claim. Rules are not marketplace-selectable at all — `internal/config.AllKinds`
-has no rule kind, for any harness — and "marketplace-selectable rules" is an
-explicit non-goal of the promoted Devin plan, which is a statement about the
-selection model that no runtime observation can falsify. Emitting into
+**Why Devin still intentionally emits no rule artifact.** Rules are
+marketplace-selectable generally. Devin is the deliberate target-specific
+exception: its compiler emits `rule.devin.unsupported` as a warning and emits
+no artifact. This is a scope decision, not a claim that Rules are unavailable
+to marketplace selection or that Devin cannot read them. Emitting into
 `.devin/rules` would additionally mean depending on a path Devin does not
-advertise, which is the same undocumented dependency `mcp.devin.transport-unsupported`
-and `ingest.devin.tool-unreversible` exist to refuse. If Devin ever starts
-advertising a `.devin` rules path, the probe fails loudly and the decision is
-reopened.
+advertise, which is the same undocumented dependency
+`mcp.devin.transport-unsupported` and `ingest.devin.tool-unreversible` exist to
+refuse. If Devin ever starts advertising a `.devin` rules path, the probe fails
+loudly and the decision is reopened.
 
 **Why the severity changed.** ERROR suppresses the resource and makes `sync`
 exit non-zero; that is the right signal for the rest of the Devin error family,

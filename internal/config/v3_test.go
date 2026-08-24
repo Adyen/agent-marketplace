@@ -180,6 +180,9 @@ registries:
 skills:
   include:
     - local-skill
+rules:
+  include:
+    - local-rule
 `)
 	cfg, errs := loadV3LocalConfig(data)
 	if len(errs) > 0 {
@@ -193,6 +196,9 @@ skills:
 	}
 	if len(cfg.Skills.Include) != 1 || cfg.Skills.Include[0] != "local-skill" {
 		t.Fatalf("expected local skill include, got %v", cfg.Skills.Include)
+	}
+	if len(cfg.Rules.Include) != 1 || cfg.Rules.Include[0] != "local-rule" {
+		t.Fatalf("expected local rule include, got %v", cfg.Rules.Include)
 	}
 }
 

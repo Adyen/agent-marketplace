@@ -115,8 +115,8 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 }
 
 // TestCollectManagedPathsWindsurfMachineComponents pins the exact machine-scope
-// Windsurf relative paths: global_workflows (not workflows), skills and hooks at
-// the Windsurf machine root, plus the managed root config file.
+// Windsurf relative paths: global_workflows (not workflows), skills, rules, and
+// hooks at the Windsurf machine root, plus the managed root config file.
 func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -134,7 +134,7 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
 	}
-	want := []string{"skills", "global_workflows", "hooks", "mcp_config.json"}
+	want := []string{"skills", "global_workflows", "hooks", "rules", "mcp_config.json"}
 	if !slices.Equal(mp.RelPaths, want) {
 		t.Errorf("windsurf machine-scope managed rel paths = %v, want %v", mp.RelPaths, want)
 	}

@@ -26,23 +26,24 @@ type TestCase struct {
 }
 
 // RegistryDef describes a bare git repo to create inside the container.
-// Either use Skills/Commands/Subagents/MCPServers for standard layouts,
+// Either use Skills/Commands/Subagents/Rules/MCPServers for standard layouts,
 // or Files for arbitrary file trees (path -> content).
 type RegistryDef struct {
 	Name       string
 	Skills     []Skill
 	Commands   []Command
 	Subagents  []Subagent
+	Rules      []Rule
 	MCPServers []MCPServer
 	Files      map[string]string // raw files; overrides structured fields if set
 }
 
 // FilesMap returns the map[string]string suitable for CreateBareRepo.
-// Structured resources (Skills, Commands, Subagents, MCPServers) are always
-// included; raw Files entries overlay on top so COLLECTION.yaml and custom
-// files coexist with auto-generated resource stubs.
+// Structured resources (Skills, Commands, Subagents, Rules, MCPServers) are
+// always included; raw Files entries overlay on top so COLLECTION.yaml and
+// custom files coexist with auto-generated resource stubs.
 func (r RegistryDef) FilesMap() map[string]string {
-	files := RegistryFilesEx(r.Skills, r.Commands, r.Subagents, r.MCPServers)
+	files := RegistryFilesAll(r.Skills, r.Commands, r.Subagents, r.Rules, r.MCPServers)
 	for p, c := range r.Files {
 		files[p] = c
 	}
@@ -3020,16 +3021,68 @@ registries:
 		},
 	},
 
+	// ===== rules =====
+	{
+		Name: "rule/select_list_install_remove_and_materialize",
+		Desc: "Given a Factory-authored rule selected in config, When list, sync, status, and remove are run, Then the rule is listed with its kind, materialized in Factory and Cursor roots, and removed cleanly",
+		Registries: []RegistryDef{
+			{Name: "rule-reg", Rules: []Rule{{Name: "secure-coding", Body: "# Secure coding\nNever commit credentials.\n"}}},
+		},
+		GlobalCfg: `
+harnesses:
+  - factory
+  - cursor
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:rule-reg}}
+    ref: main
+    source_harness: factory
+    rules:
+      include:
+        - secure-coding
+`,
+		Steps: []Step{
+			{Args: []string{"list", "--kind", "rule"}, MustPass: true,
+				OutContains: []string{"KIND", "rule", "secure-coding"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/workspace/.factory/rules/secure-coding.md",
+					"/workspace/.cursor/rules/secure-coding.mdc",
+				},
+				FileContains: map[string]string{
+					"/workspace/.factory/rules/secure-coding.md": "Never commit credentials.",
+					"/workspace/.cursor/rules/secure-coding.mdc": "Never commit credentials.",
+				}},
+			{Args: []string{"status"}, OutContains: []string{"rule", "secure-coding"}},
+			{Args: []string{"remove", "--kind", "rule", "secure-coding"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{
+					"/workspace/.factory/rules/secure-coding.md",
+					"/workspace/.cursor/rules/secure-coding.mdc",
+				}},
+			{Args: []string{"install", "--kind", "rule", "secure-coding"}, MustPass: true,
+				OutContains: []string{"Installed secure-coding"}},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{
+					"/workspace/.factory/rules/secure-coding.md",
+					"/workspace/.cursor/rules/secure-coding.mdc",
+				}},
+		},
+	},
+
 	// ===== collections =====
 	{
 		Name: "collection/multi_kind_resources_materialize",
-		Desc: "Given a registry with a collection referencing skills, commands, and subagents, When sync is run, Then all resource kinds materialize correctly",
+		Desc: "Given a registry with a collection referencing skills, commands, subagents, and rules, When sync is run, Then all resource kinds materialize correctly",
 		Registries: []RegistryDef{
 			{Name: "collection-reg",
 				Skills:    []Skill{{Name: "threat-model", Description: "Threat modeling skill"}},
 				Commands:  []Command{{Name: "security-scan", Description: "Security scan command", Command: "echo scan"}},
 				Subagents: []Subagent{{Name: "reviewer", Description: "Code reviewer agent", Tools: []string{"Read"}}},
+				Rules:     []Rule{{Name: "secure-coding", Body: "# Secure coding\n"}},
 				Files: map[string]string{
+					"droids/reviewer.md": (Subagent{Name: "reviewer", Description: "Code reviewer agent", Tools: []string{"Read"}}).SubagentFile(),
 					"collections/security/COLLECTION.yaml": `name: security
 version: "1.0"
 description: Security tooling collection
@@ -3039,6 +3092,8 @@ resources:
     kind: command
   - name: reviewer
     kind: subagent
+  - name: secure-coding
+    kind: rule
 `,
 				}},
 		},
@@ -3046,6 +3101,7 @@ resources:
 registries:
   - url: {{REG:collection-reg}}
     ref: main
+    source_harness: factory
 collections:
   include:
     - security
@@ -3056,9 +3112,10 @@ collections:
 					"/root/.factory/skills/threat-model/SKILL.md",
 					"/root/.factory/commands/security-scan.md",
 					"/root/.factory/droids/reviewer.md",
+					"/root/.factory/rules/secure-coding.md",
 				}},
 			{Args: []string{"status"},
-				OutContains: []string{"threat-model", "security-scan", "reviewer", "collection:security"}},
+				OutContains: []string{"threat-model", "security-scan", "reviewer", "secure-coding", "collection:security"}},
 		},
 	},
 	{
