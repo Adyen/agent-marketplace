@@ -17,8 +17,8 @@ var (
 	// team_profiles fields. Migration refuses to silently discard these.
 	ErrLegacyIdentity = errors.New("config contains legacy identity or team_profiles fields")
 
-	// ErrHarnessesRequired is returned when migration cannot determine the
-	// machine-wide target harness set and the caller must supply one or prompt.
+	// ErrHarnessesRequired is returned when an existing user config needs a
+	// target harness set and the caller must supply one or prompt.
 	ErrHarnessesRequired = errors.New("target harness set is required")
 )
 
@@ -54,15 +54,16 @@ type migrationFile struct {
 	modified   bool
 }
 
-// MigrateConfigFiles migrates user personal, repository committed, and
-// repository personal config files from v2 to v3 in one transactional pass.
+// MigrateConfigFiles performs structural remediation on user personal,
+// repository committed, and repository personal config files in one
+// transactional pass. It does not rewrite a valid v2 or v3 config to another
+// schema version; when changes are required, output is canonicalized to v2.
 // All inputs are validated before any file is written.
 //
-// The machine-wide target harness set is chosen as follows:
-//  1. Harnesses already present in the user personal config.
-//  2. The explicit harnesses argument.
-//  3. Harnesses declared in the repository committed config (moved to user).
-//  4. If none of the above are available, ErrHarnessesRequired is returned.
+// When initializing a missing user personal config, the target harness set is
+// chosen from existing user harnesses first, then the explicit harnesses
+// argument. Repository harnesses remain project-scoped and are never moved to
+// the user config.
 func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*MigrateResult, error) {
 	slog.Info("migrating config files",
 		"user", paths.User,
@@ -151,7 +152,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 			if err := migrateFileNode(f, nil); err != nil {
 				return nil, err
 			}
-			for _, key := range []string{"harnesses", "backup", "logging"} {
+			for _, key := range []string{"backup", "logging"} {
 				if removeMappingKeyByName(f.root, key) {
 					f.modified = true
 				}
@@ -166,11 +167,13 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 				}
 			}
 		}
+		canonicalizeMigrationAPIVersion(f)
 	}
 
-	// If there is no user personal config, create one with the target harness
-	// set so the machine-wide target is persisted.
-	if files["user"] == nil || !files["user"].exists {
+	// If a user personal config is absent, only create one when an explicit
+	// target harness set was supplied. Project-only configurations do not need
+	// to be rewritten or promoted to the user scope.
+	if (files["user"] == nil || !files["user"].exists) && len(targetHarnesses) > 0 {
 		if workPaths.User == "" {
 			return nil, fmt.Errorf("cannot create user personal config without a path")
 		}
@@ -186,6 +189,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 		if err := migrateFileNode(userFile, targetHarnesses); err != nil {
 			return nil, err
 		}
+		canonicalizeMigrationAPIVersion(userFile)
 	}
 
 	// Validate the migrated documents before writing.
@@ -258,9 +262,9 @@ func loadMigrationFile(path string, kind layerKind) (*migrationFile, error) {
 	return f, nil
 }
 
-// resolveMigrationTargetHarnesses chooses the machine-wide target harness set
-// for migration. User-personal harnesses win, then explicit values, then repo
-// harnesses. If none are available, ErrHarnessesRequired is returned.
+// resolveMigrationTargetHarnesses chooses harnesses for an existing user
+// config or an explicitly requested user initialization. A project config's
+// harnesses are intentionally not promoted to user scope.
 func resolveMigrationTargetHarnesses(files map[string]*migrationFile, explicitHarnesses []string) ([]string, error) {
 	if userFile := files["user"]; userFile != nil && userFile.exists && len(userFile.harnesses) > 0 {
 		return normalizedUniqueValues(userFile.harnesses), nil
@@ -268,30 +272,21 @@ func resolveMigrationTargetHarnesses(files map[string]*migrationFile, explicitHa
 	if len(explicitHarnesses) > 0 {
 		return normalizedUniqueValues(explicitHarnesses), nil
 	}
+	if userFile := files["user"]; userFile != nil && userFile.exists {
+		return nil, ErrHarnessesRequired
+	}
 	if repoFile := files["repo"]; repoFile != nil && repoFile.exists && len(repoFile.harnesses) > 0 {
-		return normalizedUniqueValues(repoFile.harnesses), nil
+		return nil, nil
 	}
 	return nil, ErrHarnessesRequired
 }
 
-// migrateFileNode updates the document to apiVersion v3, sets harnesses when
-// provided, and converts legacy collections. It tracks whether any change was
-// made.
+// migrateFileNode sets harnesses when provided and converts legacy
+// collections. It tracks whether any change was made. The caller is
+// responsible for canonicalizing apiVersion after structural edits.
 func migrateFileNode(f *migrationFile, harnesses []string) error {
 	if f == nil || !f.exists {
 		return nil
-	}
-
-	av := findMappingValue(f.root, "apiVersion")
-	if av == nil {
-		f.root.Content = append([]*yaml.Node{
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV3},
-		}, f.root.Content...)
-		f.modified = true
-	} else if av.Kind == yaml.ScalarNode && strings.TrimSpace(av.Value) != APIVersionV3 {
-		av.Value = APIVersionV3
-		f.modified = true
 	}
 
 	if len(harnesses) > 0 {
@@ -318,6 +313,46 @@ func migrateFileNode(f *migrationFile, harnesses []string) error {
 	}
 
 	return nil
+}
+
+// canonicalizeMigrationAPIVersion ensures the file declares a valid
+// apiVersion. Valid v2 and v3 files are left untouched when no structural
+// remediation is needed. New or structurally remediated files use canonical
+// v2; this keeps migration from forcing a schema-version rewrite on users.
+func canonicalizeMigrationAPIVersion(f *migrationFile) {
+	if f == nil || !f.exists {
+		return
+	}
+
+	av := findMappingValue(f.root, "apiVersion")
+	if av == nil {
+		f.root.Content = append([]*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "apiVersion"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: APIVersionV2},
+		}, f.root.Content...)
+		f.modified = true
+		return
+	}
+	if av.Kind != yaml.ScalarNode {
+		return
+	}
+
+	v := strings.TrimSpace(av.Value)
+	if !f.modified {
+		if v == APIVersionV2 || v == APIVersionV3 {
+			return
+		}
+		av.Value = APIVersionV2
+		f.modified = true
+		return
+	}
+
+	if v != APIVersionV2 {
+		av.Value = APIVersionV2
+		if v != APIVersionV3 {
+			f.modified = true
+		}
+	}
 }
 
 // migrateCollections rewrites the legacy [{name: X}] and [X] collections

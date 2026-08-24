@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
@@ -23,6 +26,8 @@ import (
 const defaultVersion = "dev"
 
 var version = defaultVersion
+var diagnosticCapture bool
+var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
 	close     func() error
@@ -31,8 +36,10 @@ var rootLogState struct {
 
 func main() {
 	cmd := newRootCmd()
-	if err := cmd.Execute(); err != nil {
-		finishRootLogging(err)
+	execCmd, execErr := cmd.ExecuteC()
+	finishTelemetry(execCmd, execErr)
+	if execErr != nil {
+		finishRootLogging(execErr)
 		// Cobra already prints the error (SilenceErrors is false) to the
 		// command's stderr. Do NOT print it again here, or every error shows
 		// up twice. Just exit non-zero.
@@ -52,7 +59,12 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			start := time.Now()
 			initRootLogging(cmd, debug)
+			initTelemetry(cmd, start)
+			if shouldSkipTargetValidation(cmd) {
+				return nil
+			}
 			if err := validateStartupTargetRegistrations(); err != nil {
 				slog.Error("validate harness target registrations", "error", err)
 				return fmt.Errorf("validate harness target registrations: %w", err)
@@ -61,10 +73,6 @@ func newRootCmd() *cobra.Command {
 				slog.Error("initialize harness targets", "error", err)
 				return fmt.Errorf("initialize harness targets: %w", err)
 			}
-			return nil
-		},
-		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			finishRootLogging(nil)
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -81,7 +89,7 @@ func newRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return tui.Run(repoRoot, homeDir)
+					return tui.Run(cmd.Context(), repoRoot, homeDir)
 				}
 			}
 
@@ -93,6 +101,8 @@ func newRootCmd() *cobra.Command {
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
+	rootCmd.PersistentFlags().BoolVar(&diagnosticCapture, "diagnostic", false, "Capture a reviewed diagnostic telemetry payload for this invocation")
+	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
 		newInitCmd(),
@@ -109,6 +119,7 @@ func newRootCmd() *cobra.Command {
 		newTUICmd(),
 		newBackupCmd(),
 		newDeinitCmd(),
+		newTelemetryCmd(),
 	)
 
 	return rootCmd
@@ -164,6 +175,132 @@ func finishRootLogging(execErr error) {
 		fmt.Fprintf(os.Stderr, "warning: failed to close log file: %v\n", err)
 	}
 	rootLogState.closed = true
+}
+
+func initTelemetry(cmd *cobra.Command, start time.Time) {
+	if cmd == nil {
+		return
+	}
+	path := cmd.CommandPath()
+	if shouldSkipTelemetryInit(path) {
+		return
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	state, err := telemetry.LoadAndResolve(ctx)
+	if err != nil {
+		slog.Warn("telemetry config resolution failed; continuing without telemetry", "error", err)
+		return
+	}
+	if state.EffectiveLevel != tmcfg.LevelBasic && state.EffectiveLevel != tmcfg.LevelDetailed {
+		return
+	}
+
+	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithDiagnostic(diagnosticCapture))
+	if err != nil {
+		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
+		return
+	}
+
+	rootSpan := telemetry.Span{}
+	if state.EffectiveLevel == tmcfg.LevelDetailed {
+		ctx, rootSpan = t.StartSpan(ctx, "agent_marketplace.command", map[string]string{
+			string(tmcfg.ResourceAttrCommandName): path,
+			string(tmcfg.ResourceAttrHarnesses):   state.HarnessesString(),
+			string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(state.Managed),
+		})
+		if t.DiagnosticActive() && rootSpan != (telemetry.Span{}) {
+			t.RecordDiagnostic("diagnostic.capture.started", "diagnostic capture enabled for this invocation")
+			rootSpan.AddEvent("diagnostic.capture.started", map[string]string{
+				"message": "diagnostic capture enabled for this invocation",
+			})
+		}
+	}
+
+	cmd.SetContext(telemetry.NewContext(ctx, t, path, start, state.HarnessesString(), state.Managed, rootSpan, t.DiagnosticActive()))
+}
+
+func finishTelemetry(cmd *cobra.Command, execErr error) {
+	if cmd == nil {
+		return
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	t := telemetry.TelemetryFromContext(ctx)
+	if t == nil {
+		return
+	}
+
+	path := telemetry.CommandPathFromContext(ctx)
+	if path == "" {
+		path = cmd.CommandPath()
+	}
+	start := telemetry.CommandStartFromContext(ctx)
+	harnesses := telemetry.HarnessesFromContext(ctx)
+	managed := telemetry.ManagedFromContext(ctx)
+
+	outcome := "success"
+	if execErr != nil {
+		outcome = "error"
+	}
+	attrs := map[string]string{
+		string(tmcfg.ResourceAttrCommandName): path,
+		string(tmcfg.ResourceAttrHarnesses):   harnesses,
+		string(tmcfg.ResourceAttrManaged):     strconv.FormatBool(managed),
+		string(tmcfg.ResourceAttrOutcomeCode): outcome,
+	}
+
+	rootSpan := telemetry.RootSpanFromContext(ctx)
+	if rootSpan != (telemetry.Span{}) {
+		if t.DiagnosticActive() {
+			for _, ev := range t.DiagnosticEvents() {
+				rootSpan.AddEvent(ev.Name, map[string]string{"message": ev.Message})
+			}
+			rootSpan.AddEvent("diagnostic.command.end", map[string]string{
+				"outcome": outcome,
+				"message": "command finished; diagnostic payload ready for review",
+			})
+		}
+		rootSpan.SetAttributes(attrs)
+		rootSpan.End()
+	}
+
+	t.CommandCounter().Add(ctx, 1, attrs)
+	t.CommandDuration().Record(ctx, time.Since(start).Milliseconds(), attrs)
+
+	if t.DiagnosticActive() {
+		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin()), diagnosticAcceptSensitive); err != nil {
+			slog.Warn("diagnostic export failed or declined", "error", err)
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := t.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("telemetry shutdown failed", "error", err)
+	}
+}
+
+// isTerminalReader reports whether r is backed by a terminal file descriptor.
+func isTerminalReader(r io.Reader) bool {
+	type fdReader interface {
+		Fd() uintptr
+	}
+	fr, ok := r.(fdReader)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(fr.Fd())
+}
+
+func shouldSkipTelemetryInit(path string) bool {
+	return path == "agent-marketplace init" || strings.HasPrefix(path, "agent-marketplace telemetry")
 }
 
 func applyLoggingConfig(opts *logging.Options, cfg *config.LoggingConfig) {
@@ -225,7 +362,7 @@ func newRemoveCmd() *cobra.Command {
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runRemove(cmd.OutOrStdout(), name, scope, scopeSpecified, kindFilter, fromURL, fromRef, fromPath)
+			return runRemove(cmd.Context(), cmd.OutOrStdout(), name, scope, scopeSpecified, kindFilter, fromURL, fromRef, fromPath)
 		},
 	}
 
@@ -237,14 +374,14 @@ func newRemoveCmd() *cobra.Command {
 	return cmd
 }
 
-func runRemove(out io.Writer, skillName string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath string) error {
+func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result, err := pipeline.Remove(context.Background(), pipeline.RemoveOptions{
+	result, err := pipeline.Remove(ctx, pipeline.RemoveOptions{
 		RepoRoot:       repoRoot,
 		ResourceName:   skillName,
 		Kind:           kind,
@@ -286,4 +423,13 @@ func runRemove(out io.Writer, skillName string, scope pipeline.Scope, scopeSpeci
 		_, err = fmt.Fprintf(out, "  (excluded in %s — applies across all repos)\n", globalPath)
 	}
 	return err
+}
+
+func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Annotations != nil && c.Annotations["skip-target-validation"] == "true" {
+			return true
+		}
+	}
+	return false
 }

@@ -649,7 +649,7 @@ func (e *Env) WriteGlobalConfig(content string) {
 }
 
 // WriteRepoConfig writes .agents/config.yaml in the workspace.
-// Automatically injects apiVersion if missing (harnesses inherited from global).
+// Automatically injects apiVersion if missing; project harnesses may be declared.
 func (e *Env) WriteRepoConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
@@ -665,13 +665,13 @@ func (e *Env) WriteLocalConfig(content string) {
 	e.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(content))
 }
 
-// WriteOrgConfig writes the v3 organization config to the managed location
-// (/etc/agent-marketplace/config.yaml in the sandbox).
+// WriteOrgConfig writes the canonical v2 organization config to the managed
+// location (/etc/agent-marketplace/config.yaml in the sandbox).
 func (e *Env) WriteOrgConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v3\n" + content
+		content = "apiVersion: agent-marketplace/v2\n" + content
 	}
 	if !strings.Contains(content, "harnesses:") {
 		content = "harnesses:\n  - factory\n" + content

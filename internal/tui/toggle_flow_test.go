@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -202,7 +203,7 @@ skills:
 	defer restoreLocal()
 
 	// Load snapshot BEFORE toggle.
-	snap1 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap1 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap1.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", snap1.errs)
 	}
@@ -231,7 +232,7 @@ skills:
 	}
 
 	// Load snapshot AFTER toggle.
-	snap2 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
 		t.Fatalf("post-toggle snapshot errors: %v", snap2.errs)
 	}
@@ -346,7 +347,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	defer restoreLocal()
 
 	// Before toggle: deploy is available.
-	snap1 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap1 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap1.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", snap1.errs)
 	}
@@ -370,7 +371,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	}
 
 	// After toggle: deploy should be project-enabled.
-	snap2 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
 		t.Fatalf("post-toggle snapshot errors: %v", snap2.errs)
 	}
@@ -516,7 +517,7 @@ skills:
 
 	// After toggle: deploy should now be project-enabled because the
 	// skill was added to the specific registry entry's skills list.
-	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	var deployRow *row
 	for i := range snap.rows {
 		if snap.rows[i].Artifact.Name == "deploy" {
@@ -717,7 +718,7 @@ skills:
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap.errs) > 0 {
 		t.Fatalf("snapshot errors: %v", snap.errs)
 	}
@@ -837,7 +838,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", snap.errs)
 	}
@@ -872,7 +873,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	}
 
 	// Reload snapshot and verify project enablement.
-	snap2 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	// Overlap warnings are acceptable (global and project entries can overlap).
 	for _, err := range snap2.errs {
 		if !catalog.IsOverlapWarning(err) {
@@ -965,7 +966,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 		t.Fatalf("disable smith: %v", err)
 	}
 
-	snap2 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
 		t.Fatalf("after disable snapshot errors: %v", snap2.errs)
 	}
@@ -988,7 +989,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 		t.Fatalf("re-enable smith: %v", err)
 	}
 
-	snap3 := readSnapshot(repoRoot, homeDir, catalogLoadCached)
+	snap3 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap3.errs) > 0 {
 		t.Fatalf("after re-enable snapshot errors: %v", snap3.errs)
 	}

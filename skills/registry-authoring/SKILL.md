@@ -36,23 +36,24 @@ my-skills/
 └── README.md
 ```
 
-Before syncing, configure the machine-wide target harness set in
-`~/.agents/config.yaml` or `/etc/agent-marketplace/config.yaml`:
+Before syncing, configure the target harness set in the project config or,
+when shared across projects, in `~/.agents/config.yaml` or
+`/etc/agent-marketplace/config.yaml`:
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory]
 registries: []
 ```
 
-The committed repository config below intentionally omits top-level
-`harnesses`; it inherits the machine-wide target set.
+The committed repository config may declare its own top-level `harnesses`;
+when omitted, it inherits the user or organization target set.
 
 Consuming repos point at it:
 
 ```yaml
 # .agents/config.yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 registries:
   - url: git@gitlab.example.com:example-org/my-skills.git
     ref: main
@@ -304,8 +305,8 @@ See `references/firewall-repo-map.md` for the repository layout and
 
 ## Multi-Resource Registries
 
-A registry can contain more than skills. Agent-marketplace v3
-supports commands, subagents, hooks, and MCP servers from the same
+A registry can contain more than skills. The canonical agent-marketplace v2
+schema supports commands, subagents, hooks, and MCP servers from the same
 repository, organized by kind:
 
 ```
@@ -329,10 +330,10 @@ team-resources/
     └── incident-responder.yaml
 ```
 
-Consumers select resources by kind in a v3 config:
+Consumers select resources by kind in a v2 config:
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 registries:
   - url: git@gitlab.example.com:team/team-resources.git
     ref: main
@@ -420,7 +421,7 @@ Example from infra-skills:
 ## Integrating with agent-marketplace
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 registries:
   - url: git@gitlab.example.com:example-team/infra-skills.git
     ref: main

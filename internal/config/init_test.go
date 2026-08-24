@@ -83,7 +83,7 @@ func TestInitializeUserPersonalAtPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 
-	// Creates a minimal v3 user personal config.
+	// Creates a minimal v2 user personal config.
 	written, err := InitializeUserPersonalAtPath(path, []string{"factory"})
 	if err != nil {
 		t.Fatalf("InitializeUserPersonalAtPath error: %v", err)
@@ -97,8 +97,8 @@ func TestInitializeUserPersonalAtPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "apiVersion: agent-marketplace/v3") {
-		t.Errorf("config missing v3 apiVersion: %s", content)
+	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") {
+		t.Errorf("config missing v2 apiVersion: %s", content)
 	}
 	if !strings.Contains(content, "harnesses:") {
 		t.Errorf("config missing harnesses: %s", content)

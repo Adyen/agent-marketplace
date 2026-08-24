@@ -46,9 +46,9 @@ func entryResourcesForKind(entry RegistryEntry, kind ir.ResourceKind) []string {
 // readOrInitConfig reads and parses the YAML at configPath. If the file does
 // not exist, returns a document pre-populated with apiVersion. When the path
 // is the global config (~/.agents/config.yaml), the skeleton includes
-// harnesses: [factory, windsurf] (required for global configs); for project
-// or local configs, harnesses is omitted so they inherit from the org/global
-// layer during merge. The returned mode is the existing file's perms, or
+// harnesses: [factory, windsurf] (the default for global configs); for project
+// or local configs, harnesses is omitted until explicitly configured. The
+// returned mode is the existing file's perms, or
 // defaultConfigMode for a new file.
 func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 	data, err := os.ReadFile(configPath)
@@ -65,8 +65,8 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 				)
 			}
 			// Include harnesses only for the global config path, where
-			// they are required. Project/local configs omit harnesses
-			// to inherit from the org/global layer during merge.
+			// the default target set is useful. Project/local configs omit harnesses
+			// until the user explicitly selects project targets.
 			if isGlobalConfigPath(configPath) {
 				harnesses := DefaultHarnesses()
 				seqContent := make([]*yaml.Node, 0, len(harnesses))
@@ -102,8 +102,8 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 
 // isGlobalConfigPath reports whether configPath refers to the global
 // (user-personal) config file at ~/.agents/config.yaml. This determines
-// whether a skeleton config should include harnesses (required on global
-// configs, omitted on project/local configs to inherit from merge).
+// whether a skeleton config should include the default harnesses (global
+// configs include them; project/local configs wait for explicit selection).
 func isGlobalConfigPath(configPath string) bool {
 	gp, err := GlobalConfigPath()
 	if err != nil {

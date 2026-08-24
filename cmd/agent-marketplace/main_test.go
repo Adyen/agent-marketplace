@@ -107,7 +107,7 @@ func TestHelpListsPlaceholderSubcommands(t *testing.T) {
 		t.Fatalf("expected help flag to succeed: %v", err)
 	}
 
-	for _, subcommand := range []string{"sync", "list", "install", "remove", "update", "status"} {
+	for _, subcommand := range []string{"sync", "list", "install", "remove", "update", "status", "telemetry"} {
 		if !strings.Contains(output, subcommand) {
 			t.Fatalf("expected help output to contain %q, got %q", subcommand, output)
 		}
@@ -123,9 +123,12 @@ func executeCommandContext(ctx context.Context, args ...string) (string, error) 
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
+	cmd.SetIn(&bytes.Buffer{})
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
 
-	err := cmd.Execute()
+	execCmd, err := cmd.ExecuteC()
+	finishTelemetry(execCmd, err)
+	finishRootLogging(err)
 	return output.String(), err
 }

@@ -992,17 +992,20 @@ registries:
 	}
 }
 
-func TestSetHarnessesInConfigRejectsNonGlobalPath(t *testing.T) {
+func TestSetHarnessesInConfigAllowsProjectPath(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoConfigPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 
-	err := SetHarnessesInConfig(repoConfigPath, []string{"factory"})
-	if err == nil {
-		t.Fatalf("expected SetHarnessesInConfig to reject non-global path")
+	if err := SetHarnessesInConfig(repoConfigPath, []string{"factory"}); err != nil {
+		t.Fatalf("expected project harnesses to be writable: %v", err)
 	}
-	if !strings.Contains(err.Error(), "user-personal (global) config") {
-		t.Fatalf("expected error to mention user-personal global config, got: %v", err)
+	cfg, err := loadProjectConfig(t, repoConfigPath)
+	if err != nil {
+		t.Fatalf("load project config: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) {
+		t.Fatalf("expected project harnesses [factory], got %#v", cfg.Harnesses)
 	}
 }
 
@@ -1015,10 +1018,8 @@ func TestSetHarnessesInConfigRejectsEmptyHarnesses(t *testing.T) {
 	}
 }
 
-// TestSetHarnessesInConfigCanonicalizesAndValidatesTargets pins both guards on
-// the one mutation that writes the machine-wide target harness set. Each
-// subtest gets its own HOME because the target set is only writable in the
-// user-personal (global) config, so that path IS the subject here.
+// TestSetHarnessesInConfigCanonicalizesAndValidatesTargets pins normalization
+// and validation on the mutation that writes a target harness set.
 func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 	t.Run("canonicalizes and dedupes", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
@@ -1052,14 +1053,18 @@ func TestSetHarnessesInConfigCanonicalizesAndValidatesTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses a non-global config", func(t *testing.T) {
+	t.Run("allows a project config", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		repoPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-		if err := SetHarnessesInConfig(repoPath, []string{"factory"}); err == nil {
-			t.Fatal("expected a non-global harnesses write to be refused")
+		if err := SetHarnessesInConfig(repoPath, []string{"factory"}); err != nil {
+			t.Fatalf("expected project harnesses to be writable: %v", err)
 		}
-		if _, err := os.Stat(repoPath); !os.IsNotExist(err) {
-			t.Fatalf("refused mutation created %q", repoPath)
+		cfg, err := loadProjectConfig(t, repoPath)
+		if err != nil {
+			t.Fatalf("load project config: %v", err)
+		}
+		if !equalStrings(cfg.Harnesses, []string{"factory"}) {
+			t.Fatalf("harnesses = %v, want [factory]", cfg.Harnesses)
 		}
 	})
 }

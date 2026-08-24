@@ -165,11 +165,15 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected harnessWrittenMsg, got %T", msg)
 	}
-	if hw.err == nil {
-		t.Fatalf("expected project harness save to fail because target harness set is machine-wide")
+	if hw.err != nil {
+		t.Fatalf("expected project harness save to succeed: %v", hw.err)
 	}
-	if !strings.Contains(hw.err.Error(), "harnesses can only be set in the user-personal") {
-		t.Fatalf("expected project scope error, got: %v", hw.err)
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load project config: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "claude"}) {
+		t.Fatalf("expected project harnesses [factory claude], got %#v", cfg.Harnesses)
 	}
 }
 
