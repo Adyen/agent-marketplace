@@ -379,7 +379,7 @@ func (c *Client) GetCollectionManifest(ctx context.Context, manifestDigest strin
 	if err := hccartifact.VerifyCollectionManifest(decoded, payload); err != nil {
 		return manifest, nil, fmt.Errorf("verify collection manifest: %w", err)
 	}
-	if err := hccartifact.ValidateFlatMirrorManifest(decoded); err != nil {
+	if err := hccartifact.ValidateCollectionManifest(decoded); err != nil {
 		return manifest, nil, fmt.Errorf("validate collection manifest: %w", err)
 	}
 	if decoded.ContentDigest != manifestDigest {

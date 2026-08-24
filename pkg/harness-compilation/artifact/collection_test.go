@@ -187,7 +187,140 @@ func TestCollectionManifestRejectsDuplicateMembers(t *testing.T) {
 	}
 }
 
-func TestValidateFlatMirrorManifestRequiresExactLeaves(t *testing.T) {
+func TestNestedCollectionManifestPreservesIncludesLeavesAndPaths(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	manifest := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "root",
+		Members: []CollectionMemberEntry{
+			{Kind: "collection", Name: "base", SourceID: "source", Revision: digest},
+			{Kind: "skill", Name: "direct", SourceID: "source", Revision: digest},
+		},
+		Includes: []string{"base"},
+		Leaves: []CollectionMemberEntry{{
+			Kind: "skill", Name: "review", SourceID: "source", Revision: digest,
+			InclusionPaths: [][]string{{"root", "base"}, {"root", "security"}},
+		}},
+		SupportedSchemas: []string{CollectionSchemaV1},
+	}
+	payload, _, err := EncodeCollectionManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := DecodeCollectionManifest(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCollectionManifest(got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Members) != 2 || got.Members[0].Kind != "collection" {
+		t.Fatalf("direct members were not preserved: %#v", got.Members)
+	}
+	if len(got.Includes) != 1 || got.Includes[0] != "base" {
+		t.Fatalf("direct includes were not preserved: %#v", got.Includes)
+	}
+	if len(got.Leaves) != 1 || len(got.Leaves[0].InclusionPaths) != 2 {
+		t.Fatalf("flattened leaf paths were not preserved: %#v", got.Leaves)
+	}
+}
+
+func TestCollectionManifestRejectsConflictingLeafRevisions(t *testing.T) {
+	manifest := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "root",
+		Leaves: []CollectionMemberEntry{
+			{Kind: "skill", Name: "review", SourceID: "source", Revision: "sha256:" + strings.Repeat("a", 64), InclusionPaths: [][]string{{"root"}}},
+			{Kind: "skill", Name: "review", SourceID: "source", Revision: "sha256:" + strings.Repeat("b", 64), InclusionPaths: [][]string{{"root"}}},
+		},
+	}
+	if err := ValidateCollectionManifest(manifest); err == nil || !strings.Contains(err.Error(), "duplicate collection leaf") {
+		t.Fatalf("conflicting leaf revisions error = %v", err)
+	}
+}
+
+func TestValidateAndExpandCollectionManifestGraphAllowsSameNameDistinctRevisions(t *testing.T) {
+	leafDigest := "sha256:" + strings.Repeat("a", 64)
+	firstDigest := "sha256:" + strings.Repeat("b", 64)
+	secondDigest := "sha256:" + strings.Repeat("c", 64)
+	second := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "shared",
+		ContentDigest: secondDigest,
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"shared"}}}},
+	}
+	first := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "shared",
+		ContentDigest: firstDigest,
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "shared", SourceID: "src", Revision: secondDigest}},
+		Includes:      []string{"shared"},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"shared", "shared"}}}},
+	}
+	leaves, err := ValidateAndExpandCollectionManifestGraph(first, map[string]CollectionManifest{secondDigest: second})
+	if err != nil {
+		t.Fatalf("same-name distinct collection revisions were treated as a cycle: %v", err)
+	}
+	if len(leaves) != 1 || len(leaves[0].InclusionPaths) != 1 || !slicesEqual(leaves[0].InclusionPaths[0], []string{"shared", "shared"}) {
+		t.Fatalf("expanded leaves = %#v", leaves)
+	}
+}
+
+func TestValidateAndExpandCollectionManifestGraphRejectsStaleFlattenedLeaves(t *testing.T) {
+	leafDigest := "sha256:" + strings.Repeat("a", 64)
+	childDigest := "sha256:" + strings.Repeat("b", 64)
+	child := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "child",
+		ContentDigest: childDigest,
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"child"}}}},
+	}
+	root := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "root",
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", SourceID: "src", Revision: childDigest}, {Kind: "skill", Name: "direct", SourceID: "src", Revision: leafDigest}},
+		Includes:      []string{"child"},
+		Leaves: []CollectionMemberEntry{
+			{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child"}}},
+			{Kind: "skill", Name: "extra", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root"}}},
+		},
+	}
+	nested := map[string]CollectionManifest{childDigest: child}
+	if _, err := ValidateAndExpandCollectionManifestGraph(root, nested); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("stale flattened leaves error = %v, want missing direct leaf", err)
+	}
+
+	root.Leaves = nil
+	if _, err := ValidateAndExpandCollectionManifestGraph(root, nested); err == nil || !strings.Contains(err.Error(), "flattened leaves") {
+		t.Fatalf("absent flattened leaves error = %v, want fail closed", err)
+	}
+}
+
+func TestValidateAndExpandCollectionManifestGraphRejectsInvalidInclusionPath(t *testing.T) {
+	leafDigest := "sha256:" + strings.Repeat("a", 64)
+	childDigest := "sha256:" + strings.Repeat("b", 64)
+	child := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "child",
+		ContentDigest: childDigest,
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"child", "not-a-member"}}}},
+	}
+	root := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1,
+		Name:          "root",
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", SourceID: "src", Revision: childDigest}},
+		Includes:      []string{"child"},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child", "not-a-member"}}}},
+	}
+	if _, err := ValidateAndExpandCollectionManifestGraph(root, map[string]CollectionManifest{childDigest: child}); err == nil || !strings.Contains(err.Error(), "inclusion paths") {
+		t.Fatalf("invalid inclusion path error = %v, want graph-path rejection", err)
+	}
+}
+
+func TestValidateAndExpandCollectionManifestGraphExpandsDirectLeavesWhenFlat(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	base := CollectionManifest{
 		SchemaVersion:    CollectionSchemaV1,
