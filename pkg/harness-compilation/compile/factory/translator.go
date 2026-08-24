@@ -3,6 +3,7 @@ package factory
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -192,26 +193,34 @@ func (f *factoryCompiler) translateSubagent(s *ir.Subagent, opts compile.Options
 		// identifier does not widen the subagent's tool permissions.
 	}
 
-	// Map tools
+	// Map tools. Factory's droid frontmatter rejects unknown tool identifiers,
+	// and omitting the tools key allows Factory's default tool set. An unmapped
+	// tool therefore omits the whole tools key but still publishes the droid.
 	var mappedTools []string
 	if s.Tools != nil {
 		mappedTools = make([]string, 0, len(s.Tools))
 	}
+	toolsUnknown := false
 	for _, t := range s.Tools {
 		mapped, ok := mapping.ToolWithOverride(t, mapping.TargetFactory, opts.ToolOverride())
 		if ok {
 			mappedTools = append(mappedTools, mapped...)
 		} else {
+			toolsUnknown = true
 			diags = append(diags, diag.Diagnostic{
 				Code:     diag.CodeSubagentFactoryToolUnknown,
-				Severity: diag.SeverityError,
+				Severity: diag.SeverityWarning,
 				Target:   string(mapping.TargetFactory),
 				Resource: s.Name(),
-				Message:  "Factory cannot map an explicit subagent tool; artifact suppressed",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool",
-				Source:   diag.SourceRef(s.Source),
+				Message:  "Factory cannot map an explicit subagent tool; the tools key was omitted and Factory's default tool set applies",
+				Hint:     "Add the tool to the mapping table or remove the explicit tool to keep the restriction, or accept Factory's default tool set for this subagent",
+				Source:   compile.DiagSource(s.Source),
 			})
 		}
+	}
+	if toolsUnknown {
+		slog.Warn("factory subagent tool unrepresentable", "target", mapping.TargetFactory, "resource", s.Name(), "outcome", "tools key omitted")
+		mappedTools = nil
 	}
 
 	// Factory cannot represent these security restrictions. Fail closed rather
