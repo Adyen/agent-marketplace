@@ -21,12 +21,14 @@ cells:
       class: cross
       diagnostics:
         - subagent.devin.tool-unknown
+        - subagent.devin.tool-unknown
         - subagent.security-restriction-unsupported
         - subagent.security-restriction-unsupported
     - from: claude
       to: factory
       class: marquee
       diagnostics:
+        - subagent.factory.tool-unknown
         - subagent.factory.disallowed-tools-dropped
         - subagent.factory.isolation-dropped
       allowedLosses:
@@ -71,6 +73,7 @@ cells:
       diagnostics:
         - subagent.devin.effort-dropped
         - subagent.devin.tool-unknown
+        - subagent.devin.tool-unknown
       allowedLosses:
         - disallowedTools
         - effort
@@ -79,9 +82,12 @@ cells:
     - from: cursor
       to: factory
       class: cross
+      diagnostics:
+        - subagent.factory.tool-unknown
       allowedLosses:
         - disallowedTools
         - isolation
+        - tools
     - from: cursor
       to: gemini
       class: cross
@@ -160,6 +166,7 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
+        - tools
     - from: factory
       to: cursor
       class: cross
@@ -168,6 +175,7 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
+        - tools
     # Same reversal as cursor-to-devin (bead agent-marketplace-pu6b): the
     # profile is emitted without allowed-tools instead of being suppressed.
     - from: factory
@@ -190,6 +198,7 @@ cells:
       allowedLosses:
         - disallowedTools
         - isolation
+        - tools
     - from: factory
       to: gemini
       class: cross
@@ -200,6 +209,7 @@ cells:
         - effort
         - isolation
         - model
+        - tools
     - from: factory
       to: windsurf
       class: drop
@@ -235,6 +245,7 @@ cells:
         - ingest.gemini.bundle-manifest-synthesized
         - subagent.devin.model-unmappable
         - subagent.devin.tool-unknown
+        - subagent.devin.tool-unknown
       allowedLosses:
         - disallowedTools
         - effort
@@ -246,10 +257,12 @@ cells:
       class: cross
       diagnostics:
         - ingest.gemini.bundle-manifest-synthesized
+        - subagent.factory.tool-unknown
       allowedLosses:
         - disallowedTools
         - effort
         - isolation
+        - tools
     - from: gemini
       to: gemini
       class: identity

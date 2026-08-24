@@ -49,7 +49,7 @@ func TestLoadCommand(t *testing.T) {
 func TestLoadSubagent(t *testing.T) {
 	src := fstest.MapFS{
 		"droids/reviewer.md": {
-			Data: []byte("---\nname: reviewer\ndescription: Reviews code\nmodel: claude-sonnet-4-5-20250929\ntools:\n  - Read\n  - Edit\n  - Create\nreasoningEffort: high\nisolation: worktree\ncustomFlag: true\n---\nReview code\n"),
+			Data: []byte("---\nname: reviewer\ndescription: Reviews code\nmodel: claude-sonnet-4-5-20250929\ntools:\n  - Read\n  - Edit\n  - Create\n  - Execute\n  - FetchUrl\nreasoningEffort: high\nisolation: worktree\ncustomFlag: true\n---\nReview code\n"),
 		},
 	}
 
@@ -63,7 +63,7 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Model != "sonnet" {
 		t.Fatalf("Model = %q, want %q", subagent.Model, "sonnet")
 	}
-	if got, want := strings.Join(subagent.Tools, ","), "Read,Write"; got != want {
+	if got, want := strings.Join(subagent.Tools, ","), "Read,Write,Bash,WebFetch"; got != want {
 		t.Fatalf("Tools = %q, want %q", got, want)
 	}
 	if subagent.Effort != "high" {
@@ -80,6 +80,29 @@ func TestLoadSubagent(t *testing.T) {
 	}
 }
 
+func TestLoadSubagentPreservesMissingAndEmptyTools(t *testing.T) {
+	tests := []struct {
+		name    string
+		tools   string
+		wantNil bool
+	}{
+		{name: "missing", wantNil: true},
+		{name: "empty", tools: "tools: []\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := fstest.MapFS{"droids/reviewer.md": {Data: []byte("---\nname: reviewer\n" + tt.tools + "---\nBody\n")}}
+			subagent, _, err := LoadSubagent(src, "droids/reviewer.md")
+			if err != nil {
+				t.Fatalf("LoadSubagent: %v", err)
+			}
+			if (subagent.Tools == nil) != tt.wantNil {
+				t.Fatalf("Tools = %#v, want nil=%v", subagent.Tools, tt.wantNil)
+			}
+		})
+	}
+}
+
 func TestLoadSubagent_StrictSecurityFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -87,6 +110,9 @@ func TestLoadSubagent_StrictSecurityFields(t *testing.T) {
 		want string
 	}{
 		{"disallowed tools", "---\nname: reviewer\ndisallowedTools: []\n---\nBody\n", ""},
+		{"standalone create", "---\nname: reviewer\ntools: [Create]\n---\nBody\n", "cannot be represented in canonical tool vocabulary"},
+		{"native only tool", "---\nname: reviewer\ntools: [ConnectorSearch]\n---\nBody\n", "cannot be represented in canonical tool vocabulary"},
+		{"mixed reversible and native tools", "---\nname: reviewer\ntools: [Read, ToolSearch]\n---\nBody\n", "cannot be represented in canonical tool vocabulary"},
 		{"malformed disallowed tools", "---\nname: reviewer\ndisallowedTools: [true]\n---\nBody\n", "invalid disallowedTools"},
 		{"malformed isolation", "---\nname: reviewer\nisolation: true\n---\nBody\n", "invalid isolation"},
 	}

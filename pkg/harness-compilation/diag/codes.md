@@ -241,12 +241,35 @@ loud absence for a silent, inert install, which is worse.
 
 **Factory now follows the same reversal for `subagent.factory.tool-unknown`,
 and only Gemini and Cursor still fail closed.** Factory's droid frontmatter
-rejects unknown tool identifiers, while omitting the `tools` key has a documented
-meaning: Factory's default tool set applies. The droid is therefore emitted with
-the key omitted and sync exits zero. `disallowedTools` and `isolation` remain
-fail-closed errors because they have no safe omission semantics.
+rejects unknown tool identifiers, while omitting the `tools` key selects
+Factory's default tool set. The droid is therefore emitted with the key omitted
+and sync exits zero. `disallowedTools` and `isolation` remain fail-closed errors
+because they have no safe omission semantics.
 
-**The ingest direction is deliberately not reversed.**
+The opt-in `internal/factoryprobe` suite records the runtime evidence behind
+that decision and runs with `make factory-probe`. It requires the pinned droid
+0.199.0 baseline before asserting the exact vocabulary `ConnectorSearch`,
+`Create`, `DismissHandoffItems`,
+`Edit`, `EndFeatureRun`, `Execute`, `ExitSpecMode`, `FetchUrl`, `GenerateDroid`,
+`GenerateImage`, `Glob`, `Grep`, `LS`, `Loop`, `ProposeMission`, `Read`, `Skill`,
+`StartMissionRun`, `Task`, `TaskOutput`, `TaskStop`, `TodoWrite`, `ToolSearch`, and
+`WebSearch`. An unknown identifier is rejected with `Unknown tool identifier(s)`.
+With no explicit tools restriction, the read-only runtime allows
+`ConnectorSearch`, `Execute`, `FetchUrl`, `Glob`, `Grep`, `LS`, `Read`, `Skill`,
+`TodoWrite`, `ToolSearch`, and `WebSearch`; explicitly selecting only `Read`
+blocks that default set and leaves only `Read` allowed.
+
+The probe also corrects the canonical mapping table: Claude `Bash` maps to
+Factory `Execute`, `WebFetch` maps to `FetchUrl`, and `MultiEdit` is unsupported.
+Factory ingestion reverses one-to-one mappings while preserving the special
+`Edit` plus `Create` to `Write` collapse. An explicit Factory tool that has no
+canonical reverse mapping fails ingestion, so a valid native-only restriction
+such as `Create` or `ConnectorSearch` cannot become an unrestricted droid after
+Factory-to-Factory conversion. Missing `tools` remains nil and an explicit
+`tools: []` remains non-nil and empty, so both forms round-trip without changing
+omission into an explicit deny-all restriction.
+
+**The Devin ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
 ingestion writes the harness-neutral IR that all six compilers read, so a
 rewritten restriction there propagates to targets that do enforce it. Compiling

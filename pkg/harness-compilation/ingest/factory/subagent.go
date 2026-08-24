@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -40,7 +41,10 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, []diag.Diagnostic, erro
 		if err != nil {
 			return nil, nil, fmt.Errorf("ingest/factory: invalid tools in %s: %w", path, err)
 		}
-		tools = normalizeFactoryTools(parsed)
+		tools, ok = normalizeFactoryTools(parsed)
+		if !ok {
+			return nil, nil, fmt.Errorf("ingest/factory: tools in %s cannot be represented in canonical tool vocabulary", path)
+		}
 	}
 	var disallowedTools []string
 	if value, ok := fm["disallowedTools"]; ok {
@@ -97,17 +101,21 @@ func reverseFactoryModel(model string) string {
 	}
 }
 
-func normalizeFactoryTools(tools []string) []string {
-	var result []string
+func normalizeFactoryTools(tools []string) ([]string, bool) {
+	result := make([]string, 0, len(tools))
 	for i := 0; i < len(tools); i++ {
 		if i+1 < len(tools) && isEditCreatePair(tools[i], tools[i+1]) {
 			result = append(result, "Write")
 			i++
 			continue
 		}
-		result = append(result, tools[i])
+		canonical, ok := mapping.ReverseTool(tools[i], mapping.TargetFactory)
+		if !ok {
+			return nil, false
+		}
+		result = append(result, canonical)
 	}
-	return result
+	return result, true
 }
 
 func isEditCreatePair(a, b string) bool {

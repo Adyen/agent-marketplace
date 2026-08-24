@@ -5,6 +5,7 @@ model: claude-sonnet-4-5-20250929
 tools:
   - Read
   - Write
+  - MultiEdit
 effort: high
 ---
 You are a demo agent. Execute tasks with high reasoning effort.

@@ -39,7 +39,14 @@ per unmapped tool and omits the entire `tools` frontmatter key. `sync` exits 0
 and installs the droid. Explicitly empty lists still render `tools: []`, fully
 mappable lists still render their mapped values, and tool overrides still work.
 Omitting the key intentionally inherits Factory's default tool set; emitting an
-unknown identifier would cause Factory to reject the droid.
+unknown identifier would cause Factory to reject the droid. The opt-in
+`internal/factoryprobe` suite verifies both outcomes against a required droid
+0.199.0 baseline and pins its recognized and default tool sets. Its evidence
+corrects `Bash` to `Execute` and `WebFetch` to `FetchUrl`, marks `MultiEdit`
+unsupported, and the Factory ingester now reverses those one-to-one mappings
+while preserving missing versus explicitly empty `tools` lists. Explicit native
+Factory tools without a canonical reverse mapping fail ingestion rather than
+widening into Factory's default set on round-trip.
 
 ### An unrepresentable Devin `allowed-tools` restriction now omits the key instead of costing the resource
 

@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe factory-probe $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -87,6 +87,9 @@ build-release:
 
 clean:
 	rm -rf $(DIST_DIR) $(BINARY)
+
+factory-probe:
+	@AGENT_MARKETPLACE_FACTORY_PROBES=1 $(GO) test -v -count=1 -timeout 5m ./internal/factoryprobe/
 
 # Devin runtime probe suite (internal/devinprobe).
 #

@@ -5,6 +5,7 @@ model: sonnet
 tools:
   - Read
   - Write
+  - MultiEdit
 effort: high
 disallowedTools:
   - Bash

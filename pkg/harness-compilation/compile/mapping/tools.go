@@ -58,7 +58,7 @@ var toolTable = []toolEntry{
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	{Claude: "Bash", Targets: map[Target][]string{
 		TargetClaude:   {"Bash"},
-		TargetFactory:  {"Bash"},
+		TargetFactory:  {"Execute"},
 		TargetCursor:   {"Bash"},
 		TargetWindsurf: {"Bash"},
 		TargetGemini:   {"Bash"},
@@ -88,7 +88,7 @@ var toolTable = []toolEntry{
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	{Claude: "MultiEdit", Targets: map[Target][]string{
 		TargetClaude:   {"MultiEdit"},
-		TargetFactory:  {"MultiEdit"},
+		TargetFactory:  nil,
 		TargetCursor:   {"MultiEdit"},
 		TargetWindsurf: {"MultiEdit"},
 		TargetGemini:   {"MultiEdit"},
@@ -98,7 +98,7 @@ var toolTable = []toolEntry{
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	{Claude: "WebFetch", Targets: map[Target][]string{
 		TargetClaude:   {"WebFetch"},
-		TargetFactory:  {"WebFetch"},
+		TargetFactory:  {"FetchUrl"},
 		TargetCursor:   {"WebFetch"},
 		TargetWindsurf: {"WebFetch"},
 		TargetGemini:   {"WebFetch"},

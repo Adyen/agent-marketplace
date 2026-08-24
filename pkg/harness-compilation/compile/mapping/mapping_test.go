@@ -104,10 +104,13 @@ func TestTool_BasicMapping(t *testing.T) {
 		{"Write", TargetWindsurf, []string{"Write"}, true},
 		{"Write", TargetGemini, []string{"Write"}, true},
 
-		// Bash → same everywhere
+		// Bash → Execute for Factory, Bash for others
 		{"Bash", TargetClaude, []string{"Bash"}, true},
-		{"Bash", TargetFactory, []string{"Bash"}, true},
+		{"Bash", TargetFactory, []string{"Execute"}, true},
 		{"Bash", TargetGemini, []string{"Bash"}, true},
+
+		{"MultiEdit", TargetFactory, nil, false},
+		{"WebFetch", TargetFactory, []string{"FetchUrl"}, true},
 
 		// Glob → same everywhere
 		{"Glob", TargetClaude, []string{"Glob"}, true},
