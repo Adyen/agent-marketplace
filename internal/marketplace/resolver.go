@@ -99,22 +99,37 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 		} else {
 			slog.Debug("marketplace cached no-fetch resolution", "url", entry.URL, "instance_id", entry.InstanceID)
 		}
+		// Expanded collection roots are persisted next to their flattened leaf
+		// pins. Resolve every root first, regardless of config order, so a leaf
+		// cannot materialize before its collection graph has passed revocation
+		// checks.
+		blockedCollections := make(map[string]error)
 		for _, pin := range entry.Resources {
-			// Collections are virtual. Their exact leaf pins are persisted beside
-			// the collection pin and are the only inputs to materialization. The
-			// root still has to be checked: otherwise an expanded root could evade
-			// an exact revocation simply because it is skipped below.
+			if pin.Kind != "collection" || !hasExpandedCollectionLeaves(entry, pin) {
+				continue
+			}
+			rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+			if revErr == nil {
+				revErr = validateResourceRevision(entry, pin, rev)
+			}
+			if revErr == nil {
+				revErr = enforceMarketplaceRevocation(rev, policy)
+			}
+			if revErr != nil {
+				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, revErr))
+				continue
+			}
+			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, mode, policy); graphErr != nil {
+				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, graphErr))
+				blockedCollections[collectionSelectionKey(pin.SourceID, pin.Name, pin.Revision)] = graphErr
+			}
+		}
+		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
-				rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
-				if revErr == nil {
-					revErr = validateResourceRevision(entry, pin, rev)
-				}
-				if revErr == nil {
-					revErr = enforceMarketplaceRevocation(rev, policy)
-				}
-				if revErr != nil {
-					errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, revErr))
-				}
+				continue
+			}
+			if blocked, ok := blockedCollectionForPin(pin, blockedCollections); ok {
+				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "source_id", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue
 			}
 			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
@@ -137,6 +152,127 @@ func hasExpandedCollectionLeaves(entry config.MarketplaceEntry, collectionPin co
 		}
 	}
 	return false
+}
+
+func collectionSelectionKey(sourceID, name, revision string) string {
+	return sourceID + "\x00" + name + "\x00" + revision
+}
+
+func blockedCollectionForPin(pin config.MarketplaceResourcePin, blocked map[string]error) (error, bool) {
+	for _, selected := range pin.SelectedBy.List() {
+		if err, ok := blocked[collectionSelectionKey(selected.SourceID, selected.Name, selected.Revision)]; ok {
+			return err, true
+		}
+	}
+	return nil, false
+}
+
+// enforceExpandedCollectionRevocations validates the manifest graph behind an
+// already-expanded collection. Expanded leaves are persisted independently, so
+// resolving only their pins would otherwise bypass an exact revocation of a
+// nested collection revision.
+func (r *Resolver) enforceExpandedCollectionRevocations(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, rootPin config.MarketplaceResourcePin, rootRevision store.ResourceRevision, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) error {
+	manifest, _, err := r.collectionManifest(ctx, client, cache, string(rootRevision.ContentDigest), mode)
+	if err != nil {
+		return fmt.Errorf("inspect collection manifest graph: %w", err)
+	}
+	if manifest.Name != rootPin.Name {
+		return fmt.Errorf("collection manifest name mismatch: got %q, want %q", manifest.Name, rootPin.Name)
+	}
+	if manifest.ContentDigest != string(rootRevision.ContentDigest) {
+		return fmt.Errorf("collection manifest digest mismatch: got %q, want %q", manifest.ContentDigest, rootRevision.ContentDigest)
+	}
+
+	nestedManifests := make(map[string]hccartifact.CollectionManifest)
+	if err := r.enforceNestedCollectionRevocations(ctx, client, cache, entry, manifest, map[string]bool{manifest.ContentDigest: true}, nestedManifests, mode, policy); err != nil {
+		return err
+	}
+	if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(manifest, nestedManifests); err != nil {
+		return fmt.Errorf("validate collection graph: %w", err)
+	}
+	return nil
+}
+
+func (r *Resolver) collectionManifest(ctx context.Context, client *Client, cache *Cache, digest string, mode resolver.MarketplaceResolveMode) (hccartifact.CollectionManifest, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return hccartifact.CollectionManifest{}, nil, err
+	}
+	raw, verified, err := cache.ReadCollectionManifest(digest)
+	if err != nil {
+		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("read cached collection manifest: %w", err)
+	}
+	if raw != nil && verified {
+		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(raw))
+		if err != nil {
+			return hccartifact.CollectionManifest{}, nil, fmt.Errorf("decode cached collection manifest: %w", err)
+		}
+		if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
+			return hccartifact.CollectionManifest{}, nil, fmt.Errorf("verify cached collection manifest: %w", err)
+		}
+		if manifest.ContentDigest != digest {
+			return hccartifact.CollectionManifest{}, nil, fmt.Errorf("cached collection manifest digest mismatch: got %q, want %q", manifest.ContentDigest, digest)
+		}
+		return manifest, payload, nil
+	}
+	if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
+		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("verified collection manifest is missing from cache")
+	}
+	if client == nil {
+		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("online collection resolution requires a Marketplace client")
+	}
+	manifest, payload, err := client.GetCollectionManifest(ctx, digest)
+	if err != nil {
+		return hccartifact.CollectionManifest{}, nil, err
+	}
+	if _, err := cache.WriteCollectionManifest(digest, payload); err != nil {
+		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("cache collection manifest: %w", err)
+	}
+	if err := cache.MarkCollectionVerified(digest); err != nil {
+		return hccartifact.CollectionManifest{}, nil, fmt.Errorf("mark collection manifest verified: %w", err)
+	}
+	return manifest, payload, nil
+}
+
+func (r *Resolver) enforceNestedCollectionRevocations(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, manifest hccartifact.CollectionManifest, visiting map[string]bool, nestedManifests map[string]hccartifact.CollectionManifest, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) error {
+	for _, member := range manifest.Members {
+		if member.Kind != "collection" {
+			continue
+		}
+		if member.SourceID == "" || member.Revision == "" {
+			return fmt.Errorf("nested collection %q has an unresolved source or revision", member.Name)
+		}
+		if visiting[member.Revision] {
+			return fmt.Errorf("nested collection %q creates a cycle", member.Name)
+		}
+		nestedPin := config.MarketplaceResourcePin{SourceID: member.SourceID, Kind: "collection", Name: member.Name, Revision: member.Revision, Digest: member.Revision}
+		nestedRevision, err := r.getResourceRevision(ctx, client, cache, entry, nestedPin, mode)
+		if err != nil {
+			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
+		}
+		if err := validateResourceRevision(entry, nestedPin, nestedRevision); err != nil {
+			return fmt.Errorf("nested collection %q revision metadata: %w", member.Name, err)
+		}
+		if err := enforceMarketplaceRevocation(nestedRevision, policy); err != nil {
+			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
+		}
+		nested, _, err := r.collectionManifest(ctx, client, cache, member.Revision, mode)
+		if err != nil {
+			return fmt.Errorf("nested collection %q manifest: %w", member.Name, err)
+		}
+		if nested.Name != member.Name {
+			return fmt.Errorf("nested collection %q manifest name mismatch: got %q", member.Name, nested.Name)
+		}
+		if nested.ContentDigest != member.Revision {
+			return fmt.Errorf("nested collection %q manifest digest mismatch: got %q, want %q", member.Name, nested.ContentDigest, member.Revision)
+		}
+		nestedManifests[member.Revision] = nested
+		visiting[member.Revision] = true
+		if err := r.enforceNestedCollectionRevocations(ctx, client, cache, entry, nested, visiting, nestedManifests, mode, policy); err != nil {
+			return err
+		}
+		delete(visiting, member.Revision)
+	}
+	return nil
 }
 
 func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {

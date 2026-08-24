@@ -1,6 +1,9 @@
 package api
 
-import "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+import (
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
 
 // Marketplace-selectable resource kinds. Collections are virtual and never
 // materialize; rules are intentionally out of scope for Marketplace selection.
@@ -26,11 +29,7 @@ var SupportedResourceKinds = []string{
 
 // IsMarketplaceKind reports whether kind is a selectable Marketplace resource kind.
 func IsMarketplaceKind(kind string) bool {
-	switch kind {
-	case KindSkill, KindCommand, KindSubagent, KindHook, KindMcpServer, KindCollection:
-		return true
-	}
-	return false
+	return store.IsMarketplaceResourceKind(kind)
 }
 
 // ToIR converts a Marketplace kind string to the harness-compilation IR kind.

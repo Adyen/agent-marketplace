@@ -342,6 +342,24 @@ func TestLoadConfigTraversingRootPath(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsExactRevocationForDifferentMarketplace(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	yaml := strings.Replace(validConfigYAML(), "revisions: []", "revisions:\n  - other-mp/src/skill/review@"+digest, 1)
+	_, err := LoadConfig(writeConfig(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "does not match instance.id") {
+		t.Fatalf("LoadConfig error = %v, want Marketplace identity mismatch", err)
+	}
+}
+
+func TestLoadConfigRejectsUnsupportedExactRevocationKind(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	yaml := strings.Replace(validConfigYAML(), "revisions: []", "revisions:\n  - test-mp/src/rule/review@"+digest, 1)
+	_, err := LoadConfig(writeConfig(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "unsupported resource kind") {
+		t.Fatalf("LoadConfig error = %v, want unsupported resource kind", err)
+	}
+}
+
 func writeConfig(t *testing.T, yaml string) string {
 	t.Helper()
 	dir := t.TempDir()

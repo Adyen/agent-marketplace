@@ -101,6 +101,9 @@ func ParseRevisionRevocationTarget(raw string) (RevisionRevocationTarget, error)
 			return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: %s must be a non-empty route token", raw, label)
 		}
 	}
+	if !IsMarketplaceResourceKind(coordinate.Kind) {
+		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: unsupported resource kind %q", raw, coordinate.Kind)
+	}
 	digest := input[at+1:]
 	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
 		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: content digest must be sha256:<64 lowercase hex>", raw)
@@ -117,6 +120,19 @@ func ParseRevisionRevocationTarget(raw string) (RevisionRevocationTarget, error)
 // String returns the canonical exact revision revocation target.
 func (t RevisionRevocationTarget) String() string {
 	return t.Coordinate.String() + "@" + string(t.ContentDigest)
+}
+
+// IsMarketplaceResourceKind reports whether kind is valid in a public
+// Marketplace resource coordinate. Keeping this validation in the store parser
+// prevents operator revocation declarations from accepting identities that the
+// consumer-side override parser would reject.
+func IsMarketplaceResourceKind(kind string) bool {
+	switch kind {
+	case "skill", "command", "subagent", "hook", "mcpserver", "collection":
+		return true
+	default:
+		return false
+	}
 }
 
 // AcquisitionMode describes how a source's artifacts are handled.
