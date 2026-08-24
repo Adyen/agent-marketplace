@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -251,7 +252,17 @@ func resolveMarketplaceEntry(locator marketplace.MarketplaceLocator, selector st
 
 func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, ec *config.EffectiveConfig, plan *marketplace.PreparedInstall) error {
 	if len(plan.CollectionMembers) > 0 {
+		seen := make(map[string]*marketplace.PreparedInstall, len(plan.CollectionMembers))
 		for _, member := range plan.CollectionMembers {
+			kind := marketplaceProtocolKind(member.Resolved.Kind)
+			key := kind + "\x00" + marketplaceInstalledName(member.Pin)
+			if previous, ok := seen[key]; ok {
+				if !sameMarketplacePlanIdentity(previous, member) {
+					return fmt.Errorf("collection leaves collide on %s installed name %q", kind, marketplaceInstalledName(member.Pin))
+				}
+				continue
+			}
+			seen[key] = member
 			if err := checkMarketplaceInstallCollision(ctx, opts, ec, member); err != nil {
 				return err
 			}
@@ -306,6 +317,13 @@ func sameMarketplacePinIdentity(url, instanceID string, pin config.MarketplaceRe
 		pin.SourceID == plan.Pin.SourceID && pin.Kind == plan.Pin.Kind && pin.Name == plan.Pin.Name
 }
 
+func sameMarketplacePlanIdentity(a, b *marketplace.PreparedInstall) bool {
+	return canonicalMarketplaceURL(a.Entry.URL) != "" &&
+		canonicalMarketplaceURL(a.Entry.URL) == canonicalMarketplaceURL(b.Entry.URL) &&
+		a.Entry.InstanceID == b.Entry.InstanceID && a.Pin.SourceID == b.Pin.SourceID &&
+		a.Pin.Kind == b.Pin.Kind && a.Pin.Name == b.Pin.Name
+}
+
 func sameResolvedMarketplaceIdentity(existing resolver.ResolvedArtifact, plan *marketplace.PreparedInstall) bool {
 	existingURL := canonicalMarketplaceURL(existing.MarketplaceURL)
 	planURL := canonicalMarketplaceURL(plan.Entry.URL)
@@ -337,15 +355,26 @@ func marketplaceInstalledName(pin config.MarketplaceResourcePin) string {
 }
 
 func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) error {
-	if len(plan.CollectionMembers) > 0 {
-		for _, member := range plan.CollectionMembers {
-			if err := evaluateMarketplaceConsent(member, accept); err != nil {
-				return err
-			}
-		}
-		return nil
+	// Evaluate the virtual collection revision before descending into leaves. A
+	// collection finding is part of the trust decision even though the root has
+	// no materialized artifact.
+	return evaluateMarketplacePreviewConsentRecursive(plan.Preview(), accept)
+}
+
+func evaluateMarketplacePreviewConsentRecursive(preview marketplace.InstallPreview, accept bool) error {
+	if err := evaluateMarketplacePreviewConsent(preview.Findings, preview.Capabilities, accept); err != nil {
+		return err
 	}
-	for _, finding := range plan.Artifact.Manifest.Findings {
+	for _, member := range preview.CollectionMembers {
+		if err := evaluateMarketplacePreviewConsentRecursive(member, accept); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func evaluateMarketplacePreviewConsent(findings []hccartifact.CanonicalFinding, capabilities []string, accept bool) error {
+	for _, finding := range findings {
 		outcome := strings.ToLower(strings.TrimSpace(finding.PolicyOutcome))
 		switch outcome {
 		case "allow", "warn":
@@ -356,8 +385,8 @@ func evaluateMarketplaceConsent(plan *marketplace.PreparedInstall, accept bool) 
 			return fmt.Errorf("marketplace finding %s has unknown policy outcome %q; refusing to continue", marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.PolicyOutcome))
 		}
 	}
-	if (len(plan.Artifact.Manifest.Findings) > 0 || len(plan.Artifact.Manifest.Capabilities) > 0) && !accept {
-		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(plan.Artifact.Manifest.Findings), len(plan.Artifact.Manifest.Capabilities))
+	if (len(findings) > 0 || len(capabilities) > 0) && !accept {
+		return fmt.Errorf("marketplace install requires risk acceptance: %d finding(s), %d active capability(ies); re-run with --accept-risk (or --yes)", len(findings), len(capabilities))
 	}
 	return nil
 }
@@ -372,10 +401,26 @@ type marketplacePreviewFinding struct {
 	PolicyOutcome marketplace.TerminalString `json:"policy_outcome"`
 }
 
-func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error) {
-	preview := plan.Preview()
-	findings := make([]marketplacePreviewFinding, 0, len(preview.Findings))
-	for _, finding := range preview.Findings {
+type marketplacePreviewLeaf struct {
+	SourceID             marketplace.TerminalString   `json:"source_id"`
+	SourceSlug           marketplace.TerminalString   `json:"source_slug"`
+	Kind                 marketplace.TerminalString   `json:"kind"`
+	Name                 marketplace.TerminalString   `json:"name"`
+	InstalledName        marketplace.TerminalString   `json:"installed_name"`
+	Revision             marketplace.TerminalString   `json:"revision"`
+	ContentDigest        marketplace.TerminalString   `json:"content_digest"`
+	ArchiveDigest        marketplace.TerminalString   `json:"archive_digest"`
+	Acquisition          marketplace.TerminalString   `json:"acquisition"`
+	SourceCommit         marketplace.TerminalString   `json:"source_commit,omitempty"`
+	SourceManifestDigest marketplace.TerminalString   `json:"source_manifest_digest,omitempty"`
+	License              marketplace.TerminalString   `json:"license,omitempty"`
+	Findings             []marketplacePreviewFinding  `json:"findings"`
+	Capabilities         []marketplace.TerminalString `json:"capabilities"`
+}
+
+func marketplacePreviewFindings(values []hccartifact.CanonicalFinding) []marketplacePreviewFinding {
+	findings := make([]marketplacePreviewFinding, 0, len(values))
+	for _, finding := range values {
 		findings = append(findings, marketplacePreviewFinding{
 			Code: marketplace.TerminalString(finding.Code), Severity: marketplace.TerminalString(finding.Severity), Message: marketplace.TerminalString(finding.Message),
 			File: marketplace.TerminalString(finding.File), Line: finding.Line, Analyzer: marketplace.TerminalString(finding.Analyzer),
@@ -387,6 +432,48 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 		right, _ := json.Marshal(b)
 		return strings.Compare(string(left), string(right))
 	})
+	return findings
+}
+
+func marketplacePreviewLeafFromPreview(preview marketplace.InstallPreview) marketplacePreviewLeaf {
+	caps := slices.Clone(preview.Capabilities)
+	sort.Strings(caps)
+	return marketplacePreviewLeaf{
+		SourceID: marketplace.TerminalString(preview.SourceID), SourceSlug: marketplace.TerminalString(preview.SourceSlug),
+		Kind: marketplace.TerminalString(preview.Kind), Name: marketplace.TerminalString(preview.Name),
+		InstalledName: marketplace.TerminalString(preview.InstalledName), Revision: marketplace.TerminalString(preview.Revision),
+		ContentDigest: marketplace.TerminalString(preview.ContentDigest), ArchiveDigest: marketplace.TerminalString(preview.ArchiveDigest),
+		Acquisition:  marketplace.TerminalString(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)),
+		SourceCommit: marketplace.TerminalString(preview.SourceCommit), SourceManifestDigest: marketplace.TerminalString(preview.SourceManifestDigest),
+		License: marketplace.TerminalString(preview.License), Findings: marketplacePreviewFindings(preview.Findings),
+		Capabilities: marketplace.TerminalStrings(caps),
+	}
+}
+
+func marketplacePreviewLeaves(members []marketplace.InstallPreview) []marketplacePreviewLeaf {
+	leaves := make([]marketplacePreviewLeaf, 0, len(members))
+	var appendLeaves func([]marketplace.InstallPreview)
+	appendLeaves = func(values []marketplace.InstallPreview) {
+		for _, member := range values {
+			if len(member.CollectionMembers) > 0 {
+				appendLeaves(member.CollectionMembers)
+				continue
+			}
+			leaves = append(leaves, marketplacePreviewLeafFromPreview(member))
+		}
+	}
+	appendLeaves(members)
+	slices.SortFunc(leaves, func(a, b marketplacePreviewLeaf) int {
+		left, _ := json.Marshal(a)
+		right, _ := json.Marshal(b)
+		return strings.Compare(string(left), string(right))
+	})
+	return leaves
+}
+
+func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error) {
+	preview := plan.Preview()
+	findings := marketplacePreviewFindings(preview.Findings)
 	caps := slices.Clone(preview.Capabilities)
 	sort.Strings(caps)
 	findingsJSON := "none"
@@ -406,7 +493,15 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 		capabilities = marketplace.QuoteTerminal("none")
 	}
 	provenance := fmt.Sprintf("registry_url=%s ref=%s path=%s generator=%s", marketplace.QuoteTerminal(preview.Provenance.RegistryURL), marketplace.QuoteTerminal(preview.Provenance.Ref), marketplace.QuoteTerminal(preview.Provenance.Path), marketplace.QuoteTerminal(preview.Provenance.Generator))
-	return fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\nfindings: %s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findingsJSON, capabilities, provenance), nil
+	result := fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\nfindings: %s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findingsJSON, capabilities, provenance)
+	if len(preview.CollectionMembers) == 0 {
+		return result, nil
+	}
+	leaves, err := json.Marshal(marketplacePreviewLeaves(preview.CollectionMembers))
+	if err != nil {
+		return "", fmt.Errorf("encode Marketplace collection leaf preview: %w", err)
+	}
+	return result + "\ncollection_leaves: " + string(leaves), nil
 }
 
 func displayMarketplace(plan *marketplace.PreparedInstall) string {

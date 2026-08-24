@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -221,6 +222,91 @@ func TestPublishSourceRevisionRequiresCompleteCollectionGraph(t *testing.T) {
 				t.Fatalf("failed publication committed leaf metadata: %v", err)
 			}
 		})
+	}
+}
+
+func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		leaves func([]hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry
+		want   string
+	}{
+		{
+			name: "stale leaf",
+			leaves: func(members []hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry {
+				return []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "stale", SourceID: members[0].SourceID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}}}
+			},
+			want: "missing",
+		},
+		{
+			name: "extra leaf",
+			leaves: func(members []hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry {
+				return append(append([]hccartifact.CollectionMemberEntry(nil), members...), hccartifact.CollectionMemberEntry{Kind: "skill", Name: "extra", SourceID: members[0].SourceID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}})
+			},
+			want: "extra",
+		},
+		{
+			name: "invalid inclusion path",
+			leaves: func(members []hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry {
+				members[0].InclusionPaths = [][]string{{"bundle", "not-a-member"}}
+				return members
+			},
+			want: "inclusion paths",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, leafCoord := collectionPublicationFixture(t)
+			manifest, _, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(req.ExtraBlobs[0].Data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			members := append([]hccartifact.CollectionMemberEntry(nil), manifest.Members...)
+			for i := range members {
+				members[i].InclusionPaths = [][]string{{manifest.Name}}
+			}
+			manifest.Leaves = tc.leaves(members)
+			payload, digest, err := hccartifact.EncodeCollectionManifest(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.ExtraBlobs[0] = store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: payload}
+			req.Resources[1].ContentDigest = store.RevisionDigest(digest)
+			req.Collections[0].ID = digest
+			req.Collections[0].ManifestDigest = store.RevisionDigest(digest)
+
+			meta, blobs := openAtomicStores(t)
+			if err := store.PublishSourceRevision(context.Background(), meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			}
+			if _, err := meta.GetResourceRevision(context.Background(), leafCoord, req.Resources[0].ContentDigest); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("invalid flattened leaves committed leaf metadata: %v", err)
+			}
+		})
+	}
+}
+
+func TestPublishSourceRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *testing.T) {
+	ctx := context.Background()
+	meta, blobs := openAtomicStores(t)
+	req, leafCoord := collectionPublicationFixture(t)
+	manifest, _, err := hccartifact.DecodeCollectionManifest(strings.NewReader(string(req.ExtraBlobs[0].Data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Leaves = append([]hccartifact.CollectionMemberEntry(nil), manifest.Members...)
+	manifest.Leaves[0].InclusionPaths = [][]string{{manifest.Name}}
+	payload, digest, err := hccartifact.EncodeCollectionManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ExtraBlobs[0] = store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: payload}
+	req.Resources[0].ArchiveDigest = ""
+	req.Resources[1].ContentDigest = store.RevisionDigest(digest)
+	req.Collections[0].ID = digest
+	req.Collections[0].ManifestDigest = store.RevisionDigest(digest)
+	req.Resources[0].Provenance = &store.Provenance{SourceID: leafCoord.Source, Commit: "abc123", ManifestDigest: req.Occurrence.SourceRevisionManifestDigest}
+	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("mixed mirror/index-only publication failed: %v", err)
 	}
 }
 

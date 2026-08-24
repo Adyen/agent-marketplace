@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -51,16 +52,18 @@ type InstallPreview struct {
 	Findings             []hccartifact.CanonicalFinding
 	Capabilities         []string
 	Provenance           hccartifact.CanonicalProvenance
+	CollectionMembers    []InstallPreview
 }
 
 // Preview returns metadata decoded from the verified artifact, not from an
-// untrusted index response.
+// untrusted index response. Virtual collections use their verified revision
+// metadata for the root and recursively expose each verified member preview.
 func (p *PreparedInstall) Preview() InstallPreview {
 	installedName := p.Pin.InstalledName
 	if installedName == "" {
 		installedName = p.Pin.Name
 	}
-	return InstallPreview{
+	preview := InstallPreview{
 		MarketplaceAlias: p.Entry.Alias, MarketplaceURL: p.Entry.URL, InstanceID: p.Entry.InstanceID,
 		SourceID: p.Pin.SourceID, SourceSlug: p.Pin.SourceSlug, Kind: p.Pin.Kind, Name: p.Pin.Name,
 		InstalledName: installedName, Revision: p.Pin.Revision, ContentDigest: p.Pin.Digest,
@@ -69,6 +72,57 @@ func (p *PreparedInstall) Preview() InstallPreview {
 		License: p.Artifact.Manifest.License, Findings: p.Artifact.Manifest.Findings,
 		Capabilities: p.Artifact.Manifest.Capabilities, Provenance: p.Artifact.Manifest.Provenance,
 	}
+	if p.Pin.Kind == "collection" || len(p.CollectionMembers) > 0 {
+		if len(p.Revision.Findings) > 0 {
+			preview.Findings = canonicalFindingsFromRevision(p.Revision)
+		}
+		if preview.License == "" {
+			preview.License = p.Revision.License
+		}
+		if preview.Provenance == (hccartifact.CanonicalProvenance{}) {
+			preview.Provenance = p.CollectionManifest.Provenance
+		}
+		preview.CollectionMembers = make([]InstallPreview, len(p.CollectionMembers))
+		for i := range p.CollectionMembers {
+			preview.CollectionMembers[i] = p.CollectionMembers[i].Preview()
+		}
+	}
+	return preview
+}
+
+func canonicalFindingsFromRevision(revision store.ResourceRevision) []hccartifact.CanonicalFinding {
+	if len(revision.Findings) == 0 {
+		return nil
+	}
+	findings := make([]hccartifact.CanonicalFinding, len(revision.Findings))
+	for i, finding := range revision.Findings {
+		findings[i] = hccartifact.CanonicalFinding{
+			Code: finding.Code, Severity: finding.Severity, Message: finding.Message,
+			PolicyOutcome: finding.Policy, AnalyzerVersion: revision.AnalyzerVersion,
+		}
+		file, line, column := parseSourceRange(finding.SourceRange)
+		findings[i].File, findings[i].Line, findings[i].Column = file, line, column
+	}
+	return findings
+}
+
+func parseSourceRange(raw string) (file string, line, column int) {
+	file = raw
+	parts := strings.Split(raw, ":")
+	if len(parts) < 2 {
+		return file, 0, 0
+	}
+	last, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return file, 0, 0
+	}
+	if len(parts) >= 3 {
+		second, secondErr := strconv.Atoi(parts[len(parts)-2])
+		if secondErr == nil {
+			return strings.Join(parts[:len(parts)-2], ":"), second, last
+		}
+	}
+	return strings.Join(parts[:len(parts)-1], ":"), last, 0
 }
 
 // LatestRevision verifies the endpoint and source identity, then fetches the
@@ -259,9 +313,6 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		if source.Acquisition != store.AcquisitionMirror {
 			return nil, fmt.Errorf("collection %q requires mirror acquisition", locator.Name)
 		}
-		// A collection revision is the trust boundary for its entire leaf graph.
-		// Reject it before fetching the manifest or writing anything to the cache;
-		// otherwise a revoked collection could still cause its leaves to be fetched.
 		if err := enforceMarketplaceRevocation(revision, canonical, pin, nil); err != nil {
 			return nil, fmt.Errorf("collection revision: %w", err)
 		}
@@ -275,33 +326,30 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		if manifest.Name != locator.Name {
 			return nil, fmt.Errorf("collection manifest name mismatch: got %q, want %q", manifest.Name, locator.Name)
 		}
-		members := make([]*PreparedInstall, 0, len(manifest.Members))
-		for _, member := range manifest.Members {
-			memberSource, err := client.GetSource(ctx, member.SourceID)
+		nestedManifests := make(map[string]hccartifact.CollectionManifest)
+		if err := r.verifyNestedCollectionManifests(ctx, client, manifest, map[string]bool{string(revision.ContentDigest): true}, nestedManifests); err != nil {
+			return nil, err
+		}
+		leaves, err := hccartifact.ValidateAndExpandCollectionManifestGraph(manifest, nestedManifests)
+		if err != nil {
+			return nil, fmt.Errorf("validate collection graph: %w", err)
+		}
+		members := make([]*PreparedInstall, 0, len(leaves))
+		seen := make(map[string]string, len(leaves))
+		for _, member := range leaves {
+			key := member.SourceID + "/" + member.Kind + "/" + member.Name
+			if previous, ok := seen[key]; ok {
+				if previous != member.Revision {
+					return nil, fmt.Errorf("collection contains conflicting revisions for %s", key)
+				}
+				continue
+			}
+			seen[key] = member.Revision
+			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, source, revision, member, targets)
 			if err != nil {
-				return nil, fmt.Errorf("resolve collection member source %q: %w", member.SourceID, err)
+				return nil, err
 			}
-			if memberSource.Acquisition != store.AcquisitionMirror {
-				return nil, fmt.Errorf("collection member %s/%q is not mirror-acquired", member.Kind, member.Name)
-			}
-			leafPin := config.MarketplaceResourcePin{
-				SourceID: string(memberSource.ID), SourceSlug: memberSource.Slug,
-				Kind: member.Kind, Name: member.Name, Revision: member.Revision,
-				Digest: member.Revision, Acquisition: config.MarketplaceAcquisitionMirror,
-				SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: string(source.ID), Name: locator.Name, Revision: string(revision.ContentDigest)}}),
-			}
-			leafRevision, err := client.GetResourceRevisionForSource(ctx, string(memberSource.ID), string(memberSource.ID), member.Kind, member.Name, member.Revision)
-			if err != nil {
-				return nil, fmt.Errorf("resolve collection member %s/%q: %w", member.Kind, member.Name, err)
-			}
-			if err := validateResourceRevision(canonical, leafPin, leafRevision); err != nil {
-				return nil, fmt.Errorf("collection member %s/%q metadata: %w", member.Kind, member.Name, err)
-			}
-			resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, leafPin, targets, resolver.MarketplaceResolveModeRefresh)
-			if err != nil {
-				return nil, fmt.Errorf("verify collection member %s/%q: %w", member.Kind, member.Name, err)
-			}
-			members = append(members, &PreparedInstall{Entry: canonical, Pin: leafPin, Revision: leafRevision, Resolved: resolved, Artifact: artifact, ArchiveDigest: string(leafRevision.ArchiveDigest)})
+			members = append(members, memberPlan)
 		}
 		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
 		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members}, nil
@@ -319,4 +367,106 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	}
 	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest, "acquisition", pin.Acquisition, "source_commit", pin.SourceCommit)
 	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: archiveDigest}, nil
+}
+
+func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *Client, manifest hccartifact.CollectionManifest, visiting map[string]bool, nestedManifests map[string]hccartifact.CollectionManifest) error {
+	for _, member := range manifest.Members {
+		if member.Kind != "collection" {
+			continue
+		}
+		if member.SourceID == "" || member.Revision == "" {
+			return fmt.Errorf("collection %q has an unresolved nested member %q", manifest.Name, member.Name)
+		}
+		if visiting[member.Revision] {
+			return fmt.Errorf("collection cycle detected at %q", member.Name)
+		}
+		nestedSource, err := client.GetSource(ctx, member.SourceID)
+		if err != nil {
+			return fmt.Errorf("resolve nested collection source %q: %w", member.SourceID, err)
+		}
+		if nestedSource.Acquisition != store.AcquisitionMirror {
+			return fmt.Errorf("nested collection %q uses unsupported acquisition %q", member.Name, nestedSource.Acquisition)
+		}
+		nestedRevision, err := client.GetResourceRevisionForSource(ctx, string(nestedSource.ID), string(nestedSource.ID), "collection", member.Name, member.Revision)
+		if err != nil {
+			return fmt.Errorf("resolve nested collection %q revision: %w", member.Name, err)
+		}
+		if nestedRevision.ContentDigest != store.RevisionDigest(member.Revision) || nestedRevision.ArchiveDigest != "" {
+			return fmt.Errorf("nested collection %q revision metadata does not match manifest", member.Name)
+		}
+		nested, payload, err := client.GetCollectionManifest(ctx, member.Revision)
+		if err != nil {
+			return fmt.Errorf("fetch nested collection %q: %w", member.Name, err)
+		}
+		if nested.Name != member.Name {
+			return fmt.Errorf("nested collection name mismatch: got %q, want %q", nested.Name, member.Name)
+		}
+		if _, err := r.cache().WriteCollectionManifest(member.Revision, payload); err != nil {
+			return fmt.Errorf("cache nested collection %q: %w", member.Name, err)
+		}
+		nestedManifests[member.Revision] = nested
+		visiting[member.Revision] = true
+		if err := r.verifyNestedCollectionManifests(ctx, client, nested, visiting, nestedManifests); err != nil {
+			return err
+		}
+		delete(visiting, member.Revision)
+	}
+	for _, name := range manifest.Includes {
+		found := false
+		for _, member := range manifest.Members {
+			if member.Kind == "collection" && member.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("collection %q includes missing nested collection %q", manifest.Name, name)
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionSource store.Source, collectionRevision store.ResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target) (*PreparedInstall, error) {
+	memberSource, err := client.GetSource(ctx, member.SourceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve collection member source %q: %w", member.SourceID, err)
+	}
+	acquisition := config.MarketplaceAcquisitionMirror
+	if memberSource.Acquisition == store.AcquisitionIndexOnly {
+		acquisition = config.MarketplaceAcquisitionIndexOnly
+	} else if memberSource.Acquisition != store.AcquisitionMirror {
+		return nil, fmt.Errorf("collection member %s/%q uses unsupported acquisition %q", member.Kind, member.Name, memberSource.Acquisition)
+	}
+	leafPin := config.MarketplaceResourcePin{
+		SourceID: string(memberSource.ID), SourceSlug: memberSource.Slug,
+		Kind: member.Kind, Name: member.Name, Revision: member.Revision,
+		Digest: member.Revision, Acquisition: acquisition,
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: string(collectionSource.ID), Name: collectionRevision.Coordinate.Name, Revision: string(collectionRevision.ContentDigest)}}),
+	}
+	leafRevision, err := client.GetResourceRevisionForSource(ctx, string(memberSource.ID), string(memberSource.ID), member.Kind, member.Name, member.Revision)
+	if err != nil {
+		return nil, fmt.Errorf("resolve collection member %s/%q: %w", member.Kind, member.Name, err)
+	}
+	if err := validateResourceRevision(entry, leafPin, leafRevision); err != nil {
+		return nil, fmt.Errorf("collection member %s/%q metadata: %w", member.Kind, member.Name, err)
+	}
+	if acquisition == config.MarketplaceAcquisitionIndexOnly {
+		if leafRevision.Provenance == nil || leafRevision.Provenance.Commit == "" || leafRevision.Provenance.SourceID != memberSource.ID {
+			return nil, fmt.Errorf("collection member %s/%q has no exact index-only source occurrence", member.Kind, member.Name)
+		}
+		occurrence, err := client.GetSourceOccurrence(ctx, string(memberSource.ID), leafRevision.Provenance.Commit)
+		if err != nil {
+			return nil, fmt.Errorf("resolve collection member %s/%q occurrence: %w", member.Kind, member.Name, err)
+		}
+		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.SourceRevisionManifestDigest != leafRevision.Provenance.ManifestDigest {
+			return nil, fmt.Errorf("collection member %s/%q source occurrence does not match revision", member.Kind, member.Name)
+		}
+		leafPin.SourceCommit = occurrence.Commit
+		leafPin.SourceManifestDigest = string(occurrence.SourceRevisionManifestDigest)
+	}
+	resolved, decoded, err := r.resolvePinWithArtifact(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh)
+	if err != nil {
+		return nil, fmt.Errorf("verify collection member %s/%q: %w", member.Kind, member.Name, err)
+	}
+	return &PreparedInstall{Entry: entry, Pin: leafPin, Revision: leafRevision, Resolved: resolved, Artifact: decoded, ArchiveDigest: string(leafRevision.ArchiveDigest)}, nil
 }

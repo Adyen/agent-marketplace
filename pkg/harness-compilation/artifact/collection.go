@@ -30,6 +30,7 @@ type CollectionManifest struct {
 	Description      string                  `json:"description,omitempty"`
 	Members          []CollectionMemberEntry `json:"members"`
 	Includes         []string                `json:"includes,omitempty"`
+	Leaves           []CollectionMemberEntry `json:"leaves,omitempty"`
 	ContentDigest    string                  `json:"content_digest"`
 	Provenance       CanonicalProvenance     `json:"provenance"`
 	SupportedSchemas []string                `json:"supported_schema_versions"`
@@ -37,11 +38,12 @@ type CollectionManifest struct {
 
 // CollectionMemberEntry describes a resource that is part of a collection.
 type CollectionMemberEntry struct {
-	Kind     string `json:"kind"`
-	Name     string `json:"name"`
-	Optional bool   `json:"optional,omitempty"`
-	SourceID string `json:"source_id,omitempty"`
-	Revision string `json:"revision,omitempty"`
+	Kind           string     `json:"kind"`
+	Name           string     `json:"name"`
+	Optional       bool       `json:"optional,omitempty"`
+	SourceID       string     `json:"source_id,omitempty"`
+	Revision       string     `json:"revision,omitempty"`
+	InclusionPaths [][]string `json:"inclusion_paths,omitempty"`
 }
 
 // CollectionContentDigest returns the digest of a collection manifest payload.
@@ -85,15 +87,35 @@ func canonicalCollectionPayload(m CollectionManifest) ([]byte, error) {
 
 	// Sort a copy of the members and includes slices so we never mutate the
 	// caller's data while still producing a deterministic payload.
-	if len(cm.Members) > 0 {
-		cm.Members = append([]CollectionMemberEntry(nil), cm.Members...)
-		sort.SliceStable(cm.Members, func(i, j int) bool {
-			if cm.Members[i].Kind != cm.Members[j].Kind {
-				return cm.Members[i].Kind < cm.Members[j].Kind
+	sortMembers := func(members []CollectionMemberEntry) []CollectionMemberEntry {
+		if len(members) == 0 {
+			return nil
+		}
+		out := append([]CollectionMemberEntry(nil), members...)
+		for i := range out {
+			if len(out[i].InclusionPaths) > 0 {
+				out[i].InclusionPaths = append([][]string(nil), out[i].InclusionPaths...)
+				sort.Slice(out[i].InclusionPaths, func(a, b int) bool {
+					return strings.Join(out[i].InclusionPaths[a], "\x00") < strings.Join(out[i].InclusionPaths[b], "\x00")
+				})
 			}
-			return cm.Members[i].Name < cm.Members[j].Name
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Kind != out[j].Kind {
+				return out[i].Kind < out[j].Kind
+			}
+			if out[i].Name != out[j].Name {
+				return out[i].Name < out[j].Name
+			}
+			if out[i].SourceID != out[j].SourceID {
+				return out[i].SourceID < out[j].SourceID
+			}
+			return out[i].Revision < out[j].Revision
 		})
+		return out
 	}
+	cm.Members = sortMembers(cm.Members)
+	cm.Leaves = sortMembers(cm.Leaves)
 	if len(cm.Includes) > 0 {
 		cm.Includes = append([]string(nil), cm.Includes...)
 		sort.Strings(cm.Includes)
@@ -182,24 +204,20 @@ func ValidateFlatMirrorManifest(m CollectionManifest) error {
 		return errors.New("flat collection manifest must contain direct leaves")
 	}
 	for i, member := range m.Members {
-		if !validCollectionToken(member.SourceID) {
-			return fmt.Errorf("members[%d].source_id is not a route-safe token", i)
-		}
-		if !validCollectionToken(member.Name) {
-			return fmt.Errorf("members[%d].name is not a route-safe token", i)
-		}
 		if member.Kind == "collection" {
 			return fmt.Errorf("members[%d] contains a nested collection", i)
 		}
-		if member.SourceID == "" {
-			return fmt.Errorf("members[%d].source_id is required", i)
+		if err := validateCollectionLeaf(member, i); err != nil {
+			return errors.New(strings.Replace(err.Error(), "leaves[", "members[", 1))
 		}
-		if len(member.Revision) != len("sha256:")+64 || !strings.HasPrefix(member.Revision, "sha256:") {
-			return fmt.Errorf("members[%d].revision must be sha256:<64 lowercase hex>", i)
+	}
+	if len(m.Leaves) > 0 {
+		if len(m.Leaves) != len(m.Members) {
+			return errors.New("flat collection manifest leaves do not match members")
 		}
-		for _, ch := range member.Revision[len("sha256:"):] {
-			if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
-				return fmt.Errorf("members[%d].revision must be sha256:<64 lowercase hex>", i)
+		for i, leaf := range m.Leaves {
+			if err := validateCollectionLeaf(leaf, i); err != nil {
+				return err
 			}
 		}
 	}
@@ -218,24 +236,251 @@ func validCollectionToken(value string) bool {
 	return true
 }
 
-// Validate checks the collection manifest for required fields and valid members.
+func ValidateCollectionManifest(m CollectionManifest) error { return m.Validate() }
+
+// ValidateAndExpandCollectionManifestGraph validates a collection manifest and
+// its nested manifests, then derives the exact flattened leaf set from the
+// direct member/include graph. The nested map is keyed by collection manifest
+// content digest. A flat manifest may omit Leaves for backwards compatibility;
+// once a nested member or include exists, Leaves is required and must exactly
+// match the graph-derived set and inclusion paths.
+//
+// The returned leaves are the graph-derived leaves, not the caller-provided
+// flattened list. Callers should use them only after this function succeeds.
+func ValidateAndExpandCollectionManifestGraph(root CollectionManifest, nested map[string]CollectionManifest) ([]CollectionMemberEntry, error) {
+	if err := root.Validate(); err != nil {
+		return nil, err
+	}
+	leaves, err := expandCollectionManifestGraph(root, nested, make(map[collectionManifestIdentity]bool))
+	if err != nil {
+		return nil, err
+	}
+	if err := validateFlattenedCollectionLeaves(root, leaves); err != nil {
+		return nil, err
+	}
+	return leaves, nil
+}
+
+type collectionManifestIdentity struct {
+	contentDigest string
+	name          string
+	registryURL   string
+	ref           string
+	path          string
+}
+
+// collectionManifestKey identifies one exact collection revision while walking
+// a graph. Names are display labels, not revision identities: two revisions
+// may intentionally use the same name. ContentDigest is the primary identity;
+// provenance and name keep malformed or legacy manifests with an empty digest
+// from collapsing distinct nodes.
+func collectionManifestKey(manifest CollectionManifest) collectionManifestIdentity {
+	return collectionManifestIdentity{
+		contentDigest: manifest.ContentDigest,
+		name:          manifest.Name,
+		registryURL:   manifest.Provenance.RegistryURL,
+		ref:           manifest.Provenance.Ref,
+		path:          manifest.Provenance.Path,
+	}
+}
+
+func expandCollectionManifestGraph(manifest CollectionManifest, nested map[string]CollectionManifest, visiting map[collectionManifestIdentity]bool) ([]CollectionMemberEntry, error) {
+	if err := manifest.Validate(); err != nil {
+		return nil, err
+	}
+	key := collectionManifestKey(manifest)
+	if visiting[key] {
+		return nil, fmt.Errorf("collection graph cycle detected at %q", manifest.Name)
+	}
+	visiting[key] = true
+	defer delete(visiting, key)
+
+	byKey := make(map[string]int)
+	leaves := make([]CollectionMemberEntry, 0, len(manifest.Members))
+	addLeaf := func(leaf CollectionMemberEntry, paths [][]string) error {
+		key := collectionLeafKey(leaf)
+		if index, ok := byKey[key]; ok {
+			if leaves[index].Revision != leaf.Revision || leaves[index].Optional != leaf.Optional {
+				return fmt.Errorf("collection %q contains conflicting leaves for %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+			}
+			leaves[index].InclusionPaths = appendUniqueCollectionPaths(leaves[index].InclusionPaths, paths...)
+			return nil
+		}
+		leaf.InclusionPaths = appendUniqueCollectionPaths(nil, paths...)
+		byKey[key] = len(leaves)
+		leaves = append(leaves, leaf)
+		return nil
+	}
+
+	for i, member := range manifest.Members {
+		if member.Kind != "collection" {
+			if err := validateCollectionLeaf(member, i); err != nil {
+				return nil, fmt.Errorf("collection %q direct member: %s", manifest.Name, strings.Replace(err.Error(), "leaves[", "members[", 1))
+			}
+			if err := addLeaf(member, [][]string{{manifest.Name}}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if !validCollectionToken(member.Name) || !validCollectionToken(member.SourceID) || !validCollectionDigest(member.Revision) {
+			return nil, fmt.Errorf("collection %q nested member %q must have a valid source_id and revision", manifest.Name, member.Name)
+		}
+		child, ok := nested[member.Revision]
+		if !ok {
+			return nil, fmt.Errorf("collection %q nested member %q manifest %q is missing", manifest.Name, member.Name, member.Revision)
+		}
+		if child.Name != member.Name {
+			return nil, fmt.Errorf("collection %q nested member name mismatch: got %q, want %q", manifest.Name, child.Name, member.Name)
+		}
+		if child.ContentDigest != member.Revision {
+			return nil, fmt.Errorf("collection %q nested member %q manifest digest mismatch: got %q, want %q", manifest.Name, member.Name, child.ContentDigest, member.Revision)
+		}
+		childLeaves, err := expandCollectionManifestGraph(child, nested, visiting)
+		if err != nil {
+			return nil, err
+		}
+		for _, childLeaf := range childLeaves {
+			paths := make([][]string, 0, len(childLeaf.InclusionPaths))
+			for _, path := range childLeaf.InclusionPaths {
+				paths = append(paths, append([]string{manifest.Name}, path...))
+			}
+			if err := addLeaf(childLeaf, paths); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	for _, include := range manifest.Includes {
+		found := false
+		for _, member := range manifest.Members {
+			if member.Kind == "collection" && member.Name == include {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("collection %q include %q is not a direct nested member", manifest.Name, include)
+		}
+	}
+	if err := validateFlattenedCollectionLeaves(manifest, leaves); err != nil {
+		return nil, err
+	}
+	return leaves, nil
+}
+
+func validateFlattenedCollectionLeaves(manifest CollectionManifest, expected []CollectionMemberEntry) error {
+	hasNestedGraph := len(manifest.Includes) > 0
+	for _, member := range manifest.Members {
+		if member.Kind == "collection" {
+			hasNestedGraph = true
+			break
+		}
+	}
+	if hasNestedGraph && len(manifest.Leaves) == 0 {
+		return fmt.Errorf("collection %q must contain flattened leaves when nested members or includes exist", manifest.Name)
+	}
+	if len(manifest.Leaves) == 0 {
+		return nil
+	}
+	actual := make(map[string]CollectionMemberEntry, len(manifest.Leaves))
+	for _, leaf := range manifest.Leaves {
+		key := collectionLeafKey(leaf)
+		if previous, ok := actual[key]; ok {
+			if previous.Revision != leaf.Revision {
+				return fmt.Errorf("collection %q flattened leaves contain conflicting revisions of %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+			}
+			return fmt.Errorf("collection %q flattened leaves contain duplicate %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+		}
+		actual[key] = leaf
+	}
+	expectedByKey := make(map[string]CollectionMemberEntry, len(expected))
+	for _, leaf := range expected {
+		expectedByKey[collectionLeafKey(leaf)] = leaf
+	}
+	for key, leaf := range expectedByKey {
+		got, ok := actual[key]
+		if !ok {
+			return fmt.Errorf("collection %q flattened leaves are missing %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+		}
+		if got.Revision != leaf.Revision || got.Optional != leaf.Optional {
+			return fmt.Errorf("collection %q flattened leaf %s/%q from source %q has conflicting metadata", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+		}
+		if !sameCollectionPaths(got.InclusionPaths, leaf.InclusionPaths) {
+			return fmt.Errorf("collection %q flattened leaf %s/%q has inclusion paths that do not follow the nested graph", manifest.Name, leaf.Kind, leaf.Name)
+		}
+		delete(actual, key)
+	}
+	for _, leaf := range actual {
+		return fmt.Errorf("collection %q flattened leaves contain extra %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+	}
+	return nil
+}
+
+func collectionLeafKey(leaf CollectionMemberEntry) string {
+	return leaf.Kind + "\x00" + leaf.Name + "\x00" + leaf.SourceID
+}
+
+func appendUniqueCollectionPaths(paths [][]string, add ...[]string) [][]string {
+	for _, candidate := range add {
+		duplicate := false
+		for _, existing := range paths {
+			if slicesEqual(existing, candidate) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			paths = append(paths, append([]string(nil), candidate...))
+		}
+	}
+	return paths
+}
+
+func sameCollectionPaths(a, b [][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, path := range a {
+		seen[strings.Join(path, "\x00")] = struct{}{}
+	}
+	for _, path := range b {
+		if _, ok := seen[strings.Join(path, "\x00")]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (m CollectionManifest) Validate() error {
 	if m.SchemaVersion != CollectionSchemaV1 {
 		return fmt.Errorf("unsupported collection schema version %q", m.SchemaVersion)
 	}
-	if m.Name == "" {
-		return errors.New("collection name is required")
+	if !validCollectionToken(m.Name) {
+		return errors.New("collection name is required and must be a route-safe token")
 	}
-	if len(m.Members) == 0 && len(m.Includes) == 0 {
-		return errors.New("collection must have members or includes")
+	if len(m.Members) == 0 && len(m.Includes) == 0 && len(m.Leaves) == 0 {
+		return errors.New("collection must have members, includes, or leaves")
 	}
 	seen := make(map[string]bool)
 	for i, mem := range m.Members {
 		if !isCollectionKind(mem.Kind) {
 			return fmt.Errorf("members[%d].kind %q is not a valid collection member kind", i, mem.Kind)
 		}
-		if mem.Name == "" {
-			return fmt.Errorf("members[%d].name is required", i)
+		if !validCollectionToken(mem.Name) {
+			return fmt.Errorf("members[%d].name must be a route-safe token", i)
 		}
 		key := mem.Kind + "/" + mem.Name
 		if seen[key] {
@@ -243,7 +488,82 @@ func (m CollectionManifest) Validate() error {
 		}
 		seen[key] = true
 	}
+	seenIncludes := make(map[string]bool)
+	for i, name := range m.Includes {
+		if !validCollectionToken(name) {
+			return fmt.Errorf("includes[%d] must be a route-safe token", i)
+		}
+		if seenIncludes[name] {
+			return fmt.Errorf("duplicate collection include %q", name)
+		}
+		seenIncludes[name] = true
+	}
+	seenLeaves := make(map[string]bool)
+	for i, leaf := range m.Leaves {
+		if err := validateCollectionLeaf(leaf, i); err != nil {
+			return err
+		}
+		key := leaf.Kind + "/" + leaf.Name + "/" + leaf.SourceID
+		if seenLeaves[key] {
+			return fmt.Errorf("duplicate collection leaf %q", key)
+		}
+		seenLeaves[key] = true
+		if len(leaf.InclusionPaths) == 0 {
+			return fmt.Errorf("leaves[%d].inclusion_paths is required", i)
+		}
+		seenPaths := make(map[string]bool)
+		for pathIndex, path := range leaf.InclusionPaths {
+			if len(path) == 0 {
+				return fmt.Errorf("leaves[%d].inclusion_paths[%d] is empty", i, pathIndex)
+			}
+			if path[0] != m.Name {
+				return fmt.Errorf("leaves[%d].inclusion_paths[%d] must start with collection %q", i, pathIndex, m.Name)
+			}
+			for segmentIndex, segment := range path {
+				if !validCollectionToken(segment) {
+					return fmt.Errorf("leaves[%d].inclusion_paths[%d][%d] is not a route-safe token", i, pathIndex, segmentIndex)
+				}
+			}
+			pathKey := strings.Join(path, "\x00")
+			if seenPaths[pathKey] {
+				return fmt.Errorf("duplicate inclusion path for collection leaf %q", key)
+			}
+			seenPaths[pathKey] = true
+		}
+	}
 	return nil
+}
+
+func validateCollectionLeaf(leaf CollectionMemberEntry, index int) error {
+	if !isMaterializedCollectionKind(leaf.Kind) {
+		return fmt.Errorf("leaves[%d].kind %q is not a materialized collection member kind", index, leaf.Kind)
+	}
+	if !validCollectionToken(leaf.Name) {
+		return fmt.Errorf("leaves[%d].name must be a route-safe token", index)
+	}
+	if !validCollectionToken(leaf.SourceID) {
+		return fmt.Errorf("leaves[%d].source_id must be a route-safe token", index)
+	}
+	if !validCollectionDigest(leaf.Revision) {
+		return fmt.Errorf("leaves[%d].revision must be sha256:<64 lowercase hex>", index)
+	}
+	return nil
+}
+
+func validCollectionDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, ch := range value[len("sha256:"):] {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isMaterializedCollectionKind(kind string) bool {
+	return kind == "skill" || kind == "command" || kind == "subagent" || kind == "hook" || kind == "mcpserver"
 }
 
 func isCollectionKind(kind string) bool {
