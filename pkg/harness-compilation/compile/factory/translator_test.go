@@ -203,18 +203,40 @@ func TestFactorySubagent_FrontmatterExtraFieldsAreDeterministic(t *testing.T) {
 	}
 }
 
-// --- Factory Subagent: no disallowedTools or isolation → no diagnostics ---
-func TestFactorySubagent_UnknownToolFailsClosed(t *testing.T) {
+// --- Factory Subagent: unknown tool is a warning that omits the tools key ---
+func TestFactorySubagent_UnknownToolOmitsToolsKey(t *testing.T) {
 	sub := ir.NewSubagent("unknown-tool", "Agent", "Work", "sonnet", []string{"MysteryTool"}, "", nil, "", nil, ir.SourceRef{})
 	arts, diags, err := (&factoryCompiler{}).Translate(sub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(arts) != 0 {
-		t.Fatalf("artifacts = %d, want none", len(arts))
+	if len(arts) != 1 {
+		t.Fatalf("artifacts = %d, want one droid artifact", len(arts))
 	}
-	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityError {
-		t.Fatalf("diagnostics = %#v, want factory unknown-tool error", diags)
+	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityWarning {
+		t.Fatalf("diagnostics = %#v, want factory unknown-tool warning", diags)
+	}
+	body := string(arts[0].Bytes)
+	if strings.Contains(body, "tools:") {
+		t.Fatalf("droid frontmatter should not contain a tools key, got:\n%s", body)
+	}
+}
+
+func TestFactorySubagent_MixedToolOmitsToolsKey(t *testing.T) {
+	sub := ir.NewSubagent("mixed-tool", "Agent", "Work", "sonnet", []string{"Read", "MysteryTool"}, "", nil, "", nil, ir.SourceRef{})
+	arts, diags, err := (&factoryCompiler{}).Translate(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("artifacts = %d, want one droid artifact", len(arts))
+	}
+	if len(diags) != 1 || diags[0].Code != diag.CodeSubagentFactoryToolUnknown || diags[0].Severity != diag.SeverityWarning {
+		t.Fatalf("diagnostics = %#v, want factory unknown-tool warning", diags)
+	}
+	body := string(arts[0].Bytes)
+	if strings.Contains(body, "tools:") {
+		t.Fatalf("droid frontmatter should not contain a tools key when any tool is unmapped, got:\n%s", body)
 	}
 }
 
