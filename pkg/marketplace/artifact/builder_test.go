@@ -168,9 +168,6 @@ func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 	// represented correctly.
 	rev := SourceRevisionManifest{
 		SchemaVersion: SourceRevisionSchemaV1,
-		SourceURL:     opts.Source.RegistryURL,
-		Ref:           opts.Source.Ref,
-		Path:          opts.Source.Path,
 		Generator:     "agent-marketplace source-revision v" + analyzerVersion(opts),
 		Resources: []RevisionResource{
 			{

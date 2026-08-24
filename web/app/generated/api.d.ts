@@ -191,6 +191,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/{source}/occurrences/{commit}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one exact source occurrence */
+        get: operations["getSourceOccurrence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -235,6 +252,18 @@ export interface components {
             artifact_schema_versions: "v1"[];
             features: string[];
             resource_kinds: ("skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection")[];
+        };
+        /** @description Exact source occurrence plus the current operator-approved acquisition origin. */
+        ExactSourceOccurrence: {
+            /** @enum {string} */
+            acquisition: "index-only" | "mirror";
+            acquisition_origin: string;
+            commit: string;
+            /** Format: date-time */
+            occurred_at: string;
+            ref: string;
+            source_id: string;
+            source_revision_manifest_digest: string;
         };
         Marketplace: {
             /**
@@ -604,6 +633,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceOccurrence"][];
+                };
+            };
+        };
+    };
+    getSourceOccurrence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commit: string;
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact source occurrence and current approved acquisition origin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExactSourceOccurrence"];
                 };
             };
         };

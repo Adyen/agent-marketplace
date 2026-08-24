@@ -582,6 +582,11 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	// and pipeline consumers can resolve configured Marketplace pins.
 	result.Config.Marketplaces = cfg.Marketplaces
 	result.Config.AllowedMarketplaces = cfg.AllowedMarketplaces
+	// Marketplace resolution happens after registry loading. Preserve the
+	// effective origin policy on the config returned by this loader; otherwise
+	// the downstream resolver would see only the Marketplace pins and could
+	// acquire an index-only source without the configured allowlist.
+	result.Config.AllowedRegistries = cfg.AllowedRegistries
 
 	// Phase 1: Prepare fetch jobs from registry entries.
 	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)

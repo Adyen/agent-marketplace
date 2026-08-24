@@ -20,14 +20,16 @@ type MarketplaceEntry struct {
 
 // MarketplaceResourcePin is an exact Marketplace resource coordinate and digest.
 type MarketplaceResourcePin struct {
-	SourceID      string `yaml:"source_id"`
-	SourceSlug    string `yaml:"source_slug,omitempty"`
-	Kind          string `yaml:"kind"`
-	Name          string `yaml:"name"`
-	Revision      string `yaml:"revision"`
-	Digest        string `yaml:"digest"`                // "sha256:<64 lowercase hex>"
-	Acquisition   string `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
-	InstalledName string `yaml:"installed_name,omitempty"`
+	SourceID             string `yaml:"source_id"`
+	SourceSlug           string `yaml:"source_slug,omitempty"`
+	Kind                 string `yaml:"kind"`
+	Name                 string `yaml:"name"`
+	Revision             string `yaml:"revision"`
+	Digest               string `yaml:"digest"`                // "sha256:<64 lowercase hex>"
+	Acquisition          string `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
+	SourceCommit         string `yaml:"source_commit,omitempty"`
+	SourceManifestDigest string `yaml:"source_manifest_digest,omitempty"`
+	InstalledName        string `yaml:"installed_name,omitempty"`
 }
 
 const (
@@ -116,10 +118,32 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndexOnly {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].acquisition must be %q or %q", entryIdx, pinIdx, MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly))
 	}
+	if err := validateMarketplaceOccurrenceFields(p.Acquisition, p.SourceCommit, p.SourceManifestDigest); err != nil {
+		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
+	}
 	if err := ValidateMarketplaceInstalledName(p.InstalledName); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
 	return errs
+}
+
+func validateMarketplaceOccurrenceFields(acquisition, sourceCommit, sourceManifestDigest string) error {
+	if acquisition == MarketplaceAcquisitionIndexOnly {
+		if !api.IsCanonicalGitCommit(sourceCommit) {
+			return fmt.Errorf("source_commit must be a full lowercase Git commit")
+		}
+		if !api.IsCanonicalSHA256Digest(sourceManifestDigest) {
+			return fmt.Errorf("source_manifest_digest must be sha256:<64-hex>")
+		}
+		return nil
+	}
+	if sourceCommit != "" || sourceManifestDigest != "" {
+		// These fields are the immutable occurrence pin for index-only
+		// acquisition. Do not accept them on a mirror pin, where they would be
+		// silently ignored and could mislead an editor or later sync.
+		return fmt.Errorf("source_commit and source_manifest_digest require acquisition %q", MarketplaceAcquisitionIndexOnly)
+	}
+	return nil
 }
 
 // IsMarketplaceKind reports whether kind is a selectable Marketplace resource kind.

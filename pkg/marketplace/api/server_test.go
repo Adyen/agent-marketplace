@@ -211,6 +211,17 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("history missing commit: %s", body)
 	}
 
+	// Exact source occurrence includes the current approved acquisition origin.
+	resp = mustGet(t, public.URL+"/api/v1/sources/test-source/occurrences/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, `"source_id":"src-test"`) ||
+		!strings.Contains(body, `"ref":"main"`) ||
+		!strings.Contains(body, `"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`) ||
+		!strings.Contains(body, `"acquisition_origin":"https://example.com/repo.git?token=%5Bredacted%5D"`) {
+		t.Fatalf("exact occurrence status/body = %d/%s", resp.StatusCode, body)
+	}
+
 	// Empty source history is a JSON array, not null.
 	resp = mustGet(t, public.URL+"/api/v1/sources/empty-source/history")
 	body = mustRead(t, resp)

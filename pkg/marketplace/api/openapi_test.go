@@ -46,6 +46,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/search",
 		"/api/v1/sources/{source}",
 		"/api/v1/sources/{source}/history",
+		"/api/v1/sources/{source}/occurrences/{commit}",
 		"/api/v1/resources/{source}/{kind}/{name}",
 		"/api/v1/resources/{source}/{kind}/{name}/revisions",
 		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}",
@@ -68,7 +69,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}

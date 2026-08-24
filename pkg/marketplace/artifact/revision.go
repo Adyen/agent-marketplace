@@ -22,9 +22,9 @@ const (
 // pattern.
 type SourceRevisionManifest struct {
 	SchemaVersion  string             `json:"schema_version"`
-	SourceURL      string             `json:"source_url,omitempty"`
-	Ref            string             `json:"ref,omitempty"`
-	Path           string             `json:"path,omitempty"`
+	SourceURL      string             `json:"-"`
+	Ref            string             `json:"-"`
+	Path           string             `json:"-"`
 	Generator      string             `json:"generator"`
 	Resources      []RevisionResource `json:"resources"`
 	RevisionDigest string             `json:"revision_digest,omitempty"`
@@ -32,17 +32,31 @@ type SourceRevisionManifest struct {
 
 // RevisionResource identifies a single resource inside a source revision.
 type RevisionResource struct {
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	ContentDigest string `json:"content_digest"`
-	ArchiveDigest string `json:"archive_digest,omitempty"`
-	Rejected      bool   `json:"rejected,omitempty"`
+	Kind          string            `json:"kind"`
+	Name          string            `json:"name"`
+	ContentDigest string            `json:"content_digest"`
+	ArchiveDigest string            `json:"archive_digest,omitempty"`
+	SupportFiles  map[string]string `json:"support_files,omitempty"`
+	Rejected      bool              `json:"rejected,omitempty"`
 }
 
 // RevisionDigest returns the sha256 digest of a canonical JSON payload.
 func RevisionDigest(payload []byte) string {
 	h := sha256.Sum256(payload)
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+func isCanonicalDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || value[:len("sha256:")] != "sha256:" {
+		return false
+	}
+	for i := len("sha256:"); i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // canonicalPayloadAndDigest returns the deterministic JSON for m with the
@@ -176,6 +190,14 @@ func (m SourceRevisionManifest) Validate() error {
 			return fmt.Errorf("duplicate revision resource %q", key)
 		}
 		seen[key] = true
+		for path, digest := range r.SupportFiles {
+			if path == "" {
+				return fmt.Errorf("resources[%d].support_files contains an empty path", i)
+			}
+			if !isCanonicalDigest(digest) {
+				return fmt.Errorf("resources[%d].support_files[%q] has invalid digest", i, path)
+			}
+		}
 	}
 	return nil
 }
