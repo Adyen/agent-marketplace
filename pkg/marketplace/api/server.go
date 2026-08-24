@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -553,6 +555,22 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Source revision manifests and collection manifests share this immutable
+	// route. Validate the latter at the serving boundary so a published
+	// collection can never be served with non-canonical or mismatched bytes.
+	if collection, payload, decodeErr := hccartifact.DecodeCollectionManifest(bytes.NewReader(data)); decodeErr == nil && collection.Name != "" {
+		if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil || collection.ContentDigest != digest {
+			slog.Error("collection manifest blob is invalid", "digest", digest, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+			return
+		}
+		if err := hccartifact.ValidateFlatMirrorManifest(collection); err != nil {
+			slog.Error("collection manifest blob is outside supported flat slice", "digest", digest, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	setImmutableCache(w)
 	_, _ = w.Write(data)
@@ -788,6 +806,9 @@ func validatePublicResourceRevision(rev store.ResourceRevision) error {
 	}
 	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
 		return errors.New("resource content digest is not canonical")
+	}
+	if coord.Kind == "collection" && rev.ArchiveDigest != "" {
+		return errors.New("virtual collection resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
 		return errors.New("resource archive digest is not canonical")

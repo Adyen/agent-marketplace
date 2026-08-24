@@ -79,6 +79,7 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	pub := store.SourceRevisionPublication{
 		Occurrence:      rev.Occurrence,
 		Resources:       rev.Resources,
+		Collections:     rev.Collections,
 		ManifestPayload: rev.ManifestPayload,
 		ExtraBlobs:      rev.ExtraBlobs,
 	}

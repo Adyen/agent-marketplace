@@ -73,7 +73,7 @@ func TestBuildResourceArtifactRejects(t *testing.T) {
 func TestBuildCollectionManifest(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
-	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main"}
+	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "source-id"}
 
 	s := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
 	skillResult, err := BuildResourceArtifact(ctx, s, nil, opts)
@@ -83,7 +83,7 @@ func TestBuildCollectionManifest(t *testing.T) {
 
 	c := ir.NewCollection("defaults", "1.0.0", "Desc", []ir.CollectionMember{
 		{Kind: ir.KindSkill, Name: "review"},
-	}, []string{"base"}, nil, ir.SourceRef{})
+	}, nil, nil, ir.SourceRef{})
 
 	result, err := BuildCollectionManifest(ctx, c, []BuildResult{skillResult}, opts)
 	if err != nil {
@@ -92,23 +92,19 @@ func TestBuildCollectionManifest(t *testing.T) {
 	if result.Rejected {
 		t.Fatalf("collection rejected: %v", result.Findings)
 	}
-	if result.ContentDigest == "" {
-		t.Fatal("expected content digest")
+	if result.ContentDigest == "" || result.ManifestDigest == "" || result.ContentDigest != result.ManifestDigest {
+		t.Fatalf("collection manifest digest = content %q, manifest %q", result.ContentDigest, result.ManifestDigest)
 	}
-	if len(result.RawArchive) == 0 {
-		t.Fatal("expected raw archive")
+	if len(result.RawArchive) != 0 || result.ArchiveDigest != "" {
+		t.Fatalf("virtual collection unexpectedly has archive: bytes=%d digest=%q", len(result.RawArchive), result.ArchiveDigest)
 	}
 	if result.RevisionDigest == "" {
 		t.Fatal("expected revision digest")
 	}
 
-	if err := result.Artifact.ValidateArchive(nil); err != nil {
-		t.Fatalf("ValidateArchive: %v", err)
-	}
-
-	// The artifact payload should be a valid collection manifest JSON.
-	if !bytes.Contains(result.Artifact.Payload, []byte(`"schema_version"`)) {
-		t.Fatal("collection payload missing schema_version")
+	// The standalone manifest payload is JSON, not a collection tar artifact.
+	if !bytes.Contains(result.ManifestPayload, []byte(`"schema_version"`)) || !bytes.Equal(result.ManifestPayload, result.Artifact.Payload) {
+		t.Fatal("collection payload missing or not equal to standalone manifest")
 	}
 }
 
@@ -122,7 +118,7 @@ func TestBuildCollectionManifestNil(t *testing.T) {
 func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
-	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main"}
+	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "source-id"}
 
 	acceptedSkill := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
 	accepted, err := BuildResourceArtifact(ctx, acceptedSkill, nil, opts)
@@ -150,47 +146,11 @@ func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 		{Kind: ir.KindSkill, Name: "bad"},
 	}, nil, nil, ir.SourceRef{})
 
-	result, err := BuildCollectionManifest(ctx, c, []BuildResult{accepted, rejected}, opts)
-	if err != nil {
-		t.Fatalf("BuildCollectionManifest: %v", err)
-	}
-	if result.Rejected {
-		t.Fatalf("collection rejected: %v", result.Findings)
-	}
-	if result.RevisionDigest == "" {
-		t.Fatal("expected revision digest")
-	}
-	if err := result.Artifact.ValidateArchive(nil); err != nil {
-		t.Fatalf("ValidateArchive: %v", err)
+	_, err = BuildCollectionManifest(ctx, c, []BuildResult{accepted, rejected}, opts)
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("no publishable leaf artifact")) {
+		t.Fatalf("expected rejected leaf to be refused by flat collection validation, got %v", err)
 	}
 
-	// Reconstruct the source revision manifest to verify the rejected member is
-	// represented correctly.
-	rev := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
-		Generator:     "agent-marketplace source-revision v" + analyzerVersion(opts),
-		Resources: []RevisionResource{
-			{
-				Kind:          accepted.Kind,
-				Name:          accepted.Name,
-				ContentDigest: accepted.ContentDigest,
-				ArchiveDigest: accepted.ArchiveDigest,
-				Rejected:      false,
-			},
-			{
-				Kind:          rejected.Kind,
-				Name:          rejected.Name,
-				ContentDigest: rejected.ContentDigest,
-				ArchiveDigest: rejected.ArchiveDigest,
-				Rejected:      true,
-			},
-		},
-	}
-	_, expectedDigest, err := EncodeSourceRevisionManifest(rev)
-	if err != nil {
-		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
-	}
-	if expectedDigest != result.RevisionDigest {
-		t.Fatalf("revision digest mismatch: expected %s, got %s", expectedDigest, result.RevisionDigest)
-	}
+	// A rejected leaf cannot be represented by an exact flat collection because
+	// there is no leaf artifact/revision to publish.
 }

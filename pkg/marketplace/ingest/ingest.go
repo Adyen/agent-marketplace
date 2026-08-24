@@ -2,6 +2,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
@@ -31,6 +33,11 @@ type Revision struct {
 	ExtraBlobs      []store.BlobUpload
 	ManifestPayload []byte
 	ManifestDigest  store.RevisionDigest
+	// CollectionManifests contains standalone canonical collection manifests.
+	// They are uploaded by the worker under their manifest content digest; the
+	// collection remains virtual and its tar archive is never used for install.
+	CollectionManifests []store.BlobUpload
+	Collections         []store.CollectionRevision
 	// ResourceArchives retains locally-built canonical archives for index-only
 	// consumers. They are never published by the worker.
 	ResourceArchives      map[string][]byte
@@ -184,6 +191,9 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			return artifact.BuildResult{}, nil, fmt.Errorf("resource %q is not a collection", name)
 		}
 
+		if len(c.Includes) > 0 {
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q includes nested collections, which are not supported in the flat mirror slice", name)
+		}
 		visiting[name] = true
 		defer func() { delete(visiting, name) }()
 
@@ -208,13 +218,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			}
 
 			if memberKind == hccir.KindCollection {
-				res, mems, err := resolveCollection(m.Name, visiting)
-				if err != nil {
-					return artifact.BuildResult{}, nil, err
-				}
-				members = append(members, res)
-				members = append(members, mems...)
-				continue
+				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q contains nested collection %q, which is not supported in the flat mirror slice", name, m.Name)
 			}
 
 			kind := api.FromIR(memberKind)
@@ -246,13 +250,42 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
 		}
 		r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
+		if source.Acquisition != store.AcquisitionMirror {
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition; mixed/index-only collections are not supported", name)
+		}
+		if r.Rejected {
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q is rejected and has no publishable standalone manifest", name)
+		}
+		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(r.ManifestPayload))
+		if err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("decode collection %q manifest: %w", name, err)
+		}
+		if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("verify collection %q manifest: %w", name, err)
+		}
+		if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q is not a flat mirror collection: %w", name, err)
+		}
+		for _, member := range members {
+			if member.Rejected || member.ArchiveDigest == "" || len(member.RawArchive) == 0 {
+				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s/%q has no mirrored artifact", name, member.Kind, member.Name)
+			}
+		}
 		collectionCache[name] = resolvedCollection{result: r, members: members}
 		return r, members, nil
 	}
 
 	for _, entry := range collectionEntries {
+		if source.Acquisition != store.AcquisitionMirror {
+			slog.Warn("skipping collection for non-mirror source", "source", source.ID, "collection", entry.Name, "acquisition", source.Acquisition)
+			continue
+		}
 		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
+			if strings.Contains(err.Error(), "rejected") {
+				slog.Warn("skipping collection without publishable leaves", "source", source.ID, "collection", entry.Name, "err", err)
+				continue
+			}
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
 		}
 		processedResults = append(processedResults, processed{entry: entry, result: r})
@@ -265,11 +298,19 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 	for _, p := range processedResults {
 		kind := api.FromIR(p.entry.Kind)
+		contentDigest := p.result.ContentDigest
+		archiveDigest := p.result.ArchiveDigest
+		if kind == "collection" {
+			// A collection is virtual. Its revision points at the standalone
+			// collection manifest and never at a tar archive.
+			contentDigest = p.result.ManifestDigest
+			archiveDigest = ""
+		}
 		manifest.Resources = append(manifest.Resources, artifact.RevisionResource{
 			Kind:          kind,
 			Name:          p.entry.Name,
-			ContentDigest: p.result.ContentDigest,
-			ArchiveDigest: p.result.ArchiveDigest,
+			ContentDigest: contentDigest,
+			ArchiveDigest: archiveDigest,
 			SupportFiles:  p.supportFiles,
 			Rejected:      p.result.Rejected,
 		})
@@ -291,6 +332,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 	var resources []store.ResourceRevision
 	var extraBlobs []store.BlobUpload
+	var collectionManifests []store.BlobUpload
+	var collections []store.CollectionRevision
 	for _, p := range processedResults {
 		kind := api.FromIR(p.entry.Kind)
 		coord := store.ResourceCoordinate{
@@ -300,10 +343,16 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			Name:        p.entry.Name,
 		}
 
+		contentDigest := p.result.ContentDigest
+		archiveDigest := p.result.ArchiveDigest
+		if kind == "collection" {
+			contentDigest = p.result.ManifestDigest
+			archiveDigest = ""
+		}
 		rev := store.ResourceRevision{
 			Coordinate:      coord,
-			ContentDigest:   store.RevisionDigest(p.result.ContentDigest),
-			ArchiveDigest:   store.ArchiveDigest(p.result.ArchiveDigest),
+			ContentDigest:   store.RevisionDigest(contentDigest),
+			ArchiveDigest:   store.ArchiveDigest(archiveDigest),
 			AnalyzerVersion: analyze.AnalyzerVersionV1,
 			Findings:        toStoreFindings(p.result.Findings),
 			License:         p.result.License,
@@ -315,11 +364,38 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		}
 		if p.result.Rejected {
 			rev.ArchiveDigest = ""
-			rev.ContentDigest = store.RevisionDigest(p.result.ContentDigest)
+			if kind != "collection" {
+				rev.ContentDigest = store.RevisionDigest(p.result.ContentDigest)
+			}
 		}
 		resources = append(resources, rev)
 
-		if !p.result.Rejected && source.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
+		if kind == "collection" && !p.result.Rejected {
+			if p.result.ManifestDigest == "" || len(p.result.ManifestPayload) == 0 {
+				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", p.entry.Name)
+			}
+			collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(p.result.ManifestPayload))
+			if err != nil {
+				return Revision{}, fmt.Errorf("decode collection %q manifest: %w", p.entry.Name, err)
+			}
+			if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
+				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", p.entry.Name, err)
+			}
+			if err := hccartifact.ValidateFlatMirrorManifest(collection); err != nil {
+				return Revision{}, fmt.Errorf("collection %q is not a flat mirror collection: %w", p.entry.Name, err)
+			}
+			if collection.ContentDigest != p.result.ManifestDigest {
+				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", p.entry.Name)
+			}
+			collectionManifests = appendUpload(collectionManifests, store.ArchiveDigest(p.result.ManifestDigest), p.result.ManifestPayload)
+			members := make([]store.ResourceCoordinate, 0, len(collection.Members))
+			for _, member := range collection.Members {
+				members = append(members, store.ResourceCoordinate{Marketplace: mpID, Source: store.SourceID(member.SourceID), Kind: member.Kind, Name: member.Name})
+			}
+			collections = append(collections, store.CollectionRevision{ID: p.result.ManifestDigest, SourceID: source.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest), Members: members})
+		}
+
+		if kind != "collection" && !p.result.Rejected && source.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
 		}
 	}
@@ -327,7 +403,9 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	return Revision{
 		Occurrence:            occ,
 		Resources:             resources,
-		ExtraBlobs:            extraBlobs,
+		ExtraBlobs:            append(extraBlobs, collectionManifests...),
+		CollectionManifests:   collectionManifests,
+		Collections:           collections,
 		ManifestPayload:       payload,
 		ManifestDigest:        store.RevisionDigest(digest),
 		ResourceArchives:      resourceArchives,

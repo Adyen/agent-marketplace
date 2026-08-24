@@ -376,6 +376,18 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	if len(got.Members) != 1 || got.Members[0].Name != "member" {
 		t.Fatalf("collection members lost: %+v", got.Members)
 	}
+	if err := s.PutCollectionRevision(ctx, cr); err != nil {
+		t.Fatalf("idempotent collection retry failed: %v", err)
+	}
+	changed := cr
+	changed.ManifestDigest = store.RevisionDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := s.PutCollectionRevision(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting collection write = %v, want ErrConflict", err)
+	}
+	got, err = s.GetCollectionRevision(ctx, cr.ID)
+	if err != nil || got.ManifestDigest != cr.ManifestDigest {
+		t.Fatalf("conflicting collection write changed stored metadata: %+v, %v", got, err)
+	}
 
 	all, err := s.ListCollectionRevisions(ctx, cr.SourceID)
 	if err != nil {

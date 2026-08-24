@@ -338,6 +338,21 @@ type CollectionRevision struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Equal reports whether two collection revisions have the same immutable
+// metadata. CreatedAt is assigned by the store on first publication and is
+// intentionally excluded so retries are idempotent.
+func (c CollectionRevision) Equal(other CollectionRevision) bool {
+	if c.ID != other.ID || c.SourceID != other.SourceID || c.ManifestDigest != other.ManifestDigest || len(c.Members) != len(other.Members) {
+		return false
+	}
+	for i := range c.Members {
+		if c.Members[i] != other.Members[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // JobStatus describes the lifecycle state of a durable job.
 type JobStatus string
 
