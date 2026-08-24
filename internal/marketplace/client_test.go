@@ -350,11 +350,104 @@ func TestClientBindsResourceSourceAfterSourceResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetSource(context.Background(), "source-slug"); err != nil {
-		t.Fatalf("GetSource: %v", err)
+	if _, err := c.GetSourceBySlug(context.Background(), "source-slug"); err != nil {
+		t.Fatalf("GetSourceBySlug: %v", err)
 	}
 	if _, err := c.GetLatestResourceRevision(context.Background(), "source-slug", "skill", "review"); err == nil || !strings.Contains(err.Error(), "coordinate.source") {
 		t.Fatalf("GetLatestResourceRevision error = %v, want source mismatch", err)
+	}
+}
+
+func TestClientBindsSourceResponseToRequestedSourceID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(mpapi.PublicSource{
+			ID: "other-source", Slug: "requested-source", Origins: []string{"https://example.com/repo"},
+			Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror,
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetSource(context.Background(), "requested-source"); err == nil || !strings.Contains(err.Error(), "source ID") {
+		t.Fatalf("GetSource error = %v, want requested source ID mismatch", err)
+	}
+}
+
+func TestClientBindsSourceOccurrenceToRequestedSourceAndCommit(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
+			SourceID: "other-source", Ref: "main", Commit: commit,
+			SourceRevisionManifestDigest: store.RevisionDigest(manifest),
+			Acquisition:                  store.AcquisitionIndexOnly,
+			AcquisitionOrigin:            "https://example.com/repo.git",
+			OccurredAt:                   time.Now().UTC(),
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetSourceOccurrence(context.Background(), "requested-source", commit); err == nil || !strings.Contains(err.Error(), "source ID") {
+		t.Fatalf("GetSourceOccurrence error = %v, want requested source mismatch", err)
+	}
+}
+
+func TestClientBindsSourceOccurrenceCommitToRequestedCommit(t *testing.T) {
+	requestedCommit := strings.Repeat("a", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
+			SourceID: "source", Ref: "main", Commit: strings.Repeat("b", 40),
+			SourceRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)),
+			Acquisition:                  store.AcquisitionIndexOnly,
+			AcquisitionOrigin:            "https://example.com/repo.git",
+			OccurredAt:                   time.Now().UTC(),
+		})
+	}))
+	defer server.Close()
+
+	c, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.GetSourceOccurrence(context.Background(), "source", requestedCommit); err == nil || !strings.Contains(err.Error(), "commit") {
+		t.Fatalf("GetSourceOccurrence error = %v, want requested commit mismatch", err)
+	}
+}
+
+func TestValidateAcquisitionOrigin(t *testing.T) {
+	for _, origin := range []string{
+		"https://example.com/org/repo.git",
+		"http://example.com/org/repo.git",
+		"ssh://example.com/org/repo.git",
+		"git@example.com:org/repo.git",
+		"file:///tmp/repo.git",
+	} {
+		if err := validateAcquisitionOrigin(origin); err != nil {
+			t.Errorf("validateAcquisitionOrigin(%q) unexpected error: %v", origin, err)
+		}
+	}
+	for _, test := range []struct {
+		origin string
+		want   string
+	}{
+		{origin: "/tmp/repo", want: "bare relative or absolute paths"},
+		{origin: "./repo", want: "bare relative or absolute paths"},
+		{origin: "https://user:pass@example.com/repo.git", want: "userinfo"},
+		{origin: "https://example.com/repo.git?token=secret", want: "query"},
+		{origin: "git://example.com/repo.git", want: "git:// protocol"},
+		{origin: "ext::sh -c evil", want: "transport helper"},
+		{origin: "example.com/repo.git", want: "HTTP(S)"},
+	} {
+		if err := validateAcquisitionOrigin(test.origin); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("validateAcquisitionOrigin(%q) = %v, want %q", test.origin, err, test.want)
+		}
 	}
 }
 

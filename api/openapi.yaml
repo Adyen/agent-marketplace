@@ -112,6 +112,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/Source"
 
+  /api/v1/sources/{source}/occurrences/{commit}:
+    get:
+      operationId: getSourceOccurrence
+      summary: Get one exact source occurrence
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: commit
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{40}$"
+      responses:
+        "200":
+          description: Exact source occurrence and current approved acquisition origin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExactSourceOccurrence"
+
   /api/v1/sources/{source}/history:
     get:
       operationId: getSourceHistory
@@ -530,6 +554,38 @@ components:
         mirrored_artifact_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
+        occurred_at:
+          type: string
+          format: date-time
+
+    ExactSourceOccurrence:
+      type: object
+      additionalProperties: false
+      description: Exact source occurrence plus the current operator-approved acquisition origin.
+      required:
+        - source_id
+        - ref
+        - commit
+        - source_revision_manifest_digest
+        - acquisition
+        - acquisition_origin
+        - occurred_at
+      properties:
+        source_id:
+          type: string
+        ref:
+          type: string
+        commit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        source_revision_manifest_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        acquisition:
+          type: string
+          enum: [index-only, mirror]
+        acquisition_origin:
+          type: string
         occurred_at:
           type: string
           format: date-time

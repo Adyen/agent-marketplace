@@ -27,22 +27,24 @@ type PreparedInstall struct {
 
 // InstallPreview is the stable, typed preview surface for a prepared install.
 type InstallPreview struct {
-	MarketplaceAlias string
-	MarketplaceURL   string
-	InstanceID       string
-	SourceID         string
-	SourceSlug       string
-	Kind             string
-	Name             string
-	InstalledName    string
-	Revision         string
-	ContentDigest    string
-	ArchiveDigest    string
-	Acquisition      string
-	License          string
-	Findings         []hccartifact.CanonicalFinding
-	Capabilities     []string
-	Provenance       hccartifact.CanonicalProvenance
+	MarketplaceAlias     string
+	MarketplaceURL       string
+	InstanceID           string
+	SourceID             string
+	SourceSlug           string
+	Kind                 string
+	Name                 string
+	InstalledName        string
+	Revision             string
+	ContentDigest        string
+	ArchiveDigest        string
+	Acquisition          string
+	SourceCommit         string
+	SourceManifestDigest string
+	License              string
+	Findings             []hccartifact.CanonicalFinding
+	Capabilities         []string
+	Provenance           hccartifact.CanonicalProvenance
 }
 
 // Preview returns metadata decoded from the verified artifact, not from an
@@ -56,7 +58,8 @@ func (p *PreparedInstall) Preview() InstallPreview {
 		MarketplaceAlias: p.Entry.Alias, MarketplaceURL: p.Entry.URL, InstanceID: p.Entry.InstanceID,
 		SourceID: p.Pin.SourceID, SourceSlug: p.Pin.SourceSlug, Kind: p.Pin.Kind, Name: p.Pin.Name,
 		InstalledName: installedName, Revision: p.Pin.Revision, ContentDigest: p.Pin.Digest,
-		ArchiveDigest: p.ArchiveDigest, Acquisition: config.MarketplaceAcquisitionMirror,
+		ArchiveDigest: p.ArchiveDigest, Acquisition: p.Pin.Acquisition,
+		SourceCommit: p.Pin.SourceCommit, SourceManifestDigest: p.Pin.SourceManifestDigest,
 		License: p.Artifact.Manifest.License, Findings: p.Artifact.Manifest.Findings,
 		Capabilities: p.Artifact.Manifest.Capabilities, Provenance: p.Artifact.Manifest.Provenance,
 	}
@@ -83,7 +86,7 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 	if wellKnown.InstanceID != canonical.InstanceID {
 		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, canonical.InstanceID)
 	}
-	source, err := client.GetSource(ctx, marketplaceAPISource(pin))
+	source, err := client.GetSourceBySlug(ctx, marketplaceAPISource(pin))
 	if err != nil {
 		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("resolve source %q: %w", pin.SourceID, err)
 	}
@@ -162,12 +165,12 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if locator.Kind == "" {
 		return nil, fmt.Errorf("marketplace resource kind is required")
 	}
-	source, err := client.GetSource(ctx, locator.Source)
+	source, err := client.GetSourceBySlug(ctx, locator.Source)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source %q: %w", locator.Source, err)
 	}
-	if source.Acquisition != store.AcquisitionMirror {
-		return nil, fmt.Errorf("source %q uses %q acquisition; this install supports mirror only (index-only is not supported)", locator.Source, source.Acquisition)
+	if source.Acquisition != store.AcquisitionMirror && source.Acquisition != store.AcquisitionIndexOnly {
+		return nil, fmt.Errorf("source %q uses unsupported acquisition %q", locator.Source, source.Acquisition)
 	}
 
 	var revision store.ResourceRevision
@@ -175,14 +178,16 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if exactRevision == "" {
 		exactRevision = locator.Digest
 	}
+	// Index-only occurrence lookup is keyed by immutable Source ID, while
+	// preserving the existing slug route for mirror revision lookups.
 	resourceSource := locator.Source
-	if resourceSource == "" {
+	if source.Acquisition == store.AcquisitionIndexOnly || resourceSource == "" {
 		resourceSource = string(source.ID)
 	}
 	if exactRevision != "" {
-		revision, err = client.GetResourceRevision(ctx, resourceSource, locator.Kind, locator.Name, exactRevision)
+		revision, err = client.GetResourceRevisionForSource(ctx, resourceSource, string(source.ID), locator.Kind, locator.Name, exactRevision)
 	} else {
-		revision, err = client.GetLatestResourceRevision(ctx, resourceSource, locator.Kind, locator.Name)
+		revision, err = client.GetLatestResourceRevisionForSource(ctx, resourceSource, string(source.ID), locator.Kind, locator.Name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve resource revision: %w", err)
@@ -201,6 +206,27 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		Name: locator.Name, Revision: pinRevision, Digest: string(revision.ContentDigest),
 		Acquisition: config.MarketplaceAcquisitionMirror,
 	}
+	if source.Acquisition == store.AcquisitionIndexOnly {
+		if revision.Provenance == nil || revision.Provenance.Commit == "" {
+			return nil, fmt.Errorf("index-only resource revision has no exact source occurrence")
+		}
+		occurrence, err := client.GetSourceOccurrence(ctx, string(source.ID), revision.Provenance.Commit)
+		if err != nil {
+			return nil, fmt.Errorf("resolve exact source occurrence: %w", err)
+		}
+		if occurrence.Acquisition != store.AcquisitionIndexOnly {
+			return nil, fmt.Errorf("resource revision occurrence is not index-only")
+		}
+		if revision.Provenance.SourceID != source.ID || revision.Provenance.SourceID != occurrence.SourceID {
+			return nil, fmt.Errorf("resource revision provenance source ID does not match exact source occurrence")
+		}
+		if occurrence.SourceRevisionManifestDigest != revision.Provenance.ManifestDigest {
+			return nil, fmt.Errorf("resource revision and source occurrence manifest digests differ")
+		}
+		pin.Acquisition = config.MarketplaceAcquisitionIndexOnly
+		pin.SourceCommit = occurrence.Commit
+		pin.SourceManifestDigest = string(occurrence.SourceRevisionManifestDigest)
+	}
 	cache := r.cache()
 	resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh)
 	if err != nil {
@@ -209,6 +235,10 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest)
-	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: string(revision.ArchiveDigest)}, nil
+	archiveDigest := string(revision.ArchiveDigest)
+	if archiveDigest == "" {
+		archiveDigest = artifact.Manifest.ArchiveDigest
+	}
+	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest, "acquisition", pin.Acquisition, "source_commit", pin.SourceCommit)
+	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: archiveDigest}, nil
 }

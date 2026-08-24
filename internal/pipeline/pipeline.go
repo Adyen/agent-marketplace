@@ -462,12 +462,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	registryCount := 0
+	if mergedCfg != nil {
+		registryCount = len(mergedCfg.Registries)
+	}
 	slog.Debug("config layers merged",
 		"org", result.OrgCfg != nil,
 		"user", result.GlobalCfg != nil,
 		"repo", result.RepoCfg != nil,
 		"local", result.LocalCfg != nil,
-		"registries", len(mergedCfg.Registries),
+		"registries", registryCount,
 	)
 
 	var selectionSpan telemetry.Span
@@ -513,6 +517,12 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpMode = *opts.MarketplaceMode
 	}
 	marketplaceResolver := marketplace.NewResolver()
+	// Keep the effective registry origin policy on the Marketplace resolver as
+	// well as on the loaded config. PrepareLocator uses the resolver directly,
+	// while normal sync passes the loaded config through the generic resolver.
+	if mergedCfg != nil && mergedCfg.AllowedRegistries != nil {
+		marketplaceResolver.AllowedRegistries = *mergedCfg.AllowedRegistries
+	}
 	var mpResolver resolver.MarketplaceResolver = marketplaceResolver
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
 		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)

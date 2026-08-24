@@ -34,6 +34,81 @@ func TestCloneValidRepo(t *testing.T) {
 	}
 }
 
+func TestCloneAtCommitRequiresAndChecksOutExactCommit(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{"README.md": "hello"})
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repo
+	commitBytes, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.TrimSpace(string(commitBytes))
+	res, err := CloneAtCommit(context.Background(), repo, "main", commit, Credentials{}, Limits{}, time.Minute)
+	if err != nil {
+		t.Fatalf("CloneAtCommit: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+	if res.Commit != commit {
+		t.Fatalf("commit = %q, want %q", res.Commit, commit)
+	}
+	headBytes, err := exec.Command("git", "-C", res.Dir, "rev-parse", "--verify", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("verify cloned HEAD: %v", err)
+	}
+	if got := strings.TrimSpace(string(headBytes)); got != commit {
+		t.Fatalf("cloned HEAD = %q, want %q", got, commit)
+	}
+	if _, err := CloneAtCommit(context.Background(), repo, "main", strings.Repeat("a", 40), Credentials{}, Limits{}, time.Minute); err == nil {
+		t.Fatal("expected unavailable exact commit to fail")
+	}
+}
+
+func TestCloneAtCommitDoesNotFollowMovingRefTip(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{"README.md": "first"})
+	firstBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.TrimSpace(string(firstBytes))
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", "README.md")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-q", "-m", "second")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	secondBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := strings.TrimSpace(string(secondBytes))
+	if first == second {
+		t.Fatal("test repository did not create two commits")
+	}
+
+	res, err := CloneAtCommit(context.Background(), repo, "main", first, Credentials{}, Limits{}, time.Minute)
+	if err != nil {
+		t.Fatalf("CloneAtCommit pinned commit: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+	if res.Commit != first {
+		t.Fatalf("commit = %q, want pinned %q", res.Commit, first)
+	}
+	got, err := os.ReadFile(filepath.Join(res.Dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("pinned tree = %q, want first; ref tip was %s", got, second)
+	}
+}
+
 func TestCloneInvalidURL(t *testing.T) {
 	_, err := Clone(context.Background(), "--option", "main", Credentials{}, Limits{}, time.Minute)
 	if err == nil {

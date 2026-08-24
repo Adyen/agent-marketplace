@@ -74,7 +74,12 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 		return nil, err
 	}
 
+	allowedRegistries := []string(nil)
+	if ec.Merged != nil && ec.Merged.AllowedRegistries != nil {
+		allowedRegistries = *ec.Merged.AllowedRegistries
+	}
 	resolverMP := marketplace.NewResolver()
+	resolverMP.AllowedRegistries = allowedRegistries
 	plan, err := resolverMP.PrepareLocator(ctx, entry, locator, hccTargetsFromStrings(ec.TargetHarnesses))
 	if err != nil {
 		return nil, err
@@ -310,9 +315,9 @@ type marketplacePreviewFinding struct {
 }
 
 func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error) {
-	m := plan.Artifact.Manifest
-	findings := make([]marketplacePreviewFinding, 0, len(m.Findings))
-	for _, finding := range m.Findings {
+	preview := plan.Preview()
+	findings := make([]marketplacePreviewFinding, 0, len(preview.Findings))
+	for _, finding := range preview.Findings {
 		findings = append(findings, marketplacePreviewFinding{
 			Code: marketplace.TerminalString(finding.Code), Severity: marketplace.TerminalString(finding.Severity), Message: marketplace.TerminalString(finding.Message),
 			File: marketplace.TerminalString(finding.File), Line: finding.Line, Analyzer: marketplace.TerminalString(finding.Analyzer),
@@ -324,7 +329,7 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 		right, _ := json.Marshal(b)
 		return strings.Compare(string(left), string(right))
 	})
-	caps := slices.Clone(m.Capabilities)
+	caps := slices.Clone(preview.Capabilities)
 	sort.Strings(caps)
 	findingsJSON := "none"
 	if len(findings) > 0 {
@@ -342,8 +347,8 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 	if len(caps) == 0 {
 		capabilities = marketplace.QuoteTerminal("none")
 	}
-	provenance := fmt.Sprintf("registry_url=%s ref=%s path=%s generator=%s", marketplace.QuoteTerminal(m.Provenance.RegistryURL), marketplace.QuoteTerminal(m.Provenance.Ref), marketplace.QuoteTerminal(m.Provenance.Path), marketplace.QuoteTerminal(m.Provenance.Generator))
-	return fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nlicense: %s\nfindings: %s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(plan.Entry.URL), marketplace.QuoteTerminal(plan.Entry.InstanceID), marketplace.QuoteTerminal(plan.Pin.SourceSlug), marketplace.QuoteTerminal(plan.Pin.SourceID), marketplace.QuoteTerminal(plan.Pin.Kind), marketplace.QuoteTerminal(plan.Pin.Name), marketplace.QuoteTerminal(nonEmpty(plan.Pin.InstalledName, plan.Pin.Name)), marketplace.QuoteTerminal(plan.Pin.Revision), marketplace.QuoteTerminal(plan.Pin.Digest), marketplace.QuoteTerminal(plan.ArchiveDigest), marketplace.QuoteTerminal("mirror"), marketplace.QuoteTerminal(nonEmpty(m.License, "none")), findingsJSON, capabilities, provenance), nil
+	provenance := fmt.Sprintf("registry_url=%s ref=%s path=%s generator=%s", marketplace.QuoteTerminal(preview.Provenance.RegistryURL), marketplace.QuoteTerminal(preview.Provenance.Ref), marketplace.QuoteTerminal(preview.Provenance.Path), marketplace.QuoteTerminal(preview.Provenance.Generator))
+	return fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\nfindings: %s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findingsJSON, capabilities, provenance), nil
 }
 
 func displayMarketplace(plan *marketplace.PreparedInstall) string {

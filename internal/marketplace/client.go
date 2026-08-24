@@ -8,11 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -246,15 +248,25 @@ func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, st
 
 // GetResourceRevision fetches a specific revision of a resource.
 func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.ResourceRevision, error) {
+	return c.getResourceRevision(ctx, source, source, kind, name, revision)
+}
+
+// GetResourceRevisionForSource keeps a slug in the route while validating the
+// immutable Source ID returned by the Marketplace.
+func (c *Client) GetResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name, revision string) (store.ResourceRevision, error) {
+	return c.getResourceRevision(ctx, routeSource, sourceID, kind, name, revision)
+}
+
+func (c *Client) getResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name, revision string) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
 	if err := validateSHA256Digest(revision); err != nil {
 		return rev, fmt.Errorf("revision digest %q: %w", revision, err)
 	}
-	segments := []string{"api", "v1", "resources", source, kind, name, "revisions", revision}
+	segments := []string{"api", "v1", "resources", routeSource, kind, name, "revisions", revision}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
-	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(source, kind, name), store.RevisionDigest(revision)); err != nil {
+	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedSource, kind, name), store.RevisionDigest(revision)); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
 	}
 	return rev, nil
@@ -262,27 +274,56 @@ func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, re
 
 // GetLatestResourceRevision fetches the latest revision of a resource.
 func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.ResourceRevision, error) {
+	return c.getLatestResourceRevision(ctx, source, source, kind, name)
+}
+
+// GetLatestResourceRevisionForSource keeps a slug in the route while validating
+// the immutable Source ID returned by the Marketplace.
+func (c *Client) GetLatestResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name string) (store.ResourceRevision, error) {
+	return c.getLatestResourceRevision(ctx, routeSource, sourceID, kind, name)
+}
+
+func (c *Client) getLatestResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name string) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
-	segments := []string{"api", "v1", "resources", source, kind, name}
+	segments := []string{"api", "v1", "resources", routeSource, kind, name}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
-	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(source, kind, name), ""); err != nil {
+	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedSource, kind, name), ""); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
 	}
 	return rev, nil
 }
 
-// GetSource fetches source metadata.
-func (c *Client) GetSource(ctx context.Context, source string) (store.Source, error) {
+// GetSource fetches source metadata addressed by its immutable Source ID. The
+// response ID is checked before any metadata is remembered or returned so a
+// route/proxy mix-up cannot retarget a pin.
+func (c *Client) GetSource(ctx context.Context, sourceID string) (store.Source, error) {
+	if strings.TrimSpace(sourceID) == "" {
+		return store.Source{}, fmt.Errorf("source ID is required")
+	}
+	return c.getSource(ctx, sourceID, sourceID)
+}
+
+// GetSourceBySlug fetches source metadata through a user-facing slug or alias.
+// A slug is not an immutable identity, so callers must use the returned ID for
+// subsequent exact-coordinate requests.
+func (c *Client) GetSourceBySlug(ctx context.Context, slug string) (store.Source, error) {
+	return c.getSource(ctx, slug, "")
+}
+
+func (c *Client) getSource(ctx context.Context, routeSource, expectedSourceID string) (store.Source, error) {
 	var public mpapi.PublicSource
-	if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "sources", source}, nil), &public); err != nil {
+	if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "sources", routeSource}, nil), &public); err != nil {
 		return store.Source{}, err
 	}
 	if err := validateAPISource(public); err != nil {
 		return store.Source{}, fmt.Errorf("invalid Marketplace source: %w", err)
 	}
-	c.rememberSource(source, public)
+	if expectedSourceID != "" && public.ID != store.SourceID(expectedSourceID) {
+		return store.Source{}, fmt.Errorf("source ID %q does not match requested %q", public.ID, expectedSourceID)
+	}
+	c.rememberSource(routeSource, public)
 
 	src := store.Source{
 		ID: public.ID, Slug: public.Slug, Aliases: public.Aliases,
@@ -293,6 +334,28 @@ func (c *Client) GetSource(ctx context.Context, source string) (store.Source, er
 		src.Publisher = store.Publisher{Name: public.Publisher.Name, URL: public.Publisher.URL}
 	}
 	return src, nil
+}
+
+// GetSourceOccurrence fetches the immutable occurrence for one exact commit and
+// the source's current operator-approved acquisition origin.
+func (c *Client) GetSourceOccurrence(ctx context.Context, source, commit string) (mpapi.ExactSourceOccurrence, error) {
+	var occurrence mpapi.ExactSourceOccurrence
+	if strings.TrimSpace(source) == "" {
+		return occurrence, fmt.Errorf("source occurrence source ID is required")
+	}
+	if !mpapi.IsCanonicalGitCommit(commit) {
+		return occurrence, fmt.Errorf("source occurrence commit %q is not canonical", commit)
+	}
+	segments := []string{"api", "v1", "sources", source, "occurrences", commit}
+	if err := c.getJSONStrict(ctx, c.requestURL(segments, nil), &occurrence); err != nil {
+		return occurrence, err
+	}
+	// The route accepts either the current source slug or immutable Source ID,
+	// but a response for a different source must never be usable for this pin.
+	if err := validateAPIExactSourceOccurrence(occurrence, store.SourceID(source), commit); err != nil {
+		return occurrence, fmt.Errorf("invalid Marketplace source occurrence: %w", err)
+	}
+	return occurrence, nil
 }
 
 // GetArtifact downloads an artifact archive by its archive digest.
@@ -464,6 +527,112 @@ func validateAPIResourceListItem(item mpapi.ResourceListItem) error {
 		return fmt.Errorf("revision and content digest differ")
 	}
 	return nil
+}
+
+func validateAPIExactSourceOccurrence(occ mpapi.ExactSourceOccurrence, source store.SourceID, commit string) error {
+	if occ.SourceID == "" {
+		return fmt.Errorf("source ID is missing")
+	}
+	if source != "" && occ.SourceID != source {
+		return fmt.Errorf("source ID %q does not match requested %q", occ.SourceID, source)
+	}
+	if occ.Commit != commit || !mpapi.IsCanonicalGitCommit(occ.Commit) {
+		return fmt.Errorf("occurrence commit is not the requested full commit")
+	}
+	if strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.AcquisitionOrigin) == "" || occ.OccurredAt.IsZero() {
+		return fmt.Errorf("source occurrence fields are incomplete")
+	}
+	if err := validateSHA256Digest(string(occ.SourceRevisionManifestDigest)); err != nil {
+		return fmt.Errorf("source manifest digest: %w", err)
+	}
+	if err := occ.Acquisition.Validate(); err != nil {
+		return err
+	}
+	if err := validateAcquisitionOrigin(occ.AcquisitionOrigin); err != nil {
+		return fmt.Errorf("acquisition origin: %w", err)
+	}
+	return nil
+}
+
+// validateAcquisitionOrigin is stricter than the general registry URL check:
+// an index-only occurrence must name a Git remote, not a plain local directory,
+// and must not carry credentials or URL query state. SCP syntax remains
+// supported because it is the documented SSH form for local registry entries.
+func validateAcquisitionOrigin(raw string) error {
+	origin := strings.TrimSpace(raw)
+	if err := cache.ValidateGitURL(origin); err != nil {
+		return err
+	}
+	if filepath.IsAbs(origin) || origin == "." || origin == ".." || strings.HasPrefix(origin, "./") || strings.HasPrefix(origin, "../") {
+		return fmt.Errorf("bare relative or absolute paths are not allowed")
+	}
+	if strings.ContainsAny(origin, "?#") {
+		return fmt.Errorf("query and fragment are not allowed")
+	}
+
+	parsed, err := url.Parse(origin)
+	if err == nil && parsed.Scheme != "" {
+		if parsed.User != nil {
+			return fmt.Errorf("URL userinfo is not allowed")
+		}
+		switch strings.ToLower(parsed.Scheme) {
+		case "http", "https", "ssh":
+			if parsed.Host == "" {
+				return fmt.Errorf("URL host is required")
+			}
+		case "file":
+			if hasPathTraversal(parsed.Path) {
+				return fmt.Errorf("file URL contains path traversal")
+			}
+			if parsed.Host != "" || !filepath.IsAbs(parsed.Path) {
+				return fmt.Errorf("file URL must use an absolute local path")
+			}
+			return nil
+		default:
+			return fmt.Errorf("unsupported Git URL scheme %q", parsed.Scheme)
+		}
+		if hasPathTraversal(parsed.Path) {
+			return fmt.Errorf("URL contains path traversal")
+		}
+		return nil
+	}
+
+	if !isSCPOrigin(origin) {
+		return fmt.Errorf("origin must be an HTTP(S), SSH, file URL, or SCP-style Git origin")
+	}
+	return nil
+}
+
+func hasPathTraversal(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func isSCPOrigin(origin string) bool {
+	colon := strings.IndexByte(origin, ':')
+	if colon <= 0 || strings.ContainsAny(origin[:colon], "/\\") || origin[colon+1:] == "" {
+		return false
+	}
+	host := origin[:colon]
+	if at := strings.LastIndexByte(host, '@'); at >= 0 {
+		if at == 0 || strings.Contains(host[:at], ":") {
+			return false
+		}
+		host = host[at+1:]
+	}
+	if host == "" || strings.HasPrefix(host, "-") || strings.HasPrefix(origin[colon+1:], "-") {
+		return false
+	}
+	for _, r := range host {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateAPISource(src mpapi.PublicSource) error {

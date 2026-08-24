@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,6 +296,12 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleSourceHistory(w, r, parts[0])
+	case 3:
+		if parts[1] != "occurrences" {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		s.handleSourceOccurrence(w, r, parts[0], parts[2])
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -320,6 +327,55 @@ func (s *Server) handleSourceDetail(w http.ResponseWriter, r *http.Request, slug
 		return
 	}
 	writeJSON(w, http.StatusOK, public)
+}
+
+func (s *Server) handleSourceOccurrence(w http.ResponseWriter, r *http.Request, slugOrID, commit string) {
+	if !IsCanonicalGitCommit(commit) {
+		writeError(w, http.StatusBadRequest, "invalid source occurrence commit")
+		return
+	}
+	src, err := s.resolveSource(r.Context(), slugOrID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "source not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load source")
+		return
+	}
+	occurrence, err := s.meta.GetSourceOccurrence(r.Context(), src.ID, commit)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "source occurrence not found")
+			return
+		}
+		slog.Error("source occurrence failed", "source", src.ID, "commit", commit, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+		return
+	}
+	if err := validatePublicSourceOccurrence(occurrence); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+		return
+	}
+	if occurrence.SourceID != src.ID || occurrence.Commit != commit {
+		slog.Error("source occurrence did not match requested identity", "source", src.ID, "commit", commit, "occurrence_source", occurrence.SourceID, "occurrence_commit", occurrence.Commit)
+		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+		return
+	}
+	origin := ""
+	if len(src.Origins) > 0 {
+		origin = publicAcquisitionOrigin(src.Origins[len(src.Origins)-1])
+	}
+	if strings.TrimSpace(origin) == "" {
+		writeError(w, http.StatusInternalServerError, "source has no acquisition origin")
+		return
+	}
+	writeJSON(w, http.StatusOK, ExactSourceOccurrence{
+		SourceID: occurrence.SourceID, Ref: occurrence.Ref, Commit: occurrence.Commit,
+		SourceRevisionManifestDigest: occurrence.SourceRevisionManifestDigest,
+		Acquisition:                  occurrence.Acquisition, AcquisitionOrigin: origin,
+		OccurredAt: occurrence.OccurredAt,
+	})
 }
 
 func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slugOrID string) {
@@ -675,6 +731,29 @@ func validatePublicSource(src SourceDTO) error {
 		}
 	}
 	return nil
+}
+
+func publicAcquisitionOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err == nil && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) {
+		return publicurl.Redact(raw)
+	}
+	// Git/file origins are valid acquisition locations for private and local
+	// deployments. Strip URL passwords while preserving the Git transport.
+	parsed, err = url.Parse(raw)
+	if err == nil && (strings.EqualFold(parsed.Scheme, "ssh") || strings.EqualFold(parsed.Scheme, "git") || strings.EqualFold(parsed.Scheme, "file")) {
+		if parsed.User != nil {
+			username := parsed.User.Username()
+			parsed.User = url.User(username)
+		}
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+	if strings.HasPrefix(raw, "git@") && !strings.ContainsAny(raw, "\r\n") {
+		return raw
+	}
+	return ""
 }
 
 func validatePublicSourceOccurrence(occ store.SourceOccurrence) error {

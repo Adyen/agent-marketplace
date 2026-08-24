@@ -31,6 +31,10 @@ type Revision struct {
 	ExtraBlobs      []store.BlobUpload
 	ManifestPayload []byte
 	ManifestDigest  store.RevisionDigest
+	// ResourceArchives retains locally-built canonical archives for index-only
+	// consumers. They are never published by the worker.
+	ResourceArchives      map[string][]byte
+	ResourceArchiveDigest map[string]string
 }
 
 // BuildSourceRevision discovers resources under dir for the given source and
@@ -60,12 +64,15 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	defer cancel()
 
 	type processed struct {
-		entry  catalog.Entry
-		result artifact.BuildResult
+		entry        catalog.Entry
+		result       artifact.BuildResult
+		supportFiles map[string]string
 	}
 
 	var processedResults []processed
 	resourceResults := make(map[string]processed)
+	resourceArchives := make(map[string][]byte)
+	resourceArchiveDigests := make(map[string]string)
 	var collectionEntries []catalog.Entry
 	seen := make(map[string]bool)
 
@@ -127,12 +134,21 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 				continue
 			}
 
-			r, err := buildResource(ctx, source, root, entry, origin, commit, dir, policy, limits, allowlist, nil)
+			files, err := fileSetForResource(dir, entry)
+			if err != nil {
+				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
+			}
+			r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, files, nil)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
+			rawArchive, rawArchiveDigest := r.RawArchive, r.ArchiveDigest
 			r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
-			p := processed{entry: entry, result: r}
+			if source.Acquisition == store.AcquisitionIndexOnly && !r.Rejected && len(rawArchive) > 0 {
+				resourceArchives[key] = rawArchive
+				resourceArchiveDigests[key] = rawArchiveDigest
+			}
+			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
 			processedResults = append(processedResults, p)
 			resourceResults[key] = p
 		}
@@ -224,7 +240,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		// local test fixtures. The origin is already captured in opts.Source.
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, source, root, entry, origin, commit, dir, policy, limits, allowlist, members)
+		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, nil, members)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
@@ -244,8 +260,6 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 	var manifest artifact.SourceRevisionManifest
 	manifest.SchemaVersion = artifact.SourceRevisionSchemaV1
-	manifest.SourceURL = origin
-	manifest.Ref = source.Ref
 	manifest.Generator = fmt.Sprintf("agent-marketplace source-revision v%s", analyze.AnalyzerVersionV1)
 	manifest.Resources = make([]artifact.RevisionResource, 0, len(processedResults))
 
@@ -256,6 +270,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			Name:          p.entry.Name,
 			ContentDigest: p.result.ContentDigest,
 			ArchiveDigest: p.result.ArchiveDigest,
+			SupportFiles:  p.supportFiles,
 			Rejected:      p.result.Rejected,
 		})
 	}
@@ -310,11 +325,13 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	}
 
 	return Revision{
-		Occurrence:      occ,
-		Resources:       resources,
-		ExtraBlobs:      extraBlobs,
-		ManifestPayload: payload,
-		ManifestDigest:  store.RevisionDigest(digest),
+		Occurrence:            occ,
+		Resources:             resources,
+		ExtraBlobs:            extraBlobs,
+		ManifestPayload:       payload,
+		ManifestDigest:        store.RevisionDigest(digest),
+		ResourceArchives:      resourceArchives,
+		ResourceArchiveDigest: resourceArchiveDigests,
 	}, nil
 }
 
@@ -327,7 +344,7 @@ func firstErrorDiagnostic(ds []diag.Diagnostic) diag.Diagnostic {
 	return diag.Diagnostic{}
 }
 
-func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit, dir string, policy analyze.Policy, limits config.Limits, allowlist []string, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
+func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, allowlist []string, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
 	opts.Source = analyze.Source{
@@ -345,11 +362,6 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 		MaxFindings:   defaultMaxFindings,
 	}
 
-	files, err := fileSetForResource(dir, entry)
-	if err != nil {
-		return artifact.BuildResult{}, fmt.Errorf("support files: %w", err)
-	}
-
 	switch r := entry.Resource.(type) {
 	case *hccir.Collection:
 		if r.SourcePath != "" {
@@ -361,6 +373,17 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 	default:
 		return artifact.BuildResult{}, fmt.Errorf("unknown resource type %T", entry.Resource)
 	}
+}
+
+func supportFileDigests(files analyze.FileSet) map[string]string {
+	if len(files) == 0 {
+		return nil
+	}
+	digests := make(map[string]string, len(files))
+	for name, data := range files {
+		digests[name] = artifact.RevisionDigest(data)
+	}
+	return digests
 }
 
 func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error) {
