@@ -424,6 +424,9 @@ func inspectConvertOutput(outDir, rel string, record convertsync.Record) (conver
 		// block on it, so its bytes are deliberately never obtained.
 		return convertOutputState{exists: true}, nil
 	}
+	if !record.Recorded(rel) {
+		return convertOutputState{exists: true}, nil
+	}
 	current, err := os.ReadFile(abs)
 	if err != nil {
 		// Ownership is proved by comparing bytes, so bytes that cannot be read
