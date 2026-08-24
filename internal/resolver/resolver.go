@@ -1575,11 +1575,7 @@ func expandMembersRecursive(
 			CatalogKey:   includedEntry.catalogKey,
 			Harnesses:    artifact.Harnesses,
 		}
-		// Trust is inherited down the include chain while the chain stays with
-		// one provider: naming a collection accepts what its own registry
-		// composes into it, and a nested name may widen trust when the config
-		// names it on that same registry.
-		includedTrusted := trusted.widenedBy(trust.evaluate(name, includedEntry.catalogKey))
+		var includedTrusted executableTrust
 		if includedEntry.catalogKey != artifact.CatalogKey {
 			// A cross-provider include is a bare name answered by a registry the
 			// trusting author does not control, so nothing is inherited: the
@@ -1591,6 +1587,12 @@ func expandMembersRecursive(
 			if !includedTrusted.granted {
 				includedTrusted.includedFromKey = artifact.CatalogKey
 			}
+		} else {
+			// Trust is inherited down the include chain while the chain stays with
+			// one provider: naming a collection accepts what its own registry
+			// composes into it, and a nested name may widen trust when the config
+			// names it on that same registry.
+			includedTrusted = trusted.widenedBy(trust.evaluate(name, includedEntry.catalogKey))
 		}
 		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet, trust, includedTrusted)
 	}

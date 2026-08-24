@@ -646,3 +646,45 @@ func BenchmarkCandidatesAtPath(b *testing.B) {
 		_ = candidatesAtPath(candidates, "teams/development/plugins/dev-language-guides/")
 	}
 }
+
+func BenchmarkResolveCrossProviderCollectionIncludes(b *testing.B) {
+	const includeCount = 64
+	const hostURL = "git@example.com:host.git"
+	const providerURL = "git@example.com:provider.git"
+
+	names := make([]string, 0, includeCount)
+	for i := 0; i < includeCount; i++ {
+		names = append(names, fmt.Sprintf("included-%d", i))
+	}
+	outer := ir.NewCollection("outer", "", "", nil, names, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: hostURL, Ref: "main", Collections: config.KindSelector{Include: []string{"outer"}}},
+		{URL: providerURL, Ref: "main"},
+	}}
+	setCatalogKeys(cfg)
+
+	hostKey := cfg.Registries[0].CatalogKey
+	providerKey := cfg.Registries[1].CatalogKey
+	providerCatalog := make([]catalog.Entry, 0, includeCount*2)
+	for _, name := range names {
+		providerCatalog = append(providerCatalog,
+			catalog.Entry{
+				Kind:     ir.KindCollection,
+				Name:     name,
+				Resource: ir.NewCollection(name, "", "", []ir.CollectionMember{{Kind: ir.KindHook, Name: "hook-" + name}}, nil, nil, ir.SourceRef{}),
+			},
+			catalog.Entry{Kind: ir.KindHook, Name: "hook-" + name, Path: "/cache/hooks/" + name},
+		)
+	}
+	catalogs := map[string][]catalog.Entry{
+		hostKey:     {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		providerKey: providerCatalog,
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Resolve(cfg, catalogs, nil)
+	}
+}
