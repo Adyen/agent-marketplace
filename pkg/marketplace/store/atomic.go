@@ -229,7 +229,7 @@ func validateCollectionPublication(req SourceRevisionPublication, uploads []Blob
 			if cr.ID != string(rev.ContentDigest) || cr.ManifestDigest != rev.ContentDigest || cr.SourceID != rev.Coordinate.Source {
 				return fmt.Errorf("%w: collection %s metadata does not agree with resource revision", ErrConflict, rev.Coordinate)
 			}
-			if err := validateCollectionManifestGraph(rev, cr, byDigest, req.Resources); err != nil {
+			if err := validateCollectionManifestGraph(rev, cr, byDigest, req.Resources, collections); err != nil {
 				return err
 			}
 		}
@@ -253,58 +253,128 @@ func validateCollectionPublication(req SourceRevisionPublication, uploads []Blob
 	return nil
 }
 
-func validateCollectionManifestGraph(rev ResourceRevision, cr CollectionRevision, byDigest map[ArchiveDigest][]byte, resources []ResourceRevision) error {
-	data, ok := byDigest[ArchiveDigest(cr.ManifestDigest)]
+func validateCollectionManifestGraph(rev ResourceRevision, cr CollectionRevision, byDigest map[ArchiveDigest][]byte, resources []ResourceRevision, collections map[string]CollectionRevision) error {
+	// Decode every metadata-backed manifest first. The artifact helper then
+	// validates the complete nested graph and compares every flattened Leaves
+	// entry with the graph-derived result before metadata can be committed.
+	manifests := make(map[string]hccartifact.CollectionManifest, len(collections))
+	for id, collectionMeta := range collections {
+		data, ok := byDigest[ArchiveDigest(collectionMeta.ManifestDigest)]
+		if !ok {
+			return fmt.Errorf("collection revision %q manifest is missing from upload graph", id)
+		}
+		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("collection revision %q manifest: %w", id, err)
+		}
+		if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
+			return fmt.Errorf("collection revision %q manifest: %w", id, err)
+		}
+		if manifest.ContentDigest != id || manifest.ContentDigest != string(collectionMeta.ManifestDigest) {
+			return fmt.Errorf("%w: collection revision %q manifest digest disagrees with metadata", ErrConflict, id)
+		}
+		manifests[id] = manifest
+	}
+	rootManifest, ok := manifests[cr.ID]
 	if !ok {
-		return fmt.Errorf("collection %s manifest is missing from upload graph", rev.Coordinate)
+		return fmt.Errorf("collection revision %q manifest is missing from publication", cr.ID)
 	}
-	manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("collection %s manifest: %w", rev.Coordinate, err)
+	if rootManifest.Name != rev.Coordinate.Name {
+		return fmt.Errorf("%w: collection %s manifest name disagrees with metadata", ErrConflict, rev.Coordinate)
 	}
-	if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
-		return fmt.Errorf("collection %s manifest: %w", rev.Coordinate, err)
-	}
-	if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
-		return fmt.Errorf("collection %s manifest: %w", rev.Coordinate, err)
-	}
-	if manifest.ContentDigest != string(cr.ManifestDigest) || manifest.Name != rev.Coordinate.Name {
-		return fmt.Errorf("%w: collection %s manifest digest or name disagrees with metadata", ErrConflict, rev.Coordinate)
+	if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(rootManifest, manifests); err != nil {
+		return fmt.Errorf("collection %s manifest graph: %w", rev.Coordinate, err)
 	}
 
-	metadataMembers := make(map[ResourceCoordinate]struct{}, len(cr.Members))
-	for _, member := range cr.Members {
-		if _, exists := metadataMembers[member]; exists {
-			return fmt.Errorf("%w: collection %s metadata contains duplicate member %s", ErrConflict, rev.Coordinate, member)
+	visiting := make(map[string]bool)
+	leafRevisions := make(map[ResourceCoordinate]RevisionDigest)
+	var walk func(ResourceRevision, CollectionRevision) error
+	walk = func(collectionRev ResourceRevision, collectionMeta CollectionRevision) error {
+		if visiting[collectionMeta.ID] {
+			return fmt.Errorf("collection %s contains a cycle", collectionRev.Coordinate)
 		}
-		metadataMembers[member] = struct{}{}
-	}
-	if len(metadataMembers) != len(manifest.Members) {
-		return fmt.Errorf("%w: collection %s metadata member count disagrees with manifest", ErrConflict, rev.Coordinate)
-	}
-	for _, member := range manifest.Members {
-		coordinate := ResourceCoordinate{Marketplace: rev.Coordinate.Marketplace, Source: SourceID(member.SourceID), Kind: member.Kind, Name: member.Name}
-		if _, ok := metadataMembers[coordinate]; !ok {
-			return fmt.Errorf("%w: collection %s metadata is missing member %s", ErrConflict, rev.Coordinate, coordinate)
+		visiting[collectionMeta.ID] = true
+		defer delete(visiting, collectionMeta.ID)
+		manifest, ok := manifests[collectionMeta.ID]
+		if !ok {
+			return fmt.Errorf("collection %s manifest is missing from upload graph", collectionRev.Coordinate)
 		}
-		var leaf *ResourceRevision
-		for i := range resources {
-			if resources[i].Coordinate == coordinate && resources[i].ContentDigest == RevisionDigest(member.Revision) {
-				leaf = &resources[i]
-				break
+		if manifest.Name != collectionRev.Coordinate.Name {
+			return fmt.Errorf("%w: collection %s manifest name disagrees with metadata", ErrConflict, collectionRev.Coordinate)
+		}
+
+		metadataMembers := make(map[ResourceCoordinate]struct{}, len(collectionMeta.Members))
+		for _, member := range collectionMeta.Members {
+			if _, exists := metadataMembers[member]; exists {
+				return fmt.Errorf("%w: collection %s metadata contains duplicate member %s", ErrConflict, collectionRev.Coordinate, member)
+			}
+			metadataMembers[member] = struct{}{}
+		}
+		if len(metadataMembers) != len(manifest.Members) {
+			return fmt.Errorf("%w: collection %s metadata member count disagrees with manifest", ErrConflict, collectionRev.Coordinate)
+		}
+		for _, member := range manifest.Members {
+			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Source: SourceID(member.SourceID), Kind: member.Kind, Name: member.Name}
+			if _, ok := metadataMembers[coordinate]; !ok {
+				return fmt.Errorf("%w: collection %s metadata is missing member %s", ErrConflict, collectionRev.Coordinate, coordinate)
+			}
+			memberRevision, found := resourceRevisionFor(resources, coordinate, RevisionDigest(member.Revision))
+			if !found {
+				return fmt.Errorf("collection %s member %s revision is missing from publication", collectionRev.Coordinate, coordinate)
+			}
+			if member.Kind == "collection" {
+				nested, ok := collections[string(memberRevision.ContentDigest)]
+				if !ok {
+					return fmt.Errorf("collection %s nested member %s metadata is missing", collectionRev.Coordinate, coordinate)
+				}
+				if nested.SourceID != coordinate.Source || nested.ID != member.Revision || nested.ManifestDigest != RevisionDigest(member.Revision) {
+					return fmt.Errorf("%w: collection %s nested member %s metadata identity disagrees with manifest", ErrConflict, collectionRev.Coordinate, coordinate)
+				}
+				if err := walk(memberRevision, nested); err != nil {
+					return err
+				}
 			}
 		}
-		if leaf == nil {
-			return fmt.Errorf("collection %s leaf %s revision is missing from publication", rev.Coordinate, coordinate)
+
+		// A legacy flat manifest may omit Leaves, in which case its direct
+		// materialized members are the leaves. Nested manifests are fail-closed
+		// by ValidateAndExpandCollectionManifestGraph and cannot use this fallback.
+		leaves := manifest.Leaves
+		if len(leaves) == 0 {
+			for _, member := range manifest.Members {
+				if member.Kind != "collection" {
+					leaves = append(leaves, member)
+				}
+			}
 		}
-		if leaf.ArchiveDigest == "" {
-			return fmt.Errorf("collection %s leaf %s has no mirrored archive", rev.Coordinate, coordinate)
+		for _, member := range leaves {
+			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Source: SourceID(member.SourceID), Kind: member.Kind, Name: member.Name}
+			memberRevision, found := resourceRevisionFor(resources, coordinate, RevisionDigest(member.Revision))
+			if !found {
+				return fmt.Errorf("collection %s leaf %s revision is missing from publication", collectionRev.Coordinate, coordinate)
+			}
+			if previous, exists := leafRevisions[coordinate]; exists && previous != memberRevision.ContentDigest {
+				return fmt.Errorf("%w: collection graph contains conflicting revisions for %s", ErrConflict, coordinate)
+			}
+			leafRevisions[coordinate] = memberRevision.ContentDigest
+			if memberRevision.ArchiveDigest != "" {
+				if _, ok := byDigest[memberRevision.ArchiveDigest]; !ok {
+					return fmt.Errorf("collection %s leaf %s archive is missing from upload graph", collectionRev.Coordinate, coordinate)
+				}
+			}
 		}
-		if _, ok := byDigest[leaf.ArchiveDigest]; !ok {
-			return fmt.Errorf("collection %s leaf %s archive is missing from upload graph", rev.Coordinate, coordinate)
+		return nil
+	}
+	return walk(rev, cr)
+}
+
+func resourceRevisionFor(resources []ResourceRevision, coordinate ResourceCoordinate, digest RevisionDigest) (ResourceRevision, bool) {
+	for _, resource := range resources {
+		if resource.Coordinate == coordinate && resource.ContentDigest == digest {
+			return resource, true
 		}
 	}
-	return nil
+	return ResourceRevision{}, false
 }
 
 func collectionManifestDigests(req SourceRevisionPublication) map[ArchiveDigest]struct{} {

@@ -166,40 +166,68 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		collectionByName[e.Name] = e
 	}
 
+	type collectionLeaf struct {
+		result artifact.BuildResult
+		paths  [][]string
+	}
 	type resolvedCollection struct {
-		result  artifact.BuildResult
-		members []artifact.BuildResult
+		result artifact.BuildResult
+		leaves []collectionLeaf
 	}
 	collectionCache := make(map[string]resolvedCollection)
 
-	var resolveCollection func(name string, visiting map[string]bool) (artifact.BuildResult, []artifact.BuildResult, error)
-	resolveCollection = func(name string, visiting map[string]bool) (artifact.BuildResult, []artifact.BuildResult, error) {
+	var resolveCollection func(name string, visiting map[string]bool) (artifact.BuildResult, []collectionLeaf, error)
+	resolveCollection = func(name string, visiting map[string]bool) (artifact.BuildResult, []collectionLeaf, error) {
 		if visiting[name] {
 			return artifact.BuildResult{}, nil, fmt.Errorf("cyclic collection reference: %q", name)
 		}
 		if cached, ok := collectionCache[name]; ok {
-			return cached.result, cached.members, nil
+			return cached.result, cached.leaves, nil
 		}
-
 		entry, ok := collectionByName[name]
 		if !ok {
 			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q not found", name)
 		}
-
 		c, ok := entry.Resource.(*hccir.Collection)
 		if !ok {
 			return artifact.BuildResult{}, nil, fmt.Errorf("resource %q is not a collection", name)
-		}
-
-		if len(c.Includes) > 0 {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q includes nested collections, which are not supported in the flat mirror slice", name)
 		}
 		visiting[name] = true
 		defer func() { delete(visiting, name) }()
 
 		root := store.SourceRoot{Path: c.SourcePath}
+		var directResults []artifact.BuildResult
+		var leaves []collectionLeaf
+		addLeaf := func(result artifact.BuildResult, path []string) error {
+			for i := range leaves {
+				if leaves[i].result.Kind == result.Kind && leaves[i].result.Name == result.Name {
+					if leaves[i].result.ContentDigest != result.ContentDigest {
+						return fmt.Errorf("collection %q contains conflicting revisions of %s/%q", name, result.Kind, result.Name)
+					}
+					leaves[i].paths = appendUniquePath(leaves[i].paths, path)
+					return nil
+				}
+			}
+			leaves = append(leaves, collectionLeaf{result: result, paths: [][]string{path}})
+			return nil
+		}
+		resolveChild := func(childName string, path []string) error {
+			child, childLeaves, err := resolveCollection(childName, visiting)
+			if err != nil {
+				return err
+			}
+			directResults = append(directResults, child)
+			for _, leaf := range childLeaves {
+				for _, childPath := range leaf.paths {
+					fullPath := append(append([]string{name}, path...), childPath...)
+					if err := addLeaf(leaf.result, fullPath); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
 
-		var members []artifact.BuildResult
 		for _, m := range c.Members {
 			memberKind := m.Kind
 			if memberKind == 0 {
@@ -216,42 +244,39 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			if effectiveRegistry != origin || effectiveRef != source.Ref {
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %q references external registry/ref which is not supported", name, m.Name)
 			}
-
 			if memberKind == hccir.KindCollection {
-				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q contains nested collection %q, which is not supported in the flat mirror slice", name, m.Name)
+				if err := resolveChild(m.Name, nil); err != nil {
+					return artifact.BuildResult{}, nil, err
+				}
+				continue
 			}
-
 			kind := api.FromIR(memberKind)
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in source", name, kind, m.Name)
 			}
-			members = append(members, rp.result)
-		}
-
-		for _, inc := range c.Includes {
-			res, mems, err := resolveCollection(inc, visiting)
-			if err != nil {
+			directResults = append(directResults, rp.result)
+			if err := addLeaf(rp.result, []string{name}); err != nil {
 				return artifact.BuildResult{}, nil, err
 			}
-			_ = res
-			members = append(members, mems...)
+		}
+		for _, inc := range c.Includes {
+			if err := resolveChild(inc, nil); err != nil {
+				return artifact.BuildResult{}, nil, err
+			}
 		}
 
-		// Clear provenance-only source fields before analysis; the analyzer's
-		// dangerous-url scanner would otherwise flag the file:// origin used for
-		// local test fixtures. The origin is already captured in opts.Source.
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, nil, members)
+		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, nil, directResults)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
 		}
 		r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
 		if source.Acquisition != store.AcquisitionMirror {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition; mixed/index-only collections are not supported", name)
+			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition", name)
 		}
 		if r.Rejected {
 			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q is rejected and has no publishable standalone manifest", name)
@@ -263,16 +288,20 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		if err := hccartifact.VerifyCollectionManifest(manifest, payload); err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("verify collection %q manifest: %w", name, err)
 		}
-		if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q is not a flat mirror collection: %w", name, err)
+		manifest.Leaves = nil
+		for _, leaf := range leaves {
+			manifestLeaf := hccartifact.CollectionMemberEntry{Kind: leaf.result.Kind, Name: leaf.result.Name, SourceID: string(source.ID), Revision: leaf.result.ContentDigest, InclusionPaths: leaf.paths}
+			manifest.Leaves = append(manifest.Leaves, manifestLeaf)
 		}
-		for _, member := range members {
-			if member.Rejected || member.ArchiveDigest == "" || len(member.RawArchive) == 0 {
-				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s/%q has no mirrored artifact", name, member.Kind, member.Name)
-			}
+		manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(manifest)
+		if err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("encode collection %q graph: %w", name, err)
 		}
-		collectionCache[name] = resolvedCollection{result: r, members: members}
-		return r, members, nil
+		r.ManifestPayload, r.ManifestDigest, r.ContentDigest = manifestPayload, manifestDigest, manifestDigest
+		r.Artifact.Manifest.ContentDigest = manifestDigest
+		r.Artifact.Payload = manifestPayload
+		collectionCache[name] = resolvedCollection{result: r, leaves: leaves}
+		return r, leaves, nil
 	}
 
 	for _, entry := range collectionEntries {
@@ -289,6 +318,29 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
 		}
 		processedResults = append(processedResults, processed{entry: entry, result: r})
+	}
+
+	// Validate every published collection against the complete set of manifests
+	// produced for this source. This prevents a malformed or stale flattened
+	// Leaves list from becoming part of the immutable publication.
+	publishedCollectionManifests := make(map[string]hccartifact.CollectionManifest, len(collectionEntries))
+	for _, p := range processedResults {
+		if p.entry.Kind != hccir.KindCollection || p.result.Rejected {
+			continue
+		}
+		collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(p.result.ManifestPayload))
+		if err != nil {
+			return rev, fmt.Errorf("decode collection %q manifest for graph validation: %w", p.entry.Name, err)
+		}
+		if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
+			return rev, fmt.Errorf("verify collection %q manifest for graph validation: %w", p.entry.Name, err)
+		}
+		publishedCollectionManifests[collection.ContentDigest] = collection
+	}
+	for _, collection := range publishedCollectionManifests {
+		if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(collection, publishedCollectionManifests); err != nil {
+			return rev, fmt.Errorf("validate published collection %q graph: %w", collection.Name, err)
+		}
 	}
 
 	var manifest artifact.SourceRevisionManifest
@@ -381,8 +433,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
 				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", p.entry.Name, err)
 			}
-			if err := hccartifact.ValidateFlatMirrorManifest(collection); err != nil {
-				return Revision{}, fmt.Errorf("collection %q is not a flat mirror collection: %w", p.entry.Name, err)
+			if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(collection, publishedCollectionManifests); err != nil {
+				return Revision{}, fmt.Errorf("collection %q manifest graph: %w", p.entry.Name, err)
 			}
 			if collection.ContentDigest != p.result.ManifestDigest {
 				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", p.entry.Name)
@@ -420,6 +472,15 @@ func firstErrorDiagnostic(ds []diag.Diagnostic) diag.Diagnostic {
 		}
 	}
 	return diag.Diagnostic{}
+}
+
+func appendUniquePath(paths [][]string, candidate []string) [][]string {
+	for _, path := range paths {
+		if slices.Equal(path, candidate) {
+			return paths
+		}
+	}
+	return append(paths, append([]string(nil), candidate...))
 }
 
 func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, allowlist []string, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {

@@ -564,8 +564,8 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 			return
 		}
-		if err := hccartifact.ValidateFlatMirrorManifest(collection); err != nil {
-			slog.Error("collection manifest blob is outside supported flat slice", "digest", digest, "err", err)
+		if err := hccartifact.ValidateCollectionManifest(collection); err != nil {
+			slog.Error("collection manifest blob is invalid", "digest", digest, "err", err)
 			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 			return
 		}

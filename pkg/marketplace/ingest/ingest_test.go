@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -200,6 +201,114 @@ func TestBuildSourceRevisionCollection(t *testing.T) {
 			t.Fatalf("source revision manifest exposed collection archive digest: %#v", resource)
 		}
 	}
+}
+
+func TestBuildSourceRevisionNestedCollectionDeduplicatesLeavesAndRetainsPaths(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	baseDir := filepath.Join(repoDir, ".agents", "collections", "base")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "COLLECTION.yaml"), []byte(`name: base
+resources:
+  - name: review
+    kind: skill
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defaults := filepath.Join(repoDir, ".agents", "collections", "defaults", "COLLECTION.yaml")
+	if err := os.WriteFile(defaults, []byte(`name: defaults
+includes:
+  - name: base
+resources:
+  - name: review
+    kind: skill
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-q", "-m", "nested")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+
+	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	rev, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Collections) != 2 {
+		t.Fatalf("expected two collection revisions, got %#v", rev.Collections)
+	}
+	var rootDigest store.RevisionDigest
+	for _, resource := range rev.Resources {
+		if resource.Coordinate.Kind == "collection" && resource.Coordinate.Name == "defaults" {
+			rootDigest = resource.ContentDigest
+		}
+	}
+	if rootDigest == "" {
+		t.Fatal("root collection revision missing")
+	}
+	var rootManifest []byte
+	for _, upload := range rev.CollectionManifests {
+		if store.RevisionDigest(upload.Digest) == rootDigest {
+			rootManifest = upload.Data
+		}
+	}
+	manifest, _, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(rootManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Includes) != 1 || manifest.Includes[0] != "base" {
+		t.Fatalf("direct includes lost: %#v", manifest.Includes)
+	}
+	if len(manifest.Leaves) != 1 || len(manifest.Leaves[0].InclusionPaths) != 2 {
+		t.Fatalf("deduplicated leaf paths = %#v", manifest.Leaves)
+	}
+}
+
+func TestBuildSourceRevisionRejectsNestedCollectionCycle(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	baseDir := filepath.Join(repoDir, ".agents", "collections", "base")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "COLLECTION.yaml"), []byte("name: base\nincludes:\n  - name: defaults\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defaults := filepath.Join(repoDir, ".agents", "collections", "defaults", "COLLECTION.yaml")
+	if err := os.WriteFile(defaults, []byte("name: defaults\nincludes:\n  - name: base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-q", "-m", "cycle")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	_, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
+	if err == nil || !strings.Contains(err.Error(), "cyclic collection reference") {
+		t.Fatalf("cycle error = %v", err)
+	}
+}
+
+func mustRepoCommit(t *testing.T, repoDir string) string {
+	t.Helper()
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return commit
 }
 
 func TestBuildSourceRevisionLicenseRejection(t *testing.T) {

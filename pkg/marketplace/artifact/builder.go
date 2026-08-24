@@ -141,19 +141,26 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	if manifest.SupportedSchemas == nil {
 		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
 	}
+	seenMemberRevisions := make(map[string]string, len(memberResults))
 	for _, member := range memberResults {
 		if member.Rejected {
 			return BuildResult{}, fmt.Errorf("collection member %s/%q is rejected and has no publishable leaf artifact", member.Kind, member.Name)
 		}
+		kind := member.Kind
+		if kind == "" {
+			kind = memberKind(member)
+		}
+		key := kind + "/" + member.Name
+		if previous, exists := seenMemberRevisions[key]; exists && previous != member.ContentDigest {
+			return BuildResult{}, fmt.Errorf("collection contains conflicting revisions of %s/%q", kind, member.Name)
+		}
+		seenMemberRevisions[key] = member.ContentDigest
 	}
 	if len(memberResults) > 0 {
 		manifest = resolveCollectionManifestMembers(manifest, memberResults, opts)
 	}
-	// Collections are virtual: only the standalone collection manifest and its
-	// exact leaf artifacts are published. Validate the publishable flat slice
-	// before encoding anything that can be handed to a publisher.
-	if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
-		return BuildResult{}, fmt.Errorf("validate flat collection manifest: %w", err)
+	if err := hccartifact.ValidateCollectionManifest(manifest); err != nil {
+		return BuildResult{}, fmt.Errorf("validate collection manifest: %w", err)
 	}
 
 	payload, manifestDigest, err := hccartifact.EncodeCollectionManifest(manifest)
@@ -277,43 +284,66 @@ func resolveCollectionManifestMembers(manifest hccartifact.CollectionManifest, m
 			kind = memberKind(mr)
 		}
 		key := kind + "/" + mr.Name
+		if previous, ok := byKey[key]; ok && previous.ContentDigest != mr.ContentDigest {
+			continue
+		}
 		byKey[key] = mr
 	}
 
-	resolved := make([]hccartifact.CollectionMemberEntry, 0, len(memberResults))
+	resolved := make([]hccartifact.CollectionMemberEntry, 0, len(manifest.Members))
 	for i := range manifest.Members {
 		m := manifest.Members[i]
 		key := m.Kind + "/" + m.Name
 		if mr, ok := byKey[key]; ok {
 			m.SourceID = opts.Source.ID
 			m.Revision = mr.ContentDigest
-			delete(byKey, key)
 		}
 		resolved = append(resolved, m)
 	}
-
 	for _, mr := range memberResults {
 		kind := mr.Kind
 		if kind == "" {
 			kind = memberKind(mr)
 		}
-		key := kind + "/" + mr.Name
-		if _, ok := byKey[key]; !ok {
+		if kind != "collection" {
 			continue
 		}
-		resolved = append(resolved, hccartifact.CollectionMemberEntry{
-			Kind:     kind,
-			Name:     mr.Name,
-			SourceID: opts.Source.ID,
-			Revision: mr.ContentDigest,
-		})
-	}
-
-	if len(resolved) > len(manifest.Members) {
-		// Includes were expanded into the member list; drop unresolved names.
-		manifest.Includes = nil
+		key := kind + "/" + mr.Name
+		found := false
+		for _, member := range resolved {
+			if member.Kind+"/"+member.Name == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			resolved = append(resolved, hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, SourceID: opts.Source.ID, Revision: mr.ContentDigest})
+		}
 	}
 	manifest.Members = resolved
+
+	leaves := make([]hccartifact.CollectionMemberEntry, 0, len(memberResults))
+	seen := make(map[string]int)
+	for _, mr := range memberResults {
+		kind := mr.Kind
+		if kind == "" {
+			kind = memberKind(mr)
+		}
+		if kind == "collection" {
+			continue
+		}
+		key := kind + "/" + mr.Name + "/" + opts.Source.ID
+		leaf := hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, SourceID: opts.Source.ID, Revision: mr.ContentDigest, InclusionPaths: [][]string{{manifest.Name}}}
+		if index, ok := seen[key]; ok {
+			if leaves[index].Revision == leaf.Revision {
+				leaves[index].InclusionPaths = append(leaves[index].InclusionPaths, leaf.InclusionPaths...)
+			}
+			continue
+		}
+		seen[key] = len(leaves)
+		leaves = append(leaves, leaf)
+	}
+	manifest.Leaves = leaves
 	return manifest
 }
 
