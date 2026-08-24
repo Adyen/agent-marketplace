@@ -57,9 +57,8 @@ type ResolveOptions struct {
 	// MarketplaceRevocationPolicy is an optional, invocation-scoped policy for
 	// exact revoked Marketplace overrides.
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
-	// MarketplaceMode overrides the mode derived from CatalogMode when set.
-	// This is useful for callers that need Git inspection semantics while using
-	// a different, explicitly local-only Marketplace resolution policy.
+	// MarketplaceMode overrides the mode derived from CatalogMode when set,
+	// except that Offline always forces CachedNoFetch.
 	MarketplaceMode *resolver.MarketplaceResolveMode
 	// MarketplaceSourceFilter limits Marketplace resolution to entries owned by
 	// the selected sources. It is applied only to the resolver's view and does
@@ -495,6 +494,12 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	mpMode := marketplaceResolveMode(opts.CatalogMode, opts.Offline)
 	if opts.MarketplaceMode != nil {
 		mpMode = *opts.MarketplaceMode
+	}
+	if opts.Offline {
+		if opts.MarketplaceMode != nil && mpMode != resolver.MarketplaceResolveModeCachedNoFetch {
+			slog.Debug("offline Marketplace resolution overrides explicit mode", "requested_mode", mpMode, "effective_mode", resolver.MarketplaceResolveModeCachedNoFetch)
+		}
+		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	marketplaceResolver := marketplace.NewResolver()
 	// Keep the effective registry origin policy on the Marketplace resolver as

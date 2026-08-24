@@ -95,6 +95,76 @@ func TestPlanMarketplaceUpdateSkipsUnchangedWithoutArtifactFetch(t *testing.T) {
 	}
 }
 
+func TestMarketplaceOccurrenceComparisonPreservesUpdatePlanningContract(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifestDigest := "sha256:" + strings.Repeat("b", 64)
+	pin := config.MarketplaceResourcePin{
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+	}
+	cases := []struct {
+		name    string
+		pin     config.MarketplaceResourcePin
+		latest  store.ResourceRevision
+		changed bool
+	}{
+		{
+			name: "same occurrence", pin: pin,
+			latest: store.ResourceRevision{Provenance: &store.Provenance{Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)}},
+		},
+		{
+			name: "different commit", pin: pin,
+			latest:  store.ResourceRevision{Provenance: &store.Provenance{Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest(manifestDigest)}},
+			changed: true,
+		},
+		{
+			name: "different manifest", pin: pin,
+			latest:  store.ResourceRevision{Provenance: &store.Provenance{Commit: commit, ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64))}},
+			changed: true,
+		},
+		{
+			name: "missing provenance", pin: pin,
+			latest:  store.ResourceRevision{},
+			changed: true,
+		},
+		{
+			name: "mirror ignores provenance", pin: config.MarketplaceResourcePin{Acquisition: config.MarketplaceAcquisitionMirror},
+			latest: store.ResourceRevision{Provenance: &store.Provenance{Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64))}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := marketplace.IndexOnlyOccurrenceChanged(tc.pin, tc.latest); got != tc.changed {
+				t.Fatalf("occurrence changed = %t, want %t", got, tc.changed)
+			}
+		})
+	}
+}
+
+func TestPlanMarketplaceUpdatePreparesSameContentForChangedIndexOccurrence(t *testing.T) {
+	fixture := newMarketplaceUpdateFixture(t, false)
+	pin := fixture.pin
+	pin.Digest = fixture.latestDigest
+	pin.Acquisition = config.MarketplaceAcquisitionIndexOnly
+	pin.SourceCommit = strings.Repeat("a", 40)
+	pin.SourceManifestDigest = "sha256:" + strings.Repeat("b", 64)
+	fixture.latest.Provenance = &store.Provenance{
+		SourceID: "src", Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest(pin.SourceManifestDigest),
+	}
+	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{pin}}
+	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
+
+	plans, err := planMarketplaceUpdates(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot}, ec)
+	if err != nil {
+		t.Fatalf("plan Marketplace update: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Skipped || plans[0].NewPin.Digest != pin.Digest {
+		t.Fatalf("plans = %#v, want prepared same-content update", plans)
+	}
+	if fixture.artifactRequests != 1 {
+		t.Fatalf("artifact requests = %d, want one prepared update", fixture.artifactRequests)
+	}
+}
+
 func TestPlanMarketplaceUpdateFailureDoesNotMutateConfig(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, true)
 	before := []byte("apiVersion: agent-marketplace/v2\nmarketplaces: []\n")

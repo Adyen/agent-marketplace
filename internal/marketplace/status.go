@@ -1,6 +1,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -139,6 +141,10 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 	start := time.Now()
 	slog.Debug("marketplace status inspection started", "marketplaces", len(cfg.Marketplaces), "mode", marketplaceResolveModeName(mode))
 	cache := r.cache()
+	allowedRegistries := r.AllowedRegistries
+	if cfg.AllowedRegistries != nil {
+		allowedRegistries = *cfg.AllowedRegistries
+	}
 	var inspection Inspection
 	for _, configuredEntry := range cfg.Marketplaces {
 		entry, entryErr := canonicalMarketplaceEntry(configuredEntry)
@@ -203,9 +209,18 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 				status.Cache = CacheStateError
 				status.State = PinStateUnavailable
 				status.Detail = cacheErr.Error()
+			} else if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly && metadataCached {
+				if err := validateCachedIndexOnlyRevision(entry, pin, cached); err != nil {
+					status.Cache = CacheStateError
+					status.State = PinStateUnavailable
+					status.Detail = "digest mismatch: " + err.Error()
+				} else {
+					populateCacheFacts(&status, cache, entry, pin, cached)
+				}
 			} else {
 				populateCacheFacts(&status, cache, entry, pin, cached)
 			}
+			validateCachedIndexOnlyStagingFacts(cache, entry, pin, &status)
 
 			if mode == resolver.MarketplaceResolveModeCached || mode == resolver.MarketplaceResolveModeCachedNoFetch {
 				applyCachedState(&status, cached, metadataCached, cacheErr)
@@ -233,6 +248,12 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 					if cacheErr == nil {
 						populateCacheFacts(&status, cache, entry, pin, remote)
 					}
+					if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+						identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, SourceID: pin.SourceID, Commit: pin.SourceCommit, ManifestDigest: pin.SourceManifestDigest}
+						if _, cacheWriteErr := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, remote); cacheWriteErr != nil {
+							appendPinDetail(&status, "cache write failed: "+cacheWriteErr.Error())
+						}
+					}
 					artifact.Revoked = remote.Revocation != nil
 					if remote.Revocation != nil {
 						status.State = PinStateRevoked
@@ -241,7 +262,14 @@ func (r *Resolver) Inspect(ctx context.Context, cfg *config.Config, targetSet []
 					} else {
 						status.State = PinStateUnavailable
 					}
-					queryLatestRevision(ctx, client, entry, pin, &status)
+					if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+						inspectIndexOnlyOccurrence(ctx, client, entry, pin, &status, allowedRegistries)
+						if status.State == PinStateCurrent {
+							queryLatestRevision(ctx, client, entry, pin, &status)
+						}
+					} else {
+						queryLatestRevision(ctx, client, entry, pin, &status)
+					}
 				}
 			}
 			inspection.Pins = append(inspection.Pins, status)
@@ -287,7 +315,8 @@ func (i *Inspection) appendUnavailable(cache *Cache, entry config.MarketplaceEnt
 		} else {
 			populateCacheFacts(&status, cache, entry, pin, cached)
 		}
-		if cacheErr == nil && cached.Revocation != nil {
+		validateCachedIndexOnlyStagingFacts(cache, entry, pin, &status)
+		if status.Cache != CacheStateError && cacheErr == nil && cached.Revocation != nil {
 			applyRevision(&status, cached)
 			artifact.Revoked = true
 			status.State = PinStateRevoked
@@ -339,6 +368,10 @@ func readCachedPin(cache *Cache, entry config.MarketplaceEntry, pin config.Marke
 	if cache == nil {
 		return store.ResourceRevision{}, false, errors.New("marketplace cache is unavailable")
 	}
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, SourceID: pin.SourceID, Commit: pin.SourceCommit, ManifestDigest: pin.SourceManifestDigest}
+		return cache.ReadIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+	}
 	return cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 }
 
@@ -349,13 +382,11 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 	if status.Cache == CacheStateError {
 		return
 	}
-	if status.Acquisition == AcquisitionIndexOnly {
-		status.Cache = CacheStateNotApplicable
-	} else if !status.MetadataCached {
+	if !status.MetadataCached {
 		status.Cache = CacheStateMissing
 	}
-	if rev.ArchiveDigest == "" {
-		if status.MetadataCached && status.Acquisition == AcquisitionMirror {
+	if rev.ArchiveDigest == "" && status.Acquisition != AcquisitionIndexOnly {
+		if status.MetadataCached {
 			status.Cache = CacheStateMetadataOnly
 		}
 		return
@@ -365,11 +396,26 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 		status.Cache = CacheStateError
 		return
 	}
-	raw, verified, err := cache.ReadArtifact(string(rev.ArchiveDigest))
+	var raw []byte
+	var verified bool
+	var err error
+	if status.Acquisition == AcquisitionIndexOnly {
+		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, SourceID: pin.SourceID, Commit: pin.SourceCommit, ManifestDigest: pin.SourceManifestDigest}
+		raw, verified, err = cache.ReadIndexOnlyArtifact(identity, pin.Digest)
+	} else {
+		raw, verified, err = cache.ReadArtifact(string(rev.ArchiveDigest))
+	}
 	if err != nil {
 		status.Cache = CacheStateError
 		status.Detail = err.Error()
 		return
+	}
+	if status.Acquisition == AcquisitionIndexOnly && raw != nil {
+		if err := validateCachedIndexOnlyArtifact(raw, pin); err != nil {
+			status.Cache = CacheStateError
+			status.Detail = "digest mismatch: " + err.Error()
+			return
+		}
 	}
 	status.ArtifactPresent = raw != nil
 	status.ArtifactVerified = verified
@@ -377,11 +423,60 @@ func populateCacheFacts(status *PinStatus, cache *Cache, entry config.Marketplac
 		status.Cache = CacheStateArtifactVerified
 	} else if raw != nil {
 		status.Cache = CacheStateArtifactUnverified
-	} else if status.Acquisition == AcquisitionMirror {
+	} else {
 		status.Cache = CacheStateMissing
 	}
-	if status.MetadataCached && cacheIsStale(cache.MetadataPath(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)) {
+	metadataPath := cache.MetadataPath(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, SourceID: pin.SourceID, Commit: pin.SourceCommit, ManifestDigest: pin.SourceManifestDigest}
+		metadataPath = cache.IndexOnlyMetadataPath(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+	}
+	if status.MetadataCached && cacheIsStale(metadataPath) {
 		status.Cache = CacheStateStale
+	}
+}
+
+func validateCachedIndexOnlyRevision(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision) error {
+	if err := validateResourceRevision(entry, pin, rev); err != nil {
+		return err
+	}
+	if rev.Provenance == nil || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != pin.SourceCommit || rev.Provenance.ManifestDigest != store.RevisionDigest(pin.SourceManifestDigest) {
+		return errors.New("cached resource provenance does not match pinned source occurrence")
+	}
+	return nil
+}
+
+func validateCachedIndexOnlyArtifact(raw []byte, pin config.MarketplaceResourcePin) error {
+	artifact, archive, err := hccartifact.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("decode artifact: %w", err)
+	}
+	if err := artifact.ValidateArchive(nil); err != nil {
+		return fmt.Errorf("validate artifact: %w", err)
+	}
+	if err := artifact.VerifyArchiveDigest(archive); err != nil {
+		return fmt.Errorf("verify archive: %w", err)
+	}
+	if err := artifact.VerifyContentDigest(); err != nil {
+		return fmt.Errorf("verify content: %w", err)
+	}
+	if artifact.Manifest.Kind != pin.Kind || artifact.Manifest.Name != pin.Name || artifact.Manifest.SourceID != pin.SourceID || artifact.Manifest.ContentDigest != pin.Digest {
+		return fmt.Errorf("artifact identity does not match pin")
+	}
+	return nil
+}
+
+func validateCachedIndexOnlyStagingFacts(cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status *PinStatus) {
+	if cache == nil || pin.Acquisition != config.MarketplaceAcquisitionIndexOnly || !status.MetadataCached || !status.ArtifactPresent || status.Cache == CacheStateError {
+		return
+	}
+	identity := indexOnlyIdentity(entry, pin)
+	resourcePath := cachedReconstructedResourcePath(cache, identity, pin.Kind)
+	if err := validateCachedReconstructedResource(cache, resourcePath); err != nil {
+		status.Cache = CacheStateError
+		status.State = PinStateUnavailable
+		status.Detail = fmt.Sprintf("cached reconstructed source: validate occurrence-scoped reconstructed source %q: %v", resourcePath, err)
+		cache.InvalidateIndexOnlyArtifactVerified(identity, pin.Digest)
 	}
 }
 
@@ -399,7 +494,7 @@ func applyCachedState(status *PinStatus, rev store.ResourceRevision, metadataCac
 		status.State = PinStateRevoked
 	} else if status.Cache == CacheStateStale {
 		status.State = PinStateStale
-	} else if status.Acquisition == AcquisitionIndexOnly || status.ArtifactVerified {
+	} else if status.ArtifactVerified {
 		status.State = PinStateCached
 	} else {
 		status.State = PinStateMissing
@@ -435,6 +530,54 @@ func marketplaceAPISource(pin config.MarketplaceResourcePin) string {
 	return pin.SourceID
 }
 
+func inspectIndexOnlyOccurrence(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status *PinStatus, allowedRegistries []string) {
+	if client == nil {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, "exact source commit unavailable: Marketplace client is unavailable")
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, err.Error())
+		return
+	}
+	status.EndpointQueried = true
+	occ, err := client.GetSourceOccurrence(ctx, pin.SourceID, pin.SourceCommit)
+	if err != nil {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, "exact source commit unavailable: "+err.Error())
+		return
+	}
+	if occ.SourceID != store.SourceID(pin.SourceID) || occ.Commit != pin.SourceCommit || occ.Acquisition != store.AcquisitionIndexOnly {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, "exact source occurrence identity mismatch")
+		return
+	}
+	if occ.SourceRevisionManifestDigest != store.RevisionDigest(pin.SourceManifestDigest) {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, fmt.Sprintf("source manifest digest mismatch: occurrence %q, pin %q", occ.SourceRevisionManifestDigest, pin.SourceManifestDigest))
+		return
+	}
+	origin := strings.TrimSpace(occ.AcquisitionOrigin)
+	if err := validateAcquisitionOrigin(origin); err != nil {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, "policy rejection: invalid acquisition origin: "+err.Error())
+		return
+	}
+	if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: origin, Ref: occ.Ref}}, allowedRegistries); err != nil {
+		status.State = PinStateUnavailable
+		appendPinDetail(status, "policy rejection: acquisition origin rejected by allowed_registries: "+err.Error())
+		return
+	}
+}
+
+func IndexOnlyOccurrenceChanged(pin config.MarketplaceResourcePin, latest store.ResourceRevision) bool {
+	if pin.Acquisition != config.MarketplaceAcquisitionIndexOnly {
+		return false
+	}
+	return latest.Provenance == nil || latest.Provenance.Commit != pin.SourceCommit || latest.Provenance.ManifestDigest != store.RevisionDigest(pin.SourceManifestDigest)
+}
+
 func queryLatestRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, status *PinStatus) {
 	if err := ctx.Err(); err != nil {
 		appendPinDetail(status, err.Error())
@@ -457,7 +600,7 @@ func queryLatestRevision(ctx context.Context, client *Client, entry config.Marke
 		appendPinDetail(status, "latest revision is revoked")
 		return
 	}
-	status.UpdateAvailable = latest.ContentDigest != store.RevisionDigest(pin.Digest)
+	status.UpdateAvailable = latest.ContentDigest != store.RevisionDigest(pin.Digest) || IndexOnlyOccurrenceChanged(pin, latest)
 	if status.UpdateAvailable && status.State == PinStateCurrent {
 		status.State = PinStateUpdateAvailable
 	}
@@ -480,7 +623,7 @@ func validateLatestResourceRevision(entry config.MarketplaceEntry, pin config.Ma
 		if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
 			return fmt.Errorf("latest revision archive digest %q: %w", rev.ArchiveDigest, err)
 		}
-	} else if rev.Revocation == nil && pin.Kind != "collection" {
+	} else if rev.Revocation == nil && pin.Kind != "collection" && pin.Acquisition != config.MarketplaceAcquisitionIndexOnly {
 		return errors.New("latest revision archive digest is required")
 	}
 	return nil

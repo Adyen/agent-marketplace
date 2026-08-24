@@ -1,6 +1,8 @@
 package marketplace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,32 @@ import (
 // revision metadata on disk under a single root.
 type Cache struct {
 	root string
+}
+
+// IndexOnlyIdentity is the immutable occurrence identity used for index-only
+// cache entries. The acquisition origin is deliberately absent: it is mutable
+// operator metadata and must never make an old origin reachable.
+type IndexOnlyIdentity struct {
+	Marketplace    string
+	SourceID       string
+	Commit         string
+	ManifestDigest string
+}
+
+// IndexOnlyKey returns a stable, opaque directory key for an exact occurrence.
+func IndexOnlyKey(identity IndexOnlyIdentity) string {
+	value := identity.Marketplace + "\x00" + identity.SourceID + "\x00" + identity.Commit + "\x00" + identity.ManifestDigest
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func indexOnlyIdentity(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) IndexOnlyIdentity {
+	return IndexOnlyIdentity{
+		Marketplace:    entry.InstanceID,
+		SourceID:       pin.SourceID,
+		Commit:         pin.SourceCommit,
+		ManifestDigest: pin.SourceManifestDigest,
+	}
 }
 
 // NewCache returns a Cache rooted at root.
@@ -313,6 +341,50 @@ func (c *Cache) ArtifactPath(digest string) string {
 	return filepath.Join(c.root, "artifacts", safeDigest(digest), "artifact.tar.gz")
 }
 
+// IndexOnlyArtifactPath returns the cache path for an artifact reconstructed
+// from one exact source occurrence.
+func (c *Cache) IndexOnlyArtifactPath(identity IndexOnlyIdentity, digest string) string {
+	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "artifacts", safeDigest(digest), "artifact.tar.gz")
+}
+
+func (c *Cache) WriteIndexOnlyArtifact(identity IndexOnlyIdentity, digest string, raw []byte) (string, error) {
+	return cache.WithCacheMutationLock(func() (string, error) {
+		p := c.IndexOnlyArtifactPath(identity, digest)
+		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+			return "", fmt.Errorf("prepare index-only artifact cache %q: %w", p, err)
+		}
+		if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
+			return "", fmt.Errorf("write index-only artifact cache %q: %w", p, err)
+		}
+		return p, nil
+	})
+}
+
+func (c *Cache) ReadIndexOnlyArtifact(identity IndexOnlyIdentity, digest string) ([]byte, bool, error) {
+	p := c.IndexOnlyArtifactPath(identity, digest)
+	raw, verified, err := readVerifiedCacheFile(c.root, p)
+	if err != nil {
+		return nil, false, fmt.Errorf("read index-only artifact cache %q: %w", p, err)
+	}
+	return raw, verified, nil
+}
+
+func (c *Cache) MarkIndexOnlyArtifactVerified(identity IndexOnlyIdentity, digest string) error {
+	return cache.WithCacheMutation(func() error {
+		return writeMarker(c.root, verifiedMarkerPath(filepath.Dir(c.IndexOnlyArtifactPath(identity, digest))))
+	})
+}
+
+func (c *Cache) InvalidateIndexOnlyArtifactVerified(identity IndexOnlyIdentity, digest string) {
+	_ = cache.WithCacheMutation(func() error {
+		dir := filepath.Dir(c.IndexOnlyArtifactPath(identity, digest))
+		if err := validateCacheDirectory(c.root, dir); err != nil {
+			return err
+		}
+		return os.Remove(verifiedMarkerPath(dir))
+	})
+}
+
 // WriteArtifact writes the artifact archive bytes and returns the path.
 func (c *Cache) WriteArtifact(digest string, raw []byte) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
@@ -416,6 +488,49 @@ func (c *Cache) MetadataPath(baseURL, sourceID, kind, name, revision string) str
 		safePathSegment(name),
 		safeDigest(revision)+".json",
 	)
+}
+
+// IndexOnlyMetadataPath returns the cache path for resource metadata tied to
+// an exact source occurrence, rather than only its content digest.
+func (c *Cache) IndexOnlyMetadataPath(identity IndexOnlyIdentity, sourceID, kind, name, revision string) string {
+	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "metadata", safePathSegment(sourceID), safePathSegment(kind), safePathSegment(name), safeDigest(revision)+".json")
+}
+
+func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string, rev store.ResourceRevision) (string, error) {
+	return cache.WithCacheMutationLock(func() (string, error) {
+		p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
+		raw, err := json.Marshal(rev)
+		if err != nil {
+			return "", fmt.Errorf("marshal index-only resource revision: %w", err)
+		}
+		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+			return "", fmt.Errorf("prepare index-only metadata cache %q: %w", p, err)
+		}
+		if err := writeAtomic(c.root, p, raw, 0o644, ""); err != nil {
+			return "", fmt.Errorf("write index-only metadata cache %q: %w", p, err)
+		}
+		return p, nil
+	})
+}
+
+func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string) (store.ResourceRevision, bool, error) {
+	var rev store.ResourceRevision
+	p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
+	exists, err := validateCacheRegularFile(c.root, p)
+	if err != nil {
+		return rev, false, fmt.Errorf("validate index-only metadata cache %q: %w", p, err)
+	}
+	if !exists {
+		return rev, false, nil
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return rev, false, fmt.Errorf("read index-only metadata cache %q: %w", p, err)
+	}
+	if err := json.Unmarshal(raw, &rev); err != nil {
+		return rev, true, fmt.Errorf("decode index-only metadata cache %q: %w", p, err)
+	}
+	return rev, true, nil
 }
 
 // WriteResourceRevision caches a resource revision JSON document.

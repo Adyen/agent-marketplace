@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -66,7 +67,8 @@ func (p *PreparedInstall) Preview() InstallPreview {
 }
 
 // LatestRevision verifies the endpoint and source identity, then fetches the
-// latest metadata for an existing mirror pin. It does not fetch the artifact.
+// latest metadata for an existing pin. Index-only pins also validate the exact
+// source occurrence, but this method does not fetch an artifact.
 func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.Source, store.ResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
 		return store.Source{}, store.ResourceRevision{}, err
@@ -93,10 +95,13 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 	if source.ID != store.SourceID(pin.SourceID) {
 		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("source identity mismatch: got %q, want %q", source.ID, pin.SourceID)
 	}
-	if source.Acquisition != store.AcquisitionMirror {
-		return source, store.ResourceRevision{}, nil
+	if source.Acquisition != store.AcquisitionMirror && source.Acquisition != store.AcquisitionIndexOnly {
+		return source, store.ResourceRevision{}, fmt.Errorf("source uses unsupported acquisition %q", source.Acquisition)
 	}
 	resourceSource := source.Slug
+	if source.Acquisition == store.AcquisitionIndexOnly {
+		resourceSource = string(source.ID)
+	}
 	if resourceSource == "" {
 		resourceSource = string(source.ID)
 	}
@@ -109,6 +114,25 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 	}
 	if latest.Revocation != nil {
 		return store.Source{}, store.ResourceRevision{}, fmt.Errorf("latest revision is revoked")
+	}
+	if source.Acquisition == store.AcquisitionIndexOnly {
+		if latest.Provenance == nil || latest.Provenance.SourceID != source.ID || !mpapi.IsCanonicalGitCommit(latest.Provenance.Commit) || latest.Provenance.ManifestDigest == "" {
+			return store.Source{}, store.ResourceRevision{}, fmt.Errorf("latest index-only revision has no exact source occurrence")
+		}
+		occurrence, err := client.GetSourceOccurrence(ctx, string(source.ID), latest.Provenance.Commit)
+		if err != nil {
+			return store.Source{}, store.ResourceRevision{}, fmt.Errorf("exact source commit unavailable: %w", err)
+		}
+		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.SourceRevisionManifestDigest != latest.Provenance.ManifestDigest {
+			return store.Source{}, store.ResourceRevision{}, fmt.Errorf("source manifest digest mismatch for latest index-only revision")
+		}
+		origin := strings.TrimSpace(occurrence.AcquisitionOrigin)
+		if err := validateAcquisitionOrigin(origin); err != nil {
+			return store.Source{}, store.ResourceRevision{}, fmt.Errorf("policy rejection: invalid acquisition origin: %w", err)
+		}
+		if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: origin, Ref: occurrence.Ref}}, r.AllowedRegistries); err != nil {
+			return store.Source{}, store.ResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
+		}
 	}
 	return source, latest, nil
 }

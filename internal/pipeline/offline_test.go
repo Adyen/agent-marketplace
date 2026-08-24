@@ -3,6 +3,8 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,5 +279,42 @@ func TestOfflineSyncMarketplaceCacheFailurePreservesOutput(t *testing.T) {
 	}
 	if string(data) != "keep" {
 		t.Fatalf("existing generated output changed to %q", data)
+	}
+}
+
+func TestOfflineOverridesExplicitMarketplaceRefresh(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "unexpected offline request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	explicitMode := resolver.MarketplaceResolveModeRefresh
+	result := Resolve(context.Background(), ResolveOptions{
+		RepoRoot:        t.TempDir(),
+		Offline:         true,
+		MarketplaceMode: &explicitMode,
+		Loaders: Loaders{
+			Org: func() (*config.Config, error) { return &config.Config{}, nil },
+			Global: func() (*config.Config, error) {
+				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+			},
+			Repo: func() (*config.Config, error) {
+				return &config.Config{Marketplaces: []config.MarketplaceEntry{{
+					URL: server.URL, InstanceID: "mp",
+					Resources: []config.MarketplaceResourcePin{{
+						SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64),
+					}},
+				}}}, nil
+			},
+			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+		},
+	})
+	if requests != 0 {
+		t.Fatalf("offline resolve made %d Marketplace requests despite explicit refresh mode", requests)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("offline resolve unexpectedly succeeded without cached Marketplace metadata")
 	}
 }
