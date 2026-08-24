@@ -10,7 +10,7 @@ Route these exact paths to the Go API without rewriting the path:
 - `/api/`
 - `/healthz`
 
-Route `/s/` and `/` to Nuxt. Nuxt owns the browser pages, while its same-origin API calls use `/api/v1`. Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. Set sensible proxy read, body-size, connection, and rate limits for the environment.
+Route `/s/` (including both `/s/{source}/{kind}/{name}` and `/s/{source}/{kind}/{name}/revisions/{revision}`) and `/` to Nuxt. Nuxt owns the browser pages, while its same-origin API calls use `/api/v1`; the Go API must not be used as a fallback for `/s/**`. Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. Set sensible proxy read, body-size, connection, and rate limits for the environment.
 
 Do not route or publish `/readyz` or `/metrics`. Public requests to those exact paths are explicitly rejected with 404, while the paths are served on the operations listener and should be reachable only by a private monitoring/admin network. If a monitoring proxy is required, use a separate private listener and an explicit allowlist/authentication policy.
 

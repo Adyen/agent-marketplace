@@ -327,13 +327,14 @@ paths:
 
   /s/{source}/{kind}/{name}:
     get:
-      operationId: getBrowserResource
-      summary: Stable browser route for a resource
+      operationId: getBrowserResourceLatest
+      summary: Stable Nuxt-owned browser route for the latest resource revision
+      description: This HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
       parameters:
         - in: path
           name: source
           required: true
-          description: Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          description: Route-safe source slug or ID.
           schema:
             type: string
             pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
@@ -342,27 +343,63 @@ paths:
           required: true
           schema:
             type: string
-            enum:
-              - skill
-              - command
-              - subagent
-              - hook
-              - mcpserver
-              - collection
+            enum: [skill, command, subagent, hook, mcpserver, collection]
         - in: path
           name: name
           required: true
-          description: Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators.
+          description: Route-safe source-local name.
           schema:
             type: string
             pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
       responses:
         "200":
-          description: Resource revision
+          description: HTML latest-revision browser page
           content:
-            application/json:
+            text/html:
               schema:
-                $ref: "#/components/schemas/ResourceRevision"
+                type: string
+        "404":
+          description: Browser frontend is not deployed or the resource is unavailable
+
+  /s/{source}/{kind}/{name}/revisions/{revision}:
+    get:
+      operationId: getBrowserResourceRevision
+      summary: Stable Nuxt-owned browser route for an exact resource revision
+      description: This immutable HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
+      parameters:
+        - in: path
+          name: source
+          required: true
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [skill, command, subagent, hook, mcpserver, collection]
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: revision
+          required: true
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: HTML exact-revision browser page
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Browser frontend is not deployed or the revision is unavailable
 
   /healthz:
     get:
@@ -426,7 +463,6 @@ components:
             - instance_id
             - canonical_url
             - api_base
-            - browser_route_template
           properties:
             instance_id:
               type: string
@@ -436,8 +472,16 @@ components:
               description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
             api_base:
               type: string
-            browser_route_template:
+            browser_base:
               type: string
+              format: uri
+              description: Optional safe HTTP(S) base URL for the Nuxt browser frontend.
+            browser_latest_route_template:
+              type: string
+              description: Present only when browser_base is configured.
+            browser_exact_route_template:
+              type: string
+              description: Present only when browser_base is configured; revision is an exact SHA-256 content digest.
 
     Marketplace:
       type: object

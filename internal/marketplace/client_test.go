@@ -16,7 +16,7 @@ import (
 )
 
 func writeTestWellKnown(w http.ResponseWriter, instanceID string) {
-	_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
+	_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com", "https://example.com"))
 }
 
 func writeTestSource(w http.ResponseWriter, src store.Source) {
@@ -49,11 +49,13 @@ func TestNewClientValidatesBaseURL(t *testing.T) {
 
 func TestClientWellKnown(t *testing.T) {
 	want := mpapi.WellKnown{
-		InstanceID:   "mp-test",
-		CanonicalURL: "https://example.com",
-		APIBase:      "/api/v1",
-		BrowserRoute: "/s/{source}/{kind}/{name}",
-		Capabilities: mpapi.DefaultCapabilities(),
+		InstanceID:         "mp-test",
+		CanonicalURL:       "https://example.com",
+		APIBase:            "/api/v1",
+		BrowserBase:        "https://example.com",
+		BrowserLatestRoute: "https://example.com/s/{source}/{kind}/{name}",
+		BrowserExactRoute:  "https://example.com/s/{source}/{kind}/{name}/revisions/{revision}",
+		Capabilities:       mpapi.DefaultCapabilities(),
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +82,17 @@ func TestClientWellKnown(t *testing.T) {
 	}
 	if got.APIBase != want.APIBase {
 		t.Fatalf("APIBase = %q, want %q", got.APIBase, want.APIBase)
+	}
+}
+
+func TestClientWellKnownAllowsAPIOnlyAndRejectsPartialBrowserMetadata(t *testing.T) {
+	base := mpapi.DefaultWellKnown("mp", "https://api.example")
+	if err := validateAPIWellKnown(base); err != nil {
+		t.Fatalf("API-only well-known rejected: %v", err)
+	}
+	base.BrowserBase = "https://web.example"
+	if err := validateAPIWellKnown(base); err == nil || !strings.Contains(err.Error(), "browser fields are incomplete") {
+		t.Fatalf("partial browser metadata error = %v", err)
 	}
 }
 

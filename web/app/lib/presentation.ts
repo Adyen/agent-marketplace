@@ -43,15 +43,21 @@ export function safeCanonicalUrl(value: string | undefined): string {
   }
 }
 
-export function resourceLocator(item: ResourceListItem, canonicalURL: string): string {
-  const canonical = safeCanonicalUrl(canonicalURL)
+export function resourceLatestLocator(item: ResourceListItem, browserBase: string): string {
+  const canonical = safeCanonicalUrl(browserBase)
   const source = item.source_slug || item.source_id
-  if (!canonical || !isSafeRouteToken(item.source_id) || (item.source_slug !== undefined && !isSafeRouteToken(item.source_slug)) || !isSafeResourceRoute(source, item.kind, item.name) || !isSha256Digest(item.content_digest)) return ''
-  return `${canonical}/s/${encodeURIComponent(source)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}/revisions/${encodeURIComponent(item.content_digest)}`
+  if (!canonical || !isSafeRouteToken(item.source_id) || (item.source_slug !== undefined && !isSafeRouteToken(item.source_slug)) || !isSafeResourceRoute(source, item.kind, item.name)) return ''
+  return `${canonical}/s/${encodeURIComponent(source)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
 }
 
-export function installCommand(item: ResourceListItem, canonicalURL: string): string {
-  const locator = resourceLocator(item, canonicalURL)
+export function resourceLocator(item: ResourceListItem, browserBase: string): string {
+  const latest = resourceLatestLocator(item, browserBase)
+  if (!latest || !isSha256Digest(item.content_digest)) return ''
+  return `${latest}/revisions/${encodeURIComponent(item.content_digest)}`
+}
+
+export function installCommand(item: ResourceListItem, browserBase: string): string {
+  const locator = resourceLocator(item, browserBase)
   return locator ? `agent-marketplace install "${locator}"` : ''
 }
 

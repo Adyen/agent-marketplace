@@ -48,11 +48,13 @@ type Capabilities struct {
 
 // WellKnown is the response payload for `/.well-known/agent-marketplace.json`.
 type WellKnown struct {
-	InstanceID   string `json:"instance_id"`
-	CanonicalURL string `json:"canonical_url"`
-	APIBase      string `json:"api_base"`
-	BrowserRoute string `json:"browser_route_template"`
-	Capabilities `json:",inline"`
+	InstanceID         string `json:"instance_id"`
+	CanonicalURL       string `json:"canonical_url"`
+	APIBase            string `json:"api_base"`
+	BrowserBase        string `json:"browser_base,omitempty"`
+	BrowserLatestRoute string `json:"browser_latest_route_template,omitempty"`
+	BrowserExactRoute  string `json:"browser_exact_route_template,omitempty"`
+	Capabilities       `json:",inline"`
 }
 
 // ExactSourceOccurrence is the immutable source occurrence selected for an

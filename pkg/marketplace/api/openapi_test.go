@@ -53,6 +53,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/manifests/{source-revision}",
 		"/api/v1/artifacts/sha256/{digest}",
 		"/s/{source}/{kind}/{name}",
+		"/s/{source}/{kind}/{name}/revisions/{revision}",
 		"/healthz",
 	}
 	for _, p := range requiredPaths {
@@ -72,6 +73,32 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
+		}
+	}
+}
+
+func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	latest := paths["/s/{source}/{kind}/{name}"].(map[string]any)["get"].(map[string]any)
+	exact := paths["/s/{source}/{kind}/{name}/revisions/{revision}"].(map[string]any)["get"].(map[string]any)
+	for name, operation := range map[string]map[string]any{"latest": latest, "exact": exact} {
+		responses := operation["responses"].(map[string]any)
+		response := responses["200"].(map[string]any)
+		content := response["content"].(map[string]any)
+		if _, ok := content["text/html"]; !ok {
+			t.Errorf("%s browser route does not return text/html: %#v", name, content)
+		}
+	}
+
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	wellKnown := schemas["WellKnown"].(map[string]any)
+	wellKnownObject := wellKnown["allOf"].([]any)[1].(map[string]any)
+	required := wellKnownObject["required"].([]any)
+	for _, field := range required {
+		if field == "browser_base" || field == "browser_latest_route_template" || field == "browser_exact_route_template" {
+			t.Errorf("optional browser field is required: %q", field)
 		}
 	}
 }

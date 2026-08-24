@@ -4,7 +4,7 @@
 
 Run the static Go binary as two roles when possible:
 
-- `serve --role api` serves read-only catalog, artifact, browser, well-known, and public health routes.
+- `serve --role api` serves read-only catalog, artifact, well-known, and public health routes. Browser pages are served only by the separate Nuxt frontend; `/s/**` returns 404 from this API-only role.
 - `serve --role worker` performs repository acquisition, analysis, and indexing. The worker image includes `git`, CA certificates, and `/bin/sh` because acquisition runs there.
 - `serve --role all` is suitable for a single-process development deployment, not the preferred production topology.
 
@@ -18,7 +18,7 @@ The application has no built-in user authentication or authorization. Treat ever
 
 ## Configuration and secrets
 
-Use `storage.metadata.dsn_file` in production, preferably through a Compose/platform secret integration. Exactly one DSN source must be configured and the selected value must be non-empty. Literal `dsn` and the environment-based `dsn_env` Compose fixture are for local development only. DSN values are not included in configuration errors or application startup logs.
+Set `instance.browser_base` to the public Nuxt origin when browser pages are deployed; omit it for an API-only deployment. The well-known document then includes separate latest and exact browser route templates. Use `storage.metadata.dsn_file` in production, preferably through a Compose/platform secret integration. Exactly one DSN source must be configured and the selected value must be non-empty. Literal `dsn` and the environment-based `dsn_env` Compose fixture are for local development only. DSN values are not included in configuration errors or application startup logs.
 
 Use file permissions and a secret manager for DSN files. For S3, prefer workload identity/IAM roles through the AWS SDK's default credential chain; if roles are unavailable, use an SDK-supported credentials file from the platform secret manager rather than static environment credentials. Do not put passwords in committed YAML, Compose files, image layers, command arguments, or issue output. Source origins must not contain URL userinfo or password/token query parameters; put source authentication in a credentials file or environment reference instead. Source credential settings follow the same file/environment-reference rule. Production SQLite configuration must name a writable filesystem database; `:memory:`, `mode=memory`, `mode=ro`, and `immutable=1` URI modes are rejected (the SQLite package's direct in-memory constructor remains available to tests).
 

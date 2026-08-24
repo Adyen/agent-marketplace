@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { installCommand, resourceLocator, safeCanonicalUrl } from '../../app/lib/presentation'
+import { installCommand, resourceLatestLocator, resourceLocator, safeCanonicalUrl } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
   it('creates the documented browser locator and CLI command for route-safe values', () => {
     const item = { source_id: 'source-id', source_slug: 'source-team', kind: 'skill' as const, name: 'code review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
     const url = resourceLocator(item, 'https://market.example/')
+    expect(resourceLatestLocator(item, 'https://market.example')).toBe('https://market.example/s/source-team/skill/code%20review')
     expect(url).toBe('https://market.example/s/source-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
     expect(installCommand(item, 'https://market.example')).toBe(`agent-marketplace install "${url}"`)
   })

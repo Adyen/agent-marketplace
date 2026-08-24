@@ -43,10 +43,7 @@ const currentPage = computed(() => Math.floor(searchParams.value.offset / search
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
 const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => {
-  const candidate = safeCanonicalUrl(metadata.value?.canonical_url)
-  if (candidate) return candidate
-  if (import.meta.client) return window.location.origin
-  return ''
+  return safeCanonicalUrl(metadata.value?.browser_base)
 })
 const apiEndpoint = computed(() => apiPath(config.public.apiBase, '/search'))
 const mainContent = ref<HTMLElement | null>(null)
