@@ -117,19 +117,18 @@ const (
 	//     skill would install and then be unable to run `openspec`. A loud
 	//     absence beats a silently inert install.
 	//
-	// Devin therefore DIVERGES from Factory, Gemini, and Cursor, whose
-	// subagent.<target>.tool-unknown codes are still errors in the block below.
-	// The divergence is accepted, not accidental: Factory's fail-closed contract
-	// is pinned by bead agent-marketplace-r2zr's acceptance criteria. Do not
-	// "harmonize" the four codes in either direction without new evidence about
-	// the target you are changing.
+	// Factory now uses the same warning policy for subagent.tool-unknown: its
+	// droid format gives an omitted `tools` key a documented default meaning.
+	// Gemini and Cursor still fail closed because their unknown-tool diagnostics
+	// suppress the artifact.
 	//
 	// Neither message, hint, nor slog attribute quotes the offending specifier:
 	// allowed-tools entries carry command strings such as
 	// `Bash(git push --force:*)`. Only the resource name and source location
 	// localize the loss.
-	CodeSkillDevinToolUnknown    = "skill.devin.tool-unknown"    // Devin skill/command allowed tool not representable; allowed-tools key omitted
-	CodeSubagentDevinToolUnknown = "subagent.devin.tool-unknown" // Devin subagent tool not representable; allowed-tools key omitted
+	CodeSkillDevinToolUnknown      = "skill.devin.tool-unknown"      // Devin skill/command allowed tool not representable; allowed-tools key omitted
+	CodeSubagentDevinToolUnknown   = "subagent.devin.tool-unknown"   // Devin subagent tool not representable; allowed-tools key omitted
+	CodeSubagentFactoryToolUnknown = "subagent.factory.tool-unknown" // Factory subagent tool not representable; tools key omitted
 
 	// Devin hook and MCP codes that still EMIT the entry.
 	//
@@ -283,7 +282,6 @@ const (
 const (
 	CodeSubagentFactoryDisallowedToolsDropped  = "subagent.factory.disallowed-tools-dropped" // Factory cannot represent disallowedTools
 	CodeSubagentFactoryIsolationDropped        = "subagent.factory.isolation-dropped"        // Factory cannot represent isolation
-	CodeSubagentFactoryToolUnknown             = "subagent.factory.tool-unknown"             // Factory tool not in mapping table; artifact suppressed
 	CodeSubagentGeminiToolUnknown              = "subagent.gemini.tool-unknown"              // Gemini tool not in mapping table; artifact suppressed
 	CodeSubagentCursorToolUnknown              = "subagent.cursor.tool-unknown"              // Cursor tool not in mapping table; artifact suppressed
 	CodeSubagentSecurityRestrictionUnsupported = "subagent.security-restriction-unsupported" // Unsupported security restriction suppresses artifact
@@ -306,10 +304,10 @@ const (
 	CodeIngestGeminiLoadHookFailed             = "ingest.gemini.load-hook-failed"            // Failed to load a hook from the source layout
 	CodeIngestFactoryLoadRuleFailed            = "ingest.factory.load-rule-failed"           // Failed to load a rule from the source layout
 	CodeIngestCursorLoadRuleFailed             = "ingest.cursor.load-rule-failed"            // Failed to load a rule from the source layout
-	// skill.devin.tool-unknown and subagent.devin.tool-unknown were declared
-	// here until bead agent-marketplace-pu6b. They are now WARNINGS and live in
-	// the warning block above, which carries the rationale. Their Factory,
-	// Gemini, and Cursor siblings above are unchanged and still fail closed.
+	// skill.devin.tool-unknown, subagent.devin.tool-unknown, and
+	// subagent.factory.tool-unknown are warnings and live in the warning block
+	// above, which carries the rationale. Gemini and Cursor siblings still fail
+	// closed.
 	CodeSubagentDevinBuiltinNameConflict   = "subagent.devin.builtin-name-conflict"   // Subagent name collides with a Devin built-in subagent
 	CodeSubagentDevinNestedNameUnsupported = "subagent.devin.nested-name-unsupported" // Subagent name expresses nesting the flat Devin layout cannot represent
 
@@ -482,11 +480,12 @@ var codeCatalog = []CodeDoc{
 	{CodeSubagentDevinModelUnmappable, SeverityWarning, "Explicit model is not a stable Devin alias; model was omitted", "Use sonnet, opus, or haiku for a stable Devin model alias"},
 	{CodeSubagentDevinModelDefault, SeverityWarning, "Empty subagent model uses Devin's default subagent model", "Set an explicit stable Devin model alias when a fixed model is required"},
 	{CodeSubagentDevinEffortDropped, SeverityWarning, "Devin does not represent subagent effort", "Remove effort or use a target that supports it"},
-	// Warnings since bead agent-marketplace-pu6b; both were errors that
-	// suppressed the artifact. See the rationale on the constants above and the
-	// dedicated section in codes.md.
+	// Warnings since bead agent-marketplace-pu6b (Devin) and the Factory
+	// unknown-tool policy change; these used to suppress the artifact. See the
+	// rationale on the constants above and the dedicated section in codes.md.
 	{CodeSkillDevinToolUnknown, SeverityWarning, "An explicitly allowed skill or command tool has no Devin equivalent; the allowed-tools key was omitted and the resource was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource"},
 	{CodeSubagentDevinToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Devin equivalent; the allowed-tools key was omitted and the profile was still emitted", "Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent"},
+	{CodeSubagentFactoryToolUnknown, SeverityWarning, "An explicitly allowed subagent tool has no Factory equivalent; the tools key was omitted and the droid was still emitted", "Use a tool the Factory mapping table knows, or accept Factory's default tool set for this subagent"},
 	{CodeHookDevinPayloadDropped, SeverityWarning, "The hook carries the payload its type does not select; that payload was dropped", "Split the hook into one command hook and one prompt hook if both payloads are required"},
 	{CodeHookDevinPluginRootUnresolved, SeverityWarning, "The hook command references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the command resolves, or use an absolute command path"},
 	{CodeMcpDevinFieldDropped, SeverityWarning, "A modeled MCP field belongs to the documented server form this server did not select and was dropped", "Move the field to a server of the form that documents it"},
@@ -511,7 +510,6 @@ var codeCatalog = []CodeDoc{
 	// Error
 	{CodeSubagentFactoryDisallowedToolsDropped, SeverityError, "Factory cannot represent disallowedTools; artifact suppressed", "Use a target that supports disallowedTools or remove the restriction explicitly"},
 	{CodeSubagentFactoryIsolationDropped, SeverityError, "Factory cannot represent isolation; artifact suppressed", "Use a target that supports isolation or remove the restriction explicitly"},
-	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory tool is not in the mapping table; artifact suppressed", "Add the tool to the mapping table or remove the explicit tool"},
 	{CodeSubagentGeminiToolUnknown, SeverityError, "Gemini tool is not in the mapping table; artifact suppressed", "Add the tool to the mapping table or remove the explicit tool"},
 	{CodeSubagentCursorToolUnknown, SeverityError, "Cursor tool is not in the mapping table; artifact suppressed", "Add the tool to the mapping table or remove the explicit tool"},
 	{CodeSubagentSecurityRestrictionUnsupported, SeverityError, "Unsupported subagent security restriction suppresses the artifact", "Use a target that represents the restriction or remove it explicitly"},

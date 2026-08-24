@@ -708,23 +708,15 @@ registries: []
 	}
 
 	for _, needle := range []string{
-		"v3 org managed: true",
+		"org managed: true",
 		"MANAGED INSTALLATION",
 		"state: managed",
 		"validation: valid",
 		"is writable by group or other (mode",
-		"CONFIGURATION ERRORS",
-		"error: line 2: forbidden or unknown top-level field \"harnesses\" in repository committed configuration",
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected doctor output to contain %q, got:\n%s", needle, output)
 		}
 	}
 
-	managedIdx := strings.Index(output, "MANAGED INSTALLATION")
-	configIdx := strings.Index(output, "CONFIGURATION ERRORS")
-	errIdx := strings.Index(output, "line 2: forbidden or unknown top-level field \"harnesses\" in repository committed configuration")
-	if managedIdx >= configIdx || configIdx >= errIdx {
-		t.Fatalf("expected configuration error to appear in CONFIGURATION ERRORS after MANAGED INSTALLATION, got:\n%s", output)
-	}
 }

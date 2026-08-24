@@ -1367,8 +1367,8 @@ registries:
 		},
 	},
 	{
-		Name: "subagent/unknown_tool_fails_closed",
-		Desc: "Given a registry with a subagent using a tool absent from the Factory mapping table, When sync is run for factory, Then the artifact is suppressed and sync exits 1 rather than emitting a droid whose tool grant cannot be honoured",
+		Name: "subagent/unknown_tool_warns_and_emits",
+		Desc: "Given a registry with a subagent using a tool absent from the Factory mapping table, When sync is run for factory, Then the droid is emitted with the tools key omitted and a warning is reported; sync exits 0",
 		Registries: []RegistryDef{
 			{Name: "sub-tool-pt", Subagents: []Subagent{
 				{Name: "unk-tool-agent", Tools: []string{"Read", "CustomTool"}},
@@ -1382,9 +1382,12 @@ registries:
       - unk-tool-agent
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, AssertExitCode: intPtr(1),
+			{Args: []string{"sync"}, MustPass: true,
 				OutContains: []string{"subagent.factory.tool-unknown"},
-				FilesAbsent: []string{"/root/.factory/droids/unk-tool-agent.md"},
+				FilesExist:  []string{"/root/.factory/droids/unk-tool-agent.md"},
+				FileNotContains: map[string]string{
+					"/root/.factory/droids/unk-tool-agent.md": "tools:",
+				},
 			},
 		},
 	},

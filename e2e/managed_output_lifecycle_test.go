@@ -159,7 +159,7 @@ func TestDeinitUserPreservesOrgOwnedOutput(t *testing.T) {
 }
 
 // TestSyncFailsWithInvalidManagedOrgConfig verifies that a present but invalid
-// v3 organization configuration blocks synchronization before any catalog fetch.
+// organization configuration blocks synchronization before any catalog fetch.
 func TestSyncFailsWithInvalidManagedOrgConfig(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
@@ -176,7 +176,7 @@ func TestSyncFailsWithInvalidManagedOrgConfig(t *testing.T) {
 `, regURL))
 
 	// Write an invalid present organization config directly; WriteOrgConfig
-	// would auto-inject a valid v3 header.
+	// would auto-inject a valid v2 header.
 	env.WriteFile("/etc/agent-marketplace/config.yaml", `apiVersion: agent-marketplace/v1
 harnesses:
   - factory
@@ -187,7 +187,7 @@ registries: []
 	if r.ExitCode == 0 {
 		t.Fatalf("expected sync to fail with invalid org config, got exit 0:\n%s", r.Combined)
 	}
-	if !strings.Contains(r.Combined, "apiVersion must be") {
-		t.Fatalf("expected sync error to mention apiVersion requirement, got:\n%s", r.Combined)
+	if !strings.Contains(r.Combined, "unsupported apiVersion") {
+		t.Fatalf("expected sync error to mention unsupported apiVersion, got:\n%s", r.Combined)
 	}
 }

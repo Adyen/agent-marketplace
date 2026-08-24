@@ -26,6 +26,21 @@ comparisons read naturally would silently change behaviour for every consumer.
 No catalog entry changes; `codes.md` only gains a section stating the direction
 and naming the predicates.
 
+### An unrepresentable Factory `tools` restriction now omits the key instead of costing the droid
+
+**This reverses a documented, tested contract on purpose.**
+`subagent.factory.tool-unknown` was an error that suppressed the droid artifact;
+it is now a **warning** that omits the `tools` key from a droid that is still
+emitted. `disallowedTools` and `isolation` remain fail-closed errors because
+Factory has no field for those controls.
+
+A subagent `tools` list containing an unknown Factory tool produces one warning
+per unmapped tool and omits the entire `tools` frontmatter key. `sync` exits 0
+and installs the droid. Explicitly empty lists still render `tools: []`, fully
+mappable lists still render their mapped values, and tool overrides still work.
+Omitting the key intentionally inherits Factory's default tool set; emitting an
+unknown identifier would cause Factory to reject the droid.
+
 ### An unrepresentable Devin `allowed-tools` restriction now omits the key instead of costing the resource
 
 **This reverses a documented, tested contract on purpose** (bead
@@ -96,17 +111,14 @@ only stops auto-activation and leaves the skill usable, whereas
 `openspec-apply-change` needs `exec` to run `openspec`. That trades a loud absence
 for a silent, inert install.
 
-**Devin now DIVERGES from Factory, and the divergence is accepted rather than
-accidental.** `subagent.factory.tool-unknown` still fails closed, as do
-`subagent.gemini.tool-unknown` and `subagent.cursor.tool-unknown`. Factory's
-fail-closed contract is pinned by bead `agent-marketplace-r2zr`'s acceptance
-criteria and must not be relaxed to match Devin. The split is justified by
-evidence, not taste: Devin is the one target whose tool vocabulary has been probed
-at runtime, so it is the one target where "the restriction cannot be represented,
-and what *is* written is honest about what will happen" is an observation rather
-than an assumption. `ingest.devin.tool-unreversible` also stays an error, because
-ingestion writes the harness-neutral IR that all six compilers read, so a
-rewritten restriction there propagates to targets that do enforce it.
+**Devin and Factory no longer diverge on tool-unknown, and the remaining split is
+accepted rather than accidental.** `subagent.gemini.tool-unknown` and
+`subagent.cursor.tool-unknown` still fail closed; `subagent.factory.tool-unknown`
+was relaxed because Factory's droid frontmatter rejects unknown tool identifiers
+and omitting the `tools` key uses Factory's documented default tool set.
+`ingest.devin.tool-unreversible` also stays an error, because ingestion writes the
+harness-neutral IR that all six compilers read, so a rewritten restriction there
+propagates to targets that do enforce it.
 
 **Decision records updated rather than quietly corrected.** The invariant "a
 privilege-broadening loss must be an error" is now false for these two codes and
