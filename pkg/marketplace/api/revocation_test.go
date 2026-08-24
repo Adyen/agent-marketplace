@@ -58,6 +58,53 @@ func TestManifestRevocationUsesLiveDeclarationWithoutRevisionMetadata(t *testing
 	}
 }
 
+func TestSearchAppliesSourceAndCoordinateRevocations(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []struct {
+		name string
+		cfg  config.Revocations
+	}{
+		{name: "source", cfg: config.Revocations{SourceIDs: []string{"src"}}},
+		{name: "coordinate", cfg: config.Revocations{Coordinates: []string{"mp/src/skill/review"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := sqlite.New(":memory:")
+			if err := meta.Open(ctx); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = meta.Close() })
+			if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
+				t.Fatal(err)
+			}
+			if err := meta.PutResourceRevision(ctx, store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "mp"}, Revocations: test.cfg}, meta, fsblob.New(t.TempDir())).PublicHandler())
+			defer server.Close()
+			resp, err := http.Get(server.URL + "/api/v1/search?q=review")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var result struct {
+				Items []ResourceListItem `json:"items"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusOK || len(result.Items) != 0 {
+				t.Fatalf("search = %d/%+v, want no effective result", resp.StatusCode, result.Items)
+			}
+		})
+	}
+}
+
 func TestSearchSelectsLatestEffectiveNonRevokedRevision(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")

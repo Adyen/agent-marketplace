@@ -67,6 +67,46 @@ func TestEnsureRevocationsExactAdditionsAreAtomic(t *testing.T) {
 	}
 }
 
+func TestEnsureRevocationsWithdrawsStaleDeclarationsWithoutMutatingRevisionHistory(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	digest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}
+	revision := store.ResourceRevision{Coordinate: coord, ContentDigest: digest, Revocation: &store.Revocation{Kind: store.RevocationRevision, TargetID: "historical"}}
+	if err := meta.PutResourceRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationSource, TargetID: "src", Reason: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationRevision, TargetID: coord.String() + "@" + digest.String(), Reason: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureRevocations(ctx, Deps{Config: config.Config{Instance: config.Instance{ID: "mp"}}, MetadataStore: meta}); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+		rows, err := meta.ListRevocations(ctx, kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("active %s revocations = %#v, want empty", kind, rows)
+		}
+	}
+	got, err := meta.GetResourceRevision(ctx, coord, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Revocation == nil || got.Revocation.TargetID != "historical" {
+		t.Fatalf("immutable revision history changed: %#v", got.Revocation)
+	}
+}
+
 func TestRunFailsAfterRevocationReconciliationFailure(t *testing.T) {
 	ctx := context.Background()
 	base := sqlite.New(":memory:")

@@ -242,8 +242,8 @@ type TokenCredential struct {
 	Value string `yaml:"value"`
 }
 
-// Revocations lists operator-configured revocations. Revisions use the exact
-// marketplace/source/kind/name@sha256:<64 lowercase hex> identity.
+// Revocations lists operator-configured revocations from broad to narrow:
+// source IDs, complete coordinates, and exact coordinate-plus-digest targets.
 type Revocations struct {
 	SourceIDs   []string `yaml:"source_ids"`
 	Coordinates []string `yaml:"coordinates"`
@@ -649,16 +649,21 @@ func (r Revocations) ValidateForMarketplace(instanceID string) []error {
 func (r Revocations) validate(instanceID string) []error {
 	var errs []error
 	for i, id := range r.SourceIDs {
-		if strings.TrimSpace(id) == "" {
+		id = strings.TrimSpace(id)
+		if id == "" {
 			errs = append(errs, fmt.Errorf("revocations.source_ids[%d] must not be empty", i))
+		} else if strings.ContainsAny(id, "/@") {
+			errs = append(errs, fmt.Errorf("revocations.source_ids[%d] %q must be a source ID, not a coordinate", i, id))
 		}
 	}
 	for i, coord := range r.Coordinates {
-		if strings.TrimSpace(coord) == "" {
-			errs = append(errs, fmt.Errorf("revocations.coordinates[%d] must not be empty", i))
-		}
-		if _, err := parseCoordinate(coord); err != nil {
+		parsed, err := parseCoordinate(coord)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("revocations.coordinates[%d] %q: %w", i, coord, err))
+			continue
+		}
+		if instanceID != "" && parsed.Marketplace.String() != instanceID {
+			errs = append(errs, fmt.Errorf("revocations.coordinates[%d] %q: marketplace %q does not match instance.id %q", i, coord, parsed.Marketplace, instanceID))
 		}
 	}
 	for i, rev := range r.Revisions {
@@ -676,12 +681,24 @@ func (r Revocations) validate(instanceID string) []error {
 
 var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
-func parseCoordinate(s string) (string, error) {
-	parts := strings.Split(s, "/")
-	if len(parts) != 4 {
-		return "", fmt.Errorf("coordinate must have 4 components: marketplace/source/kind/name")
+func parseCoordinate(s string) (store.ResourceCoordinate, error) {
+	value := strings.TrimSpace(s)
+	coordinate, err := store.ParseResourceCoordinate(value)
+	if err != nil {
+		return store.ResourceCoordinate{}, fmt.Errorf("coordinate must have 4 components: marketplace/source/kind/name")
 	}
-	return s, nil
+	for label, part := range map[string]string{
+		"marketplace": coordinate.Marketplace.String(), "source": coordinate.Source.String(),
+		"kind": coordinate.Kind, "name": coordinate.Name,
+	} {
+		if part == "" || strings.ContainsAny(part, "/@") {
+			return store.ResourceCoordinate{}, fmt.Errorf("coordinate %s must be a non-empty route token", label)
+		}
+	}
+	if !store.IsMarketplaceResourceKind(coordinate.Kind) {
+		return store.ResourceCoordinate{}, fmt.Errorf("unsupported resource kind %q", coordinate.Kind)
+	}
+	return coordinate, nil
 }
 
 func keys(m map[string]bool) []string {

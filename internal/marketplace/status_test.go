@@ -400,6 +400,19 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 	}
 }
 
+func TestApplyCachedStateTreatsBroadCachedRevocationAsRevoked(t *testing.T) {
+	status := PinStatus{Cache: CacheStateArtifactVerified, MetadataCached: true, ArtifactVerified: true}
+	cached := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+		Revocation:    &store.Revocation{Kind: store.RevocationSource, TargetID: "source-id", Reason: "withdrawn"},
+	}
+	applyCachedState(&status, cached, true, nil)
+	if status.State != PinStateRevoked {
+		t.Fatalf("cached broad revocation state = %q, want revoked", status.State)
+	}
+}
+
 func TestPinStatusErrorQuotesDynamicFields(t *testing.T) {
 	statusErr := (&PinStatusError{Pin: PinStatus{
 		SourceID: "source\x00\x1b[31m\n\u202e", Kind: "skill\t", Name: "name\r", State: PinState("state\x07"), Detail: "detail\u2028",
