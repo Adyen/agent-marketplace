@@ -101,8 +101,20 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 		}
 		for _, pin := range entry.Resources {
 			// Collections are virtual. Their exact leaf pins are persisted beside
-			// the collection pin and are the only inputs to materialization.
+			// the collection pin and are the only inputs to materialization. The
+			// root still has to be checked: otherwise an expanded root could evade
+			// an exact revocation simply because it is skipped below.
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
+				rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+				if revErr == nil {
+					revErr = validateResourceRevision(entry, pin, rev)
+				}
+				if revErr == nil {
+					revErr = enforceMarketplaceRevocation(rev, policy)
+				}
+				if revErr != nil {
+					errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, revErr))
+				}
 				continue
 			}
 			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
@@ -154,21 +166,24 @@ func marketplacePinRequired(source config.Source) bool {
 	return source == config.Organization
 }
 
-func enforceMarketplaceRevocation(rev store.ResourceRevision, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, policy resolver.MarketplaceRevocationPolicy) error {
+func enforceMarketplaceRevocation(rev store.ResourceRevision, policy resolver.MarketplaceRevocationPolicy) error {
 	if rev.Revocation == nil {
 		return nil
 	}
+	// Build the authorization identity from verified response metadata, not the
+	// requested pin. A stale pin must never turn an exact override into a broad
+	// authorization for a different response revision.
 	identity := resolver.MarketplaceRevocationIdentity{
-		Marketplace:   entry.InstanceID,
-		Source:        pin.SourceID,
-		Kind:          pin.Kind,
-		Name:          pin.Name,
-		ContentDigest: pin.Digest,
+		Marketplace:   string(rev.Coordinate.Marketplace),
+		Source:        string(rev.Coordinate.Source),
+		Kind:          rev.Coordinate.Kind,
+		Name:          rev.Coordinate.Name,
+		ContentDigest: string(rev.ContentDigest),
 	}
 	if policy == nil || !policy.AllowRevoked(identity) {
 		return fmt.Errorf("revision is revoked")
 	}
-	slog.Warn("marketplace revoked revision explicitly allowed for this invocation", "marketplace", entry.InstanceID, "source", pin.SourceID, "kind", pin.Kind, "name", pin.Name, "content_digest", pin.Digest)
+	slog.Warn("marketplace revoked revision explicitly allowed for this invocation", "marketplace", identity.Marketplace, "source", identity.Source, "kind", identity.Kind, "name", identity.Name, "content_digest", identity.ContentDigest)
 	return nil
 }
 
@@ -270,7 +285,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		InstalledName:         pin.InstalledName,
 		Revoked:               rev.Revocation != nil,
 	}
-	if err := enforceMarketplaceRevocation(rev, entry, pin, policy); err != nil {
+	if err := enforceMarketplaceRevocation(rev, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
 
@@ -385,7 +400,7 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
 	}
 	artifact.Ref = pin.SourceCommit
-	if err := enforceMarketplaceRevocation(rev, entry, pin, policy); err != nil {
+	if err := enforceMarketplaceRevocation(rev, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
 	var origin string

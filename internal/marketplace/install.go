@@ -313,8 +313,11 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		if source.Acquisition != store.AcquisitionMirror {
 			return nil, fmt.Errorf("collection %q requires mirror acquisition", locator.Name)
 		}
-		if err := enforceMarketplaceRevocation(revision, canonical, pin, nil); err != nil {
+		if err := enforceMarketplaceRevocation(revision, nil); err != nil {
 			return nil, fmt.Errorf("collection revision: %w", err)
+		}
+		if _, err := cache.WriteResourceRevision(canonical.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, revision); err != nil {
+			return nil, fmt.Errorf("cache collection revision: %w", err)
 		}
 		manifest, manifestPayload, err := client.GetCollectionManifest(ctx, string(revision.ContentDigest))
 		if err != nil {
@@ -393,6 +396,9 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		}
 		if nestedRevision.ContentDigest != store.RevisionDigest(member.Revision) || nestedRevision.ArchiveDigest != "" {
 			return fmt.Errorf("nested collection %q revision metadata does not match manifest", member.Name)
+		}
+		if err := enforceMarketplaceRevocation(nestedRevision, nil); err != nil {
+			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
 		}
 		nested, payload, err := client.GetCollectionManifest(ctx, member.Revision)
 		if err != nil {
