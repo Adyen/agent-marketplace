@@ -684,3 +684,31 @@ func TestExecutableCollisionRemediationNamesSourceQualifiedSelection(t *testing.
 		}
 	}
 }
+
+func TestExecutableSourceLabelPreservesRepositoryPath(t *testing.T) {
+	source := ExecutableSource{
+		URL:  "git@example.com:registry.git",
+		Path: "teams/https://directory@example.com",
+	}
+
+	if got, want := source.Label(), "git@example.com:registry (teams/https://directory@example.com)"; got != want {
+		t.Fatalf("ExecutableSource.Label() = %q, want %q", got, want)
+	}
+}
+
+func TestExecutableCollisionRemediationPreservesRepositoryPath(t *testing.T) {
+	refusal := &ExecutableCollisionError{
+		Kind: ir.KindHook,
+		Name: "pre-commit-guard",
+		Sources: []ExecutableSource{{
+			URL:  "git@example.com:registry.git",
+			Ref:  "main",
+			Path: "teams/https://directory@example.com",
+		}},
+	}
+
+	want := "--path teams/https://directory@example.com"
+	if got := refusal.Remediation(); !strings.Contains(got, want) {
+		t.Fatalf("ExecutableCollisionError.Remediation() = %q, want it to contain %q", got, want)
+	}
+}

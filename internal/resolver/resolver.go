@@ -228,7 +228,7 @@ type ExecutableSource struct {
 func (s ExecutableSource) Label() string {
 	label := redact.URL(config.NormalizeGitURL(s.URL))
 	if s.Path != "" {
-		label += " (" + redact.URL(s.Path) + ")"
+		label += " (" + s.Path + ")"
 	}
 	if s.Ref != "" {
 		label += "@" + s.Ref
@@ -268,7 +268,7 @@ func (e *ExecutableCollisionError) Remediation() string {
 	if len(e.Sources) > 0 {
 		target = redact.URL(config.NormalizeGitURL(e.Sources[0].URL))
 		if e.Sources[0].Path != "" {
-			pathFlag = " --path " + redact.URL(e.Sources[0].Path)
+			pathFlag = " --path " + e.Sources[0].Path
 		}
 	}
 	return fmt.Sprintf("keep exactly one source for this %s: 'agent-marketplace remove %q --from %s%s' (repeat for every source you do not want), then re-run sync",
