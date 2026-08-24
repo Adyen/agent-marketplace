@@ -282,6 +282,45 @@ func TestOfflineSyncMarketplaceCacheFailurePreservesOutput(t *testing.T) {
 	}
 }
 
+func TestOfflineSyncPreservesExactMarketplaceSelectorsOnFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	repoRoot := t.TempDir()
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	original := []byte("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n      - source_id: source\n        kind: skill\n        name: review\n        revision: " + digest + "\n        digest: " + digest + "\n        direct: true\n        selected_by:\n          - source_id: collections\n            name: bundle\n            revision: " + digest + "\n")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := Sync(context.Background(), ResolveOptions{
+		RepoRoot: repoRoot,
+		NoBackup: true,
+		Offline:  true,
+		Loaders: Loaders{
+			Org: func() (*config.Config, error) { return &config.Config{}, nil },
+			Global: func() (*config.Config, error) {
+				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+			},
+			Repo:  func() (*config.Config, error) { return config.LoadConfigFromPath(configPath) },
+			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
+		},
+	})
+	if len(result.Errors) == 0 {
+		t.Fatal("offline sync unexpectedly succeeded without the exact Marketplace cache")
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("offline sync changed exact selectors:\nbefore:\n%s\nafter:\n%s", original, got)
+	}
+}
+
 func TestOfflineOverridesExplicitMarketplaceRefresh(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

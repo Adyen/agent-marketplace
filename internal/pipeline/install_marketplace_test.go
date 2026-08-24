@@ -390,3 +390,10 @@ func testMarketplacePreparedInstall() *marketplace.PreparedInstall {
 		Pin:   config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
 	}
 }
+
+func TestMarketplaceDirectInstallPersistsDirectSelection(t *testing.T) {
+	pins := marketplaceInstallPins(testMarketplacePreparedInstall())
+	if len(pins) != 1 || !pins[0].Direct {
+		t.Fatalf("direct install pins = %#v, want direct marker", pins)
+	}
+}

@@ -241,6 +241,43 @@ registries:
 	}
 }
 
+func TestV3MarketplaceRejectsMalformedSelectionEdgesAndDirectValues(t *testing.T) {
+	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cases := map[string]string{
+		"null selected_by":        "selected_by: null",
+		"scalar selected_by":      "selected_by: invalid",
+		"scalar selection":        "selected_by:\n          - invalid",
+		"missing selection field": "selected_by:\n          - source_id: source\n            name: review",
+		"extra selection field":   "selected_by:\n          - source_id: source\n            name: review\n            revision: " + digest + "\n            extra: value",
+		"non-string selection":    "selected_by:\n          - source_id: true\n            name: review\n            revision: " + digest,
+		"string direct":           "direct: \"true\"",
+		"integer direct":          "direct: 1",
+		"null direct":             "direct: null",
+	}
+	for name, field := range cases {
+		t.Run(name, func(t *testing.T) {
+			data := []byte(`apiVersion: agent-marketplace/v2
+marketplaces:
+  - url: https://market.example
+    instance_id: market
+    resources:
+      - source_id: source
+        kind: skill
+        name: review
+        revision: revision
+        digest: ` + digest + "\n        " + field + "\n")
+			_, errs := loadV3Config(data, repoLayer, false)
+			if len(errs) == 0 {
+				t.Fatalf("malformed %s was accepted", name)
+			}
+			combined := errorsJoin(errs)
+			if !strings.Contains(combined, "selected_by") && !strings.Contains(combined, "direct") {
+				t.Fatalf("error did not identify malformed field: %v", combined)
+			}
+		})
+	}
+}
+
 func errorsJoin(errs []error) string {
 	var parts []string
 	for _, e := range errs {
