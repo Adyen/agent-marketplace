@@ -7,6 +7,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
+	"gopkg.in/yaml.v3"
 )
 
 // MarketplaceEntry is one configured marketplace endpoint and optional exact pins.
@@ -19,17 +20,64 @@ type MarketplaceEntry struct {
 }
 
 // MarketplaceResourcePin is an exact Marketplace resource coordinate and digest.
+// MarketplaceSelection records an exact collection revision that keeps a leaf
+// selected. Its absence on a leaf represents a direct user selection.
+type MarketplaceSelection struct {
+	SourceID string `yaml:"source_id"`
+	Name     string `yaml:"name"`
+	Revision string `yaml:"revision"`
+}
+
+// MarketplaceSelections is a comparable, YAML-sequence-backed value. Keeping
+// its storage scalar preserves compatibility with callers comparing pins while
+// still emitting the readable selected_by sequence on disk.
+type MarketplaceSelections string
+
+func MarketplaceSelectionsFrom(values []MarketplaceSelection) MarketplaceSelections {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, value.SourceID+"\x00"+value.Name+"\x00"+value.Revision)
+	}
+	return MarketplaceSelections(strings.Join(parts, "\n"))
+}
+
+func (s MarketplaceSelections) List() []MarketplaceSelection {
+	if s == "" {
+		return nil
+	}
+	var values []MarketplaceSelection
+	for _, part := range strings.Split(string(s), "\n") {
+		fields := strings.Split(part, "\x00")
+		if len(fields) == 3 {
+			values = append(values, MarketplaceSelection{SourceID: fields[0], Name: fields[1], Revision: fields[2]})
+		}
+	}
+	return values
+}
+
+func (s MarketplaceSelections) MarshalYAML() (any, error) { return s.List(), nil }
+
+func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
+	var values []MarketplaceSelection
+	if err := node.Decode(&values); err != nil {
+		return err
+	}
+	*s = MarketplaceSelectionsFrom(values)
+	return nil
+}
+
 type MarketplaceResourcePin struct {
-	SourceID             string `yaml:"source_id"`
-	SourceSlug           string `yaml:"source_slug,omitempty"`
-	Kind                 string `yaml:"kind"`
-	Name                 string `yaml:"name"`
-	Revision             string `yaml:"revision"`
-	Digest               string `yaml:"digest"`                // "sha256:<64 lowercase hex>"
-	Acquisition          string `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
-	SourceCommit         string `yaml:"source_commit,omitempty"`
-	SourceManifestDigest string `yaml:"source_manifest_digest,omitempty"`
-	InstalledName        string `yaml:"installed_name,omitempty"`
+	SourceID             string                `yaml:"source_id"`
+	SourceSlug           string                `yaml:"source_slug,omitempty"`
+	Kind                 string                `yaml:"kind"`
+	Name                 string                `yaml:"name"`
+	Revision             string                `yaml:"revision"`
+	Digest               string                `yaml:"digest"`                // "sha256:<64 lowercase hex>"
+	Acquisition          string                `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
+	SourceCommit         string                `yaml:"source_commit,omitempty"`
+	SourceManifestDigest string                `yaml:"source_manifest_digest,omitempty"`
+	InstalledName        string                `yaml:"installed_name,omitempty"`
+	SelectedBy           MarketplaceSelections `yaml:"selected_by,omitempty"`
 }
 
 const (
@@ -124,7 +172,28 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 	if err := ValidateMarketplaceInstalledName(p.InstalledName); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
+	for selectorIndex, selector := range p.SelectedBy.List() {
+		if err := validateMarketplaceSelection(selector); err != nil {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].selected_by[%d].%w", entryIdx, pinIdx, selectorIndex, err))
+		}
+	}
 	return errs
+}
+
+func validateMarketplaceSelection(selection MarketplaceSelection) error {
+	if err := validateMarketplaceSegment("selected_by source_id", selection.SourceID); err != nil {
+		return err
+	}
+	if err := validateMarketplaceSegment("selected_by name", selection.Name); err != nil {
+		return err
+	}
+	if err := validateMarketplaceSegment("selected_by revision", selection.Revision); err != nil {
+		return err
+	}
+	if !api.IsCanonicalSHA256Digest(selection.Revision) {
+		return fmt.Errorf("selected_by revision must be sha256:<64-hex>")
+	}
+	return nil
 }
 
 func validateMarketplaceOccurrenceFields(acquisition, sourceCommit, sourceManifestDigest string) error {

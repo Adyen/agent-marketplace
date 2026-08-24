@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
@@ -58,7 +60,7 @@ func TestPublishSourceRevision(t *testing.T) {
 	manifest := []byte(`{"schema_version":"v1","generator":"test"}`)
 	manifestDigest := store.RevisionDigest(sha256Digest(manifest))
 	archive := []byte("archive bytes")
-	archiveDigest := store.ArchiveDigest("sha256:archive123")
+	archiveDigest := store.ArchiveDigest(sha256Digest(archive))
 
 	coord := store.ResourceCoordinate{
 		Marketplace: mp.ID,
@@ -147,6 +149,96 @@ func TestPublishSourceRevisionManifestDigestMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "manifest payload digest mismatch") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPublishSourceRevisionRejectsCollectionArchive(t *testing.T) {
+	err := store.PublishSourceRevision(context.Background(), nil, nil, store.SourceRevisionPublication{
+		Resources: []store.ResourceRevision{{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+			ContentDigest: "sha256:collection",
+			ArchiveDigest: "sha256:collection-archive",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "collection resource revision") {
+		t.Fatalf("expected collection archive rejection, got %v", err)
+	}
+}
+
+func collectionPublicationFixture(t *testing.T) (store.SourceRevisionPublication, store.ResourceCoordinate) {
+	t.Helper()
+	leafData := []byte("leaf archive")
+	leafContent := store.RevisionDigest("sha256:" + strings.Repeat("1", 64))
+	leafArchive := store.ArchiveDigest(sha256Digest(leafData))
+	collectionSource := store.SourceID("src-collection")
+	leafSource := store.SourceID("src-leaf")
+	manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion:    hccartifact.CollectionSchemaV1,
+		Name:             "bundle",
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "member", SourceID: string(leafSource), Revision: string(leafContent)}},
+		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectionCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Source: collectionSource, Kind: "collection", Name: "bundle"}
+	leafCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Source: leafSource, Kind: "skill", Name: "member"}
+	collection := store.CollectionRevision{ID: manifestDigest, SourceID: collectionSource, ManifestDigest: store.RevisionDigest(manifestDigest), Members: []store.ResourceCoordinate{leafCoord}}
+	sourceManifest := []byte("source revision manifest")
+	req := store.SourceRevisionPublication{
+		Occurrence: store.SourceOccurrence{SourceID: collectionSource, Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: store.RevisionDigest(sha256Digest(sourceManifest)), Acquisition: store.AcquisitionMirror, OccurredAt: time.Now().UTC()},
+		Resources: []store.ResourceRevision{
+			{Coordinate: leafCoord, ContentDigest: leafContent, ArchiveDigest: leafArchive},
+			{Coordinate: collectionCoord, ContentDigest: store.RevisionDigest(manifestDigest)},
+		},
+		Collections:     []store.CollectionRevision{collection},
+		ManifestPayload: sourceManifest,
+		ExtraBlobs:      []store.BlobUpload{{Digest: store.ArchiveDigest(manifestDigest), Data: manifestPayload}, {Digest: leafArchive, Data: leafData}},
+	}
+	return req, leafCoord
+}
+
+func TestPublishSourceRevisionRequiresCompleteCollectionGraph(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*store.SourceRevisionPublication)
+		want   string
+	}{
+		{"missing manifest", func(req *store.SourceRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[1:] }, "manifest is missing"},
+		{"missing leaf archive", func(req *store.SourceRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[:1] }, "archive is missing"},
+		{"tampered collection manifest", func(req *store.SourceRevisionPublication) { req.ExtraBlobs[0].Data = []byte("{}") }, "collection"},
+		{"tampered leaf archive", func(req *store.SourceRevisionPublication) { req.ExtraBlobs[1].Data = []byte("tampered") }, "data digest mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta, blobs := openAtomicStores(t)
+			req, leafCoord := collectionPublicationFixture(t)
+			tc.mutate(&req)
+			if err := store.PublishSourceRevision(ctx, meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			}
+			if _, err := meta.GetResourceRevision(ctx, leafCoord, req.Resources[0].ContentDigest); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("failed publication committed leaf metadata: %v", err)
+			}
+		})
+	}
+}
+
+func TestPublishSourceRevisionIsIdempotentForCollection(t *testing.T) {
+	ctx := context.Background()
+	meta, blobs := openAtomicStores(t)
+	req, _ := collectionPublicationFixture(t)
+	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("first PublishSourceRevision: %v", err)
+	}
+	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("retry PublishSourceRevision: %v", err)
+	}
+	changed := req
+	changed.Collections = append([]store.CollectionRevision(nil), req.Collections...)
+	changed.Collections[0].Members = nil
+	if err := store.PublishSourceRevision(ctx, meta, blobs, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting collection metadata error = %v, want ErrConflict", err)
 	}
 }
 

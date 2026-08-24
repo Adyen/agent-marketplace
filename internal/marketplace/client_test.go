@@ -461,6 +461,14 @@ func TestClientRejectsNonCanonicalResourceMetadata(t *testing.T) {
 	if err := validateAPIResourceRevision(revision); err == nil {
 		t.Fatal("resource revision accepted a development provenance commit")
 	}
+	collectionRevision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(digest),
+		ArchiveDigest: store.ArchiveDigest(digest),
+	}
+	if err := validateAPIResourceRevision(collectionRevision); err == nil || !strings.Contains(err.Error(), "virtual collection") {
+		t.Fatalf("collection archive revision validation = %v", err)
+	}
 	item := mpapi.ResourceListItem{SourceID: "source", Kind: "skill", Name: "review", Revision: "refs/heads/main", ContentDigest: digest}
 	if err := validateAPIResourceListItem(item); err == nil {
 		t.Fatal("resource list item accepted a symbolic revision")

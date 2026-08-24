@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -170,8 +172,33 @@ func TestBuildSourceRevisionCollection(t *testing.T) {
 	if collection.ContentDigest == "" {
 		t.Fatalf("collection content digest should not be empty")
 	}
-	if collection.ArchiveDigest == "" {
-		t.Fatalf("collection archive digest should not be empty for mirror mode")
+	if collection.ArchiveDigest != "" {
+		t.Fatalf("virtual collection must not have an archive digest: %q", collection.ArchiveDigest)
+	}
+	if collection.ContentDigest == "" || len(rev.CollectionManifests) != 1 {
+		t.Fatalf("collection standalone publication = digest %q/archive %q, manifests %d", collection.ContentDigest, collection.ArchiveDigest, len(rev.CollectionManifests))
+	}
+	if len(rev.ExtraBlobs) != 2 || rev.ExtraBlobs[0].Digest == rev.CollectionManifests[0].Digest {
+		t.Fatalf("collection publication should contain one leaf archive and one standalone manifest: %#v", rev.ExtraBlobs)
+	}
+	if len(rev.CollectionManifests[0].Data) == 0 || rev.CollectionManifests[0].Data[0] != '{' || string(rev.CollectionManifests[0].Digest) != string(collection.ContentDigest) {
+		t.Fatalf("collection manifest upload = digest %q/data prefix %q", rev.CollectionManifests[0].Digest, rev.CollectionManifests[0].Data)
+	}
+	if len(rev.Collections) != 1 || rev.Collections[0].ManifestDigest != collection.ContentDigest || len(rev.Collections[0].Members) != 1 {
+		t.Fatalf("collection metadata = %#v", rev.Collections)
+	}
+	manifest, payload, err := marketplaceartifact.DecodeSourceRevisionManifest(bytes.NewReader(rev.ManifestPayload))
+	if err != nil {
+		t.Fatalf("decode source revision manifest: %v", err)
+	}
+	manifest.RevisionDigest = string(rev.ManifestDigest)
+	if err := marketplaceartifact.VerifySourceRevisionManifest(manifest, payload); err != nil {
+		t.Fatalf("verify source revision manifest: %v", err)
+	}
+	for _, resource := range manifest.Resources {
+		if resource.Kind == "collection" && resource.ArchiveDigest != "" {
+			t.Fatalf("source revision manifest exposed collection archive digest: %#v", resource)
+		}
 	}
 }
 

@@ -100,6 +100,11 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			slog.Debug("marketplace cached no-fetch resolution", "url", entry.URL, "instance_id", entry.InstanceID)
 		}
 		for _, pin := range entry.Resources {
+			// Collections are virtual. Their exact leaf pins are persisted beside
+			// the collection pin and are the only inputs to materialization.
+			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
+				continue
+			}
 			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err))
@@ -109,6 +114,17 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 		}
 	}
 	return out, errs
+}
+
+func hasExpandedCollectionLeaves(entry config.MarketplaceEntry, collectionPin config.MarketplaceResourcePin) bool {
+	for _, pin := range entry.Resources {
+		for _, selected := range pin.SelectedBy.List() {
+			if selected.SourceID == collectionPin.SourceID && selected.Name == collectionPin.Name && selected.Revision == collectionPin.Revision {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func canonicalMarketplaceEntry(entry config.MarketplaceEntry) (config.MarketplaceEntry, error) {
@@ -818,6 +834,9 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 	}
 	if rev.ContentDigest != store.RevisionDigest(pin.Digest) {
 		return fmt.Errorf("revision content digest mismatch: metadata %q, pin %q", rev.ContentDigest, pin.Digest)
+	}
+	if pin.Kind == "collection" && rev.ArchiveDigest != "" {
+		return fmt.Errorf("virtual collection resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" {
 		if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {

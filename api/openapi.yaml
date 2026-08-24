@@ -287,7 +287,7 @@ paths:
   /api/v1/manifests/{source-revision}:
     get:
       operationId: getManifest
-      summary: Download a source revision manifest
+      summary: Download a content-addressed source or collection manifest
       parameters:
         - in: path
           name: source-revision

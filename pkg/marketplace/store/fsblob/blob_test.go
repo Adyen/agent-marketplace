@@ -78,6 +78,28 @@ func TestBlobContentAddressedLayout(t *testing.T) {
 	}
 }
 
+func TestBlobImmutableWrite(t *testing.T) {
+	ctx := context.Background()
+	bs := fsblob.New(t.TempDir())
+	digest := store.ArchiveDigest("sha256:immutable")
+	if err := bs.PutImmutable(ctx, digest, []byte("first")); err != nil {
+		t.Fatalf("PutImmutable first: %v", err)
+	}
+	if err := bs.PutImmutable(ctx, digest, []byte("first")); err != nil {
+		t.Fatalf("PutImmutable retry: %v", err)
+	}
+	if err := bs.PutImmutable(ctx, digest, []byte("second")); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("PutImmutable conflict = %v, want ErrConflict", err)
+	}
+	got, err := bs.Get(ctx, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("immutable blob changed to %q", got)
+	}
+}
+
 func TestBlobOverwriteAndDelete(t *testing.T) {
 	ctx := context.Background()
 	bs := fsblob.New(t.TempDir())

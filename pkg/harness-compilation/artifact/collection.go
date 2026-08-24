@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"unicode"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -123,6 +125,9 @@ func DecodeCollectionManifest(r io.Reader) (CollectionManifest, []byte, error) {
 // VerifyCollectionManifest checks that the manifest's ContentDigest matches its
 // JSON payload bytes.
 func VerifyCollectionManifest(m CollectionManifest, payload []byte) error {
+	if err := m.Validate(); err != nil {
+		return fmt.Errorf("validate collection manifest: %w", err)
+	}
 	if m.ContentDigest == "" {
 		return errors.New("collection manifest content_digest is empty")
 	}
@@ -144,12 +149,73 @@ func VerifyCollectionManifest(m CollectionManifest, payload []byte) error {
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			return fmt.Errorf("unmarshal provided payload: %w", err)
 		}
+		if err := decoded.Validate(); err != nil {
+			return fmt.Errorf("validate provided collection manifest: %w", err)
+		}
 		if decoded.ContentDigest != m.ContentDigest {
 			return errors.New("provided payload content_digest does not match manifest")
+		}
+		canonical, err := canonicalCollectionPayload(m)
+		if err != nil {
+			return fmt.Errorf("canonical manifest payload: %w", err)
+		}
+		if !bytes.Equal(payload, canonical) {
+			return errors.New("provided payload is not canonical")
 		}
 	}
 
 	return nil
+}
+
+// ValidateFlatMirrorManifest verifies the subset published by the first
+// Marketplace collection slice: a standalone manifest containing only exact,
+// direct mirror leaves. Nested collections and mixed acquisition are deliberate
+// follow-up features and must not be accepted accidentally here.
+func ValidateFlatMirrorManifest(m CollectionManifest) error {
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	if len(m.Includes) != 0 {
+		return errors.New("flat collection manifest cannot contain includes")
+	}
+	if len(m.Members) == 0 {
+		return errors.New("flat collection manifest must contain direct leaves")
+	}
+	for i, member := range m.Members {
+		if !validCollectionToken(member.SourceID) {
+			return fmt.Errorf("members[%d].source_id is not a route-safe token", i)
+		}
+		if !validCollectionToken(member.Name) {
+			return fmt.Errorf("members[%d].name is not a route-safe token", i)
+		}
+		if member.Kind == "collection" {
+			return fmt.Errorf("members[%d] contains a nested collection", i)
+		}
+		if member.SourceID == "" {
+			return fmt.Errorf("members[%d].source_id is required", i)
+		}
+		if len(member.Revision) != len("sha256:")+64 || !strings.HasPrefix(member.Revision, "sha256:") {
+			return fmt.Errorf("members[%d].revision must be sha256:<64 lowercase hex>", i)
+		}
+		for _, ch := range member.Revision[len("sha256:"):] {
+			if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+				return fmt.Errorf("members[%d].revision must be sha256:<64 lowercase hex>", i)
+			}
+		}
+	}
+	return nil
+}
+
+func validCollectionToken(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value == "." || value == ".." || strings.ContainsAny(value, "/\\%") {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate checks the collection manifest for required fields and valid members.

@@ -13,18 +13,23 @@ import (
 
 // BuildResult is the unified output of building a resource or collection artifact.
 type BuildResult struct {
-	Artifact       hccartifact.CanonicalArtifact
-	RawArchive     []byte
-	ContentDigest  string
-	ArchiveDigest  string
-	RevisionDigest string
-	Findings       []analyze.Finding
-	Capabilities   []string
-	Name           string
-	Kind           string
-	License        string
-	Rejected       bool
-	RejectReason   string
+	Artifact   hccartifact.CanonicalArtifact
+	RawArchive []byte
+	// ManifestPayload and ManifestDigest are populated for virtual collection
+	// builds. The standalone manifest is the collection revision identity; the
+	// tar archive remains available for the legacy source-revision artifact.
+	ManifestPayload []byte
+	ManifestDigest  string
+	ContentDigest   string
+	ArchiveDigest   string
+	RevisionDigest  string
+	Findings        []analyze.Finding
+	Capabilities    []string
+	Name            string
+	Kind            string
+	License         string
+	Rejected        bool
+	RejectReason    string
 }
 
 // BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
@@ -102,9 +107,10 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	}, nil
 }
 
-// BuildCollectionManifest builds a collection manifest and wraps it in a
-// canonical artifact. If memberResults is provided, a source revision manifest
-// is also produced and its digest is returned in BuildResult.RevisionDigest.
+// BuildCollectionManifest builds a standalone collection manifest and keeps an
+// in-memory canonical envelope for metadata consumers. It never produces a tar
+// archive. If memberResults is provided, a source revision manifest is also
+// produced and its digest is returned in BuildResult.RevisionDigest.
 func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResults []BuildResult, opts analyze.Options) (BuildResult, error) {
 	if c == nil {
 		return BuildResult{}, fmt.Errorf("nil collection")
@@ -135,19 +141,30 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	if manifest.SupportedSchemas == nil {
 		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
 	}
+	for _, member := range memberResults {
+		if member.Rejected {
+			return BuildResult{}, fmt.Errorf("collection member %s/%q is rejected and has no publishable leaf artifact", member.Kind, member.Name)
+		}
+	}
 	if len(memberResults) > 0 {
 		manifest = resolveCollectionManifestMembers(manifest, memberResults, opts)
 	}
+	// Collections are virtual: only the standalone collection manifest and its
+	// exact leaf artifacts are published. Validate the publishable flat slice
+	// before encoding anything that can be handed to a publisher.
+	if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
+		return BuildResult{}, fmt.Errorf("validate flat collection manifest: %w", err)
+	}
 
-	payload, _, err := hccartifact.EncodeCollectionManifest(manifest)
+	payload, manifestDigest, err := hccartifact.EncodeCollectionManifest(manifest)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("encode collection manifest: %w", err)
 	}
 
-	// The artifact content digest is over the payload bytes (the collection
-	// manifest JSON), not the collection manifest's self-referential digest.
-	artifactContentDigest := hccartifact.ContentDigest(payload)
-
+	// Keep an in-memory canonical envelope for callers that need collection
+	// metadata, but deliberately do not encode it as a tar archive. A collection
+	// resource revision is identified by the standalone manifest digest, not by
+	// an archive digest.
 	artifact := hccartifact.CanonicalArtifact{
 		Manifest: hccartifact.CanonicalManifest{
 			SchemaVersion:    hccartifact.CanonicalArtifactSchemaV1,
@@ -155,7 +172,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 			Kind:             "collection",
 			Name:             c.Name(),
 			Revision:         opts.Source.Ref,
-			ContentDigest:    artifactContentDigest,
+			ContentDigest:    manifestDigest,
 			License:          opts.Source.License,
 			AnalyzerVersion:  analyzerVersion(opts),
 			Capabilities:     caps,
@@ -164,16 +181,6 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 			SupportedSchemas: []string{hccartifact.CanonicalArtifactSchemaV1},
 		},
 		Payload: payload,
-	}
-
-	raw, archiveDigest, err := hccartifact.Encode(artifact)
-	if err != nil {
-		return BuildResult{}, fmt.Errorf("encode collection artifact: %w", err)
-	}
-
-	decoded, _, err := hccartifact.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return BuildResult{}, fmt.Errorf("decode collection artifact: %w", err)
 	}
 
 	revisionDigest := ""
@@ -207,17 +214,17 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	}
 
 	return BuildResult{
-		Artifact:       decoded,
-		Name:           c.Name(),
-		Kind:           "collection",
-		License:        artifact.Manifest.License,
-		RawArchive:     raw,
-		ContentDigest:  artifactContentDigest,
-		ArchiveDigest:  archiveDigest,
-		RevisionDigest: revisionDigest,
-		Findings:       report.Findings,
-		Capabilities:   caps,
-		Rejected:       false,
+		Artifact:        artifact,
+		Name:            c.Name(),
+		Kind:            "collection",
+		License:         artifact.Manifest.License,
+		ManifestPayload: payload,
+		ManifestDigest:  manifestDigest,
+		ContentDigest:   manifestDigest,
+		RevisionDigest:  revisionDigest,
+		Findings:        report.Findings,
+		Capabilities:    caps,
+		Rejected:        false,
 	}, nil
 }
 

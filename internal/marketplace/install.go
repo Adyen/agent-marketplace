@@ -24,6 +24,11 @@ type PreparedInstall struct {
 	Resolved      resolver.ResolvedArtifact
 	Artifact      hccartifact.CanonicalArtifact
 	ArchiveDigest string
+
+	// CollectionMembers contains the fully verified leaf plans for a virtual
+	// collection. The collection itself is never passed to materialization.
+	CollectionMembers  []*PreparedInstall
+	CollectionManifest hccartifact.CollectionManifest
 }
 
 // InstallPreview is the stable, typed preview surface for a prepared install.
@@ -183,9 +188,6 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		return nil, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, canonical.InstanceID)
 	}
 
-	if locator.Kind == "collection" {
-		return nil, fmt.Errorf("collection Marketplace install is not supported yet; install an individual resource")
-	}
 	if locator.Kind == "" {
 		return nil, fmt.Errorf("marketplace resource kind is required")
 	}
@@ -251,7 +253,59 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		pin.SourceCommit = occurrence.Commit
 		pin.SourceManifestDigest = string(occurrence.SourceRevisionManifestDigest)
 	}
+
 	cache := r.cache()
+	if locator.Kind == "collection" {
+		if source.Acquisition != store.AcquisitionMirror {
+			return nil, fmt.Errorf("collection %q requires mirror acquisition", locator.Name)
+		}
+		// A collection revision is the trust boundary for its entire leaf graph.
+		// Reject it before fetching the manifest or writing anything to the cache;
+		// otherwise a revoked collection could still cause its leaves to be fetched.
+		if err := enforceMarketplaceRevocation(revision, canonical, pin, nil); err != nil {
+			return nil, fmt.Errorf("collection revision: %w", err)
+		}
+		manifest, manifestPayload, err := client.GetCollectionManifest(ctx, string(revision.ContentDigest))
+		if err != nil {
+			return nil, fmt.Errorf("fetch collection manifest: %w", err)
+		}
+		if _, err := cache.WriteCollectionManifest(string(revision.ContentDigest), manifestPayload); err != nil {
+			return nil, fmt.Errorf("cache collection manifest: %w", err)
+		}
+		if manifest.Name != locator.Name {
+			return nil, fmt.Errorf("collection manifest name mismatch: got %q, want %q", manifest.Name, locator.Name)
+		}
+		members := make([]*PreparedInstall, 0, len(manifest.Members))
+		for _, member := range manifest.Members {
+			memberSource, err := client.GetSource(ctx, member.SourceID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve collection member source %q: %w", member.SourceID, err)
+			}
+			if memberSource.Acquisition != store.AcquisitionMirror {
+				return nil, fmt.Errorf("collection member %s/%q is not mirror-acquired", member.Kind, member.Name)
+			}
+			leafPin := config.MarketplaceResourcePin{
+				SourceID: string(memberSource.ID), SourceSlug: memberSource.Slug,
+				Kind: member.Kind, Name: member.Name, Revision: member.Revision,
+				Digest: member.Revision, Acquisition: config.MarketplaceAcquisitionMirror,
+				SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: string(source.ID), Name: locator.Name, Revision: string(revision.ContentDigest)}}),
+			}
+			leafRevision, err := client.GetResourceRevisionForSource(ctx, string(memberSource.ID), string(memberSource.ID), member.Kind, member.Name, member.Revision)
+			if err != nil {
+				return nil, fmt.Errorf("resolve collection member %s/%q: %w", member.Kind, member.Name, err)
+			}
+			if err := validateResourceRevision(canonical, leafPin, leafRevision); err != nil {
+				return nil, fmt.Errorf("collection member %s/%q metadata: %w", member.Kind, member.Name, err)
+			}
+			resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, leafPin, targets, resolver.MarketplaceResolveModeRefresh)
+			if err != nil {
+				return nil, fmt.Errorf("verify collection member %s/%q: %w", member.Kind, member.Name, err)
+			}
+			members = append(members, &PreparedInstall{Entry: canonical, Pin: leafPin, Revision: leafRevision, Resolved: resolved, Artifact: artifact, ArchiveDigest: string(leafRevision.ArchiveDigest)})
+		}
+		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
+		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members}, nil
+	}
 	resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh)
 	if err != nil {
 		return nil, fmt.Errorf("verify Marketplace artifact: %w", err)

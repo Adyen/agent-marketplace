@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -358,6 +359,35 @@ func (c *Client) GetSourceOccurrence(ctx context.Context, source, commit string)
 	return occurrence, nil
 }
 
+// GetCollectionManifest downloads and verifies a standalone canonical
+// collection manifest by its content digest. The manifest is not a tar
+// artifact: collections remain virtual and only their leaf artifacts are
+// materialized.
+func (c *Client) GetCollectionManifest(ctx context.Context, manifestDigest string) (hccartifact.CollectionManifest, []byte, error) {
+	var manifest hccartifact.CollectionManifest
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return manifest, nil, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
+	}
+	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
+	if err != nil {
+		return manifest, nil, err
+	}
+	decoded, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(raw))
+	if err != nil {
+		return manifest, nil, fmt.Errorf("decode collection manifest: %w", err)
+	}
+	if err := hccartifact.VerifyCollectionManifest(decoded, payload); err != nil {
+		return manifest, nil, fmt.Errorf("verify collection manifest: %w", err)
+	}
+	if err := hccartifact.ValidateFlatMirrorManifest(decoded); err != nil {
+		return manifest, nil, fmt.Errorf("validate collection manifest: %w", err)
+	}
+	if decoded.ContentDigest != manifestDigest {
+		return manifest, nil, fmt.Errorf("collection manifest digest mismatch: got %s, want %s", decoded.ContentDigest, manifestDigest)
+	}
+	return decoded, payload, nil
+}
+
 // GetArtifact downloads an artifact archive by its archive digest.
 func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte, error) {
 	if err := validateSHA256Digest(archiveDigest); err != nil {
@@ -663,6 +693,9 @@ func validateAPIResourceRevision(rev store.ResourceRevision) error {
 	}
 	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
 		return fmt.Errorf("content digest: %w", err)
+	}
+	if coord.Kind == "collection" && rev.ArchiveDigest != "" {
+		return fmt.Errorf("virtual collection resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" {
 		if err := validateSHA256Digest(string(rev.ArchiveDigest)); err != nil {
