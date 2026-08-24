@@ -299,21 +299,20 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// "replayed OR rolled back according to the recorded phase" is honoured by
 	// treating "prepared" as not-yet-authorized-to-publish.
 	if err := s.crash(CrashAfterStagedWrite); err != nil {
-		_ = staged.Close()
-		return Result{}, err
+		return Result{}, errors.Join(err, staged.Close())
 	}
 
 	// CAS PRECONDITION: refuse if the record or aggregate changed since the caller
 	// read them. With locking this should never fire; without locking it is the
 	// only thing that prevents lost updates.
 	if err := s.assertPrecondition(m); err != nil {
-		_ = staged.Close()
+		closeErr := staged.Close()
 		s.cleanupAfterCASFailure(journal, backupPath)
 		s.observeLock(LockEvent{Kind: LockCASConflict, Path: m.AbsFile, Err: err})
 		if errors.Is(err, ErrGenerationConflict) {
-			return Result{}, coded(diag.CodeOwnershipGenerationConflict, m.Rel, err)
+			return Result{}, coded(diag.CodeOwnershipGenerationConflict, m.Rel, errors.Join(err, closeErr))
 		}
-		return Result{}, err
+		return Result{}, errors.Join(err, closeErr)
 	}
 
 	// STEP 4: publish the patched aggregate through the opened staging root. The
@@ -324,8 +323,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	if err := staging.publish(staged, filepath.Base(m.AbsFile), func() error {
 		return s.crash(CrashBeforeAggregateRename)
 	}); err != nil {
-		_ = staged.Close()
-		return Result{}, err
+		return Result{}, errors.Join(err, staged.Close())
 	}
 
 	// Prune retained backups now that publication succeeded. Retention is not
@@ -342,8 +340,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	// heuristic — and rolls FORWARD, committing the journal's ownership
 	// generation so state matches the bytes that are live.
 	if err := s.crash(CrashAfterAggregateRename); err != nil {
-		_ = staged.Close()
-		return Result{}, err
+		return Result{}, errors.Join(err, staged.Close())
 	}
 	if err := staged.Close(); err != nil {
 		return Result{}, fmt.Errorf("ownership: close published staged file %s: %w", journal.StagedPath, err)

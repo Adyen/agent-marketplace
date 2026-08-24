@@ -304,6 +304,9 @@ func syncRootDirectory(root *os.Root) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	// Some filesystems refuse fsync on a directory. We still complete the
+	// mutation when that happens, but cannot confirm that the directory update
+	// survived a power loss.
 	_ = f.Sync()
 	return nil
 }
