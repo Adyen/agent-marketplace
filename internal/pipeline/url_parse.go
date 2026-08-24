@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"net/url"
+	pathpkg "path"
 	"strings"
 )
 
@@ -9,10 +10,11 @@ import (
 // (GitLab, GitHub). If the URL doesn't match a known pattern, ok is false
 // and the fields are empty.
 type ParsedWebURL struct {
-	GitURL string // the git-cloneable URL (SSH or HTTPS)
-	Ref    string // branch, tag, or commit SHA
-	Path   string // subdirectory within the repo
-	Ok     bool   // true when the URL was successfully parsed
+	GitURL       string // the git-cloneable URL (SSH or HTTPS)
+	Ref          string // branch, tag, or commit SHA
+	Path         string // subdirectory within the repo
+	ResourceName string
+	Ok           bool // true when the URL was successfully parsed
 }
 
 // ParseGitWebURL attempts to decompose a Git hosting web URL into its
@@ -54,14 +56,22 @@ func ParseGitWebURL(rawURL string) ParsedWebURL {
 	host := u.Host
 	path := strings.TrimPrefix(u.Path, "/")
 
+	resourceName := hostedMarkdownResourceName(path)
+
 	// Try GitLab pattern: <group>/<project>/-/tree/<ref>[/<path>]
 	if gitURL, ref, subPath, ok := parseGitLabURL(host, path); ok {
-		return ParsedWebURL{GitURL: gitURL, Ref: ref, Path: subPath, Ok: true}
+		if resourceName != "" && strings.Contains(path, "/-/tree/") {
+			subPath = parentPath(subPath)
+		}
+		return ParsedWebURL{GitURL: gitURL, Ref: ref, Path: subPath, ResourceName: resourceName, Ok: true}
 	}
 
 	// Try GitHub pattern: <group>/<project>/tree/<ref>[/<path>]
 	if gitURL, ref, subPath, ok := parseGitHubURL(host, path); ok {
-		return ParsedWebURL{GitURL: gitURL, Ref: ref, Path: subPath, Ok: true}
+		if resourceName != "" && strings.Contains(path, "/tree/") {
+			subPath = parentPath(subPath)
+		}
+		return ParsedWebURL{GitURL: gitURL, Ref: ref, Path: subPath, ResourceName: resourceName, Ok: true}
 	}
 
 	// Try bare project URL (no /-/tree/...): <group>/<project>
@@ -171,6 +181,29 @@ var knownSubpages = map[string]bool{
 	"commits": true, "branches": true, "tags": true, "compare": true,
 	"network": true, "graphs": true, "stargazers": true, "forks": true,
 	"watchers": true, "labels": true, "merge_requests": true, "pipelines": true,
+}
+
+func hostedMarkdownResourceName(path string) string {
+	if strings.HasSuffix(path, "/") || (!strings.Contains(path, "/blob/") && !strings.Contains(path, "/tree/")) {
+		return ""
+	}
+	base := pathpkg.Base(path)
+	if strings.EqualFold(base, "SKILL.md") {
+		return ""
+	}
+	ext := strings.ToLower(pathpkg.Ext(base))
+	if ext != ".md" && ext != ".mdc" {
+		return ""
+	}
+	return strings.TrimSuffix(base, pathpkg.Ext(base))
+}
+
+func parentPath(path string) string {
+	parent := pathpkg.Dir(path)
+	if parent == "." {
+		return ""
+	}
+	return parent
 }
 
 // parseBareProjectURL handles URLs that point to a project root

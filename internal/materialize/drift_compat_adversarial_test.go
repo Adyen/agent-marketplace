@@ -104,3 +104,46 @@ func TestDriftReportBrokenBeatsSynced(t *testing.T) {
 		}
 	}
 }
+
+func TestDriftReportKeepsSameNamedKindsDistinct(t *testing.T) {
+	skillKey := skill.ResourceKey(ir.KindSkill, "shared")
+	ruleKey := skill.ResourceKey(ir.KindRule, "shared")
+	report := &Report{PerRoot: []TargetReport{{Written: []string{
+		"skills/shared/SKILL.md",
+		"rules/shared.mdc",
+	}}}}
+
+	dr := DriftReportFromReport(report, []string{skillKey, ruleKey})
+	missing := map[string]bool{}
+	for _, item := range dr.Missing {
+		missing[item.Name] = true
+	}
+	if !missing[skillKey] || !missing[ruleKey] {
+		t.Fatalf("Missing = %+v, want distinct %q and %q identities", dr.Missing, skillKey, ruleKey)
+	}
+	if len(dr.Synced) != 0 {
+		t.Fatalf("Synced = %+v, want neither unwritten resource reported as synced", dr.Synced)
+	}
+}
+
+func TestDriftReportAmbiguousDiagnosticMarksSameNamedKindsBroken(t *testing.T) {
+	skillKey := skill.ResourceKey(ir.KindSkill, "shared")
+	ruleKey := skill.ResourceKey(ir.KindRule, "shared")
+	report := &Report{Diags: []diag.Diagnostic{{
+		Code:     "materialize.compile.error",
+		Severity: diag.SeverityError,
+		Resource: "shared",
+	}}}
+
+	dr := DriftReportFromReport(report, []string{skillKey, ruleKey})
+	broken := map[string]bool{}
+	for _, item := range dr.Broken {
+		broken[item.Name] = true
+	}
+	if !broken[skillKey] || !broken[ruleKey] {
+		t.Fatalf("Broken = %+v, want conservative typed identities %q and %q", dr.Broken, skillKey, ruleKey)
+	}
+	if len(dr.Synced) != 0 {
+		t.Fatalf("Synced = %+v, want ambiguous error to leave neither resource falsely synced", dr.Synced)
+	}
+}

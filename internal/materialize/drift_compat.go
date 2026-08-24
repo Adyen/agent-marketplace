@@ -74,16 +74,19 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 
 	var dr DriftReport
 
-	resolvedByName := make(map[string]string, len(resolvedNames))
+	resolvedSet := make(map[string]bool, len(resolvedNames))
+	resolvedByName := make(map[string][]string, len(resolvedNames))
 	for _, name := range resolvedNames {
-		resolvedByName[resourceKeyName(name)] = name
+		resolvedSet[name] = true
+		plainName := resourceKeyName(name)
+		resolvedByName[plainName] = append(resolvedByName[plainName], name)
 	}
 
 	// Artifacts that would be written = missing from disk (need sync)
 	writtenNames := make(map[string]bool)
 	for _, tr := range report.TargetReports() {
 		for _, w := range tr.Written {
-			writtenNames[resourceKeyForPath(w, resolvedByName)] = true
+			writtenNames[resourceKeyForPath(w, resolvedSet, resolvedByName)] = true
 		}
 	}
 	for name := range writtenNames {
@@ -93,7 +96,7 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	// Removed files = orphaned
 	for _, tr := range report.TargetReports() {
 		for _, r := range tr.Removed {
-			dr.Orphaned = append(dr.Orphaned, DriftItem{Name: resourceKeyForPath(r, resolvedByName), Reason: DriftOrphaned})
+			dr.Orphaned = append(dr.Orphaned, DriftItem{Name: resourceKeyForPath(r, resolvedSet, resolvedByName), Reason: DriftOrphaned})
 		}
 	}
 
@@ -103,9 +106,19 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 		if !d.IsError() || d.Resource == "" {
 			continue
 		}
+		keys := resolvedByName[d.Resource]
+		if len(keys) > 1 {
+			for _, resource := range keys {
+				if !brokenSet[resource] {
+					brokenSet[resource] = true
+					dr.Broken = append(dr.Broken, DriftItem{Name: resource, Reason: DriftBroken})
+				}
+			}
+			continue
+		}
 		resource := d.Resource
-		if key, ok := resolvedByName[d.Resource]; ok {
-			resource = key
+		if len(keys) == 1 {
+			resource = keys[0]
 		}
 		if !brokenSet[resource] {
 			brokenSet[resource] = true
@@ -114,10 +127,6 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	}
 
 	// Remaining resolved skills are in sync
-	resolvedSet := make(map[string]bool, len(resolvedNames))
-	for _, name := range resolvedNames {
-		resolvedSet[name] = true
-	}
 	for name := range resolvedSet {
 		if !writtenNames[name] && !brokenSet[name] {
 			dr.Synced = append(dr.Synced, DriftItem{Name: name, Reason: DriftInSync})
@@ -127,18 +136,20 @@ func DriftReportFromReport(report *Report, resolvedNames []string) DriftReport {
 	return dr
 }
 
-func resourceKeyForPath(path string, resolvedByName map[string]string) string {
+func resourceKeyForPath(path string, resolvedSet map[string]bool, resolvedByName map[string][]string) string {
 	name := filePathToSkillName(path)
-	if key, ok := resolvedByName[name]; ok {
-		return key
-	}
 	kind := filePathResourceKind(path)
 	switch kind {
 	case ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule:
-		return skill.ResourceKey(kind, name)
-	default:
-		return name
+		key := skill.ResourceKey(kind, name)
+		if resolvedSet[key] || len(resolvedByName[name]) != 1 {
+			return key
+		}
 	}
+	if keys := resolvedByName[name]; len(keys) == 1 {
+		return keys[0]
+	}
+	return name
 }
 
 func resourceKeyName(key string) string {

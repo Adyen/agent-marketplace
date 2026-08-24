@@ -231,6 +231,49 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 	}
 }
 
+func TestRenderDetailFullReadsWorkspaceRuleSource(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		sourceHarness string
+		workspaceDir  string
+	}{
+		{name: "cursor", sourceHarness: catalog.HarnessCursor, workspaceDir: ".cursor"},
+		{name: "windsurf", sourceHarness: catalog.HarnessWindsurf, workspaceDir: ".windsurf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			rulePath := filepath.Join(root, tc.workspaceDir, "rules", "secure-coding.mdc")
+			if err := os.MkdirAll(filepath.Dir(rulePath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rulePath, []byte("---\nalwaysApply: true\n---\n# Secure coding\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.sourceHarness == catalog.HarnessWindsurf {
+				directPath := filepath.Join(root, "rules", "secure-coding.mdc")
+				if err := os.MkdirAll(filepath.Dir(directPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(directPath, []byte("# Wrong source\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			loaded, err := catalog.Load(root, tc.sourceHarness)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(loaded.Entries) != 1 {
+				t.Fatalf("catalog entries = %d, want 1", len(loaded.Entries))
+			}
+			out := ansi.Strip(renderDetailFullContent(row{Artifact: resolver.ResolvedArtifact{Entry: loaded.Entries[0]}}))
+			if !contains(out, "Secure coding") || contains(out, "Wrong source") || contains(out, "Error reading resource") {
+				t.Fatalf("workspace Rule detail could not read its source:\n%s", out)
+			}
+		})
+	}
+}
+
 // --- Viewport scroll tests ---
 
 func TestDetailViewportScrollsDownWithJ(t *testing.T) {

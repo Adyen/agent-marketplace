@@ -290,10 +290,25 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	}
 	for i := range cat.Entries {
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
-			cat.Entries[i].Path = filepath.Join(dir, cat.Entries[i].Path)
+			cat.Entries[i].Path = catalogSourcePath(dir, cat.SourceHarness, cat.Entries[i].Path)
 		}
 	}
 	return cat, nil
+}
+
+func catalogSourcePath(dir, sourceHarness, path string) string {
+	direct := filepath.Join(dir, path)
+	workspace := filepath.Join(dir, "."+sourceHarness, path)
+	candidates := []string{direct, workspace}
+	if sourceHarness == HarnessWindsurf {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return direct
 }
 
 // LoadFS discovers resources from an fs.FS using HCC IngestBundle.

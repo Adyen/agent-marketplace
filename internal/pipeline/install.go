@@ -823,6 +823,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 	// Resolve the URL: parse web URLs (GitLab/GitHub) into git URL + ref + path.
 	// Explicit --ref/--path flags take precedence over values parsed from the URL.
+	parsedWebURL := ParseGitWebURL(fromURL)
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
 	fromURL = resolvedURL
 	fromRef := resolvedRef
@@ -945,7 +946,10 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// If it matches exactly one resource in the catalog, install just that one.
 	// Otherwise fall back to bundle mode (install all).
 	inferredName := ""
-	if resolvedPath != "" {
+	if opts.FromPath == "" {
+		inferredName = parsedWebURL.ResourceName
+	}
+	if inferredName == "" && resolvedPath != "" {
 		inferredName = pathBase(resolvedPath)
 	}
 

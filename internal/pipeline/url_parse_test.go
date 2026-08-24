@@ -257,6 +257,30 @@ func TestParseGitWebURL(t *testing.T) {
 	}
 }
 
+func TestParseGitWebURLRetainsRuleResourceName(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://gitlab.example.com/example-org/infra-rules/-/blob/main/rules/secure-coding.mdc",
+		"https://gitlab.example.com/example-org/infra-rules/-/tree/main/rules/secure-coding.mdc",
+		"https://github.com/example-org/infra-rules/blob/main/rules/secure-coding.mdc",
+		"https://github.com/example-org/infra-rules/tree/main/rules/secure-coding.mdc",
+	} {
+		parsed := ParseGitWebURL(rawURL)
+		if parsed.ResourceName != "secure-coding" {
+			t.Fatalf("ParseGitWebURL(%q).ResourceName = %q, want secure-coding", rawURL, parsed.ResourceName)
+		}
+		if parsed.Path != "rules" {
+			t.Fatalf("ParseGitWebURL(%q).Path = %q, want rules", rawURL, parsed.Path)
+		}
+	}
+}
+
+func TestParseGitWebURLPreservesMarkdownDirectory(t *testing.T) {
+	parsed := ParseGitWebURL("https://github.com/example-org/infra-rules/tree/main/policies.md/")
+	if parsed.ResourceName != "" || parsed.Path != "policies.md" {
+		t.Fatalf("parsed markdown directory = %#v, want path policies.md without a resource name", parsed)
+	}
+}
+
 func TestResolveFromURL(t *testing.T) {
 	tests := []struct {
 		name         string
