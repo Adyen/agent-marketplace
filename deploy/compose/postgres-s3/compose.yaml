@@ -12,7 +12,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-marketplace}
       POSTGRES_PASSWORD_FILE: /run/secrets/marketplace-postgres-password
     secrets:
-      - marketplace_postgres_password
+      - source: marketplace_postgres_password
+        target: marketplace-postgres-password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -34,7 +35,8 @@ services:
     volumes:
       - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
     secrets:
-      - marketplace_postgres_dsn
+      - source: marketplace_postgres_dsn
+        target: marketplace-postgres-dsn
     read_only: true
     tmpfs:
       - /tmp
@@ -67,7 +69,8 @@ services:
     volumes:
       - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
     secrets:
-      - marketplace_postgres_dsn
+      - source: marketplace_postgres_dsn
+        target: marketplace-postgres-dsn
     read_only: true
     tmpfs:
       - /tmp
