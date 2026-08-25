@@ -2,9 +2,11 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -31,6 +35,15 @@ func TestMarketplacePublicGate(t *testing.T) {
 		[]MCPServer{{Name: "server-one", Command: "echo", Args: []string{"server-one"}}},
 	)
 	files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"echo hook","matcher":"Read"}]}}`
+	files["collections/public-bundle/COLLECTION.yaml"] = `name: public-bundle
+version: "1.0"
+description: Public gate collection
+resources:
+  - name: skill-one
+    kind: skill
+  - name: command-one
+    kind: command
+`
 	rooted := make(map[string]string, len(files))
 	for path, content := range files {
 		rooted[path] = content
@@ -42,7 +55,9 @@ func TestMarketplacePublicGate(t *testing.T) {
 
 	dbPath := filepath.Join(env.workspace, "marketplace.db")
 	blobsPath := filepath.Join(env.workspace, "blobs")
-	config := publicGateConfig(registryURL, "", dbPath, blobsPath)
+	listenAddr := publicGateEphemeralAddress(t)
+	operationsAddr := publicGateEphemeralAddress(t)
+	config := publicGateConfig(registryURL, "", dbPath, blobsPath, listenAddr, operationsAddr)
 	env.WriteFile("/workspace/marketplace.yaml", config)
 	result := env.RunAMWithEnv(map[string]string{"MARKETPLACE_PRIVATE_TOKEN": "private-origin-secret"}, "serve", "reindex", "--config", "marketplace.yaml")
 	if result.ExitCode != 0 {
@@ -53,19 +68,23 @@ func TestMarketplacePublicGate(t *testing.T) {
 	}
 
 	cfgPath := env.mustResolvePath("/workspace/marketplace.yaml")
+	assertPublicGateProcess(t, env, cfgPath, listenAddr, operationsAddr)
 	cfg, meta, blobs := openPublicGateStores(t, cfgPath)
 	server := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer server.Close()
 
 	skillDigest := publicGateResourceDigest(t, server.URL, "skill", "skill-one")
-	assertPublicGateRoutes(t, server.URL, []string{"skill", "command", "subagent", "hook", "mcpserver"}, skillDigest)
+	collectionDigest := publicGateCollection(t, server.URL)
+	assertPublicGateRoutes(t, server.URL, []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}, skillDigest)
+	assertPublicGateArtifactIntegrity(t, server.URL, "skill", "skill-one")
 	assertNoSecrets(t, server.URL, []string{"MARKETPLACE_PRIVATE_TOKEN", "private-origin-secret", "refresh-token"})
+	assertMarketplaceConsumerRoundTrip(t, server.URL)
 
 	server.Close()
 	if err := meta.Close(); err != nil {
 		t.Fatal(err)
 	}
-	env.WriteFile("/workspace/marketplace.yaml", publicGateConfig(registryURL, "e2e-public-gate/src-public/skill/skill-one@"+skillDigest, dbPath, blobsPath))
+	env.WriteFile("/workspace/marketplace.yaml", publicGateConfig(registryURL, "e2e-public-gate/src-public/skill/skill-one@"+skillDigest+"\n    - e2e-public-gate/src-public/collection/public-bundle@"+collectionDigest, dbPath, blobsPath, listenAddr, operationsAddr))
 	cfg, meta, blobs = openPublicGateStores(t, cfgPath)
 	if err := worker.EnsureRevocations(t.Context(), worker.Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}); err != nil {
 		t.Fatalf("revocation reconciliation failed: %v", err)
@@ -99,9 +118,14 @@ func TestMarketplacePublicGate(t *testing.T) {
 	if inspection.StatusCode != http.StatusOK {
 		t.Fatalf("revoked inspection status = %d", inspection.StatusCode)
 	}
+	collectionManifest := getPublicGateResponse(t, revokedServer.URL+"/api/v1/manifests/"+collectionDigest)
+	collectionManifest.Body.Close()
+	if collectionManifest.StatusCode != http.StatusGone {
+		t.Fatalf("revoked collection manifest status = %d, want %d", collectionManifest.StatusCode, http.StatusGone)
+	}
 }
 
-func publicGateConfig(origin, revision, dbPath, blobsPath string) string {
+func publicGateConfig(origin, revision, dbPath, blobsPath, listen, operationsListen string) string {
 	revocations := "  revisions: []"
 	if revision != "" {
 		revocations = "  revisions:\n    - " + revision
@@ -112,6 +136,8 @@ instance:
   name: E2E Public Gate
   canonical_url: https://marketplace.example.invalid
   browser_base: https://marketplace.example.invalid
+listen: %s
+operations_listen: %s
 storage:
   metadata:
     driver: sqlite
@@ -151,7 +177,7 @@ revocations:
   source_ids: []
   coordinates: []
 %s
-`, dbPath, blobsPath, origin, revocations)
+`, listen, operationsListen, dbPath, blobsPath, origin, revocations)
 }
 
 func openPublicGateStores(t *testing.T, cfgPath string) (mpconfig.Config, store.MetadataStore, store.BlobStore) {
@@ -165,6 +191,76 @@ func openPublicGateStores(t *testing.T, cfgPath string) (mpconfig.Config, store.
 		t.Fatal(err)
 	}
 	return cfg, meta, blobs
+}
+
+func publicGateEphemeralAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return address
+}
+
+func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operationsAddr string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, env.binary, "serve", "--config", cfgPath, "--role", "api")
+	cmd.Dir = env.workspace
+	cmd.Env = env.subprocessEnv()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start serve --role api: %v", err)
+	}
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	waited := false
+	var waitErr error
+	wait := func() error {
+		if !waited {
+			waitErr = <-waitCh
+			waited = true
+		}
+		return waitErr
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = wait()
+	})
+
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	waitFor := func(url string, want int) {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case err := <-waitCh:
+				waited, waitErr = true, err
+				t.Fatalf("serve --role api exited before %s was ready: %v\n%s", url, err, output.String())
+			default:
+			}
+			response, err := client.Get(url)
+			if err == nil {
+				_, _ = io.Copy(io.Discard, response.Body)
+				_ = response.Body.Close()
+				if response.StatusCode == want {
+					return
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("serve --role api did not make %s return %d\n%s", url, want, output.String())
+	}
+	waitFor("http://"+publicAddr+"/healthz", http.StatusOK)
+	waitFor("http://"+operationsAddr+"/readyz", http.StatusOK)
+	waitFor("http://"+publicAddr+"/readyz", http.StatusNotFound)
+	waitFor("http://"+operationsAddr+"/healthz", http.StatusNotFound)
 }
 
 func publicGateResourceDigest(t *testing.T, base, kind, name string) string {
@@ -186,13 +282,123 @@ func publicGateResourceDigest(t *testing.T, base, kind, name string) string {
 	return revision.ContentDigest
 }
 
+func publicGateCollection(t *testing.T, base string) string {
+	t.Helper()
+	response := getPublicGateResponse(t, base+"/api/v1/resources/public-source/collection/public-bundle")
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("collection status = %d", response.StatusCode)
+	}
+	var revision struct {
+		ContentDigest string `json:"content_digest"`
+		ArchiveDigest string `json:"archive_digest"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(revision.ContentDigest, "sha256:") {
+		t.Fatalf("collection returned invalid content digest %q", revision.ContentDigest)
+	}
+	if revision.ArchiveDigest != "" {
+		t.Fatalf("virtual collection returned archive digest %q", revision.ArchiveDigest)
+	}
+
+	manifestResponse := getPublicGateResponse(t, base+"/api/v1/manifests/"+revision.ContentDigest)
+	payload, err := io.ReadAll(manifestResponse.Body)
+	manifestResponse.Body.Close()
+	if err != nil || manifestResponse.StatusCode != http.StatusOK {
+		t.Fatalf("collection manifest status/body = %d/%s (%v)", manifestResponse.StatusCode, payload, err)
+	}
+	manifest, canonicalPayload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("decode collection manifest: %v", err)
+	}
+	if err := hccartifact.VerifyCollectionManifest(manifest, canonicalPayload); err != nil {
+		t.Fatalf("verify collection manifest: %v", err)
+	}
+	if err := hccartifact.ValidateFlatMirrorManifest(manifest); err != nil {
+		t.Fatalf("validate flat collection manifest: %v", err)
+	}
+	if manifest.Name != "public-bundle" || manifest.ContentDigest != revision.ContentDigest || len(manifest.Members) != 2 {
+		t.Fatalf("collection manifest identity/members = %#v", manifest)
+	}
+	archiveResponse := getPublicGateResponse(t, base+"/api/v1/artifacts/"+strings.Replace(revision.ContentDigest, ":", "/", 1))
+	archiveResponse.Body.Close()
+	if archiveResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("virtual collection artifact status = %d, want %d", archiveResponse.StatusCode, http.StatusNotFound)
+	}
+	return revision.ContentDigest
+}
+
+func assertPublicGateArtifactIntegrity(t *testing.T, base, kind, name string) {
+	t.Helper()
+	response := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name)
+	var revision struct {
+		ArchiveDigest string `json:"archive_digest"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&revision); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if !strings.HasPrefix(revision.ArchiveDigest, "sha256:") {
+		t.Fatalf("%s/%s returned invalid archive digest %q", kind, name, revision.ArchiveDigest)
+	}
+	artifactResponse := getPublicGateResponse(t, base+"/api/v1/artifacts/"+strings.Replace(revision.ArchiveDigest, ":", "/", 1))
+	payload, err := io.ReadAll(artifactResponse.Body)
+	artifactResponse.Body.Close()
+	if err != nil || artifactResponse.StatusCode != http.StatusOK {
+		t.Fatalf("%s/%s artifact status/body = %d/%s (%v)", kind, name, artifactResponse.StatusCode, payload, err)
+	}
+	artifact, _, err := hccartifact.Decode(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("decode %s/%s artifact: %v", kind, name, err)
+	}
+	if err := artifact.VerifyArchiveDigest(payload); err != nil {
+		t.Fatalf("verify %s/%s artifact integrity: %v", kind, name, err)
+	}
+}
+
+func assertMarketplaceConsumerRoundTrip(t *testing.T, endpoint string) {
+	t.Helper()
+	consumer := newEnv(t)
+	consumer.InitGitRepo()
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
+	consumer.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v2
+marketplaces:
+  - url: %s
+    instance_id: e2e-public-gate
+    alias: public
+`, endpoint))
+	result := consumer.RunAM("install", "public:public-source/skill/skill-one", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace mirror install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertRepoFactorySkillExists("skill-one")
+	if !strings.Contains(consumer.ReadFile("/workspace/.factory/skills/skill-one/SKILL.md"), "hostile-safe skill") {
+		t.Fatal("Marketplace mirror install produced the wrong skill content")
+	}
+	result = consumer.RunAM("sync")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace mirror repeat sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	result = consumer.RunAM("sync", "--offline")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace mirror offline sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	result = consumer.RunAM("sync", "--check")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace mirror sync --check reported drift (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+}
+
 func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDigest string) {
 	t.Helper()
 	if got := getPublicGate(t, base+"/.well-known/agent-marketplace.json"); !strings.Contains(got, `"instance_id":"e2e-public-gate"`) {
 		t.Fatalf("well-known response missing instance identity: %s", got)
 	}
-	if got := getPublicGate(t, base+"/api/v1/search?limit=100"); !strings.Contains(got, `"total":5`) {
-		t.Fatalf("search did not publish all five resource kinds: %s", got)
+	if got := getPublicGate(t, base+"/api/v1/search?limit=100"); !strings.Contains(got, `"total":6`) {
+		t.Fatalf("search did not publish all five resource kinds and collection: %s", got)
 	}
 	for _, path := range []string{
 		"/s/public-source/skill/skill-one",
@@ -209,11 +415,12 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 
 	for _, kind := range kinds {
 		name := map[string]string{
-			"skill":     "skill-one",
-			"command":   "command-one",
-			"subagent":  "agent-one",
-			"hook":      "PreToolUse-command",
-			"mcpserver": "server-one",
+			"skill":      "skill-one",
+			"command":    "command-one",
+			"subagent":   "agent-one",
+			"hook":       "PreToolUse-command",
+			"mcpserver":  "server-one",
+			"collection": "public-bundle",
 		}[kind]
 		resource := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name)
 		payload, err := io.ReadAll(resource.Body)
