@@ -130,10 +130,8 @@ func resolvePluginRootToken(value string, opts compile.Options) (resolved string
 //     surviving subset is narrower than the source asked for and can leave the
 //     resource unable to do its job.
 //
-// Devin therefore now DIVERGES from Factory, Gemini, and Cursor, which still
-// fail closed on subagent.<target>.tool-unknown. That divergence is accepted,
-// not accidental: Factory's fail-closed contract is pinned by bead
-// agent-marketplace-r2zr's acceptance criteria and must not be changed here.
+// Devin and Factory now both publish a profile when a subagent tool cannot be
+// represented. Gemini and Cursor still fail closed on subagent.<target>.tool-unknown.
 //
 // Explicitly empty (`allowed-tools: []`, or a string that splits to nothing) and
 // fully mappable restrictions are UNCHANGED: the first still renders the
