@@ -120,20 +120,23 @@ compose-config:
 	elif ! docker compose version >/dev/null 2>&1; then \
 		echo "SKIP: docker compose unavailable; cannot validate Compose files"; \
 	else \
-		secret_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-dsn; \
-		password_file=deploy/compose/postgres-s3/secrets/marketplace-postgres-password; \
-		sqlite_config=$$(mktemp); \
-		postgres_config=$$(mktemp); \
-		trap 'rm -f "$$secret_file" "$$password_file" "$$sqlite_config" "$$postgres_config"' EXIT; \
+		secret_dir=$$(mktemp -d) || { echo "ERROR: cannot create temporary Compose secret directory"; exit 1; }; \
+		secret_file=$$secret_dir/marketplace-postgres-dsn; \
+		password_file=$$secret_dir/marketplace-postgres-password; \
+		secret_override=$$(mktemp) || { rm -rf "$$secret_dir"; echo "ERROR: cannot create temporary Compose override"; exit 1; }; \
+		sqlite_config=$$(mktemp) || { rm -rf "$$secret_dir"; rm -f "$$secret_override"; echo "ERROR: cannot create temporary Compose output"; exit 1; }; \
+		postgres_config=$$(mktemp) || { rm -rf "$$secret_dir"; rm -f "$$secret_override" "$$sqlite_config"; echo "ERROR: cannot create temporary Compose output"; exit 1; }; \
+		trap 'rm -rf "$$secret_dir"; rm -f "$$secret_override" "$$sqlite_config" "$$postgres_config"' EXIT; \
 		printf '%s\n' 'postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable' > "$$secret_file"; \
 		printf '%s\n' 'validation-only' > "$$password_file"; \
+		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
 		docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config --quiet && \
-		docker compose -f deploy/compose/postgres-s3/compose.yaml config --quiet && \
+		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
 		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config > "$$sqlite_config" && \
 		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml config > "$$postgres_config" && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
 		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \
-		docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.dsn-file.yaml config --quiet && \
+		docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.dsn-file.yaml -f "$$secret_override" config --quiet && \
 		POSTGRES_PASSWORD=validation-only MARKETPLACE_POSTGRES_DSN=postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable AWS_ACCESS_KEY_ID=validation-only AWS_SECRET_ACCESS_KEY=validation-only docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.development.yaml config --quiet; \
 	fi
 

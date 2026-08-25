@@ -875,8 +875,15 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
 		return
 	}
-	if inspectionDigestOf(data) != string(digest) {
-		slog.Error("artifact blob digest mismatch", "digest", digest)
+	artifact, rawArchive, err := hccartifact.Decode(bytes.NewReader(data))
+	if err == nil && artifact.Manifest.ArchiveDigest != string(digest) {
+		err = fmt.Errorf("manifest archive digest %q does not match requested %q", artifact.Manifest.ArchiveDigest, digest)
+	}
+	if err == nil {
+		err = artifact.VerifyArchiveDigest(rawArchive)
+	}
+	if err != nil {
+		slog.Error("artifact blob digest mismatch", "digest", digest, "error", err)
 		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
 		return
 	}
