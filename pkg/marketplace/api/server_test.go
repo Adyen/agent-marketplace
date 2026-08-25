@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -70,8 +72,14 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put source: %v", err)
 	}
 
-	artifactData := []byte("fake tar.gz artifact")
-	artifactDigest := inspection.Digest(artifactData)
+	canonicalArtifact, err := hccartifact.FromIR(ir.NewSkill("review", "Review", "review body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("build canonical artifact: %v", err)
+	}
+	artifactData, artifactDigest, err := hccartifact.Encode(canonicalArtifact)
+	if err != nil {
+		t.Fatalf("encode canonical artifact: %v", err)
+	}
 	rev := store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID(cfg.Instance.ID),
@@ -79,7 +87,7 @@ func TestServerRoutes(t *testing.T) {
 			Kind:        KindSkill,
 			Name:        "review",
 		},
-		ContentDigest:   "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		ContentDigest:   store.RevisionDigest(canonicalArtifact.Manifest.ContentDigest),
 		ArchiveDigest:   store.ArchiveDigest(artifactDigest),
 		AnalyzerVersion: "1.0.0",
 		License:         "MIT",
@@ -270,7 +278,7 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("resource status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `"content_digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"`) {
+	if !strings.Contains(body, fmt.Sprintf(`"content_digest":"%s"`, rev.ContentDigest)) {
 		t.Fatalf("resource missing content_digest: %s", body)
 	}
 
@@ -285,7 +293,7 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	// specific revision
-	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review/revisions/sha256:1111111111111111111111111111111111111111111111111111111111111111")
+	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review/revisions/"+string(rev.ContentDigest))
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("revision status %d: %s", resp.StatusCode, body)
@@ -310,8 +318,8 @@ func TestServerRoutes(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("artifact status %d: %s", resp.StatusCode, body)
 	}
-	if body != "fake tar.gz artifact" {
-		t.Fatalf("artifact body = %q, want fake tar.gz artifact", body)
+	if body != string(artifactData) {
+		t.Fatalf("artifact body does not match the canonical artifact payload")
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.agent-marketplace.artifact.v1.tar+gzip" {
 		t.Fatalf("artifact content-type = %q", ct)
@@ -349,7 +357,7 @@ func TestServerRoutes(t *testing.T) {
 
 	for _, path := range []string{
 		"/s/test-source/skill/review",
-		"/s/test-source/skill/review/revisions/sha256%3A1111111111111111111111111111111111111111111111111111111111111111",
+		"/s/test-source/skill/review/revisions/" + strings.ReplaceAll(string(rev.ContentDigest), ":", "%3A"),
 	} {
 		resp = mustGet(t, public.URL+path)
 		body = mustRead(t, resp)
