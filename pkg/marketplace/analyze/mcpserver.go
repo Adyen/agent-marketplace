@@ -17,17 +17,21 @@ func (a mcpServerAnalyzer) Analyze(ctx context.Context, r ir.Resource, files Fil
 		return Report{}, fmt.Errorf("expected *ir.McpServer, got %T", r)
 	}
 
-	report, err := baseAnalyze(ctx, r, files, a.Name(), opts)
+	// Do not pass the complete MCP struct through the generic field extractor:
+	// environment/header/OAuth values are credentials and scanner messages are
+	// persisted in public revision metadata. The name is the only typed field
+	// that is both useful to inspect and safe to scan here; support files still
+	// go through the normal bounded asset/text policy.
+	samples := []textSample{{path: a.Name() + "/" + m.Name() + "/name", content: m.Name()}}
+	report, err := baseAnalyzeSamples(ctx, samples, files, a.Name(), opts)
 	if err != nil {
 		return Report{}, err
 	}
 
+	// Do not include endpoint values in findings. MCP URLs can contain userinfo,
+	// query tokens, or other credentials, and findings are persisted in public
+	// revision metadata alongside the inspection manifest.
 	msg := "resource declares MCP server capability"
-	if m.Transport != "" {
-		msg = fmt.Sprintf("resource declares MCP server capability: transport=%s", m.Transport)
-	} else if m.URL != "" {
-		msg = fmt.Sprintf("resource declares MCP server capability: url=%s", m.URL)
-	}
 	report.Findings = append(report.Findings, NewFinding(FindingMcpCapability, msg, analyzerName(opts, a.Name()), &SourceRange{File: a.Name() + "/" + m.Name()}))
 	report.Findings, report.Rejected = applyPolicy(report.Findings, opts.Policy)
 

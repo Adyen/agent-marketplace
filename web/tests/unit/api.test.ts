@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, createMarketplaceApi, isRasterMediaType, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
 import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
@@ -150,6 +150,19 @@ describe('Marketplace API URL handling', () => {
     })).toThrow(/acquisition is unsupported/)
   })
 
+  it('selects text and raster response handling for inspection content', async () => {
+    expect(isRasterMediaType('image/png')).toBe(true)
+    expect(isRasterMediaType('application/json')).toBe(false)
+    const calls: Array<{ request: string; responseType?: string }> = []
+    const api = createMarketplaceApi(async <T>(request: string, options?: { responseType?: string }) => {
+      calls.push({ request, responseType: options?.responseType })
+      return 'body' as T
+    }, '/api/v1')
+    await api.getResourceInspectionContent('source', 'skill', 'review', 'sha256:' + 'a'.repeat(64), 'application/json')
+    await api.getResourceInspectionFile('source', 'skill', 'review', 'sha256:' + 'a'.repeat(64), 'sha256:' + 'b'.repeat(64), 'image/png')
+    expect(calls.map(call => call.responseType)).toEqual(['text', 'blob'])
+  })
+
   it('builds exact inspection paths and validates bounded projection metadata', async () => {
     const digest = 'sha256:' + 'f'.repeat(64)
     expect(resourceInspectionPath('/api/v1', 'source', 'skill', 'review', digest)).toBe('/api/v1/resources/source/skill/review/revisions/sha256%3A' + 'f'.repeat(64) + '/inspection')
@@ -161,6 +174,8 @@ describe('Marketplace API URL handling', () => {
     }
     const api = createMarketplaceApi(async () => payload)
     await expect(api.getResourceInspection('source', 'skill', 'review', digest)).resolves.toMatchObject({ primary_path: 'SKILL.md' })
+    expect(() => normalizeInspectionManifest({ ...payload, files: [{ ...payload.files[0], media_type: 'text/plain' }] })).toThrow(/primary media policy/)
+    expect(() => normalizeInspectionManifest({ ...payload, files: [{ ...payload.files[0] }, { ...payload.files[0], path: 'support/COMMAND.md' }] })).toThrow(/path is not canonical/)
     expect(() => normalizeInspectionManifest({ ...payload, findings: [{ code: 'warn', severity: 'warn', start_byte: 3, end_byte: 2 }] })).toThrow(/inverted byte range/)
   })
 

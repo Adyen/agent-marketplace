@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -154,6 +155,77 @@ func TestClientRejectsPrivateAndLegacySourceFields(t *testing.T) {
 				t.Fatalf("GetSource accepted private field %q", field)
 			}
 		})
+	}
+}
+
+func TestClientInspectionMethodsVerifyProvenanceAndContent(t *testing.T) {
+	ctx := context.Background()
+	revision := "sha256:" + strings.Repeat("a", 64)
+	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
+	body := []byte("# review\\n")
+	projection, err := inspection.Build(coord, revision, body, map[string][]byte{"notes.txt": []byte("notes")}, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/revisions/"+revision):
+			_ = json.NewEncoder(w).Encode(rev)
+		case strings.HasSuffix(r.URL.Path, "/inspection"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(projection.Payload)
+		case strings.HasSuffix(r.URL.Path, "/inspection/content"):
+			w.Header().Set("Content-Type", inspection.MediaMarkdown)
+			_, _ = w.Write(body)
+		case strings.HasSuffix(r.URL.Path, "/inspection/content/"+inspection.Digest(body)):
+			w.Header().Set("Content-Type", inspection.MediaMarkdown)
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := client.GetResourceInspection(ctx, "source-id", "skill", "review", revision)
+	if err != nil || manifest.ManifestDigest != projection.Manifest.ManifestDigest {
+		t.Fatalf("GetResourceInspection = %q, %v", manifest.ManifestDigest, err)
+	}
+	primary, err := client.GetResourceInspectionPrimary(ctx, "source-id", "skill", "review", revision)
+	if err != nil || string(primary.Data) != string(body) || primary.ContentType != inspection.MediaMarkdown {
+		t.Fatalf("primary = %#v, %v", primary, err)
+	}
+	file, err := client.GetResourceInspectionFile(ctx, "source-id", "skill", "review", revision, inspection.Digest(body))
+	if err != nil || string(file.Data) != string(body) {
+		t.Fatalf("file = %#v, %v", file, err)
+	}
+}
+
+func TestClientInspectionRejectsProvenanceMismatch(t *testing.T) {
+	revision := "sha256:" + strings.Repeat("a", 64)
+	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
+	projection, err := inspection.Build(coord, revision, []byte("# review\\n"), nil, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64))}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/revisions/"+revision) {
+			_ = json.NewEncoder(w).Encode(rev)
+			return
+		}
+		_, _ = w.Write(projection.Payload)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetResourceInspection(context.Background(), "source-id", "skill", "review", revision); err == nil || !strings.Contains(err.Error(), "manifest digest mismatch") {
+		t.Fatalf("provenance mismatch error = %v", err)
 	}
 }
 

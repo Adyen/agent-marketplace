@@ -307,7 +307,7 @@ paths:
   /api/v1/inspection/sha256/{digest}:
     get:
       operationId: getInspectionManifest
-      summary: Download an immutable skill inspection manifest by digest
+      summary: Download an immutable inspection manifest by digest
       parameters:
         - in: path
           name: digest
@@ -342,6 +342,10 @@ paths:
               schema: { type: string }
             text/plain:
               schema: { type: string }
+            application/json:
+              schema: { type: string }
+            application/yaml:
+              schema: { type: string }
             image/png:
               schema: { type: string, format: binary }
             image/jpeg:
@@ -354,10 +358,10 @@ paths:
   /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection:
     get:
       operationId: getResourceInspection
-      summary: Get the exact textual skill inspection manifest
+      summary: Get the exact immutable inspection manifest
       parameters:
         - { in: path, name: source, required: true, schema: { type: string } }
-        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
         - { in: path, name: name, required: true, schema: { type: string } }
         - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
       responses:
@@ -371,18 +375,24 @@ paths:
   /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content:
     get:
       operationId: getResourceInspectionContent
-      summary: Get the primary canonical skill Markdown
+      summary: Get the primary canonical inspection content
       parameters:
         - { in: path, name: source, required: true, schema: { type: string } }
-        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
         - { in: path, name: name, required: true, schema: { type: string } }
         - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
       responses:
         "200":
-          description: Canonical skill Markdown
+          description: Canonical inspection content
           content:
-            text/markdown:
-              schema: { type: string }
+            text/markdown: { schema: { type: string } }
+            text/plain: { schema: { type: string } }
+            application/json: { schema: { type: string } }
+            application/yaml: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
 
   /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}:
     get:
@@ -390,7 +400,7 @@ paths:
       summary: Get one allowlisted inspection file by digest
       parameters:
         - { in: path, name: source, required: true, schema: { type: string } }
-        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill] } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
         - { in: path, name: name, required: true, schema: { type: string } }
         - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
         - { in: path, name: digest, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
@@ -398,7 +408,10 @@ paths:
         "200":
           description: Allowlisted inspection file
           content:
+            text/markdown: { schema: { type: string } }
             text/plain: { schema: { type: string } }
+            application/json: { schema: { type: string } }
+            application/yaml: { schema: { type: string } }
             image/png: { schema: { type: string, format: binary } }
             image/jpeg: { schema: { type: string, format: binary } }
             image/gif: { schema: { type: string, format: binary } }
@@ -855,7 +868,7 @@ components:
         revision_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
-        primary_path: { type: string, enum: [SKILL.md] }
+        primary_path: { type: string, enum: [SKILL.md, COMMAND.md, AGENT.md, HOOK.md, .mcp.json, COLLECTION.json] }
         files:
           type: array
           items: { $ref: "#/components/schemas/InspectionFile" }
@@ -877,7 +890,7 @@ components:
     InspectionFinding:
       type: object
       additionalProperties: false
-      required: [code, severity]
+      required: [code, severity, path]
       properties:
         code: { type: string }
         severity: { type: string }

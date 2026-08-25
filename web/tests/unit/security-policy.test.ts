@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addNonceToScripts, basePolicy, generateCspNonce, scriptPolicy } from '../../server/utils/security-policy'
+import { addNonceToScripts, basePolicy, generateCspNonce, imagePolicy, scriptPolicy } from '../../server/utils/security-policy'
 
 describe('runtime Content Security Policy', () => {
   it('allows only same-origin and nonce-authorized scripts', () => {
@@ -7,6 +7,7 @@ describe('runtime Content Security Policy', () => {
     expect(scriptPolicy('test-nonce')).not.toContain("'unsafe-inline'")
     expect(basePolicy).toContain("style-src 'self' 'unsafe-inline'")
     expect(basePolicy.some(directive => directive.startsWith('script-src'))).toBe(false)
+    expect(imagePolicy(["'self'", 'data:', 'https://api.example.com'])).toBe("img-src 'self' data: https://api.example.com")
   })
 
   it('generates a fresh nonce and adds it only to inline script tags', () => {

@@ -25,11 +25,58 @@ const SchemaVersion = "v1"
 const MaxManifestBytes int64 = 1 * 1024 * 1024
 
 const (
-	ClassText     = "text"
-	ClassImage    = "image"
+	ClassText  = "text"
+	ClassImage = "image"
+	// ClassMetadata is used for bytes whose identity is inspectable but whose
+	// body must not be rendered (for example executables and SVG).
 	ClassMetadata = "metadata"
+
 	MediaMarkdown = "text/markdown"
+	MediaPlain    = "text/plain"
+	MediaJSON     = "application/json"
+	MediaYAML     = "application/yaml"
+	MediaPNG      = "image/png"
+	MediaJPEG     = "image/jpeg"
+	MediaGIF      = "image/gif"
+	MediaWEBP     = "image/webp"
+	MediaMetadata = "application/octet-stream"
 )
+
+var PublicMediaTypes = []string{
+	MediaMarkdown, MediaPlain, MediaJSON, MediaYAML,
+	MediaPNG, MediaJPEG, MediaGIF, MediaWEBP,
+}
+
+// Canonical primary paths are stable projection paths, not source-layout paths.
+// Keeping them independent of the source prevents path disclosure and makes an
+// inspection digest portable across acquisition modes.
+const (
+	PrimarySkillPath      = "SKILL.md"
+	PrimaryCommandPath    = "COMMAND.md"
+	PrimarySubagentPath   = "AGENT.md"
+	PrimaryHookPath       = "HOOK.md"
+	PrimaryMCPServerPath  = ".mcp.json"
+	PrimaryCollectionPath = "COLLECTION.json"
+)
+
+func PrimaryPath(kind string) string {
+	switch kind {
+	case "skill":
+		return PrimarySkillPath
+	case "command":
+		return PrimaryCommandPath
+	case "subagent":
+		return PrimarySubagentPath
+	case "hook":
+		return PrimaryHookPath
+	case "mcpserver":
+		return PrimaryMCPServerPath
+	case "collection":
+		return PrimaryCollectionPath
+	default:
+		return ""
+	}
+}
 
 type File struct {
 	Path            string `json:"path"`
@@ -70,11 +117,12 @@ type Projection struct {
 // duplicating the projection builder; omitted or non-positive values use the
 // package default.
 func Build(coordinate store.ResourceCoordinate, revision string, body []byte, support map[string][]byte, findings []analyze.Finding, maxFiles int, maxFileBytes, maxTotalBytes int64, manifestLimits ...int64) (Projection, error) {
-	if coordinate.Kind != "skill" {
-		return Projection{}, fmt.Errorf("inspection projection only supports skills, got %q", coordinate.Kind)
+	primaryPath := PrimaryPath(coordinate.Kind)
+	if primaryPath == "" {
+		return Projection{}, fmt.Errorf("unsupported inspection resource kind %q", coordinate.Kind)
 	}
-	if coordinate.Name == "" || !utf8.Valid(body) {
-		return Projection{}, fmt.Errorf("skill primary content must be valid UTF-8")
+	if coordinate.Name == "" {
+		return Projection{}, fmt.Errorf("inspection resource name must not be empty")
 	}
 	manifestLimit := MaxManifestBytes
 	if len(manifestLimits) > 0 && manifestLimits[0] > 0 {
@@ -89,7 +137,7 @@ func Build(coordinate store.ResourceCoordinate, revision string, body []byte, su
 
 	files := make([]File, 0, len(support)+1)
 	bodies := make(map[string][]byte, len(support)+1)
-	seenPaths := map[string]struct{}{"SKILL.md": {}}
+	seenPaths := map[string]struct{}{primaryPath: {}}
 	add := func(name string, data []byte, mediaType, class string, expose bool) error {
 		if maxFileBytes > 0 && int64(len(data)) > maxFileBytes {
 			return fmt.Errorf("inspection file %q exceeds file limit %d", name, maxFileBytes)
@@ -105,10 +153,20 @@ func Build(coordinate store.ResourceCoordinate, revision string, body []byte, su
 		}
 		return nil
 	}
-	// The primary path is intentionally added outside the support map, so a
-	// support alias can never shadow the canonical Markdown document.
-	files = append(files, File{Path: "SKILL.md", ContentDigest: digest(body), MediaType: MediaMarkdown, Size: int64(len(body)), InspectionClass: ClassText})
-	bodies[digest(body)] = append([]byte(nil), body...)
+
+	if maxTotalBytes > 0 && int64(len(body)) > maxTotalBytes {
+		return Projection{}, fmt.Errorf("inspection content exceeds total limit %d", maxTotalBytes)
+	}
+	primaryMedia, primaryClass, primaryExpose := mediaPolicy(primaryPath, body)
+	expectedMedia, expectedClass := primaryMediaPolicy(coordinate.Kind)
+	if primaryMedia != expectedMedia || primaryClass != expectedClass {
+		return Projection{}, fmt.Errorf("primary content for %s does not match canonical media policy", coordinate.Kind)
+	}
+	primaryDigest := digest(body)
+	files = append(files, File{Path: primaryPath, ContentDigest: primaryDigest, MediaType: primaryMedia, Size: int64(len(body)), InspectionClass: primaryClass})
+	if primaryExpose {
+		bodies[primaryDigest] = append([]byte(nil), body...)
+	}
 
 	keys := make([]string, 0, len(support))
 	for name := range support {
@@ -135,9 +193,9 @@ func Build(coordinate store.ResourceCoordinate, revision string, body []byte, su
 		return Projection{}, fmt.Errorf("inspection content exceeds total limit %d", maxTotalBytes)
 	}
 
-	out := Manifest{SchemaVersion: SchemaVersion, Coordinate: coordinate, RevisionDigest: revision, PrimaryPath: "SKILL.md", Files: files}
+	out := Manifest{SchemaVersion: SchemaVersion, Coordinate: coordinate, RevisionDigest: revision, PrimaryPath: primaryPath, Files: files}
 	for _, finding := range findings {
-		out.Findings = append(out.Findings, mapFinding(finding, body, support))
+		out.Findings = append(out.Findings, mapFinding(finding, primaryPath, body, support))
 	}
 	sort.Slice(out.Findings, func(i, j int) bool {
 		if out.Findings[i].Path != out.Findings[j].Path {
@@ -180,7 +238,8 @@ func canonicalSupportPath(name string) (string, error) {
 			return "", fmt.Errorf("invalid support path %q", original)
 		}
 	}
-	if name == "SKILL.md" {
+	switch name {
+	case PrimarySkillPath, PrimaryCommandPath, PrimarySubagentPath, PrimaryHookPath, PrimaryMCPServerPath, PrimaryCollectionPath:
 		return "", fmt.Errorf("support path %q shadows primary document", original)
 	}
 	return path.Join("support", name), nil
@@ -188,29 +247,43 @@ func canonicalSupportPath(name string) (string, error) {
 
 func mediaPolicy(name string, data []byte) (string, string, bool) {
 	ext := strings.ToLower(path.Ext(name))
-	if isUnsafeExtension(ext) || looksUnsafeText(data) {
-		return "application/octet-stream", ClassMetadata, false
-	}
-	if media := http.DetectContentType(data); media == "image/png" || media == "image/jpeg" || media == "image/gif" || media == "image/webp" {
+	if media := http.DetectContentType(data); media == MediaPNG || media == MediaJPEG || media == MediaGIF || media == MediaWEBP {
 		return media, ClassImage, true
 	}
+	if isUnsafeExtension(ext) || (looksUnsafeText(data) && !isPrimaryMarkdownPath(name)) {
+		return MediaMetadata, ClassMetadata, false
+	}
+	if isPrimaryMarkdownPath(name) && !IsValidText(data) {
+		return MediaMetadata, ClassMetadata, false
+	}
 	if !utf8.Valid(data) {
-		return "application/octet-stream", ClassMetadata, false
+		return MediaMetadata, ClassMetadata, false
 	}
 	switch ext {
 	case ".md", ".markdown":
 		return MediaMarkdown, ClassText, true
 	case ".json":
 		if json.Valid(data) {
-			return "application/json", ClassText, true
+			return MediaJSON, ClassText, true
 		}
-		return "application/octet-stream", ClassMetadata, false
+		return MediaMetadata, ClassMetadata, false
 	case ".yaml", ".yml", ".txt":
-		return map[string]string{".yaml": "application/yaml", ".yml": "application/yaml", ".txt": "text/plain"}[ext], ClassText, true
+		return map[string]string{".yaml": MediaYAML, ".yml": MediaYAML, ".txt": MediaPlain}[ext], ClassText, true
 	default:
 		// A textual file with an unrecognised extension is still safe to serve as
 		// plain text, while binary and executable formats remain metadata-only.
-		return "text/plain", ClassText, true
+		return MediaPlain, ClassText, true
+	}
+}
+
+func primaryMediaPolicy(kind string) (string, string) {
+	switch kind {
+	case "skill", "command", "subagent", "hook":
+		return MediaMarkdown, ClassText
+	case "mcpserver", "collection":
+		return MediaJSON, ClassText
+	default:
+		return "", ""
 	}
 }
 
@@ -223,21 +296,41 @@ func isUnsafeExtension(ext string) bool {
 	}
 }
 
+func isPrimaryMarkdownPath(name string) bool {
+	switch name {
+	case PrimarySkillPath, PrimaryCommandPath, PrimarySubagentPath, PrimaryHookPath:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidText reports whether bytes are valid, non-control UTF-8 text. It is
+// the narrow byte-safety policy for canonical Markdown, which is still passed
+// through the Nuxt renderer and sanitizer before it is inserted into HTML.
+func IsValidText(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
+	for _, b := range data {
+		if b == 0 || (b < 0x09) || (b > 0x0d && b < 0x20) || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // IsSafeText reports whether bytes are valid, non-control UTF-8 text that is
 // not an active HTML, script, stylesheet, XML, or SVG payload.
-func IsSafeText(data []byte) bool { return !looksUnsafeText(data) }
+func IsSafeText(data []byte) bool { return IsValidText(data) && !looksUnsafeTextLexical(data) }
 
 // looksUnsafeText protects direct content consumers when a dangerous payload is
 // given a harmless-looking filename or no filename at all.
 func looksUnsafeText(data []byte) bool {
-	if !utf8.Valid(data) {
-		return true
-	}
-	for _, b := range data {
-		if b == 0 || (b < 0x09) || (b > 0x0d && b < 0x20) || b == 0x7f {
-			return true
-		}
-	}
+	return !IsValidText(data) || looksUnsafeTextLexical(data)
+}
+
+func looksUnsafeTextLexical(data []byte) bool {
 	text := strings.ToLower(strings.TrimSpace(string(data)))
 	if text == "" {
 		return false
@@ -265,26 +358,19 @@ func looksUnsafeText(data []byte) bool {
 		(strings.Contains(text, "{") && strings.Contains(text, "}") && strings.Contains(text, ":") && !json.Valid(data))
 }
 
-func mapFinding(f analyze.Finding, body []byte, support map[string][]byte) Finding {
-	result := Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message}
+func mapFinding(f analyze.Finding, primaryPath string, body []byte, support map[string][]byte) Finding {
+	result := Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message, Path: primaryPath}
 	file := ""
 	if f.SourceRange != nil {
-		file = f.SourceRange.File
+		file = strings.ReplaceAll(f.SourceRange.File, "\\", "/")
 	}
 	content := body
-	switch {
-	case strings.HasSuffix(file, "/body") || strings.HasSuffix(file, "/name") || strings.Contains(file, "/Description"):
-		result.Path = "SKILL.md"
-	case strings.HasPrefix(file, "skill/"):
-		// Findings over structured fields are still anchored to the primary
-		// canonical document rather than exposing analyzer implementation paths.
-		result.Path = "SKILL.md"
-	default:
-		name := strings.TrimPrefix(strings.ReplaceAll(file, "\\", "/"), "support/")
+	// Analyzer paths describe semantic fields (for example command/foo/body),
+	// while the projection deliberately exposes only canonical paths.
+	if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
+		name := strings.TrimPrefix(file, "support/")
 		if data, ok := support[name]; ok {
 			result.Path, content = path.Join("support", name), data
-		} else {
-			result.Path = "SKILL.md"
 		}
 	}
 	if f.SourceRange != nil && f.SourceRange.Line > 0 {
@@ -334,17 +420,22 @@ func Digest(data []byte) string {
 func digest(data []byte) string { return Digest(data) }
 
 func Verify(manifest Manifest, payload []byte, expected string) error {
-	if manifest.SchemaVersion != SchemaVersion || manifest.Coordinate.Kind != "skill" ||
+	if manifest.SchemaVersion != SchemaVersion || PrimaryPath(manifest.Coordinate.Kind) == "" ||
 		manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Source == "" || manifest.Coordinate.Name == "" ||
-		!validDigest(manifest.RevisionDigest) || manifest.PrimaryPath != "SKILL.md" || len(manifest.Files) == 0 {
+		!validDigest(manifest.RevisionDigest) || manifest.PrimaryPath != PrimaryPath(manifest.Coordinate.Kind) || len(manifest.Files) == 0 {
 		return fmt.Errorf("invalid inspection manifest")
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
+	fileSizes := make(map[string]int64, len(manifest.Files))
 	primary := false
 	for _, file := range manifest.Files {
-		if file.Path == "SKILL.md" {
-			if primary || file.MediaType != MediaMarkdown || file.InspectionClass != ClassText {
+		if file.Path == manifest.PrimaryPath {
+			if primary || !AllowedMediaType(file.MediaType, file.InspectionClass) {
 				return fmt.Errorf("invalid inspection primary file")
+			}
+			expectedMedia, expectedClass := primaryMediaPolicy(manifest.Coordinate.Kind)
+			if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
+				return fmt.Errorf("invalid inspection primary media policy")
 			}
 			primary = true
 		} else {
@@ -359,18 +450,21 @@ func Verify(manifest Manifest, payload []byte, expected string) error {
 			return fmt.Errorf("invalid inspection file %q", file.Path)
 		}
 		seen[file.Path] = struct{}{}
+		fileSizes[file.Path] = file.Size
 	}
 	if !primary {
 		return fmt.Errorf("inspection manifest is missing primary file")
 	}
 	for _, finding := range manifest.Findings {
-		if finding.Code == "" || finding.Severity == "" || finding.StartByte < 0 || finding.EndByte < 0 || finding.StartByte > finding.EndByte {
+		if finding.Code == "" || finding.Severity == "" || finding.Path == "" || finding.StartByte < 0 || finding.EndByte < 0 || finding.StartByte > finding.EndByte {
 			return fmt.Errorf("invalid inspection finding")
 		}
-		if finding.Path != "" {
-			if _, exists := seen[finding.Path]; !exists {
-				return fmt.Errorf("inspection finding references unknown path %q", finding.Path)
-			}
+		size, exists := fileSizes[finding.Path]
+		if !exists {
+			return fmt.Errorf("inspection finding references unknown path %q", finding.Path)
+		}
+		if finding.EndByte > size {
+			return fmt.Errorf("inspection finding range exceeds file %q", finding.Path)
 		}
 	}
 	canonical, err := json.Marshal(manifest)
@@ -404,12 +498,45 @@ func validDigest(value string) bool {
 func AllowedMediaType(mediaType, class string) bool {
 	switch class {
 	case ClassText:
-		return mediaType == MediaMarkdown || mediaType == "text/plain" || mediaType == "application/json" || mediaType == "application/yaml"
+		return mediaType == MediaMarkdown || mediaType == MediaPlain || mediaType == MediaJSON || mediaType == MediaYAML
 	case ClassImage:
-		return mediaType == "image/png" || mediaType == "image/jpeg" || mediaType == "image/gif" || mediaType == "image/webp"
+		return mediaType == MediaPNG || mediaType == MediaJPEG || mediaType == MediaGIF || mediaType == MediaWEBP
 	case ClassMetadata:
-		return mediaType == "application/octet-stream"
+		return mediaType == MediaMetadata
 	default:
 		return false
 	}
+}
+
+func VerifyFileContent(file File, data []byte) error {
+	if !AllowedMediaType(file.MediaType, file.InspectionClass) {
+		return fmt.Errorf("media type %q is not allowed for class %q", file.MediaType, file.InspectionClass)
+	}
+	expectedMedia, expectedClass, _ := mediaPolicy(file.Path, data)
+	if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
+		return fmt.Errorf("content media policy does not match manifest")
+	}
+	if int64(len(data)) != file.Size {
+		return fmt.Errorf("content size does not match manifest")
+	}
+	if digest(data) != file.ContentDigest {
+		return fmt.Errorf("content digest does not match manifest")
+	}
+	switch file.InspectionClass {
+	case ClassImage:
+		if http.DetectContentType(data) != file.MediaType {
+			return fmt.Errorf("content media type does not match manifest")
+		}
+	case ClassText:
+		if file.MediaType == MediaMarkdown {
+			if !IsValidText(data) {
+				return fmt.Errorf("markdown content is not valid text")
+			}
+		} else {
+			if !IsSafeText(data) || (file.MediaType == MediaJSON && !json.Valid(data)) {
+				return fmt.Errorf("text content does not match manifest policy")
+			}
+		}
+	}
+	return nil
 }

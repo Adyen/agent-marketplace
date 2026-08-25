@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"gopkg.in/yaml.v3"
 )
 
@@ -78,6 +79,36 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceCoordinate", "InspectionManifest", "InspectionFile", "InspectionFinding"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
+		}
+	}
+}
+
+func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	for _, route := range []string{
+		"/api/v1/content/sha256/{digest}",
+		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content",
+		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
+	} {
+		operation := paths[route].(map[string]any)["get"].(map[string]any)
+		response := operation["responses"].(map[string]any)["200"].(map[string]any)
+		content := response["content"].(map[string]any)
+		got := make(map[string]bool, len(content))
+		for mediaType := range content {
+			got[mediaType] = true
+		}
+		want := make(map[string]bool, len(inspection.PublicMediaTypes))
+		for _, mediaType := range inspection.PublicMediaTypes {
+			want[mediaType] = true
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s media types = %#v, want %#v", route, got, want)
+		}
+		for mediaType := range want {
+			if !got[mediaType] {
+				t.Errorf("%s missing media type %q", route, mediaType)
+			}
 		}
 	}
 }

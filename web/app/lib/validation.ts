@@ -171,12 +171,14 @@ export function normalizeInspectionManifest(input: unknown, expected?: ExpectedR
   if (requiredString(object.schema_version, 'schema_version') !== 'v1') throw new ApiValidationError('unsupported inspection schema')
   const coordinate = stringRecord(object.coordinate, 'coordinate') as InspectionManifest['coordinate']
   for (const [field, value] of Object.entries(coordinate)) requiredString(value, `coordinate.${field}`)
-  if (coordinate.kind !== 'skill') throw new ApiValidationError('inspection kind must be skill')
+  const coordinateKind = requiredString(coordinate.kind, 'coordinate.kind')
+  if (!isResourceKind(coordinateKind)) throw new ApiValidationError('inspection kind is unsupported')
   const revision = requiredDigest(object.revision_digest, 'revision_digest')
   if (expected?.contentDigest !== undefined && revision !== expected.contentDigest) throw new ApiValidationError('inspection revision does not match request')
   validateRequestedCoordinate(coordinate, expected)
   const primaryPath = requiredString(object.primary_path, 'primary_path')
-  if (primaryPath !== 'SKILL.md') throw new ApiValidationError('inspection primary path is invalid')
+  if (primaryPath !== inspectionPrimaryPath(coordinateKind)) throw new ApiValidationError('inspection primary path is invalid')
+  const seenPaths = new Set<string>()
   const files = boundedArray(object.files, 'files').map((value, index) => {
     const file = asObject(value, `files[${index}]`)
     const size = boundedInteger(file.size, `files[${index}].size`)
@@ -184,36 +186,87 @@ export function normalizeInspectionManifest(input: unknown, expected?: ExpectedR
     const inspectionClass = requiredString(file.inspection_class, `files[${index}].inspection_class`)
     if (!['text', 'image', 'metadata'].includes(inspectionClass)) throw new ApiValidationError(`files[${index}].inspection_class is invalid`)
     const mediaType = requiredString(file.media_type, `files[${index}].media_type`)
-    const allowedMediaTypes = ['text/markdown', 'text/plain', 'application/json', 'application/yaml', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream']
-    if (!allowedMediaTypes.includes(mediaType)) throw new ApiValidationError(`files[${index}].media_type is invalid`)
+    const mediaClass = mediaTypeClass(mediaType)
+    if (mediaClass === undefined || mediaClass !== inspectionClass) throw new ApiValidationError(`files[${index}] media type and inspection class disagree`)
+    const filePath = requiredString(file.path, `files[${index}].path`)
+    if (filePath === primaryPath) {
+      const [expectedMedia, expectedClass] = inspectionPrimaryMediaPolicy(coordinateKind)
+      if (mediaType !== expectedMedia || inspectionClass !== expectedClass) throw new ApiValidationError(`files[${index}] primary media policy is not canonical`)
+    }
+    if (seenPaths.has(filePath) || (filePath !== primaryPath && !canonicalSupportPath(filePath))) throw new ApiValidationError(`files[${index}].path is not canonical`)
+    seenPaths.add(filePath)
     return {
-      path: requiredString(file.path, `files[${index}].path`),
+      path: filePath,
       content_digest: requiredDigest(file.content_digest, `files[${index}].content_digest`),
       media_type: mediaType as InspectionFile['media_type'],
       size,
       inspection_class: inspectionClass as InspectionFile['inspection_class'],
     }
   })
+  if (!seenPaths.has(primaryPath)) throw new ApiValidationError('inspection primary file is missing')
   const rawFindings = object.findings
   const findings = rawFindings === undefined ? undefined : boundedUnknownArray(rawFindings!, 'findings')!.map((value, index) => {
     const finding = asObject(value, `findings[${index}]`)
     const start = finding.start_byte === undefined ? undefined : boundedInteger(finding.start_byte, `findings[${index}].start_byte`)
     const end = finding.end_byte === undefined ? undefined : boundedInteger(finding.end_byte, `findings[${index}].end_byte`)
     if (start !== undefined && end !== undefined && start > end) throw new ApiValidationError(`findings[${index}] has an inverted byte range`)
+    const findingPath = requiredString(finding.path, `findings[${index}].path`)
+    if (!seenPaths.has(findingPath)) throw new ApiValidationError(`findings[${index}] references an unknown path`)
+    if ((start === undefined) !== (end === undefined)) throw new ApiValidationError(`findings[${index}] must include both range endpoints`)
+    const file = files.find(candidate => candidate.path === findingPath)
+    if (file && end !== undefined && end > file.size) throw new ApiValidationError(`findings[${index}] range exceeds file size`)
     return {
       code: requiredString(finding.code, `findings[${index}].code`),
       severity: requiredString(finding.severity, `findings[${index}].severity`),
       ...(finding.policy === undefined ? {} : { policy: boundedString(finding.policy, `findings[${index}].policy`) }),
       ...(finding.message === undefined ? {} : { message: boundedString(finding.message, `findings[${index}].message`) }),
-      ...(finding.path === undefined ? {} : { path: boundedString(finding.path, `findings[${index}].path`) }),
+      path: findingPath,
       ...(start === undefined ? {} : { start_byte: start }),
       ...(end === undefined ? {} : { end_byte: end }),
     }
   })
   return {
-    schema_version: 'v1', coordinate, revision_digest: revision, primary_path: 'SKILL.md', files,
+    schema_version: 'v1', coordinate, revision_digest: revision, primary_path: primaryPath, files,
     ...(findings === undefined ? {} : { findings }),
   }
+}
+
+function inspectionPrimaryPath(kind: ResourceKind): InspectionManifest['primary_path'] {
+  switch (kind) {
+    case 'skill': return 'SKILL.md'
+    case 'command': return 'COMMAND.md'
+    case 'subagent': return 'AGENT.md'
+    case 'hook': return 'HOOK.md'
+    case 'mcpserver': return '.mcp.json'
+    case 'collection': return 'COLLECTION.json'
+  }
+}
+
+function inspectionPrimaryMediaPolicy(kind: ResourceKind): [string, InspectionFile['inspection_class']] {
+  switch (kind) {
+    case 'skill':
+    case 'command':
+    case 'subagent':
+    case 'hook':
+      return ['text/markdown', 'text']
+    case 'mcpserver':
+    case 'collection':
+      return ['application/json', 'text']
+  }
+}
+
+function canonicalSupportPath(value: string): boolean {
+  if (!value.startsWith('support/') || value === 'support/' || value.includes('\\')) return false
+  const name = value.slice('support/'.length)
+  if (['SKILL.md', 'COMMAND.md', 'AGENT.md', 'HOOK.md', '.mcp.json', 'COLLECTION.json'].includes(name)) return false
+  return name.split('/').every(part => part !== '' && part !== '.' && part !== '..')
+}
+
+function mediaTypeClass(mediaType: string): InspectionFile['inspection_class'] | undefined {
+  if (['text/markdown', 'text/plain', 'application/json', 'application/yaml'].includes(mediaType)) return 'text'
+  if (['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mediaType)) return 'image'
+  if (mediaType === 'application/octet-stream') return 'metadata'
+  return undefined
 }
 
 function validateRequestedCoordinate(coordinate: { source?: string; kind?: string; name?: string }, expected: ExpectedResourceCoordinate | undefined): void {

@@ -4,9 +4,11 @@ import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
 import { revisionAsyncDataKey, routeParam } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
+import type { InspectionFile } from '~/types/marketplace'
 
 const route = useRoute()
 const api = useMarketplaceApi()
+const runtimeConfig = useRuntimeConfig()
 
 const source = routeParam(route.params.source, 'source')
 const kindValue = routeParam(route.params.kind, 'resource kind')
@@ -25,14 +27,22 @@ const inspectionKey = `${revisionAsyncDataKey(source, kind, name, revision)}:ins
 const { data: inspection } = await useAsyncData(
   inspectionKey,
   () => api.getResourceInspection(source, kind, name, revision),
-  { immediate: kind === 'skill' },
+  { immediate: true },
 )
-const { data: primaryContent } = await useAsyncData(
+const { data: primaryContent } = await useAsyncData<string | undefined>(
   `${inspectionKey}:content`,
-  () => api.getResourceInspectionContent(source, kind, name, revision),
-  { immediate: kind === 'skill' },
+  () => {
+    const primary = inspection.value?.files.find(file => file.path === inspection.value?.primary_path)
+    if (!primary || primary.inspection_class === 'image' || primary.inspection_class === 'metadata') return Promise.resolve(undefined)
+    return api.getResourceInspectionContent(source, kind, name, revision, primary.media_type) as Promise<string>
+  },
+  { immediate: true },
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
+
+function loadInspectionFile(file: InspectionFile): Promise<string | Blob> {
+  return api.getResourceInspectionFile(source, kind, name, revision, file.content_digest, file.media_type)
+}
 
 function retry() {
   refresh()
@@ -65,7 +75,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :inspection="inspection" :primary-content="primaryContent" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" />
     </main>
   </div>
 </template>

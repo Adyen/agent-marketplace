@@ -79,7 +79,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download an immutable skill inspection manifest by digest */
+        /** Download an immutable inspection manifest by digest */
         get: operations["getInspectionManifest"];
         put?: never;
         post?: never;
@@ -181,7 +181,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the exact textual skill inspection manifest */
+        /** Get the exact immutable inspection manifest */
         get: operations["getResourceInspection"];
         put?: never;
         post?: never;
@@ -198,7 +198,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the primary canonical skill Markdown */
+        /** Get the primary canonical inspection content */
         get: operations["getResourceInspectionContent"];
         put?: never;
         post?: never;
@@ -388,7 +388,7 @@ export interface components {
             /** Format: int64 */
             end_byte?: number;
             message?: string;
-            path?: string;
+            path: string;
             policy?: string;
             severity: string;
             /** Format: int64 */
@@ -399,7 +399,7 @@ export interface components {
             files: components["schemas"]["InspectionFile"][];
             findings?: components["schemas"]["InspectionFinding"][];
             /** @enum {string} */
-            primary_path: "SKILL.md";
+            primary_path: "SKILL.md" | "COMMAND.md" | "AGENT.md" | "HOOK.md" | ".mcp.json" | "COLLECTION.json";
             revision_digest: string;
             /** @enum {string} */
             schema_version: "v1";
@@ -613,6 +613,8 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": string;
+                    "application/yaml": string;
                     "image/gif": string;
                     "image/jpeg": string;
                     "image/png": string;
@@ -772,7 +774,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "skill";
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
                 revision: string;
                 source: string;
@@ -797,7 +799,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "skill";
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
                 revision: string;
                 source: string;
@@ -806,13 +808,20 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Canonical skill Markdown */
+            /** @description Canonical inspection content */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": string;
+                    "application/yaml": string;
+                    "image/gif": string;
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
                     "text/markdown": string;
+                    "text/plain": string;
                 };
             };
         };
@@ -823,7 +832,7 @@ export interface operations {
             header?: never;
             path: {
                 digest: string;
-                kind: "skill";
+                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
                 revision: string;
                 source: string;
@@ -838,10 +847,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": string;
+                    "application/yaml": string;
                     "image/gif": string;
                     "image/jpeg": string;
                     "image/png": string;
                     "image/webp": string;
+                    "text/markdown": string;
                     "text/plain": string;
                 };
             };

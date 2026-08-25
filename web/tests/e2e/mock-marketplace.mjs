@@ -6,7 +6,11 @@ const digest = `sha256:${'a'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
 const inspectionDigest = `sha256:${'d'.repeat(64)}`
 const primaryDigest = `sha256:${'e'.repeat(64)}`
-const primaryContent = '# Safe review\n\n![remote image](https://evil.invalid/pixel.png)\n\n<script>alert("xss")</script>\n'
+const notesDigest = `sha256:${'f'.repeat(64)}`
+const configDigest = `sha256:${'1'.repeat(64)}`
+const primaryContent = '# Safe review\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert("xss")</script>\n'
+const notesContent = '# Additional notes\n\n<script>alert("support-xss")</script>\n'
+const configContent = '{"html":"<script>escaped</script>"}'
 
 const items = [
   {
@@ -132,10 +136,23 @@ const server = createServer((request, response) => {
     if (parts[6] === 'revisions' && parts[7] !== item.content_digest) return sendJson(response, 404, { error: 'revision not found' })
     if (parts[8] === 'inspection') {
       if (parts[9] === 'content') {
-        response.writeHead(200, { 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
+        if (parts[10] === notesDigest) {
+          response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
+          return response.end(notesContent)
+        }
+        if (parts[10] === configDigest) {
+          response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' })
+          return response.end(configContent)
+        }
+        response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
         return response.end(primaryContent)
       }
-      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: item.content_digest, primary_path: 'SKILL.md', files: [{ path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' }], findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 0, end_byte: 1 }] })
+      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: item.content_digest, primary_path: 'SKILL.md', files: [
+        { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' },
+        { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: Buffer.byteLength(notesContent), inspection_class: 'text' },
+        { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: Buffer.byteLength(configContent), inspection_class: 'text' },
+        { path: 'support/tool.bin', content_digest: `sha256:${'2'.repeat(64)}`, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
+      ], findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 0, end_byte: 1 }] })
     }
     return sendJson(response, 200, resource(item))
   }

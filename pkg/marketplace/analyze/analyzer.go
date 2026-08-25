@@ -110,6 +110,14 @@ func truncateFindings(findings []Finding, max int) []Finding {
 // shared scanners and asset scanner, and applies policy outcomes. It is the
 // common analysis stage used by all per-kind analyzers.
 func baseAnalyze(ctx context.Context, r ir.Resource, files FileSet, name string, opts Options) (Report, error) {
+	return baseAnalyzeSamples(ctx, extractResourceSamples(r), files, name, opts)
+}
+
+// baseAnalyzeSamples is the common scanner pipeline with an explicit resource
+// sample set. Some resource fields, notably MCP credentials, must never be
+// scanned into persisted finding messages; those analyzers provide only their
+// intentionally public samples here.
+func baseAnalyzeSamples(ctx context.Context, samples []textSample, files FileSet, name string, opts Options) (Report, error) {
 	if ctx.Err() != nil {
 		return Report{}, ctx.Err()
 	}
@@ -120,7 +128,6 @@ func baseAnalyze(ctx context.Context, r ir.Resource, files FileSet, name string,
 		return Report{}, err
 	}
 
-	samples := extractResourceSamples(r)
 	for path, data := range files {
 		if len(data) == 0 {
 			continue
