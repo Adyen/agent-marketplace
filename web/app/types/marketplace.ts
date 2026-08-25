@@ -53,6 +53,7 @@ export interface SearchParams {
 
 export interface FetchOptions {
   query?: Record<string, string | number>
+  responseType?: 'json' | 'text' | 'blob'
 }
 
 export type ApiFetcher = <T>(request: string, options?: FetchOptions) => Promise<T>

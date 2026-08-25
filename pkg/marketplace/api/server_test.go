@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
@@ -68,6 +70,8 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put source: %v", err)
 	}
 
+	artifactData := []byte("fake tar.gz artifact")
+	artifactDigest := inspection.Digest(artifactData)
 	rev := store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID(cfg.Instance.ID),
@@ -76,25 +80,36 @@ func TestServerRoutes(t *testing.T) {
 			Name:        "review",
 		},
 		ContentDigest:   "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		ArchiveDigest:   "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		ArchiveDigest:   store.ArchiveDigest(artifactDigest),
 		AnalyzerVersion: "1.0.0",
 		License:         "MIT",
 		Provenance: &store.Provenance{
-			SourceID:       src.ID,
-			Commit:         strings.Repeat("a", 40),
-			ManifestDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+			SourceID: src.ID,
+			Commit:   strings.Repeat("a", 40),
 		},
 	}
+	manifestData, manifestDigest, err := marketplaceartifact.CanonicalSourceRevisionPayload(marketplaceartifact.SourceRevisionManifest{
+		SchemaVersion: marketplaceartifact.SourceRevisionSchemaV1,
+		Generator:     "test source revision",
+		Resources: []marketplaceartifact.RevisionResource{{
+			Kind:          KindSkill,
+			Name:          "review",
+			ContentDigest: string(rev.ContentDigest),
+			ArchiveDigest: string(rev.ArchiveDigest),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("build source manifest: %v", err)
+	}
+	rev.Provenance.ManifestDigest = store.RevisionDigest(manifestDigest)
 	if err := meta.PutResourceRevision(ctx, rev); err != nil {
 		t.Fatalf("put resource revision: %v", err)
 	}
 
-	artifactData := []byte("fake tar.gz artifact")
 	if err := blobs.Put(ctx, rev.ArchiveDigest, artifactData); err != nil {
 		t.Fatalf("put artifact blob: %v", err)
 	}
 
-	manifestData := []byte(`{"schema_version":"v1"}`)
 	if err := blobs.Put(ctx, store.ArchiveDigest(rev.Provenance.ManifestDigest), manifestData); err != nil {
 		t.Fatalf("put manifest blob: %v", err)
 	}
@@ -280,17 +295,17 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	// manifest
-	resp = mustGet(t, public.URL+"/api/v1/manifests/sha256:3333333333333333333333333333333333333333333333333333333333333333")
+	resp = mustGet(t, public.URL+"/api/v1/manifests/"+string(rev.Provenance.ManifestDigest))
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("manifest status %d: %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(body, `{"schema_version":"v1"}`) {
+	if body != string(manifestData) {
 		t.Fatalf("manifest unexpected body: %s", body)
 	}
 
 	// artifact
-	resp = mustGet(t, public.URL+"/api/v1/artifacts/sha256/2222222222222222222222222222222222222222222222222222222222222222")
+	resp = mustGet(t, public.URL+"/api/v1/artifacts/"+strings.Replace(string(rev.ArchiveDigest), ":", "/", 1))
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("artifact status %d: %s", resp.StatusCode, body)
@@ -367,6 +382,66 @@ func TestServerRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, "agent_marketplace_requests_total") {
 		t.Fatalf("metrics missing requests_total: %s", body)
+	}
+}
+
+type countingBlobStore struct {
+	store.BlobStore
+	gets int
+}
+
+func (s *countingBlobStore) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	s.gets++
+	return s.BlobStore.Get(ctx, digest)
+}
+
+func TestPublicManifestRejectsArchiveBlob(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	blobs := fsblob.New(t.TempDir())
+	data := []byte("not a manifest or an archive format")
+	digest := inspection.Digest(data)
+	if err := blobs.Put(ctx, store.ArchiveDigest(digest), data); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "mp"}}, meta, blobs).PublicHandler())
+	defer server.Close()
+
+	resp := mustGet(t, server.URL+"/api/v1/manifests/"+digest)
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("arbitrary manifest status/body = %d/%s", resp.StatusCode, body)
+	}
+}
+
+func TestPublicArtifactDoesNotReadUnownedBlob(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	base := fsblob.New(t.TempDir())
+	data := []byte("orphaned artifact")
+	digest := inspection.Digest(data)
+	if err := base.Put(ctx, store.ArchiveDigest(digest), data); err != nil {
+		t.Fatal(err)
+	}
+	blobs := &countingBlobStore{BlobStore: base}
+	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "mp"}}, meta, blobs).PublicHandler())
+	defer server.Close()
+
+	resp := mustGet(t, server.URL+"/api/v1/artifacts/"+strings.Replace(digest, ":", "/", 1))
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unowned artifact status/body = %d/%s", resp.StatusCode, body)
+	}
+	if blobs.gets != 0 {
+		t.Fatalf("unowned artifact caused %d blob reads, want 0", blobs.gets)
 	}
 }
 

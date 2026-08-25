@@ -5,8 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"path"
+	"strings"
+	"unicode/utf8"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 )
@@ -57,6 +63,9 @@ func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobSt
 	}
 	uploads, err := prepareUploads(req)
 	if err != nil {
+		return err
+	}
+	if err := validateInspectionPublication(req, uploads); err != nil {
 		return err
 	}
 	if err := validateCollectionPublication(req, uploads); err != nil {
@@ -124,6 +133,333 @@ func validateSourceRevisionPublication(req SourceRevisionPublication) error {
 		}
 	}
 	return nil
+}
+
+// validateInspectionPublication prevents a metadata transaction from exposing
+// a revision whose immutable inspection projection was not uploaded as part of
+// the same publication. Legacy callers that omit Provenance are retained for
+// compatibility; Marketplace ingest always stamps it, so published revisions
+// cannot bypass this check.
+func validateInspectionPublication(req SourceRevisionPublication, uploads []BlobUpload) error {
+	strict := len(req.InspectionBlobs) > 0
+	for _, rev := range req.Resources {
+		if rev.Provenance != nil && rev.Provenance.InspectionManifestDigest != "" {
+			strict = true
+		}
+	}
+	if !strict {
+		return nil
+	}
+	byDigest := make(map[ArchiveDigest][]byte, len(uploads))
+	for _, upload := range uploads {
+		byDigest[upload.Digest] = upload.Data
+	}
+	for _, rev := range req.Resources {
+		if rev.Provenance == nil {
+			return fmt.Errorf("resource revision %s has incomplete inspection projection", rev.Coordinate)
+		}
+		digest := rev.Provenance.InspectionManifestDigest
+		if digest == "" {
+			return fmt.Errorf("resource revision %s has incomplete inspection projection", rev.Coordinate)
+		}
+		data, ok := byDigest[ArchiveDigest(digest)]
+		if !ok || len(data) == 0 {
+			return fmt.Errorf("resource revision %s inspection manifest is missing", rev.Coordinate)
+		}
+		if len(data) > 1*1024*1024 {
+			return fmt.Errorf("resource revision %s inspection manifest exceeds serialized limit", rev.Coordinate)
+		}
+		if err := validateInspectionManifestBytes(data, rev, byDigest); err != nil {
+			return fmt.Errorf("resource revision %s inspection manifest: %w", rev.Coordinate, err)
+		}
+	}
+	return nil
+}
+
+type inspectionPublicationFile struct {
+	Path            string `json:"path"`
+	ContentDigest   string `json:"content_digest"`
+	MediaType       string `json:"media_type"`
+	Size            int64  `json:"size"`
+	InspectionClass string `json:"inspection_class"`
+}
+
+type inspectionPublicationFinding struct {
+	Code      string `json:"code"`
+	Severity  string `json:"severity"`
+	Policy    string `json:"policy,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Path      string `json:"path,omitempty"`
+	StartByte int64  `json:"start_byte,omitempty"`
+	EndByte   int64  `json:"end_byte,omitempty"`
+}
+
+type inspectionPublicationManifest struct {
+	SchemaVersion  string                         `json:"schema_version"`
+	Coordinate     ResourceCoordinate             `json:"coordinate"`
+	RevisionDigest string                         `json:"revision_digest"`
+	PrimaryPath    string                         `json:"primary_path"`
+	Files          []inspectionPublicationFile    `json:"files"`
+	Findings       []inspectionPublicationFinding `json:"findings,omitempty"`
+}
+
+// validateInspectionManifestBytes mirrors inspection.Verify's canonical
+// identity, path, media, and finding-range checks. The store package cannot
+// call inspection.Verify directly because inspection's projection types use
+// store coordinates; publication additionally verifies every exposed body
+// before making the revision visible.
+func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs map[ArchiveDigest][]byte) error {
+	var manifest inspectionPublicationManifest
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("inspection manifest has trailing JSON")
+		}
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	canonical, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("canonical JSON: %w", err)
+	}
+	if !bytes.Equal(canonical, data) {
+		return errors.New("inspection manifest is not canonical JSON")
+	}
+	if manifest.SchemaVersion != "v1" || manifest.Coordinate != rev.Coordinate || manifest.RevisionDigest != string(rev.ContentDigest) || manifest.PrimaryPath != inspectionPrimaryPathForKind(rev.Coordinate.Kind) || len(manifest.Files) == 0 {
+		return errors.New("identity or schema is incomplete")
+	}
+	if manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Source == "" || manifest.Coordinate.Name == "" || !validInspectionDigest(manifest.RevisionDigest) {
+		return errors.New("identity or revision digest is invalid")
+	}
+	seen := make(map[string]struct{}, len(manifest.Files))
+	fileSizes := make(map[string]int64, len(manifest.Files))
+	primary := false
+	for _, file := range manifest.Files {
+		if file.Path == "" || file.ContentDigest == "" || file.Size < 0 || !validInspectionDigest(file.ContentDigest) || !allowedInspectionFile(file.MediaType, file.InspectionClass) {
+			return fmt.Errorf("invalid file metadata for %q", file.Path)
+		}
+		if _, exists := seen[file.Path]; exists {
+			return fmt.Errorf("duplicate file path %q", file.Path)
+		}
+		seen[file.Path] = struct{}{}
+		if file.Path == manifest.PrimaryPath {
+			if primary {
+				return errors.New("duplicate primary file")
+			}
+			expectedMedia, expectedClass := inspectionPrimaryMediaPolicy(rev.Coordinate.Kind)
+			if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
+				return errors.New("primary file media policy is not canonical")
+			}
+			primary = true
+		} else if !canonicalInspectionSupportPath(file.Path) {
+			return fmt.Errorf("non-canonical file path %q", file.Path)
+		}
+		fileSizes[file.Path] = file.Size
+		bodyRequired := file.InspectionClass == "text" || file.InspectionClass == "image"
+		if bodyRequired {
+			body, ok := blobs[ArchiveDigest(file.ContentDigest)]
+			if !ok {
+				return fmt.Errorf("body for %q is missing", file.Path)
+			}
+			if err := verifyInspectionBody(file, body); err != nil {
+				return fmt.Errorf("body for %q: %w", file.Path, err)
+			}
+		}
+	}
+	if !primary {
+		return errors.New("primary file is missing")
+	}
+	for _, finding := range manifest.Findings {
+		if finding.Code == "" || finding.Severity == "" || finding.Path == "" || finding.StartByte < 0 || finding.EndByte < 0 || finding.StartByte > finding.EndByte {
+			return fmt.Errorf("invalid finding range for %q", finding.Path)
+		}
+		size, ok := fileSizes[finding.Path]
+		if !ok || finding.EndByte > size {
+			return fmt.Errorf("invalid finding range for %q", finding.Path)
+		}
+	}
+	return nil
+}
+
+func inspectionPrimaryPathForKind(kind string) string {
+	switch kind {
+	case "skill":
+		return "SKILL.md"
+	case "command":
+		return "COMMAND.md"
+	case "subagent":
+		return "AGENT.md"
+	case "hook":
+		return "HOOK.md"
+	case "mcpserver":
+		return ".mcp.json"
+	case "collection":
+		return "COLLECTION.json"
+	default:
+		return ""
+	}
+}
+
+func inspectionPrimaryMediaPolicy(kind string) (string, string) {
+	switch kind {
+	case "skill", "command", "subagent", "hook":
+		return "text/markdown", "text"
+	case "mcpserver", "collection":
+		return "application/json", "text"
+	default:
+		return "", ""
+	}
+}
+
+func validInspectionDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, c := range value[len("sha256:"):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func allowedInspectionFile(mediaType, class string) bool {
+	switch class {
+	case "text":
+		return mediaType == "text/markdown" || mediaType == "text/plain" || mediaType == "application/json" || mediaType == "application/yaml"
+	case "image":
+		return mediaType == "image/png" || mediaType == "image/jpeg" || mediaType == "image/gif" || mediaType == "image/webp"
+	case "metadata":
+		return mediaType == "application/octet-stream"
+	default:
+		return false
+	}
+}
+
+func verifyInspectionBody(file inspectionPublicationFile, body []byte) error {
+	if int64(len(body)) != file.Size || contentDigest(body) != file.ContentDigest {
+		return errors.New("digest or size does not match manifest")
+	}
+	expectedMedia, expectedClass := inspectionMediaPolicy(file.Path, body)
+	if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
+		return errors.New("media type or inspection class does not match manifest")
+	}
+	return nil
+}
+
+func inspectionMediaPolicy(name string, data []byte) (string, string) {
+	ext := strings.ToLower(path.Ext(name))
+	if media := http.DetectContentType(data); media == "image/png" || media == "image/jpeg" || media == "image/gif" || media == "image/webp" {
+		return media, "image"
+	}
+	if isUnsafeInspectionExtension(ext) || (!isInspectionPrimaryPath(name) && !isSafeInspectionText(data)) {
+		return "application/octet-stream", "metadata"
+	}
+	if isInspectionPrimaryPath(name) && !isValidInspectionText(data) {
+		return "application/octet-stream", "metadata"
+	}
+	if !utf8.Valid(data) {
+		return "application/octet-stream", "metadata"
+	}
+	switch ext {
+	case ".md", ".markdown":
+		return "text/markdown", "text"
+	case ".json":
+		if json.Valid(data) {
+			return "application/json", "text"
+		}
+		return "application/octet-stream", "metadata"
+	case ".yaml", ".yml":
+		return "application/yaml", "text"
+	case ".txt":
+		return "text/plain", "text"
+	default:
+		return "text/plain", "text"
+	}
+}
+
+func isUnsafeInspectionExtension(ext string) bool {
+	switch ext {
+	case ".svg", ".html", ".htm", ".xhtml", ".xml", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".css":
+		return true
+	default:
+		return false
+	}
+}
+
+func isInspectionPrimaryPath(value string) bool {
+	switch value {
+	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidInspectionText(data []byte) bool {
+	if !utf8.Valid(data) {
+		return false
+	}
+	for _, b := range data {
+		if b == 0 || b < 0x09 || (b > 0x0d && b < 0x20) || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeInspectionText(data []byte) bool {
+	if !isValidInspectionText(data) {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(string(data)))
+	for _, marker := range []string{"<script", "<svg", "<html", "<!doctype", "<?xml", "<style", "<iframe", "onerror=", "onload="} {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	if start := strings.IndexByte(text, '<'); start >= 0 && start+1 < len(text) {
+		next := text[start+1]
+		if (next >= 'a' && next <= 'z') || next == '/' || next == '!' || next == '?' {
+			if strings.IndexByte(text[start+1:], '>') >= 0 {
+				return false
+			}
+		}
+	}
+	if strings.HasPrefix(text, "#!") || strings.HasPrefix(text, "javascript:") ||
+		strings.HasPrefix(text, "function ") || strings.HasPrefix(text, "async function ") ||
+		strings.HasPrefix(text, "const ") || strings.HasPrefix(text, "let ") ||
+		strings.HasPrefix(text, "var ") || strings.HasPrefix(text, "import ") ||
+		strings.HasPrefix(text, "export ") || strings.HasPrefix(text, "console.") ||
+		strings.HasPrefix(text, "window.") || strings.HasPrefix(text, "document.") ||
+		strings.HasPrefix(text, "alert(") {
+		return false
+	}
+	if strings.Contains(text, "{") && strings.Contains(text, "}") && strings.Contains(text, ":") && !json.Valid(data) {
+		return false
+	}
+	return true
+}
+
+func canonicalInspectionSupportPath(value string) bool {
+	if !strings.HasPrefix(value, "support/") || value == "support/" || strings.Contains(value, "\\") {
+		return false
+	}
+	name := strings.TrimPrefix(value, "support/")
+	switch name {
+	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md", ".mcp.json", "COLLECTION.json":
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func prepareUploads(req SourceRevisionPublication) ([]BlobUpload, error) {

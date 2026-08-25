@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -274,6 +275,114 @@ func (c *Client) getResourceRevision(ctx context.Context, routeSource, expectedS
 	return rev, nil
 }
 
+type InspectionContent struct {
+	Manifest    inspection.Manifest
+	File        inspection.File
+	ContentType string
+	Data        []byte
+}
+
+func (c *Client) GetResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, error) {
+	manifest, _, err := c.getResourceInspection(ctx, source, kind, name, revision)
+	return manifest, err
+}
+
+func (c *Client) GetResourceInspectionManifest(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, error) {
+	return c.GetResourceInspection(ctx, source, kind, name, revision)
+}
+
+func (c *Client) GetResourceInspectionPrimary(ctx context.Context, source, kind, name, revision string) (InspectionContent, error) {
+	return c.getResourceInspectionContent(ctx, source, kind, name, revision, "")
+}
+
+func (c *Client) GetResourceInspectionFile(ctx context.Context, source, kind, name, revision, fileDigest string) (InspectionContent, error) {
+	if err := validateSHA256Digest(fileDigest); err != nil {
+		return InspectionContent{}, fmt.Errorf("inspection file digest %q: %w", fileDigest, err)
+	}
+	return c.getResourceInspectionContent(ctx, source, kind, name, revision, fileDigest)
+}
+
+func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, store.ResourceRevision, error) {
+	var manifest inspection.Manifest
+	if !mpapi.IsMarketplaceKind(kind) {
+		return manifest, store.ResourceRevision{}, fmt.Errorf("inspection kind %q is invalid", kind)
+	}
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(name) == "" {
+		return manifest, store.ResourceRevision{}, fmt.Errorf("inspection coordinate is incomplete")
+	}
+	rev, err := c.getResourceRevision(ctx, source, "", kind, name, revision)
+	if err != nil {
+		return manifest, rev, err
+	}
+	if rev.Provenance == nil || rev.Provenance.InspectionManifestDigest == "" {
+		return manifest, rev, fmt.Errorf("resource revision has no inspection manifest provenance")
+	}
+	manifestDigest := string(rev.Provenance.InspectionManifestDigest)
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return manifest, rev, fmt.Errorf("inspection manifest provenance: %w", err)
+	}
+	raw, err := c.getRawLimited(ctx, c.requestURL([]string{"api", "v1", "resources", source, kind, name, "revisions", revision, "inspection"}, nil), inspection.MaxManifestBytes)
+	if err != nil {
+		return manifest, rev, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return manifest, rev, fmt.Errorf("inspection manifest has trailing JSON")
+		}
+		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+	}
+	if err := inspection.Verify(manifest, raw, manifestDigest); err != nil {
+		return manifest, rev, fmt.Errorf("verify inspection manifest: %w", err)
+	}
+	manifest.ManifestDigest = manifestDigest
+	if manifest.Coordinate != rev.Coordinate || manifest.RevisionDigest != string(rev.ContentDigest) {
+		return manifest, rev, fmt.Errorf("inspection manifest identity does not match resource revision")
+	}
+	return manifest, rev, nil
+}
+
+func (c *Client) getResourceInspectionContent(ctx context.Context, source, kind, name, revision, fileDigest string) (InspectionContent, error) {
+	manifest, _, err := c.getResourceInspection(ctx, source, kind, name, revision)
+	if err != nil {
+		return InspectionContent{}, err
+	}
+	var file *inspection.File
+	for i := range manifest.Files {
+		if (fileDigest == "" && manifest.Files[i].Path == manifest.PrimaryPath) || manifest.Files[i].ContentDigest == fileDigest {
+			file = &manifest.Files[i]
+			break
+		}
+	}
+	if file == nil || file.InspectionClass == inspection.ClassMetadata {
+		return InspectionContent{}, fmt.Errorf("inspection content %q is unavailable", fileDigest)
+	}
+	if file.Size < 0 || file.Size > maxArtifactBytes {
+		return InspectionContent{}, fmt.Errorf("inspection content size %d exceeds client limit", file.Size)
+	}
+	segments := []string{"api", "v1", "resources", source, kind, name, "revisions", revision, "inspection", "content"}
+	if fileDigest != "" {
+		segments = append(segments, fileDigest)
+	}
+	data, headers, err := c.getRawResponseLimit(ctx, c.requestURL(segments, nil), file.Size)
+	if err != nil {
+		return InspectionContent{}, err
+	}
+	contentType := strings.TrimSpace(strings.Split(headers.Get("Content-Type"), ";")[0])
+	if contentType != file.MediaType {
+		return InspectionContent{}, fmt.Errorf("inspection content type %q does not match manifest %q", contentType, file.MediaType)
+	}
+	if err := inspection.VerifyFileContent(*file, data); err != nil {
+		return InspectionContent{}, fmt.Errorf("verify inspection content: %w", err)
+	}
+	return InspectionContent{Manifest: manifest, File: *file, ContentType: contentType, Data: data}, nil
+}
+
 // GetLatestResourceRevision fetches the latest revision of a resource.
 func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.ResourceRevision, error) {
 	return c.getLatestResourceRevision(ctx, source, source, kind, name)
@@ -401,9 +510,23 @@ func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte,
 
 // getRaw performs a GET and returns the response body bytes for non-JSON endpoints.
 func (c *Client) getRaw(ctx context.Context, requestURL string) ([]byte, error) {
+	body, _, err := c.getRawResponse(ctx, requestURL)
+	return body, err
+}
+
+func (c *Client) getRawResponse(ctx context.Context, requestURL string) ([]byte, http.Header, error) {
+	return c.getRawResponseLimit(ctx, requestURL, maxArtifactBytes)
+}
+
+func (c *Client) getRawLimited(ctx context.Context, requestURL string, limit int64) ([]byte, error) {
+	body, _, err := c.getRawResponseLimit(ctx, requestURL, limit)
+	return body, err
+}
+
+func (c *Client) getRawResponseLimit(ctx context.Context, requestURL string, limit int64) ([]byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("marketplace request %s: %w", requestURL, err)
+		return nil, nil, fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
@@ -411,22 +534,22 @@ func (c *Client) getRaw(ctx context.Context, requestURL string) ([]byte, error) 
 
 	resp, err := c.do(req)
 	if err != nil {
-		return nil, fmt.Errorf("marketplace request %s: %w", req.URL.Redacted(), err)
+		return nil, nil, fmt.Errorf("marketplace request %s: %w", req.URL.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	limit := int64(maxArtifactBytes)
+	responseLimit := limit
 	if resp.StatusCode != http.StatusOK {
-		limit = maxAPIErrorBytes
+		responseLimit = maxAPIErrorBytes
 	}
-	body, err := readResponseBody(resp, limit)
+	body, err := readResponseBody(resp, responseLimit)
 	if err != nil {
-		return nil, fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
+		return nil, nil, fmt.Errorf("marketplace read %s: %w", req.URL.Redacted(), err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, apiError(resp.StatusCode, body)
+		return nil, nil, apiError(resp.StatusCode, body)
 	}
-	return body, nil
+	return body, resp.Header.Clone(), nil
 }
 
 func (c *Client) requestURL(segments []string, query url.Values) string {

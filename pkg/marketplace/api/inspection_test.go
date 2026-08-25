@@ -52,6 +52,118 @@ func TestContentPolicyRejectsActiveTextAndUnknownBytes(t *testing.T) {
 	}
 }
 
+func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	blobs := fsblob.New(t.TempDir())
+	src := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
+	if err := meta.PutSource(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	const revisionPrefix = "sha256:"
+	for i, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
+		revision := revisionPrefix + strings.Repeat(string('a'+byte(i)), 64)
+		coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: src.ID, Kind: kind, Name: "example"}
+		body := []byte("# safe " + kind)
+		if kind == "mcpserver" || kind == "collection" {
+			body = []byte(`{"name":"safe"}`)
+		}
+		projection, err := inspection.Build(coord, revision, body, map[string][]byte{"diagram.svg": []byte("<svg>unsafe</svg>"), "notes.txt": []byte("safe")}, nil, 10, 1024, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for digest, data := range projection.Bodies {
+			if err := blobs.Put(ctx, store.ArchiveDigest(digest), data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := blobs.Put(ctx, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutResourceRevision(ctx, store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, blobs)
+	testServer := httptest.NewServer(server.PublicHandler())
+	defer testServer.Close()
+	for _, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
+		revision := "sha256:" + strings.Repeat(string('a'+byte(indexOfKind(kind))), 64)
+		url := testServer.URL + "/api/v1/resources/source/" + kind + "/example/revisions/" + revision + "/inspection"
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s inspection status = %d", kind, resp.StatusCode)
+		}
+		resp, err = http.Get(url + "/content")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		wantMedia := inspection.MediaMarkdown
+		if kind == "mcpserver" || kind == "collection" {
+			wantMedia = inspection.MediaJSON
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != wantMedia {
+			t.Fatalf("%s inspection content = %d/%q, want %q", kind, resp.StatusCode, resp.Header.Get("Content-Type"), wantMedia)
+		}
+	}
+}
+
+func indexOfKind(kind string) int {
+	for i, candidate := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
+		if candidate == kind {
+			return i
+		}
+	}
+	return 0
+}
+
+func TestPublicMCPArtifactIsNotDownloadable(t *testing.T) {
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	blobs := fsblob.New(t.TempDir())
+	source := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}
+	if err := meta.PutSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	archive := "sha256:" + strings.Repeat("b", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "remote"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)), ArchiveDigest: store.ArchiveDigest(archive),
+	}
+	if err := meta.PutResourceRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, blobs).PublicHandler())
+	defer server.Close()
+	resp, err := http.Get(server.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("MCP artifact status = %d, want %d", resp.StatusCode, http.StatusUnsupportedMediaType)
+	}
+}
+
 func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")
@@ -66,10 +178,35 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 		t.Fatal(err)
 	}
 	coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: src.ID, Kind: KindSkill, Name: "review"}
-	body := []byte("# Safe review\n\n[remote](https://example.com)\n")
-	projection, err := inspection.Build(coord, revision, body, nil, []analyze.Finding{{Code: "warn", Severity: analyze.OutcomeWarn, PolicyOutcome: analyze.OutcomeWarn, SourceRange: analyze.SourceRangeAt("skill/review/body", string(body), 2)}}, 10, 1024, 4096)
+	body := []byte("# Hostile review\n\n<div>raw HTML</div>\n<script>alert(1)</script>\n![remote image](https://evil.invalid/pixel.png)\n[link](https://example.com/docs)\n")
+	support := map[string][]byte{
+		"notes.md":    []byte("<script>support must stay hidden</script>"),
+		"data.json":   []byte(`{"safe":true}`),
+		"config.yaml": []byte("safe: true\\n"),
+		"pixel.png":   {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0},
+	}
+	projection, err := inspection.Build(coord, revision, body, support, []analyze.Finding{{Code: "warn", Severity: analyze.OutcomeWarn, PolicyOutcome: analyze.OutcomeWarn, SourceRange: analyze.SourceRangeAt("skill/review/body", string(body), 2)}}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
+	}
+	primaryFile := projection.Manifest.Files[0]
+	if primaryFile.Path != "SKILL.md" || primaryFile.MediaType != inspection.MediaMarkdown || primaryFile.InspectionClass != inspection.ClassText {
+		t.Fatalf("hostile primary policy = %#v", primaryFile)
+	}
+	if string(projection.Bodies[primaryFile.ContentDigest]) != string(body) {
+		t.Fatal("hostile primary Markdown was not retained as canonical bytes")
+	}
+	var supportDigest string
+	for _, file := range projection.Manifest.Files[1:] {
+		if file.Path == "support/notes.md" {
+			supportDigest = file.ContentDigest
+			if file.InspectionClass != inspection.ClassMetadata || len(projection.Bodies[file.ContentDigest]) != 0 {
+				t.Fatalf("hostile support policy = %#v", file)
+			}
+		}
+	}
+	if supportDigest == "" {
+		t.Fatal("hostile support metadata missing")
 	}
 	for digest, data := range projection.Bodies {
 		if err := blobs.Put(ctx, store.ArchiveDigest(digest), data); err != nil {
@@ -110,6 +247,50 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || string(data) != string(body) || resp.Header.Get("Content-Type") != inspection.MediaMarkdown {
 		t.Fatalf("content response = %d/%q/%q", resp.StatusCode, data, resp.Header.Get("Content-Type"))
+	}
+	for _, expected := range []struct {
+		path  string
+		media string
+		body  []byte
+	}{
+		{path: "support/data.json", media: inspection.MediaJSON, body: support["data.json"]},
+		{path: "support/config.yaml", media: inspection.MediaYAML, body: support["config.yaml"]},
+		{path: "support/pixel.png", media: inspection.MediaPNG, body: support["pixel.png"]},
+	} {
+		var digest string
+		for _, file := range projection.Manifest.Files {
+			if file.Path == expected.path {
+				digest = file.ContentDigest
+			}
+		}
+		if digest == "" {
+			t.Fatalf("missing %s in inspection manifest", expected.path)
+		}
+		resp, err = http.Get(base + "/inspection/content/" + digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(data) != string(expected.body) || resp.Header.Get("Content-Type") != expected.media {
+			t.Fatalf("%s content = %d/%q/%q", expected.path, resp.StatusCode, data, resp.Header.Get("Content-Type"))
+		}
+	}
+	resp, err = http.Get(base + "/inspection/content/" + supportDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unsafe support content status = %d", resp.StatusCode)
+	}
+	resp, err = http.Get(testServer.URL + "/api/v1/content/" + strings.Replace(primaryFile.ContentDigest, ":", "/", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("global hostile content status = %d", resp.StatusCode)
 	}
 	resp, err = http.Get(testServer.URL + "/api/v1/inspection/sha256/" + strings.TrimPrefix(projection.Manifest.ManifestDigest, "sha256:"))
 	if err != nil {

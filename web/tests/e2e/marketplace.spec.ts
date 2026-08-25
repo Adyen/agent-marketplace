@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 
 const digest = `sha256:${'a'.repeat(64)}`
+const notesDigest = `sha256:${'f'.repeat(64)}`
+const configDigest = `sha256:${'1'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
 const mockURL = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '4311'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
@@ -76,7 +78,11 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByText('No findings were reported for this revision.', { exact: true })).toBeVisible()
   })
 
-  test('follows an exact digest-pinned browser route to verified detail', async ({ page }) => {
+  test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
+    const remoteRequests: string[] = []
+    page.on('request', request => {
+      if (request.url().includes('evil.invalid')) remoteRequests.push(request.url())
+    })
     await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
     await expect(page).toHaveURL(new RegExp(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
@@ -84,9 +90,35 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Inspection preview', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Safe review', exact: true })).toBeVisible()
+    await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('href', 'https://example.com/docs')
     await expect(page.locator('[data-testid="safe-markdown"] img')).toHaveCount(0)
     await expect(page.locator('[data-testid="safe-markdown"] script')).toHaveCount(0)
+    await expect(page.locator('[data-testid="safe-markdown"]')).not.toContainText('evil.invalid')
     await expect(page.locator('[data-testid="escaped-raw"]')).toContainText('<script>alert("xss")</script>')
+    expect(remoteRequests).toEqual([])
+  })
+
+  test('lazily selects additional text files by digest without fetching metadata bodies', async ({ page }) => {
+    const contentRequests: string[] = []
+    page.on('request', request => {
+      if (request.url().includes('/inspection/content/')) contentRequests.push(request.url())
+    })
+    await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+
+    const selector = page.getByLabel('Inspection file')
+    await expect(selector).toHaveValue(`sha256:${'e'.repeat(64)}`)
+    expect(contentRequests).toEqual([])
+
+    await selector.selectOption(notesDigest)
+    await expect(page.getByRole('heading', { name: 'Additional notes', exact: true })).toBeVisible()
+    await expect(page.locator('[data-testid="safe-markdown"] script')).toHaveCount(0)
+    expect(contentRequests.some(url => url.endsWith(`/inspection/content/${encodeURIComponent(notesDigest)}`))).toBe(true)
+
+    await selector.selectOption(configDigest)
+    await expect(page.locator('[data-testid="escaped-selected-raw"]')).toContainText('<script>escaped</script>')
+    await expect(page.locator('[data-testid="safe-markdown"]')).toHaveCount(0)
+    expect(contentRequests.some(url => url.endsWith(`/inspection/content/${encodeURIComponent(configDigest)}`))).toBe(true)
+    expect(contentRequests.some(url => url.includes(`${encodeURIComponent('sha256:2222222222222222222222222222222222222222222222222222222222222222')}`))).toBe(false)
   })
 
   test('keeps revoked revision metadata visible but disables install command actions', async ({ page }) => {
@@ -137,7 +169,9 @@ test.describe('Marketplace browser discovery', () => {
     page.on('request', request => {
       if (request.url().includes('/api/v1/')) absoluteRequests.push(request.url())
     })
-    await page.goto('/')
+    const response = await page.goto('/')
+    const csp = response?.headers()['content-security-policy'] ?? ''
+    expect(csp).toContain(`img-src 'self' data: ${mockURL}`)
     await expect(page.getByText(`${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
     await page.getByLabel('Search resources').fill('secure')
     await page.getByRole('button', { name: 'Search' }).click()

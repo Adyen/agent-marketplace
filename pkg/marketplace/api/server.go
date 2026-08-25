@@ -18,6 +18,7 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
@@ -609,7 +610,8 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
 		return
 	}
-	if inspectionDigestOf(data) != file.ContentDigest || int64(len(data)) != file.Size || !contentMatchesInspectionMedia(file.MediaType, file.InspectionClass, data) {
+	if err := inspection.VerifyFileContent(*file, data); err != nil {
+		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", err)
 		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
 		return
 	}
@@ -620,7 +622,7 @@ func (s *Server) getResourceInspection(ctx context.Context, sourceSlug, kind, na
 	if !isCanonicalSHA256Digest(digest) {
 		return inspection.Manifest{}, nil, errInvalidInspectionRevision
 	}
-	if kind != KindSkill {
+	if !IsMarketplaceKind(kind) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
 	src, err := s.resolveSource(ctx, sourceSlug)
@@ -757,26 +759,6 @@ func fixedContentMediaType(data []byte) (string, bool) {
 	return "text/plain", true
 }
 
-func contentMatchesInspectionMedia(mediaType, class string, data []byte) bool {
-	if !allowedInspectionMediaType(mediaType, class) {
-		return false
-	}
-	switch class {
-	case inspection.ClassImage:
-		return http.DetectContentType(data) == mediaType
-	case inspection.ClassText:
-		if !inspection.IsSafeText(data) {
-			return false
-		}
-		if mediaType == "application/json" {
-			return json.Valid(data)
-		}
-		return mediaType == "text/plain" || mediaType == "text/markdown" || mediaType == "application/yaml"
-	default:
-		return false
-	}
-}
-
 func inspectionDigestOf(data []byte) string { return inspection.Digest(data) }
 
 func inspectionWithinLimit(size int, limit int64) bool {
@@ -826,24 +808,21 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Source revision manifests and collection manifests share this immutable
-	// route. Validate the latter at the serving boundary so a published
-	// collection can never be served with non-canonical or mismatched bytes.
-	if collection, payload, decodeErr := hccartifact.DecodeCollectionManifest(bytes.NewReader(data)); decodeErr == nil && collection.Name != "" {
-		if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil || collection.ContentDigest != digest {
-			slog.Error("collection manifest blob is invalid", "digest", digest, "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+	// route. The blob store is also used for archives, so the route must prove
+	// the payload's manifest type, canonical representation, and identity before
+	// returning it. An arbitrary JSON or archive blob must never become a public
+	// manifest merely because it was stored under a digest-shaped key.
+	if err := validateManifestPayload(data, digest, manifestPayloadLimit(s.cfg)); err != nil {
+		if errors.Is(err, errManifestUnsupported) {
+			writeError(w, http.StatusUnsupportedMediaType, "manifest media type is not supported")
 			return
 		}
-		if err := hccartifact.ValidateCollectionManifest(collection); err != nil {
-			slog.Error("collection manifest blob is invalid", "digest", digest, "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
-			return
-		}
+		slog.Error("manifest blob is invalid", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	setImmutableCache(w)
-	_, _ = w.Write(data)
+	writeImmutable(w, "application/json", data)
 }
 
 func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
@@ -855,13 +834,26 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	digest := store.ArchiveDigest("sha256:" + parts[1])
-	revoked, err := s.artifactEffectivelyRevoked(r.Context(), digest)
+	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
 	if err != nil {
-		slog.Error("artifact revocation lookup failed", "digest", digest, "err", err)
+		slog.Error("artifact ownership lookup failed", "digest", digest, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
-	if revoked {
+	// The digest address is not itself authorization to read a blob. Refuse an
+	// unowned digest before touching blob storage, including when an orphaned
+	// blob happens to exist at the requested address.
+	if len(revisions) == 0 {
+		writeError(w, http.StatusNotFound, "artifact not found")
+		return
+	}
+	for _, revision := range revisions {
+		if revision.Coordinate.Kind == KindMcpServer {
+			writeError(w, http.StatusUnsupportedMediaType, "MCP artifacts are not publicly downloadable")
+			return
+		}
+	}
+	if s.artifactRevokedForRevisions(revisions) {
 		writeError(w, http.StatusGone, "artifact is revoked")
 		return
 	}
@@ -875,10 +867,106 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
+	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
+	if artifactLimit <= 0 {
+		artifactLimit = config.DefaultArtifactBytes
+	}
+	if int64(len(data)) > artifactLimit {
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+		return
+	}
+	if inspectionDigestOf(data) != string(digest) {
+		slog.Error("artifact blob digest mismatch", "digest", digest)
+		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
-	setImmutableCache(w)
-	_, _ = w.Write(data)
+	writeImmutable(w, "application/vnd.agent-marketplace.artifact.v1.tar+gzip", data)
+}
+
+var errManifestUnsupported = errors.New("unsupported manifest payload")
+
+func manifestPayloadLimit(cfg config.Config) int64 {
+	if cfg.Policy.Limits.ArtifactBytes > 0 {
+		return cfg.Policy.Limits.ArtifactBytes
+	}
+	return config.DefaultArtifactBytes
+}
+
+// validateManifestPayload accepts the two manifest formats published by the
+// Marketplace. Source revision manifests are content-addressed by the
+// canonical payload with revision_digest omitted; the encoded compatibility
+// form with revision_digest is also accepted. Collection manifests carry their
+// content_digest in the payload. Both forms must be canonical and match the
+// digest in the URL.
+func validateManifestPayload(data []byte, digest string, limit int64) error {
+	if limit > 0 && int64(len(data)) > limit {
+		return fmt.Errorf("manifest payload size %d exceeds limit %d", len(data), limit)
+	}
+
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(data, &shape); err != nil || shape == nil {
+		return errManifestUnsupported
+	}
+
+	_, sourceShape := shape["generator"]
+	if !sourceShape {
+		_, sourceShape = shape["resources"]
+	}
+	if !sourceShape {
+		_, sourceShape = shape["revision_digest"]
+	}
+	if sourceShape {
+		manifest, payload, err := marketplaceartifact.DecodeSourceRevisionManifest(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("decode source revision manifest: %w", err)
+		}
+		if manifest.RevisionDigest != "" {
+			if manifest.RevisionDigest != digest {
+				return fmt.Errorf("source revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
+			}
+			if err := marketplaceartifact.VerifySourceRevisionManifest(manifest, payload); err != nil {
+				return fmt.Errorf("verify source revision manifest: %w", err)
+			}
+			return nil
+		}
+		canonical, computed, err := marketplaceartifact.CanonicalSourceRevisionPayload(manifest)
+		if err != nil {
+			return fmt.Errorf("validate source revision manifest: %w", err)
+		}
+		if !bytes.Equal(canonical, payload) {
+			return errors.New("source revision manifest is not canonical JSON")
+		}
+		if computed != digest {
+			return fmt.Errorf("source revision manifest digest mismatch: got %s, want %s", computed, digest)
+		}
+		return nil
+	}
+
+	_, collectionShape := shape["name"]
+	if !collectionShape {
+		_, collectionShape = shape["members"]
+	}
+	if !collectionShape {
+		_, collectionShape = shape["content_digest"]
+	}
+	if !collectionShape {
+		_, collectionShape = shape["supported_schema_versions"]
+	}
+	if !collectionShape {
+		return errManifestUnsupported
+	}
+	collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("decode collection manifest: %w", err)
+	}
+	if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
+		return fmt.Errorf("verify collection manifest: %w", err)
+	}
+	if collection.ContentDigest != digest {
+		return fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
+	}
+	return nil
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -991,21 +1079,16 @@ func latestEffectiveRevisions(revs []store.ResourceRevision, evaluator *revocati
 	return selected
 }
 
-// artifactEffectivelyRevoked maps an archive digest back to every published
-// revision that references it. An artifact is withheld when any exact revision
+// artifactRevokedForRevisions withholds an artifact when any exact revision
 // using those bytes is effectively revoked; direct digest lookup has no
 // coordinate in its URL and therefore cannot safely make a narrower decision.
-func (s *Server) artifactEffectivelyRevoked(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
-	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(ctx, s.mpID, digest)
-	if err != nil {
-		return false, err
-	}
+func (s *Server) artifactRevokedForRevisions(revisions []store.ResourceRevision) bool {
 	for _, revision := range revisions {
 		if s.applyEffectiveRevocation(revision).Revocation != nil {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // Collection manifests use the collection revision's content digest rather
@@ -1195,6 +1278,9 @@ func validatePublicResourceRevision(rev store.ResourceRevision) error {
 		}
 		if rev.Provenance.ManifestDigest != "" && !isCanonicalSHA256Digest(string(rev.Provenance.ManifestDigest)) {
 			return errors.New("resource provenance manifest digest is not canonical")
+		}
+		if rev.Provenance.InspectionManifestDigest != "" && !isCanonicalSHA256Digest(string(rev.Provenance.InspectionManifestDigest)) {
+			return errors.New("resource provenance inspection manifest digest is not canonical")
 		}
 	}
 	return nil
