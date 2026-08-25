@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, isRasterMediaType, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
-import { ApiValidationError, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
+import { apiPath, createMarketplaceApi, isRasterMediaType, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 const params: SearchParams = {
@@ -65,6 +65,22 @@ describe('Marketplace API URL handling', () => {
       content_digest: digest,
     }))
     await expect(api.getResource('team/tools', 'skill', 'code review')).resolves.toMatchObject({ content_digest: digest })
+  })
+
+  it('lists bounded exact revisions and preserves revocation metadata', async () => {
+    const latestDigest = 'sha256:' + 'a'.repeat(64)
+    const revokedDigest = 'sha256:' + 'b'.repeat(64)
+    expect(resourceRevisionsPath('/api/v1', 'team/tools', 'skill', 'code review')).toBe('/api/v1/resources/team%2Ftools/skill/code%20review/revisions')
+    const payload = [
+      { coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' }, content_digest: latestDigest },
+      { coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' }, content_digest: revokedDigest, revocation: { reason: 'policy' } },
+    ]
+    const api = createMarketplaceApi(async request => request.endsWith('/revisions') ? payload : payload[0])
+    await expect(api.listResourceRevisions('team/tools', 'skill', 'code review')).resolves.toMatchObject([
+      { content_digest: latestDigest },
+      { content_digest: revokedDigest, revocation: { reason: 'policy' } },
+    ])
+    expect(() => normalizeResourceRevisions(Array.from({ length: MAX_RESOURCE_REVISION_ENTRIES + 1 }, () => payload[0]), { kind: 'skill', name: 'code review' })).toThrow(/at most 100 entries/)
   })
 
   it('builds source discovery paths and validates source/history payloads', async () => {

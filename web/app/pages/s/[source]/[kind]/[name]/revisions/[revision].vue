@@ -23,6 +23,10 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   revisionAsyncDataKey(source, kind, name, revision),
   () => api.getResourceRevision(source, kind, name, revision),
 )
+const { data: revisions, error: revisionsError } = await useAsyncData(
+  `${revisionAsyncDataKey(source, kind, name, revision)}:history`,
+  () => api.listResourceRevisions(source, kind, name),
+)
 const inspectionKey = `${revisionAsyncDataKey(source, kind, name, revision)}:inspection`
 const { data: inspection } = await useAsyncData(
   inspectionKey,
@@ -75,7 +79,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

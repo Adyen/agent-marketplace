@@ -156,7 +156,7 @@ useHead({
 
         <UAlert v-if="metadataError" color="warning" variant="subtle" icon="i-lucide-info" title="Instance metadata is unavailable" description="Search is still available, but this instance's capability filters may be incomplete." class="mb-6" />
 
-        <div v-if="pending" class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading resources" aria-busy="true">
+        <div v-if="pending" class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-live="polite" aria-label="Loading resources" aria-busy="true">
           <UCard v-for="i in 6" :key="i" class="h-64 animate-pulse motion-reduce:animate-none">
             <div class="h-8 w-2/3 rounded bg-muted" />
             <div class="mt-6 h-4 w-full rounded bg-muted" />
