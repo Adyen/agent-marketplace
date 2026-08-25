@@ -12,9 +12,12 @@ func TestServeReindex(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
-	regURL := env.CreateBareRepo("serve-reg", map[string]string{
+	env.CreateBareRepo("serve-reg", map[string]string{
 		".agents/skills/review/SKILL.md": "---\nname: review\ndescription: Review code carefully\nlicense: MIT\n---\n\n# review\n",
 	})
+	gitServer := newGitHTTPServer(t, env.repos)
+	defer gitServer.Close()
+	regURL := gitServer.URL + "/serve-reg.git"
 
 	cfg := fmt.Sprintf(`apiVersion: agent-marketplace.io/marketplace/v1
 instance:

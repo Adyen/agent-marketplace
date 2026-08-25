@@ -20,7 +20,7 @@ export GO_BUILD_IMAGE ALPINE_RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -136,6 +136,16 @@ compose-config:
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.dsn-file.yaml config --quiet && \
 		POSTGRES_PASSWORD=validation-only MARKETPLACE_POSTGRES_DSN=postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable AWS_ACCESS_KEY_ID=validation-only AWS_SECRET_ACCESS_KEY=validation-only docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.development.yaml config --quiet; \
 	fi
+
+marketplace-gate:
+	@set -e; \
+		$(MAKE) secrets-check container-check compose-config; \
+		$(MAKE) test; \
+		E2E_SKIP_DOCKER=1 $(MAKE) e2e; \
+		command -v pnpm >/dev/null 2>&1 || { echo "ERROR: pnpm is required for marketplace-gate"; exit 1; }; \
+		cd web; \
+		pnpm run check; \
+		pnpm run test:e2e
 
 # Cross-compilation targets
 darwin-arm64:
