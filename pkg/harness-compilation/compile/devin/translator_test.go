@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 func TestCompilerRegistration(t *testing.T) {
@@ -16,6 +17,41 @@ func TestCompilerRegistration(t *testing.T) {
 	}
 	if compiler.Target() != compile.TargetDevin {
 		t.Errorf("compiler target = %q, want %q", compiler.Target(), compile.TargetDevin)
+	}
+}
+
+func TestCompilerDirectTranslationGuardsNativeCodexSecurity(t *testing.T) {
+	server := ir.NewMcpServerWithOptions("native", "", nil, nil, nil, ir.SourceRef{}, ir.WithMcpURL("https://example.test/mcp"))
+	server.Ext.Codex = &ext.Codex{BearerTokenEnvVar: "TOKEN"}
+
+	artifacts, diagnostics, err := (Compiler{}).Translate(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 0 {
+		t.Fatalf("artifacts = %d, want none for dropped native authentication", len(artifacts))
+	}
+	if !diag.HasErrors(diagnostics) || !diag.HasCode(diagnostics, diag.CodeMcpSecurityRestrictionUnsupported) {
+		t.Fatalf("diagnostics = %#v, want %s error", diagnostics, diag.CodeMcpSecurityRestrictionUnsupported)
+	}
+}
+
+func TestCompilerGuardDoesNotDuplicateNativeCodexWarnings(t *testing.T) {
+	agent := ir.NewSubagent("native", "Native", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
+	agent.Ext.Codex = &ext.Codex{ReasoningEffort: "xhigh"}
+
+	result, err := compile.Compile(agent, compile.TargetDevin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Code == diag.CodeSubagentCodexEffortDropped {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%s diagnostics = %d, want 1: %#v", diag.CodeSubagentCodexEffortDropped, count, result.Diagnostics)
 	}
 }
 
@@ -202,6 +238,7 @@ func TestCompilerRejectsInvalidResources(t *testing.T) {
 	}{
 		{"nil resource", nil},
 		{"typed nil skill", (*ir.Skill)(nil)},
+		{"typed nil subagent", (*ir.Subagent)(nil)},
 		{"empty name", ir.NewSkill("", "", "body", nil, nil, ir.SourceRef{})},
 	}
 	for _, tt := range tests {

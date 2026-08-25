@@ -4,20 +4,25 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/harness"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 func TestSupportedHarnessTargets(t *testing.T) {
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini"}
+	want := targetmeta.CompilerNames()
 	got := SupportedHarnessTargets()
-	if len(got) != len(want) {
-		t.Fatalf("SupportedHarnessTargets() = %v, want %v", got, want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("SupportedHarnessTargets() = %v, want registry compiler targets %v", got, want)
 	}
-	for i, v := range want {
-		if got[i] != v {
-			t.Fatalf("SupportedHarnessTargets()[%d] = %q, want %q", i, got[i], v)
-		}
+	if !slices.Contains(got, string(targetmeta.TargetDevin)) {
+		t.Fatal("SupportedHarnessTargets() omits Devin")
+	}
+	if !slices.Contains(got, string(targetmeta.TargetCodex)) {
+		t.Fatal("SupportedHarnessTargets() omits Codex")
 	}
 }
 
@@ -33,7 +38,7 @@ func TestIsSupportedHarness(t *testing.T) {
 }
 
 func TestValidateHarnessIDs(t *testing.T) {
-	if err := ValidateHarnessIDs([]string{"factory", "claude"}); err != nil {
+	if err := ValidateHarnessIDs([]string{"factory", "claude", "codex"}); err != nil {
 		t.Errorf("ValidateHarnessIDs valid = %v", err)
 	}
 	if err := ValidateHarnessIDs([]string{"factory", "  "}); err == nil {
@@ -44,11 +49,55 @@ func TestValidateHarnessIDs(t *testing.T) {
 	}
 }
 
+func TestDetectInstalledHarnessesUsesCodexHomeNotSharedAgentsRoot(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := harness.DetectInstalled(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "codex") {
+		t.Fatalf("shared .agents root alone detected Codex: %v", got)
+	}
+
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err = harness.DetectInstalled(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "codex") {
+		t.Fatalf("resolved CODEX_HOME did not detect Codex: %v", got)
+	}
+}
+
+func TestDetectInstalledHarnessesUsesDefaultCodexHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", "")
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := harness.DetectInstalled(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "codex") {
+		t.Fatalf("default CODEX_HOME did not detect Codex: %v", got)
+	}
+}
+
 func TestDetectInstalledHarnessesInHome(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CODEX_HOME", "")
 
 	// None detected initially.
-	got, err := DetectInstalledHarnessesInHome(home)
+	got, err := harness.DetectInstalled(home)
 	if err != nil {
 		t.Fatalf("DetectInstalledHarnessesInHome error: %v", err)
 	}
@@ -64,7 +113,7 @@ func TestDetectInstalledHarnessesInHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err = DetectInstalledHarnessesInHome(home)
+	got, err = harness.DetectInstalled(home)
 	if err != nil {
 		t.Fatalf("DetectInstalledHarnessesInHome error: %v", err)
 	}

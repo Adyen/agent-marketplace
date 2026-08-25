@@ -1,5 +1,6 @@
 {
   "command": "/plugins/demo/scripts/check.sh",
   "event": "pre_read_code",
+  "matcher": "Read",
   "type": "command"
 }

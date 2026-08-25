@@ -40,7 +40,13 @@ func (c Compiler) Translate(r ir.Resource) ([]artifact.Artifact, []diag.Diagnost
 }
 
 // TranslateWithOptions compiles a resource into Windsurf artifacts and diagnostics.
-func (Compiler) TranslateWithOptions(r ir.Resource, opts compilepkg.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+func (c Compiler) TranslateWithOptions(r ir.Resource, opts compilepkg.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	return compilepkg.GuardNativeCodexTranslation(r, c.Target(), func(r ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+		return c.translateWithOptions(r, opts)
+	})
+}
+
+func (Compiler) translateWithOptions(r ir.Resource, opts compilepkg.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	switch v := r.(type) {
 	case *ir.Skill:
 		return translateSkill(v)

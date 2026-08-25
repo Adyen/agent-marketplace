@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -54,7 +55,7 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 		return err
 	}
 
-	detected, err := config.DetectInstalledHarnesses()
+	detected, err := harness.DetectInstalledInCurrentHome()
 	if err != nil {
 		slog.Error("init failed to detect installed harnesses", "err", err)
 		return err

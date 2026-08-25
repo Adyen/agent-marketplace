@@ -65,7 +65,7 @@ import (
 // whether the second one LOST the first one's entry or correctly PRUNED it as a
 // stale owned entry — the two outcomes are the same bytes. Every test here
 // therefore makes both racers PARTIAL runs, using a rule the plan already states
-// and devinPatchPlan already implements: "A partial run does not prune". With
+// and ownedJSONPatchPlan already implements: "A partial run does not prune". With
 // pruning off, the union is the only correct end state and a missing entry can
 // only be a lost update.
 
@@ -75,13 +75,13 @@ import (
 
 // devinMcpDesired builds one desired mcp_config.json entry with canonical value
 // bytes, so its digest is the same one the reconciler derives from the file.
-func devinMcpDesired(t *testing.T, key, command string) devinEntry {
+func devinMcpDesired(t *testing.T, key, command string) ownedJSONEntry {
 	t.Helper()
-	raw, err := devinCanonicalJSON([]byte(`{"command":"` + command + `"}`))
+	raw, err := canonicalOwnedJSON([]byte(`{"command":"` + command + `"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return devinEntry{
+	return ownedJSONEntry{
 		rel:       harness.DevinMcpConfigFile,
 		kind:      ownership.KindMcpServer,
 		container: devinMcpServersKey,
@@ -107,7 +107,7 @@ func newDevinReport() *Report {
 // long as pruning is on.
 //
 // The construction here turns pruning off, using a rule the plan already states
-// and devinPatchPlan already implements: "A partial run does not prune" — when
+// and ownedJSONPatchPlan already implements: "A partial run does not prune" — when
 // `incomplete` is set for a file, the prune list is emptied. Both racers are
 // partial runs against the same aggregate, so NEITHER of them is allowed to
 // remove the other's entry for any reason. The union is therefore the only
@@ -144,7 +144,7 @@ func TestAdversarialTwoPartialRunsMustNotLoseAnEntry(t *testing.T) {
 		// Build desired entries on the main test goroutine; devinMcpDesired uses
 		// t.Fatal, which only exits the calling goroutine and must not be called
 		// from a racer goroutine.
-		entries := []devinEntry{
+		entries := []ownedJSONEntry{
 			devinMcpDesired(t, "alpha", "alpha-binary"),
 			devinMcpDesired(t, "beta", "beta-binary"),
 		}
@@ -152,9 +152,9 @@ func TestAdversarialTwoPartialRunsMustNotLoseAnEntry(t *testing.T) {
 		var wg sync.WaitGroup
 		for _, e := range entries {
 			wg.Add(1)
-			go func(entry devinEntry) {
+			go func(entry ownedJSONEntry) {
 				defer wg.Done()
-				work := &devinAggregateWork{}
+				work := &ownedJSONAggregateWork{}
 				work.add(entry)
 				// A partial run: this racer had a resource skipped for this
 				// file, so it is forbidden to prune anything from it.
@@ -227,7 +227,7 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 	var mu sync.Mutex
 	released := false
 	var once sync.Once
-	devinLockAcquisitionHook = func(ev ownership.LockEvent) {
+	ownedAggregateLockAcquisitionHook = func(ev ownership.LockEvent) {
 		switch ev.Kind {
 		case ownership.LockReleased:
 			mu.Lock()
@@ -246,12 +246,12 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 		}
 		once.Do(func() { time.Sleep(widen) })
 	}
-	t.Cleanup(func() { devinLockAcquisitionHook = nil })
+	t.Cleanup(func() { ownedAggregateLockAcquisitionHook = nil })
 
 	// Build desired entries on the main test goroutine; devinMcpDesired uses
 	// t.Fatal, which only exits the calling goroutine and must not be called
 	// from a racer goroutine.
-	entries := []devinEntry{
+	entries := []ownedJSONEntry{
 		devinMcpDesired(t, "alpha", "alpha-binary"),
 		devinMcpDesired(t, "beta", "beta-binary"),
 	}
@@ -259,9 +259,9 @@ func TestAdversarialTheReadIsInsideTheSectionOrTheEntryIsLost(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, e := range entries {
 		wg.Add(1)
-		go func(entry devinEntry) {
+		go func(entry ownedJSONEntry) {
 			defer wg.Done()
-			work := &devinAggregateWork{}
+			work := &ownedJSONAggregateWork{}
 			work.add(entry)
 			work.markIncomplete(rel)
 			<-start
@@ -381,7 +381,7 @@ func TestDevinLostUpdateChildProcess(t *testing.T) {
 	root := os.Getenv(devinLostUpdateRootEnv)
 	t.Setenv("XDG_STATE_HOME", os.Getenv(devinLostUpdateStateEnv))
 
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.add(devinMcpDesired(t, name, name+"-binary"))
 	work.markIncomplete(harness.DevinMcpConfigFile)
 

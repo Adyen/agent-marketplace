@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -16,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // writeSourceSkill writes a minimal skill directory and returns its path.
@@ -149,6 +151,9 @@ func declaredTargets(t *testing.T) []hcc.Target {
 	}
 	targets := make([]hcc.Target, 0, len(harness.TargetInfoMap))
 	for target := range harness.TargetInfoMap {
+		if target == hcc.Target(targetmeta.TargetCodex) {
+			continue // Codex is covered by the split-root backup-set tests.
+		}
 		targets = append(targets, target)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
@@ -156,6 +161,78 @@ func declaredTargets(t *testing.T) []hcc.Target {
 		t.Fatal("harness.TargetInfoMap is empty; these tests would be vacuous")
 	}
 	return targets
+}
+
+func TestCollectCodexBackupPartitionsUsesBothNativeRoots(t *testing.T) {
+	home, codexHome := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	partitions, err := CollectCodexBackupPartitions(machineScopeSkill(hcc.Target(targetmeta.TargetCodex)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCodexHome, err := filepath.EvalSymlinks(codexHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"machine-agents": filepath.Join(canonicalHome, ".agents"), "machine-codex": canonicalCodexHome}
+	if len(partitions) != len(want) {
+		t.Fatalf("partitions = %#v", partitions)
+	}
+	for _, partition := range partitions {
+		if partition.Root != want[partition.ID] {
+			t.Errorf("partition = %#v, want root %q", partition, want[partition.ID])
+		}
+	}
+}
+
+func TestCodexBackupPartitionsContainOnlyEvidencedManagedPaths(t *testing.T) {
+	home, codexHome := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	personalSkill := filepath.Join(home, ".agents", "skills", "personal")
+	personalAgent := filepath.Join(codexHome, "agents", "personal.toml")
+	if err := os.MkdirAll(personalSkill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(personalAgent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(personalAgent, []byte("personal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	managedSource := filepath.Join(cache.CacheDir(), "registry", "managed")
+	if err := os.MkdirAll(managedSource, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	managedLink := filepath.Join(home, ".agents", "skills", "managed")
+	if err := os.Symlink(managedSource, managedLink); err != nil {
+		t.Fatal(err)
+	}
+	partitions, err := CodexBackupPartitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, partition := range partitions {
+		switch partition.ID {
+		case "machine-agents":
+			if !slices.Equal(partition.RelPaths, []string{"skills/managed"}) {
+				t.Fatalf("machine-agents paths = %v", partition.RelPaths)
+			}
+		case "machine-codex":
+			if len(partition.RelPaths) != 0 {
+				t.Fatalf("machine-codex paths = %v", partition.RelPaths)
+			}
+		}
+	}
+	beforeRemoval, err := CollectCodexBackupPartitions(nil)
+	if err != nil || len(beforeRemoval) != 2 {
+		t.Fatalf("existing managed output was not backed up before removal: %#v, %v", beforeRemoval, err)
+	}
 }
 
 // machineScopeSkill returns a single machine-scope resolved artifact, which is

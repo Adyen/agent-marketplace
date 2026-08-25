@@ -32,6 +32,22 @@ func TestValidateRejectsUnknownHarnessTargetsAtEveryConfigSurface(t *testing.T) 
 	}
 }
 
+func TestValidateAcceptsCodexAtEveryConfigSurface(t *testing.T) {
+	cfg := Config{
+		APIVersion: APIVersionV2,
+		Harnesses:  []string{"codex"},
+		Registries: []RegistryEntry{{
+			URL:           "git@example.com:registry.git",
+			Ref:           "main",
+			Harnesses:     []string{"codex"},
+			SourceHarness: "codex",
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Codex config rejected: %v", err)
+	}
+}
+
 func TestLoadConfigRejectsUnknownHarnessTarget(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

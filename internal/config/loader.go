@@ -103,7 +103,6 @@ func gitRootFor(dir string) string {
 		gitRootLocks[dir] = mu
 	}
 	gitRootMu.Unlock()
-
 	mu.Lock()
 	defer mu.Unlock()
 

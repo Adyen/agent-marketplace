@@ -24,6 +24,12 @@ type toolEntry struct {
 // closed, known, and silently filtered rather than rejected, a nil Devin cell
 // means "Devin has no such tool" (unsupported), never "not yet mapped", and the
 // compiler must fail a source tool it cannot map rather than pass it through.
+//
+// Codex provenance for every Codex cell below: verified 2026-08-19 against
+// https://developers.openai.com/codex/subagents. The documented custom-agent
+// schema has no per-agent tool allow-list equivalent to the IR Tools field, so
+// every source tool is explicitly unsupported. A nil cell is intentional and
+// prevents translation from silently widening a source restriction.
 var toolTable = []toolEntry{
 	// Last verified: 2026-04-23 against Claude Code v1.0
 	{Claude: "Read", Targets: map[Target][]string{
@@ -33,6 +39,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Read"},
 		TargetGemini:   {"Read"},
 		TargetDevin:    {"read"}, // Devin: documented allowed-tools value.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -43,6 +50,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Write"},
 		TargetGemini:   {"Write"},
 		TargetDevin:    nil, // unsupported: not in Devin's closed read/edit/grep/glob/exec vocabulary.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -53,6 +61,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Edit"},
 		TargetGemini:   {"Edit"},
 		TargetDevin:    {"edit"}, // Devin: documented allowed-tools value.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -63,6 +72,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Bash"},
 		TargetGemini:   {"Bash"},
 		TargetDevin:    {"exec"}, // Devin: documented allowed-tools value.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -73,6 +83,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Glob"},
 		TargetGemini:   {"Glob"},
 		TargetDevin:    {"glob"}, // Devin: documented allowed-tools value.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -83,6 +94,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"Grep"},
 		TargetGemini:   {"Grep"},
 		TargetDevin:    {"grep"}, // Devin: documented allowed-tools value.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -93,6 +105,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"MultiEdit"},
 		TargetGemini:   {"MultiEdit"},
 		TargetDevin:    nil, // unsupported: not in Devin's closed read/edit/grep/glob/exec vocabulary.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -103,6 +116,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"WebFetch"},
 		TargetGemini:   {"WebFetch"},
 		TargetDevin:    nil, // unsupported: not in Devin's closed read/edit/grep/glob/exec vocabulary.
+		TargetCodex:    nil,
 	}},
 
 	// Last verified: 2026-04-23 against Claude Code v1.0
@@ -113,6 +127,7 @@ var toolTable = []toolEntry{
 		TargetWindsurf: {"WebSearch"},
 		TargetGemini:   {"WebSearch"},
 		TargetDevin:    nil, // unsupported: not in Devin's closed read/edit/grep/glob/exec vocabulary.
+		TargetCodex:    nil,
 	}},
 }
 

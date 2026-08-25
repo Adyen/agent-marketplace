@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 )
 
 // initModalState holds the first-run harness-selection UI. It mirrors the
@@ -25,7 +26,7 @@ type initModalState struct {
 // newInitModalState detects installed harnesses under homeDir and returns a
 // modal state with those harnesses pre-selected.
 func newInitModalState(homeDir string) (initModalState, error) {
-	detected, err := config.DetectInstalledHarnessesInHome(homeDir)
+	detected, err := harness.DetectInstalled(homeDir)
 	if err != nil {
 		return initModalState{}, err
 	}

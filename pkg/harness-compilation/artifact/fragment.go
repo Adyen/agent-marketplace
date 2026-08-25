@@ -34,6 +34,9 @@ func MergeFragments(artifacts []Artifact) ([]Artifact, error) {
 	}
 
 	for path, fragments := range fragmentGroups {
+		if err := orderFragments(fragments); err != nil {
+			return nil, fmt.Errorf("merging fragments for %q: %w", path, err)
+		}
 		fragmentKey := fragments[0].FragmentKey
 		for _, fragment := range fragments[1:] {
 			if fragment.FragmentKey != fragmentKey {
@@ -53,6 +56,33 @@ func MergeFragments(artifacts []Artifact) ([]Artifact, error) {
 	})
 
 	return result, nil
+}
+
+func orderFragments(fragments []Artifact) error {
+	if len(fragments) < 2 {
+		return nil
+	}
+	ordered := false
+	for _, fragment := range fragments {
+		ordered = ordered || fragment.FragmentOrderKey != ""
+	}
+	if !ordered {
+		return nil
+	}
+	for _, fragment := range fragments {
+		if fragment.FragmentOrderKey == "" {
+			return errors.New("FragmentOrderKey must be set on every fragment in the group")
+		}
+	}
+	sort.Slice(fragments, func(i, j int) bool {
+		return fragments[i].FragmentOrderKey < fragments[j].FragmentOrderKey
+	})
+	for i := 1; i < len(fragments); i++ {
+		if fragments[i].FragmentOrderKey == fragments[i-1].FragmentOrderKey {
+			return fmt.Errorf("duplicate FragmentOrderKey %q", fragments[i].FragmentOrderKey)
+		}
+	}
+	return nil
 }
 
 // mergeGroup merges a set of fragments that share the same output Path.
@@ -120,12 +150,13 @@ func mergeJSON(path string, fragments []Artifact) (Artifact, error) {
 	}
 
 	return Artifact{
-		Path:                  path,
-		Bytes:                 bytes,
-		MergeWithExisting:     anyMergeWithExisting(fragments),
-		ManagedByField:        firstManagedByField(fragments),
-		ManagedByValue:        firstManagedByValue(fragments),
-		DedupeFragmentEntries: dedupe,
+		Path:                           path,
+		Bytes:                          bytes,
+		MergeWithExisting:              anyMergeWithExisting(fragments),
+		ExternalReconciliationRequired: anyExternalReconciliationRequired(fragments),
+		ManagedByField:                 firstManagedByField(fragments),
+		ManagedByValue:                 firstManagedByValue(fragments),
+		DedupeFragmentEntries:          dedupe,
 	}, nil
 }
 
@@ -248,11 +279,12 @@ func mergeText(path string, fragments []Artifact) (Artifact, error) {
 	}
 
 	return Artifact{
-		Path:              path,
-		Bytes:             []byte(sb.String()),
-		MergeWithExisting: anyMergeWithExisting(fragments),
-		ManagedByField:    firstManagedByField(fragments),
-		ManagedByValue:    firstManagedByValue(fragments),
+		Path:                           path,
+		Bytes:                          []byte(sb.String()),
+		MergeWithExisting:              anyMergeWithExisting(fragments),
+		ExternalReconciliationRequired: anyExternalReconciliationRequired(fragments),
+		ManagedByField:                 firstManagedByField(fragments),
+		ManagedByValue:                 firstManagedByValue(fragments),
 	}, nil
 }
 
@@ -268,6 +300,15 @@ func anyDedupeFragmentEntries(artifacts []Artifact) bool {
 func anyMergeWithExisting(artifacts []Artifact) bool {
 	for _, a := range artifacts {
 		if a.MergeWithExisting {
+			return true
+		}
+	}
+	return false
+}
+
+func anyExternalReconciliationRequired(artifacts []Artifact) bool {
+	for _, a := range artifacts {
+		if a.ExternalReconciliationRequired {
 			return true
 		}
 	}

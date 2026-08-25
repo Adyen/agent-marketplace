@@ -169,6 +169,26 @@ func TestMaterialize_BasicWrite(t *testing.T) {
 	}
 }
 
+func TestMaterialize_RefusesExternalReconciliationArtifact(t *testing.T) {
+	out := t.TempDir()
+	path := filepath.Join(out, "config.toml")
+	original := []byte("handwritten = true\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := &Result{Artifacts: []Artifact{{Path: "config.toml", Bytes: []byte("generated = true\n"), ExternalReconciliationRequired: true}}}
+	if _, err := Materialize(result, out); !errors.Is(err, ErrExternalReconciliationRequired) {
+		t.Fatalf("Materialize error = %v, want %v", err, ErrExternalReconciliationRequired)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("externally reconciled file changed:\n%s", got)
+	}
+}
+
 func TestMaterialize_DeduplicatesIdenticalArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	result := &Result{
@@ -238,6 +258,28 @@ func TestMaterialize_RejectsConflictingDuplicateArtifacts(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "harnesscompile.Materialize: duplicate artifact path with different contents: support.js") {
 				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestSameArtifactIncludesBehavioralMetadata(t *testing.T) {
+	base := Artifact{Path: "support.js", Bytes: []byte("same")}
+	tests := []struct {
+		name   string
+		mutate func(*Artifact)
+	}{
+		{"fragment order", func(a *Artifact) { a.FragmentOrderKey = "later" }},
+		{"external reconciliation", func(a *Artifact) { a.ExternalReconciliationRequired = true }},
+		{"fragment deduplication", func(a *Artifact) { a.DedupeFragmentEntries = true }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := base
+			tt.mutate(&changed)
+			if sameArtifact(base, changed) {
+				t.Fatal("artifacts with different behavioral metadata compare equal")
 			}
 		})
 	}

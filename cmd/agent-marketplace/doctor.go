@@ -70,8 +70,9 @@ the 3000.3 compatibility floor, and recommends selecting the devin harness when
 a Devin CLI is installed but no harness list contains it. Sync
 never requires a Devin binary, so nothing doctor reports here blocks it.
 
---repair is the recovery surface for Devin's SHARED aggregate files
-(hooks.v1.json, config.json#hooks, mcp_config.json). It previews exact adoption
+--repair is the recovery surface for Devin and Codex shared aggregate files
+(hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json, and
+.codex/config.toml). It previews exact adoption
 matches, evidence-backed orphan candidates, and existing unmanaged entries whose
 key matches a selected resource but whose value differs, and, on a terminal,
 prompts for each one. Off a terminal it is preview-only. Every aggregate it
@@ -94,7 +95,7 @@ harness lists.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Preview and, on a terminal, confirm recovery of Devin shared-aggregate ownership state")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Preview and, on a terminal, confirm recovery of Devin and Codex shared-aggregate ownership state")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, adopt exact current desired matches without prompting; removing an orphan or replacing a conflicting entry still requires an interactive per-entry confirmation")
 	return cmd
 }
@@ -173,26 +174,34 @@ func runDoctor(opts doctorOptions) error {
 }
 
 // writeDoctorInstallRoots lists every declared target with its capabilities and
-// both roots. It is the "target displays include Devin" half of the plan's
-// "Help text, status, list badges, conversion allowlists, and target displays
-// include Devin" — Devin's canonical roots (.devin and ~/.config/devin) come
-// from the same registry every other target's do.
+// resolved roots. Partitioned layouts retain their stable destination names.
 func writeDoctorInstallRoots(out io.Writer, repoRoot string) error {
 	if _, err := fmt.Fprintln(out, "install roots:"); err != nil {
 		return err
 	}
 
-	roots := harness.MakeInstallRoots()
-	targets := make([]string, 0, len(roots))
-	for target := range roots {
-		targets = append(targets, string(target))
+	targets := make([]string, 0, len(targetmeta.Definitions()))
+	for _, definition := range targetmeta.Definitions() {
+		targets = append(targets, string(definition.Target))
 	}
 	sort.Strings(targets)
+	legacyRoots := harness.MakeInstallRoots()
 
 	for _, target := range targets {
-		root := roots[hcc.Target(target)]
+		definition, _ := targetmeta.Lookup(target)
+		repoRootSummary, machineRootSummary := "-", "-"
+		if definition.PartitionedRoots {
+			var err error
+			repoRootSummary, machineRootSummary, err = harnessRootSummaries(hcc.Target(target), repoRoot)
+			if err != nil {
+				return err
+			}
+		} else if root, ok := legacyRoots[hcc.Target(target)]; ok {
+			repoRootSummary = root.For(false, repoRoot)
+			machineRootSummary = root.For(true, repoRoot)
+		}
 		if _, err := fmt.Fprintf(out, "  %s repo=%s machine=%s capabilities=%s\n",
-			target, root.For(false, repoRoot), root.For(true, repoRoot), targetCapabilities(target)); err != nil {
+			targetDisplayName(target), repoRootSummary, machineRootSummary, targetCapabilities(target)); err != nil {
 			return err
 		}
 	}
@@ -363,63 +372,80 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 // only", and "the user said no to everything".
 func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string) error {
 	ctx := opts.ctx
-	preview, err := materialize.DevinRepairPreview(ctx, repoRoot, opts.resolve(ctx, repoRoot))
+	slog.Info("doctor repair preview start", "repo_root", repoRoot)
+	previews, err := materialize.RepairPreviews(ctx, repoRoot, opts.resolve(ctx, repoRoot))
 	if err != nil {
+		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("repair preview: %w", err)
 	}
 
-	if _, err := fmt.Fprintln(out, "repair: devin shared-aggregate ownership"); err != nil {
-		return err
+	actionable := false
+	corrupt := false
+	for _, targetPreview := range previews {
+		if _, err := fmt.Fprintf(out, "repair: %s shared-aggregate ownership\n", targetDisplayName(string(targetPreview.Target))); err != nil {
+			return err
+		}
+		if err := writeRepairDiagnostics(out, targetPreview.Preview); err != nil {
+			return err
+		}
+		if err := writeRepairPreview(out, targetPreview.Preview); err != nil {
+			return err
+		}
+		actionable = actionable || targetPreview.Preview.Actionable()
+		corrupt = corrupt || targetPreview.Preview.HasErrors()
 	}
-	if err := writeRepairDiagnostics(out, preview); err != nil {
-		return err
-	}
-	if err := writeRepairPreview(out, preview); err != nil {
-		return err
-	}
+	slog.Info("doctor repair preview complete", "repo_root", repoRoot, "targets", len(previews), "actionable", actionable, "corrupt", corrupt)
 
 	// A corrupt ownership record or an unparseable aggregate is reported and
 	// never repaired around: "exit 1 means corrupt state/file". Actions are
 	// still offered for the files that ARE readable, because per-file
 	// independence is the same rule sync follows.
-	corrupt := preview.HasErrors()
-
-	if !preview.Actionable() {
+	if !actionable {
 		if _, err := fmt.Fprintln(out, "  nothing to repair"); err != nil {
 			return err
 		}
 		if corrupt {
+			slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
 			return errors.New("doctor --repair: corrupt ownership state or aggregate file")
 		}
+		slog.Info("doctor repair execution complete", "repo_root", repoRoot, "status", "success", "actions", 0)
 		return nil
 	}
 
 	if !opts.isTTY && !opts.yes {
 		// "off-TTY, `doctor --repair` is preview-only". Nothing below this point
-		// runs, and DevinRepairPreview has no mutation path, so this is a
+		// runs, and every target preview has no mutation path, so this is a
 		// structural guarantee rather than a promise.
 		if _, err := fmt.Fprintln(out, "  preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches"); err != nil {
 			return err
 		}
-		slog.Info("devin repair preview-only: stdin is not a terminal", "repo_root", repoRoot)
+		slog.Info("doctor repair preview-only: stdin is not a terminal", "repo_root", repoRoot)
 		if corrupt {
+			slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
 			return errors.New("doctor --repair: corrupt ownership state or aggregate file")
 		}
 		return nil
 	}
 
-	failures := applyRepairActions(out, opts, preview)
+	slog.Info("doctor repair execution start", "repo_root", repoRoot, "targets", len(previews), "automatic_adoption", opts.yes)
+	var failures []error
+	for _, targetPreview := range previews {
+		failures = append(failures, applyRepairActions(out, opts, targetPreview.Preview)...)
+	}
 	if len(failures) > 0 {
 		for _, failure := range failures {
 			if _, err := fmt.Fprintf(out, "  repair failed: %v [%s]\n", failure, diag.CodeDoctorRepairFailed); err != nil {
 				return err
 			}
 		}
+		slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", corrupt, "failures", len(failures), "code", diag.CodeDoctorRepairFailed)
 		return fmt.Errorf("doctor --repair: %d repair action(s) failed", len(failures))
 	}
 	if corrupt {
+		slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
 		return errors.New("doctor --repair: corrupt ownership state or aggregate file")
 	}
+	slog.Info("doctor repair execution complete", "repo_root", repoRoot, "status", "success")
 	return nil
 }
 
@@ -557,21 +583,27 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 		var adopt []int
 		for i, candidate := range file.Adoptions {
 			if opts.yes {
+				logDoctorRepairDecision(file, "adopt", "authorized", candidate.EntryKind(), candidate.Identity(), "--yes")
 				adopt = append(adopt, i)
 				continue
 			}
 			prompt := fmt.Sprintf("  adopt %s %q in %s? [y/N] ", candidate.EntryKind(), candidate.Identity(), file.Rel)
 			ok, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
+				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "adopt", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
 				break
 			}
 			if ok {
+				logDoctorRepairDecision(file, "adopt", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 				adopt = append(adopt, i)
+			} else {
+				logDoctorRepairDecision(file, "adopt", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 			}
 		}
 		if len(adopt) > 0 {
 			if _, err := file.Adopt(adopt); err != nil {
+				slog.Error("doctor repair action failed", "target", file.Target, "file", file.Rel, "action", "adopt", "entries", len(adopt), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("adopt %d entr(y/ies) in %s: %w", len(adopt), file.Rel, err))
 			} else if _, err := fmt.Fprintf(out, "  adopted %d entr(y/ies) in %s\n", len(adopt), file.Rel); err != nil {
 				failures = append(failures, err)
@@ -587,12 +619,14 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 					candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
 					failures = append(failures, err)
 				}
+				logDoctorRepairDecision(file, "replace", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
 			prompt := fmt.Sprintf("  replace %s %q in %s with the generated entry? this deletes the existing value [y/N] ",
 				candidate.EntryKind(), candidate.Identity(), file.Rel)
 			confirmed, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
+				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "replace", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
 				break
 			}
@@ -602,9 +636,12 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 					candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
 					failures = append(failures, err)
 				}
+				logDoctorRepairDecision(file, "replace", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
+			logDoctorRepairDecision(file, "replace", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.ReplaceConflict(i, true); err != nil {
+				slog.Error("doctor repair action failed", "target", file.Target, "file", file.Rel, "action", "replace", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("replace %s %q in %s: %w", candidate.EntryKind(), candidate.Identity(), file.Rel, err))
 				continue
 			}
@@ -621,11 +658,13 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 					candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
 					failures = append(failures, err)
 				}
+				logDoctorRepairDecision(file, "remove", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
 			prompt := fmt.Sprintf("  remove %s %q from %s? this deletes the entry [y/N] ", candidate.EntryKind(), candidate.Identity(), file.Rel)
 			confirmed, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
+				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "remove", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
 				break
 			}
@@ -635,9 +674,12 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				if _, err := fmt.Fprintf(out, "  declined: %s %q in %s left unchanged\n", candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
 					failures = append(failures, err)
 				}
+				logDoctorRepairDecision(file, "remove", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
+			logDoctorRepairDecision(file, "remove", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.RemoveOrphan(i, true); err != nil {
+				slog.Error("doctor repair action failed", "target", file.Target, "file", file.Rel, "action", "remove", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("remove %s %q from %s: %w", candidate.EntryKind(), candidate.Identity(), file.Rel, err))
 				continue
 			}
@@ -647,6 +689,12 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 		}
 	}
 	return failures
+}
+
+func logDoctorRepairDecision(file *materialize.RepairFile, action, decision, kind, identity, authorization string) {
+	slog.Info("doctor repair decision",
+		"target", file.Target, "file", file.Rel, "action", action, "decision", decision,
+		"kind", kind, "identity", identity, "authorization", authorization)
 }
 
 // confirmPrompt asks one yes/no question. Anything that is not an explicit

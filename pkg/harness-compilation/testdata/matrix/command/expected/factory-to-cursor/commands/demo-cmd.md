@@ -1,5 +1,5 @@
 ---
 name: demo-cmd
-description: 
+description: ''
 ---
 Run the demo command.

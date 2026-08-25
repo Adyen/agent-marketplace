@@ -8,6 +8,10 @@
         "Read",
         "Grep"
       ]
+    },
+    {
+      "description": "Portable agent for golden testing",
+      "name": "portable-agent"
     }
   ],
   "skills": [

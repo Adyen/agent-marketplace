@@ -471,7 +471,7 @@ func TestDevinRunAcquiresOncePerRootNotOncePerFile(t *testing.T) {
 	var mu sync.Mutex
 	var acquired, reentered int
 	var maxDepth int
-	devinLockAcquisitionHook = func(ev ownership.LockEvent) {
+	ownedAggregateLockAcquisitionHook = func(ev ownership.LockEvent) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch ev.Kind {
@@ -484,7 +484,7 @@ func TestDevinRunAcquiresOncePerRootNotOncePerFile(t *testing.T) {
 			maxDepth = ev.Depth
 		}
 	}
-	t.Cleanup(func() { devinLockAcquisitionHook = nil })
+	t.Cleanup(func() { ownedAggregateLockAcquisitionHook = nil })
 
 	resolved := []resolver.ResolvedArtifact{
 		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
@@ -631,7 +631,7 @@ func TestDevinLockReporterSeverities(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".devin")
 
 	t.Run("a long wait is one Info diagnostic naming the root", func(t *testing.T) {
-		r := newDevinLockReporter(key, root)
+		r := newOwnedAggregateLockReporter(key, root)
 		r.observe(ownership.LockEvent{Kind: ownership.LockContended, Attempts: 1})
 		r.observe(ownership.LockEvent{Kind: ownership.LockAcquired, Waited: 2 * time.Second, Attempts: 9})
 		r.observe(ownership.LockEvent{Kind: ownership.LockReentered, Depth: 2})
@@ -650,7 +650,7 @@ func TestDevinLockReporterSeverities(t *testing.T) {
 	})
 
 	t.Run("a few milliseconds of contention is not reported", func(t *testing.T) {
-		r := newDevinLockReporter(key, root)
+		r := newOwnedAggregateLockReporter(key, root)
 		r.observe(ownership.LockEvent{Kind: ownership.LockContended, Attempts: 1})
 		r.observe(ownership.LockEvent{Kind: ownership.LockAcquired, Waited: 3 * time.Millisecond, Attempts: 2})
 		if diags := r.diags(); len(diags) != 0 {
@@ -659,7 +659,7 @@ func TestDevinLockReporterSeverities(t *testing.T) {
 	})
 
 	t.Run("an uncontended acquisition reports nothing", func(t *testing.T) {
-		r := newDevinLockReporter(key, root)
+		r := newOwnedAggregateLockReporter(key, root)
 		r.observe(ownership.LockEvent{Kind: ownership.LockAcquired, Attempts: 1})
 		r.observe(ownership.LockEvent{Kind: ownership.LockReleased})
 		if diags := r.diags(); len(diags) != 0 {
@@ -668,7 +668,7 @@ func TestDevinLockReporterSeverities(t *testing.T) {
 	})
 
 	t.Run("a degraded root warns once, not once per mutation", func(t *testing.T) {
-		r := newDevinLockReporter(key, root)
+		r := newOwnedAggregateLockReporter(key, root)
 		for i := 0; i < 4; i++ {
 			r.observe(ownership.LockEvent{Kind: ownership.LockUnsupported, Attempts: 1})
 		}
@@ -723,7 +723,7 @@ func TestDevinBackupOnlyFailureKeepsTheCodedErrorsOwnCode(t *testing.T) {
 	// held elsewhere. Run's own outer session would refuse before reaching it.
 	key := outputKey{target: hcc.TargetDevin, machineScope: false}
 	out := reconcileDevinAggregateFile(store, key, projectRoot, harness.DevinMcpConfigFile,
-		[]devinEntry{}, false, false)
+		[]ownedJSONEntry{}, false, false)
 
 	var backupCoded, malformedSeen bool
 	for _, d := range out.diags {

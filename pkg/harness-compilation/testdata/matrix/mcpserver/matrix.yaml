@@ -171,3 +171,83 @@ cells:
       class: identity
       diagnostics:
         - ingest.windsurf.bundle-manifest-synthesized
+    - from: claude
+      to: codex
+      class: cross
+      allowedLosses:
+        - env
+    - from: cursor
+      to: codex
+      class: cross
+      allowedLosses:
+        - env
+    - from: devin
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - ingest.devin.mcp-env-normalized
+      allowedLosses:
+        - env
+    - from: factory
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+      allowedLosses:
+        - env
+    - from: gemini
+      to: codex
+      class: cross
+      allowedLosses:
+        - env
+    - from: windsurf
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - env
+    - from: codex
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+    - from: codex
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+    - from: codex
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+      allowedLosses:
+        - env
+    - from: codex
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+    - from: codex
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+    - from: codex
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+        - mcp.security-restriction-unsupported
+    - from: codex
+      to: codex
+      class: identity
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized

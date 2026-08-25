@@ -88,6 +88,7 @@ func TestMigratePreservesUserAndRepoHarnesses(t *testing.T) {
 	writeV2Config(t, userPath, `apiVersion: agent-marketplace/v2
 harnesses:
   - factory
+  - codex
 `)
 
 	writeV2Config(t, repoPath, `apiVersion: agent-marketplace/v2
@@ -107,8 +108,8 @@ registries:
 	if len(errs) > 0 {
 		t.Fatalf("expected valid migrated user config: %v", errors.Join(errs...))
 	}
-	if !equalStrings(userCfg.Harnesses, []string{"factory"}) {
-		t.Fatalf("expected user harnesses preserved as [factory], got %v", userCfg.Harnesses)
+	if !equalStrings(userCfg.Harnesses, []string{"factory", "codex"}) {
+		t.Fatalf("expected user harnesses preserved as [factory codex], got %v", userCfg.Harnesses)
 	}
 
 	repoCfg, errs := loadV3Config([]byte(readConfigString(t, repoPath)), repoLayer, false)
