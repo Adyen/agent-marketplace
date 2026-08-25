@@ -65,7 +65,7 @@ func TestE2ECodexCustomHomeAndNativeDetectionDoNotRequireExecutable(t *testing.T
 			t.Fatal(err)
 		}
 
-		result := runAMInTTY(t, env, "init", "", "Use these?", "y\n")
+		result := runAMInTTY(t, env, "init", "", "Use these?", "y\nn\n")
 		if result.ExitCode != 0 || !strings.Contains(result.Combined, "Detected harnesses: codex") {
 			t.Fatalf("init did not detect resolved CODEX_HOME (exit=%d):\n%s", result.ExitCode, result.Combined)
 		}
@@ -80,7 +80,7 @@ func TestE2ECodexCustomHomeAndNativeDetectionDoNotRequireExecutable(t *testing.T
 			t.Fatal(err)
 		}
 
-		result := runAMInTTY(t, env, "init", "", "Enter comma-separated harnesses:", "codex\n")
+		result := runAMInTTY(t, env, "init", "", "Enter comma-separated harnesses:", "codex\nn\n")
 		if result.ExitCode != 0 || !strings.Contains(result.Combined, "No harnesses detected.") {
 			t.Fatalf("init treated shared .agents as installation evidence (exit=%d):\n%s", result.ExitCode, result.Combined)
 		}
