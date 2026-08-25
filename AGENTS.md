@@ -86,7 +86,7 @@ Run QA-only driver and contract self-tests with `make tui-qa-check`, trusted nat
 
 ## E2E Test Suite
 
-The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. They run directly in CI through `make marketplace-gate`; local runs can optionally use a Docker container for host isolation.
 
 There are **two types** of E2E tests:
 
@@ -96,9 +96,9 @@ There are **two types** of E2E tests:
 ### Running
 
 ```bash
-make e2e                    # run locally inside Docker
-E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
-E2E_PARALLEL=8 make e2e     # control concurrency (default 4, set to 1 for serial)
+make e2e                  # runs inside Docker (isolated from host env)
+E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
+E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
 ### Architecture

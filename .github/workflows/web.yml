@@ -52,8 +52,10 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      - name: Browser E2E release gate
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Install Chromium
+        run: pnpm run e2e:install
+
+      - name: Browser E2E gate
         env:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ vars.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }}
           AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}

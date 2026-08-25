@@ -5,6 +5,7 @@ const notesDigest = `sha256:${'f'.repeat(64)}`
 const configDigest = `sha256:${'1'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
 const mockURL = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '4311'}`
+const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
 
 function searchResult() {
@@ -67,6 +68,19 @@ test.describe('Marketplace browser discovery', () => {
     await expect(card.getByRole('link', { name: 'secure-review', exact: true })).toHaveAttribute('href', /\/s\/team-tools\/skill\/secure-review$/)
   })
 
+  test('keeps browser routes Nuxt-owned while the API remains API-only', async ({ page, request }) => {
+    const apiLatest = await request.get(`${mockURL}/s/team-tools/skill/secure-review`)
+    expect(apiLatest.status()).toBe(404)
+    expect(apiLatest.headers()['content-type']).toContain('application/json')
+
+    const latest = await page.goto('/s/team-tools/skill/secure-review')
+    expect(latest?.status()).toBe(200)
+    expect(latest?.headers()['content-type']).toContain('text/html')
+    const exact = await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+    expect(exact?.status()).toBe(200)
+    expect(exact?.headers()['content-type']).toContain('text/html')
+  })
+
   test('follows a latest resource link and exposes an exact install pin', async ({ page }) => {
     await page.goto('/')
     await page.getByRole('link', { name: 'secure-review', exact: true }).click()
@@ -74,7 +88,9 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(/\/s\/team-tools\/skill\/secure-review$/)
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
-    await expect(page.locator('code')).toContainText(`/revisions/${encodeURIComponent(digest)}`)
+    await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
+    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
     await expect(page.getByText('No findings were reported for this revision.', { exact: true })).toBeVisible()
   })
 
