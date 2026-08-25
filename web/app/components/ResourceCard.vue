@@ -19,7 +19,7 @@ const actionsAvailable = computed(() => Boolean(browserUrl.value && command.valu
 </script>
 
 <template>
-  <article class="group flex min-h-full flex-col rounded-2xl border border-default bg-default p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none">
+  <article class="group flex min-h-full flex-col rounded-2xl border border-default bg-default p-5 shadow-sm transition motion-safe:hover:-translate-y-0.5 hover:shadow-md motion-reduce:transition-none">
     <div class="flex items-start justify-between gap-4">
       <div class="flex min-w-0 items-center gap-3">
         <div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden="true">

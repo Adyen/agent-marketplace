@@ -4,8 +4,9 @@ import { describe, expect, it } from 'vitest'
 import ResourceDetailView from '../../app/components/ResourceDetailView.vue'
 
 const stubs = {
+  NuxtLink: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(props, { attrs, slots }) { return () => h('a', { ...attrs, href: String(props.to) }, slots.default?.()) } }),
   UIcon: defineComponent({ setup: () => () => h('span') }),
-  UBadge: defineComponent({ setup(_, { slots }) { return () => h('span', slots.default?.()) } }),
+  UBadge: defineComponent({ setup(_, { attrs, slots }) { return () => h('span', attrs, slots.default?.()) } }),
   UButton: defineComponent({ setup(_, { attrs, slots }) { return () => h('button', attrs, slots.default?.()) } }),
 }
 
@@ -17,7 +18,7 @@ const resource = {
   acquisition: 'mirror',
   license: 'Apache-2.0',
   provenance: { repository: 'https://example.test/repo', commit: 'a'.repeat(40) },
-  findings: [{ severity: 'low', message: '<script>not markup</script>' }],
+  findings: [{ code: 'metadata-check', severity: 'low', policy: 'content-policy', message: '<script>not markup</script>' }],
 }
 
 describe('ResourceDetailView', () => {
@@ -36,8 +37,29 @@ describe('ResourceDetailView', () => {
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.find('[aria-live="polite"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Severity: low')
+    expect(wrapper.text()).toContain('Policy: content-policy')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.findAll('h2').length).toBeGreaterThan(1)
+  })
+
+  it('renders exact digest revision links and preserves revoked history state', () => {
+    const previousDigest = 'sha256:' + 'd'.repeat(64)
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        revisions: [
+          { ...resource, content_digest: previousDigest, revocation: { reason: 'policy' } },
+        ],
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain(previousDigest)
+    expect(wrapper.get(`a[href="https://market.example/s/source/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
+    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Revoked')
+    expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Current')
   })
 
   it('renders only sanitized Markdown and an escaped raw view from the inspection projection', () => {
@@ -48,7 +70,7 @@ describe('ResourceDetailView', () => {
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
-          findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: '<script>finding</script>' }],
+          findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: '<script>finding</script>' }],
         },
         primaryContent: '# Hello\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert(1)</script>',
       },
@@ -61,7 +83,11 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('evil.invalid')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('href="https://example.com/docs"')
     expect(wrapper.get('[data-testid="escaped-raw"]').html()).toContain('&lt;script&gt;')
+    expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference (warn)')
+    expect(wrapper.get('a[href="#finding-highlight-0"]').text()).toBe('View highlighted range')
     expect(wrapper.text()).toContain('remote-reference')
+    expect(wrapper.text()).toContain('Severity: warn')
+    expect(wrapper.text()).toContain('Policy: network-policy')
     expect(wrapper.text()).toContain('SKILL.md:1-2')
   })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { escapeRawText, renderSafeMarkdown } from '../../app/lib/markdown'
+import { escapeRawText, highlightEscapedRawText, renderSafeMarkdown } from '../../app/lib/markdown'
 
 describe('safe Markdown rendering', () => {
   it('never activates raw script tags or event handlers', () => {
@@ -46,7 +46,15 @@ describe('safe Markdown rendering', () => {
     expect(html).toContain('<strong>two</strong>')
     expect(html).toContain('<code>inline</code>')
     expect(html).toContain('<pre><code>const value = "&lt;safe&gt;"')
-    expect(html).toContain('<a href="https://example.com/docs" title="Docs">docs</a>')
+    expect(html).toContain('<a href="https://example.com/docs" title="Docs" target="_blank" rel="noopener noreferrer">docs</a>')
+  })
+
+  it('marks valid finding byte ranges only after escaping raw content', () => {
+    const html = highlightEscapedRawText('safe <script>alert(1)</script>', [{ index: 2, startByte: 5, endByte: 13, label: 'remote-reference (warn)' }])
+    expect(html).toContain('<mark id="finding-highlight-2" tabindex="-1" aria-label="Finding highlight: remote-reference (warn)">')
+    expect(html).toContain('&lt;')
+    expect(html).not.toContain('<script>')
+    expect(highlightEscapedRawText('safe', [{ index: 0, startByte: 1, endByte: 99 }])).toBe('safe')
   })
 
   it('escapes raw text without interpreting it as Markdown or HTML', () => {
