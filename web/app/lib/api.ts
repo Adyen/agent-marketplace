@@ -1,5 +1,6 @@
 import type {
   ApiFetcher,
+  InspectionFile,
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
@@ -83,9 +84,15 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
       fetcher<unknown>(resourceRevisionPath(apiBase, source, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { source, kind, name, contentDigest: revision })),
     getResourceInspection: (source: string, kind: ResourceKind, name: string, revision: string) =>
       fetcher<unknown>(resourceInspectionPath(apiBase, source, kind, name, revision)).then(payload => normalizeInspectionManifest(payload, { source, kind, name, contentDigest: revision })),
-    getResourceInspectionContent: (source: string, kind: ResourceKind, name: string, revision: string) =>
-      fetcher<string>(resourceInspectionContentPath(apiBase, source, kind, name, revision)),
+    getResourceInspectionContent: (source: string, kind: ResourceKind, name: string, revision: string, mediaType: InspectionFile['media_type'] = 'text/plain') =>
+      fetcher<string | Blob>(resourceInspectionContentPath(apiBase, source, kind, name, revision), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
+    getResourceInspectionFile: (source: string, kind: ResourceKind, name: string, revision: string, digest: string, mediaType?: InspectionFile['media_type']) =>
+      fetcher<string | Blob>(resourceInspectionFilePath(apiBase, source, kind, name, revision, digest), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
   }
+}
+
+export function isRasterMediaType(value: string | undefined): boolean {
+  return value === 'image/png' || value === 'image/jpeg' || value === 'image/gif' || value === 'image/webp'
 }
 
 export function isResourceKind(value: string): value is ResourceKind {
@@ -114,6 +121,10 @@ export function resourceInspectionPath(apiBase: string | undefined, source: stri
 
 export function resourceInspectionContentPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
   return `${resourceInspectionPath(apiBase, source, kind, name, revision)}/content`
+}
+
+export function resourceInspectionFilePath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string, digest: string): string {
+  return `${resourceInspectionContentPath(apiBase, source, kind, name, revision)}/${encodeURIComponent(digest)}`
 }
 
 function hasUnsafeURLCharacters(value: string): boolean {

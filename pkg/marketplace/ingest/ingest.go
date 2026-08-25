@@ -4,11 +4,14 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -160,24 +163,19 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
 			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
-			if entry.Kind == hccir.KindSkill && !r.Rejected {
-				skill, ok := entry.Resource.(*hccir.Skill)
-				if !ok {
-					return rev, fmt.Errorf("skill %q has unexpected resource type %T", entry.Name, entry.Resource)
-				}
-				projection, err := inspection.Build(
-					store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: kind, Name: entry.Name},
-					r.ContentDigest, skillBodyBytes(skill), files, r.Findings,
-					limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
-				)
-				if err != nil {
-					return rev, fmt.Errorf("inspection projection for skill %q: %w", entry.Name, err)
-				}
-				inspectionDigests[key] = projection.Manifest.ManifestDigest
-				inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
-				for digest, data := range projection.Bodies {
-					inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
-				}
+			primary, projectionSupport := inspectionInput(entry.Resource, r, files)
+			projection, err := inspection.Build(
+				store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: kind, Name: entry.Name},
+				r.ContentDigest, primary, projectionSupport, r.Findings,
+				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+			)
+			if err != nil {
+				return rev, fmt.Errorf("inspection projection for %s %q: %w", kind, entry.Name, err)
+			}
+			inspectionDigests[key] = projection.Manifest.ManifestDigest
+			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
+			for digest, data := range projection.Bodies {
+				inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
 			}
 			processedResults = append(processedResults, p)
 			resourceResults[key] = p
@@ -323,6 +321,21 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		r.ManifestPayload, r.ManifestDigest, r.ContentDigest = manifestPayload, manifestDigest, manifestDigest
 		r.Artifact.Manifest.ContentDigest = manifestDigest
 		r.Artifact.Payload = manifestPayload
+		primary, projectionSupport := inspectionInput(entry.Resource, r, nil)
+		projection, err := inspection.Build(
+			store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: "collection", Name: entry.Name},
+			r.ContentDigest, primary, projectionSupport, r.Findings,
+			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+		)
+		if err != nil {
+			return artifact.BuildResult{}, nil, fmt.Errorf("inspection projection for collection %q: %w", name, err)
+		}
+		key := "collection/" + entry.Name
+		inspectionDigests[key] = projection.Manifest.ManifestDigest
+		inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
+		for digest, data := range projection.Bodies {
+			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
+		}
 		collectionCache[name] = resolvedCollection{result: r, leaves: leaves}
 		return r, leaves, nil
 	}
@@ -539,11 +552,115 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 	}
 }
 
-func skillBodyBytes(skill *hccir.Skill) []byte {
-	if skill == nil {
+// inspectionInput turns the typed IR into the stable primary document used by
+// the inspection projection. Source paths are intentionally not used here:
+// projections must be identical for mirror and index-only acquisition.
+func inspectionInput(resource hccir.Resource, result artifact.BuildResult, files analyze.FileSet) ([]byte, analyze.FileSet) {
+	support := files
+	switch r := resource.(type) {
+	case *hccir.Skill:
+		return []byte(r.Body), support
+	case *hccir.Command:
+		return []byte(r.Body), support
+	case *hccir.Subagent:
+		return []byte(r.Body), support
+	case *hccir.Hook:
+		body := r.Command
+		if body == "" {
+			body = r.Prompt
+		} else if r.Prompt != "" {
+			if support == nil {
+				support = make(analyze.FileSet)
+			}
+			support["prompt.txt"] = []byte(r.Prompt)
+		}
+		return []byte(body), support
+	case *hccir.McpServer:
+		return redactedMCPInspectionPrimary(r), nil
+	case *hccir.Collection:
+		return append([]byte(nil), result.ManifestPayload...), support
+	default:
+		return nil, support
+	}
+}
+
+// redactedMCPInspectionPrimary is deliberately separate from the canonical
+// artifact representation. The latter is used for installation and therefore
+// preserves the complete MCP configuration, including secret values. An
+// inspection projection is public, so it may contain identity and key names but
+// must never contain credentials, environment values, header values, or argv
+// values. Build applies the configured file/total limits to the resulting
+// canonical JSON before it is published.
+func redactedMCPInspectionPrimary(server *hccir.McpServer) []byte {
+	if server == nil {
+		return []byte(`{"name":""}`)
+	}
+
+	primary := struct {
+		Name                string   `json:"name"`
+		Command             string   `json:"command,omitempty"`
+		ArgumentCount       int      `json:"argument_count,omitempty"`
+		URLOrigin           string   `json:"url_origin,omitempty"`
+		Transport           string   `json:"transport,omitempty"`
+		EnvironmentKeys     []string `json:"environment_keys,omitempty"`
+		HeaderKeys          []string `json:"header_keys,omitempty"`
+		OAuthClientID       string   `json:"oauth_client_id,omitempty"`
+		OAuthResourceOrigin string   `json:"oauth_resource_origin,omitempty"`
+		Disabled            *bool    `json:"disabled,omitempty"`
+	}{
+		Name:                server.Name(),
+		Command:             executableIdentity(server.Command),
+		ArgumentCount:       len(server.Args),
+		URLOrigin:           safeURLOrigin(server.URL),
+		Transport:           server.Transport,
+		EnvironmentKeys:     sortedStringKeys(server.Env),
+		HeaderKeys:          sortedStringKeys(server.Headers),
+		OAuthClientID:       server.OAuthClientID,
+		OAuthResourceOrigin: safeURLOrigin(server.OAuthResource),
+	}
+	if server.DisabledSet {
+		primary.Disabled = &server.Disabled
+	}
+	data, err := json.Marshal(primary)
+	if err != nil {
+		// All fields above are JSON primitives or strings, so this is not
+		// expected. Keep a safe valid primary if a future field changes that.
+		return []byte(`{"name":""}`)
+	}
+	return data
+}
+
+func sortedStringKeys(values map[string]string) []string {
+	if len(values) == 0 {
 		return nil
 	}
-	return []byte(skill.Body)
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func executableIdentity(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	// Command lines may contain shell snippets or inline credentials. Only the
+	// executable token is useful identity and it cannot expose trailing argv.
+	return fields[0]
+}
+
+func safeURLOrigin(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	// Userinfo, path, query, and fragment can all carry bearer tokens or other
+	// credentials. Scheme and authority are sufficient to identify the endpoint
+	// without copying attacker-controlled URL values into a public projection.
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func supportFileDigests(files analyze.FileSet) map[string]string {

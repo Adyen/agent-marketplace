@@ -37,8 +37,12 @@ const (
 	defaultFileBytes          = 2 * 1024 * 1024
 	defaultArtifactBytes      = 16 * 1024 * 1024
 	defaultCloneDuration      = 5 * time.Minute
-	defaultIngestionDuration  = 2 * time.Minute
-	defaultMaxFindings        = 1000
+
+	// DefaultArtifactBytes is the default maximum size for a published artifact
+	// and its digest-addressed manifest payloads.
+	DefaultArtifactBytes     = defaultArtifactBytes
+	defaultIngestionDuration = 2 * time.Minute
+	defaultMaxFindings       = 1000
 )
 
 var (

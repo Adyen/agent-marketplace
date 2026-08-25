@@ -1,5 +1,5 @@
 import { defineComponent, h } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ResourceDetailView from '../../app/components/ResourceDetailView.vue'
 
@@ -50,17 +50,95 @@ describe('ResourceDetailView', () => {
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
           findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: '<script>finding</script>' }],
         },
-        primaryContent: '# Hello\n\n[remote](javascript:alert(1))\n\n<script>alert(1)</script>',
+        primaryContent: '# Hello\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert(1)</script>',
       },
       global: { stubs },
     })
 
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('<h1>Hello</h1>')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<script>')
-    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('href="javascript:')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<img')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('evil.invalid')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('href="https://example.com/docs"')
     expect(wrapper.get('[data-testid="escaped-raw"]').html()).toContain('&lt;script&gt;')
     expect(wrapper.text()).toContain('remote-reference')
     expect(wrapper.text()).toContain('SKILL.md:1-2')
+  })
+
+  it('lazily fetches selected text files by exact digest and reports unavailable files', async () => {
+    const primaryDigest = digest
+    const notesDigest = 'sha256:' + 'd'.repeat(64)
+    const configDigest = 'sha256:' + 'e'.repeat(64)
+    const unavailableDigest = 'sha256:' + 'f'.repeat(64)
+    const calls: Array<{ path: string; digest: string }> = []
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          files: [
+            { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: 10, inspection_class: 'text' },
+            { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: 20, inspection_class: 'text' },
+            { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: 20, inspection_class: 'text' },
+            { path: 'support/tool.bin', content_digest: unavailableDigest, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
+            { path: 'support/missing.txt', content_digest: 'sha256:' + 'b'.repeat(64), media_type: 'text/plain', size: 4, inspection_class: 'text' },
+          ],
+        },
+        primaryContent: '# Primary',
+        loadInspectionFile: async file => {
+          calls.push({ path: file.path, digest: file.content_digest })
+          if (file.path.endsWith('notes.md')) return '# Notes\n\n<script>removed</script>'
+          if (file.path.endsWith('config.json')) return '{"value":"<script>escaped</script>"}'
+          throw new Error('unavailable')
+        },
+      },
+      global: { stubs },
+    })
+
+    const selector = wrapper.get('select[aria-label="Inspection file"]')
+    expect(selector.element.value).toBe(primaryDigest)
+    expect(calls).toEqual([])
+
+    await selector.setValue(notesDigest)
+    await flushPromises()
+    expect(calls).toEqual([{ path: 'support/notes.md', digest: notesDigest }])
+    expect(wrapper.get('[data-testid="safe-markdown"]').text()).toContain('Notes')
+    expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<script>')
+
+    await selector.setValue(configDigest)
+    await flushPromises()
+    expect(calls.at(-1)).toEqual({ path: 'support/config.json', digest: configDigest })
+    expect(wrapper.find('[data-testid="safe-markdown"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="escaped-selected-raw"]').html()).toContain('&lt;script&gt;')
+    expect(wrapper.find('script').exists()).toBe(false)
+
+    await selector.setValue('sha256:' + 'b'.repeat(64))
+    await flushPromises()
+    expect(wrapper.get('[role="status"]').text()).toContain('unavailable')
+    expect(wrapper.find('script').exists()).toBe(false)
+  })
+
+  it('shows all-kind metadata without rendering SVG or binary bodies', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, coordinate: { ...resource.coordinate, kind: 'command', name: 'build' } },
+        source: 'source', kind: 'command', name: 'build', canonicalUrl: 'https://market.example', apiBase: '/',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'command', name: 'build' }, revision_digest: digest, primary_path: 'COMMAND.md',
+          files: [
+            { path: 'COMMAND.md', content_digest: digest, media_type: 'text/plain', size: 4, inspection_class: 'text' },
+            { path: 'support/diagram.svg', content_digest: 'sha256:' + 'd'.repeat(64), media_type: 'application/octet-stream', size: 12, inspection_class: 'metadata' },
+          ],
+        },
+        primaryContent: 'make',
+      },
+      global: { stubs },
+    })
+    expect(wrapper.text()).toContain('COMMAND.md')
+    expect(wrapper.text()).toContain('Binary metadata (not rendered)')
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(wrapper.find('svg').exists()).toBe(false)
   })
 
   it('announces revoked content and keeps copy controls keyboard accessible', () => {

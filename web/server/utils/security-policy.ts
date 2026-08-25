@@ -7,12 +7,15 @@ export const basePolicy = [
   "frame-ancestors 'none'",
   "form-action 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
   "font-src 'self' data:",
 ]
 
 export function generateCspNonce() {
   return randomBytes(16).toString('base64url')
+}
+
+export function imagePolicy(sources: string[]) {
+  return `img-src ${sources.join(' ')}`
 }
 
 export function scriptPolicy(nonce: string) {

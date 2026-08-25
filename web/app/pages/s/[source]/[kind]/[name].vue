@@ -3,9 +3,11 @@ import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
 import { resourceAsyncDataKey, routeParam } from '~/lib/routes'
+import type { InspectionFile } from '~/types/marketplace'
 
 const route = useRoute()
 const api = useMarketplaceApi()
+const runtimeConfig = useRuntimeConfig()
 
 const source = routeParam(route.params.source, 'source')
 const kindValue = routeParam(route.params.kind, 'resource kind')
@@ -22,14 +24,22 @@ const revision = computed(() => resource.value?.content_digest ?? '')
 const { data: inspection } = await useAsyncData(
   `marketplace-inspection:${source}:${kind}:${name}:${revision.value}`,
   () => api.getResourceInspection(source, kind, name, revision.value),
-  { immediate: kind === 'skill' && Boolean(revision.value) },
+  { immediate: Boolean(revision.value) },
 )
-const { data: primaryContent } = await useAsyncData(
+const { data: primaryContent } = await useAsyncData<string | undefined>(
   `marketplace-inspection-content:${source}:${kind}:${name}:${revision.value}`,
-  () => api.getResourceInspectionContent(source, kind, name, revision.value),
-  { immediate: kind === 'skill' && Boolean(revision.value) },
+  () => {
+    const primary = inspection.value?.files.find(file => file.path === inspection.value?.primary_path)
+    if (!primary || primary.inspection_class === 'image' || primary.inspection_class === 'metadata') return Promise.resolve(undefined)
+    return api.getResourceInspectionContent(source, kind, name, revision.value, primary.media_type) as Promise<string>
+  },
+  { immediate: Boolean(revision.value) },
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
+
+function loadInspectionFile(file: InspectionFile): Promise<string | Blob> {
+  return api.getResourceInspectionFile(source, kind, name, revision.value, file.content_digest, file.media_type)
+}
 
 function retry() {
   refresh()
@@ -62,7 +72,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :inspection="inspection" :primary-content="primaryContent" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" />
     </main>
   </div>
 </template>

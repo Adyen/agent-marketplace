@@ -3,6 +3,10 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,9 +15,15 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
+	marketplaceapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
 func TestBuildSourceRevision(t *testing.T) {
@@ -80,6 +90,141 @@ func TestBuildSourceRevision(t *testing.T) {
 			t.Fatalf("source revision manifest exposed %q: %s", field, rev.ManifestPayload)
 		}
 	}
+}
+
+func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
+	const (
+		envSecret    = "mcp-env-secret-7f2a"
+		headerSecret = "mcp-header-secret-91bd"
+		argSecret    = "mcp-arg-secret-c4e8"
+		oauthSecret  = "mcp-oauth-secret-d03c"
+		urlSecret    = "mcp-url-secret-a62f"
+	)
+	mcp := hccir.NewMcpServerWithOptions(
+		"hostile",
+		"node --token "+argSecret,
+		[]string{"--token", argSecret},
+		map[string]string{"API_TOKEN": envSecret},
+		nil,
+		hccir.SourceRef{},
+		hccir.WithMcpURL("https://mcp.example.invalid/server?access_token="+urlSecret),
+		hccir.WithMcpTransport("streamable-http"),
+		hccir.WithMcpHeaders(map[string]string{"Authorization": "Bearer " + headerSecret}),
+		hccir.WithMcpOAuth("public-client", oauthSecret, "https://mcp.example.invalid/resource?token="+urlSecret),
+	)
+	report, err := analyze.NewEngine().Analyze(context.Background(), mcp, nil, analyze.DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range report.Findings {
+		for _, secret := range []string{envSecret, headerSecret, argSecret, oauthSecret, urlSecret} {
+			if strings.Contains(finding.Message, secret) {
+				t.Fatalf("MCP finding exposed hostile secret %q: %#v", secret, finding)
+			}
+		}
+	}
+
+	// Establish that the installation artifact intentionally retains the full
+	// configuration; inspection must not accidentally reuse this payload.
+	artifact, err := hccartifact.FromIR(mcp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{envSecret, headerSecret, argSecret, oauthSecret, urlSecret} {
+		if !strings.Contains(string(artifact.Payload), secret) {
+			t.Fatalf("fixture artifact did not contain hostile secret %q", secret)
+		}
+	}
+
+	primary, support := inspectionInput(mcp, marketplaceartifact.BuildResult{Artifact: artifact}, nil)
+	projection, err := inspection.Build(
+		store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: "mcpserver", Name: "hostile"},
+		"sha256:"+strings.Repeat("a", 64), primary, support, nil, 10, 4096, 8192,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(primary), `"environment_keys":["API_TOKEN"]`) || !strings.Contains(string(primary), `"header_keys":["Authorization"]`) {
+		t.Fatalf("redacted primary omitted safe keys: %s", primary)
+	}
+	if strings.Contains(string(primary), "node --token") || strings.Contains(string(primary), "argument_count") && strings.Contains(string(primary), argSecret) {
+		t.Fatalf("redacted primary exposed argv: %s", primary)
+	}
+	assertNoMCPSecrets := func(where string, values ...[]byte) {
+		t.Helper()
+		for _, value := range values {
+			text := string(value)
+			for _, secret := range []string{envSecret, headerSecret, argSecret, oauthSecret, urlSecret} {
+				if strings.Contains(text, secret) {
+					t.Fatalf("%s exposed hostile MCP secret %q: %s", where, secret, text)
+				}
+			}
+		}
+	}
+	assertNoMCPSecrets("inspection primary", primary)
+	assertNoMCPSecrets("inspection manifest", projection.Payload)
+	for digest, body := range projection.Bodies {
+		assertNoMCPSecrets("inspection body "+digest, body)
+	}
+
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	blobs := fsblob.New(t.TempDir())
+	source := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.invalid/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
+	if err := meta.PutSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.invalid"}); err != nil {
+		t.Fatal(err)
+	}
+	for digest, body := range projection.Bodies {
+		if err := blobs.Put(ctx, store.ArchiveDigest(digest), body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := blobs.Put(ctx, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload); err != nil {
+		t.Fatal(err)
+	}
+	revision := "sha256:" + strings.Repeat("a", 64)
+	coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "hostile"}
+	if err := meta.PutResourceRevision(ctx, store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previousLogger)
+	server := marketplaceapi.NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, blobs)
+	httpServer := httptest.NewServer(server.PublicHandler())
+	defer httpServer.Close()
+	paths := []string{
+		"/api/v1/resources/source/mcpserver/hostile/revisions/" + revision + "/inspection",
+		"/api/v1/resources/source/mcpserver/hostile/revisions/" + revision + "/inspection/content",
+		"/api/v1/resources/source/mcpserver/hostile/revisions/" + revision,
+		"/api/v1/inspection/sha256/" + strings.TrimPrefix(projection.Manifest.ManifestDigest, "sha256:"),
+		"/api/v1/content/sha256/" + strings.TrimPrefix(inspection.Digest(primary), "sha256:"),
+	}
+	for _, path := range paths {
+		resp, err := http.Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %s", path, resp.StatusCode, data)
+		}
+		assertNoMCPSecrets("API response "+path, data)
+	}
+	assertNoMCPSecrets("log values", logs.Bytes())
 }
 
 func TestBuildSourceRevisionIndexOnly(t *testing.T) {
