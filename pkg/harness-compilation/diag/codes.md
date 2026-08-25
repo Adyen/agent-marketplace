@@ -32,6 +32,7 @@ comparison in non-test code.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `ingest.codex.bundle-manifest-synthesized` | Codex workspace has no bundle manifest; manifest synthesized | Codex bundle metadata is synthesized from the native layout |
 | `subagent.cursor.model-passthrough` | Cursor model not in mapping table; passed through unchanged | Add the model to the mapping table if a Cursor-specific ID exists |
 | `ingest.claude.bundle-manifest-synthesized` | Workspace form has no plugin.json; manifest synthesized | Add a .claude-plugin/plugin.json to the source if a manifest is needed |
 | `ingest.factory.bundle-manifest-synthesized` | Workspace form has no plugin.json; manifest synthesized | Add a .factory-plugin/plugin.json to the source if a manifest is needed |
@@ -66,6 +67,14 @@ comparison in non-test code.
 | `rule.claude.no-primitive` | Claude Code has no rules directory primitive; rule dropped | Claude reads project guidance from CLAUDE.md; reference the rule content there instead |
 | `rule.gemini.no-primitive` | Gemini CLI has no rules directory primitive; rule dropped | Gemini reads project guidance from GEMINI.md; reference the rule content there instead |
 | `rule.devin.unsupported` | Rules are out of scope for the Devin target; no rule artifact was emitted | This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
+| `rule.codex.unsupported` | Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted | Use a supported resource kind or manage AGENTS.md separately |
+| `compile.codex.field-dropped` | A benign IR field has no documented Codex equivalent and was omitted | Remove the field or choose a target that represents it |
+| `subagent.codex.model-dropped` | A Codex-only subagent model was omitted for a non-Codex target | Compile to Codex to preserve the native-only model, or choose a portable canonical model |
+| `subagent.codex.effort-dropped` | A Codex-only subagent reasoning effort was omitted for a non-Codex target | Compile to Codex to preserve the native-only effort, or use a portable canonical effort |
+| `hook.codex.plugin-root-unresolved` | The hook command references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the command resolves, or use an absolute command path |
+| `mcp.codex.plugin-root-unresolved` | An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the value resolves, or use an absolute path |
+| `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
+| `ingest.codex.field-dropped` | A benign native Codex field has no canonical equivalent and was omitted | Remove the field or keep the resource in Codex format |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
@@ -99,9 +108,42 @@ comparison in non-test code.
 | `ownership.lock-unavailable` | This filesystem or platform does not support advisory locking, so ownership mutations for this target root are not serialized against other processes | Concurrent writers on this root can still race; move XDG_STATE_HOME to a local filesystem if two agent-marketplace processes ever run at once |
 | `materialize.devin.hook-satisfied-by-unmanaged` | A handwritten Devin hook is semantically identical to a selected marketplace hook, so no generated entry was added | No action needed; the existing handwritten entry already provides the behaviour and is neither adopted nor duplicated |
 | `materialize.devin.aggregate-prune-postponed` | A resource was skipped this run, so stale owned aggregate entries were not pruned | Fix the reported resource errors and re-run sync; a skipped resource is indistinguishable from a removed one, so pruning would delete valid output |
+| `materialize.codex.hook-satisfied-by-unmanaged` | A handwritten Codex hook is semantically identical to a selected marketplace hook, so no generated entry was added | No action needed; the existing handwritten entry already provides the behaviour and is neither adopted nor duplicated |
+| `materialize.codex.aggregate-prune-postponed` | A Codex resource was skipped this run, so stale owned aggregate entries were not pruned | Fix the reported resource errors and re-run sync; a skipped resource is indistinguishable from a removed one, so pruning would delete valid output |
+| `materialize.codex.aggregate-malformed` | A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found | Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved |
+| `materialize.codex.aggregate-unpatchable` | An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved | Rewrite the server as a standard [mcp_servers.&lt;name&gt;] table or edit it by hand before syncing |
+| `materialize.destination.overlap` | Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused | Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots |
+| `materialize.codex.trust-review` | Repository Codex hooks or MCP configuration changed and may require project trust review | Review or re-approve the repository in Codex before using the changed configuration |
+| `materialize.codex.trust-review-pending` | `sync --check` found a pending repository Codex hooks or MCP change without mutating files or trust state | A later sync may require reviewing or re-approving the repository in Codex |
 | `doctor.devin.version-unsupported` | The installed Devin CLI is older than the 3000.3 compatibility floor | Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output |
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
+
+### Codex diagnostics are evidence-bound and fail closed on authority loss
+
+The Codex catalog entries are tied to the native schemas verified on 2026-08-19:
+[skills](https://developers.openai.com/codex/skills),
+[subagents](https://developers.openai.com/codex/subagents),
+[hooks](https://developers.openai.com/codex/hooks), and
+[MCP](https://developers.openai.com/codex/mcp), with `oauth_resource` verified
+in the [config reference](https://developers.openai.com/codex/config-file/config-reference).
+Their fixture coverage lives in
+`compile/codex/translator_test.go`, `ingest/codex/codex_test.go`, and the Codex
+cells of `testdata/matrix`.
+
+`compile.codex.field-dropped` and `ingest.codex.field-dropped` are warnings only
+for benign metadata loss. Codex-specific `*unsupported` errors and the shared
+`subagent.security-restriction-unsupported` error suppress the affected skill,
+subagent, hook entry, or MCP server when translation would lose a tool/sandbox
+restriction, executable behavior, authentication, transport, or interpolation
+semantics. They never guess an approximation and never suppress an independent
+valid resource.
+
+`materialize.codex.*` codes belong to the consumer-owned reconciliation layer:
+they preserve malformed or unpatchable shared files, refuse duplicate desired
+identities, and report repository trust review without changing Codex trust
+state. Check-only drift uses `materialize.codex.trust-review-pending`; only an
+actual repo hooks/MCP mutation uses `materialize.codex.trust-review`.
 
 ### `rule.devin.unsupported` is a scope decision, not a capability limit
 
@@ -248,7 +290,7 @@ fail-closed errors because they have no safe omission semantics.
 
 **The ingest direction is deliberately not reversed.**
 `ingest.devin.tool-unreversible` stays an error that skips the resource, because
-ingestion writes the harness-neutral IR that all six compilers read, so a
+ingestion writes the harness-neutral IR that all seven compilers read, so a
 rewritten restriction there propagates to targets that do enforce it. Compiling
 to Devin writes only Devin's own artifact. Same field, different blast radius.
 
@@ -492,6 +534,22 @@ key or a hook event name), the resource name, and content digests are reported.
 
 | Code | Summary | Hint |
 |------|---------|------|
+| `materialize.codex.aggregate-malformed` | A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found | Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved |
+| `materialize.codex.aggregate-unpatchable` | An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved | Rewrite the server as a standard [mcp_servers.&lt;name&gt;] table or edit it by hand before syncing |
+| `materialize.destination.overlap` | Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused | Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots |
+| `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
+| `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
+| `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
+| `hook.codex.native-fields-unsupported` | Target cannot preserve native Codex hook execution or context fields; hook suppressed | Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format |
+| `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
+| `mcp.security-restriction-unsupported` | Target cannot preserve native MCP authority or literal semantics; server suppressed | Keep the server in its native format or remove the unsupported security field explicitly |
+| `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
+| `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |
+| `ingest.codex.duplicate-identity` | Duplicate Codex resource identity was suppressed without choosing a winner | Rename one duplicate native resource |
+| `ingest.codex.hook-unsupported` | An unsupported native Codex hook event or handler was skipped | Use a documented Codex event with a command handler |
+| `ingest.codex.mcp-security-unsupported` | Security-sensitive native Codex MCP fields cannot be represented safely | Remove the unsupported restriction or keep the server in Codex format |
+| `ingest.codex.subagent-security-unsupported` | Authority-bearing native Codex subagent fields cannot be represented safely | Remove the unsupported restriction or keep the subagent in Codex format |
+| `materialize.codex.duplicate-identity` | Duplicate desired Codex aggregate identity was suppressed without choosing a winner | Rename one duplicate selected resource |
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |

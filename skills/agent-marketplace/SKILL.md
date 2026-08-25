@@ -45,12 +45,14 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of truth; native harness output is generated, disposable, and recreated by `agent-marketplace sync`. Keep generated harness output out of source control:
+The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of truth for marketplace-managed output; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
 
 ```gitignore
+.agents/skills/
 .factory/
 .claude/
 .cursor/
+.codex/
 .gemini/
 .windsurf/
 .devin/
@@ -59,7 +61,7 @@ The canonical v2 schema materializes native harness files instead of the old def
 ## What the Native Schema Provides
 
 - **Layered target harness set** — project-level `harnesses:` takes precedence; when absent, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
-- **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin]` to compile resources into each harness' layout.
+- **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin, codex]` to compile resources into each harness' layout.
 - **Multi-resource selection** — select `skills`, `commands`, `subagents`, `hooks`, and `mcp` entries from the same registry catalog.
 - **Source harness ingestion** — use `source_harness: claude` when autodetection is not enough; registries are ingested through `harness-compilation`.
 - **Repo and machine scope outputs** — repo config materializes under repo roots like `.factory/`; global config materializes under machine roots like `~/.factory/`.
@@ -76,6 +78,39 @@ Typical native outputs:
 - **Gemini CLI** — `.gemini/skills/<skill>/SKILL.md`
 - **Windsurf** — files under `.windsurf/`
 - **Devin CLI** — `.devin/skills/<skill>/SKILL.md` (repo) and `~/.config/devin/skills/<skill>/SKILL.md` (machine)
+- **Codex** — `.agents/skills/<skill>/SKILL.md` plus `.codex/` subagents and shared configuration
+
+## Codex
+
+Select `codex` in the TUI harness modal (`H`) or add it to the machine-wide
+`harnesses:` list. Existing configs and `migrate` do not opt in automatically.
+
+| Scope | Skill/command root | Subagent/hook/MCP root |
+|---|---|---|
+| Repo | `<repo>/.agents` | `<repo>/.codex` |
+| Machine | `~/.agents` | absolute `$CODEX_HOME`, otherwise `~/.codex` |
+
+In default symlink mode, skills and converted commands are directory symlinks
+at `skills/<name>/`; file mode writes regular directory trees there. Each
+contains `SKILL.md`, and commands carry `x-agent-marketplace-kind: command`.
+Subagents go to `agents/<name>.toml`, hooks to `hooks.json`, and MCP servers to
+`config.toml` under the Codex root.
+`CODEX_HOME` never relocates the `.agents` partition.
+
+Codex is a full conversion target (`convert --from/--to codex`,
+`source_harness: codex`). `convert --to codex` requires a destination without
+pre-existing `.codex/hooks.json` or `.codex/config.toml`; choose a new or empty
+destination rather than overwriting shared configuration. Autodetection
+requires `.codex`; the shared `.agents/skills` layout alone is not
+Codex-specific. Rules, `AGENTS.md` generation, and emitted legacy
+`.codex/prompts` are excluded.
+
+`hooks.json` and `config.toml` are reconciled entry by entry through durable
+ownership state and mandatory backups. Missing or corrupt state preserves every
+existing entry, refuses collisions, and prunes nothing. A repo mutation may
+require Codex project trust review; Agent Marketplace reports it but never
+changes trust state or adds Codex output paths to `.gitignore`. It never
+installs, requires, or probes a Codex executable.
 
 ## Devin
 
@@ -127,7 +162,7 @@ agent-marketplace update --bump                # Bump pinned refs when newer ref
 agent-marketplace migrate --harnesses factory  # Rewrite v2 configs to v3
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
-agent-marketplace doctor --repair              # Preview Devin aggregate ownership recovery
+agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery
 agent-marketplace doctor --repair --yes        # Adopt exact matches without prompting
 agent-marketplace tui                          # Browse and edit selections interactively (H = harnesses)
 ```
@@ -142,7 +177,8 @@ Plain `doctor` reports the repo root, the autodetected harness, and every instal
 - warns when that version is below the 3000.3 floor, or when the version cannot be established. Neither warning blocks anything — `sync` never needs a Devin binary;
 - recommends adding `devin` to a harnesses list when a Devin CLI is installed but no layer selects it. It only recommends; it never edits a harness list.
 
-`--repair` is the recovery surface for Devin's shared-aggregate ownership state, and nothing else:
+`--repair` is the recovery surface for Devin and Codex shared-aggregate
+ownership state, and nothing else:
 
 - It previews three classes: **exact adoption matches** (entries already byte-identical to what the marketplace would write), **evidence-backed orphan candidates** (entries a retained safety backup or journal ties to earlier managed output), and **value conflicts** (an unmanaged entry has the same key as a selected resource but a different value). Orphans without evidence and unrelated unmanaged entries are never nominated — edit those yourself.
 - On a terminal it then prompts per action. Off a terminal it is **preview-only** and mutates nothing.
@@ -186,7 +222,7 @@ tags:
 ```
 
 - **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` remains accepted as a compatibility alias.
-- **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, and `devin`.
+- **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex`.
 - **`source_harness`** is optional per registry entry; empty means autodetect.
 - **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
 - **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
@@ -271,7 +307,9 @@ agent-marketplace migrate --harnesses factory,cursor
 agent-marketplace sync
 ```
 
-Then replace old `.agents/skills/` ignore rules with the harness output roots you use, unless your repo intentionally tracks generated harness files.
+Then replace old `.agents/skills/` ignore rules with the harness output roots
+you use. Keep `.agents/skills/` ignored when `codex` is selected, unless your
+repo intentionally tracks generated harness files.
 
 ## Gotchas
 
@@ -282,6 +320,7 @@ Then replace old `.agents/skills/` ignore rules with the harness output roots yo
 - **Collection-level `requires` is ignored** — collections expand into members before prerequisite validation.
 - **Private registries should use SSH URLs** — HTTPS can fail when terminal prompts are disabled.
 - **Cache keys are URL-dependent** — changing the registry URL creates a separate cache entry.
-- **No target selection means no target output** — if you expected `.devin/` output and got none, check that `devin` is in the effective `harnesses:` list (`status` → HARNESS TARGETS).
+- **No target selection means no target output** — if you expected `.devin/` or `.codex/` output and got none, check that the target is in the effective `harnesses:` list (`status` → HARNESS TARGETS).
 - **Devin needs symlinks** — with `materialization.mode: file` the Devin target is refused outright rather than writing regular files. Other targets in the same run are unaffected.
-- **Do not delete `~/.local/state/agent-marketplace` to "reset" Devin** — it is the ownership authority, not a cache. Without it every existing aggregate entry becomes unmanaged, so `sync` stops pruning what it previously wrote. Use `doctor --repair` to re-adopt instead.
+- **`CODEX_HOME` moves only Codex configuration** — it must be absolute; machine skills and converted commands remain under `~/.agents/skills`.
+- **Do not delete `~/.local/state/agent-marketplace` to "reset" Devin or Codex** — it is the ownership authority, not a cache. Without it every existing aggregate entry becomes unmanaged, so `sync` stops pruning what it previously wrote. Use `doctor --repair` to re-adopt instead.

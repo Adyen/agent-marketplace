@@ -1,6 +1,6 @@
 # Rich IR field matrix (D2)
 
-This matrix is the D2 status contract, extended with the Devin column owned by the Devin work packages (D3-D7; skills and commands landed in D4, subagents in D5, hooks in D6, MCP servers in D7 — the Devin column has no pending cells left). `emit` means the modeled field is written to the target artifact; `drop` means the resource is suppressed when the field is present; `defer` means the field name is source-relative metadata but this IR layer has no bytes to materialize. Optional fields are emitted only when present, including explicit `false`, `0`, and empty lists where the target format can represent them. Canonical fields take precedence over same-named `Extra` fields only when emitted; conflicts produce one value-free `compile.canonical-field-overrides-extra` warning per field. Output and diagnostics are deterministic.
+This matrix records all seven targets. The historical D2 table is extended with the Devin column owned by the Devin work packages (D3-D7); the Codex mapping follows in a dedicated table so the already-dense cells remain reviewable. `emit` means the modeled field is written to the target artifact; `drop` means the resource is suppressed when the field is present; `defer` means the field name is source-relative metadata but this IR layer has no bytes to materialize. Optional fields are emitted only when present, including explicit `false`, `0`, and empty lists where the target format can represent them. Canonical fields take precedence over same-named `Extra` fields only when emitted; conflicts produce one value-free `compile.canonical-field-overrides-extra` warning per field. Output and diagnostics are deterministic.
 
 | Resource field | Claude | Factory | Cursor | Windsurf | Gemini | Devin |
 |---|---|---|---|---|---|---|
@@ -27,6 +27,37 @@ This matrix is the D2 status contract, extended with the Devin column owned by t
 | Unknown `Extra` field conflicting with emitted canonical | canonical wins + warning `compile.canonical-field-overrides-extra` | same | same | same | same | same. On skills/commands, `allowed-tools`, `permissions`, and `x-agent-marketplace-kind` are reserved and never passed through verbatim. On subagents, `model`, `max-nesting`, `tools`, `disallowedTools`, `isolation`, and `effort` are reserved unconditionally so an unverified extension value cannot raise a limit or advertise a restriction Devin does not enforce; `allowed-tools` is reserved only when the typed field is set, because otherwise it is consumed and strictly mapped rather than overridden. On hooks, ALL of `event`, `type`, `matcher`, `command`, `prompt`, and `timeout` are reserved unconditionally: each one is a behavior-tuple member, so an extension copy could inject an unvetted command line, change which payload runs, change when the hook fires, or remove an execution bound. On MCP servers, ALL TEN documented members (`command`, `args`, `env`, `url`, `transport`, `headers`, `disabled`, `oauthClientId`, `oauthClientSecret`, `oauthResource`) are reserved unconditionally: `oauthClientSecret` is typed precisely so it cannot be reintroduced from an untyped extension map, `command`/`args`/`url` decide what runs and what is contacted, `env`/`headers` bypass the literal-credential scan, `transport` bypasses the documented-vocabulary check, and `disabled` could re-enable a server the source disabled. Nothing is ever consumed from `Extra` and re-emitted in mapped form on the MCP path, so the conflict warning is always honest |
 
 Every Devin hook/MCP case marked ERROR above skips exactly that aggregate entry and makes `sync` exit non-zero (bead `agent-marketplace-5exj.20`); the cases still marked warning EMIT their entry and only drop an inert sub-field or leave a plugin-root token unexpanded.
+
+## Codex target
+
+The Codex cells were verified on 2026-08-19 against the official documentation
+for [skills](https://developers.openai.com/codex/skills),
+[subagents](https://developers.openai.com/codex/subagents),
+[hooks](https://developers.openai.com/codex/hooks), and
+[MCP](https://developers.openai.com/codex/mcp), with `oauth_resource` verified
+in the [config reference](https://developers.openai.com/codex/config-file/config-reference).
+Native fixture shapes are pinned
+by `compile/codex/translator_test.go` and `ingest/codex/codex_test.go`; all five
+target-materialized kinds also have Codex source/destination cells in
+`testdata/matrix/*/matrix.yaml`, with `codex-to-*` golden trees for cross-target
+output. The table states only mappings supported by those sources and fixtures.
+
+| Resource field | Codex |
+|---|---|
+| Skill `name`, `description`, `body` | emit to `.agents/skills/<name>/SKILL.md`; canonical fields win over conflicting extras |
+| Skill activation metadata (`argument-hint`, `model`, `triggers`, `subagent`, `agent`) | omit with warning `compile.codex.field-dropped`; the skill remains |
+| Skill `allowed-tools` / `permissions` | any explicit value, including an explicit empty restriction, suppresses the artifact with error `skill.codex.security-restriction-unsupported`; Codex has no documented skill field that preserves these controls |
+| Skill `SupportFiles` | defer bytes with warning `skill.support-files-deferred`; the `SKILL.md` artifact remains |
+| Command | emit through the skill path with `x-agent-marketplace-kind: command`; ingestion restores command provenance and rejects marked commands carrying authority-bearing skill controls |
+| Subagent core fields | emit `name`, `description`, `developer_instructions`, mapped/preserved `model`, and `model_reasoning_effort` to `.codex/agents/<name>.toml`; native `sandbox_mode` round-trips for `read-only`, `workspace-write`, and `danger-full-access` |
+| Subagent restrictions | explicit `tools`, `disallowedTools`, `isolation`, or `max-nesting`, and an invalid native `sandbox_mode`, suppress the artifact with `subagent.security-restriction-unsupported`; unmodeled benign fields warn and are omitted |
+| Hook handler and event | emit documented command handlers to `.codex/hooks.json`; portable mappings cover `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, and `Stop`, while native Codex events round-trip through the sidecar. Unsupported events/types, prompt handlers, invalid bounds, or matchers on `Stop`/`UserPromptSubmit` suppress the entry with `hook.codex.unsupported` |
+| Hook optional fields | emit non-negative `timeout` plus native `async`, `statusMessage`, `commandWindows`, and non-negative `additionalContextLimit`; `SessionEnd` is synchronous and caps timeout at three seconds, with `compile.codex.field-dropped` when normalization occurs |
+| MCP stdio | emit exactly one `command` form with optional `args`, `cwd`, `env`, `env_vars`, `experimental_environment`, and `enabled` under `[mcp_servers.<name>]`; remote-only/auth fields or an inconsistent transport suppress the entry with `mcp.codex.security-unsupported` |
+| MCP remote | emit exactly one `url` form with optional `http_headers`, `env_http_headers`, `bearer_token_env_var`, `oauth_resource`, and `enabled`; stdio-only fields, canonical OAuth client id/secret, or an inconsistent transport suppress the entry with `mcp.codex.security-unsupported` |
+| MCP interpolation and credentials | whole-value `${VAR}` / `${env:VAR}` environment references map to documented env-name fields; file or ambiguous interpolation suppresses the entry. Literal credentials are preserved with value-redacted warning `mcp.credentials.literal-secret` |
+| Hook/MCP aggregate identity | hooks merge by documented behavior tuple; MCP servers merge by table key. Both artifacts set `ExternalReconciliationRequired`, so the consumer must reconcile shared files rather than overwrite them |
+| Rule | no artifact and warning `rule.codex.unsupported`; neither a rule file nor `AGENTS.md` is synthesized. Deprecated `.codex/prompts/*.md` is ingest-only command input |
 
 Loaders reject malformed or mixed typed security lists rather than silently filtering them. Explicit empty lists remain empty; permissions maps preserve unknown nested keys and reject non-object/null permission values. MCP and hook map-backed iteration is sorted by resource/event name. Secret values never occur in diagnostics or logs.
 

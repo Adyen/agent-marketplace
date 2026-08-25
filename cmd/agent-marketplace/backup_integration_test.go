@@ -178,6 +178,20 @@ registries:
 	}
 }
 
+func TestBackupListUsesCodexLabel(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	createEmptyCodexBackupSet(t, homeDir)
+
+	var out strings.Builder
+	if err := runBackupList(&out); err != nil {
+		t.Fatalf("runBackupList: %v", err)
+	}
+	if !strings.Contains(out.String(), "\nCodex (1):\n") {
+		t.Fatalf("backup list did not use the Codex label:\n%s", out.String())
+	}
+}
+
 func TestSyncNoBackupFlag(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -541,6 +555,58 @@ registries:
 	archives, err = filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
 	if err != nil || len(archives) == 0 {
 		t.Fatalf("expected backup archive after 'backup create', got %v (err=%v)", archives, err)
+	}
+}
+
+func TestBackupCreateUsesCodexLabel(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "")
+
+	cacheTarget := filepath.Join(homeDir, ".cache", "agent-marketplace", "compiled", "codex", "demo-skill")
+	if err := os.MkdirAll(cacheTarget, 0o755); err != nil {
+		t.Fatalf("mkdir cache target: %v", err)
+	}
+	managedSkill := filepath.Join(homeDir, ".agents", "skills", "demo-skill")
+	if err := os.MkdirAll(filepath.Dir(managedSkill), 0o755); err != nil {
+		t.Fatalf("mkdir managed skills: %v", err)
+	}
+	if err := os.Symlink(cacheTarget, managedSkill); err != nil {
+		t.Fatalf("symlink managed skill: %v", err)
+	}
+
+	withWorkingDir(t, t.TempDir())
+	output, err := executeCommand("backup", "create")
+	if err != nil {
+		t.Fatalf("backup create failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Backup created for: Codex\n") {
+		t.Fatalf("backup create did not use the Codex label:\n%s", output)
+	}
+}
+
+func TestBackupRestoreUsesCanonicalCodexLabel(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	createEmptyCodexBackupSet(t, homeDir)
+
+	var out strings.Builder
+	if err := runBackupRestore(&out, "CoDeX"); err != nil {
+		t.Fatalf("runBackupRestore: %v", err)
+	}
+	if !strings.Contains(out.String(), "Overlay-restored Codex from backup ") {
+		t.Fatalf("backup restore did not use the canonical Codex label:\n%s", out.String())
+	}
+}
+
+func createEmptyCodexBackupSet(t *testing.T, homeDir string) {
+	t.Helper()
+	partitions := []backup.CodexPartition{
+		{ID: "machine-agents", Root: filepath.Join(homeDir, ".agents")},
+		{ID: "machine-codex", Root: filepath.Join(homeDir, ".codex")},
+	}
+	if _, err := backup.CreateCodexSet(partitions); err != nil {
+		t.Fatalf("CreateCodexSet: %v", err)
 	}
 }
 

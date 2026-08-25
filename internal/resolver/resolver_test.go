@@ -3691,7 +3691,7 @@ func TestResolveTargetHarnesses(t *testing.T) {
 				URL:       "git@example.com:infra.git",
 				Ref:       "main",
 				Skills:    ks("vm-lifecycle"),
-				Harnesses: []string{string(hcc.TargetClaude), string(hcc.TargetGemini)},
+				Harnesses: []string{string(hcc.TargetClaude), string(hcc.TargetCodex), string(hcc.TargetGemini)},
 			}},
 		}
 		setCatalogKeys(cfg)
@@ -3699,7 +3699,7 @@ func TestResolveTargetHarnesses(t *testing.T) {
 			ck("git@example.com:infra.git", "main"): {{Name: "vm-lifecycle", Path: "/cache/infra/vm-lifecycle"}},
 		}
 
-		targets := []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}
+		targets := []hcc.Target{hcc.TargetCodex, hcc.TargetFactory}
 		got, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses(targets))
 		if len(errs) != 0 {
 			t.Fatalf("expected no errors, got %v", errs)
@@ -3707,7 +3707,7 @@ func TestResolveTargetHarnesses(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("expected 1 artifact, got %d", len(got))
 		}
-		want := []hcc.Target{hcc.TargetClaude}
+		want := []hcc.Target{hcc.TargetCodex}
 		if !harnessesEqual(got[0].Harnesses, want) {
 			t.Fatalf("expected harnesses %v, got %v", want, got[0].Harnesses)
 		}

@@ -70,6 +70,22 @@ func TestDocForCode(t *testing.T) {
 	}
 }
 
+func TestCodexMaterializationCodesAreCatalogued(t *testing.T) {
+	for _, code := range []string{
+		CodeMaterializeCodexTrustReview,
+		CodeMaterializeCodexTrustReviewPending,
+		CodeMaterializeCodexHookSatisfiedByUnmanaged,
+		CodeMaterializeCodexAggregatePrunePostponed,
+		"materialize.codex.aggregate-malformed",
+		"materialize.codex.aggregate-unpatchable",
+		"materialize.destination.overlap",
+	} {
+		if _, ok := DocForCode(code); !ok {
+			t.Errorf("DocForCode(%q): no entry found", code)
+		}
+	}
+}
+
 func TestDiagnosticCodes_Documented(t *testing.T) {
 	// Parse codes.md to extract all documented codes.
 	codeSet := parseCodesMD(t)

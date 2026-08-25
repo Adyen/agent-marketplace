@@ -38,6 +38,8 @@ Then skim:
 - `internal/config/merge.go` — `Merge(global, repo)` and
   `resolveInheritedList` (the "specific wins over default" rule).
 - `internal/resolver/resolver.go` — selects which resources are enabled.
+- `internal/harness/destinations.go` — resolves single-root and Codex
+  partitioned destinations for repo and machine scopes.
 - `internal/tui/state.go` — `Model` and `row` shape used by the TUI.
 
 ## Build, Test, Lint
@@ -100,29 +102,30 @@ target roots for repo and machine scopes.
 
 Preserve these invariants:
 
-- **Skills are links, not copies.** Harness skill entries should be
-  symlinks to files/directories under `~/.cache/agent-marketplace`, so
-  target installs reflect cache state and bundled skill assets are not
-  silently dropped.
+- **Skills link by default; file mode copies.** Default-mode harness skill
+  entries are symlinks to files/directories under
+  `~/.cache/agent-marketplace`. File mode writes regular files/trees for
+  targets that support it; Devin deliberately refuses file mode.
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
   harness' native files instead of skill symlinks. The exception is
   declared, never hard-coded: `harness.TargetInfo.SkillDirKinds` names
-  the kinds that take the directory-symlink path instead. Devin sets it
-  for `ir.KindCommand`, because a Devin command *is* a skill directory
-  (`skills/<name>/SKILL.md` carrying `x-agent-marketplace-kind:
-  command`), which also gives it the same prune coverage as a skill.
+  the kinds that take the skill-directory path instead. Devin and Codex set it
+  for `ir.KindCommand`, because their commands are skill directories containing
+  `SKILL.md` with `x-agent-marketplace-kind: command`. Default mode links those
+  directories; Codex file mode writes them as regular trees, while Devin
+  refuses file mode.
 - **No harness-specific skill-link allowlists.** Decide whether a
   resource is a skill by the compiled/source artifact shape, the
   resource kind, and declarative `harness.TargetInfo` metadata — not by
   hard-coded target names like Claude, Factory, Cursor, Windsurf,
-  Gemini, or Devin.
+  Gemini, Devin, or Codex.
 - **`AggregateFiles` must match what the compilers emit.**
   `harness.TargetInfo.AggregateFiles` is the single source of truth for
   which files a target merges into, per scope; both materialization
   routing and `pipeline.CollectManagedPaths` (safety backup coverage)
-  read it. All six targets declare it, and the declaration is not
+  read it. All seven targets declare it, and the declaration is not
   editorial: it must equal "every compiled artifact with
   `MergeWithExisting == true`, at the output-root-relative path the
   planner writes it to, in that scope".
@@ -131,19 +134,24 @@ Preserve these invariants:
   either direction — never satisfy it by restating a list. An
   undeclared aggregate is a file mutated with no safety backup.
 - **Shared aggregate files are ownership-reconciled, not
-  marker-merged.** Targets that reconcile aggregates through ownership —
-  currently only Devin, which declares
-  `harness.TargetInfo.OwnershipReconciledAggregates` and is fenced out of
+  marker-merged.** Devin and Codex declare
+  `harness.TargetInfo.OwnershipReconciledAggregates` and are fenced out of
   the marker-strip prune walk by `aggregateProtectedPaths` on that field
-  alone — go through `internal/ownership` plus
-  `pkg/harness-compilation/jsonc`, in the sequence the `ownership`
-  package doc names (`Open`, `Recover` once before any mutation,
-  `Proof`, `Classify`, patch, `Apply`). Never inject a `_managed_by`
-  marker into such a file and never infer ownership from its bytes:
-  ownership is proven from durable state under
-  `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state must
-  fail closed (every entry unmanaged; preserve everything, prune
+  alone. They go through `internal/ownership` plus their format-preserving
+  JSONC/TOML patchers, in the sequence the `ownership` package doc names
+  (`Open`, `Recover` once before any mutation, `Proof`, `Classify`, patch,
+  `Apply`). Never inject a `_managed_by` marker into such a file and never
+  infer ownership from its bytes: ownership is proven from durable state
+  under `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state
+  must fail closed (every entry unmanaged; preserve everything, prune
   nothing).
+- **Codex has two resolved destinations per scope.** Repo output splits
+  between `<repo>/.agents` and `<repo>/.codex`; machine output splits
+  between `~/.agents` and an absolute `$CODEX_HOME` (default `~/.codex`).
+  Route artifacts by their `.agents`/`.codex` prefix through
+  `ResolveDestinations`; never flatten Codex into one root or let a repo
+  symlink escape the repository. `.agents/skills` alone is not Codex
+  installation evidence.
 - **Symlink-only targets refuse file mode.** A target that sets
   `harness.TargetInfo.SymlinkOnly` (Devin) rejects
   `config.MaterializationModeFile` with

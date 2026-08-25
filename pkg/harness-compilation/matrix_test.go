@@ -118,7 +118,7 @@ func TestMatrix_RoundTripSameHarness(t *testing.T) {
 				}
 
 				outDir := t.TempDir()
-				if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+				if _, err := materializeMatrixResult(result, outDir, harness); err != nil {
 					t.Fatalf("Materialize(%s %s→%s): %v", kind, harness, harness, err)
 				}
 
@@ -163,7 +163,7 @@ func TestMatrix_CrossHarnessLossProfile(t *testing.T) {
 					}
 					return
 				}
-				if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+				if _, err := materializeMatrixResult(result, outDir, cell.To); err != nil {
 					t.Fatalf("Materialize(%s %s→%s): %v", kind, cell.From, cell.To, err)
 				}
 				reingested, err := IngestBundle(os.DirFS(outDir), cell.To)
@@ -212,13 +212,13 @@ func runMatrixKind(t *testing.T, kind string) {
 			case matrixClassIdentity, matrixClassMarquee:
 				requireSingleResource(t, kind, cell.From, bundle.Resources)
 				outDir := t.TempDir()
-				if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+				if _, err := materializeMatrixResult(result, outDir, cell.To); err != nil {
 					t.Fatalf("Materialize(%s %s→%s): %v", kind, cell.From, cell.To, err)
 				}
 				testutil.AssertGoldenDir(t, outDir, matrixExpectedDir(kind, cell.From, cell.To))
 			case matrixClassCross:
 				requireSingleResource(t, kind, cell.From, bundle.Resources)
-				assertArtifactShapeMatches(t, result, matrixExpectedDir(kind, cell.From, cell.To))
+				assertArtifactShapeMatches(t, result, matrixExpectedDir(kind, cell.From, cell.To), cell.To)
 			case matrixClassDrop:
 				if len(result.Artifacts) != 0 {
 					t.Fatalf("drop cell %s %s→%s produced %d artifacts, want 0", kind, cell.From, cell.To, len(result.Artifacts))
@@ -328,10 +328,10 @@ func assertDiagnosticCodesMatch(t *testing.T, diags []Diagnostic, want []string)
 	}
 }
 
-func assertArtifactShapeMatches(t *testing.T, result *Result, expectedDir string) {
+func assertArtifactShapeMatches(t *testing.T, result *Result, expectedDir string, target Harness) {
 	t.Helper()
 	outDir := t.TempDir()
-	if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+	if _, err := materializeMatrixResult(result, outDir, target); err != nil {
 		t.Fatalf("Materialize(shape): %v", err)
 	}
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
@@ -343,6 +343,33 @@ func assertArtifactShapeMatches(t *testing.T, result *Result, expectedDir string
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("artifact shape = %v, want %v", got, want)
 	}
+}
+
+func materializeMatrixResult(result *Result, outDir string, target Harness) (*WriteReport, error) {
+	// Matrix fixtures contain one resource and materialize into isolated empty
+	// roots, so consumer-owned reconciliation and aggregate merging are absent.
+	fixtureResult := *result
+	fixtureResult.Artifacts = append([]Artifact(nil), result.Artifacts...)
+	for i := range fixtureResult.Artifacts {
+		artifact := &fixtureResult.Artifacts[i]
+		if artifact.ExternalReconciliationRequired {
+			artifact.ExternalReconciliationRequired = false
+			artifact.Fragment = false
+			artifact.MergeWithExisting = false
+		}
+	}
+	report, err := Materialize(&fixtureResult, outDir, WithWriteMode(WriteModeOverwrite))
+	if err != nil {
+		return nil, err
+	}
+	if target == HarnessCodex {
+		// Codex skills and commands are shared under .agents, but Codex ingest
+		// deliberately requires the ambient .codex workspace marker.
+		if err := os.MkdirAll(filepath.Join(outDir, ".codex"), 0o755); err != nil {
+			return nil, err
+		}
+	}
+	return report, nil
 }
 
 func walkFiles(t *testing.T, root string) []string {

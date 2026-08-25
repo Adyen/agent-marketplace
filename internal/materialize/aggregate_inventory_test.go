@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // probeResources returns one resource of every compilable ir.ResourceKind.
@@ -62,6 +64,14 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bool) []string {
 	t.Helper()
 	outDir := t.TempDir()
+	relativeRoot := outDir
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		relativeRoot, _ = ownership.CanonicalRoot(outDir)
+	}
+	if target == hcc.Target(targetmeta.TargetCodex) && machineScope {
+		t.Setenv("HOME", outDir)
+		t.Setenv("CODEX_HOME", filepath.Join(outDir, ".codex"))
+	}
 
 	seen := make(map[string]bool)
 	for _, kind := range sortedKinds(probeResources()) {
@@ -82,7 +92,7 @@ func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bo
 				if !a.MergeWithExisting {
 					continue
 				}
-				rel, relErr := filepath.Rel(outDir, filepath.Join(plan.outDir, a.Path))
+				rel, relErr := filepath.Rel(relativeRoot, filepath.Join(plan.outDir, a.Path))
 				if relErr != nil {
 					t.Fatalf("filepath.Rel(%s, %s): %v", outDir, filepath.Join(plan.outDir, a.Path), relErr)
 				}
@@ -228,18 +238,19 @@ func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 // than SymlinkOnly. This test stays a statement about the registry as it stands;
 // TestAggregateProtectedPathsKeysOffOwnership below is the statement about the
 // predicate itself, over targets that do not exist yet.
-func TestAggregateProtectedPathsStaysDevinOnly(t *testing.T) {
+func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
+	codex := hcc.Target(targetmeta.TargetCodex)
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
 			protected := aggregateProtectedPaths(target, machineScope)
-			if target == hcc.TargetDevin {
+			if target == hcc.TargetDevin || target == codex {
 				declared := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
 				if len(protected) != len(declared) {
-					t.Errorf("devin (machine_scope=%v): protected %v does not cover declared %v", machineScope, protected, declared)
+					t.Errorf("%s (machine_scope=%v): protected %v does not cover declared %v", target, machineScope, protected, declared)
 				}
 				for _, rel := range declared {
 					if !protected[rel] {
-						t.Errorf("devin (machine_scope=%v): %q is not protected from marker stripping", machineScope, rel)
+						t.Errorf("%s (machine_scope=%v): %q is not protected from marker stripping", target, machineScope, rel)
 					}
 				}
 				continue
@@ -247,6 +258,16 @@ func TestAggregateProtectedPathsStaysDevinOnly(t *testing.T) {
 			if len(protected) != 0 {
 				t.Errorf("%s (machine_scope=%v): aggregateProtectedPaths = %v, want empty; marker-merge targets must keep their aggregates in the prune walk", target, machineScope, protected)
 			}
+		}
+	}
+}
+
+func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
+	for _, target := range sortedTargets(t) {
+		hasHandler := ownedAggregateHandlerFor(target) != nil
+		wantHandler := harness.TargetInfoMap[target].OwnershipReconciledAggregates
+		if hasHandler != wantHandler {
+			t.Errorf("%s: owned aggregate handler = %v, ownership-reconciled metadata = %v", target, hasHandler, wantHandler)
 		}
 	}
 }

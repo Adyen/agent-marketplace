@@ -163,7 +163,7 @@ func TestDevinFirstRunSuppressionStillFailsClosedAgainstAHandwrittenAggregate(t 
 // TestDevinPerRootStateDiagnosticsAreDistinguishable attacks diagnostic
 // IDENTITY rather than rendering.
 //
-// devinAggregateCodedDiag stopped overwriting Source.File with the coded error's
+// ownedAggregateCodedDiag stopped overwriting Source.File with the coded error's
 // own path (the per-root state file) and now uses the output-relative path.
 // Both Devin scopes hold a file called mcp_config.json, so two warnings about
 // two DIFFERENT files under two DIFFERENT roots are identical in
@@ -239,7 +239,7 @@ func TestDevinRootLevelDiagnosticKeepsASource(t *testing.T) {
 	err := diag.NewCodedError(diag.CodeOwnershipStateCorrupt,
 		diag.SourceRef{File: "/state/agent-marketplace/ownership/abc/state.json"},
 		ownership.ErrStateCorrupt)
-	d := devinAggregateCodedDiag(key, "/repo/.devin", "", err, diag.CodeMaterializeDevinAggregateWrite)
+	d := ownedAggregateCodedDiag(key, "/repo/.devin", "", err, diag.CodeMaterializeDevinAggregateWrite)
 	if d.Source.File == "" {
 		t.Fatalf("a root-level ownership diagnostic lost its Source entirely; "+
 			"nothing in the report can now attribute it to a file or a root: %+v", d)
@@ -268,8 +268,8 @@ func TestDevinAggregateMessageIsUnambiguous(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := devinAggregateMessage(tc.outDir, tc.rel, tc.message)
-			label := devinAggregateLabel(tc.outDir, tc.rel)
+			got := ownedAggregateMessage(tc.outDir, tc.rel, tc.message)
+			label := ownedAggregateLabel(tc.outDir, tc.rel)
 			if !strings.HasPrefix(got, label+": ") {
 				t.Fatalf("message does not lead with the aggregate label\n label: %q\n   got: %q", label, got)
 			}
@@ -288,8 +288,8 @@ func TestDevinAggregateMessageIsUnambiguous(t *testing.T) {
 // message, because that is the whole contract of the helper.
 func TestDevinAggregateMessageKeepsTheAggregateWhenTheErrorAlreadyNamesIt(t *testing.T) {
 	outDir, rel := "/repo/.devin", "mcp_config.json"
-	label := devinAggregateLabel(outDir, rel)
-	got := devinAggregateMessage(outDir, rel, "could not rename staging file over "+label)
+	label := ownedAggregateLabel(outDir, rel)
+	got := ownedAggregateMessage(outDir, rel, "could not rename staging file over "+label)
 	if !strings.Contains(got, label) {
 		t.Fatalf("the aggregate identity was lost: %q", got)
 	}

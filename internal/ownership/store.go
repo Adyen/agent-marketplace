@@ -113,6 +113,9 @@ type Store struct {
 	// production and set only by tests in this package, which is the only way to
 	// reach the ErrLockUnsupported branch on a filesystem that supports locking.
 	tryLock func(*os.File) error
+	// removeJournalFile overrides journal deletion for failure-path tests. It is
+	// nil in production, where clearJournal uses os.Remove.
+	removeJournalFile func(string) error
 }
 
 // Option customizes a Store.

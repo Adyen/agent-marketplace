@@ -3,15 +3,23 @@ package materialize
 import (
 	"strings"
 
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
-
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // blockedAllComponents is the wildcard component. It records "a resource was
 // skipped and we cannot attribute it to a component", which is the only case
 // that may still suppress pruning for a whole output root.
 const blockedAllComponents = "*"
+
+var codexNativePrefixes = func() []string {
+	layout, _ := targetmeta.LookupNativeLayout(targetmeta.TargetCodex)
+	prefixes := make([]string, 0, len(layout.Partitions))
+	for _, partition := range layout.Partitions {
+		prefixes = append(prefixes, partition.Prefix)
+	}
+	return prefixes
+}()
 
 // blockedOutputs records, per output key, WHICH output components must not be
 // pruned this run because a resource that would have written into them was
@@ -29,7 +37,7 @@ const blockedAllComponents = "*"
 // stopped `.devin/skills/` and `.devin/agents/` from pruning as well. Devin
 // hooks and MCP servers write to shared aggregate FILES, not to component
 // directories, so they now block no component here and are prune-suppressed
-// per file by devinAggregateWork.incomplete instead.
+// per file by ownedJSONAggregateWork.incomplete instead.
 type blockedOutputs map[outputKey]map[string]bool
 
 // mark records components for an output key. Marking zero components still
@@ -76,11 +84,13 @@ func componentBlocked(blocked map[string]bool, component string) bool {
 func anyBlocked(blocked map[string]bool) bool { return len(blocked) > 0 }
 
 // componentName reduces an install-dir-relative path to the component name the
-// prune bookkeeping uses: the first path segment, with Windsurf's repo-scope
-// ".windsurf/" wrapper removed so ".windsurf/skills" and "skills" agree (the
-// same normalization linkedComponents applies).
+// prune bookkeeping uses: the first path segment, with target-native virtual
+// root prefixes removed so routed and unrouted component names agree.
 func componentName(rel string) string {
 	rel = strings.TrimPrefix(rel, windsurfDir+"/")
+	for _, prefix := range codexNativePrefixes {
+		rel = strings.TrimPrefix(rel, strings.TrimSuffix(prefix, "/")+"/")
+	}
 	component, _, _ := strings.Cut(rel, "/")
 	return component
 }
@@ -89,9 +99,9 @@ func componentName(rel string) string {
 // would have written into.
 //
 // It returns nil — block nothing — when the resource's whole output is a shared
-// aggregate FILE rather than a component directory. That is the Devin hook and
-// MCP case, and the file is prune-suppressed by devinAggregateWork.incomplete,
-// which is strictly narrower than any component would be.
+// aggregate FILE rather than a component directory. The target's aggregate
+// handler suppresses pruning for that exact file, which is strictly narrower
+// than any component would be.
 //
 // It falls back to the wildcard whenever the mapping is not known, so an
 // unmapped kind keeps today's fail-closed behaviour rather than silently
@@ -105,7 +115,7 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 		return []string{blockedAllComponents}
 	}
 	kind := w.skill.Resource.Kind()
-	if key.target == hcc.TargetDevin && len(devinAggregateRels(kind, key.machineScope)) > 0 {
+	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
 		return nil
 	}
 	if info.UsesSkillDir(kind) {

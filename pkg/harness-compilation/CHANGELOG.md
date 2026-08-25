@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Codex is a first-class native target
+
+Codex is the seventh bidirectional compiler/ingester/conversion target. It
+covers all five target-materialized kinds without plugin packaging:
+
+- skills and converted commands use `.agents/skills/<name>/SKILL.md`, with the
+  command provenance marker `x-agent-marketplace-kind: command`;
+- subagents use `.codex/agents/<name>.toml`;
+- command hooks merge into `.codex/hooks.json`; and
+- stdio or remote MCP servers merge into `[mcp_servers.<name>]` tables in
+  `.codex/config.toml`.
+
+The application resolves those artifact prefixes into repo `.agents`/`.codex`
+roots and machine `~/.agents` plus `$CODEX_HOME` (or `~/.codex`). It reconciles
+the two shared files through durable ownership and mandatory backups, preserves
+unmanaged entries, and reports repo trust review without editing Codex trust
+state. Missing/corrupt ownership and malformed or unpatchable aggregate forms
+fail closed.
+
+Conversion to Codex refuses any destination that already contains
+`.codex/hooks.json` or `.codex/config.toml`; use a new or empty destination so
+one-shot conversion never overwrites shared configuration. Sync, check,
+ingestion, and conversion do not install, require, or probe a Codex executable.
+
+The mapping is evidence-bound to the official Codex skills, subagents, hooks,
+and MCP documentation as of 2026-08-19. Benign metadata loss warns; any loss of
+tool/sandbox restrictions, executable behavior, authentication, transport, or
+interpolation semantics suppresses only the affected resource or aggregate
+entry with a stable diagnostic. `.agents/skills` alone is not autodetected as
+Codex. Rules and `AGENTS.md` generation remain out of scope, and deprecated
+`.codex/prompts/*.md` files are ingest-only migration input, never compiler
+output.
+
 ### `diag` names the severity threshold so consumers cannot get the ordinal direction wrong
 
 `SeverityError` is the ZERO value of `Severity` (error 0, warning 1, info 2), so
@@ -117,7 +150,7 @@ accepted rather than accidental.** `subagent.gemini.tool-unknown` and
 was relaxed because Factory's droid frontmatter rejects unknown tool identifiers
 and omitting the `tools` key uses Factory's documented default tool set.
 `ingest.devin.tool-unreversible` also stays an error, because ingestion writes the
-harness-neutral IR that all six compilers read, so a rewritten restriction there
+harness-neutral IR that every registered compiler reads, so a rewritten restriction there
 propagates to targets that do enforce it.
 
 **Decision records updated rather than quietly corrected.** The invariant "a
@@ -285,7 +318,7 @@ whatever trivia the index it lands on used to hold. Deleting a superseded
 generated hook used to delete the comment the user had written above the hook
 BELOW it.
 
-All six golden trees are byte-for-byte identical. Benchmarks (`benchstat`,
+All then-existing golden trees are byte-for-byte identical. Benchmarks (`benchstat`,
 5×300ms): the steady-state paths are flat; the worst case in the suite — 100
 stale named array entries, none reusable, all replaced — is +5.6% time and
 +2.6% allocs for the trivia-preserving element match, on a container that is

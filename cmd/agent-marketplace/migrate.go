@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 )
 
 func newMigrateCmd() *cobra.Command {
@@ -95,7 +96,7 @@ func runMigrate(out io.Writer, in io.Reader, explicitHarnesses []string) error {
 
 func promptMigrateHarnesses(out io.Writer, in io.Reader) ([]string, error) {
 	reader := bufio.NewReader(in)
-	detected, err := config.DetectInstalledHarnesses()
+	detected, err := harness.DetectInstalledInCurrentHome()
 	if err != nil {
 		return nil, err
 	}

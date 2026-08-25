@@ -1,9 +1,9 @@
 // Package harnesscompile converts AI-agent configuration resources from
 // a canonical source format into vendor-specific layouts.
 //
-// It supports six conversion targets (Claude Code, Factory Droid, Cursor,
-// Windsurf, Gemini CLI, and Devin CLI), each with a registered compiler and
-// ingester.
+// It supports seven conversion targets (Claude Code, Factory Droid, Cursor,
+// Windsurf, Gemini CLI, Devin CLI, and Codex), each with a registered compiler
+// and ingester.
 package harnesscompile
 
 import (
@@ -36,6 +36,7 @@ const (
 	TargetWindsurf = targetmeta.TargetWindsurf
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
+	TargetCodex    = targetmeta.TargetCodex
 )
 
 // Harness is a backward-compatible alias for Target. It allows callers to
@@ -50,6 +51,7 @@ const (
 	HarnessWindsurf Harness = TargetWindsurf
 	HarnessGemini   Harness = TargetGemini
 	HarnessDevin    Harness = TargetDevin
+	HarnessCodex    Harness = TargetCodex
 )
 
 // TargetDefinition is the shared metadata declaration for a target.
@@ -83,8 +85,8 @@ func ValidateTargetRegistrations() error {
 			errs = append(errs, fmt.Errorf("target %q is declared more than once", t))
 		}
 		seen[definition.Target] = true
-		if definition.RepoRoot == "" || definition.UserRoot == "" {
-			errs = append(errs, fmt.Errorf("target %q has incomplete root metadata", t))
+		if err := targetmeta.ValidateDefinition(definition); err != nil {
+			errs = append(errs, err)
 		}
 		if definition.Compiler {
 			if _, ok := compile.Lookup(compile.Target(t)); !ok {
@@ -538,6 +540,10 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 //	}
 var ErrPartialResult = errors.New("result contains error diagnostics; only resources that compiled cleanly were materialized")
 
+// ErrExternalReconciliationRequired reports that generic materialization was
+// asked to write a shared file whose ownership must be reconciled externally.
+var ErrExternalReconciliationRequired = errors.New("artifact requires external ownership reconciliation")
+
 // Materialize writes a Result to disk using staged-then-rename for individual
 // artifacts. It merges fragment artifacts before writing, validates paths, detects
 // identical files via sha256, and supports dry-run and prune-stale modes.
@@ -579,6 +585,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 	artifacts, err := artifact.MergeFragments(r.Artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
+	}
+	for _, candidate := range artifacts {
+		if candidate.ExternalReconciliationRequired {
+			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+		}
 	}
 
 	// Validate all artifact paths and reject symlinked destination parents
@@ -780,9 +791,12 @@ func sameArtifact(a, b Artifact) bool {
 		a.Mode == b.Mode &&
 		a.Fragment == b.Fragment &&
 		a.FragmentKey == b.FragmentKey &&
+		a.FragmentOrderKey == b.FragmentOrderKey &&
 		a.MergeWithExisting == b.MergeWithExisting &&
+		a.ExternalReconciliationRequired == b.ExternalReconciliationRequired &&
 		a.ManagedByField == b.ManagedByField &&
-		a.ManagedByValue == b.ManagedByValue
+		a.ManagedByValue == b.ManagedByValue &&
+		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
 func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport) ([]Artifact, []Artifact, error) {
