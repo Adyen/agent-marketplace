@@ -104,8 +104,6 @@ func gitRootFor(dir string) string {
 	}
 	gitRootMu.Unlock()
 	mu.Lock()
-
-	mu.Lock()
 	defer mu.Unlock()
 
 	// Double-check the cache now that we hold the per-directory lock.
