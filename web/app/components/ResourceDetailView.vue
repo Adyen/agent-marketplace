@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { resourceInspectionFilePath } from '~/lib/api'
 import { installCommand, kindIcon, kindLabel, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
-import { escapeRawText, renderSafeMarkdown } from '~/lib/markdown'
+import { highlightEscapedRawText, renderSafeMarkdown } from '~/lib/markdown'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
@@ -16,6 +16,8 @@ type Props = {
   inspection?: InspectionManifest
   primaryContent?: string
   loadInspectionFile?: (file: InspectionFile) => Promise<string | Blob>
+  revisions?: ResourceRevision[]
+  revisionsError?: boolean
 }
 
 const props = defineProps<Props>()
@@ -30,12 +32,24 @@ const listItem = computed<ResourceListItem>(() => ({
 }))
 const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
-const revoked = computed(() => Boolean(props.resource.revocation && Object.keys(props.resource.revocation).length))
+const revoked = computed(() => hasRevocation(props.resource))
 const commandAvailable = computed(() => !revoked.value && Boolean(command.value))
 const browserAvailable = computed(() => Boolean(browserUrl.value))
 const acquisition = computed(() => props.resource.acquisition || valueFromRecord(props.resource.provenance, 'acquisition') || 'Not specified')
 const provenanceEntries = computed(() => Object.entries(props.resource.provenance ?? {}))
+const showRevisionHistory = computed(() => props.revisions !== undefined)
+const revisionHistory = computed(() => {
+  if (!props.revisions) return []
+  const seen = new Set<string>()
+  return [...props.revisions, props.resource].filter(revision => {
+    if (seen.has(revision.content_digest)) return false
+    seen.add(revision.content_digest)
+    return true
+  })
+})
 const inspectionFindings = computed(() => props.inspection?.findings ?? [])
+const inspectionFindingDetails = computed(() => inspectionFindings.value.map(findingDetails))
+const resourceFindingDetails = computed(() => (props.resource.findings ?? []).map(findingDetails))
 const primaryFile = computed(() => props.inspection?.files.find(file => file.path === props.inspection?.primary_path))
 const selectedDigest = ref('')
 const loadedContents = ref<Record<string, string>>({})
@@ -56,8 +70,14 @@ const selectedContent = computed(() => {
 const selectedContentUnavailable = computed(() => Boolean(selectedFile.value && selectedFile.value.inspection_class === 'text' && (
   unavailableContents.value[selectedFile.value.content_digest] || (selectedIsPrimary.value && props.primaryContent === undefined)
 )))
+const selectedFindingDetails = computed(() => inspectionFindingDetails.value.filter(finding => finding.path === selectedFile.value?.path))
 const renderedContent = computed(() => selectedContent.value === undefined ? '' : renderSafeMarkdown(selectedContent.value))
-const escapedContent = computed(() => selectedContent.value === undefined ? '' : escapeRawText(selectedContent.value))
+const highlightedContent = computed(() => selectedContent.value === undefined ? '' : highlightEscapedRawText(selectedContent.value, selectedFindingDetails.value.map(finding => ({
+  index: finding.index,
+  startByte: finding.startByte,
+  endByte: finding.endByte,
+  label: `${finding.code} (${finding.severity})`,
+}))))
 const textFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'text' && file.path !== props.inspection?.primary_path) ?? [])
 const selectableFiles = computed(() => {
   const primary = primaryFile.value
@@ -93,6 +113,61 @@ watch(selectedDigest, digest => {
 
 function inspectionFileURL(digest: string): string {
   return resourceInspectionFilePath(props.apiBase, props.source, props.kind, props.name, props.resource.content_digest, digest)
+}
+
+function revisionURL(revision: ResourceRevision): string {
+  return resourceLocator({
+    source_id: props.source,
+    kind: props.kind,
+    name: props.name,
+    revision: revision.content_digest,
+    content_digest: revision.content_digest,
+  }, props.canonicalUrl)
+}
+
+function isCurrentRevision(revision: ResourceRevision): boolean {
+  return revision.content_digest === props.resource.content_digest
+}
+
+function hasRevocation(revision: ResourceRevision): boolean {
+  return Boolean(revision.revocation && Object.keys(revision.revocation).length)
+}
+
+type FindingDetails = {
+  index: number
+  code: string
+  severity: string
+  policy: string
+  message: string
+  path: string
+  startByte?: number
+  endByte?: number
+}
+
+function findingDetails(value: unknown, index: number): FindingDetails {
+  const record = isRecord(value) ? value : {}
+  return {
+    index,
+    code: stringField(record.code) || 'Unspecified finding',
+    severity: stringField(record.severity) || 'Unspecified',
+    policy: stringField(record.policy),
+    message: stringField(record.message),
+    path: stringField(record.path),
+    startByte: nonNegativeInteger(record.start_byte),
+    endByte: nonNegativeInteger(record.end_byte),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
 function valueFromRecord(record: Record<string, unknown> | undefined, key: string): string {
@@ -152,6 +227,24 @@ function formatValue(value: unknown): string {
       <p class="mt-3 break-words font-mono text-xs text-dimmed">{{ formatValue(resource.revocation) }}</p>
     </section>
 
+    <section v-if="showRevisionHistory" class="border-b border-default py-6" aria-labelledby="revision-history-heading">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 id="revision-history-heading" class="text-lg font-semibold text-highlighted">Revision history</h2>
+        <span class="text-xs text-muted">{{ revisionHistory.length }} revision{{ revisionHistory.length === 1 ? '' : 's' }}</span>
+      </div>
+      <p v-if="revisionsError" class="mt-3 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning" role="status" aria-live="polite">Revision history is unavailable. The current revision remains available below.</p>
+      <ol v-else class="mt-4 space-y-2" aria-label="Resource revision history">
+        <li v-for="revision in revisionHistory" :key="revision.content_digest" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-default bg-muted/30 px-4 py-3">
+          <div class="min-w-0">
+            <NuxtLink v-if="revisionURL(revision)" :to="revisionURL(revision)" class="break-all font-mono text-sm text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ revision.content_digest }}</NuxtLink>
+            <span v-else class="break-all font-mono text-sm text-muted">{{ revision.content_digest }}</span>
+            <span v-if="isCurrentRevision(revision)" class="ml-2 text-xs font-medium text-muted">Current</span>
+          </div>
+          <UBadge :color="hasRevocation(revision) ? 'error' : 'success'" variant="subtle">{{ hasRevocation(revision) ? 'Revoked' : 'Available' }}</UBadge>
+        </li>
+      </ol>
+    </section>
+
     <section v-if="inspection" class="border-b border-default py-6" aria-labelledby="inspection-heading">
       <div class="flex flex-wrap items-baseline justify-between gap-3">
         <h2 id="inspection-heading" class="text-lg font-semibold text-highlighted">Inspection preview</h2>
@@ -170,7 +263,7 @@ function formatValue(value: unknown): string {
       <div v-else-if="selectedContent !== undefined && selectedIsMarkdown" class="mt-4 rounded-xl border border-default bg-default p-5">
         <div class="prose prose-sm max-w-none text-default" data-testid="safe-markdown" v-html="renderedContent" />
       </div>
-      <pre v-else-if="selectedContent !== undefined" data-testid="escaped-primary" class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-default bg-muted/30 p-5 font-mono text-xs text-highlighted" v-html="escapedContent" />
+      <pre v-else-if="selectedContent !== undefined" data-testid="escaped-primary" aria-label="Escaped raw inspection text" class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-default bg-muted/30 p-5 font-mono text-xs text-highlighted" v-html="highlightedContent" />
       <p v-else-if="loadingDigest === selectedFile?.content_digest" class="mt-4 rounded-xl border border-default bg-muted/30 px-4 py-3 text-sm text-muted" role="status" aria-live="polite">Loading {{ selectedFile.path }}…</p>
       <p v-else-if="selectedContentUnavailable || !selectedIsImage" class="mt-4 rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning" role="status">{{ selectedIsPrimary ? 'Primary content is unavailable or intentionally withheld for safe inspection.' : 'This file is unavailable for safe inspection.' }}</p>
       <div v-if="imageFiles.length" class="mt-4 rounded-xl border border-default bg-muted/30 p-4">
@@ -192,12 +285,19 @@ function formatValue(value: unknown): string {
       </div>
       <details v-if="selectedContent !== undefined" class="mt-4 rounded-xl border border-default bg-muted/30">
         <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-highlighted">View escaped raw text</summary>
-        <pre :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" class="max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-xs text-highlighted" v-html="escapedContent" />
+        <p v-if="selectedFindingDetails.some(finding => finding.startByte !== undefined && finding.endByte !== undefined)" class="px-4 pb-2 text-xs text-muted">Finding ranges are highlighted below. Select a finding's range link to move focus to its highlighted text.</p>
+        <pre :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" aria-label="Escaped raw inspection text" class="max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-xs text-highlighted" v-html="highlightedContent" />
       </details>
-      <ul v-if="inspectionFindings.length" class="mt-4 space-y-3" aria-label="Inspection findings">
-        <li v-for="(finding, index) in inspectionFindings" :key="`${finding.code}-${index}`" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
-          <span class="font-semibold">{{ finding.code }}</span><span v-if="finding.path" class="ml-2 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.start_byte ?? 0 }}-{{ finding.end_byte ?? finding.start_byte ?? 0 }}</span>
+      <ul v-if="inspectionFindingDetails.length" class="mt-4 space-y-3" aria-label="Inspection findings">
+        <li v-for="finding in inspectionFindingDetails" :id="`inspection-finding-${finding.index}`" :key="`${finding.code}-${finding.index}`" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span class="font-semibold">{{ finding.code }}</span>
+            <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
+            <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
+          </div>
+          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.startByte ?? 0 }}-{{ finding.endByte ?? finding.startByte ?? 0 }}</p>
           <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
+          <a v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" :href="`#finding-highlight-${finding.index}`" class="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">View highlighted range</a>
         </li>
       </ul>
     </section>
@@ -215,9 +315,15 @@ function formatValue(value: unknown): string {
 
     <section class="border-b border-default py-6" aria-labelledby="findings-heading">
       <h2 id="findings-heading" class="text-lg font-semibold text-highlighted">Security findings</h2>
-      <ul v-if="resource.findings?.length" class="mt-4 space-y-3">
-        <li v-for="(finding, index) in resource.findings" :key="index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
-          {{ formatValue(finding) }}
+      <ul v-if="resourceFindingDetails.length" class="mt-4 space-y-3" aria-label="Security findings">
+        <li v-for="finding in resourceFindingDetails" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span class="font-semibold">{{ finding.code }}</span>
+            <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
+            <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
+          </div>
+          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.startByte ?? 0 }}-{{ finding.endByte ?? finding.startByte ?? 0 }}</p>
+          <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
         </li>
       </ul>
       <p v-else class="mt-3 text-sm text-muted">No findings were reported for this revision.</p>

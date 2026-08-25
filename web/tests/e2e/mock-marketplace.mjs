@@ -61,17 +61,18 @@ const wellKnown = {
   features: ['search', 'source-history', 'inspection'],
 }
 
-function resource(item) {
+function resource(item, contentDigest = item.content_digest, revocation) {
+  const effectiveRevocation = revocation === undefined && item.name === 'deploy-preview' ? { reason: 'security review' } : revocation
   return {
     coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name },
-    content_digest: item.content_digest,
+    content_digest: contentDigest,
     archive_digest: `sha256:${'c'.repeat(64)}`,
     analyzer_version: 'e2e-analyzer-1',
     acquisition: 'mirror',
     provenance: { observed_from: 'mock-marketplace', inspection_manifest_digest: inspectionDigest },
     findings: [],
     license: 'MIT',
-    ...(item.name === 'deploy-preview' ? { revocation: { reason: 'security review' } } : {}),
+    ...(effectiveRevocation ? { revocation: effectiveRevocation } : {}),
   }
 }
 
@@ -133,7 +134,12 @@ const server = createServer((request, response) => {
   if (parts.length >= 6 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'resources') {
     const item = items.find(candidate => candidate.source_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
     if (!item) return sendJson(response, 404, { error: 'resource not found' })
-    if (parts[6] === 'revisions' && parts[7] !== item.content_digest) return sendJson(response, 404, { error: 'revision not found' })
+    const previousDigest = `sha256:${'9'.repeat(64)}`
+    const requestedRevision = parts[6] === 'revisions' ? (parts[7] || item.content_digest) : item.content_digest
+    if (parts[6] === 'revisions' && parts[7] === undefined) {
+      return sendJson(response, 200, [resource(item), resource(item, previousDigest, item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined)])
+    }
+    if (parts[6] === 'revisions' && ![item.content_digest, previousDigest].includes(requestedRevision)) return sendJson(response, 404, { error: 'revision not found' })
     if (parts[8] === 'inspection') {
       if (parts[9] === 'content') {
         if (parts[10] === notesDigest) {
@@ -147,14 +153,14 @@ const server = createServer((request, response) => {
         response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
         return response.end(primaryContent)
       }
-      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: item.content_digest, primary_path: 'SKILL.md', files: [
+      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: requestedRevision, primary_path: 'SKILL.md', files: [
         { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' },
         { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: Buffer.byteLength(notesContent), inspection_class: 'text' },
         { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: Buffer.byteLength(configContent), inspection_class: 'text' },
         { path: 'support/tool.bin', content_digest: `sha256:${'2'.repeat(64)}`, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
-      ], findings: [{ code: 'remote-reference', severity: 'warn', path: 'SKILL.md', start_byte: 0, end_byte: 1 }] })
+      ], findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 0, end_byte: 1, message: 'External reference requires review.' }] })
     }
-    return sendJson(response, 200, resource(item))
+    return sendJson(response, 200, resource(item, requestedRevision, requestedRevision === previousDigest && item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined))
   }
   sendJson(response, 404, { error: 'not found' })
 })

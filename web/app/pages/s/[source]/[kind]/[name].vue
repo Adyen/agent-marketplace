@@ -20,6 +20,10 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   resourceAsyncDataKey(source, kind, name),
   () => api.getResource(source, kind, name),
 )
+const { data: revisions, error: revisionsError } = await useAsyncData(
+  `${resourceAsyncDataKey(source, kind, name)}:revisions`,
+  () => api.listResourceRevisions(source, kind, name),
+)
 const revision = computed(() => resource.value?.content_digest ?? '')
 const { data: inspection } = await useAsyncData(
   `marketplace-inspection:${source}:${kind}:${name}:${revision.value}`,
@@ -72,7 +76,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

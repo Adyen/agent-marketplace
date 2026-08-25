@@ -15,6 +15,11 @@ const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
  */
 export const MAX_SOURCE_HISTORY_ENTRIES = 1_000
 
+// Revision history is currently returned as one array by the API. Fail closed
+// on unexpectedly large responses so a malicious or misconfigured source
+// cannot make the browser render an unbounded history.
+export const MAX_RESOURCE_REVISION_ENTRIES = 100
+
 export function isSha256Digest(value: string): boolean {
   return DIGEST_PATTERN.test(value)
 }
@@ -82,6 +87,10 @@ export function normalizeSource(input: unknown): Source {
 
 export function normalizeSourceHistory(input: unknown): SourceOccurrence[] {
   return boundedArray(input, 'source history', MAX_SOURCE_HISTORY_ENTRIES).map((item, index) => normalizeSourceOccurrence(item, `source history[${index}]`))
+}
+
+export function normalizeResourceRevisions(input: unknown, expected: ExpectedResourceCoordinate): ResourceRevision[] {
+  return boundedArray(input, 'resource revisions', MAX_RESOURCE_REVISION_ENTRIES).map(item => normalizeResourceRevision(item, { kind: expected.kind, name: expected.name }))
 }
 
 export function normalizeSourceOccurrence(input: unknown, label = 'source occurrence'): SourceOccurrence {
