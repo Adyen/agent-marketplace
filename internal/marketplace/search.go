@@ -236,11 +236,17 @@ func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]sear
 			return nil, fmt.Errorf("no marketplaces configured; add one to your config or use --marketplace <url>")
 		}
 		endpoints := make([]searchEndpoint, 0, len(entries))
+		seen := make(map[string]struct{}, len(entries))
 		for _, configured := range entries {
 			ep, err := canonicalMarketplaceEntry(configured)
 			if err != nil {
 				return nil, fmt.Errorf("invalid configured marketplace URL %q: %w", configured.URL, err)
 			}
+			identity := ep.URL + "\x00" + ep.InstanceID
+			if _, ok := seen[identity]; ok {
+				continue
+			}
+			seen[identity] = struct{}{}
 			endpoints = append(endpoints, searchEndpoint{MarketplaceEntry: ep, verifyInstanceID: true})
 		}
 		return endpoints, nil

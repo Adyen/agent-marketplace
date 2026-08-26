@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,6 +134,45 @@ func TestResolveMarketplaceEndpointsCanonicalURLSelectionPreservesVerification(t
 	}
 }
 
+func TestFederatedSearchQueriesDuplicateEndpointIdentityOnce(t *testing.T) {
+	var searchRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "mp-shared")
+		case "/api/v1/search":
+			searchRequests.Add(1)
+			_ = json.NewEncoder(w).Encode(SearchResponse{
+				Items: []mpapi.ResourceListItem{canonicalSearchItem("src", "skill", "review", 1)},
+				Total: 1,
+				Limit: 100,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{URL: server.URL, InstanceID: "mp-shared"},
+		{URL: server.URL + "/", InstanceID: "mp-shared"},
+	}}}
+
+	results, endpointErrs, err := FederatedSearch(context.Background(), ec, "review", SearchOpts{})
+	if err != nil {
+		t.Fatalf("FederatedSearch: %v", err)
+	}
+	if len(endpointErrs) != 0 {
+		t.Fatalf("unexpected endpoint errors: %v", endpointErrs)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d duplicate results, want 1", len(results))
+	}
+	if got := searchRequests.Load(); got != 1 {
+		t.Fatalf("duplicate endpoint received %d search requests, want 1", got)
+	}
+}
+
 func TestFederatedSearchSingleAlias(t *testing.T) {
 	alpha := searchServer(t, "alpha", false, canonicalSearchItem("src-a", "skill", "review", 1.0))
 	beta := searchServer(t, "beta", false, canonicalSearchItem("src-b", "skill", "other", 1.0))
@@ -180,24 +220,24 @@ func TestFederatedSearchAdHocURL(t *testing.T) {
 
 func TestFederatedSearchCancellationWhileSlotsAreBusy(t *testing.T) {
 	searchStarted := make(chan struct{}, MaxSearchConcurrency+1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/agent-marketplace.json":
-			writeTestWellKnown(w, "mp-cancel")
-		case "/api/v1/search":
-			searchStarted <- struct{}{}
-			<-r.Context().Done()
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
 	marketplaces := make([]config.MarketplaceEntry, MaxSearchConcurrency+1)
 	for i := range marketplaces {
+		instanceID := fmt.Sprintf("mp-cancel-%d", i)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/agent-marketplace.json":
+				writeTestWellKnown(w, instanceID)
+			case "/api/v1/search":
+				searchStarted <- struct{}{}
+				<-r.Context().Done()
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
 		marketplaces[i] = config.MarketplaceEntry{
 			URL:        server.URL,
-			InstanceID: "mp-cancel",
+			InstanceID: instanceID,
 			Alias:      fmt.Sprintf("cancel-%d", i),
 		}
 	}
