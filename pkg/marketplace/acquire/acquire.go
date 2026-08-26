@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -33,6 +34,7 @@ type Limits struct {
 type Credentials struct {
 	SSHKeyFile string
 	Token      string
+	CAFile     string
 }
 
 // Result is an acquired source workspace.
@@ -138,7 +140,10 @@ func clone(ctx context.Context, origin, ref, exactCommit string, cred Credential
 		}
 	}
 
-	if err := enforceLimits(dir, limits); err != nil {
+	if err := dereferenceRepositorySymlinks(cloneCtx, dir, limits); err != nil {
+		return nil, err
+	}
+	if err := enforceLimits(cloneCtx, dir, limits); err != nil {
 		return nil, err
 	}
 
@@ -183,32 +188,44 @@ func runGit(ctx context.Context, env []string, dir string, args []string) ([]byt
 }
 
 type workspace struct {
-	askpassDir string
-	envSlice   []string
+	tempDir  string
+	envSlice []string
 }
 
 func newWorkspace(cred Credentials) (*workspace, error) {
-	askpassDir := ""
-	if strings.TrimSpace(cred.Token) != "" {
+	tempDir := ""
+	if strings.TrimSpace(cred.Token) != "" || strings.TrimSpace(cred.CAFile) != "" {
 		var err error
-		askpassDir, err = os.MkdirTemp("", "marketplace-askpass-")
+		tempDir, err = os.MkdirTemp("", "marketplace-git-")
 		if err != nil {
-			return nil, fmt.Errorf("create askpass dir: %w", err)
+			return nil, fmt.Errorf("create git workspace: %w", err)
 		}
 	}
-	env, err := gitEnv(cred, askpassDir)
+	if strings.TrimSpace(cred.CAFile) != "" {
+		data, err := os.ReadFile(strings.TrimSpace(cred.CAFile))
+		if err != nil {
+			_ = os.RemoveAll(tempDir)
+			return nil, fmt.Errorf("read source CA file: %w", err)
+		}
+		cred.CAFile = filepath.Join(tempDir, "ca.pem")
+		if err := os.WriteFile(cred.CAFile, data, 0o600); err != nil {
+			_ = os.RemoveAll(tempDir)
+			return nil, fmt.Errorf("copy source CA file: %w", err)
+		}
+	}
+	env, err := gitEnv(cred, tempDir)
 	if err != nil {
-		_ = os.RemoveAll(askpassDir)
+		_ = os.RemoveAll(tempDir)
 		return nil, err
 	}
-	return &workspace{envSlice: env, askpassDir: askpassDir}, nil
+	return &workspace{envSlice: env, tempDir: tempDir}, nil
 }
 
 func (w *workspace) env() []string { return w.envSlice }
 
 func (w *workspace) cleanup() error {
-	if w.askpassDir != "" {
-		_ = os.RemoveAll(w.askpassDir)
+	if w.tempDir != "" {
+		_ = os.RemoveAll(w.tempDir)
 	}
 	return nil
 }
@@ -228,6 +245,9 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 	if strings.TrimSpace(cred.SSHKeyFile) != "" {
 		ssh := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o BatchMode=yes", shQuote(cred.SSHKeyFile))
 		env["GIT_SSH_COMMAND"] = ssh
+	}
+	if strings.TrimSpace(cred.CAFile) != "" {
+		env["GIT_SSL_CAINFO"] = strings.TrimSpace(cred.CAFile)
 	}
 
 	if strings.TrimSpace(cred.Token) != "" {
@@ -299,13 +319,10 @@ func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string
 		if len(fields) < 4 {
 			continue
 		}
-		mode, typ, sizeStr := fields[0], fields[1], fields[3]
+		typ, sizeStr := fields[1], fields[3]
 		if typ != "blob" {
 			// Reject submodules and other non-blob tree entries.
 			return fmt.Errorf("%w: tree contains non-blob entry %q (type %s)", ErrLimitExceeded, path, typ)
-		}
-		if mode == "120000" {
-			return fmt.Errorf("%w: tree contains symlink %q", ErrLimitExceeded, path)
 		}
 		size, err := strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
@@ -326,11 +343,282 @@ func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string
 	return nil
 }
 
-func enforceLimits(dir string, limits Limits) error {
-	var total int64
-	var count int
+type repositoryBudget struct {
+	limits Limits
+	total  int64
+	count  int
+}
+
+func (b *repositoryBudget) add(path string, size int64) error {
+	if b.limits.FileBytes > 0 && size > b.limits.FileBytes {
+		return fmt.Errorf("%w: file %q size %d exceeds file_bytes limit %d", ErrLimitExceeded, path, size, b.limits.FileBytes)
+	}
+	b.total += size
+	b.count++
+	if b.limits.RepositoryBytes > 0 && b.total > b.limits.RepositoryBytes {
+		return fmt.Errorf("%w: workspace size %d exceeds repository_bytes limit %d", ErrLimitExceeded, b.total, b.limits.RepositoryBytes)
+	}
+	if b.limits.FileCount > 0 && b.count > b.limits.FileCount {
+		return fmt.Errorf("%w: workspace file count %d exceeds file_count limit %d", ErrLimitExceeded, b.count, b.limits.FileCount)
+	}
+	return nil
+}
+
+func dereferenceRepositorySymlinks(ctx context.Context, dir string, limits Limits) error {
+	budget, err := scanRepository(ctx, dir, limits, false)
+	if err != nil {
+		return fmt.Errorf("prepare symlink expansion: %w", err)
+	}
+	var links []string
+	if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".git" {
+			return fs.SkipDir
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			links = append(links, path)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("find repository symlinks: %w", err)
+	}
+	for _, link := range links {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		info, err := os.Lstat(link)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if err := materializeRepositorySymlink(ctx, dir, link, budget, make(map[string]bool)); err != nil {
+			rel, _ := filepath.Rel(dir, link)
+			return fmt.Errorf("dereference symlink %q: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+func materializeRepositorySymlink(ctx context.Context, root, link string, budget *repositoryBudget, active map[string]bool) error {
+	stageDir, err := os.MkdirTemp(filepath.Dir(link), ".agent-marketplace-symlink-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(stageDir) }()
+	stage := filepath.Join(stageDir, "value")
+	if err := copyRepositorySymlink(ctx, root, link, stage, budget, active); err != nil {
+		return err
+	}
+	if err := os.Remove(link); err != nil {
+		return err
+	}
+	return os.Rename(stage, link)
+}
+
+func copyRepositorySymlink(ctx context.Context, root, link, dst string, budget *repositoryBudget, active map[string]bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	link = filepath.Clean(link)
+	if active[link] {
+		return fmt.Errorf("symlink cycle at %q", repositoryRelative(root, link))
+	}
+	active[link] = true
+	defer delete(active, link)
+
+	target, info, err := resolveRepositoryPath(ctx, root, link)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() && pathContains(target, link) {
+		return fmt.Errorf("symlink cycle from %q to ancestor %q", repositoryRelative(root, link), repositoryRelative(root, target))
+	}
+	return copyRepositoryNode(ctx, root, target, dst, budget, active)
+}
+
+func resolveRepositoryPath(ctx context.Context, root, path string) (string, fs.FileInfo, error) {
+	current := filepath.Clean(path)
+	seen := make(map[string]bool)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
+		}
+		rel, err := repositoryPath(root, current)
+		if err != nil {
+			return "", nil, err
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		probe := root
+		followed := false
+		for i, part := range parts {
+			if part == "." {
+				continue
+			}
+			probe = filepath.Join(probe, part)
+			info, err := os.Lstat(probe)
+			if errors.Is(err, os.ErrNotExist) {
+				return "", nil, fmt.Errorf("broken symlink target %q", repositoryRelative(root, current))
+			}
+			if err != nil {
+				return "", nil, err
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				if !info.IsDir() && i < len(parts)-1 {
+					return "", nil, fmt.Errorf("broken symlink target %q", repositoryRelative(root, current))
+				}
+				continue
+			}
+			if seen[probe] {
+				return "", nil, fmt.Errorf("symlink cycle at %q", repositoryRelative(root, probe))
+			}
+			seen[probe] = true
+			target, err := os.Readlink(probe)
+			if err != nil {
+				return "", nil, err
+			}
+			if filepath.IsAbs(target) {
+				return "", nil, fmt.Errorf("absolute symlink target %q", target)
+			}
+			remaining := filepath.Join(parts[i+1:]...)
+			current = filepath.Clean(filepath.Join(filepath.Dir(probe), target, remaining))
+			if _, err := repositoryPath(root, current); err != nil {
+				return "", nil, err
+			}
+			followed = true
+			break
+		}
+		if followed {
+			continue
+		}
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil, fmt.Errorf("broken symlink target %q", repositoryRelative(root, current))
+		}
+		return current, info, err
+	}
+}
+
+func copyRepositoryNode(ctx context.Context, root, src, dst string, budget *repositoryBudget, active map[string]bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return copyRepositorySymlink(ctx, root, src, dst, budget, active)
+	}
+	if info.IsDir() {
+		if err := os.Mkdir(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyRepositoryNode(ctx, root, filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), budget, active); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("non-regular symlink target %q", repositoryRelative(root, src))
+	}
+	if err := budget.add(repositoryRelative(root, src), info.Size()); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if err := copyWithContext(ctx, out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(dst, info.Mode().Perm())
+}
+
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) error {
+	buf := make([]byte, 32*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			if _, err := dst.Write(buf[:n]); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func repositoryPath(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("symlink target escapes repository: %q", path)
+	}
+	if strings.EqualFold(strings.Split(rel, string(filepath.Separator))[0], ".git") {
+		return "", fmt.Errorf("symlink targets repository metadata: %q", rel)
+	}
+	return rel, nil
+}
+
+func repositoryRelative(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func scanRepository(ctx context.Context, dir string, limits Limits, rejectSymlinks bool) (*repositoryBudget, error) {
+	budget := &repositoryBudget{limits: limits}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -346,34 +634,29 @@ func enforceLimits(dir string, limits Limits) error {
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 			return fmt.Errorf("%w: path escapes workspace: %q", ErrLimitExceeded, rel)
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%w: symlinks are not allowed: %q", ErrLimitExceeded, rel)
-		}
-		if !d.Type().IsRegular() {
-			return fmt.Errorf("%w: non-regular files are not allowed: %q", ErrLimitExceeded, rel)
-		}
-		info, err := d.Info()
+		info, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
-		sz := info.Size()
-		if limits.FileBytes > 0 && sz > limits.FileBytes {
-			return fmt.Errorf("%w: file %q size %d exceeds file_bytes limit %d", ErrLimitExceeded, rel, sz, limits.FileBytes)
+		if info.IsDir() {
+			return nil
 		}
-		total += sz
-		count++
-		if limits.RepositoryBytes > 0 && total > limits.RepositoryBytes {
-			return fmt.Errorf("%w: workspace size %d exceeds repository_bytes limit %d", ErrLimitExceeded, total, limits.RepositoryBytes)
+		if info.Mode()&os.ModeSymlink != 0 {
+			if rejectSymlinks {
+				return fmt.Errorf("%w: symlink remained after expansion: %q", ErrLimitExceeded, rel)
+			}
+			return nil
 		}
-		if limits.FileCount > 0 && count > limits.FileCount {
-			return fmt.Errorf("%w: workspace file count %d exceeds file_count limit %d", ErrLimitExceeded, count, limits.FileCount)
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%w: non-regular files are not allowed: %q", ErrLimitExceeded, rel)
 		}
-		return nil
+		return budget.add(rel, info.Size())
 	})
-	if err != nil {
+	return budget, err
+}
+
+func enforceLimits(ctx context.Context, dir string, limits Limits) error {
+	if _, err := scanRepository(ctx, dir, limits, true); err != nil {
 		return fmt.Errorf("enforce repository limits: %w", err)
 	}
 	return nil

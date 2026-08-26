@@ -25,6 +25,9 @@ policy:
     - Apache-2.0
     - BSD-2-Clause
     - BSD-3-Clause
+  # A resource that declares no license is unknown, not disallowed.
+  # reject (default) | warn | allow
+  license_undeclared: reject
   limits:
     repository_bytes: 104857600
     file_count: 1024

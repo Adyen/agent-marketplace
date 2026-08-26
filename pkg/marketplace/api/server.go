@@ -18,6 +18,7 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -240,9 +241,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slugs, err := s.sourceSlugs(r.Context())
+	sources, err := s.sourceIndex(r.Context())
 	if err != nil {
-		slog.Error("source slugs failed", "err", err)
+		slog.Error("source index failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
@@ -279,7 +280,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]ResourceListItem, 0, len(revs))
 	for _, rev := range revs {
-		items = append(items, s.resourceToListItem(rev, slugs, relevanceScore(rev.Coordinate.Name, searchQ)))
+		items = append(items, s.resourceToListItem(rev, sources, relevanceScore(rev.Coordinate.Name, searchQ)))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1125,27 +1126,63 @@ func (s *Server) manifestEffectivelyRevoked(ctx context.Context, digest store.Re
 	return false, nil
 }
 
-func (s *Server) sourceSlugs(ctx context.Context) (map[store.SourceID]string, error) {
+// sourceIndex loads every source once so a listing can resolve slugs and
+// acquisition modes for its whole page without a per-resource lookup.
+func (s *Server) sourceIndex(ctx context.Context) (map[store.SourceID]store.Source, error) {
 	sources, err := s.meta.ListSources(ctx)
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[store.SourceID]string, len(sources))
+	m := make(map[store.SourceID]store.Source, len(sources))
 	for _, src := range sources {
-		m[src.ID] = src.Slug
+		m[src.ID] = src
 	}
 	return m, nil
 }
 
-func (s *Server) resourceToListItem(rev store.ResourceRevision, slugs map[store.SourceID]string, score float64) ResourceListItem {
+// resourceAvailability reports whether a revision can be installed from this
+// instance, using only what the listing already holds.
+//
+// A rejected revision is stored and indexed on purpose, for transparency, but
+// its artifact is stripped at ingest. Two independent signals of that survive
+// into the revision: the reject-severity finding that caused it, and the
+// missing archive digest. The archive check is qualified by acquisition mode
+// because an index-only source legitimately has no archive, and a collection
+// is addressed by its manifest digest rather than an archive.
+func resourceAvailability(rev store.ResourceRevision, src store.Source) Availability {
+	if rev.Revocation != nil {
+		return AvailabilityRevoked
+	}
+	for _, finding := range rev.Findings {
+		if finding.Severity == analyze.OutcomeReject {
+			return AvailabilityBlocked
+		}
+	}
+	if src.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
+		slog.Debug("listing resource without a mirrored artifact as blocked",
+			"coordinate", rev.Coordinate,
+			"content_digest", rev.ContentDigest,
+		)
+		return AvailabilityBlocked
+	}
+	return AvailabilityAvailable
+}
+
+func (s *Server) resourceToListItem(rev store.ResourceRevision, sources map[store.SourceID]store.Source, score float64) ResourceListItem {
+	src := sources[rev.Coordinate.Source]
 	item := ResourceListItem{
 		SourceID:      string(rev.Coordinate.Source),
-		SourceSlug:    slugs[rev.Coordinate.Source],
+		SourceSlug:    src.Slug,
 		Kind:          rev.Coordinate.Kind,
 		Name:          rev.Coordinate.Name,
 		Revision:      string(rev.ContentDigest),
 		ContentDigest: string(rev.ContentDigest),
-		Score:         score,
+		// Bound again on the way out. The ingest path already bounds what it
+		// writes, but this response must stay safe for rows written by any
+		// other producer against the same database.
+		Description:  store.BoundDescription(rev.Description),
+		Availability: resourceAvailability(rev, src),
+		Score:        score,
 	}
 	if rev.License != "" {
 		if item.Metadata == nil {

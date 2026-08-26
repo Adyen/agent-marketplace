@@ -7,6 +7,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +32,7 @@ const (
 	defaultOperationsListen   = "127.0.0.1:9090"
 	defaultRefreshInterval    = 30 * time.Minute
 	defaultHiddenContent      = "reject"
+	defaultLicenseUndeclared  = LicenseUndeclaredReject
 	defaultAcquisitionDefault = "mirror"
 	defaultRepositoryBytes    = 100 * 1024 * 1024
 	defaultFileCount          = 1024
@@ -45,12 +47,29 @@ const (
 	defaultMaxFindings       = 1000
 )
 
+// Accepted values for policy.license_undeclared. They deliberately reuse the
+// reject/warn/allow outcome vocabulary that findings and analyzer policy
+// already use, so an operator only has to learn one set of words.
+const (
+	// LicenseUndeclaredReject strips the artifact of a resource that declares
+	// no license, exactly as a disallowed license does. This is the default.
+	LicenseUndeclaredReject = "reject"
+	// LicenseUndeclaredWarn keeps such a resource installable and records a
+	// warn-severity finding against it.
+	LicenseUndeclaredWarn = "warn"
+	// LicenseUndeclaredAllow accepts such a resource silently.
+	LicenseUndeclaredAllow = "allow"
+)
+
 var (
 	validMetadataDrivers = map[string]bool{"sqlite": true, "postgres": true}
 	validBlobDrivers     = map[string]bool{"filesystem": true, "s3": true}
 	validAcquisition     = map[string]bool{"mirror": true, "index-only": true}
 	validHiddenContent   = map[string]bool{"reject": true, "warn": true}
-	validSourceHarnesses = map[string]bool{
+	// validLicenseUndeclared is an ordered slice, not a map, so the accepted
+	// values appear in a stable, least-to-most permissive order in errors.
+	validLicenseUndeclared = []string{LicenseUndeclaredReject, LicenseUndeclaredWarn, LicenseUndeclaredAllow}
+	validSourceHarnesses   = map[string]bool{
 		"":         true,
 		"factory":  true,
 		"claude":   true,
@@ -187,7 +206,35 @@ type Refresh struct {
 type Policy struct {
 	HiddenContent    string   `yaml:"hidden_content"`
 	LicenseAllowlist []string `yaml:"license_allowlist"`
-	Limits           Limits   `yaml:"limits"`
+	// LicenseUndeclared decides what happens to a resource that declares no
+	// license at all while LicenseAllowlist is non-empty. An undeclared
+	// license is unknown, not disallowed, so the operator chooses the outcome:
+	// reject (default), warn, or allow. It has no effect when no allowlist is
+	// configured, because license policy is not enforced at all then.
+	LicenseUndeclared string `yaml:"license_undeclared"`
+	Limits            Limits `yaml:"limits"`
+}
+
+// UndeclaredLicenseOutcome returns the effective outcome for a resource that
+// declares no license.
+//
+// An empty or unrecognised value resolves to reject. That keeps the historical
+// behaviour for a configuration written before this option existed, and for a
+// Policy value constructed in code, so adding the option cannot silently
+// loosen an existing deployment's security posture.
+func (p Policy) UndeclaredLicenseOutcome() string {
+	return ResolveUndeclaredLicenseOutcome(p.LicenseUndeclared)
+}
+
+// ResolveUndeclaredLicenseOutcome maps a configured undeclared-license value to
+// an accepted outcome, failing closed on anything unrecognised. It is exported
+// so a per-source policy override is resolved by exactly the same rule as the
+// global policy.
+func ResolveUndeclaredLicenseOutcome(value string) string {
+	if slices.Contains(validLicenseUndeclared, value) {
+		return value
+	}
+	return LicenseUndeclaredReject
 }
 
 // Limits are resource and timing bounds enforced by the worker.
@@ -207,6 +254,7 @@ type Source struct {
 	Aliases         []string       `yaml:"aliases"`
 	Origin          string         `yaml:"origin"`
 	Ref             string         `yaml:"ref"`
+	CAFile          string         `yaml:"ca_file,omitempty"`
 	Acquisition     string         `yaml:"acquisition"`
 	Publisher       Publisher      `yaml:"publisher"`
 	License         string         `yaml:"license"`
@@ -292,6 +340,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Policy.LicenseAllowlist == nil {
 		cfg.Policy.LicenseAllowlist = defaultLicenseAllowlist
+	}
+	if cfg.Policy.LicenseUndeclared == "" {
+		cfg.Policy.LicenseUndeclared = defaultLicenseUndeclared
 	}
 	if cfg.Policy.Limits.RepositoryBytes == 0 {
 		cfg.Policy.Limits.RepositoryBytes = defaultRepositoryBytes
@@ -546,6 +597,14 @@ func (p Policy) Validate() []error {
 	if !validHiddenContent[p.HiddenContent] {
 		errs = append(errs, fmt.Errorf("policy.hidden_content must be one of %v", keys(validHiddenContent)))
 	}
+	// An absent value is legal and means the conservative default; a value that
+	// is present but unrecognised is an operator mistake and must not be
+	// silently downgraded to reject, because the operator asked for something
+	// else and would never see it happen.
+	if p.LicenseUndeclared != "" && !slices.Contains(validLicenseUndeclared, p.LicenseUndeclared) {
+		errs = append(errs, fmt.Errorf("policy.license_undeclared %q must be one of %v (unset means %q)",
+			p.LicenseUndeclared, validLicenseUndeclared, LicenseUndeclaredReject))
+	}
 	if p.Limits.RepositoryBytes <= 0 {
 		errs = append(errs, errors.New("policy.limits.repository_bytes must be positive"))
 	}
@@ -594,6 +653,9 @@ func validateSource(idx int, src Source, policy Policy) []error {
 	if strings.TrimSpace(src.Ref) == "" {
 		errs = append(errs, fmt.Errorf("sources[%d].ref is required", idx))
 	}
+	if err := validateSourceCAFile(idx, src.CAFile); err != nil {
+		errs = append(errs, err)
+	}
 	if len(src.Roots) == 0 {
 		errs = append(errs, fmt.Errorf("sources[%d].roots must contain at least one root", idx))
 	}
@@ -616,6 +678,34 @@ func validateSource(idx int, src Source, policy Policy) []error {
 	}
 	errs = append(errs, validateCredentials(idx, src.Credentials)...)
 	return errs
+}
+
+func validateSourceCAFile(idx int, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("sources[%d].ca_file %q must be absolute", idx, path)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("sources[%d].ca_file %q: %w", idx, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("sources[%d].ca_file %q must not be a symlink", idx, path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("sources[%d].ca_file %q must be a regular file", idx, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("sources[%d].ca_file %q is not readable: %w", idx, path, err)
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(data) {
+		return fmt.Errorf("sources[%d].ca_file %q does not contain a valid PEM certificate", idx, path)
+	}
+	return nil
 }
 
 func validateCredentials(idx int, cred Credentials) []error {

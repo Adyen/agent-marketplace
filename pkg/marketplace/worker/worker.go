@@ -55,7 +55,7 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	}
 	origin := merged.Origins[len(merged.Origins)-1]
 
-	creds, err := toAcquireCredentials(cfgSource.Credentials)
+	creds, err := toAcquireCredentials(cfgSource.Credentials, cfgSource.CAFile)
 	if err != nil {
 		return fmt.Errorf("resolve credentials for source %q: %w", source.ID, err)
 	}
@@ -454,18 +454,20 @@ func toStoreRoots(roots []config.SourceRoot) []store.SourceRoot {
 	return out
 }
 
-func toAcquireCredentials(cred config.Credentials) (acquire.Credentials, error) {
+func toAcquireCredentials(cred config.Credentials, caFile string) (acquire.Credentials, error) {
+	out := acquire.Credentials{CAFile: caFile}
 	if cred.SSHKey != nil {
-		return acquire.Credentials{SSHKeyFile: cred.SSHKey.File}, nil
+		out.SSHKeyFile = cred.SSHKey.File
+		return out, nil
 	}
 	if cred.Token != nil {
 		token, err := resolveToken(*cred.Token)
 		if err != nil {
 			return acquire.Credentials{}, err
 		}
-		return acquire.Credentials{Token: token}, nil
+		out.Token = token
 	}
-	return acquire.Credentials{}, nil
+	return out, nil
 }
 
 func resolveToken(t config.TokenCredential) (string, error) {

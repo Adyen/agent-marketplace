@@ -28,8 +28,13 @@ type BuildResult struct {
 	Name            string
 	Kind            string
 	License         string
-	Rejected        bool
-	RejectReason    string
+	// Description is the author-written one-line summary, normalized and
+	// bounded by store.BoundDescription. It is populated for rejected results
+	// too: a rejected resource stays listed for transparency and still needs a
+	// description to be identifiable.
+	Description  string
+	Rejected     bool
+	RejectReason string
 }
 
 // BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
@@ -41,6 +46,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	}
 
 	caps := ExtractCapabilities(r)
+	description := ExtractDescription(r)
 
 	base, err := hccartifact.FromIR(r)
 	if err != nil {
@@ -58,6 +64,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 			Name:          base.Manifest.Name,
 			Kind:          base.Manifest.Kind,
 			License:       opts.Source.License,
+			Description:   description,
 			ContentDigest: base.Manifest.ContentDigest,
 			Findings:      report.Findings,
 			Capabilities:  caps,
@@ -97,6 +104,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		Name:           artifact.Manifest.Name,
 		Kind:           artifact.Manifest.Kind,
 		License:        base.Manifest.License,
+		Description:    description,
 		RawArchive:     raw,
 		ContentDigest:  base.Manifest.ContentDigest,
 		ArchiveDigest:  digest,
@@ -123,9 +131,11 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	}
 
 	caps := ExtractCapabilities(c)
+	description := ExtractDescription(c)
 
 	if report.Rejected {
 		return BuildResult{
+			Description:  description,
 			Findings:     report.Findings,
 			Capabilities: caps,
 			Rejected:     true,
@@ -225,6 +235,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		Name:            c.Name(),
 		Kind:            "collection",
 		License:         artifact.Manifest.License,
+		Description:     description,
 		ManifestPayload: payload,
 		ManifestDigest:  manifestDigest,
 		ContentDigest:   manifestDigest,

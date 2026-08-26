@@ -462,10 +462,26 @@ func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.S
 
 // -- Resource revisions --
 
+// rowScanner is satisfied by both *sql.Row and *sql.Rows so a single scan
+// implementation serves point lookups and iteration alike.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// resourceRevisionColumns is the single definition of the resource revision
+// projection. Every read path selects exactly these columns in this order, so
+// adding a column cannot silently drop out of one query site.
+const resourceRevisionColumns = `marketplace_id, source_id, kind, name, content_digest, archive_digest,
+	        analyzer_version, findings, license, description, provenance, revocation`
+
+// qualifiedResourceRevisionColumns is resourceRevisionColumns aliased for the
+// joined search query.
+const qualifiedResourceRevisionColumns = `rr.marketplace_id, rr.source_id, rr.kind, rr.name, rr.content_digest, rr.archive_digest,
+	       rr.analyzer_version, rr.findings, rr.license, rr.description, rr.provenance, rr.revocation`
+
 func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) (store.ResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		        analyzer_version, findings, license, provenance, revocation
+		`SELECT `+resourceRevisionColumns+`
 		 FROM resource_revisions
 		 WHERE marketplace_id=? AND source_id=? AND kind=? AND name=? AND content_digest=?`,
 		coord.Marketplace, coord.Source, coord.Kind, coord.Name, digest,
@@ -473,15 +489,16 @@ func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoo
 	return s.scanResourceRevision(row)
 }
 
-func (s *Store) scanResourceRevision(row *sql.Row) (store.ResourceRevision, error) {
+func (s *Store) scanResourceRevision(sc rowScanner) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
-	var archiveDigest, license, analyzer, provenanceJSON sql.NullString
+	var archiveDigest, license, analyzer, description, provenanceJSON sql.NullString
 	var findingsJSON string
 	var revocationJSON []byte
 
-	err := row.Scan(
+	err := sc.Scan(
 		&rev.Coordinate.Marketplace, &rev.Coordinate.Source, &rev.Coordinate.Kind, &rev.Coordinate.Name,
-		&rev.ContentDigest, &archiveDigest, &analyzer, &findingsJSON, &license, &provenanceJSON, &revocationJSON,
+		&rev.ContentDigest, &archiveDigest, &analyzer, &findingsJSON, &license, &description,
+		&provenanceJSON, &revocationJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceRevision{}, store.ErrNotFound
@@ -493,6 +510,7 @@ func (s *Store) scanResourceRevision(row *sql.Row) (store.ResourceRevision, erro
 	rev.ArchiveDigest = store.ArchiveDigest(archiveDigest.String)
 	rev.AnalyzerVersion = analyzer.String
 	rev.License = license.String
+	rev.Description = description.String
 
 	if err := unmarshalJSON([]byte(findingsJSON), &rev.Findings); err != nil {
 		return store.ResourceRevision{}, fmt.Errorf("unmarshal findings: %w", err)
@@ -541,10 +559,11 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 	_, err = s.q.ExecContext(ctx,
 		`INSERT OR REPLACE INTO resource_revisions
 		 (marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		  analyzer_version, findings, license, provenance, revocation, created_at)
-		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''), ?, ?)`,
+		  analyzer_version, findings, license, description, provenance, revocation, created_at)
+		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?, ?)`,
 		rev.Coordinate.Marketplace, rev.Coordinate.Source, rev.Coordinate.Kind, rev.Coordinate.Name,
-		rev.ContentDigest, archive, rev.AnalyzerVersion, findingsJSON, rev.License, provenanceJSON, revocationJSON,
+		rev.ContentDigest, archive, rev.AnalyzerVersion, findingsJSON, rev.License,
+		store.BoundDescription(rev.Description), provenanceJSON, revocationJSON,
 		timeToMicro(time.Now().UTC()),
 	)
 	return err
@@ -552,8 +571,7 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 
 func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceCoordinate) ([]store.ResourceRevision, error) {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		        analyzer_version, findings, license, provenance, revocation
+		`SELECT `+resourceRevisionColumns+`
 		 FROM resource_revisions
 		 WHERE marketplace_id=? AND source_id=? AND kind=? AND name=?
 		 ORDER BY content_digest`,
@@ -564,9 +582,15 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 	}
 	defer func() { _ = rows.Close() }()
 
+	return s.collectResourceRevisions(rows)
+}
+
+// collectResourceRevisions drains rows produced by a resourceRevisionColumns
+// projection.
+func (s *Store) collectResourceRevisions(rows *sql.Rows) ([]store.ResourceRevision, error) {
 	var out []store.ResourceRevision
 	for rows.Next() {
-		rev, err := s.scanResourceRevisionFromRows(rows)
+		rev, err := s.scanResourceRevision(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -575,45 +599,9 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 	return out, rows.Err()
 }
 
-func (s *Store) scanResourceRevisionFromRows(rows *sql.Rows) (store.ResourceRevision, error) {
-	var rev store.ResourceRevision
-	var archiveDigest, license, analyzer, provenanceJSON sql.NullString
-	var findingsJSON string
-	var revocationJSON []byte
-
-	err := rows.Scan(
-		&rev.Coordinate.Marketplace, &rev.Coordinate.Source, &rev.Coordinate.Kind, &rev.Coordinate.Name,
-		&rev.ContentDigest, &archiveDigest, &analyzer, &findingsJSON, &license, &provenanceJSON, &revocationJSON,
-	)
-	if err != nil {
-		return store.ResourceRevision{}, err
-	}
-	rev.ArchiveDigest = store.ArchiveDigest(archiveDigest.String)
-	rev.AnalyzerVersion = analyzer.String
-	rev.License = license.String
-
-	if err := unmarshalJSON([]byte(findingsJSON), &rev.Findings); err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("unmarshal findings: %w", err)
-	}
-	if provenanceJSON.Valid && provenanceJSON.String != "" && provenanceJSON.String != "null" {
-		rev.Provenance = &store.Provenance{}
-		if err := unmarshalJSON([]byte(provenanceJSON.String), rev.Provenance); err != nil {
-			return store.ResourceRevision{}, fmt.Errorf("unmarshal provenance: %w", err)
-		}
-	}
-	if len(revocationJSON) > 0 && string(revocationJSON) != "null" {
-		rev.Revocation = &store.Revocation{}
-		if err := unmarshalJSON(revocationJSON, rev.Revocation); err != nil {
-			return store.ResourceRevision{}, fmt.Errorf("unmarshal revocation: %w", err)
-		}
-	}
-	return rev, nil
-}
-
 func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.ArchiveDigest) ([]store.ResourceRevision, error) {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		        analyzer_version, findings, license, provenance, revocation
+		`SELECT `+resourceRevisionColumns+`
 		 FROM resource_revisions
 		 WHERE marketplace_id=? AND archive_digest=?
 		 ORDER BY source_id, kind, name, content_digest`,
@@ -624,21 +612,12 @@ func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, market
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []store.ResourceRevision
-	for rows.Next() {
-		rev, err := s.scanResourceRevisionFromRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rev)
-	}
-	return out, rows.Err()
+	return s.collectResourceRevisions(rows)
 }
 
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.ResourceRevision, error) {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		        analyzer_version, findings, license, provenance, revocation
+		`SELECT `+resourceRevisionColumns+`
 		 FROM resource_revisions
 		 WHERE marketplace_id=? AND content_digest=?
 		 ORDER BY source_id, kind, name`, marketplace, digest)
@@ -646,21 +625,13 @@ func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, market
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var out []store.ResourceRevision
-	for rows.Next() {
-		rev, scanErr := s.scanResourceRevisionFromRows(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		out = append(out, rev)
-	}
-	return out, rows.Err()
+
+	return s.collectResourceRevisions(rows)
 }
 
 func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.ResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT marketplace_id, source_id, kind, name, content_digest, archive_digest,
-		        analyzer_version, findings, license, provenance, revocation
+		`SELECT `+resourceRevisionColumns+`
 		 FROM resource_revisions
 		 WHERE marketplace_id=? AND source_id=? AND kind=? AND name=?
 		 ORDER BY created_at DESC, content_digest DESC
@@ -688,12 +659,12 @@ func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.Resour
 	}
 
 	query := fmt.Sprintf(`
-		SELECT rr.marketplace_id, rr.source_id, rr.kind, rr.name, rr.content_digest, rr.archive_digest,
-		       rr.analyzer_version, rr.findings, rr.license, rr.provenance, rr.revocation
+		SELECT %s
 		FROM resource_revisions rr
 		JOIN sources s ON s.id = rr.source_id
 		WHERE %s
-		ORDER BY rr.source_id, rr.kind, rr.name, rr.created_at DESC, rr.content_digest DESC`, where)
+		ORDER BY rr.source_id, rr.kind, rr.name, rr.created_at DESC, rr.content_digest DESC`,
+		qualifiedResourceRevisionColumns, where)
 
 	rows, err := s.q.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -701,13 +672,5 @@ func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.Resour
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []store.ResourceRevision
-	for rows.Next() {
-		rev, err := s.scanResourceRevisionFromRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rev)
-	}
-	return out, rows.Err()
+	return s.collectResourceRevisions(rows)
 }

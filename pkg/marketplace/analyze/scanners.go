@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,8 +16,6 @@ import (
 
 var (
 	htmlCommentRe = regexp.MustCompile(`(?s:<!--.*?-->)`)
-
-	dangerousURLRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:javascript|data|file|vbscript):)`)
 
 	suspiciousCallRe = regexp.MustCompile(`(?i)(?:\b(?:setTimeout|setInterval|exec)\s*\(|\bnew\s+Function\s*\(|\bwindow\s*\[\s*["']eval["']\s*\])`)
 
@@ -266,59 +265,185 @@ func terminalControlMessage(content string, start, end int, kind byte) string {
 	return fmt.Sprintf("%s (%s: %q)", prefix, describeBytes(end-start), truncate(strconv.Quote(content[start:end]), 80))
 }
 
-// ScanDangerousURLs finds URL schemes that can execute code or access local files.
+// Character classes shared by the dangerous-URL patterns.
+const (
+	// dataURLMediaChar is the RFC 2045 media-type and parameter character
+	// set. Whitespace is deliberately absent, so a media type can never span
+	// the words of a sentence.
+	dataURLMediaChar = `A-Za-z0-9!#$&^_.+*`
+
+	// urlStrippedGap are the characters a browser removes from anywhere in a
+	// URL (ASCII tab, LF, CR), so "file:<TAB>//x" is the same URL as
+	// "file://x". A space is not in this set: in a path it survives as %20 and
+	// addresses something else entirely, which is exactly why "file:
+	// config.yaml" and "Attach the file: report.pdf" are prose, not URLs.
+	urlStrippedGap = `\t\n\r`
+)
+
+// Every pattern is anchored at the byte after the scheme colon, so the
+// scanner walks the colons in a sample (a memchr scan) instead of running an
+// unanchored automaton over the whole sample for every scheme.
+var (
+	// scriptURLBodyRe requires a code body after javascript:/vbscript:.
+	// Whitespace before the body is allowed because the body is source code,
+	// where leading whitespace is insignificant and browsers strip tab/LF/CR
+	// from URLs anyway; but the first code byte must be one that can legally
+	// begin a script, which markdown decoration ("**JavaScript:** Node 18+")
+	// and closing punctuation cannot.
+	scriptURLBodyRe = regexp.MustCompile(`\A\s*[^\s*#|>=?@)\]},.:^]`)
+
+	// dataURLBodyRe requires an RFC 2397 body,
+	// data:[<mediatype>][;base64],<data>. Three shapes qualify: a ";base64"
+	// payload marker, a complete body ending at the mandatory comma, or a
+	// "type/subtype" media type. The whole-body shapes tolerate leading
+	// whitespace because the WHATWG data-URL processor strips whitespace
+	// around the media type, so "data: text/html,<script>" really does
+	// render; the comma-less media type does not, so "Input data: CSV/rows"
+	// stays clean. Either way a bare "data:" followed by an English word is
+	// not a data URI.
+	dataURLBodyRe = regexp.MustCompile(`(?i)\A(?:` +
+		`\s*[` + dataURLMediaChar + `/;=-]*;\s*base64` +
+		`|\s*(?:[` + dataURLMediaChar + `-]+/[` + dataURLMediaChar + `-]+)?(?:;[` + dataURLMediaChar + `=-]*)*,` +
+		`|[` + urlStrippedGap + `]*[` + dataURLMediaChar + `-]+/[` + dataURLMediaChar + `-]+)`)
+
+	// fileURLBodyRe requires a path component: "file:/" (canonically
+	// "file://"), a backslash (browsers treat "\" as "/" for special schemes)
+	// or a Windows drive letter ("file:C:/"). Prose such as "Attach the file:
+	// report.pdf" has no path component.
+	fileURLBodyRe = regexp.MustCompile(`(?i)\A[` + urlStrippedGap + `]*(?:[\\/]|[a-z]:[\\/])`)
+)
+
+// dangerousURLScheme couples a scheme name with the pattern its body must
+// match before the "<name>:" token counts as a URL of that scheme rather than
+// an English word followed by a colon.
+type dangerousURLScheme struct {
+	name string
+	body *regexp.Regexp
+}
+
+var dangerousURLSchemes = [...]dangerousURLScheme{
+	{"javascript", scriptURLBodyRe},
+	{"vbscript", scriptURLBodyRe},
+	{"data", dataURLBodyRe},
+	{"file", fileURLBodyRe},
+}
+
+// ScanDangerousURLs finds URL schemes that can execute code or access local
+// files. It requires evidence that the token really is a URL of that scheme:
+// "data" and "file" are ordinary English words that documentation constantly
+// follows with a colon ("**With data:** User uploads a CSV", "file:
+// config.yaml"), and reporting those rejected whole catalogs. Encoded and
+// whitespace-padded variants are still caught, because every pattern is also
+// applied to the URL-decoded view of each token.
 func ScanDangerousURLs(content, file, analyzer string) []Finding {
 	var findings []Finding
-	seen := make(map[int]bool)
+	ctx := &urlScanContext{findings: &findings, content: content, file: file, analyzer: analyzer}
 
-	for _, tok := range tokenizeURLLike(content) {
-		if !looksLikeDangerousURLToken(tok.text) {
-			continue
-		}
-		decoded, offsets, _ := decodeURLToken(tok.text)
+	ctx.scanString(content, 0, nil)
 
-		loc := dangerousURLRe.FindStringSubmatchIndex(decoded)
-		if len(loc) < 4 || loc[2] < 0 {
-			continue
+	// Encoded variants ("javascript%3Aalert(1)", "data&#x3a;text/html,x")
+	// only become visible after decoding; the plain forms are already covered
+	// by the pass above, so only tokens carrying an encoding marker are
+	// decoded.
+	if containsEncodedMarker(content) {
+		for _, tok := range tokenizeURLLike(content) {
+			if !containsEncodedMarker(tok.text) {
+				continue
+			}
+			decoded, offsets, changed := decodeURLToken(tok.text)
+			if !changed {
+				continue
+			}
+			ctx.scanString(decoded, tok.start, offsets)
 		}
-
-		origStart := tok.start + offsets[loc[2]]
-		if seen[origStart] {
-			continue
-		}
-		seen[origStart] = true
-
-		schemeEnd := loc[3] - 1
-		if schemeEnd < loc[2] {
-			schemeEnd = loc[3]
-		}
-		scheme := strings.ToLower(decoded[loc[2]:schemeEnd])
-		msg := fmt.Sprintf("dangerous URL scheme: %s:", scheme)
-		findings = append(findings, NewFinding(FindingDangerousURL, msg, analyzer, SourceRangeAt(file, content, origStart)))
 	}
 
 	return findings
 }
 
-func looksLikeDangerousURLToken(tok string) bool {
-	if strings.Contains(tok, ":") {
-		return true
-	}
-	for i := 0; i < len(tok); i++ {
-		switch tok[i] {
-		case '%':
-			if i+2 < len(tok) && isHex(tok[i+1]) && isHex(tok[i+2]) {
-				return true
+// urlScanContext carries the state shared by every dangerous-URL pattern pass
+// over one resource sample.
+type urlScanContext struct {
+	findings *[]Finding
+	seen     map[int]bool
+	content  string
+	file     string
+	analyzer string
+}
+
+// scanString reports every dangerous URL in s. It walks the colons in s and,
+// for each one preceded by a scheme name at a token boundary, requires that
+// scheme's body pattern to match. When offsets is non-nil, s is a decoded view
+// of content starting at base and offsets maps decoded byte positions back to
+// original ones.
+func (c *urlScanContext) scanString(s string, base int, offsets []int) {
+	for i := 0; i < len(s); {
+		idx := strings.IndexByte(s[i:], ':')
+		if idx < 0 {
+			return
+		}
+		colon := i + idx
+		i = colon + 1
+		// Fast reject: every dangerous scheme name ends in 't', 'a' or 'e',
+		// so most prose colons ("Steps:", "description:") cost one compare.
+		if colon == 0 || !isSchemeTailByte(s[colon-1]) {
+			continue
+		}
+
+		for _, sch := range dangerousURLSchemes {
+			schemeStart := colon - len(sch.name)
+			if schemeStart < 0 || !strings.EqualFold(s[schemeStart:colon], sch.name) {
+				continue
 			}
-		case '&':
-			return true
-		case '\\':
-			if i+3 < len(tok) && tok[i+1] == 'x' && isHex(tok[i+2]) && isHex(tok[i+3]) {
-				return true
+			// A scheme must start at a token boundary, so "metadata:" and
+			// "profile:" are not "data:" and "file:".
+			if schemeStart > 0 && isASCIIAlnum(s[schemeStart-1]) {
+				continue
 			}
+			loc := sch.body.FindStringIndex(s[i:])
+			if loc == nil {
+				continue
+			}
+			start := schemeStart
+			if offsets != nil {
+				if schemeStart >= len(offsets) {
+					continue
+				}
+				start = base + offsets[schemeStart]
+			}
+			c.add(start, sch.name, s[schemeStart:i+loc[1]])
+			break
 		}
 	}
+}
+
+// isSchemeTailByte reports whether b is the last letter of a dangerous scheme
+// name ("javascripT", "vbscripT", "datA", "filE"), ignoring case.
+func isSchemeTailByte(b byte) bool {
+	switch b {
+	case 't', 'T', 'a', 'A', 'e', 'E':
+		return true
+	}
 	return false
+}
+
+// add records one dangerous URL at the given offset in the original content.
+// evidence is the matched scheme plus the body that proved it is a URL, taken
+// from the decoded view.
+func (c *urlScanContext) add(start int, scheme, evidence string) bool {
+	if start < 0 || start >= len(c.content) || c.seen[start] {
+		return false
+	}
+	slog.Debug("dangerous url scheme detected",
+		"file", c.file, "scheme", scheme, "offset", start, "match", truncate(evidence, 80))
+	*c.findings = append(*c.findings, NewFinding(FindingDangerousURL,
+		fmt.Sprintf("dangerous URL scheme: %s:", scheme),
+		c.analyzer, SourceRangeAt(c.file, c.content, start)))
+	if c.seen == nil {
+		c.seen = make(map[int]bool)
+	}
+	c.seen[start] = true
+	return true
 }
 
 // ScanRemoteReferences finds http://, https://, ftp:// and protocol-relative // URLs.
@@ -358,30 +483,75 @@ func isSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
-// ScanSuspiciousPaths finds path traversal, absolute paths and sensitive paths.
+// pathScanMode selects the precision profile used by the suspicious-path
+// scanner. The two call sites have different threat models, so they must not
+// share one set of patterns.
+type pathScanMode uint8
+
+const (
+	// pathScanContent scans resource prose (markdown bodies, descriptions,
+	// frontmatter values). Slash-command invocations such as
+	// "/analyze-cohorts" and prose ellipses such as "..." are legitimate
+	// there, so only sensitive filesystem roots and real traversal segments
+	// are reported.
+	pathScanContent pathScanMode = iota
+	// pathScanFilePath scans FileSet entry paths, where any absolute path or
+	// ".." segment is a packaging (zip-slip / path-escape) signal and stays
+	// strict.
+	pathScanFilePath
+)
+
+func (m pathScanMode) String() string {
+	if m == pathScanFilePath {
+		return "file-path"
+	}
+	return "content"
+}
+
+// ScanSuspiciousPaths finds path traversal and sensitive filesystem paths in
+// resource content (prose, markdown bodies, metadata values). It uses the
+// content precision profile: a bare "/slash-command" or a prose ellipsis is
+// not a filesystem path. Use ScanSuspiciousFilePaths for FileSet entry paths.
 func ScanSuspiciousPaths(content, file, analyzer string) []Finding {
+	return scanSuspiciousPaths(content, file, analyzer, pathScanContent)
+}
+
+// ScanSuspiciousFilePaths finds path traversal and absolute or sensitive
+// filesystem paths in a file path taken from a resource FileSet. Archive
+// entries must be relative and contained, so any absolute path or ".."
+// segment is reported.
+func ScanSuspiciousFilePaths(filePath, file, analyzer string) []Finding {
+	return scanSuspiciousPaths(filePath, file, analyzer, pathScanFilePath)
+}
+
+func scanSuspiciousPaths(content, file, analyzer string, mode pathScanMode) []Finding {
 	var findings []Finding
-	seen := make(map[int]bool)
+	ctx := &pathScanContext{findings: &findings, content: content, file: file, analyzer: analyzer, mode: mode}
 
-	scanSuspiciousPathString(&findings, seen, content, file, analyzer, content, 0, nil)
+	ctx.scanString(content, 0, nil)
 
-	if containsEncodedPathMarker(content) {
+	if containsEncodedMarker(content) {
 		for _, tok := range tokenizeURLLike(content) {
-			if !looksLikeEncodedPath(tok.text) {
+			if !containsEncodedMarker(tok.text) {
 				continue
 			}
 			decoded, offsets, changed := decodeURLToken(tok.text)
 			if !changed {
 				continue
 			}
-			scanSuspiciousPathString(&findings, seen, content, file, analyzer, decoded, tok.start, offsets)
+			ctx.scanString(decoded, tok.start, offsets)
 		}
 	}
 
 	return findings
 }
 
-func containsEncodedPathMarker(s string) bool {
+// containsEncodedMarker reports whether s carries any marker of an encoding
+// that decodeURLToken can undo: a percent escape, an HTML entity or a
+// backslash-hex escape. It is the shared prefilter for both decoded passes
+// (dangerous URLs and suspicious paths): without a marker, decoding cannot
+// reveal anything the raw pass has not already seen.
+func containsEncodedMarker(s string) bool {
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '%':
@@ -399,57 +569,130 @@ func containsEncodedPathMarker(s string) bool {
 	return false
 }
 
-func scanSuspiciousPathString(findings *[]Finding, seen map[int]bool, content, file, analyzer, s string, base int, offsets []int) {
-	run := func(re *regexp.Regexp, group int) {
-		if offsets == nil {
-			if group > 0 {
-				for _, loc := range re.FindAllStringSubmatchIndex(s, -1) {
-					if len(loc) <= group*2+1 || loc[group*2] < 0 {
-						continue
-					}
-					addSuspiciousPathFinding(findings, seen, content, file, analyzer, loc[group*2], loc[group*2+1])
-				}
-				return
-			}
-			for _, loc := range re.FindAllStringIndex(s, -1) {
-				addSuspiciousPathFinding(findings, seen, content, file, analyzer, loc[0], loc[1])
-			}
-			return
-		}
-		if group > 0 {
-			for _, loc := range re.FindAllStringSubmatchIndex(s, -1) {
-				if len(loc) <= group*2+1 || loc[group*2] < 0 {
-					continue
-				}
-				addDecodedSuspiciousPath(findings, seen, content, file, analyzer, s, base, offsets, loc[group*2], loc[group*2+1])
-			}
-			return
-		}
-		for _, loc := range re.FindAllStringIndex(s, -1) {
-			addDecodedSuspiciousPath(findings, seen, content, file, analyzer, s, base, offsets, loc[0], loc[1])
-		}
-	}
+// Character classes shared by the suspicious-path patterns. A path reference
+// in prose is delimited by whitespace, quoting or bracketing; anything else
+// (letters, digits, '-', '_', '.') means the token is not a path boundary.
+const (
+	pathBoundaryLeft  = `\s"'` + "`" + `(<\[\{=,;:|`
+	pathBoundaryRight = `\s"'` + "`" + `)>\]\}=,;:|!?`
+	pathBodyStop      = `\s"'` + "`" + `<>|)\]\}`
+)
 
-	sensitiveRe := regexp.MustCompile(`(?i)(/etc/passwd|/etc/shadow|~/.ssh)`)
-	run(sensitiveRe, 0)
+var (
+	// sensitivePathRe matches unambiguous credential targets anywhere, encoded
+	// or not. Unchanged in intent from the original, with the '.' escaped so
+	// "~/xssh" no longer matches.
+	sensitivePathRe = regexp.MustCompile(`(?i)(/etc/passwd|/etc/shadow|~/\.ssh)`)
 
-	absRe := regexp.MustCompile(`([\s"'(<\[\{=]|^)(/(?:[^/\s]+)(?:/[^/\s]+)*)`)
-	run(absRe, 2)
+	// sensitiveRootPathRe (content mode) matches an absolute path rooted at a
+	// sensitive system directory, bounded on both sides. The boundaries keep
+	// slash-command invocations ("/deploy", "/dev-setup") and words such as
+	// "/etcetera" out, which is the false-positive class that rejected whole
+	// catalogs.
+	sensitiveRootPathRe = regexp.MustCompile(`(?i)(?:^|[` + pathBoundaryLeft + `])` +
+		`(/(?:etc|var|root|proc|sys|dev|boot|usr|bin|sbin|home)(?:/[^` + pathBodyStop + `]*)?)` +
+		`(?:$|[` + pathBoundaryRight + `])`)
 
-	dotRe := regexp.MustCompile(`\.{2,}`)
-	run(dotRe, 0)
+	// absPathRe (file-path mode) keeps the original strict behaviour: any
+	// absolute path segment in an archive entry is a path-escape signal.
+	absPathRe = regexp.MustCompile(`([\s"'(<\[\{=]|^)(/(?:[^/\s]+)(?:/[^/\s]+)*)`)
 
-	tildeRe := regexp.MustCompile(`~[\\/]`)
-	run(tildeRe, 0)
+	// pathTraversalSepRe matches a dot run immediately followed by a path
+	// separator: "../", "..\", plus the naive-sanitizer bypass forms ".../"
+	// and "....//". A dot run without a separator is an ellipsis, not
+	// traversal.
+	pathTraversalSepRe = regexp.MustCompile(`\.{2,}[\\/]`)
 
-	driveRe := regexp.MustCompile(`(?i)(?:^|[^A-Za-z])([a-z]:[\\/])`)
-	run(driveRe, 1)
+	// pathTraversalTailRe matches a trailing "/.." or "\.." segment (group 1),
+	// e.g. "cd /..". The trailing class excludes '.' so Go's "./..." package
+	// wildcard is not traversal, and excludes separators because "/../" is
+	// already reported by pathTraversalSepRe.
+	pathTraversalTailRe = regexp.MustCompile(`([\\/]\.\.)(?:$|[^.\\/A-Za-z0-9_-])`)
 
-	uncRe := regexp.MustCompile(`\\\\`)
-	run(uncRe, 0)
+	// pathTraversalBareRe matches a standalone ".." token (group 1). Exactly
+	// two dots, so a prose ellipsis never matches, and delimited, so a git
+	// range such as "main..HEAD" does not either.
+	pathTraversalBareRe = regexp.MustCompile(`(?:^|[` + pathBoundaryLeft + `])(\.\.)(?:$|[` + pathBoundaryRight + `])`)
+
+	// tildePathRe matches a home-directory reference.
+	tildePathRe = regexp.MustCompile(`~[\\/]`)
+
+	// drivePathRe matches a Windows drive-letter path, not a URL scheme.
+	drivePathRe = regexp.MustCompile(`(?i)(?:^|[^A-Za-z])([a-z]:[\\/])`)
+
+	// uncPathRe (file-path mode) matches any double backslash.
+	uncPathRe = regexp.MustCompile(`\\\\`)
+
+	// uncContentPathRe (content mode) additionally requires a host segment
+	// terminated by a separator, so an escaped backslash inside a prose code
+	// sample ("\\d", "\\n") is not reported as a UNC path.
+	uncContentPathRe = regexp.MustCompile(`\\\\[^\\/\s]+[\\/]`)
+)
+
+// pathScanContext carries the state shared by every suspicious-path pattern
+// pass over one resource sample.
+type pathScanContext struct {
+	findings *[]Finding
+	seen     map[int]bool
+	content  string
+	file     string
+	analyzer string
+	mode     pathScanMode
 }
 
-func addDecodedSuspiciousPath(findings *[]Finding, seen map[int]bool, content, file, analyzer, s string, base int, offsets []int, decStart, decEnd int) bool {
+// scanString runs every pattern for the configured mode over s. When offsets
+// is non-nil, s is a decoded view of content starting at base and offsets maps
+// decoded byte positions back to original ones.
+func (c *pathScanContext) scanString(s string, base int, offsets []int) {
+	c.run(sensitivePathRe, 0, s, base, offsets)
+
+	if c.mode == pathScanFilePath {
+		c.run(absPathRe, 2, s, base, offsets)
+	} else {
+		c.run(sensitiveRootPathRe, 1, s, base, offsets)
+	}
+
+	c.run(pathTraversalSepRe, 0, s, base, offsets)
+	c.run(pathTraversalTailRe, 1, s, base, offsets)
+	c.run(pathTraversalBareRe, 1, s, base, offsets)
+
+	c.run(tildePathRe, 0, s, base, offsets)
+	c.run(drivePathRe, 1, s, base, offsets)
+
+	if c.mode == pathScanFilePath {
+		c.run(uncPathRe, 0, s, base, offsets)
+	} else {
+		c.run(uncContentPathRe, 0, s, base, offsets)
+	}
+}
+
+// run reports every match of re in s. group selects the capturing group that
+// delimits the reported path, or 0 for the whole match.
+func (c *pathScanContext) run(re *regexp.Regexp, group int, s string, base int, offsets []int) {
+	if group > 0 {
+		for _, loc := range re.FindAllStringSubmatchIndex(s, -1) {
+			if len(loc) <= group*2+1 || loc[group*2] < 0 {
+				continue
+			}
+			c.addMatch(s, base, offsets, loc[group*2], loc[group*2+1])
+		}
+		return
+	}
+	for _, loc := range re.FindAllStringIndex(s, -1) {
+		c.addMatch(s, base, offsets, loc[0], loc[1])
+	}
+}
+
+// addMatch records a match located at [start,end) inside s, mapping decoded
+// offsets back to the original content when needed.
+func (c *pathScanContext) addMatch(s string, base int, offsets []int, start, end int) bool {
+	if offsets == nil {
+		return c.add(start, end)
+	}
+	return c.addDecoded(s, base, offsets, start, end)
+}
+
+func (c *pathScanContext) addDecoded(s string, base int, offsets []int, decStart, decEnd int) bool {
 	if decStart < 0 || decEnd > len(s) || offsets == nil {
 		return false
 	}
@@ -458,35 +701,23 @@ func addDecodedSuspiciousPath(findings *[]Finding, seen map[int]bool, content, f
 	if decEnd < len(offsets) {
 		end = base + offsets[decEnd]
 	}
-	return addSuspiciousPathFinding(findings, seen, content, file, analyzer, start, end)
+	return c.add(start, end)
 }
 
-func looksLikeEncodedPath(tok string) bool {
-	for i := 0; i < len(tok); i++ {
-		switch tok[i] {
-		case '%':
-			if i+2 < len(tok) && isHex(tok[i+1]) && isHex(tok[i+2]) {
-				return true
-			}
-		case '&':
-			return true
-		case '\\':
-			if i+3 < len(tok) && tok[i+1] == 'x' && isHex(tok[i+2]) && isHex(tok[i+3]) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func addSuspiciousPathFinding(findings *[]Finding, seen map[int]bool, content, file, analyzer string, start, end int) bool {
-	if start < 0 || end > len(content) || seen[start] {
+func (c *pathScanContext) add(start, end int) bool {
+	if start < 0 || end > len(c.content) || c.seen[start] {
 		return false
 	}
-	match := content[start:end]
-	msg := fmt.Sprintf("suspicious path: %q", truncate(match, 80))
-	*findings = append(*findings, NewFinding(FindingSuspiciousPath, msg, analyzer, SourceRangeAt(file, content, start)))
-	seen[start] = true
+	match := truncate(c.content[start:end], 80)
+	slog.Debug("suspicious path detected",
+		"file", c.file, "mode", c.mode.String(), "offset", start, "match", match)
+	*c.findings = append(*c.findings, NewFinding(FindingSuspiciousPath,
+		fmt.Sprintf("suspicious path: %q", match),
+		c.analyzer, SourceRangeAt(c.file, c.content, start)))
+	if c.seen == nil {
+		c.seen = make(map[int]bool)
+	}
+	c.seen[start] = true
 	return true
 }
 
@@ -1062,8 +1293,12 @@ func findEntityEnd(s string, i int) int {
 	return i
 }
 
-func isDecimalByte(b byte) bool { return b >= '0' && b <= '9' }
-func isEntityNameByte(b byte) bool {
+func isDecimalByte(b byte) bool    { return b >= '0' && b <= '9' }
+func isEntityNameByte(b byte) bool { return isASCIIAlnum(b) }
+
+// isASCIIAlnum reports whether b is an ASCII letter or digit, i.e. a byte that
+// cannot delimit a URL scheme or an HTML entity name.
+func isASCIIAlnum(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
