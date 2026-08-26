@@ -40,11 +40,37 @@ func BenchmarkScanSuspiciousPaths(b *testing.B) {
 	}
 }
 
+// BenchmarkScanSuspiciousPathsMarkdown measures the real ingest hot path: a
+// clean markdown command body full of slash commands and ellipses.
+func BenchmarkScanSuspiciousPathsMarkdown(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ScanSuspiciousPaths(markdownBodyFixture, "Body", "test")
+	}
+}
+
+func BenchmarkScanSuspiciousFilePaths(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ScanSuspiciousFilePaths("commands/analyze-cohorts.md", "commands/analyze-cohorts.md", "test")
+	}
+}
+
 func BenchmarkScanDangerousURLs(b *testing.B) {
 	content := "safe text https://example.com javascript%3aalert(1) data&#x3a;text/html"
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		ScanDangerousURLs(content, "file", "test")
+	}
+}
+
+// BenchmarkScanDangerousURLsMarkdown measures the real ingest hot path: a
+// clean markdown body whose prose mentions "data:" and "file:" as English
+// words, which must stay allocation-free of findings.
+func BenchmarkScanDangerousURLsMarkdown(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ScanDangerousURLs(markdownProseURLFixture, "Body", "test")
 	}
 }
 

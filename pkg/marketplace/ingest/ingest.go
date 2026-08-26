@@ -70,7 +70,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 	policy := effectivePolicy(cfg, source.PolicyOverrides)
 	limits := effectiveLimits(cfg.Policy.Limits, source.PolicyOverrides)
-	allowlist := effectiveLicenseAllowlist(cfg.Policy.LicenseAllowlist, source.PolicyOverrides)
+	license := effectiveLicensePolicy(cfg.Policy, source.PolicyOverrides)
 
 	ctx, cancel := context.WithTimeout(ctx, limits.IngestionDuration.Duration())
 	defer cancel()
@@ -88,7 +88,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	inspectionDigests := make(map[string]string)
 	var inspectionBlobs []store.BlobUpload
 	var collectionEntries []catalog.Entry
-	seen := make(map[string]bool)
+	seen := make(map[string]string)
 
 	for _, root := range source.Roots {
 		rootDir := filepath.Join(dir, filepath.Clean(root.Path))
@@ -138,10 +138,22 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 				continue
 			}
 			key := kind + "/" + entry.Name
-			if seen[key] {
-				return rev, fmt.Errorf("duplicate resource %q in source %q", key, source.ID)
+			path := sourceEntryPath(dir, root, entry)
+			if keptPath, duplicate := seen[key]; duplicate {
+				if keptPath == path {
+					return rev, fmt.Errorf("duplicate resource %q at %q in source %q", key, path, source.ID)
+				}
+				slog.Warn("duplicate resource identity across source paths; keeping first occurrence",
+					"code", "marketplace.ingest.duplicate-resource",
+					"source", source.ID,
+					"resource", key,
+					"kept_path", keptPath,
+					"ignored_path", path,
+					"action", "assign distinct source-local names",
+				)
+				continue
 			}
-			seen[key] = true
+			seen[key] = path
 
 			if entry.Kind == hccir.KindCollection {
 				collectionEntries = append(collectionEntries, entry)
@@ -152,12 +164,12 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			if err != nil {
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
-			r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, files, nil)
+			r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, files, nil)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
 			rawArchive, rawArchiveDigest := r.RawArchive, r.ArchiveDigest
-			r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
+			r = applyPolicyToResult(r, source.ID, limits, license, source.Acquisition)
 			if source.Acquisition == store.AcquisitionIndexOnly && !r.Rejected && len(rawArchive) > 0 {
 				resourceArchives[key] = rawArchive
 				resourceArchiveDigests[key] = rawArchiveDigest
@@ -290,12 +302,12 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, allowlist, nil, directResults)
+		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, nil, directResults)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
 		}
-		r = applyPolicyToResult(r, limits, allowlist, source.Acquisition)
+		r = applyPolicyToResult(r, source.ID, limits, license, source.Acquisition)
 		if source.Acquisition != store.AcquisitionMirror {
 			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition", name)
 		}
@@ -444,6 +456,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			AnalyzerVersion: analyze.AnalyzerVersionV1,
 			Findings:        toStoreFindings(p.result.Findings),
 			License:         p.result.License,
+			Description:     p.result.Description,
 			Provenance: &store.Provenance{
 				InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
 				SourceID:                 source.ID,
@@ -521,7 +534,25 @@ func appendUniquePath(paths [][]string, candidate []string) [][]string {
 	return append(paths, append([]string(nil), candidate...))
 }
 
-func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, allowlist []string, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
+func sourceEntryPath(dir string, root store.SourceRoot, entry catalog.Entry) string {
+	path := entry.Path
+	if path == "" {
+		return filepath.ToSlash(filepath.Clean(root.Path))
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, root.Path, path)
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(filepath.Clean(root.Path))
+	}
+	return filepath.ToSlash(rel)
+}
+
+// buildResource analyzes one catalog entry and builds its artifact. License
+// policy is deliberately not an input here: analysis is independent of it, and
+// the license decision is taken once, afterwards, in applyPolicyToResult.
+func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
 	opts.Source = analyze.Source{
@@ -863,9 +894,16 @@ func effectiveLimits(base config.Limits, overrides map[string]any) config.Limits
 	return out
 }
 
-func effectiveLicenseAllowlist(base []string, overrides map[string]any) []string {
+// effectiveLicensePolicy resolves the global license policy against a source's
+// policy_overrides. An override that is absent, malformed, or unrecognised
+// leaves the global value in place, so a typo cannot quietly relax a source.
+func effectiveLicensePolicy(base config.Policy, overrides map[string]any) licensePolicy {
+	lp := licensePolicy{
+		allowlist:  base.LicenseAllowlist,
+		undeclared: base.UndeclaredLicenseOutcome(),
+	}
 	if overrides == nil {
-		return base
+		return lp
 	}
 	if v, ok := overrides["license_allowlist"].([]any); ok {
 		out := make([]string, 0, len(v))
@@ -875,10 +913,19 @@ func effectiveLicenseAllowlist(base []string, overrides map[string]any) []string
 			}
 		}
 		if len(out) > 0 {
-			return out
+			lp.allowlist = out
 		}
 	}
-	return base
+	if v, ok := overrides["license_undeclared"].(string); ok {
+		resolved := config.ResolveUndeclaredLicenseOutcome(v)
+		if resolved != v {
+			slog.Warn("ignoring unrecognised license_undeclared policy override",
+				"value", v, "using", lp.undeclared)
+		} else {
+			lp.undeclared = resolved
+		}
+	}
+	return lp
 }
 
 func toInt64(v any) (int64, bool) {
@@ -926,20 +973,128 @@ func stripArchive(r *artifact.BuildResult) {
 	r.ArchiveDigest = ""
 }
 
-func applyPolicyToResult(r artifact.BuildResult, limits config.Limits, allowlist []string, mode store.AcquisitionMode) artifact.BuildResult {
+// licensePolicy is the effective license policy for one source.
+//
+// The two license conditions it decides are distinct. A resource whose declared
+// license is outside the allowlist is disallowed: the operator has seen that
+// license and excluded it. A resource that declares no license at all is
+// unknown, and what an unknown license means is the operator's call, so it has
+// its own outcome. Collapsing the two would remove that choice and would also
+// make the emitted message wrong for the far more common undeclared case.
+type licensePolicy struct {
+	// allowlist is empty when license policy is not enforced at all.
+	allowlist []string
+	// undeclared is reject, warn, or allow, already resolved by
+	// config.ResolveUndeclaredLicenseOutcome, so it is never empty here.
+	undeclared string
+}
+
+// enforced reports whether license policy applies. With no allowlist nothing is
+// rejected or warned on license grounds, declared or not.
+func (lp licensePolicy) enforced() bool { return len(lp.allowlist) > 0 }
+
+func (lp licensePolicy) allowlistText() string { return strings.Join(lp.allowlist, ", ") }
+
+// licenseDecisionAttrs describes a license decision the same way for every
+// outcome, so an operator can grep one log shape and tell an undeclared license
+// from a disallowed one by license_declared alone.
+//
+// It is a plain function rather than a closure because it runs once per resource
+// per ingest: a closure would allocate on the accepted path too, where nothing
+// is logged above debug.
+func licenseDecisionAttrs(r artifact.BuildResult, sourceID store.SourceID, lp licensePolicy, code, outcome string) []any {
+	return []any{
+		"code", code,
+		"source", sourceID,
+		"kind", r.Kind,
+		"resource", r.Name,
+		"declared_license", r.License,
+		"license_declared", strings.TrimSpace(r.License) != "",
+		"outcome", outcome,
+		"allowlist", lp.allowlist,
+	}
+}
+
+// rejectOnLicense marks r rejected, strips its installable artifact, records the
+// reason, and logs the decision.
+func rejectOnLicense(r *artifact.BuildResult, sourceID store.SourceID, lp licensePolicy, code, message string) {
+	r.Rejected = true
+	stripArchive(r)
+	r.Findings = append(r.Findings, analyze.Finding{
+		Code:     code,
+		Severity: analyze.OutcomeReject,
+		Message:  message,
+	})
+	slog.Warn("license policy rejected resource", licenseDecisionAttrs(*r, sourceID, lp, code, analyze.OutcomeReject)...)
+}
+
+func debugEnabled() bool {
+	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
+}
+
+// applyLicensePolicy records the license decision for one built result. It
+// returns the result and whether the decision stops further policy evaluation.
+func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp licensePolicy) (artifact.BuildResult, bool) {
+	if !lp.enforced() {
+		return r, false
+	}
+
+	if strings.TrimSpace(r.License) == "" {
+		switch lp.undeclared {
+		case config.LicenseUndeclaredReject:
+			rejectOnLicense(&r, sourceID, lp, analyze.PolicyLicenseUndeclared, fmt.Sprintf(
+				"resource declares no license, and policy.license_undeclared is %q: it is not installable while the license allowlist (%s) is configured",
+				config.LicenseUndeclaredReject, lp.allowlistText()))
+			return r, true
+		case config.LicenseUndeclaredWarn:
+			r.Findings = append(r.Findings, analyze.Finding{
+				Code:     analyze.PolicyLicenseUndeclared,
+				Severity: analyze.OutcomeWarn,
+				Message: fmt.Sprintf(
+					"resource declares no license, and policy.license_undeclared is %q: it stays installable but its license is unknown to the configured allowlist (%s)",
+					config.LicenseUndeclaredWarn, lp.allowlistText()),
+			})
+			slog.Warn("license policy warned on undeclared license",
+				licenseDecisionAttrs(r, sourceID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeWarn)...)
+		default:
+			// Allow: the operator has already decided that an unknown license
+			// is acceptable here, so no finding is recorded. A finding would
+			// otherwise be attached to the majority of resources in catalogs
+			// that rarely declare licenses, and would be persisted into every
+			// inspection projection for no decision the operator can act on.
+			if debugEnabled() {
+				slog.Debug("license policy allowed undeclared license",
+					licenseDecisionAttrs(r, sourceID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeAllow)...)
+			}
+		}
+		return r, false
+	}
+
+	// Matched against the declared value exactly as authored, not a trimmed
+	// copy: trimming is only how "declares nothing" is recognised, and must not
+	// widen which declared strings the allowlist accepts.
+	if !slices.Contains(lp.allowlist, r.License) {
+		rejectOnLicense(&r, sourceID, lp, analyze.PolicyLicenseNotAllowed, fmt.Sprintf(
+			"declared license %q is not in the configured license allowlist (%s)",
+			r.License, lp.allowlistText()))
+		return r, true
+	}
+
+	if debugEnabled() {
+		slog.Debug("license policy allowed declared license",
+			licenseDecisionAttrs(r, sourceID, lp, "", analyze.OutcomeAllow)...)
+	}
+	return r, false
+}
+
+func applyPolicyToResult(r artifact.BuildResult, sourceID store.SourceID, limits config.Limits, license licensePolicy, mode store.AcquisitionMode) artifact.BuildResult {
 	if r.Rejected {
 		stripArchive(&r)
 		return r
 	}
 
-	if len(allowlist) > 0 && !slices.Contains(allowlist, r.License) {
-		r.Rejected = true
-		stripArchive(&r)
-		r.Findings = append(r.Findings, analyze.Finding{
-			Code:     "marketplace.policy.license-not-allowed",
-			Severity: analyze.OutcomeReject,
-			Message:  fmt.Sprintf("license %q is not in the configured license allowlist", r.License),
-		})
+	r, stop := applyLicensePolicy(r, sourceID, license)
+	if stop {
 		return r
 	}
 
@@ -948,10 +1103,19 @@ func applyPolicyToResult(r artifact.BuildResult, limits config.Limits, allowlist
 		r.Rejected = true
 		stripArchive(&r)
 		r.Findings = append(r.Findings, analyze.Finding{
-			Code:     "marketplace.policy.artifact-too-large",
+			Code:     analyze.PolicyArtifactTooLarge,
 			Severity: analyze.OutcomeReject,
 			Message:  fmt.Sprintf("artifact size %d exceeds limit %d", artifactSize, limits.ArtifactBytes),
 		})
+		slog.Warn("artifact policy decision",
+			"code", analyze.PolicyArtifactTooLarge,
+			"source", sourceID,
+			"kind", r.Kind,
+			"resource", r.Name,
+			"artifact_bytes", artifactSize,
+			"limit_bytes", limits.ArtifactBytes,
+			"outcome", analyze.OutcomeReject,
+		)
 		return r
 	}
 

@@ -96,11 +96,11 @@ container-check: secrets-check
 	@test -s .dockerignore
 	@test -s web/Dockerfile
 	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER node/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
-	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
+	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg ALPINE_RUNTIME_IMAGE=' Makefile)" -eq 1
@@ -110,8 +110,8 @@ container-check: secrets-check
 		echo "ERROR: tracked container image configuration contains a registry hostname; use an environment override instead"; exit 1; \
 	fi
 	@test "$$(grep -Fc -- 'wget -q -O - -T 5' Dockerfile.marketplace)" -eq 1
-	@test "$$(grep -Fh -- 'wget' deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml | grep -Fc -- '"-q", "-O", "-", "-T", "5"')" -eq 2
-	@test -z "$$(grep -nE -- '--(tries|quiet|output-document)' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml deploy/compose/sqlite-filesystem/compose.yaml)"
+	@test "$$(grep -Fh -- 'wget' deploy/compose/postgres-s3/compose.yaml compose.yaml | grep -Fc -- '"-q", "-O", "-", "-T", "5"')" -eq 2
+	@test -z "$$(grep -nE -- '--(tries|quiet|output-document)' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml compose.yaml)"
 	@echo "Container static checks passed"
 
 compose-config:
@@ -130,9 +130,9 @@ compose-config:
 		printf '%s\n' 'postgres://marketplace:validation-only@postgres:5432/marketplace?sslmode=disable' > "$$secret_file"; \
 		printf '%s\n' 'validation-only' > "$$password_file"; \
 		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
-		docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config --quiet && \
+		docker compose -f compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/sqlite-filesystem/compose.yaml config > "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
 		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
 		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
 		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \

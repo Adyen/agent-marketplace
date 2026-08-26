@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -210,6 +211,99 @@ func TestOpenAPIResourceListRevisionUsesCanonicalDigest(t *testing.T) {
 			t.Fatalf("%s pattern = %#v, want strict lowercase SHA-256", field, property["pattern"])
 		}
 	}
+}
+
+// The description is untrusted third-party content, so the schema must publish
+// the same bound the server enforces and must not make the field required.
+func TestOpenAPIDescriptionIsOptionalAndBounded(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+
+	for _, schemaName := range []string{"ResourceListItem", "ResourceRevision"} {
+		schema := schemas[schemaName].(map[string]any)
+		properties := schema["properties"].(map[string]any)
+
+		description, ok := properties["description"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s does not declare a description property", schemaName)
+		}
+		if description["type"] != "string" {
+			t.Errorf("%s.description type = %#v, want string", schemaName, description["type"])
+		}
+		if description["maxLength"] != store.MaxDescriptionBytes {
+			t.Errorf("%s.description maxLength = %#v, want %d (the bound the server enforces)",
+				schemaName, description["maxLength"], store.MaxDescriptionBytes)
+		}
+		if description["description"] == nil {
+			t.Errorf("%s.description is not documented as sanitized untrusted content", schemaName)
+		}
+		for _, field := range requiredFields(schema) {
+			if field == "description" {
+				t.Errorf("%s.description must stay optional: a resource kind may declare none", schemaName)
+			}
+		}
+	}
+}
+
+// Availability is additive: it must be optional, and its enum must match the
+// Go constants exactly so a client can switch on the documented values.
+func TestOpenAPIAvailabilityMatchesServerConstants(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	item := schemas["ResourceListItem"].(map[string]any)
+
+	availability, ok := item["properties"].(map[string]any)["availability"].(map[string]any)
+	if !ok {
+		t.Fatal("ResourceListItem does not declare an availability property")
+	}
+	if availability["type"] != "string" {
+		t.Errorf("availability type = %#v, want string", availability["type"])
+	}
+	if availability["description"] == nil {
+		t.Error("availability is not documented")
+	}
+
+	rawEnum, ok := availability["enum"].([]any)
+	if !ok {
+		t.Fatalf("availability enum = %#v, want a list", availability["enum"])
+	}
+	got := make(map[string]bool, len(rawEnum))
+	for _, value := range rawEnum {
+		got[value.(string)] = true
+	}
+	want := map[string]bool{
+		string(AvailabilityAvailable): true,
+		string(AvailabilityBlocked):   true,
+		string(AvailabilityRevoked):   true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("availability enum = %#v, want %#v", got, want)
+	}
+	for value := range want {
+		if !got[value] {
+			t.Errorf("availability enum missing %q", value)
+		}
+	}
+
+	for _, field := range requiredFields(item) {
+		if field == "availability" {
+			t.Error("availability must stay optional so existing clients remain conformant")
+		}
+	}
+}
+
+func requiredFields(schema map[string]any) []string {
+	raw, ok := schema["required"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if name, ok := value.(string); ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func TestOpenAPIResourceRevisionRequiresCompleteCoordinate(t *testing.T) {

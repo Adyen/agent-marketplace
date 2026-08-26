@@ -2,8 +2,12 @@ package config
 
 import (
 	"context"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -329,6 +333,55 @@ func TestLoadConfigInlineTokenCredential(t *testing.T) {
 	}
 }
 
+func TestLoadConfigSourceCAFile(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "source-ca.pem")
+	if err := os.WriteFile(caFile, testCAPEM(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(writeConfig(t, configYAML(sourceYAML("    ca_file: "+strconv.Quote(caFile)+"\n"))))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Sources[0].CAFile != caFile {
+		t.Fatalf("source ca_file = %q, want %q", cfg.Sources[0].CAFile, caFile)
+	}
+}
+
+func TestLoadConfigRejectsInvalidSourceCAFile(t *testing.T) {
+	invalidPEM := filepath.Join(t.TempDir(), "invalid.pem")
+	if err := os.WriteFile(invalidPEM, []byte("not a certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caDir := t.TempDir()
+	caTarget := filepath.Join(caDir, "target.pem")
+	caLink := filepath.Join(caDir, "link.pem")
+	if err := os.WriteFile(caTarget, testCAPEM(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(caTarget, caLink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "relative", path: "ca.pem", wantErr: "must be absolute"},
+		{name: "missing", path: filepath.Join(t.TempDir(), "missing.pem"), wantErr: "no such file"},
+		{name: "directory", path: t.TempDir(), wantErr: "regular file"},
+		{name: "symlink", path: caLink, wantErr: "must not be a symlink"},
+		{name: "invalid PEM", path: invalidPEM, wantErr: "valid PEM certificate"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadConfig(writeConfig(t, configYAML(sourceYAML("    ca_file: "+strconv.Quote(tc.path)+"\n"))))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("LoadConfig error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadConfigLimitBounds(t *testing.T) {
 	yaml := strings.ReplaceAll(validConfigYAML(), "repository_bytes: 104857600", "repository_bytes: -1")
 	path := writeConfig(t, yaml)
@@ -383,6 +436,82 @@ func TestLoadConfigRejectsUnsupportedExactRevocationKind(t *testing.T) {
 	_, err := LoadConfig(writeConfig(t, yaml))
 	if err == nil || !strings.Contains(err.Error(), "unsupported resource kind") {
 		t.Fatalf("LoadConfig error = %v, want unsupported resource kind", err)
+	}
+}
+
+// license_undeclared decides what an undeclared license does. Every accepted
+// value must survive parsing verbatim.
+func TestLoadConfigLicenseUndeclaredValues(t *testing.T) {
+	for _, want := range []string{LicenseUndeclaredReject, LicenseUndeclaredWarn, LicenseUndeclaredAllow} {
+		t.Run(want, func(t *testing.T) {
+			yaml := strings.Replace(validConfigYAML(), "  hidden_content: reject", "  hidden_content: reject\n  license_undeclared: "+want, 1)
+			cfg, err := LoadConfig(writeConfig(t, yaml))
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Policy.LicenseUndeclared != want {
+				t.Fatalf("license_undeclared = %q, want %q", cfg.Policy.LicenseUndeclared, want)
+			}
+			if got := cfg.Policy.UndeclaredLicenseOutcome(); got != want {
+				t.Fatalf("UndeclaredLicenseOutcome = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigLicenseUndeclaredInvalid(t *testing.T) {
+	yaml := strings.Replace(validConfigYAML(), "  hidden_content: reject", "  hidden_content: reject\n  license_undeclared: permit", 1)
+	_, err := LoadConfig(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for invalid license_undeclared")
+	}
+	for _, want := range []string{"policy.license_undeclared", `"permit"`, "reject", "warn", "allow"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v does not mention %q", err, want)
+		}
+	}
+}
+
+// An operator config written before the option existed must keep today's
+// behaviour: an undeclared license is rejected. This is the config half of the
+// default-preservation guard.
+func TestLoadConfigLicenseUndeclaredDefaultsToReject(t *testing.T) {
+	yaml := validConfigYAML()
+	if strings.Contains(yaml, "license_undeclared") {
+		t.Fatal("test precondition: fixture config must not declare license_undeclared")
+	}
+	cfg, err := LoadConfig(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Policy.LicenseUndeclared != LicenseUndeclaredReject {
+		t.Fatalf("license_undeclared default = %q, want %q", cfg.Policy.LicenseUndeclared, LicenseUndeclaredReject)
+	}
+	if got := cfg.Policy.UndeclaredLicenseOutcome(); got != LicenseUndeclaredReject {
+		t.Fatalf("UndeclaredLicenseOutcome default = %q, want %q", got, LicenseUndeclaredReject)
+	}
+}
+
+// A Policy built in code, or loaded by a caller that skips defaults, must fail
+// closed rather than pick the most permissive outcome.
+func TestUndeclaredLicenseOutcomeFailsClosed(t *testing.T) {
+	tests := []struct {
+		configured string
+		want       string
+	}{
+		{configured: "", want: LicenseUndeclaredReject},
+		{configured: "nonsense", want: LicenseUndeclaredReject},
+		{configured: "Reject", want: LicenseUndeclaredReject},
+		{configured: LicenseUndeclaredWarn, want: LicenseUndeclaredWarn},
+		{configured: LicenseUndeclaredAllow, want: LicenseUndeclaredAllow},
+	}
+	for _, tc := range tests {
+		if got := (Policy{LicenseUndeclared: tc.configured}).UndeclaredLicenseOutcome(); got != tc.want {
+			t.Errorf("UndeclaredLicenseOutcome(%q) = %q, want %q", tc.configured, got, tc.want)
+		}
+		if got := ResolveUndeclaredLicenseOutcome(tc.configured); got != tc.want {
+			t.Errorf("ResolveUndeclaredLicenseOutcome(%q) = %q, want %q", tc.configured, got, tc.want)
+		}
 	}
 }
 
@@ -463,4 +592,11 @@ func sourceYAML(extra string) string {
       - path: .agents
         source_harness: factory
 ` + extra
+}
+
+func testCAPEM(t *testing.T) []byte {
+	t.Helper()
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
 }

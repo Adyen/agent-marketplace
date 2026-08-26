@@ -82,7 +82,7 @@ An approved source represents one Git repository lineage and contains:
 
 Operator configuration under the same Source ID is the authority that a moved origin is the same source. Forge-specific immutable repository IDs may be retained as evidence but are not required by the protocol.
 
-Duplicate kind and name pairs across a source's roots fail the refresh. They never produce ambiguous coordinates.
+Duplicate kind and name pairs across distinct paths in a source do not produce ambiguous coordinates: configured root order deterministically retains the first occurrence, and refresh emits an actionable warning naming both paths so the publisher can assign distinct source-local names. Repeating the same path remains an operator configuration error.
 
 Collection publication expands nested includes, rejects cycles, and resolves every member to an exact resource in the same Marketplace. A member whose existing `registry`, `ref`, or `path` cannot be mapped to an approved source fails that collection's source refresh; publication never leaves a permanently unresolvable collection.
 

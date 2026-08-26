@@ -22,6 +22,43 @@ Set `instance.browser_base` to the public Nuxt origin when browser pages are dep
 
 Use file permissions and a secret manager for DSN files. For S3, prefer workload identity/IAM roles through the AWS SDK's default credential chain; if roles are unavailable, use an SDK-supported credentials file from the platform secret manager rather than static environment credentials. Do not put passwords in committed YAML, Compose files, image layers, command arguments, or issue output. Source origins must not contain URL userinfo or password/token query parameters; put source authentication in a credentials file or environment reference instead. Source credential settings follow the same file/environment-reference rule. Production SQLite configuration must name a writable filesystem database; `:memory:`, `mode=memory`, `mode=ro`, and `immutable=1` URI modes are rejected (the SQLite package's direct in-memory constructor remains available to tests).
 
+A source that uses a private certificate authority may set `ca_file` to an absolute path for a readable, non-symlink PEM bundle containing at least one certificate. The worker copies the validated bundle to a private per-acquisition file and passes that copy as `GIT_SSL_CAINFO` only to Git subprocesses for that source; it does not mutate global Git configuration or apply the bundle to other sources. Mount the file read-only at the same path in every API and worker container because all roles validate operator configuration during startup:
+
+```yaml
+sources:
+  - id: internal-resources
+    slug: internal-resources
+    origin: https://git.example.internal/resources.git
+    ref: main
+    ca_file: /etc/agent-marketplace/ca/internal.pem
+    roots:
+      - path: .agents
+```
+
+When distinct source paths publish the same kind and source-local name, ingestion keeps the first occurrence in configured root order and logs `marketplace.ingest.duplicate-resource` with both paths and the remediation to assign distinct source-local names. Repeating the same path remains an operator configuration error.
+
+## License policy
+
+`policy.license_allowlist` lists the licenses this instance is willing to index and mirror. It defaults to `[MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause]`. An empty list disables license enforcement entirely: nothing is rejected or reported on license grounds, whatever a resource declares.
+
+While an allowlist is configured, ingestion distinguishes two conditions, because they are not the same thing:
+
+- **Disallowed** — the resource declares a license that the allowlist does not contain. The operator has seen that license and excluded it, so the resource is rejected, its installable artifact is stripped, and it is reported as `marketplace.policy.license-not-allowed` naming the declared license.
+- **Undeclared** — the resource declares no license at all. Nothing is known about its terms, which is not the same as knowing they are unacceptable, so the outcome is the operator's choice. It is reported as `marketplace.policy.license-undeclared`, never as `license-not-allowed`.
+
+`policy.license_undeclared` selects that outcome and accepts `reject`, `warn`, or `allow`:
+
+```yaml
+policy:
+  license_allowlist: [MIT, Apache-2.0]
+  # reject (default) | warn | allow
+  license_undeclared: reject
+```
+
+**The default is `reject`**, which is exactly the behaviour of releases that did not have this option: an undeclared license under a configured allowlist blocks the resource. `warn` keeps the resource installable and records a warn-severity finding, so operators can inventory unlicensed content without blocking it. `allow` accepts it silently and records nothing. Anything else is a startup configuration error; an unset value means `reject`. A source may narrow or relax its own outcome through `policy_overrides.license_undeclared`, and an unrecognised override is ignored in favour of the global value.
+
+Catalogs that mostly omit license frontmatter are therefore blocked by default, and that is deliberate: relaxing it is a redistribution decision, so it must be made explicitly per instance. Every decision is logged with the resource coordinate, the declared license, whether one was declared at all, and the outcome, so `license_declared=false` separates undeclared resources from disallowed ones in the worker log. A whitespace-only declaration counts as undeclared.
+
 ## Storage and operations
 
 Use durable storage for SQLite plus filesystem blobs, PostgreSQL plus S3 blobs, or an equivalent managed service. Configure S3 bucket versioning, encryption, retention, and restricted IAM separately. Monitor `/healthz`, private `/readyz`, worker logs, migration failures, queue age, and blob availability.
