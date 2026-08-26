@@ -46,6 +46,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/capabilities",
 		"/api/v1/instance",
 		"/api/v1/search",
+		"/api/v1/sources",
 		"/api/v1/sources/{source}",
 		"/api/v1/sources/{source}/history",
 		"/api/v1/sources/{source}/occurrences/{commit}",

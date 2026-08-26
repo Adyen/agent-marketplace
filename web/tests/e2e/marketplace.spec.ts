@@ -28,16 +28,16 @@ function searchResult() {
 test.describe('Marketplace browser discovery', () => {
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: /Discover tools for your next agent workflow/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()
 
-    await page.getByLabel('Search resources').fill('secure')
-    await page.getByRole('textbox', { name: 'Source', exact: true }).fill('team-tools')
-    await page.getByRole('button', { name: 'Search' }).click()
-
+    await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)
+    await page.getByRole('combobox', { name: 'Source', exact: true }).click()
+    await page.getByRole('option', { name: 'team-tools', exact: true }).click()
+
     await expect(page).toHaveURL(/source=team-tools/)
-    await expect(page.getByRole('heading', { name: '1 resources' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
   })
 
   test('filters by kind and omits the all-kinds sentinel from the URL', async ({ page }) => {
@@ -47,15 +47,13 @@ test.describe('Marketplace browser discovery', () => {
 
     await page.locator('#search-kind').click()
     await page.getByRole('option', { name: 'Command', exact: true }).click()
-    await page.getByRole('button', { name: 'Search' }).click()
     await expect(page).toHaveURL(/kind=command/)
-    await expect(page.getByRole('heading', { name: '1 resources' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
 
     await page.locator('#search-kind').click()
     await page.getByRole('option', { name: 'All resource kinds', exact: true }).click()
-    await page.getByRole('button', { name: 'Search' }).click()
     await expect(page).not.toHaveURL(/[?&]kind=/)
-    await expect(page.getByRole('heading', { name: '2 resources' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '2', exact: true })).toBeVisible()
   })
 
   test('renders hostile text as text and preserves safe resource links', async ({ page }) => {

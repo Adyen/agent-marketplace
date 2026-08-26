@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { apiPath, createMarketplaceApi, isRasterMediaType, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
-import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '../../app/lib/validation'
+import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeSourceSummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 const params: SearchParams = {
@@ -107,9 +107,12 @@ describe('Marketplace API URL handling', () => {
       acquisition: 'mirror',
       occurred_at: '2026-01-02T03:04:05Z',
     }]
-    const api = createMarketplaceApi(async request => request.endsWith('/history') ? historyPayload : sourcePayload)
+    const sourceSummaries = [{ id: 'source-id', slug: 'team-tools' }]
+    const api = createMarketplaceApi(async request => request.endsWith('/history') ? historyPayload : request.endsWith('/sources') ? sourceSummaries : sourcePayload)
+    await expect(api.listSources()).resolves.toEqual(sourceSummaries)
     await expect(api.getSource('team/tools')).resolves.toMatchObject({ slug: 'team-tools', publisher: { name: '<publisher>' } })
     await expect(api.getSourceHistory('team/tools')).resolves.toMatchObject([{ commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }])
+    expect(() => normalizeSourceSummaries([{ id: '', slug: 'team-tools' }])).toThrow(ApiValidationError)
   })
 
   it('accepts only canonical source occurrence fields and digests', () => {

@@ -206,6 +206,20 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("search missing review: %s", body)
 	}
 
+	resp = mustGet(t, public.URL+"/api/v1/sources")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sources status %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `{"id":"src-test","slug":"test-source"}`) {
+		t.Fatalf("sources missing source summary: %s", body)
+	}
+	for _, secret := range []string{"public-api-secret", "origin-secret", "query-secret", "credentials_ref", "refresh_error", "refresh_status", "refreshed_at"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("sources response leaked private source field %q: %s", secret, body)
+		}
+	}
+
 	// /api/v1/sources/{source}
 	resp = mustGet(t, public.URL+"/api/v1/sources/test-source")
 	body = mustRead(t, resp)
