@@ -55,9 +55,13 @@ func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args
 		return errors.Join(ec.Errors...)
 	}
 
-	kind, _, err := parseOptionalKind(kindFilter)
+	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
+	}
+	apiKind := ""
+	if hasKind {
+		apiKind = mpapi.FromIR(kind)
 	}
 
 	switch output {
@@ -74,7 +78,7 @@ func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args
 
 	results, endpointErrs, err := marketplace.FederatedSearch(ctx, ec, query, marketplace.SearchOpts{
 		Marketplace: marketplaceFlag,
-		Kind:        mpapi.FromIR(kind),
+		Kind:        apiKind,
 		Limit:       limit,
 		Offset:      offset,
 		UserAgent:   "agent-marketplace/" + version,
