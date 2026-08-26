@@ -77,17 +77,44 @@ type Instance struct {
 	Alias      string `json:"alias,omitempty"`
 }
 
+// Availability tells a client whether a listed resource can be installed from
+// this instance, without a per-resource detail fetch.
+//
+// It is a string enum rather than an `installable` boolean because the reason
+// matters to the caller: a policy-blocked resource is a permanent property of
+// that revision, while a revoked one is an operator decision that can be
+// reversed, and a list card renders them differently. New states can be added
+// without adding another field.
+type Availability string
+
+const (
+	// AvailabilityAvailable means the revision is installable from this
+	// instance.
+	AvailabilityAvailable Availability = "available"
+
+	// AvailabilityBlocked means the revision is listed for transparency but is
+	// not installable: policy rejected it, so its artifact was never published.
+	AvailabilityBlocked Availability = "blocked"
+
+	// AvailabilityRevoked means an operator revoked the revision.
+	AvailabilityRevoked Availability = "revoked"
+)
+
 // ResourceListItem is a single resource returned by the listing endpoints.
 type ResourceListItem struct {
-	SourceID      string            `json:"source_id"`
-	SourceSlug    string            `json:"source_slug,omitempty"`
-	Kind          string            `json:"kind"`
-	Name          string            `json:"name"`
-	Revision      string            `json:"revision"`
-	ContentDigest string            `json:"content_digest"`
-	Description   string            `json:"description,omitempty"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
-	Score         float64           `json:"score,omitempty"`
+	SourceID      string `json:"source_id"`
+	SourceSlug    string `json:"source_slug,omitempty"`
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	Revision      string `json:"revision"`
+	ContentDigest string `json:"content_digest"`
+	Description   string `json:"description,omitempty"`
+	// Availability is always populated by this server. It stays omitempty so
+	// the field remains optional in the contract and a peer implementation
+	// that cannot determine availability may leave it out.
+	Availability Availability      `json:"availability,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Score        float64           `json:"score,omitempty"`
 }
 
 // ArtifactRequest is the body of `POST /api/v1/artifacts/{kind}/{name}` when

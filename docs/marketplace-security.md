@@ -20,6 +20,12 @@ Prefer `dsn_env` supplied by the process environment or `dsn_file` mounted by a 
 
 Configuration resolution validates source selection without including secret values in errors. Operators should still configure their logging and platform log redaction policies, especially for infrastructure, proxy, database, and cloud-provider logs.
 
+A source-specific `ca_file` is trust configuration rather than a credential. Mount each bundle read-only and scope it only to sources that require that authority. Marketplace acquisition does not inherit ambient `GIT_SSL_CAINFO`; it sets that variable from the source configuration without changing process-global or user Git settings. Never disable TLS verification to accommodate an internal CA.
+
+License policy fails closed. With `policy.license_allowlist` configured, a resource that declares a license outside it is rejected as `marketplace.policy.license-not-allowed`, and a resource that declares no license at all is rejected as `marketplace.policy.license-undeclared` unless `policy.license_undeclared` is explicitly set to `warn` or `allow`; the default, an unset value, and an unrecognised per-source override all mean `reject`. Setting `warn` or `allow` mirrors and serves content whose redistribution terms this instance does not know, which is a legal and licensing decision rather than a defect to be worked around. See the [operator guide](marketplace-operator.md) for the full option.
+
+Repository-local relative symlinks are dereferenced in the isolated checkout before ingestion. Absolute links, repository escapes, broken links, cycles, special files, and links into `.git` are rejected. Expanded files count against repository size, per-file size, and file-count limits, and published artifacts remain symlink-free.
+
 ## Isolation and updates
 
 Run API and worker as non-root users. Give the worker only the writable directories it needs, use a read-only configuration mount, and use separate service identities where possible. Keep the worker's outbound access limited to approved Git and object-storage destinations. Keep database and blob stores on private networks.

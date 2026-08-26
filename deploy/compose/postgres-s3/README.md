@@ -29,6 +29,8 @@ The mounted `config.dsn-file.example.yaml` is authoritative for the S3 bucket, r
 
 The application containers remain non-root and read-only apart from `/tmp`. Compose mounts secrets as files; the PostgreSQL password is consumed through `POSTGRES_PASSWORD_FILE`, and the application reads its DSN through `storage.metadata.dsn_file`. S3 durability, versioning, retention, and encryption remain operator responsibilities.
 
+For a source with `ca_file: /etc/agent-marketplace/ca/internal.pem`, mount the same readable PEM bundle at that absolute path in both `api` and `worker`; both roles validate the complete operator config during startup, although only the worker uses it for Git acquisition. Keep the mount read-only and readable by container UID 1000.
+
 ## Local development usage
 
 The environment-based DSN and static AWS credential path is retained only in the explicit development override. Copy `.env.example` to an untracked `.env`, replace all placeholders, and run:
@@ -39,6 +41,8 @@ $EDITOR .env
 # .env must remain untracked
 docker compose --env-file .env -f compose.yaml -f compose.development.yaml up --build
 ```
+
+If your registry mirror provides only `linux/amd64` images, add `MARKETPLACE_PLATFORM=linux/amd64` to `.env` or export it before starting. Apple Silicon will then use emulation. Use `MARKETPLACE_PLATFORM=linux/arm64` when ARM64 images are available.
 
 The development override switches both application services to `config.yaml`, which uses `storage.metadata.dsn_env`, and supplies `MARKETPLACE_POSTGRES_DSN` from `.env`. It also supplies AWS credentials from `.env` for local testing only. Never use `compose.development.yaml` or static AWS environment credentials for production.
 

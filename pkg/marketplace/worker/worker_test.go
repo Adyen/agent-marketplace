@@ -15,6 +15,29 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
+func TestAcquireCredentialsPreserveSourceCAFile(t *testing.T) {
+	t.Setenv("MARKETPLACE_TEST_TOKEN", "token-value")
+	tests := []struct {
+		name string
+		cred config.Credentials
+	}{
+		{name: "no authentication"},
+		{name: "ssh", cred: config.Credentials{SSHKey: &config.SSHKeyCredential{File: "/source/key"}}},
+		{name: "token", cred: config.Credentials{Token: &config.TokenCredential{Env: "MARKETPLACE_TEST_TOKEN"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := toAcquireCredentials(tc.cred, "/source/ca.pem")
+			if err != nil {
+				t.Fatalf("toAcquireCredentials: %v", err)
+			}
+			if got.CAFile != "/source/ca.pem" {
+				t.Fatalf("CAFile = %q", got.CAFile)
+			}
+		})
+	}
+}
+
 func TestRefreshEndToEnd(t *testing.T) {
 	ctx := context.Background()
 

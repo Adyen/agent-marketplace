@@ -10,7 +10,7 @@ import (
 
 // migrations contains the complete schema for the SQLite metadata adapter.
 // Additional migrations can be appended to this slice over time.
-var migrations = []string{migration0, migration1, migration2}
+var migrations = []string{migration0, migration1, migration2, migration3}
 
 const migrationTable = "marketplace_schema_migrations"
 
@@ -115,6 +115,10 @@ func applyMigration(ctx context.Context, tx *sql.Tx, version int) error {
 		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_resource_revisions_created
 			ON resource_revisions(marketplace_id, source_id, kind, name, created_at)`)
 		return err
+	case 3:
+		// Existing rows keep their data and take the empty default, which
+		// round-trips to an omitted `description` in API responses.
+		return ensureColumn(ctx, tx, "resource_revisions", "description", "ALTER TABLE resource_revisions ADD COLUMN description TEXT NOT NULL DEFAULT ''")
 	default:
 		_, err := tx.ExecContext(ctx, migrations[version])
 		return err
@@ -273,4 +277,8 @@ const migration2 = `
 ALTER TABLE resource_revisions ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_resource_revisions_created
     ON resource_revisions(marketplace_id, source_id, kind, name, created_at);
+`
+
+const migration3 = `
+ALTER TABLE resource_revisions ADD COLUMN description TEXT NOT NULL DEFAULT '';
 `

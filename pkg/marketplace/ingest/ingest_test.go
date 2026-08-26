@@ -92,6 +92,98 @@ func TestBuildSourceRevision(t *testing.T) {
 	}
 }
 
+func TestBuildSourceRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+
+	duplicatePath := filepath.Join(repoDir, ".agents-duplicate", "skills", "review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(duplicatePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(duplicatePath, []byte("---\nname: review\ndescription: Duplicate review\nlicense: MIT\n---\nDifferent content.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testConfig(t, repoDir)
+	source := store.Source{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots: []store.SourceRoot{
+			{Path: ".agents", SourceHarness: "factory"},
+		},
+	}
+	baseline, err := BuildSourceRevision(ctx, cfg, "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("baseline BuildSourceRevision: %v", err)
+	}
+	var wantDigest store.RevisionDigest
+	for _, resource := range baseline.Resources {
+		if resource.Coordinate.Kind == "skill" && resource.Coordinate.Name == "review" {
+			wantDigest = resource.ContentDigest
+		}
+	}
+	if wantDigest == "" {
+		t.Fatal("baseline skill/review not found")
+	}
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	source.Roots = append(source.Roots, store.SourceRoot{Path: ".agents-duplicate", SourceHarness: "factory"})
+	rev, err := BuildSourceRevision(ctx, cfg, "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildSourceRevision: %v", err)
+	}
+	var gotDigests []store.RevisionDigest
+	for _, resource := range rev.Resources {
+		if resource.Coordinate.Kind == "skill" && resource.Coordinate.Name == "review" {
+			gotDigests = append(gotDigests, resource.ContentDigest)
+		}
+	}
+	if len(gotDigests) != 1 || gotDigests[0] != wantDigest {
+		t.Fatalf("skill/review digests = %v, want first occurrence %s", gotDigests, wantDigest)
+	}
+	for _, want := range []string{"duplicate resource identity", "src-test", "skill/review", ".agents/skills/review/SKILL.md", ".agents-duplicate/skills/review/SKILL.md"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("warning logs missing %q: %s", want, logs.String())
+		}
+	}
+}
+
+func TestBuildSourceRevisionRejectsDuplicateAtSamePath(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+	source := store.Source{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots: []store.SourceRoot{
+			{Path: ".agents", SourceHarness: "factory"},
+			{Path: ".agents", SourceHarness: "factory"},
+		},
+	}
+	_, err = BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err == nil || !strings.Contains(err.Error(), `duplicate resource "skill/review" at ".agents/skills/review/SKILL.md"`) {
+		t.Fatalf("BuildSourceRevision error = %v", err)
+	}
+}
+
 func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	const (
 		envSecret    = "mcp-env-secret-7f2a"
@@ -502,6 +594,89 @@ func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	}
 }
 
+// resourceRevisionFor returns the built revision for a kind, so description
+// assertions do not depend on resource ordering.
+func resourceRevisionFor(tb testing.TB, revisions []store.ResourceRevision, kind string) store.ResourceRevision {
+	tb.Helper()
+	for _, revision := range revisions {
+		if revision.Coordinate.Kind == kind {
+			return revision
+		}
+	}
+	tb.Fatalf("no %s resource revision was built", kind)
+	return store.ResourceRevision{}
+}
+
+// The description authored in the registry must survive ingestion all the way
+// onto the persisted revision, for every kind that declares one.
+func TestBuildSourceRevisionCarriesDescriptions(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+
+	source := store.Source{
+		ID:          store.SourceID("src-test"),
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots:       []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
+	}
+
+	rev, err := BuildSourceRevision(ctx, testConfig(t, repoDir), store.MarketplaceID("mp-test"), source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildSourceRevision: %v", err)
+	}
+
+	if got := resourceRevisionFor(t, rev.Resources, "skill").Description; got != "Review code" {
+		t.Errorf("skill description = %q, want %q", got, "Review code")
+	}
+	if got := resourceRevisionFor(t, rev.Resources, "collection").Description; got != "Default collection" {
+		t.Errorf("collection description = %q, want %q", got, "Default collection")
+	}
+}
+
+// A policy-rejected resource stays listed for transparency, so it must keep
+// its description even though its artifact is stripped.
+func TestBuildSourceRevisionKeepsDescriptionWhenRejected(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+
+	cfg := testConfig(t, repoDir)
+	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
+
+	source := store.Source{
+		ID:          store.SourceID("src-test"),
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots:       []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
+	}
+
+	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildSourceRevision: %v", err)
+	}
+
+	skill := resourceRevisionFor(t, rev.Resources, "skill")
+	if skill.ArchiveDigest != "" {
+		t.Fatalf("rejected resource should not have an archive digest")
+	}
+	if skill.Description != "Review code" {
+		t.Fatalf("rejected resource lost its description: %q", skill.Description)
+	}
+}
+
 func TestSupportFilePathSafety(t *testing.T) {
 	for _, name := range []string{"../escape", "nested/../escape", "./notes", "nested//notes", ""} {
 		if _, err := validateSupportRelativePath(name); err == nil {
@@ -523,6 +698,14 @@ func TestSupportFilePathSafety(t *testing.T) {
 
 func createIngestRepo(tb testing.TB) string {
 	tb.Helper()
+	return createIngestRepoWithSkillLicense(tb, "MIT")
+}
+
+// createIngestRepoWithSkillLicense builds the shared fixture repository. An
+// empty license omits the frontmatter key entirely, which is how a resource
+// that declares no license at all reaches ingest.
+func createIngestRepoWithSkillLicense(tb testing.TB, license string) string {
+	tb.Helper()
 	dir := tb.TempDir()
 	repo := filepath.Join(dir, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -533,7 +716,11 @@ func createIngestRepo(tb testing.TB) string {
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		tb.Fatalf("mkdir skill: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: Review code\nlicense: MIT\n---\nReview the code carefully.\n"), 0o644); err != nil {
+	frontmatter := "---\nname: review\ndescription: Review code\n"
+	if license != "" {
+		frontmatter += "license: " + license + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(frontmatter+"---\nReview the code carefully.\n"), 0o644); err != nil {
 		tb.Fatalf("write skill: %v", err)
 	}
 

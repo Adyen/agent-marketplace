@@ -9,7 +9,7 @@ import (
 
 // migrations contains the complete schema for the PostgreSQL metadata adapter.
 // Additional migrations can be appended to this slice over time.
-var migrations = []string{migration0, migration1, migration2}
+var migrations = []string{migration0, migration1, migration2, migration3}
 
 const migrationTable = "marketplace_schema_migrations"
 
@@ -171,4 +171,11 @@ const migration2 = `
 ALTER TABLE resource_revisions ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_resource_revisions_created
     ON resource_revisions(marketplace_id, source_id, kind, name, created_at);
+`
+
+// migration3 mirrors the SQLite adapter's description column. Existing rows
+// keep their data and take the empty default, which round-trips to an omitted
+// description in API responses.
+const migration3 = `
+ALTER TABLE resource_revisions ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 `

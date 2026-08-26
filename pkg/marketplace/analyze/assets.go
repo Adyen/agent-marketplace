@@ -30,7 +30,7 @@ func ScanAssets(files FileSet, analyzer string) []Finding {
 	var findings []Finding
 
 	for filePath, data := range files {
-		findings = append(findings, ScanSuspiciousPaths(filePath, filePath, analyzer)...)
+		findings = append(findings, ScanSuspiciousFilePaths(filePath, filePath, analyzer)...)
 
 		// Normalize path separators so extension detection is portable.
 		normPath := strings.ReplaceAll(filePath, "\\", "/")

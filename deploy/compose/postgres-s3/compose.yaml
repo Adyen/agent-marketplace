@@ -1,11 +1,13 @@
 name: agent-marketplace-postgres
 
+x-marketplace-platform: &marketplace-platform ${MARKETPLACE_PLATFORM:-}
 x-marketplace-build-args: &marketplace-build-args
   GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-alpine3.22}
   ALPINE_RUNTIME_IMAGE: ${ALPINE_RUNTIME_IMAGE:-alpine:3.22.1}
 
 services:
   postgres:
+    platform: *marketplace-platform
     image: ${POSTGRES_IMAGE:-postgres:17.5-alpine}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-marketplace}
@@ -24,6 +26,7 @@ services:
       retries: 5
 
   api:
+    platform: *marketplace-platform
     build:
       context: ../../..
       dockerfile: Dockerfile.marketplace
@@ -58,6 +61,7 @@ services:
       start_period: 10s
 
   worker:
+    platform: *marketplace-platform
     build:
       context: ../../..
       dockerfile: Dockerfile.marketplace
@@ -73,7 +77,7 @@ services:
         target: marketplace-postgres-dsn
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:exec,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -84,6 +88,7 @@ services:
         condition: service_healthy
 
   web:
+    platform: *marketplace-platform
     build:
       context: ../../../web
       dockerfile: Dockerfile
@@ -107,6 +112,7 @@ services:
         condition: service_healthy
 
   proxy:
+    platform: *marketplace-platform
     image: ${NGINX_IMAGE:-nginx:1.27-alpine}
     ports:
       - "${MARKETPLACE_HTTP_PORT:-8080}:8080"
@@ -121,6 +127,10 @@ services:
     restart: unless-stopped
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     depends_on:

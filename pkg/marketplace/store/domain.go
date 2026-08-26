@@ -341,6 +341,11 @@ type ResourceRevision struct {
 	// License is the SPDX license identifier for this revision.
 	License string `json:"license,omitempty"`
 
+	// Description is the author-written one-line summary of the resource. It
+	// originates in a third-party registry, so it is bounded and normalized by
+	// BoundDescription before it is stored or served.
+	Description string `json:"description,omitempty"`
+
 	// Provenance is optional source identity metadata.
 	Provenance *Provenance `json:"provenance,omitempty"`
 
