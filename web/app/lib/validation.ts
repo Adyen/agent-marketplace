@@ -126,6 +126,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   const revision = requiredDigest(object.revision, `${label}.revision`)
   if (revision !== digest) throw new ApiValidationError(`${label}.revision and content_digest do not match`)
   const metadata = object.metadata === undefined ? undefined : stringRecord(object.metadata, `${label}.metadata`)
+  const availability = normalizeListAvailability(object.availability, `${label}.availability`)
   return {
     source_id: requiredString(object.source_id, `${label}.source_id`),
     ...(object.source_slug === undefined ? {} : { source_slug: boundedString(object.source_slug, `${label}.source_slug`) }),
@@ -136,7 +137,24 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
     ...(object.description === undefined ? {} : { description: boundedString(object.description, `${label}.description`) }),
     ...(metadata === undefined ? {} : { metadata }),
     ...(object.score === undefined ? {} : { score: boundedNumber(object.score, `${label}.score`) }),
+    ...(availability === undefined ? {} : { availability }),
   }
+}
+
+const LIST_AVAILABILITIES = ['available', 'blocked', 'revoked'] as const
+
+/**
+ * Keep only an availability value this client understands. A value a newer
+ * server adds is dropped rather than rejected, so the caller treats it as
+ * unknown instead of failing the whole response. A non-string is malformed
+ * and still throws.
+ */
+function normalizeListAvailability(value: unknown, label: string): ResourceListItem['availability'] {
+  if (value === undefined) return undefined
+  const text = requiredString(value, label)
+  return (LIST_AVAILABILITIES as readonly string[]).includes(text)
+    ? (text as NonNullable<ResourceListItem['availability']>)
+    : undefined
 }
 
 export type ExpectedResourceCoordinate = {

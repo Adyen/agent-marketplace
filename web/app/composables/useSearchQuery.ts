@@ -3,7 +3,7 @@ import { isResourceKind } from '~/lib/api'
 import { ALL_RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKindFilter, SearchParams } from '~/types/marketplace'
 
-export const DEFAULT_LIMIT = 12
+export const DEFAULT_LIMIT = 25
 export const MAX_LIMIT = 100
 
 export function parseSearchQuery(query: LocationQuery): SearchParams {

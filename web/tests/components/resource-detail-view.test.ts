@@ -3,7 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ResourceDetailView from '../../app/components/ResourceDetailView.vue'
 
+import ResourceFingerprint from '../../app/components/ResourceFingerprint.vue'
+
 const stubs = {
+  // Rendered for real: it is derived from untrusted digest input.
+  ResourceFingerprint,
   NuxtLink: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(props, { attrs, slots }) { return () => h('a', { ...attrs, href: String(props.to) }, slots.default?.()) } }),
   UIcon: defineComponent({ setup: () => () => h('span') }),
   UBadge: defineComponent({ setup(_, { attrs, slots }) { return () => h('span', attrs, slots.default?.()) } }),
@@ -15,6 +19,7 @@ const digest = 'sha256:' + 'c'.repeat(64)
 const resource = {
   coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'review' },
   content_digest: digest,
+  archive_digest: 'sha256:' + 'a'.repeat(64),
   acquisition: 'mirror',
   license: 'Apache-2.0',
   provenance: { repository: 'https://example.test/repo', commit: 'a'.repeat(40) },
@@ -28,7 +33,9 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.get('h1').text()).toBe('review')
+    // The heading is the resource coordinate, which is both the URL and the
+    // CLI argument, so the source is part of the identifier.
+    expect(wrapper.get('h1').text()).toBe('team-tools/review')
     expect(wrapper.text()).toContain('mirror')
     expect(wrapper.text()).toContain('Apache-2.0')
     expect(wrapper.text()).toContain('<script>not markup</script>')
@@ -164,7 +171,14 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('COMMAND.md')
     expect(wrapper.text()).toContain('Binary metadata (not rendered)')
     expect(wrapper.find('img').exists()).toBe(false)
-    expect(wrapper.find('svg').exists()).toBe(false)
+    // No SVG may come from the payload. The only SVG allowed in the tree is the
+    // locally generated fingerprint, which is derived from the digest string
+    // and never from file content, so assert that every svg present is that.
+    const svgs = wrapper.findAll('svg')
+    expect(svgs.length).toBeGreaterThan(0)
+    for (const svg of svgs) {
+      expect(svg.attributes('aria-label')).toContain('Content fingerprint')
+    }
   })
 
   it('announces revoked content and keeps copy controls keyboard accessible', () => {
@@ -182,5 +196,85 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
     expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('calls a policy-rejected revision blocked and withholds the install command', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, archive_digest: undefined, findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] },
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.text()).toContain('Blocked by policy')
+    expect(wrapper.text()).not.toContain('Available')
+    expect(wrapper.get('[role="alert"]').text()).toContain('The security policy rejected this revision')
+    expect(wrapper.find('code').exists()).toBe(false)
+    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the security policy rejected this revision')
+    expect(wrapper.get('[role="status"]').text()).toContain('Metadata and inspection remain available.')
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[aria-live="polite"]').text()).toContain('Install status for review: Blocked by policy.')
+  })
+
+  it('reports a revision with no stored artifact as not installable without claiming a policy block', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, archive_digest: undefined },
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.text()).toContain('No installable artifact')
+    expect(wrapper.text()).not.toContain('Blocked by policy')
+    expect(wrapper.find('code').exists()).toBe(false)
+    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because this Marketplace stores no artifact for this revision')
+    expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('gives each history row the status its own revision record supports', () => {
+    const rejectedDigest = 'sha256:' + 'd'.repeat(64)
+    const strippedDigest = 'sha256:' + 'e'.repeat(64)
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource,
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        revisions: [
+          { ...resource, content_digest: rejectedDigest, archive_digest: undefined, findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject' }] },
+          { ...resource, content_digest: strippedDigest, archive_digest: undefined, findings: [] },
+        ],
+      },
+      global: { stubs },
+    })
+
+    const rows = wrapper.get('[aria-labelledby="revision-history-heading"]').findAll('li')
+    expect(rows.map(row => row.text())).toEqual([
+      expect.stringContaining('Blocked by policy'),
+      expect.stringContaining('No installable artifact'),
+      expect.stringContaining('Available'),
+    ])
+    expect(rows[2]?.text()).toContain('Current')
+  })
+
+  it('lists a finding reported by both the manifest and the revision record only once', () => {
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', source_range: 'SKILL.md:1' }] },
+        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        inspection: {
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
+          findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: 'references a remote host' }],
+        },
+        primaryContent: '# Hello',
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.findAll('[aria-label="Security findings"]')).toHaveLength(1)
+    expect(wrapper.findAll('[aria-label="Security findings"] > li')).toHaveLength(1)
+    expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md:1-2')
   })
 })
