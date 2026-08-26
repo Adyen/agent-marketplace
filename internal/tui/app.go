@@ -837,6 +837,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r.IsMalformed {
 			return m, nil
 		}
+		if r.MarketplaceCollectionOnly {
+			return m, func() tea.Msg {
+				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
+			}
+		}
 		if r.Artifact.Required {
 			return m, func() tea.Msg {
 				return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}

@@ -37,6 +37,11 @@ const (
 	paneEditConfigModal
 )
 
+type marketplaceSelection struct {
+	Entry config.MarketplaceEntry
+	Pin   config.MarketplaceResourcePin
+}
+
 type row struct {
 	Artifact     resolver.ResolvedArtifact
 	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
@@ -61,6 +66,9 @@ type row struct {
 	RegistryRef   string // ref from the registry entry (for config writes)
 	Harnesses     []string
 	HarnessSource string
+
+	MarketplaceSelections     map[config.Source]marketplaceSelection
+	MarketplaceCollectionOnly bool
 
 	// searchableLower is a cached lowercased concatenation of the fields
 	// applyFilter scans (name + tags + registry URL). Populated lazily by
