@@ -308,6 +308,18 @@ func ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias
 		}
 		match = candidate.node
 	}
+	shouldSetAlias := alias != ""
+	if match != nil {
+		aliasNode := findMappingValue(match, "alias")
+		shouldSetAlias = shouldSetAlias && (aliasNode == nil || strings.TrimSpace(aliasNode.Value) == "")
+	}
+	if shouldSetAlias {
+		for _, candidate := range entries {
+			if candidate.entry.Alias == alias && (candidate.canonicalURL != canonicalURL || candidate.entry.InstanceID != instanceID) {
+				return fmt.Errorf("marketplace alias %q is already assigned to URL %q and instance_id %q in config %q", alias, candidate.canonicalURL, candidate.entry.InstanceID, configPath)
+			}
+		}
+	}
 	if match == nil {
 		entry := marketplaceEntryNode(canonicalURL, instanceID, alias)
 		resources := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
@@ -331,12 +343,9 @@ func ensureMarketplacePinsInConfig(configPath, marketplaceURL, instanceID, alias
 	}
 
 	changed := false
-	if alias != "" {
-		aliasNode := findMappingValue(match, "alias")
-		if aliasNode == nil || strings.TrimSpace(aliasNode.Value) == "" {
-			setMappingValue(match, "alias", scalarNode(alias))
-			changed = true
-		}
+	if shouldSetAlias {
+		setMappingValue(match, "alias", scalarNode(alias))
+		changed = true
 	}
 	resources, err := ensureMarketplaceResources(match)
 	if err != nil {
