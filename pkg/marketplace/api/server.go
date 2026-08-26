@@ -872,12 +872,6 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
-	for _, revision := range revisions {
-		if revision.Coordinate.Kind == KindMcpServer {
-			writeError(w, http.StatusUnsupportedMediaType, "MCP artifacts are not publicly downloadable")
-			return
-		}
-	}
 	if s.artifactRevokedForRevisions(revisions) {
 		writeError(w, http.StatusGone, "artifact is revoked")
 		return
