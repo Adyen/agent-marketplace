@@ -102,7 +102,7 @@ test.describe('Marketplace browser discovery', () => {
     await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
     await expect(page).toHaveURL(new RegExp(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
-    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `${appURL}/s/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
@@ -111,6 +111,8 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('href', 'https://example.com/docs')
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('target', '_blank')
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('rel', 'noopener noreferrer')
+    const paragraphSpacing = await page.locator('[data-testid="safe-markdown"] p').first().evaluate(element => Number.parseFloat(getComputedStyle(element).marginBottom))
+    expect(paragraphSpacing).toBeGreaterThan(0)
     await expect(page.locator('[data-testid="safe-markdown"] img')).toHaveCount(0)
     await expect(page.locator('[data-testid="safe-markdown"] script')).toHaveCount(0)
     await expect(page.locator('[data-testid="safe-markdown"]')).not.toContainText('evil.invalid')
