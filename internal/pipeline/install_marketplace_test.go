@@ -288,16 +288,23 @@ func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) 
 	}
 }
 
-func TestMarketplaceInstallPreviewEscapesAllFindingDetails(t *testing.T) {
+func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
 	plan := &marketplace.PreparedInstall{Pin: config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "slug", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), Digest: "sha256:" + strings.Repeat("a", 64)}, Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}, Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Findings: []hccartifact.CanonicalFinding{{Code: "secret", Severity: "high", Message: "line 1\nsecret=do-not-log\x1b[31m\u202e", File: "skills/review/SKILL.md\tunsafe", Line: 12, Analyzer: "scanner\r", PolicyOutcome: "warn"}}, Capabilities: []string{"exec\x1b\n"}, Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example\nunsafe", Ref: "main\u202e", Path: "skills/review", Generator: "scanner\x1b"}}}}
 	preview, err := marketplaceInstallPreview(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"message":"line 1\nsecret=do-not-log`, `"file":"skills/review/SKILL.md\tunsafe"`, `"line":12`, `"analyzer":"scanner`, `"policy_outcome":"warn"`} {
+	for _, want := range []string{
+		"findings (1):", `  1. severity: "high"`, `     message: "line 1\nsecret=do-not-log`,
+		`     location: "skills/review/SKILL.md\tunsafe":12`, `     code: "secret"`,
+		`     policy: "warn"`, `     analyzer: "scanner\r"`,
+	} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("preview missing %q: %s", want, preview)
 		}
+	}
+	if strings.Contains(preview, `findings: [{"code"`) {
+		t.Fatalf("preview renders findings as JSON: %s", preview)
 	}
 	if strings.Contains(preview, "raw resource content") {
 		t.Fatal("preview contains raw resource content")
