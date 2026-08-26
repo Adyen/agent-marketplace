@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -411,6 +413,36 @@ func TestBuildSourceRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
 	for _, f := range skill.Findings {
 		if f.Code == analyze.PolicyLicenseUndeclared || f.Code == analyze.PolicyLicenseNotAllowed {
 			t.Errorf("no allowlist must produce no license finding: %+v", f)
+		}
+	}
+}
+
+func TestBuildSourceRevisionResolvesLicenseFileDeclaration(t *testing.T) {
+	repoDir := createIngestRepoWithSkillLicense(t, "Complete terms in LICENSE.txt")
+	licensePath := filepath.Join(repoDir, ".agents", "skills", "review", "LICENSE.txt")
+	licenseText, err := os.ReadFile(filepath.Join("..", "..", "..", "LICENSE"))
+	if err != nil {
+		t.Fatalf("read Apache-2.0 fixture: %v", err)
+	}
+	if err := os.WriteFile(licensePath, licenseText, 0o644); err != nil {
+		t.Fatalf("write license: %v", err)
+	}
+
+	rev, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, mustRepoCommit(t, repoDir))
+	if err != nil {
+		t.Fatalf("BuildSourceRevision: %v", err)
+	}
+
+	skill := resourceRevisionFor(t, rev.Resources, "skill")
+	if skill.License != "Apache-2.0" {
+		t.Errorf("license = %q, want Apache-2.0", skill.License)
+	}
+	if skill.ArchiveDigest == "" {
+		t.Fatal("recognized Apache-2.0 license should remain installable")
+	}
+	for _, f := range skill.Findings {
+		if f.Code == analyze.PolicyLicenseNotAllowed {
+			t.Errorf("recognized Apache-2.0 license was rejected: %+v", f)
 		}
 	}
 }

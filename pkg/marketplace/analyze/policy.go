@@ -11,19 +11,22 @@ type Policy struct {
 // defaultOutcomes is the public-policy mapping. It is used when a Policy does
 // not override a code explicitly.
 var defaultOutcomes = map[string]string{
-	FindingHTMLComment:           OutcomeReject,
-	FindingZeroWidth:             OutcomeReject,
 	FindingTerminalControl:       OutcomeReject,
 	FindingUnsafeBidi:            OutcomeReject,
-	FindingDangerousURL:          OutcomeReject,
 	FindingExecutableAsset:       OutcomeReject,
-	FindingSuspiciousPath:        OutcomeReject,
+	FindingAssetPathEscape:       OutcomeReject,
 	FindingObfuscatedInstruction: OutcomeReject,
 
-	FindingRemoteReference: OutcomeWarn,
-	FindingToolGrant:       OutcomeWarn,
-	FindingHookCapability:  OutcomeWarn,
-	FindingMcpCapability:   OutcomeWarn,
+	FindingHTMLComment:      OutcomeWarn,
+	FindingZeroWidth:        OutcomeWarn,
+	FindingDangerousURL:     OutcomeWarn,
+	FindingRemoteReference:  OutcomeWarn,
+	FindingExecutableScript: OutcomeWarn,
+	FindingDynamicExecution: OutcomeWarn,
+	FindingSuspiciousPath:   OutcomeWarn,
+	FindingToolGrant:        OutcomeWarn,
+	FindingHookCapability:   OutcomeWarn,
+	FindingMcpCapability:    OutcomeWarn,
 }
 
 // PublicPolicy returns the default public policy.
@@ -31,18 +34,6 @@ func PublicPolicy() Policy {
 	return Policy{
 		Name:     "public",
 		Outcomes: nil,
-	}
-}
-
-// PrivatePolicy returns a policy that downgrades hidden-content findings to
-// warnings while keeping all other defaults.
-func PrivatePolicy() Policy {
-	return Policy{
-		Name: "private",
-		Outcomes: map[string]string{
-			FindingHTMLComment: OutcomeWarn,
-			FindingZeroWidth:   OutcomeWarn,
-		},
 	}
 }
 

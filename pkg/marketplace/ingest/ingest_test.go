@@ -757,6 +757,21 @@ resources:
 	return repo
 }
 
+func TestEffectivePolicyHiddenContentOverride(t *testing.T) {
+	for _, tc := range []struct {
+		outcome string
+		want    string
+	}{
+		{outcome: "warn", want: analyze.OutcomeWarn},
+		{outcome: "reject", want: analyze.OutcomeReject},
+	} {
+		policy := effectivePolicy(config.Config{Policy: config.Policy{HiddenContent: tc.outcome}}, nil)
+		if got := policy.OutcomeFor(analyze.FindingHTMLComment); got != tc.want {
+			t.Errorf("hidden_content %q outcome = %q, want %q", tc.outcome, got, tc.want)
+		}
+	}
+}
+
 func repoCommit(repoDir string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = repoDir

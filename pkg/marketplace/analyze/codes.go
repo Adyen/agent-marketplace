@@ -9,6 +9,9 @@ const (
 	FindingDangerousURL          = "marketplace.find.dangerous-url"
 	FindingRemoteReference       = "marketplace.find.remote-reference"
 	FindingExecutableAsset       = "marketplace.find.executable-asset"
+	FindingExecutableScript      = "marketplace.find.executable-script"
+	FindingAssetPathEscape       = "marketplace.find.asset-path-escape"
+	FindingDynamicExecution      = "marketplace.find.dynamic-execution"
 	FindingToolGrant             = "marketplace.find.tool-grant"
 	FindingHookCapability        = "marketplace.find.hook-capability"
 	FindingMcpCapability         = "marketplace.find.mcp-capability"
@@ -38,21 +41,12 @@ const (
 //
 // Bump this whenever detection behaviour changes. Every revision stores the
 // version that produced its findings, so leaving it fixed would make two
-// different analyzers indistinguishable in the record. 1.1.0 narrowed two
-// finding codes:
-//
-//   - marketplace.find.suspicious-path: prose no longer reports slash-command
-//     invocations ("/deploy") or ellipses ("...") as filesystem paths, while
-//     FileSet entry paths stay strict.
-//   - marketplace.find.dangerous-url: a scheme-looking word followed by a
-//     colon is no longer a URL. javascript:/vbscript: now require a code
-//     body, data: requires an RFC 2397 body (media type, ";base64" or the
-//     mandatory comma) and file: requires a path component, so prose such as
-//     "**With data:** User uploads a CSV" or "Attach the file: report.pdf" is
-//     clean. Encoded ("javascript%3Aalert(1)", "data&#x3a;text/html,x") and
-//     whitespace-padded ("javascript:\n alert(1)") payloads are still
-//     reported.
-const AnalyzerVersionV1 = "1.1.0"
+// different analyzers indistinguishable in the record. 1.2.0 separates
+// structural blockers from heuristic review signals: asset path escapes and
+// opaque executables still reject, readable scripts and raw execution calls
+// warn, content paths are limited to sensitive targets, and Unicode emoji
+// presentation sequences are accepted.
+const AnalyzerVersionV1 = "1.2.0"
 
 // Policy outcomes.
 const (
@@ -91,6 +85,9 @@ func FindingCodes() []string {
 		FindingDangerousURL,
 		FindingRemoteReference,
 		FindingExecutableAsset,
+		FindingExecutableScript,
+		FindingAssetPathEscape,
+		FindingDynamicExecution,
 		FindingToolGrant,
 		FindingHookCapability,
 		FindingMcpCapability,

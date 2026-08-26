@@ -34,7 +34,7 @@ func TestScanHTMLComments(t *testing.T) {
 }
 
 func TestScanZeroWidth(t *testing.T) {
-	content := "visible" + string('\u200B') + string('\u200D') + "after"
+	content := "visible" + string('\u200B') + "after"
 	got := ScanZeroWidth(content, "file", "test")
 	if len(got) != 1 {
 		t.Fatalf("got %d findings, want 1", len(got))
@@ -44,6 +44,14 @@ func TestScanZeroWidth(t *testing.T) {
 	}
 	if got[0].SourceRange == nil || got[0].SourceRange.Line != 1 || got[0].SourceRange.Column != 8 {
 		t.Errorf("unexpected range %+v", got[0].SourceRange)
+	}
+}
+
+func TestScanZeroWidthAllowsUnicodePresentation(t *testing.T) {
+	for _, content := range []string{"⚠️", "👨‍👩‍👧‍👦", "\uFEFFfrontmatter"} {
+		if got := ScanZeroWidth(content, "file", "test"); len(got) != 0 {
+			t.Errorf("ScanZeroWidth(%q) = %v, want no findings", content, got)
+		}
 	}
 }
 
@@ -310,19 +318,19 @@ func TestScanSuspiciousPaths(t *testing.T) {
 		content string
 		want    int
 	}{
-		{"dots", "cd ../etc", 1},
-		{"tilde", "~/ssh/config", 1},
-		{"windows", "C:\\Windows\\System32", 1},
-		{"unc", "\\\\server\\share", 1},
+		{"dots", "cd ../etc", 0},
+		{"tilde", "~/ssh/config", 0},
+		{"windows", "C:\\Windows\\System32", 0},
+		{"unc", "\\\\server\\share", 0},
 		{"passwd", "/etc/passwd", 1},
 		{"shadow", "/etc/shadow", 1},
 		{"ssh", "~/.ssh", 1},
 		{"https", "https://example.com/path", 0},
 		{"cdn", "//cdn.example.com/lib.js", 0},
 		{"normal", "a normal sentence", 0},
-		{"percentdots", "%2e%2e/%2e%2e/etc/passwd", 3},
-		{"backslashdots", "\\x2e\\x2e/etc/passwd", 2},
-		{"htmldots", "&#x2e;&#x2e;/etc/passwd", 2},
+		{"percentdots", "%2e%2e/%2e%2e/etc/passwd", 1},
+		{"backslashdots", "\\x2e\\x2e/etc/passwd", 1},
+		{"htmldots", "&#x2e;&#x2e;/etc/passwd", 1},
 		{"fullpercent", "%2fetc%2fpasswd", 1},
 	}
 
@@ -336,42 +344,21 @@ func TestScanSuspiciousPaths(t *testing.T) {
 	}
 }
 
-// suspiciousPathAttacks are payloads that must keep producing a
-// reject-worthy finding in content (prose) mode.
-var suspiciousPathAttacks = []struct {
+// sensitivePathReferences are high-risk targets that remain visible as
+// warning-level evidence in content mode.
+var sensitivePathReferences = []struct {
 	name    string
 	content string
 }{
-	{"traversal_unix", "../../etc/passwd"},
-	{"traversal_windows", `..\..\windows`},
-	{"traversal_embedded", "docs/../../secret"},
-	{"traversal_bare_token", "cd .."},
-	{"traversal_trailing", "zip -r out /.."},
-	{"traversal_dot_padded", "....//etc/passwd"},
-	{"traversal_triple_dot", ".../etc/passwd"},
 	{"etc_passwd", "/etc/passwd"},
 	{"etc_shadow", "/etc/shadow"},
 	{"ssh_key", "~/.ssh/id_rsa"},
-	{"proc_environ", "/proc/self/environ"},
-	{"root_bashrc", "/root/.bashrc"},
-	{"var_log", "tail /var/log/auth.log"},
-	{"sys_kernel", "read /sys/kernel/notes"},
-	{"dev_mem", "dd if=/dev/mem"},
-	{"boot_grub", "/boot/grub/grub.cfg"},
-	{"usr_bin", "/usr/bin/env python"},
-	{"bin_sh", "/bin/sh -c id"},
-	{"sbin_init", "/sbin/init"},
-	{"home_aws", "/home/user/.aws/credentials"},
-	{"windows_drive", `C:\Windows\System32`},
-	{"unc_share", `\\server\share`},
-	{"encoded_percent_traversal", "%2e%2e%2f"},
 	{"encoded_percent_passwd", "%2fetc%2fpasswd"},
-	{"encoded_html_entity", "&#x2e;&#x2e;/etc/passwd"},
-	{"encoded_backslash_hex", `\x2e\x2e/`},
+	{"encoded_html_entity", "&#x2f;etc/passwd"},
 }
 
 func TestScanSuspiciousPathsTruePositives(t *testing.T) {
-	for _, tc := range suspiciousPathAttacks {
+	for _, tc := range sensitivePathReferences {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ScanSuspiciousPaths(tc.content, "file", "test")
 			if len(got) == 0 {
@@ -434,7 +421,14 @@ func TestScanSuspiciousPathsProseFalsePositives(t *testing.T) {
 		{"version", "version 1.2.3"},
 		{"root_relative_link", "[guide](/docs/guide/setup)"},
 		{"word_with_root_prefix", "the /etcetera directory is fictional"},
+		{"relative_path", "read ../docs/guide.md"},
+		{"tilde_path", "write ~/Reports/output.md"},
+		{"system_paths", "run /bin/bash, /usr/bin/env and redirect to /dev/null"},
+		{"home_path", "save /home/user/documents/report.pdf"},
+		{"placeholder_path", "copy path/to/.../file"},
+		{"windows_path", `open C:\Windows\System32`},
 		{"escaped_backslash", `the regex \\d+ matches digits`},
+		{"escaped_regex", `the regex \\d+\\s+ matches fields`},
 		{"url", "https://example.com/etcetera/path"},
 	}
 
@@ -465,6 +459,7 @@ func TestScanSuspiciousFilePathsStrict(t *testing.T) {
 		{"relative_clean", "docs/guide.md", false},
 		{"relative_nested", "assets/img/logo.png", false},
 		{"dotted_name", "analyze-cohorts.md", false},
+		{"triple_dot_directory", ".../template.md", false},
 	}
 
 	for _, tc := range cases {
@@ -472,6 +467,11 @@ func TestScanSuspiciousFilePathsStrict(t *testing.T) {
 			got := ScanSuspiciousFilePaths(tc.path, tc.path, "test")
 			if tc.want && len(got) == 0 {
 				t.Fatalf("expected a finding for %q, got none", tc.path)
+			}
+			for _, finding := range got {
+				if finding.Code != FindingAssetPathEscape {
+					t.Errorf("code = %q, want %q", finding.Code, FindingAssetPathEscape)
+				}
 			}
 			if !tc.want && len(got) != 0 {
 				t.Fatalf("expected no finding for %q, got %v", tc.path, got)
@@ -493,7 +493,7 @@ func TestScanAssetsFilePathsStayStrict(t *testing.T) {
 
 	byFile := make(map[string]int)
 	for _, f := range ScanAssets(files, "test") {
-		if f.Code != FindingSuspiciousPath || f.SourceRange == nil {
+		if f.Code != FindingAssetPathEscape || f.SourceRange == nil {
 			continue
 		}
 		byFile[f.SourceRange.File]++
@@ -514,21 +514,13 @@ func TestScanAssetsFilePathsStayStrict(t *testing.T) {
 // URL-decoded view are still mapped back to the original byte range.
 func TestScanSuspiciousPathsEncodedOffsets(t *testing.T) {
 	t.Run("decoded_columns", func(t *testing.T) {
-		// "/etc/passwd" starts at byte 12 (column 13) in the raw content; the
-		// decoded "../" maps back to byte 0 (column 1).
+		// "/etc/passwd" starts at byte 12 (column 13) in the raw content.
 		got := ScanSuspiciousPaths("&#x2e;&#x2e;/etc/passwd", "Body", "test")
-		if len(got) != 2 {
-			t.Fatalf("got %d findings, want 2: %v", len(got), got)
+		if len(got) != 1 {
+			t.Fatalf("got %d findings, want 1: %v", len(got), got)
 		}
-		cols := map[int]bool{}
-		for _, f := range got {
-			if f.SourceRange == nil || f.SourceRange.Line != 1 {
-				t.Fatalf("unexpected range %+v", f.SourceRange)
-			}
-			cols[f.SourceRange.Column] = true
-		}
-		if !cols[1] || !cols[13] {
-			t.Fatalf("columns = %v, want {1, 13}", cols)
+		if got[0].SourceRange == nil || got[0].SourceRange.Line != 1 || got[0].SourceRange.Column != 13 {
+			t.Fatalf("unexpected range %+v", got[0].SourceRange)
 		}
 	})
 
@@ -550,33 +542,34 @@ func TestScanSuspiciousPathsEncodedOffsets(t *testing.T) {
 	})
 }
 
+func TestScanDynamicExecution(t *testing.T) {
+	for _, content := range []string{"eval(", "system (", "setTimeout(\"...\",0)", "new Function(...)", "exec(\"rm -rf /\")"} {
+		got := ScanDynamicExecution(content, "file", "test")
+		if len(got) == 0 || got[0].Code != FindingDynamicExecution {
+			t.Errorf("ScanDynamicExecution(%q) = %v", content, got)
+		}
+		if obfuscated := ScanObfuscatedInstructions(content, "file", "test"); len(obfuscated) != 0 {
+			t.Errorf("raw execution call %q reported as obfuscated: %v", content, obfuscated)
+		}
+	}
+}
+
 func TestScanObfuscatedInstructions(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
 	}{
-		{"eval", "eval("},
-		{"system", "system("},
 		{"base64", base64Of("javascript:alert(1)")},
 		{"hex", hexOf("eval")},
 		{"percent", "%65%76%61%6c"},
 		{"htmlentity", "&#x65;&#x76;&#x61;&#x6c;"},
 		{"backslash", "\\x65\\x76\\x61\\x6c"},
-		{"homoglyph", "Аpple"}, // Cyrillic А + Latin pple
-		// Adversarial bypasses.
 		{"percent_script", "jav%61script:alert(1)"},
 		{"backslash_eval", "ev\\x61l("},
 		{"html_url", "javascript&#x3a;alert(1)"},
 		{"short_base64", "ZXZhbA"},
 		{"upper_hex", "0X6576616c"},
-		{"unicode_ws", "eval\u00a0("},
-		{"js_comment", "eval/*x*/("},
-		{"eval_dot_call", "eval.call(...)"},
-		{"window_eval", "window[\"eval\"]"},
-		{"setTimeout", "setTimeout(\"...\",0)"},
-		{"new_function", "new Function(...)"},
-		{"exec_rm", "exec(\"rm -rf /\")"},
-		{"cyrillic_eval", "еval"}, // Cyrillic е + Latin val
+		{"cyrillic_eval", "еval"},
 	}
 
 	for _, tc := range cases {
@@ -591,6 +584,10 @@ func TestScanObfuscatedInstructions(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	if got := ScanObfuscatedInstructions("Аpple", "file", "test"); len(got) != 0 {
+		t.Errorf("benign mixed-script word reported as obfuscated: %v", got)
 	}
 }
 

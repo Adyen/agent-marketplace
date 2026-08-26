@@ -24,6 +24,14 @@ var executableExtensions = map[string]bool{
 	".lib": true,
 }
 
+var scriptExtensions = map[string]bool{
+	".sh": true, ".bash": true, ".csh": true, ".zsh": true, ".fish": true,
+	".ksh": true, ".tcsh": true, ".py": true, ".rb": true, ".pl": true,
+	".ps1": true, ".bat": true, ".cmd": true, ".awk": true, ".sed": true,
+	".php": true, ".lua": true, ".js": true, ".mjs": true, ".vbs": true,
+	".wsf": true,
+}
+
 // ScanAssets examines FileSet entries for executable magic bytes, shebang lines,
 // suspicious file paths, and executable file extensions.
 func ScanAssets(files FileSet, analyzer string) []Finding {
@@ -34,11 +42,16 @@ func ScanAssets(files FileSet, analyzer string) []Finding {
 
 		// Normalize path separators so extension detection is portable.
 		normPath := strings.ReplaceAll(filePath, "\\", "/")
+		scriptDetected := false
 		if ext, ok := extensionExecutable(normPath); ok {
+			code := FindingExecutableAsset
+			if scriptExtensions[ext] {
+				code = FindingExecutableScript
+				scriptDetected = true
+			}
 			msg := fmt.Sprintf("executable asset: extension %s", ext)
 			slog.Debug("executable asset detected", "path", filePath, "reason", msg)
-			findings = append(findings, NewFinding(FindingExecutableAsset, msg, analyzer, &SourceRange{File: filePath}))
-			continue
+			findings = append(findings, NewFinding(code, msg, analyzer, &SourceRange{File: filePath}))
 		}
 
 		if len(data) == 0 {
@@ -46,9 +59,16 @@ func ScanAssets(files FileSet, analyzer string) []Finding {
 		}
 
 		if magic, ok := executableMagic(data); ok {
+			code := FindingExecutableAsset
+			if magic == "shebang script" {
+				if scriptDetected {
+					continue
+				}
+				code = FindingExecutableScript
+			}
 			msg := fmt.Sprintf("executable asset: %s", magic)
 			slog.Debug("executable asset detected", "path", filePath, "reason", msg)
-			findings = append(findings, NewFinding(FindingExecutableAsset, msg, analyzer, &SourceRange{File: filePath}))
+			findings = append(findings, NewFinding(code, msg, analyzer, &SourceRange{File: filePath}))
 		}
 	}
 
