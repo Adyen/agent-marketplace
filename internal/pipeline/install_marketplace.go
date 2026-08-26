@@ -473,19 +473,39 @@ func marketplacePreviewLeaves(members []marketplace.InstallPreview) []marketplac
 	return leaves
 }
 
+func marketplacePreviewFindingsText(findings []marketplacePreviewFinding) string {
+	if len(findings) == 0 {
+		return "findings: none"
+	}
+	var result strings.Builder
+	fmt.Fprintf(&result, "findings (%d):", len(findings))
+	for i, finding := range findings {
+		fmt.Fprintf(&result, "\n  %d. severity: %s", i+1, marketplace.QuoteTerminal(string(finding.Severity)))
+		if finding.Message != "" {
+			fmt.Fprintf(&result, "\n     message: %s", marketplace.QuoteTerminal(string(finding.Message)))
+		}
+		if finding.File != "" {
+			fmt.Fprintf(&result, "\n     location: %s", marketplace.QuoteTerminal(string(finding.File)))
+			if finding.Line > 0 {
+				fmt.Fprintf(&result, ":%d", finding.Line)
+			}
+		}
+		fmt.Fprintf(&result, "\n     code: %s", marketplace.QuoteTerminal(string(finding.Code)))
+		if finding.PolicyOutcome != "" {
+			fmt.Fprintf(&result, "\n     policy: %s", marketplace.QuoteTerminal(string(finding.PolicyOutcome)))
+		}
+		if finding.Analyzer != "" {
+			fmt.Fprintf(&result, "\n     analyzer: %s", marketplace.QuoteTerminal(string(finding.Analyzer)))
+		}
+	}
+	return result.String()
+}
+
 func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error) {
 	preview := plan.Preview()
-	findings := marketplacePreviewFindings(preview.Findings)
+	findings := marketplacePreviewFindingsText(marketplacePreviewFindings(preview.Findings))
 	caps := slices.Clone(preview.Capabilities)
 	sort.Strings(caps)
-	findingsJSON := "none"
-	if len(findings) > 0 {
-		encoded, err := json.Marshal(findings)
-		if err != nil {
-			return "", fmt.Errorf("encode Marketplace finding preview: %w", err)
-		}
-		findingsJSON = string(encoded)
-	}
 	capabilitiesJSON, err := json.Marshal(marketplace.TerminalStrings(caps))
 	if err != nil {
 		return "", fmt.Errorf("encode Marketplace capability preview: %w", err)
@@ -495,7 +515,7 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 		capabilities = marketplace.QuoteTerminal("none")
 	}
 	provenance := fmt.Sprintf("registry_url=%s ref=%s path=%s generator=%s", marketplace.QuoteTerminal(preview.Provenance.RegistryURL), marketplace.QuoteTerminal(preview.Provenance.Ref), marketplace.QuoteTerminal(preview.Provenance.Path), marketplace.QuoteTerminal(preview.Provenance.Generator))
-	result := fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\nfindings: %s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findingsJSON, capabilities, provenance)
+	result := fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\n%s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findings, capabilities, provenance)
 	if len(preview.CollectionMembers) == 0 {
 		return result, nil
 	}
