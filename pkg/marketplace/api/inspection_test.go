@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -129,7 +131,7 @@ func indexOfKind(kind string) int {
 	return 0
 }
 
-func TestPublicMCPArtifactIsNotDownloadable(t *testing.T) {
+func TestPublicMCPArtifactIsDownloadable(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")
 	if err := meta.Open(ctx); err != nil {
@@ -144,23 +146,40 @@ func TestPublicMCPArtifactIsNotDownloadable(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	archive := "sha256:" + strings.Repeat("b", 64)
+	artifact, err := hccartifact.FromIR(ir.NewMcpServer("remote", "npx", []string{"-y", "remote-mcp"}, nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactData, archive, err := hccartifact.Encode(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
 	revision := store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "remote"},
-		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)), ArchiveDigest: store.ArchiveDigest(archive),
+		ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(archive),
 	}
 	if err := meta.PutResourceRevision(ctx, revision); err != nil {
 		t.Fatal(err)
 	}
+	if err := blobs.Put(ctx, revision.ArchiveDigest, artifactData); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, blobs).PublicHandler())
 	defer server.Close()
-	resp, err := http.Get(server.URL + "/api/v1/artifacts/sha256/" + strings.Repeat("b", 64))
+	resp, err := http.Get(server.URL + "/api/v1/artifacts/" + strings.Replace(archive, ":", "/", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusUnsupportedMediaType {
-		t.Fatalf("MCP artifact status = %d, want %d", resp.StatusCode, http.StatusUnsupportedMediaType)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("MCP artifact status = %d, want %d: %s", resp.StatusCode, http.StatusOK, body)
+	}
+	if string(body) != string(artifactData) {
+		t.Fatal("MCP artifact response does not match stored archive")
 	}
 }
 
