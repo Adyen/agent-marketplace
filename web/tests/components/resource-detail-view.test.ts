@@ -84,6 +84,7 @@ describe('ResourceDetailView', () => {
       global: { stubs },
     })
 
+    expect(wrapper.get('[data-testid="safe-markdown"]').classes()).toContain('marketplace-markdown')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).toContain('<h1>Hello</h1>')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<script>')
     expect(wrapper.get('[data-testid="safe-markdown"]').html()).not.toContain('<img')
