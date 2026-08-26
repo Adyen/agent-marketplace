@@ -125,6 +125,7 @@ const server = createServer((request, response) => {
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
   if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin })
+  if (parts.join('/') === 'api/v1/sources') return sendJson(response, 200, [{ id: source.id, slug: source.slug }])
   if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'sources') {
     return parts[3] === source.id ? sendJson(response, 200, source) : sendJson(response, 404, { error: 'source not found' })
   }

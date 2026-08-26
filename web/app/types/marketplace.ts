@@ -20,6 +20,7 @@ export type SourcePublisher = Schemas['Publisher']
 // Public source metadata only. The API deliberately omits credentials, policy
 // internals, and refresh diagnostics; origins are already sanitized server-side.
 export type Source = JsonResponse<'getSource'>
+export type SourceSummary = Schemas['SourceSummary']
 
 export type SourceOccurrence = Schemas['SourceOccurrence']
 export type ExactSourceOccurrence = Schemas['ExactSourceOccurrence']

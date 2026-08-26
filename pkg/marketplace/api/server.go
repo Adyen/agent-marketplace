@@ -31,6 +31,7 @@ import (
 // source history endpoint. Entries are ordered newest first by the metadata
 // store, so truncation is deterministic.
 const MaxSourceHistoryEntries = store.MaxSourceHistoryEntries
+const maxSourceSummaries = 1000
 
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
@@ -71,6 +72,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
 	publicMux.HandleFunc("/api/v1/instance", s.methodGet(s.handleInstance))
 	publicMux.HandleFunc("/api/v1/search", s.methodGet(s.handleSearch))
+	publicMux.HandleFunc("/api/v1/sources", s.methodGet(s.handleSourceList))
 	publicMux.HandleFunc("/api/v1/sources/", s.methodGet(s.handleSources))
 	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
 	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
@@ -289,6 +291,28 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"offset": offset,
 		"limit":  limit,
 	})
+}
+
+func (s *Server) handleSourceList(w http.ResponseWriter, r *http.Request) {
+	sources, err := s.meta.ListSources(r.Context())
+	if err != nil {
+		slog.Error("failed to list sources", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to list sources")
+		return
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].Slug < sources[j].Slug })
+	if len(sources) > maxSourceSummaries {
+		sources = sources[:maxSourceSummaries]
+	}
+	type sourceSummary struct {
+		ID   store.SourceID `json:"id"`
+		Slug string         `json:"slug"`
+	}
+	items := make([]sourceSummary, 0, len(sources))
+	for _, source := range sources {
+		items = append(items, sourceSummary{ID: source.ID, Slug: source.Slug})
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {

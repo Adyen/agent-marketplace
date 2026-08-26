@@ -11,12 +11,20 @@ const api = useMarketplaceApi()
 const config = useRuntimeConfig()
 
 const { data: metadata, error: metadataError } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
+const { data: sources } = await useAsyncData('marketplace-sources', () => api.listSources())
 const searchParams = computed(() => parseSearchQuery(route.query))
 const draft = reactive<SearchParams>({ ...searchParams.value })
+let syncingDraft = false
+let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
   () => route.query,
-  () => Object.assign(draft, searchParams.value),
+  () => {
+    clearTimeout(searchTimer)
+    syncingDraft = true
+    Object.assign(draft, searchParams.value)
+    nextTick(() => { syncingDraft = false })
+  },
 )
 
 const { data: results, pending, error: searchError, refresh } = await useAsyncData(
@@ -30,6 +38,7 @@ const supportedKinds = computed<ResourceKind[]>(() => {
   if (!knownMetadata) return [...RESOURCE_KINDS]
   return RESOURCE_KINDS.filter(kind => knownMetadata.resource_kinds.includes(kind))
 })
+const sourceOptions = computed(() => (sources.value ?? []).map(source => source.slug))
 
 const limitOptions = [
   { label: '25 per page', value: 25 },
@@ -56,25 +65,38 @@ const withheldOnPage = computed(() =>
 )
 
 const mainContent = ref<HTMLElement | null>(null)
-const resultsHeading = ref<HTMLElement | null>(null)
 const resultStatus = computed(() => {
   if (pending.value) return 'Loading Marketplace resources.'
   if (searchError.value) return 'Search failed. Review the error message and try again.'
   return `${results.value?.total ?? 0} resources available.`
 })
 
-watch([pending, searchError, results], async () => {
-  if (pending.value) return
-  await nextTick()
-  resultsHeading.value?.focus()
-}, { flush: 'post' })
+watch(() => [draft.q, draft.source], scheduleSearch)
+watch(() => [draft.kind, draft.limit], applyDraft)
+onBeforeUnmount(() => clearTimeout(searchTimer))
 
 function focusMainContent() {
   mainContent.value?.focus()
 }
 
+function applyDraft() {
+  if (syncingDraft) return
+  void router.replace({ query: toLocationQuery({ ...draft, offset: 0 }) })
+}
+
+function scheduleSearch() {
+  if (syncingDraft) return
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchTimer = undefined
+    applyDraft()
+  }, 250)
+}
+
 function submitSearch() {
-  router.push({ query: toLocationQuery({ ...draft, offset: 0 }) })
+  clearTimeout(searchTimer)
+  searchTimer = undefined
+  void router.push({ query: toLocationQuery({ ...draft, offset: 0 }) })
 }
 
 function resetSearch() {
@@ -136,7 +158,7 @@ useHead({
             </div>
             <div class="w-full sm:w-44">
               <label for="search-source" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Source</label>
-              <UInput id="search-source" v-model="draft.source" size="md" icon="i-lucide-database" placeholder="any" autocomplete="off" class="w-full" />
+              <UInputMenu id="search-source" v-model="draft.source" :items="sourceOptions" mode="autocomplete" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
             </div>
             <UButton type="submit" size="md" color="primary" class="justify-center">Search</UButton>
           </form>
@@ -146,7 +168,7 @@ useHead({
       <section class="mx-auto max-w-6xl px-4 sm:px-6" aria-labelledby="results-heading">
         <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-default py-4">
           <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h2 id="results-heading" ref="resultsHeading" tabindex="-1" class="rounded font-mono text-xl font-medium tracking-tight text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
+            <h2 id="results-heading" tabindex="-1" class="rounded font-mono text-xl font-medium tracking-tight text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
               {{ results?.total ?? 0 }}
             </h2>
             <span class="text-sm text-muted">{{ hasFilters ? 'matching entries' : 'indexed entries' }}</span>
