@@ -85,6 +85,51 @@ marketplaces:
 	}
 }
 
+func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := t.TempDir()
+	withWorkingDir(t, repoRoot)
+
+	var receivedKind string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp-public", "https://example.com"))
+		case "/api/v1/search":
+			receivedKind = r.URL.Query().Get("kind")
+			_ = json.NewEncoder(w).Encode(marketplaceSearchResponse{
+				Items: []mpapi.ResourceListItem{
+					{SourceID: "src", SourceSlug: "src", Kind: mpapi.KindMcpServer, Name: "genai-architect", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1},
+					{SourceID: "src", SourceSlug: "src", Kind: mpapi.KindSkill, Name: "architecture", Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Score: 0.5},
+				},
+				Total: 2, Limit: 100,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), fmt.Sprintf(`
+marketplaces:
+  - url: %s
+    instance_id: mp-public
+`, server.URL))
+
+	output, err := executeCommand("search", "--output", "json", "architect")
+	if err != nil {
+		t.Fatalf("expected search to succeed: %v\n%s", err, output)
+	}
+	if receivedKind != "" {
+		t.Fatalf("search sent implicit kind filter %q", receivedKind)
+	}
+	if !strings.Contains(output, `"name": "genai-architect"`) || !strings.Contains(output, `"name": "architecture"`) {
+		t.Fatalf("expected MCP server and skill in output, got:\n%s", output)
+	}
+}
+
 func TestSearchCommandAdHocURL(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
