@@ -7,11 +7,12 @@
 ## Decisions
 - The analyzer engine returns `Finding` values, not a safety verdict.
   `Report.Rejected` is computed from `Policy.OutcomeFor(code) == reject`.
-- Public policy rejects hidden content, terminal control, unsafe bidi,
-  dangerous URLs, executable assets, suspicious paths, and obfuscated
-  instructions. It warns on tool grants and hook/MCP capabilities.
-- Private policy downgrades the two hidden-content codes to `warn` via
-  `Policy.Outcomes`.
+- Default policy rejects terminal control, unsafe bidi, asset path escapes,
+  opaque executables, and confirmed obfuscated instructions. It warns on hidden
+  content, dangerous URL references, readable scripts, raw dynamic execution,
+  sensitive path references, tool grants, and hook/MCP capabilities.
+- Operators may elevate the two hidden-content codes to `reject` via
+  `policy.hidden_content`.
 - Shared content scanners operate on UTF-8 text samples extracted from the
   resource fields and `FileSet` files. Binary assets are only scanned by the
   asset scanner to avoid false positives.

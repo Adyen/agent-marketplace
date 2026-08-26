@@ -20,11 +20,14 @@ func TestScanAssets(t *testing.T) {
 		codes[f.Code]++
 	}
 
-	if codes[FindingExecutableAsset] != 2 {
-		t.Fatalf("expected 2 executable findings, got %d", codes[FindingExecutableAsset])
+	if codes[FindingExecutableAsset] != 1 {
+		t.Fatalf("expected 1 opaque executable finding, got %d", codes[FindingExecutableAsset])
 	}
-	if codes[FindingSuspiciousPath] != 1 {
-		t.Fatalf("expected 1 suspicious path finding, got %d", codes[FindingSuspiciousPath])
+	if codes[FindingExecutableScript] != 1 {
+		t.Fatalf("expected 1 script capability finding, got %d", codes[FindingExecutableScript])
+	}
+	if codes[FindingAssetPathEscape] != 1 {
+		t.Fatalf("expected 1 asset path escape finding, got %d", codes[FindingAssetPathEscape])
 	}
 }
 
@@ -95,8 +98,18 @@ func TestScanAssetsExtensionDetection(t *testing.T) {
 		codes[f.Code]++
 	}
 
-	if codes[FindingExecutableAsset] != 3 {
-		t.Fatalf("expected 3 executable findings, got %d", codes[FindingExecutableAsset])
+	if codes[FindingExecutableAsset] != 2 {
+		t.Fatalf("expected 2 opaque executable findings, got %d", codes[FindingExecutableAsset])
+	}
+	if codes[FindingExecutableScript] != 1 {
+		t.Fatalf("expected 1 script capability finding, got %d", codes[FindingExecutableScript])
+	}
+}
+
+func TestScanAssetsDoesNotDuplicateScriptEvidence(t *testing.T) {
+	findings := ScanAssets(FileSet{"run.sh": []byte("#!/bin/sh\necho hi\n")}, "test")
+	if len(findings) != 1 || findings[0].Code != FindingExecutableScript {
+		t.Fatalf("findings = %v, want one script capability", findings)
 	}
 }
 
@@ -113,7 +126,7 @@ func TestScanAssetsBOMShebang(t *testing.T) {
 		codes[f.Code]++
 	}
 
-	if codes[FindingExecutableAsset] != 2 {
-		t.Fatalf("expected 2 executable findings, got %d", codes[FindingExecutableAsset])
+	if codes[FindingExecutableScript] != 2 {
+		t.Fatalf("expected 2 script capability findings, got %d", codes[FindingExecutableScript])
 	}
 }

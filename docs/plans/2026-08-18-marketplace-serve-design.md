@@ -206,7 +206,7 @@ refresh:
   interval: 30m
 
 policy:
-  hidden_content: reject
+  hidden_content: warn
   license_allowlist: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause]
   limits:
     # Concrete defaults are fixed by benchmarks and adversarial tests.
@@ -452,7 +452,7 @@ V1 deterministic analyzers cover:
 - suspicious paths and archive structure;
 - common encoded or obfuscated instruction patterns.
 
-Terminal controls and unsafe bidirectional controls are rejected. HTML comments and zero-width characters produce high-visibility findings; public policy rejects them, while private operators may configure another outcome. The system never silently rewrites prompt semantics.
+Terminal controls, unsafe bidirectional controls, asset path escapes, opaque executables, and confirmed encoded or confusable hostile instructions are rejected. HTML comments, zero-width characters, dangerous URL references, readable scripts, dynamic-execution references, and sensitive content paths produce high-visibility warnings by default. Operators may explicitly reject hidden content. The system never silently rewrites prompt semantics.
 
 Heuristic prompt-injection patterns are warnings, not proof. Each finding stores analyzer version, stable code, severity, policy outcome, and source range where available. The Marketplace never displays a generic “safe” badge.
 

@@ -28,6 +28,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/google/licensecheck"
 )
 
 // Revision is the result of ingesting a single source commit.
@@ -561,7 +562,7 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 		Path:        root.Path,
 		ID:          string(source.ID),
 		Slug:        source.Slug,
-		License:     resourceLicense(entry.Resource, source.License),
+		License:     resolvedResourceLicense(entry.Resource, source.License, files),
 	}
 	opts.Limits = analyze.Limits{
 		MaxFileBytes:  limits.FileBytes,
@@ -843,6 +844,29 @@ func resourceLicense(r hccir.Resource, fallback string) string {
 	return fallback
 }
 
+func resolvedResourceLicense(r hccir.Resource, fallback string, files analyze.FileSet) string {
+	declared := resourceLicense(r, fallback)
+	lower := strings.ToLower(declared)
+	ids := make(map[string]struct{})
+	for name, data := range files {
+		path := strings.ToLower(filepath.ToSlash(name))
+		base := filepath.Base(path)
+		if (!strings.HasPrefix(base, "license") && !strings.HasPrefix(base, "copying")) ||
+			(!strings.Contains(lower, path) && !strings.Contains(lower, base)) {
+			continue
+		}
+		for _, match := range licensecheck.Scan(data).Match {
+			ids[match.ID] = struct{}{}
+		}
+	}
+	if len(ids) == 1 {
+		for id := range ids {
+			return id
+		}
+	}
+	return declared
+}
+
 func resourceExtra(r hccir.Resource) map[string]any {
 	extra, _, err := resourceInfo(r)
 	if err != nil {
@@ -858,10 +882,14 @@ func effectivePolicy(cfg config.Config, overrides map[string]any) analyze.Policy
 			hidden = v
 		}
 	}
-	if hidden == "warn" {
-		return analyze.PrivatePolicy()
+	policy := analyze.PublicPolicy()
+	if hidden == "reject" {
+		policy.Outcomes = map[string]string{
+			analyze.FindingHTMLComment: analyze.OutcomeReject,
+			analyze.FindingZeroWidth:   analyze.OutcomeReject,
+		}
 	}
-	return analyze.PublicPolicy()
+	return policy
 }
 
 func effectiveLimits(base config.Limits, overrides map[string]any) config.Limits {

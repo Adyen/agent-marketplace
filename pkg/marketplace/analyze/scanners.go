@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -48,6 +47,7 @@ func runSharedScanners(content, file, analyzer string) []Finding {
 	findings = append(findings, ScanDangerousURLs(content, file, analyzer)...)
 	findings = append(findings, ScanRemoteReferences(content, file, analyzer)...)
 	findings = append(findings, ScanSuspiciousPaths(content, file, analyzer)...)
+	findings = append(findings, ScanDynamicExecution(content, file, analyzer)...)
 	findings = append(findings, ScanObfuscatedInstructions(content, file, analyzer)...)
 	return findings
 }
@@ -65,12 +65,9 @@ func ScanHTMLComments(content, file, analyzer string) []Finding {
 // isZeroWidth reports whether r is an invisible or zero-width character.
 func isZeroWidth(r rune) bool {
 	switch r {
-	case '\u00AD', '\u034F', '\u180E', '\u200B', '\u200C', '\u200D',
-		'\u200E', '\u200F', '\u2060', '\u2061', '\u2062', '\u2063', '\u2064',
-		'\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F', '\uFEFF',
-		'\uFE00', '\uFE01', '\uFE02', '\uFE03', '\uFE04', '\uFE05', '\uFE06',
-		'\uFE07', '\uFE08', '\uFE09', '\uFE0A', '\uFE0B', '\uFE0C', '\uFE0D',
-		'\uFE0E', '\uFE0F':
+	case '\u00AD', '\u034F', '\u180E', '\u200B', '\u200E', '\u200F',
+		'\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\u206A', '\u206B',
+		'\u206C', '\u206D', '\u206E', '\u206F', '\uFEFF':
 		return true
 	}
 	return false
@@ -82,6 +79,9 @@ func ScanZeroWidth(content, file, analyzer string) []Finding {
 	start := -1
 	runeCount := 0
 	for i, r := range content {
+		if i == 0 && r == '\uFEFF' {
+			continue
+		}
 		if isZeroWidth(r) {
 			if start == -1 {
 				start = i
@@ -490,10 +490,8 @@ type pathScanMode uint8
 
 const (
 	// pathScanContent scans resource prose (markdown bodies, descriptions,
-	// frontmatter values). Slash-command invocations such as
-	// "/analyze-cohorts" and prose ellipses such as "..." are legitimate
-	// there, so only sensitive filesystem roots and real traversal segments
-	// are reported.
+	// frontmatter values). Ordinary filesystem references are legitimate there,
+	// so only narrowly identified sensitive targets are reported.
 	pathScanContent pathScanMode = iota
 	// pathScanFilePath scans FileSet entry paths, where any absolute path or
 	// ".." segment is a packaging (zip-slip / path-escape) signal and stays
@@ -508,10 +506,10 @@ func (m pathScanMode) String() string {
 	return "content"
 }
 
-// ScanSuspiciousPaths finds path traversal and sensitive filesystem paths in
-// resource content (prose, markdown bodies, metadata values). It uses the
-// content precision profile: a bare "/slash-command" or a prose ellipsis is
-// not a filesystem path. Use ScanSuspiciousFilePaths for FileSet entry paths.
+// ScanSuspiciousPaths finds narrowly identified sensitive filesystem targets
+// in resource content. Ordinary relative, home, system, Windows, and UNC paths
+// are expected operational documentation. Use ScanSuspiciousFilePaths for
+// FileSet entry paths.
 func ScanSuspiciousPaths(content, file, analyzer string) []Finding {
 	return scanSuspiciousPaths(content, file, analyzer, pathScanContent)
 }
@@ -526,7 +524,11 @@ func ScanSuspiciousFilePaths(filePath, file, analyzer string) []Finding {
 
 func scanSuspiciousPaths(content, file, analyzer string, mode pathScanMode) []Finding {
 	var findings []Finding
-	ctx := &pathScanContext{findings: &findings, content: content, file: file, analyzer: analyzer, mode: mode}
+	code := FindingSuspiciousPath
+	if mode == pathScanFilePath {
+		code = FindingAssetPathEscape
+	}
+	ctx := &pathScanContext{findings: &findings, content: content, file: file, analyzer: analyzer, mode: mode, code: code}
 
 	ctx.scanString(content, 0, nil)
 
@@ -575,7 +577,6 @@ func containsEncodedMarker(s string) bool {
 const (
 	pathBoundaryLeft  = `\s"'` + "`" + `(<\[\{=,;:|`
 	pathBoundaryRight = `\s"'` + "`" + `)>\]\}=,;:|!?`
-	pathBodyStop      = `\s"'` + "`" + `<>|)\]\}`
 )
 
 var (
@@ -584,24 +585,12 @@ var (
 	// "~/xssh" no longer matches.
 	sensitivePathRe = regexp.MustCompile(`(?i)(/etc/passwd|/etc/shadow|~/\.ssh)`)
 
-	// sensitiveRootPathRe (content mode) matches an absolute path rooted at a
-	// sensitive system directory, bounded on both sides. The boundaries keep
-	// slash-command invocations ("/deploy", "/dev-setup") and words such as
-	// "/etcetera" out, which is the false-positive class that rejected whole
-	// catalogs.
-	sensitiveRootPathRe = regexp.MustCompile(`(?i)(?:^|[` + pathBoundaryLeft + `])` +
-		`(/(?:etc|var|root|proc|sys|dev|boot|usr|bin|sbin|home)(?:/[^` + pathBodyStop + `]*)?)` +
-		`(?:$|[` + pathBoundaryRight + `])`)
-
 	// absPathRe (file-path mode) keeps the original strict behaviour: any
 	// absolute path segment in an archive entry is a path-escape signal.
 	absPathRe = regexp.MustCompile(`([\s"'(<\[\{=]|^)(/(?:[^/\s]+)(?:/[^/\s]+)*)`)
 
-	// pathTraversalSepRe matches a dot run immediately followed by a path
-	// separator: "../", "..\", plus the naive-sanitizer bypass forms ".../"
-	// and "....//". A dot run without a separator is an ellipsis, not
-	// traversal.
-	pathTraversalSepRe = regexp.MustCompile(`\.{2,}[\\/]`)
+	// pathTraversalSepRe matches an exact parent-directory path component.
+	pathTraversalSepRe = regexp.MustCompile(`(?:^|[\\/])(\.\.)(?:[\\/]|$)`)
 
 	// pathTraversalTailRe matches a trailing "/.." or "\.." segment (group 1),
 	// e.g. "cd /..". The trailing class excludes '.' so Go's "./..." package
@@ -622,11 +611,6 @@ var (
 
 	// uncPathRe (file-path mode) matches any double backslash.
 	uncPathRe = regexp.MustCompile(`\\\\`)
-
-	// uncContentPathRe (content mode) additionally requires a host segment
-	// terminated by a separator, so an escaped backslash inside a prose code
-	// sample ("\\d", "\\n") is not reported as a UNC path.
-	uncContentPathRe = regexp.MustCompile(`\\\\[^\\/\s]+[\\/]`)
 )
 
 // pathScanContext carries the state shared by every suspicious-path pattern
@@ -638,6 +622,7 @@ type pathScanContext struct {
 	file     string
 	analyzer string
 	mode     pathScanMode
+	code     string
 }
 
 // scanString runs every pattern for the configured mode over s. When offsets
@@ -645,25 +630,19 @@ type pathScanContext struct {
 // decoded byte positions back to original ones.
 func (c *pathScanContext) scanString(s string, base int, offsets []int) {
 	c.run(sensitivePathRe, 0, s, base, offsets)
-
-	if c.mode == pathScanFilePath {
-		c.run(absPathRe, 2, s, base, offsets)
-	} else {
-		c.run(sensitiveRootPathRe, 1, s, base, offsets)
+	if c.mode == pathScanContent {
+		return
 	}
 
-	c.run(pathTraversalSepRe, 0, s, base, offsets)
+	c.run(absPathRe, 2, s, base, offsets)
+	c.run(pathTraversalSepRe, 1, s, base, offsets)
 	c.run(pathTraversalTailRe, 1, s, base, offsets)
 	c.run(pathTraversalBareRe, 1, s, base, offsets)
 
 	c.run(tildePathRe, 0, s, base, offsets)
 	c.run(drivePathRe, 1, s, base, offsets)
 
-	if c.mode == pathScanFilePath {
-		c.run(uncPathRe, 0, s, base, offsets)
-	} else {
-		c.run(uncContentPathRe, 0, s, base, offsets)
-	}
+	c.run(uncPathRe, 0, s, base, offsets)
 }
 
 // run reports every match of re in s. group selects the capturing group that
@@ -711,7 +690,7 @@ func (c *pathScanContext) add(start, end int) bool {
 	match := truncate(c.content[start:end], 80)
 	slog.Debug("suspicious path detected",
 		"file", c.file, "mode", c.mode.String(), "offset", start, "match", match)
-	*c.findings = append(*c.findings, NewFinding(FindingSuspiciousPath,
+	*c.findings = append(*c.findings, NewFinding(c.code,
 		fmt.Sprintf("suspicious path: %q", match),
 		c.analyzer, SourceRangeAt(c.file, c.content, start)))
 	if c.seen == nil {
@@ -721,23 +700,28 @@ func (c *pathScanContext) add(start, end int) bool {
 	return true
 }
 
-// ScanObfuscatedInstructions finds encoded or obfuscated hostile instructions.
-func ScanObfuscatedInstructions(content, file, analyzer string) []Finding {
+// ScanDynamicExecution finds raw dynamic execution references.
+func ScanDynamicExecution(content, file, analyzer string) []Finding {
 	var findings []Finding
 	seen := make(map[int]bool)
-
-	// Raw dangerous calls.
 	for _, re := range []*regexp.Regexp{evalSystemRe, suspiciousCallRe} {
 		for _, loc := range re.FindAllStringIndex(content, -1) {
 			if seen[loc[0]] {
 				continue
 			}
 			seen[loc[0]] = true
-			findings = append(findings, NewFinding(FindingObfuscatedInstruction,
-				fmt.Sprintf("obfuscated instruction: %q", truncate(content[loc[0]:loc[1]], 40)),
+			findings = append(findings, NewFinding(FindingDynamicExecution,
+				fmt.Sprintf("dynamic execution reference: %q", truncate(content[loc[0]:loc[1]], 40)),
 				analyzer, SourceRangeAt(file, content, loc[0])))
 		}
 	}
+	return findings
+}
+
+// ScanObfuscatedInstructions finds encoded or obfuscated hostile instructions.
+func ScanObfuscatedInstructions(content, file, analyzer string) []Finding {
+	var findings []Finding
+	seen := make(map[int]bool)
 
 	// Encoded candidate tokens.
 	for _, tok := range tokenizeURLLike(content) {
@@ -791,15 +775,6 @@ func scanHomoglyphTokens(content, file, analyzer string, seen map[int]bool) []Fi
 		word := content[loc[0]:loc[1]]
 		mapped := homoglyphToLatin(word)
 
-		scripts := detectScripts(word)
-		if len(scripts) > 1 {
-			seen[loc[0]] = true
-			findings = append(findings, NewFinding(FindingObfuscatedInstruction,
-				fmt.Sprintf("obfuscated instruction: mixed-script homoglyph (%s)", strings.Join(scripts, ", ")),
-				analyzer, SourceRangeAt(file, content, loc[0])))
-			continue
-		}
-
 		if mapped != word && (hasSuspiciousToken(mapped) || evalSystemRe.MatchString(mapped) || suspiciousCallRe.MatchString(mapped)) {
 			seen[loc[0]] = true
 			findings = append(findings, NewFinding(FindingObfuscatedInstruction,
@@ -848,64 +823,6 @@ var homoglyphMap = map[rune]rune{
 	'υ': 'y', 'Υ': 'Y',
 	'ν': 'v', 'Ν': 'V',
 	'ζ': 'z', 'Ζ': 'Z',
-}
-
-// detectScripts returns the script names present in a word.
-func detectScripts(word string) []string {
-	scripts := make(map[string]bool)
-	for _, r := range word {
-		script := runeScript(r)
-		if script != "" {
-			scripts[script] = true
-		}
-	}
-	if len(scripts) < 2 {
-		return nil
-	}
-	var names []string
-	for name := range scripts {
-		names = append(names, name)
-	}
-	sortStrings(names)
-	return names
-}
-
-var scriptConfusables = []struct {
-	name string
-	rt   *unicode.RangeTable
-}{
-	{"Latin", unicode.Latin},
-	{"Cyrillic", unicode.Cyrillic},
-	{"Greek", unicode.Greek},
-	{"Armenian", unicode.Armenian},
-	{"Georgian", unicode.Georgian},
-	{"Hebrew", unicode.Hebrew},
-	{"Arabic", unicode.Arabic},
-}
-
-func runeScript(r rune) string {
-	if unicode.Is(unicode.Common, r) || unicode.Is(unicode.Inherited, r) || !unicode.IsLetter(r) {
-		return ""
-	}
-	for _, s := range scriptConfusables {
-		if unicode.Is(s.rt, r) {
-			return s.name
-		}
-	}
-	if unicode.IsLetter(r) {
-		return "Other"
-	}
-	return ""
-}
-
-func sortStrings(a []string) {
-	for i := 0; i < len(a); i++ {
-		for j := i + 1; j < len(a); j++ {
-			if a[j] < a[i] {
-				a[i], a[j] = a[j], a[i]
-			}
-		}
-	}
 }
 
 // looksLikeInstruction checks whether decoded bytes contain a suspicious token

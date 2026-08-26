@@ -8,18 +8,21 @@ have an entry below; `TestFindingCodes_Documented` and
 
 | Code | Severity | Description |
 |---|---|---|
-| `marketplace.find.html-comment` | reject | HTML-style comments that may hide instructions from renderers. |
-| `marketplace.find.zero-width` | reject | Zero-width or invisible Unicode characters. |
+| `marketplace.find.html-comment` | warn | HTML-style comments that may hide instructions from renderers. |
+| `marketplace.find.zero-width` | warn | Zero-width or invisible Unicode characters outside accepted presentation sequences. |
 | `marketplace.find.terminal-control` | reject | ANSI / terminal escape sequences. |
 | `marketplace.find.unsafe-bidi` | reject | Bidirectional override characters that could mislead review. |
-| `marketplace.find.dangerous-url` | reject | URL with dangerous scheme or target. |
+| `marketplace.find.dangerous-url` | warn | URL with dangerous scheme or target. |
 | `marketplace.find.remote-reference` | warn | Reference to remote resource or payload. |
-| `marketplace.find.executable-asset` | reject | Asset that appears executable or packaged. |
+| `marketplace.find.executable-asset` | reject | Opaque native, packaged, or binary executable asset. |
+| `marketplace.find.executable-script` | warn | Readable script asset or shebang script. |
+| `marketplace.find.asset-path-escape` | reject | Absolute or traversing resource asset path. |
+| `marketplace.find.dynamic-execution` | warn | Raw dynamic-code execution API reference. |
 | `marketplace.find.tool-grant` | warn | Declared tool grant or permission. |
 | `marketplace.find.hook-capability` | warn | Declared hook capability. |
 | `marketplace.find.mcp-capability` | warn | Declared MCP server capability. |
-| `marketplace.find.suspicious-path` | reject | Path traversal or suspicious file path. |
-| `marketplace.find.obfuscated-instruction` | reject | Encoded or obfuscated instruction. |
+| `marketplace.find.suspicious-path` | warn | Reference to a narrowly identified sensitive filesystem target. |
+| `marketplace.find.obfuscated-instruction` | reject | Encoded or confusable hostile instruction. |
 
 ## Policy decisions
 

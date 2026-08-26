@@ -19,7 +19,7 @@ acquisition_default: mirror
 refresh:
   interval: 30m
 policy:
-  hidden_content: reject
+  hidden_content: warn
   license_allowlist:
     - MIT
     - Apache-2.0

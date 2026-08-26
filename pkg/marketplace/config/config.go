@@ -31,7 +31,7 @@ const (
 	defaultListen             = "127.0.0.1:8080"
 	defaultOperationsListen   = "127.0.0.1:9090"
 	defaultRefreshInterval    = 30 * time.Minute
-	defaultHiddenContent      = "reject"
+	defaultHiddenContent      = "warn"
 	defaultLicenseUndeclared  = LicenseUndeclaredReject
 	defaultAcquisitionDefault = "mirror"
 	defaultRepositoryBytes    = 100 * 1024 * 1024
