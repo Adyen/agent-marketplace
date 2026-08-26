@@ -21,7 +21,7 @@ function searchResult() {
     }],
     total: 1,
     offset: 0,
-    limit: 12,
+    limit: 25,
   }
 }
 

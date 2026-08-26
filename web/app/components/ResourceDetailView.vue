@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { resourceInspectionFilePath } from '~/lib/api'
-import { installCommand, kindIcon, kindLabel, resourceLocator, sourceLabel } from '~/lib/presentation'
+import { installCommand, kindLabel, mergeFindings, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { highlightEscapedRawText, renderSafeMarkdown } from '~/lib/markdown'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
@@ -32,8 +32,24 @@ const listItem = computed<ResourceListItem>(() => ({
 }))
 const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
-const revoked = computed(() => hasRevocation(props.resource))
-const commandAvailable = computed(() => !revoked.value && Boolean(command.value))
+// Install status is derived from what the Marketplace actually reports:
+// revocation, reject-severity analyzer findings, and whether an installable
+// artifact exists. Every state stays browsable and inspectable.
+const availability = computed(() => resourceAvailability(props.resource))
+const availabilityCopy = computed(() => resourceAvailabilityCopy(props.resource))
+// Saturation carries the verdict and nothing else, so the status marker is the
+// one coloured element in the header.
+const statusDotClass = computed(() => {
+  switch (availabilityCopy.value.color) {
+    case 'success': return 'bg-success'
+    case 'error': return 'bg-error'
+    default: return 'bg-warning'
+  }
+})
+const revoked = computed(() => availability.value === 'revoked')
+const commandAvailable = computed(() => availabilityCopy.value.installable && Boolean(command.value))
+const installNotice = computed(() => availabilityCopy.value.installNotice
+  || (command.value ? '' : 'Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.'))
 const browserAvailable = computed(() => Boolean(browserUrl.value))
 const acquisition = computed(() => props.resource.acquisition || valueFromRecord(props.resource.provenance, 'acquisition') || 'Not specified')
 const provenanceEntries = computed(() => Object.entries(props.resource.provenance ?? {}))
@@ -47,9 +63,12 @@ const revisionHistory = computed(() => {
     return true
   })
 })
-const inspectionFindings = computed(() => props.inspection?.findings ?? [])
-const inspectionFindingDetails = computed(() => inspectionFindings.value.map(findingDetails))
-const resourceFindingDetails = computed(() => (props.resource.findings ?? []).map(findingDetails))
+// The revision record and the inspection manifest project the same analyzer
+// run and in practice repeat each other. Merge them into one list so a reader
+// sees each finding once; the manifest goes first because it carries the file
+// path and byte range that the revision record drops.
+const findings = computed(() => mergeFindings(props.inspection?.findings, props.resource.findings))
+const locatedFindings = computed(() => findings.value.filter(finding => finding.path !== ''))
 const primaryFile = computed(() => props.inspection?.files.find(file => file.path === props.inspection?.primary_path))
 const selectedDigest = ref('')
 const loadedContents = ref<Record<string, string>>({})
@@ -70,7 +89,7 @@ const selectedContent = computed(() => {
 const selectedContentUnavailable = computed(() => Boolean(selectedFile.value && selectedFile.value.inspection_class === 'text' && (
   unavailableContents.value[selectedFile.value.content_digest] || (selectedIsPrimary.value && props.primaryContent === undefined)
 )))
-const selectedFindingDetails = computed(() => inspectionFindingDetails.value.filter(finding => finding.path === selectedFile.value?.path))
+const selectedFindingDetails = computed(() => locatedFindings.value.filter(finding => finding.path === selectedFile.value?.path))
 const renderedContent = computed(() => selectedContent.value === undefined ? '' : renderSafeMarkdown(selectedContent.value))
 const highlightedContent = computed(() => selectedContent.value === undefined ? '' : highlightEscapedRawText(selectedContent.value, selectedFindingDetails.value.map(finding => ({
   index: finding.index,
@@ -129,47 +148,6 @@ function isCurrentRevision(revision: ResourceRevision): boolean {
   return revision.content_digest === props.resource.content_digest
 }
 
-function hasRevocation(revision: ResourceRevision): boolean {
-  return Boolean(revision.revocation && Object.keys(revision.revocation).length)
-}
-
-type FindingDetails = {
-  index: number
-  code: string
-  severity: string
-  policy: string
-  message: string
-  path: string
-  startByte?: number
-  endByte?: number
-}
-
-function findingDetails(value: unknown, index: number): FindingDetails {
-  const record = isRecord(value) ? value : {}
-  return {
-    index,
-    code: stringField(record.code) || 'Unspecified finding',
-    severity: stringField(record.severity) || 'Unspecified',
-    policy: stringField(record.policy),
-    message: stringField(record.message),
-    path: stringField(record.path),
-    startByte: nonNegativeInteger(record.start_byte),
-    endByte: nonNegativeInteger(record.end_byte),
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function stringField(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function nonNegativeInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
-}
-
 function valueFromRecord(record: Record<string, unknown> | undefined, key: string): string {
   const value = record?.[key]
   return value === undefined ? '' : formatValue(value)
@@ -187,44 +165,55 @@ function formatValue(value: unknown): string {
 </script>
 
 <template>
-  <article class="rounded-2xl border border-default bg-default p-6 shadow-sm sm:p-8">
-    <div class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-6">
+  <article class="border border-default bg-default p-5 sm:p-7">
+    <div class="flex flex-wrap items-start justify-between gap-4 border-b border-default pb-5">
       <div class="flex min-w-0 items-start gap-4">
-        <div class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden="true">
-          <UIcon :name="kindIcon(kind)" class="size-6" />
-        </div>
+        <!-- The same mark the index row carries, at reading size. -->
+        <ResourceFingerprint :digest="resource.content_digest" :size="44" class="mt-1" />
         <div class="min-w-0">
-          <p class="text-sm font-medium text-primary">{{ sourceLabel(listItem) }}</p>
-          <h1 class="mt-1 break-words text-3xl font-semibold tracking-tight text-highlighted">{{ name }}</h1>
-          <p class="mt-2 text-sm text-muted">{{ kindLabel(kind) }} resource</p>
+          <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{{ kindLabel(kind) }}</p>
+          <h1 class="mt-1 break-words font-mono text-2xl tracking-tight">
+            <span class="text-muted">{{ sourceLabel(listItem) }}/</span><span class="font-medium text-highlighted">{{ name }}</span>
+          </h1>
         </div>
       </div>
-      <UBadge :color="revoked ? 'error' : 'success'" variant="subtle">{{ revoked ? 'Revoked' : 'Available' }}</UBadge>
+      <span class="inline-flex shrink-0 items-center gap-2 text-sm">
+        <span :class="statusDotClass" class="size-2 rounded-full" aria-hidden="true" />
+        <span class="text-toned">{{ availabilityCopy.label }}</span>
+      </span>
     </div>
+    <p class="sr-only" aria-live="polite">Install status for {{ name }}: {{ availabilityCopy.label }}.</p>
 
-    <div class="grid gap-4 border-b border-default py-6 sm:grid-cols-2">
-      <div>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Content digest</h2>
-        <p class="mt-2 break-all font-mono text-sm text-highlighted">{{ resource.content_digest }}</p>
+    <!-- Provenance reads as a record, so it is set as label/value pairs in mono
+         rather than as prose. -->
+    <dl class="grid gap-x-8 gap-y-4 border-b border-default py-5 sm:grid-cols-2">
+      <div class="sm:col-span-2">
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Content digest</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.content_digest }}</dd>
       </div>
       <div>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Acquisition</h2>
-        <p class="mt-2 text-sm text-highlighted">{{ acquisition }}</p>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Acquisition</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ acquisition }}</dd>
       </div>
       <div>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">License</h2>
-        <p class="mt-2 text-sm text-highlighted">{{ resource.license || 'Not provided' }}</p>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">License</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.license || 'none declared' }}</dd>
       </div>
       <div>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Analyzer</h2>
-        <p class="mt-2 text-sm text-highlighted">{{ resource.analyzer_version || 'Not provided' }}</p>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Analyzer</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.analyzer_version || 'not recorded' }}</dd>
       </div>
-    </div>
+    </dl>
 
     <section v-if="revoked" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="revocation-heading">
       <h2 id="revocation-heading" class="text-lg font-semibold text-error">This revision is revoked</h2>
       <p class="mt-2 text-sm leading-6 text-muted">The Marketplace has marked this exact digest as revoked. This page is read-only; do not install it.</p>
       <p class="mt-3 break-words font-mono text-xs text-dimmed">{{ formatValue(resource.revocation) }}</p>
+    </section>
+
+    <section v-else-if="availability === 'policy-blocked'" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="policy-block-heading">
+      <h2 id="policy-block-heading" class="text-lg font-semibold text-error">The security policy rejected this revision</h2>
+      <p class="mt-2 text-sm leading-6 text-muted">The analyzer reported findings at reject severity, so this Marketplace kept the revision indexed for inspection and removed its installable artifact. Read the metadata, inspection preview, and findings below. There is nothing to install.</p>
     </section>
 
     <section v-if="showRevisionHistory" class="border-b border-default py-6" aria-labelledby="revision-history-heading">
@@ -240,7 +229,7 @@ function formatValue(value: unknown): string {
             <span v-else class="break-all font-mono text-sm text-muted">{{ revision.content_digest }}</span>
             <span v-if="isCurrentRevision(revision)" class="ml-2 text-xs font-medium text-muted">Current</span>
           </div>
-          <UBadge :color="hasRevocation(revision) ? 'error' : 'success'" variant="subtle">{{ hasRevocation(revision) ? 'Revoked' : 'Available' }}</UBadge>
+          <UBadge :color="resourceAvailabilityCopy(revision).color" variant="subtle">{{ resourceAvailabilityCopy(revision).label }}</UBadge>
         </li>
       </ol>
     </section>
@@ -288,18 +277,6 @@ function formatValue(value: unknown): string {
         <p v-if="selectedFindingDetails.some(finding => finding.startByte !== undefined && finding.endByte !== undefined)" class="px-4 pb-2 text-xs text-muted">Finding ranges are highlighted below. Select a finding's range link to move focus to its highlighted text.</p>
         <pre :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" aria-label="Escaped raw inspection text" class="max-h-96 overflow-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-xs text-highlighted" v-html="highlightedContent" />
       </details>
-      <ul v-if="inspectionFindingDetails.length" class="mt-4 space-y-3" aria-label="Inspection findings">
-        <li v-for="finding in inspectionFindingDetails" :id="`inspection-finding-${finding.index}`" :key="`${finding.code}-${finding.index}`" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span class="font-semibold">{{ finding.code }}</span>
-            <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
-            <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
-          </div>
-          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.startByte ?? 0 }}-{{ finding.endByte ?? finding.startByte ?? 0 }}</p>
-          <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
-          <a v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" :href="`#finding-highlight-${finding.index}`" class="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">View highlighted range</a>
-        </li>
-      </ul>
     </section>
 
     <section class="border-b border-default py-6" aria-labelledby="provenance-heading">
@@ -315,8 +292,9 @@ function formatValue(value: unknown): string {
 
     <section class="border-b border-default py-6" aria-labelledby="findings-heading">
       <h2 id="findings-heading" class="text-lg font-semibold text-highlighted">Security findings</h2>
-      <ul v-if="resourceFindingDetails.length" class="mt-4 space-y-3" aria-label="Security findings">
-        <li v-for="finding in resourceFindingDetails" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
+      <p v-if="findings.length" class="mt-2 text-sm leading-6 text-muted">Every finding the analyzer reported for this revision, listed once. The revision record and the inspection manifest report the same analyzer run.</p>
+      <ul v-if="findings.length" class="mt-4 space-y-3" aria-label="Security findings">
+        <li v-for="finding in findings" :id="`finding-${finding.index}`" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span class="font-semibold">{{ finding.code }}</span>
             <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
@@ -324,6 +302,7 @@ function formatValue(value: unknown): string {
           </div>
           <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.startByte ?? 0 }}-{{ finding.endByte ?? finding.startByte ?? 0 }}</p>
           <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
+          <a v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" :href="`#finding-highlight-${finding.index}`" class="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">View highlighted range</a>
         </li>
       </ul>
       <p v-else class="mt-3 text-sm text-muted">No findings were reported for this revision.</p>
@@ -334,8 +313,7 @@ function formatValue(value: unknown): string {
       <p class="mt-2 text-sm leading-6 text-muted">The command and browser URL include this revision's content digest. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
         <code v-if="commandAvailable" class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
-        <p v-if="revoked" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Installation is disabled because this revision is revoked. Metadata and inspection remain available.</p>
-        <p v-else-if="!commandAvailable" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.</p>
+        <p v-if="installNotice" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">{{ installNotice }}</p>
         <div class="flex flex-wrap gap-2">
           <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" :disabled="!commandAvailable" @click="copy(command, 'command')">
             {{ copied === 'command' ? 'Copied command' : 'Copy pinned command' }}

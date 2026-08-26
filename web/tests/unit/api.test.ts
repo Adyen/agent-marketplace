@@ -224,3 +224,33 @@ describe('Marketplace API URL handling', () => {
     expect(() => normalizeSearchResult({ items: [], total: -1, offset: 0, limit: 10 })).toThrow(/bounded non-negative integer/)
   })
 })
+
+describe('search result availability', () => {
+  const digest = 'sha256:' + 'a'.repeat(64)
+  const search = (availability?: unknown) => normalizeSearchResult({
+    items: [{ source_id: 'source', kind: 'skill', name: 'review', revision: digest, content_digest: digest, ...(availability === undefined ? {} : { availability }) }],
+    total: 1,
+    offset: 0,
+    limit: 10,
+  })
+
+  it('keeps every availability value this client understands', () => {
+    for (const value of ['available', 'blocked', 'revoked']) {
+      expect(search(value).items[0]?.availability).toBe(value)
+    }
+  })
+
+  it('leaves availability absent when the server does not report it', () => {
+    expect(search().items[0]?.availability).toBeUndefined()
+  })
+
+  it('drops an availability value a newer server may add instead of failing the response', () => {
+    const result = search('quarantined')
+    expect(result.items[0]?.availability).toBeUndefined()
+    expect(result.items[0]?.name).toBe('review')
+  })
+
+  it('rejects a malformed non-string availability', () => {
+    expect(() => search(7)).toThrow(ApiValidationError)
+  })
+})

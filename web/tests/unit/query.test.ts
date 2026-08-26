@@ -19,7 +19,7 @@ describe('URL-backed search state', () => {
       kind: '',
       source: '',
       offset: 0,
-      limit: 12,
+      limit: 25,
     })
   })
 
@@ -38,6 +38,6 @@ describe('URL-backed search state', () => {
       offset: '12',
       limit: '24',
     })
-    expect(toLocationQuery({ q: '', kind: fromResourceKindFilter(ALL_RESOURCE_KINDS), source: '', offset: 0, limit: 12 })).toEqual({ limit: '12' })
+    expect(toLocationQuery({ q: '', kind: fromResourceKindFilter(ALL_RESOURCE_KINDS), source: '', offset: 0, limit: 25 })).toEqual({ limit: '25' })
   })
 })
