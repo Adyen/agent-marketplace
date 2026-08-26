@@ -4,7 +4,7 @@ import type {
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
-import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeWellKnown } from '~/lib/validation'
+import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeSourceSummaries, normalizeWellKnown } from '~/lib/validation'
 
 const API_VERSION_PATH = '/api/v1'
 const WELL_KNOWN_PATH = '/.well-known/agent-marketplace.json'
@@ -72,6 +72,7 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
   return {
     getWellKnown: () => fetcher<unknown>(wellKnownPath(apiBase)).then(normalizeWellKnown),
     getInstance: () => fetcher<unknown>(apiPath(apiBase, '/instance')).then(normalizeMarketplace),
+    listSources: () => fetcher<unknown>(apiPath(apiBase, '/sources')).then(normalizeSourceSummaries),
     getSource: (source: string) => fetcher<unknown>(sourcePath(apiBase, source)).then(normalizeSource),
     getSourceHistory: (source: string) => fetcher<unknown>(sourceHistoryPath(apiBase, source)).then(normalizeSourceHistory),
     search: (params: SearchParams) =>

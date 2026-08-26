@@ -1,8 +1,9 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, WellKnown } from '~/types/marketplace'
+import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, SourceSummary, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
+const MAX_SOURCE_SUMMARIES = 1_000
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
@@ -64,6 +65,16 @@ export function normalizeMarketplace(input: unknown): Marketplace {
     canonical_url: requiredString(object.canonical_url, 'canonical_url'),
     ...(object.instance_metadata === undefined ? {} : { instance_metadata: boundedUnknownRecord(object.instance_metadata, 'instance_metadata') }),
   }
+}
+
+export function normalizeSourceSummaries(input: unknown): SourceSummary[] {
+  return boundedArray(input, 'sources', MAX_SOURCE_SUMMARIES).map((item, index) => {
+    const object = asObject(item, `sources[${index}]`)
+    return {
+      id: requiredString(object.id, `sources[${index}].id`),
+      slug: requiredString(object.slug, `sources[${index}].slug`),
+    }
+  })
 }
 
 export function normalizeSource(input: unknown): Source {

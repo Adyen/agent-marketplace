@@ -242,6 +242,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List source identifiers for discovery filters */
+        get: operations["listSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sources/{source}": {
         parameters: {
             query?: never;
@@ -513,6 +530,10 @@ export interface components {
         SourceRoot: {
             path: string;
             source_harness?: string;
+        };
+        SourceSummary: {
+            id: string;
+            slug: string;
         };
         WellKnown: components["schemas"]["Capabilities"] & {
             api_base: string;
@@ -889,6 +910,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResult"];
+                };
+            };
+        };
+    };
+    listSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source identifiers sorted by slug */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceSummary"][];
                 };
             };
         };
