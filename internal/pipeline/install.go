@@ -56,9 +56,10 @@ type InstallOptions struct {
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
-	var syncOpts []silentSyncOpt
-	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		syncOpts = append(syncOpts, withMaterializeRoot(opts.LocalConfigDir), withLocalConfigDir(opts.LocalConfigDir))
+	syncOpts := silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
+	syncOpts = append(syncOpts, withCatalogMode(catalog.LoadModeCached), withMarketplaceMode(resolver.MarketplaceResolveModeRefresh))
+	if len(opts.CatalogOption) > 0 {
+		syncOpts = append(syncOpts, withCatalogOptions(opts.CatalogOption))
 	}
 	if opts.DependencyReconcile != nil {
 		syncOpts = append(syncOpts, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))

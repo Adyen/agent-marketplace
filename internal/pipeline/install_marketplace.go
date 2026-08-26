@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -289,7 +290,8 @@ func checkMarketplaceInstallCollision(ctx context.Context, opts InstallOptions, 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir})
+	marketplaceMode := resolver.MarketplaceResolveModeRefresh
+	resolved := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir, CatalogMode: catalog.LoadModeCached, CatalogOption: opts.CatalogOption, MarketplaceMode: &marketplaceMode})
 	if len(resolved.Errors) > 0 {
 		return errors.Join(resolved.Errors...)
 	}

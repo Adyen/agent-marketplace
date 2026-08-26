@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // silentSyncOptsForPaths carries the non-default roots used by monorepo
@@ -41,19 +42,6 @@ func silentSync(ctx context.Context, repoRoot string, opts ...silentSyncOpt) err
 	return err
 }
 
-// silentSyncOptsForPaths carries the non-default roots used by monorepo
-// commands into the shared sync path.
-func silentSyncOptsForPaths(repoRoot, materializeRoot, localConfigDir string) []silentSyncOpt {
-	var opts []silentSyncOpt
-	if materializeRoot != "" && materializeRoot != repoRoot {
-		opts = append(opts, withMaterializeRoot(materializeRoot))
-	}
-	if localConfigDir != "" && localConfigDir != repoRoot {
-		opts = append(opts, withLocalConfigDir(localConfigDir))
-	}
-	return opts
-}
-
 func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncOpt) ([]error, error) {
 	var o silentSyncOptions
 	for _, opt := range opts {
@@ -79,7 +67,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease}
+	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode}
 	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
 		resolveOpts.MaterializeRoot = o.MaterializeRoot
 	}
@@ -106,6 +94,7 @@ type silentSyncOptions struct {
 	StagedConfigEdits       []StagedConfigEdit
 	ConfigStaging           *configStagingManager
 	DependencyCommitted     bool
+	MarketplaceMode         *resolver.MarketplaceResolveMode
 }
 
 type silentSyncOpt func(*silentSyncOptions)
@@ -129,6 +118,18 @@ func withDependencyReconciler(reconciler DependencyReconciler) silentSyncOpt {
 
 func withConfigStaging(staging *configStagingManager) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.ConfigStaging = staging }
+}
+
+func withCatalogMode(mode catalog.LoadMode) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.CatalogMode = mode }
+}
+
+func withCatalogOptions(opts []catalog.LoadOption) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.CatalogOption = opts }
+}
+
+func withMarketplaceMode(mode resolver.MarketplaceResolveMode) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.MarketplaceMode = &mode }
 }
 
 // WithIgnoreBlockedRegistries causes the sync to treat registry-allowlist

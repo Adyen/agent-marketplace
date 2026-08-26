@@ -607,7 +607,9 @@ func marketplaceResolveMode(mode catalog.LoadMode, offline bool) resolver.Market
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	start := time.Now()
 	if !opts.Offline {
-		opts.CatalogMode = catalog.LoadModeRefresh
+		if opts.CatalogMode != catalog.LoadModeCached {
+			opts.CatalogMode = catalog.LoadModeRefresh
+		}
 		opts.Gitignore = true
 	}
 	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
