@@ -250,7 +250,7 @@ function formatValue(value: unknown): string {
         <img :src="selectedImageURL" alt="Contained resource preview" class="max-h-96 max-w-full object-contain" loading="lazy" referrerpolicy="no-referrer">
       </div>
       <div v-else-if="selectedContent !== undefined && selectedIsMarkdown" class="mt-4 rounded-xl border border-default bg-default p-5">
-        <div class="prose prose-sm max-w-none text-default" data-testid="safe-markdown" v-html="renderedContent" />
+        <div class="marketplace-markdown" data-testid="safe-markdown" v-html="renderedContent" />
       </div>
       <pre v-else-if="selectedContent !== undefined" data-testid="escaped-primary" aria-label="Escaped raw inspection text" class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-default bg-muted/30 p-5 font-mono text-xs text-highlighted" v-html="highlightedContent" />
       <p v-else-if="loadingDigest === selectedFile?.content_digest" class="mt-4 rounded-xl border border-default bg-muted/30 px-4 py-3 text-sm text-muted" role="status" aria-live="polite">Loading {{ selectedFile.path }}…</p>
