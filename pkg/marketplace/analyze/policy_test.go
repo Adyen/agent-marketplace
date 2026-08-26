@@ -5,13 +5,17 @@ import "testing"
 func TestPublicPolicyDefaults(t *testing.T) {
 	p := PublicPolicy()
 	cases := map[string]string{
-		FindingHTMLComment:           OutcomeReject,
-		FindingZeroWidth:             OutcomeReject,
 		FindingTerminalControl:       OutcomeReject,
-		FindingDangerousURL:          OutcomeReject,
+		FindingUnsafeBidi:            OutcomeReject,
+		FindingAssetPathEscape:       OutcomeReject,
 		FindingExecutableAsset:       OutcomeReject,
-		FindingSuspiciousPath:        OutcomeReject,
 		FindingObfuscatedInstruction: OutcomeReject,
+		FindingHTMLComment:           OutcomeWarn,
+		FindingZeroWidth:             OutcomeWarn,
+		FindingDangerousURL:          OutcomeWarn,
+		FindingExecutableScript:      OutcomeWarn,
+		FindingDynamicExecution:      OutcomeWarn,
+		FindingSuspiciousPath:        OutcomeWarn,
 		FindingToolGrant:             OutcomeWarn,
 		FindingHookCapability:        OutcomeWarn,
 		FindingMcpCapability:         OutcomeWarn,
@@ -21,19 +25,6 @@ func TestPublicPolicyDefaults(t *testing.T) {
 		if got := p.OutcomeFor(code); got != want {
 			t.Errorf("OutcomeFor(%q) = %q, want %q", code, got, want)
 		}
-	}
-}
-
-func TestPrivatePolicyDowngrades(t *testing.T) {
-	p := PrivatePolicy()
-	if got := p.OutcomeFor(FindingHTMLComment); got != OutcomeWarn {
-		t.Errorf("private HTML comment outcome = %q, want warn", got)
-	}
-	if got := p.OutcomeFor(FindingZeroWidth); got != OutcomeWarn {
-		t.Errorf("private zero-width outcome = %q, want warn", got)
-	}
-	if got := p.OutcomeFor(FindingDangerousURL); got != OutcomeReject {
-		t.Errorf("private dangerous URL outcome = %q, want reject", got)
 	}
 }
 

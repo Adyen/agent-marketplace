@@ -56,7 +56,7 @@ func TestBuildResourceArtifactRejects(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
 
-	s := ir.NewSkill("review", "Review", "<!-- hidden -->", nil, nil, ir.SourceRef{})
+	s := ir.NewSkill("review", "Review", "\u202Ehidden", nil, nil, ir.SourceRef{})
 
 	result, err := BuildResourceArtifact(ctx, s, nil, opts)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 		t.Fatalf("expected accepted skill, got rejected: %v", accepted.Findings)
 	}
 
-	rejectedSkill := ir.NewSkill("bad", "Bad", "<!-- hidden -->", nil, nil, ir.SourceRef{})
+	rejectedSkill := ir.NewSkill("bad", "Bad", "\u202Ehidden", nil, nil, ir.SourceRef{})
 	rejected, err := BuildResourceArtifact(ctx, rejectedSkill, nil, opts)
 	if err != nil {
 		t.Fatalf("BuildResourceArtifact rejected: %v", err)

@@ -19,7 +19,7 @@ refresh:
 # SQLite is single-process in this example; keep refresh concurrency low.
 refresh_concurrency: 1
 policy:
-  hidden_content: reject
+  hidden_content: warn
   license_allowlist:
     - MIT
     - Apache-2.0

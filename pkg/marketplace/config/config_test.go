@@ -50,7 +50,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.AcquisitionDefault != "mirror" {
 		t.Fatalf("acquisition_default default = %q", cfg.AcquisitionDefault)
 	}
-	if cfg.Policy.HiddenContent != "reject" {
+	if cfg.Policy.HiddenContent != "warn" {
 		t.Fatalf("hidden_content default = %q", cfg.Policy.HiddenContent)
 	}
 	if len(cfg.Policy.LicenseAllowlist) != 4 {
@@ -530,13 +530,13 @@ func validConfigYAML() string {
 }
 
 func minimalConfigYAML() string {
-	return configYAML(`  - id: src-test
+	return strings.Replace(configYAML(`  - id: src-test
     slug: example-source
     origin: https://github.com/example/resources.git
     ref: main
     roots:
       - path: .agents
-`)
+`), "  hidden_content: reject\n", "", 1)
 }
 
 func configYAML(sourcesBlock string) string {
