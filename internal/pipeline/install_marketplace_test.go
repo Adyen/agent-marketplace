@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -381,6 +384,82 @@ func TestMarketplacePinRollbackRefusesConcurrentConfigChange(t *testing.T) {
 	if string(got) != string(concurrent) {
 		t.Fatalf("concurrent writer bytes = %q, want %q", got, concurrent)
 	}
+}
+
+func TestMarketplaceInstallDoesNotRefreshWarmRegistries(t *testing.T) {
+	opts, ec, plan, fetches := marketplaceInstallWarmRegistryFixture(t, 0)
+	if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+		t.Fatal(err)
+	}
+	if got := fetches.Load(); got != 0 {
+		t.Fatalf("warm registry refreshes = %d, want 0", got)
+	}
+	result := Sync(context.Background(), ResolveOptions{RepoRoot: opts.RepoRoot, CatalogOption: opts.CatalogOption})
+	if err := errors.Join(result.Errors...); err != nil {
+		t.Fatal(err)
+	}
+	if got := fetches.Load(); got != 1 {
+		t.Fatalf("warm registry refreshes after explicit sync = %d, want 1", got)
+	}
+}
+
+func BenchmarkMarketplaceInstallWarmRegistries(b *testing.B) {
+	opts, ec, plan, fetches := marketplaceInstallWarmRegistryFixture(b, time.Millisecond)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := checkMarketplaceInstallCollision(context.Background(), opts, ec, plan); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := syncAfterInstall(context.Background(), opts.RepoRoot, nil, silentSyncOptsForInstall(opts)...); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(fetches.Load())/float64(b.N), "refreshes/op")
+}
+
+func marketplaceInstallWarmRegistryFixture(tb testing.TB, fetchDelay time.Duration) (InstallOptions, *config.EffectiveConfig, *marketplace.PreparedInstall, *atomic.Int32) {
+	tb.Helper()
+	home := tb.TempDir()
+	repo := tb.TempDir()
+	tb.Setenv("HOME", home)
+	config.SetTestOrganizationConfigPath(tb, filepath.Join(home, "missing-org.yaml"))
+	registryURL := "https://example.com/registry.git"
+	registryCache := cache.RegistryCachePath(registryURL, "main")
+	if err := os.MkdirAll(registryCache, 0o755); err != nil {
+		tb.Fatal(err)
+	}
+	configPath := config.ProjectConfigPath(repo)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		tb.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+registryURL+"\n    ref: main\n"), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	var fetches atomic.Int32
+	opts := InstallOptions{
+		RepoRoot: repo,
+		CatalogOption: []catalog.LoadOption{
+			catalog.WithCloneOrPull(func(url, _ string) (string, error) {
+				if url == registryURL {
+					fetches.Add(1)
+					time.Sleep(fetchDelay)
+				}
+				return registryCache, nil
+			}),
+			catalog.WithDiscoverFunc(func(string, string) (catalog.LoadedCatalog, error) { return catalog.LoadedCatalog{}, nil }),
+		},
+	}
+	cfg := &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}, Registries: []config.RegistryEntry{{URL: registryURL, Ref: "main"}}}
+	plan := &marketplace.PreparedInstall{
+		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
+		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review"},
+		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
+	}
+	return opts, &config.EffectiveConfig{Merged: cfg}, plan, &fetches
 }
 
 func testMarketplacePreparedInstall() *marketplace.PreparedInstall {
