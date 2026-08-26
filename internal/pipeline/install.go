@@ -37,6 +37,7 @@ type InstallOptions struct {
 	InstalledName string // --as for Marketplace installs
 	AcceptRisk    bool   // --accept-risk/--yes for Marketplace installs
 	Marketplace   string // --marketplace alias or endpoint selector
+	CatalogOption []catalog.LoadOption
 
 	// LocalConfigDir overrides the directory where the local config
 	// (config.local.yaml) is written. Set by the Install function when
@@ -53,7 +54,12 @@ type InstallOptions struct {
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
-	return silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
+	syncOpts := silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
+	syncOpts = append(syncOpts, withCatalogMode(catalog.LoadModeCached), withMarketplaceMode(resolver.MarketplaceResolveModeRefresh))
+	if len(opts.CatalogOption) > 0 {
+		syncOpts = append(syncOpts, withCatalogOptions(opts.CatalogOption))
+	}
+	return syncOpts
 }
 
 // InstallResult holds the outcome of an install operation.

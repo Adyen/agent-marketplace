@@ -3,6 +3,9 @@ package pipeline
 import (
 	"context"
 	"errors"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 func silentSync(ctx context.Context, repoRoot string, opts ...silentSyncOpt) error {
@@ -28,7 +31,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 	for _, opt := range opts {
 		opt(&o)
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries}
+	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, MarketplaceMode: o.MarketplaceMode}
 	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
 		resolveOpts.MaterializeRoot = o.MaterializeRoot
 	}
@@ -43,6 +46,9 @@ type silentSyncOptions struct {
 	MaterializeRoot         string
 	LocalConfigDir          string
 	IgnoreBlockedRegistries bool
+	CatalogMode             catalog.LoadMode
+	CatalogOption           []catalog.LoadOption
+	MarketplaceMode         *resolver.MarketplaceResolveMode
 }
 
 type silentSyncOpt func(*silentSyncOptions)
@@ -58,6 +64,18 @@ func withMaterializeRoot(dir string) silentSyncOpt {
 // in local-config-layer registry entries.
 func withLocalConfigDir(dir string) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.LocalConfigDir = dir }
+}
+
+func withCatalogMode(mode catalog.LoadMode) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.CatalogMode = mode }
+}
+
+func withCatalogOptions(opts []catalog.LoadOption) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.CatalogOption = opts }
+}
+
+func withMarketplaceMode(mode resolver.MarketplaceResolveMode) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.MarketplaceMode = &mode }
 }
 
 // WithIgnoreBlockedRegistries causes the sync to treat registry-allowlist
