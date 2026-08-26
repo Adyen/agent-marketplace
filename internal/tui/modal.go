@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -27,13 +28,16 @@ const (
 // toggleAction describes the direction of a toggle (add vs remove) for a
 // given (skill, scope) pair, derived from the row's current state.
 type toggleAction struct {
-	skillName    string
-	kind         ir.ResourceKind
-	scope        scope
-	enable       bool   // true = add to config; false = remove from config
-	registryURL  string // for project/global scopes: which registry entry to target
-	registryRef  string // ref of the source registry (for EnsureRegistryInConfig fallback)
-	registryPath string // path subdirectory of the source registry (for EnsureRegistryWithPathsInConfig fallback)
+	skillName               string
+	kind                    ir.ResourceKind
+	scope                   scope
+	enable                  bool   // true = add to config; false = remove from config
+	registryURL             string // for project/global scopes: which registry entry to target
+	registryRef             string // ref of the source registry (for EnsureRegistryInConfig fallback)
+	registryPath            string // path subdirectory of the source registry (for EnsureRegistryWithPathsInConfig fallback)
+	isMarketplace           bool
+	marketplaceSelection    marketplaceSelection
+	hasMarketplaceSelection bool
 }
 
 // scopedToggleAction returns the action (add or remove) for pressing the
@@ -43,14 +47,47 @@ type toggleAction struct {
 //   - scopeProject: enable when !EnabledProject, disable otherwise.
 //   - scopeLocal: enable when !EnabledLocal, disable otherwise.
 //   - scopeLocalExclude: add exclude when !ExcludedLocally, remove otherwise.
+func marketplaceSourceForScope(s scope) config.Source {
+	switch s {
+	case scopeGlobal:
+		return config.UserPersonal
+	case scopeProject:
+		return config.RepoCommitted
+	case scopeLocal:
+		return config.RepoPersonal
+	default:
+		return config.SourceUnset
+	}
+}
+
+func marketplaceSelectionForToggle(r row, s scope) (marketplaceSelection, bool) {
+	if selection, ok := r.MarketplaceSelections[marketplaceSourceForScope(s)]; ok {
+		return selection, true
+	}
+	if selection, ok := r.MarketplaceSelections[r.Artifact.Source]; ok && (selection.Pin.Direct || len(selection.Pin.SelectedBy.List()) == 0) {
+		return selection, true
+	}
+	for _, source := range []config.Source{config.RepoPersonal, config.RepoCommitted, config.UserPersonal, config.Organization} {
+		selection, ok := r.MarketplaceSelections[source]
+		if ok && (selection.Pin.Direct || len(selection.Pin.SelectedBy.List()) == 0) {
+			return selection, true
+		}
+	}
+	return marketplaceSelection{}, false
+}
+
 func scopedToggleAction(r row, s scope) toggleAction {
 	act := toggleAction{
-		skillName:    r.Artifact.Name,
-		kind:         r.Artifact.Kind,
-		scope:        s,
-		registryURL:  r.RegistryURL,
-		registryRef:  r.RegistryRef,
-		registryPath: r.RegistryPath,
+		skillName:     r.Artifact.Name,
+		kind:          r.Artifact.Kind,
+		scope:         s,
+		registryURL:   r.RegistryURL,
+		registryRef:   r.RegistryRef,
+		registryPath:  r.RegistryPath,
+		isMarketplace: r.Artifact.IsMarketplace,
+	}
+	if act.isMarketplace {
+		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
 	}
 	switch s {
 	case scopeGlobal:
@@ -83,8 +120,53 @@ func (a toggleAction) disablesResource() bool {
 // list, which the resolver actually processes. Writing to the top-level
 // skills list would have no effect when the entry has its own skills list
 // (specific wins over default in attribute inheritance).
+func marketplaceToggleConfigPath(repoRoot string, s scope) (string, error) {
+	switch s {
+	case scopeGlobal:
+		return config.GlobalConfigPath()
+	case scopeProject:
+		return config.ProjectConfigPath(repoRoot), nil
+	case scopeLocal:
+		return config.LocalConfigPath(repoRoot), nil
+	default:
+		return "", fmt.Errorf("unsupported Marketplace toggle scope")
+	}
+}
+
+func runMarketplaceScopedToggle(repoRoot string, act toggleAction) error {
+	if !act.hasMarketplaceSelection {
+		return fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
+	}
+	configPath, err := marketplaceToggleConfigPath(repoRoot, act.scope)
+	if err != nil {
+		return err
+	}
+	selection := act.marketplaceSelection
+	if act.enable {
+		pin := selection.Pin
+		pin.Direct = true
+		pin.SelectedBy = ""
+		_, _, err = config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Entry.Alias, []config.MarketplaceResourcePin{pin})
+		return err
+	}
+	if !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
+		return fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
+	}
+	_, _, err = config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, selection.Entry.URL, selection.Entry.InstanceID, selection.Pin)
+	return err
+}
+
 func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 	return func() tea.Msg {
+		if act.isMarketplace {
+			err := runMarketplaceScopedToggle(repoRoot, act)
+			if err != nil {
+				slog.Error("TUI Marketplace toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
+			} else {
+				slog.Info("TUI Marketplace toggle completed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable)
+			}
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
+		}
 		var err error
 		switch act.scope {
 		case scopeGlobal:
@@ -366,8 +448,12 @@ func renderToggleModal(m Model) string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		if a.key == "[e]" && r.Artifact.Source.IsMachineScope() {
-			b.WriteString("  " + disabledKeyStyle.Render(a.key) + "  " + disabledLabelStyle.Render(a.label+" (use [g] to toggle at user level)"))
+		if a.key == "[e]" && (r.Artifact.Source.IsMachineScope() || r.Artifact.IsMarketplace) {
+			hint := " (use [g] to toggle at user level)"
+			if r.Artifact.IsMarketplace {
+				hint = " (use installation scopes)"
+			}
+			b.WriteString("  " + disabledKeyStyle.Render(a.key) + "  " + disabledLabelStyle.Render(a.label+hint))
 			continue
 		}
 		b.WriteString("  " + keyStyle.Render(a.key) + "  " + a.label)
@@ -455,12 +541,31 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
+		act := scopedToggleAction(m.modalSkill, scopeGlobal)
+		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
+		cmd := runScopedToggle(m.repoRoot, act)
+		if act.enable && !act.isMarketplace && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+			m.pendingExcludeAction = &act
+		}
+		return m, cmd
 	case key.Matches(msg, m.keys.ToggleProject):
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
+		act := scopedToggleAction(m.modalSkill, scopeProject)
+		m.pane = paneList
+		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
+		cmd := runScopedToggle(m.repoRoot, act)
+		if act.enable && !act.isMarketplace && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+			m.pendingExcludeAction = &act
+		}
+		return m, cmd
 	case key.Matches(msg, m.keys.ToggleLocal):
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):
+		if m.modalSkill.Artifact.IsMarketplace {
+			return m, func() tea.Msg {
+				return toastMsg{text: "Marketplace items must be toggled by installation scope", duration: 2 * time.Second}
+			}
+		}
 		if m.modalSkill.Artifact.Source.IsMachineScope() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Cannot exclude org/user skill at local level — use [g] instead", duration: 2 * time.Second}
