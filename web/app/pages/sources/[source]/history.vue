@@ -45,6 +45,7 @@ useHead(() => ({
         <NuxtLink :to="overviewPath" class="truncate text-sm text-muted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Source</NuxtLink>
         <span class="text-muted" aria-hidden="true">/</span>
         <span class="truncate text-sm text-muted">History</span>
+        <GitHubLink class="ml-auto" />
       </div>
     </header>
 

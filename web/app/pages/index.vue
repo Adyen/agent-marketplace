@@ -129,10 +129,13 @@ useHead({
         <NuxtLink to="/" class="flex items-baseline gap-2 rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
           <span class="font-mono text-sm font-medium tracking-tight text-highlighted">agent-marketplace</span>
         </NuxtLink>
-        <div class="flex items-baseline gap-3 font-mono text-xs text-muted">
-          <span v-if="metadata?.instance_id">{{ metadata.instance_id }}</span>
-          <span aria-hidden="true">·</span>
-          <span>read-only</span>
+        <div class="flex items-center gap-3">
+          <GitHubLink />
+          <div class="flex items-baseline gap-3 font-mono text-xs text-muted">
+            <span v-if="metadata?.instance_id">{{ metadata.instance_id }}</span>
+            <span aria-hidden="true">·</span>
+            <span>read-only</span>
+          </div>
         </div>
       </div>
     </header>
