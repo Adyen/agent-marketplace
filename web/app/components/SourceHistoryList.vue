@@ -7,8 +7,8 @@ defineProps<{
 </script>
 
 <template>
-  <div v-if="occurrences.length" class="relative" aria-label="Source occurrence timeline">
-    <ol class="space-y-4">
+  <div v-if="occurrences.length" class="relative">
+    <ol aria-label="Source occurrence timeline" class="space-y-4">
       <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative rounded-2xl border border-default bg-default p-5 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>

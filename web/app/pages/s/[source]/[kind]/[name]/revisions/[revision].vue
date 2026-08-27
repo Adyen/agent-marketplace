@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
-import { revisionAsyncDataKey, routeParam } from '~/lib/routes'
+import { resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, revisionAsyncDataKey, routeParam } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 import type { InspectionFile } from '~/types/marketplace'
 
@@ -27,14 +27,13 @@ const { data: revisions, error: revisionsError } = await useAsyncData(
   `${revisionAsyncDataKey(source, kind, name, revision)}:history`,
   () => api.listResourceRevisions(source, kind, name),
 )
-const inspectionKey = `${revisionAsyncDataKey(source, kind, name, revision)}:inspection`
 const { data: inspection } = await useAsyncData(
-  inspectionKey,
+  resourceInspectionAsyncDataKey(source, kind, name, revision),
   () => api.getResourceInspection(source, kind, name, revision),
   { immediate: true },
 )
 const { data: primaryContent } = await useAsyncData<string | undefined>(
-  `${inspectionKey}:content`,
+  resourceInspectionContentAsyncDataKey(source, kind, name, revision),
   () => {
     const primary = inspection.value?.files.find(file => file.path === inspection.value?.primary_path)
     if (!primary || primary.inspection_class === 'image' || primary.inspection_class === 'metadata') return Promise.resolve(undefined)
@@ -60,15 +59,8 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <a href="#resource-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
-    <header class="border-b border-default bg-default/90">
-      <div class="mx-auto flex max-w-5xl items-center px-4 py-4 sm:px-6 lg:px-8">
-        <NuxtLink to="/" class="rounded-lg text-sm font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Agent Marketplace</NuxtLink>
-        <span class="mx-3 text-muted" aria-hidden="true">/</span>
-        <span class="truncate text-sm text-muted">Resource revision</span>
-        <GitHubLink class="ml-auto" />
-      </div>
-    </header>
+    <MarketplaceSkipLink target="resource-content" />
+    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource revision' }]" />
 
     <main id="resource-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">

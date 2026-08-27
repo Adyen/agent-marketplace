@@ -53,6 +53,7 @@ describe('source discovery surfaces', () => {
 
   it('renders exact history fields as text without interpreting hostile values', () => {
     const wrapper = mount(SourceHistoryList, { props: { occurrences: [occurrence] }, global: { stubs } })
+    expect(wrapper.get('ol[aria-label="Source occurrence timeline"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Commit')
     expect(wrapper.text()).toContain('Ref')
     expect(wrapper.text()).toContain('Source revision manifest digest')

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, isRasterMediaType, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, createMarketplaceApi, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, sourceHistoryPath, sourcePath, wellKnownPath } from '../../app/lib/api'
+import { RESOURCE_KINDS } from '../../app/types/marketplace'
 import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeSourceSummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
@@ -12,6 +13,12 @@ const params: SearchParams = {
 }
 
 describe('Marketplace API URL handling', () => {
+  it('validates the canonical resource kinds', () => {
+    for (const kind of RESOURCE_KINDS) expect(isResourceKind(kind)).toBe(true)
+    expect(isResourceKind('mcp')).toBe(false)
+    expect(isResourceKind('rule')).toBe(false)
+  })
+
   it.each([
     ['/', ''],
     ['/api/v1', '/api/v1'],
