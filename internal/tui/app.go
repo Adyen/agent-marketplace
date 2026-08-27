@@ -58,6 +58,9 @@ func NewModel(repoRoot, homeDir string) Model {
 		m.initModal = initModal
 		m.pane = paneInitModal
 	}
+	// Bubble Tea schedules the initial snapshot through Init. Reserve its
+	// generation here so the resulting command and this model share identity.
+	m.beginRequest(requestSnapshot)
 	return m
 }
 
@@ -127,7 +130,7 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -166,6 +169,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case snapshotLoadedMsg:
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
+			return m, nil
+		}
 		m.loading = false
 		if msg.pendingMigration.hasConfigs() {
 			m.errs = msg.errs
@@ -173,16 +179,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
 		if msg.mergedCfg == nil && len(msg.errs) > 0 {
 			m.errs = append(m.errs, msg.errs...)
 			m.warnings = msg.warnings
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
+		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
 		m.errs = msg.errs
@@ -193,22 +198,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.globalHarnesses = msg.globalHarnesses
 		m.projectHarnesses = msg.projectHarnesses
 		m.recomputeView()
+		m.restoreSelectionAfterRebuild(selection)
 		if msg.refreshAfterLoad {
 			m.refreshing = true
-			m.nextRefreshToken++
-			m.refreshToken = m.nextRefreshToken
-			return m, tea.Batch(refreshSnapshot(m.ctx, m.repoRoot, m.homeDir, m.refreshToken), m.spinner.Tick)
+			generation := m.beginRequest(requestSnapshot)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 		}
 		m.refreshing = false
-		m.refreshToken = 0
 		return m, nil
 
 	case refreshLoadedMsg:
-		if msg.refreshToken != m.refreshToken {
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
 		if msg.pendingMigration.hasConfigs() {
 			m.errs = msg.errs
 			m.migrationPrompt = msg.pendingMigration
@@ -219,6 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errs = append(m.errs, msg.errs...)
 			return m, nil
 		}
+		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
 		m.errs = msg.errs
@@ -228,23 +232,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.globalHarnesses = msg.globalHarnesses
 		m.projectHarnesses = msg.projectHarnesses
 		m.recomputeView()
+		m.restoreSelectionAfterRebuild(selection)
 		return m, nil
 
 	case reloadMsg:
+		snapshot := snapshotLoadedMsg(msg)
+		if !m.acceptsRequest(requestSnapshot, snapshot.generation) {
+			// Update may have changed disk after a newer snapshot started. Its
+			// stale delivery cannot be applied, so schedule a current snapshot
+			// rather than leaving either result as authoritative.
+			m.syncing = false
+			generation := m.beginRequest(requestSnapshot)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		}
 		m.loading = false
 		m.syncing = false
 		m.refreshing = false
-		m.refreshToken = 0
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
+		selection := m.selectionKeyForRebuild()
+		m.rows = snapshot.rows
+		m.driftReport = snapshot.driftReport
+		m.errs = snapshot.errs
+		m.warnings = snapshot.warnings
+		m.mergedCfg = snapshot.mergedCfg
+		m.resolved = snapshot.resolved
+		m.localExcludes = snapshot.localExcludes
+		m.globalHarnesses = snapshot.globalHarnesses
+		m.projectHarnesses = snapshot.projectHarnesses
 		m.recomputeView()
+		m.restoreSelectionAfterRebuild(selection)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
 		return m, toastExpiryCmd(2 * time.Second)
@@ -284,7 +299,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
 		if msg.enabled && m.pendingExcludeAction != nil {
@@ -293,11 +307,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			exclCmd := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act)
 			// Re-load snapshot to reflect the config change, then
 			// the exclude cmd runs concurrently.
-			return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), exclCmd, toastExpiryCmd(2*time.Second))
+			generation := m.beginRequest(requestSnapshot)
+			return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), exclCmd, toastExpiryCmd(2*time.Second))
 		}
 		m.pendingExcludeAction = nil
-		// Re-load snapshot to reflect the config change
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		// Re-load snapshot to reflect the config change.
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
 		if msg.err != nil {
@@ -311,13 +327,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
 		m.syncing = false
 		m.refreshing = false
-		m.refreshToken = 0
 		if msg.err != nil {
 			m.errs = append(m.errs, msg.err)
 			m.toast = fmt.Sprintf("sync error: %v", msg.err)
@@ -337,10 +352,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
 		}
-		// Re-load to pick up on-disk changes
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(5*time.Second))
+		// Re-load to pick up on-disk changes.
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(5*time.Second))
 
 	case updateDoneMsg:
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
+			// A failed update can still leave partial on-disk effects. Re-read
+			// them under a new generation without applying this stale outcome.
+			m.syncing = false
+			generation := m.beginRequest(requestSnapshot)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		}
 		m.syncing = false
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.
@@ -370,7 +393,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
 		if msg.err != nil {
@@ -382,14 +406,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, toastExpiryCmd(5 * time.Second)
 		}
 		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case detailContentMsg:
-		// The background glamour render completed; fill the viewport.
-		if m.pane == paneDetail {
-			m.detailViewport.SetContent(msg.content)
-			m.detailViewport.GotoTop()
+		if m.pane != paneDetail {
+			m.cancelRequest(requestDetail)
+			m.acceptsRequest(requestDetail, msg.generation)
+			return m, nil
 		}
+		if !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
+		}
+		m.detailViewport.SetContent(msg.content)
+		m.detailViewport.GotoTop()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -561,9 +591,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if r, ok := m.selectedRow(); ok {
+			generation := m.beginRequest(requestDetail)
 			m.enterDetailPane()
 			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			return m, loadDetailContent(r)
+			return m, loadDetailContent(r, generation)
 		}
 		return m, nil
 
@@ -586,8 +617,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Reload):
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case key.Matches(msg, m.keys.Tab1):
 		m.switchTab(tabScope)
@@ -620,8 +651,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		m.refreshing = false
-		m.refreshToken = 0
 		// Space on a section header: toggle fold.
 		if _, ok := m.selectedSectionPath(); ok {
 			m.toggleFoldAtCursor()
@@ -658,7 +687,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		// Sync does not allocate a snapshot generation until syncDoneMsg
+		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
@@ -668,10 +698,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		generation := m.beginRequest(requestSnapshot)
 		m.syncing = true
 		recordActionSpan(m.ctx, "update", nil)
-		return m, tea.Batch(runUpdateCmd(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+		return m, tea.Batch(runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -709,6 +739,8 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
+		m.detailKey = ""
+		m.cancelRequest(requestDetail)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
@@ -732,6 +764,11 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // block on file I/O or markdown rendering.
 func (m *Model) enterDetailPane() {
 	m.pane = paneDetail
+	if r, ok := m.selectedRow(); ok {
+		m.detailKey = rowKey(r)
+	} else {
+		m.detailKey = ""
+	}
 
 	// Compute full-screen viewport dimensions (no header/footer in detail
 	// overlay — the viewport fills the terminal).

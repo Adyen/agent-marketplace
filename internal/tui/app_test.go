@@ -112,7 +112,7 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		rows:         []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		refreshing:   true,
-		refreshToken: 1,
+		requests:     requestState{next: 1, snapshot: 1},
 		keys:         defaultKeyMap,
 		help:         newHelpModel(),
 	}
@@ -123,16 +123,14 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 	}
 
 	gotModel := updatedModel.(Model)
-	if gotModel.refreshToken != 0 {
-		t.Fatalf("expected reload to invalidate pending refresh token, got %d", gotModel.refreshToken)
+	if got := gotModel.requests.active(requestSnapshot); got != 2 {
+		t.Fatalf("active snapshot generation = %d, want 2", got)
 	}
 
-	stale := refreshLoadedMsg{
-		snapshotLoadedMsg: snapshotLoadedMsg{
-			rows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
-		},
-		refreshToken: 1,
-	}
+	stale := refreshLoadedMsg{snapshotLoadedMsg: snapshotLoadedMsg{
+		generation: 1,
+		rows:       []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
+	}}
 
 	nextModel, _ := gotModel.Update(stale)
 	finalModel := nextModel.(Model)
@@ -196,7 +194,7 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 	}
 	m := NewModel(t.TempDir(), t.TempDir())
 	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 9})
-	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{rows: rows})
+	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{generation: 1, rows: rows})
 	m = loaded.(Model)
 	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
 		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View()))
