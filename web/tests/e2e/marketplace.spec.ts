@@ -26,6 +26,21 @@ function searchResult() {
 }
 
 test.describe('Marketplace browser discovery', () => {
+  test('uses the same brand font treatment on homepage and detail pages', async ({ page }) => {
+    const getBrandStyle = (selector: string) => page.locator(selector).first().evaluate(element => {
+      const style = getComputedStyle(element)
+      return { fontFamily: style.fontFamily, fontWeight: style.fontWeight, letterSpacing: style.letterSpacing }
+    })
+
+    await page.goto('/')
+    const homepageStyle = await getBrandStyle('header a[href="/"] span')
+
+    await page.goto('/s/team-tools/skill/secure-review')
+    const detailStyle = await getBrandStyle('header a[href="/"]')
+
+    expect(detailStyle).toEqual(homepageStyle)
+  })
+
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()
