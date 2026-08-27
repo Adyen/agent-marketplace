@@ -63,6 +63,7 @@ useHead(() => ({
         <NuxtLink to="/" class="rounded-lg text-sm font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Agent Marketplace</NuxtLink>
         <span class="mx-3 text-muted" aria-hidden="true">/</span>
         <span class="truncate text-sm text-muted">Resource detail</span>
+        <GitHubLink class="ml-auto" />
       </div>
     </header>
 
