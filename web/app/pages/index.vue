@@ -64,7 +64,6 @@ const withheldOnPage = computed(() =>
   (results.value?.items ?? []).filter(item => listAvailabilityCopy(item)?.installable === false).length,
 )
 
-const mainContent = ref<HTMLElement | null>(null)
 const resultStatus = computed(() => {
   if (pending.value) return 'Loading Marketplace resources.'
   if (searchError.value) return 'Search failed. Review the error message and try again.'
@@ -74,10 +73,6 @@ const resultStatus = computed(() => {
 watch(() => [draft.q, draft.source], scheduleSearch)
 watch(() => [draft.kind, draft.limit], applyDraft)
 onBeforeUnmount(() => clearTimeout(searchTimer))
-
-function focusMainContent() {
-  mainContent.value?.focus()
-}
 
 function applyDraft() {
   if (syncingDraft) return
@@ -122,7 +117,7 @@ useHead({
 
 <template>
   <div class="min-h-screen bg-default text-default">
-    <a href="#main-content" class="sr-only z-50 rounded bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4" @click.prevent="focusMainContent">Skip to content</a>
+    <MarketplaceSkipLink target="main-content" />
 
     <header class="border-b border-default">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">

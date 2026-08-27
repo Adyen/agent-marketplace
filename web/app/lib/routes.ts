@@ -34,6 +34,14 @@ export function revisionAsyncDataKey(source: string, kind: ResourceKind, name: s
   return JSON.stringify(['marketplace-resource-revision', source, kind, name, revision])
 }
 
+export function resourceInspectionAsyncDataKey(source: string, kind: ResourceKind, name: string, revision: string): string {
+  return JSON.stringify(['marketplace-resource-inspection', source, kind, name, revision])
+}
+
+export function resourceInspectionContentAsyncDataKey(source: string, kind: ResourceKind, name: string, revision: string): string {
+  return JSON.stringify(['marketplace-resource-inspection-content', source, kind, name, revision])
+}
+
 export function isSafeResourceRoute(source: string, kind: string, name: string, revision?: string): boolean {
   return isSafeRouteToken(source) && isResourceKind(kind) && isSafeRouteToken(name) && (revision === undefined || isSafeRouteToken(revision))
 }

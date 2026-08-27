@@ -178,7 +178,7 @@ export function mergeFindings(...groups: Array<readonly unknown[] | undefined>):
 export type ResourceAvailability = 'available' | 'revoked' | 'policy-blocked' | 'no-artifact'
 
 export type ResourceAvailabilityCopy = {
-  /** Badge text. A label labels: it states the revision's install status. */
+  /** Text that states the revision's install status. */
   label: string
   color: 'success' | 'error' | 'warning'
   /** True only when the pinned install command may be offered as usable. */
