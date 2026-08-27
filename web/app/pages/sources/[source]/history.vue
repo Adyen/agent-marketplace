@@ -37,17 +37,8 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <a href="#source-history-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
-    <header class="border-b border-default bg-default/90 backdrop-blur">
-      <div class="mx-auto flex max-w-5xl items-center gap-3 px-4 py-4 sm:px-6 lg:px-8">
-        <NuxtLink to="/" class="rounded-lg text-sm font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Agent Marketplace</NuxtLink>
-        <span class="text-muted" aria-hidden="true">/</span>
-        <NuxtLink :to="overviewPath" class="truncate text-sm text-muted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Source</NuxtLink>
-        <span class="text-muted" aria-hidden="true">/</span>
-        <span class="truncate text-sm text-muted">History</span>
-        <GitHubLink class="ml-auto" />
-      </div>
-    </header>
+    <MarketplaceSkipLink target="source-history-content" />
+    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Source', to: overviewPath }, { label: 'History' }]" />
 
     <main id="source-history-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
@@ -56,7 +47,7 @@ useHead(() => ({
       </div>
       <section v-else-if="error" role="alert" class="rounded-2xl border border-error/30 bg-default p-8">
         <h1 ref="heading" tabindex="-1" class="text-2xl font-semibold text-error focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Source history unavailable</h1>
-        <p class="mt-3 text-sm leading-6 text-muted">This source history could not be loaded. The Marketplace may be unavailable, the source may no longer be listed, or the response may have exceeded the client safety limit of {{ MAX_SOURCE_HISTORY_ENTRIES }} occurrences. Invalid or oversized responses are not rendered.</p>
+        <p class="mt-3 text-sm leading-6 text-muted">The Marketplace could not load this history. The source may be unavailable, or the response may exceed the safety limit of {{ MAX_SOURCE_HISTORY_ENTRIES }} occurrences. Invalid and oversized responses are not rendered.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
       <template v-else>
@@ -67,8 +58,8 @@ useHead(() => ({
             <p class="mt-2 text-sm leading-6 text-muted">Each occurrence records the exact source revision observed by this Marketplace.</p>
           </div>
           <nav aria-label="Source history actions" class="flex flex-wrap gap-2">
-            <NuxtLink :to="overviewPath" class="inline-flex items-center rounded-lg border border-default bg-default px-3 py-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary hover:bg-muted motion-reduce:transition-none">Source overview</NuxtLink>
-            <NuxtLink :to="{ path: '/', query: { source } }" class="inline-flex items-center rounded-lg border border-default bg-default px-3 py-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary hover:bg-muted motion-reduce:transition-none">Search this source</NuxtLink>
+            <UButton :to="overviewPath" color="neutral" variant="outline" size="sm">Source overview</UButton>
+            <UButton :to="{ path: '/', query: { source } }" color="neutral" variant="outline" size="sm">Search this source</UButton>
           </nav>
         </div>
         <UAlert v-if="sourceError" color="warning" variant="subtle" icon="i-lucide-info" title="Source metadata is unavailable" description="History is shown from the source history endpoint, but overview metadata could not be loaded." class="mb-6" />

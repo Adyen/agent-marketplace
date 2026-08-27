@@ -68,7 +68,7 @@ const commandLabel = computed(() => {
       </div>
 
       <p v-if="item.description" class="mt-0.5 line-clamp-2 max-w-3xl text-sm leading-snug text-toned">{{ item.description }}</p>
-      <p v-else class="mt-0.5 text-sm italic leading-snug text-dimmed">This resource kind carries no description.</p>
+      <p v-else class="mt-0.5 text-sm italic leading-snug text-dimmed">No description provided.</p>
 
       <div class="mt-1 flex flex-wrap items-center gap-x-3">
         <span class="font-mono text-xs text-muted" :title="item.content_digest">{{ shortDigest(item.content_digest) }}</span>

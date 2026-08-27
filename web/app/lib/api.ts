@@ -1,3 +1,4 @@
+import { RESOURCE_KINDS } from '~/types/marketplace'
 import type {
   ApiFetcher,
   InspectionFile,
@@ -99,7 +100,7 @@ export function isRasterMediaType(value: string | undefined): boolean {
 }
 
 export function isResourceKind(value: string): value is ResourceKind {
-  return ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'].includes(value)
+  return RESOURCE_KINDS.includes(value as ResourceKind)
 }
 
 export function sourcePath(apiBase: string | undefined, source: string): string {

@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
-import { resourceAsyncDataKey, routeParam } from '~/lib/routes'
+import { resourceAsyncDataKey, resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, routeParam } from '~/lib/routes'
+import { isSha256Digest } from '~/lib/validation'
 import type { InspectionFile } from '~/types/marketplace'
 
 const route = useRoute()
@@ -24,20 +25,28 @@ const { data: revisions, error: revisionsError } = await useAsyncData(
   `${resourceAsyncDataKey(source, kind, name)}:revisions`,
   () => api.listResourceRevisions(source, kind, name),
 )
-const revision = computed(() => resource.value?.content_digest ?? '')
+const revision = computed(() => {
+  const digest = resource.value?.content_digest ?? ''
+  return isSha256Digest(digest) ? digest : ''
+})
+const inspectionKey = computed(() => resourceInspectionAsyncDataKey(source, kind, name, revision.value || 'pending'))
+const inspectionEnabled = computed(() => Boolean(revision.value))
 const { data: inspection } = await useAsyncData(
-  `marketplace-inspection:${source}:${kind}:${name}:${revision.value}`,
+  inspectionKey,
   () => api.getResourceInspection(source, kind, name, revision.value),
-  { immediate: Boolean(revision.value) },
+  { immediate: true, enabled: inspectionEnabled },
 )
+const inspectionReady = computed(() => Boolean(revision.value && inspection.value?.revision_digest === revision.value))
+const primaryContentKey = computed(() => resourceInspectionContentAsyncDataKey(source, kind, name, revision.value || 'pending'))
 const { data: primaryContent } = await useAsyncData<string | undefined>(
-  `marketplace-inspection-content:${source}:${kind}:${name}:${revision.value}`,
+  primaryContentKey,
   () => {
+    if (!inspectionReady.value) return Promise.resolve(undefined)
     const primary = inspection.value?.files.find(file => file.path === inspection.value?.primary_path)
     if (!primary || primary.inspection_class === 'image' || primary.inspection_class === 'metadata') return Promise.resolve(undefined)
     return api.getResourceInspectionContent(source, kind, name, revision.value, primary.media_type) as Promise<string>
   },
-  { immediate: Boolean(revision.value) },
+  { immediate: true, enabled: inspectionReady, watch: [inspection] },
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
@@ -57,15 +66,8 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <a href="#resource-content" class="sr-only z-50 rounded-lg bg-primary px-4 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
-    <header class="border-b border-default bg-default/90">
-      <div class="mx-auto flex max-w-5xl items-center px-4 py-4 sm:px-6 lg:px-8">
-        <NuxtLink to="/" class="rounded-lg text-sm font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Agent Marketplace</NuxtLink>
-        <span class="mx-3 text-muted" aria-hidden="true">/</span>
-        <span class="truncate text-sm text-muted">Resource detail</span>
-        <GitHubLink class="ml-auto" />
-      </div>
-    </header>
+    <MarketplaceSkipLink target="resource-content" />
+    <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource detail' }]" />
 
     <main id="resource-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">

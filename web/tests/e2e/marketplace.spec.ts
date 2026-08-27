@@ -63,7 +63,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(card.getByText(hostileDescription, { exact: true })).toBeVisible()
     await expect(card.locator('script')).toHaveCount(0)
     await expect(card.locator('[onerror]')).toHaveCount(0)
-    await expect(card.getByRole('link', { name: 'secure-review', exact: true })).toHaveAttribute('href', /\/s\/team-tools\/skill\/secure-review$/)
+    await expect(card.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveAttribute('href', /\/s\/team-tools\/skill\/secure-review$/)
   })
 
   test('keeps browser routes Nuxt-owned while the API remains API-only', async ({ page, request }) => {
@@ -81,17 +81,18 @@ test.describe('Marketplace browser discovery', () => {
 
   test('follows a latest resource link and exposes an exact install pin', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('link', { name: 'secure-review', exact: true }).click()
+    await page.getByRole('link', { name: 'team-tools/secure-review', exact: true }).click()
 
     await expect(page).toHaveURL(/\/s\/team-tools\/skill\/secure-review$/)
-    await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toBeVisible()
     await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
     await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
-    await expect(page.getByText('No findings were reported for this revision.', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
+    await expect(page.getByText('remote-reference', { exact: true })).toBeVisible()
   })
 
   test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
@@ -150,7 +151,7 @@ test.describe('Marketplace browser discovery', () => {
     const revokedDigest = `sha256:${'b'.repeat(64)}`
     await page.goto(`/s/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
 
-    await expect(page.getByRole('heading', { name: 'deploy-preview', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toContainText('This revision is revoked')
     await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
@@ -197,8 +198,8 @@ test.describe('Marketplace browser discovery', () => {
     const response = await page.goto('/')
     const csp = response?.headers()['content-security-policy'] ?? ''
     expect(csp).toContain(`img-src 'self' data: ${mockURL}`)
-    await expect(page.getByText(`${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
-    await page.getByLabel('Search resources').fill('secure')
+    await expect(page.getByText(`searches ${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
+    await page.getByLabel('Search', { exact: true }).fill('secure')
     await page.getByRole('button', { name: 'Search' }).click()
     await expect(page).toHaveURL(/q=secure/)
     expect(absoluteRequests.some(url => url.startsWith(`${mockURL}/api/v1/`))).toBe(true)
@@ -214,10 +215,10 @@ test.describe('Marketplace browser discovery', () => {
       body: JSON.stringify(searchResult()),
     }))
     await relativePage.goto(relativeAppURL)
-    await expect(relativePage.getByRole('heading', { name: '2 resources' })).toBeVisible()
-    await relativePage.getByLabel('Search resources').fill('secure')
+    await expect(relativePage.getByRole('heading', { name: '2', exact: true })).toBeVisible()
+    await relativePage.getByLabel('Search', { exact: true }).fill('secure')
     await relativePage.getByRole('button', { name: 'Search' }).click()
-    await expect(relativePage.getByRole('heading', { name: '1 resources' })).toBeVisible()
+    await expect(relativePage.getByRole('heading', { name: '1', exact: true })).toBeVisible()
     expect(sameOriginRequests.some(url => {
       const requestURL = new URL(url)
       return requestURL.origin === relativeAppURL && requestURL.pathname === '/api/v1/search'
