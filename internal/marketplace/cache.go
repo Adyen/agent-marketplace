@@ -496,7 +496,7 @@ func (c *Cache) IndexOnlyMetadataPath(identity IndexOnlyIdentity, sourceID, kind
 	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "metadata", safePathSegment(sourceID), safePathSegment(kind), safePathSegment(name), safeDigest(revision)+".json")
 }
 
-func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string, rev store.ResourceRevision) (string, error) {
+func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
 		p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
 		raw, err := json.Marshal(rev)
@@ -513,8 +513,8 @@ func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourc
 	})
 }
 
-func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string) (store.ResourceRevision, bool, error) {
-	var rev store.ResourceRevision
+func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
+	var rev store.AssessedResourceRevision
 	p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
 	exists, err := validateCacheRegularFile(c.root, p)
 	if err != nil {
@@ -534,13 +534,13 @@ func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, source
 }
 
 // WriteResourceRevision caches a resource revision JSON document.
-func (c *Cache) WriteResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.ResourceRevision) (string, error) {
+func (c *Cache) WriteResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
 		return c.writeResourceRevision(baseURL, sourceID, kind, name, revision, rev)
 	})
 }
 
-func (c *Cache) writeResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.ResourceRevision) (string, error) {
+func (c *Cache) writeResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
 	p := c.MetadataPath(baseURL, sourceID, kind, name, revision)
 	raw, err := json.Marshal(rev)
 	if err != nil {
@@ -556,8 +556,8 @@ func (c *Cache) writeResourceRevision(baseURL, sourceID, kind, name, revision st
 }
 
 // ReadResourceRevision reads a cached resource revision JSON document.
-func (c *Cache) ReadResourceRevision(baseURL, sourceID, kind, name, revision string) (store.ResourceRevision, bool, error) {
-	var rev store.ResourceRevision
+func (c *Cache) ReadResourceRevision(baseURL, sourceID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
+	var rev store.AssessedResourceRevision
 	p := c.MetadataPath(baseURL, sourceID, kind, name, revision)
 	exists, err := validateCacheRegularFile(c.root, p)
 	if err != nil {

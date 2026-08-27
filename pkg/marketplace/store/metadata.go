@@ -53,30 +53,36 @@ type MetadataStore interface {
 	SourceHistory(ctx context.Context, id SourceID) ([]SourceOccurrence, error)
 
 	// Resource revisions.
-	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (ResourceRevision, error)
+	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (AssessedResourceRevision, error)
 	PutResourceRevision(ctx context.Context, rev ResourceRevision) error
-	ListResourceRevisions(ctx context.Context, coord ResourceCoordinate) ([]ResourceRevision, error)
+	PutResourceOccurrence(ctx context.Context, occurrence ResourceOccurrence) error
+	PutResourceAssessment(ctx context.Context, assessment ResourceAssessment) error
+	GetResourceAssessment(ctx context.Context, digest AssessmentDigest) (ResourceAssessment, error)
+	SetCurrentResourceAssessment(ctx context.Context, assessment ResourceAssessment) error
+	ListResourceAssessments(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) ([]ResourceAssessment, error)
+	ListResourceRevisions(ctx context.Context, coord ResourceCoordinate) ([]AssessedResourceRevision, error)
 	// ListResourceRevisionsByArchiveDigest returns every revision in this
 	// Marketplace that references one immutable artifact digest.
-	ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace MarketplaceID, digest ArchiveDigest) ([]ResourceRevision, error)
+	ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace MarketplaceID, digest ArchiveDigest) ([]AssessedResourceRevision, error)
 	// ListResourceRevisionsByContentDigest returns all immutable revisions with
 	// one content digest. It is used for digest-addressed collection manifests,
 	// whose route has no coordinate.
-	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]ResourceRevision, error)
+	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]AssessedResourceRevision, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.
-	GetLatestResourceRevision(ctx context.Context, coord ResourceCoordinate) (ResourceRevision, error)
+	GetLatestResourceRevision(ctx context.Context, coord ResourceCoordinate) (AssessedResourceRevision, error)
 
 	// SearchResourceRevisions returns revisions for listed-source coordinates,
 	// ordered with the latest revision first within each coordinate, optionally
 	// filtered by source, kind, and name. Callers apply live revocation policy
 	// and select the latest effective revision.
-	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]ResourceRevision, error)
+	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]AssessedResourceRevision, error)
 
 	// Source occurrences.
 	GetSourceOccurrence(ctx context.Context, source SourceID, commit string) (SourceOccurrence, error)
 	PutSourceOccurrence(ctx context.Context, occ SourceOccurrence) error
+	SetSourceHead(ctx context.Context, source SourceID, commit, expectedCommit string) error
 	LatestSourceOccurrence(ctx context.Context, source SourceID) (SourceOccurrence, error)
 
 	// Collection revisions.

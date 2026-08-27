@@ -12,7 +12,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -20,8 +19,8 @@ const SchemaVersion = "v1"
 
 // MaxManifestBytes bounds the serialized inspection projection independently
 // from the repository and individual-file limits. A manifest contains
-// attacker-controlled paths and findings, so content limits alone are not
-// sufficient to bound its response size.
+// attacker-controlled paths, so content limits alone are not sufficient to
+// bound its response size.
 const MaxManifestBytes int64 = 1 * 1024 * 1024
 
 const (
@@ -86,23 +85,12 @@ type File struct {
 	InspectionClass string `json:"inspection_class"`
 }
 
-type Finding struct {
-	Code      string `json:"code"`
-	Severity  string `json:"severity"`
-	Policy    string `json:"policy,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Path      string `json:"path,omitempty"`
-	StartByte int64  `json:"start_byte,omitempty"`
-	EndByte   int64  `json:"end_byte,omitempty"`
-}
-
 type Manifest struct {
 	SchemaVersion  string                   `json:"schema_version"`
 	Coordinate     store.ResourceCoordinate `json:"coordinate"`
 	RevisionDigest string                   `json:"revision_digest"`
 	PrimaryPath    string                   `json:"primary_path"`
 	Files          []File                   `json:"files"`
-	Findings       []Finding                `json:"findings,omitempty"`
 	ManifestDigest string                   `json:"-"`
 }
 
@@ -116,7 +104,7 @@ type Projection struct {
 // limit is retained as an argument so callers with a tighter policy can avoid
 // duplicating the projection builder; omitted or non-positive values use the
 // package default.
-func Build(coordinate store.ResourceCoordinate, revision string, body []byte, support map[string][]byte, findings []analyze.Finding, maxFiles int, maxFileBytes, maxTotalBytes int64, manifestLimits ...int64) (Projection, error) {
+func Build(coordinate store.ResourceCoordinate, revision string, body []byte, support map[string][]byte, maxFiles int, maxFileBytes, maxTotalBytes int64, manifestLimits ...int64) (Projection, error) {
 	primaryPath := PrimaryPath(coordinate.Kind)
 	if primaryPath == "" {
 		return Projection{}, fmt.Errorf("unsupported inspection resource kind %q", coordinate.Kind)
@@ -194,18 +182,6 @@ func Build(coordinate store.ResourceCoordinate, revision string, body []byte, su
 	}
 
 	out := Manifest{SchemaVersion: SchemaVersion, Coordinate: coordinate, RevisionDigest: revision, PrimaryPath: primaryPath, Files: files}
-	for _, finding := range findings {
-		out.Findings = append(out.Findings, mapFinding(finding, primaryPath, body, support))
-	}
-	sort.Slice(out.Findings, func(i, j int) bool {
-		if out.Findings[i].Path != out.Findings[j].Path {
-			return out.Findings[i].Path < out.Findings[j].Path
-		}
-		if out.Findings[i].StartByte != out.Findings[j].StartByte {
-			return out.Findings[i].StartByte < out.Findings[j].StartByte
-		}
-		return out.Findings[i].Code < out.Findings[j].Code
-	})
 	payload, err := canonicalJSON(out)
 	if err != nil {
 		return Projection{}, err
@@ -358,54 +334,6 @@ func looksUnsafeTextLexical(data []byte) bool {
 		(strings.Contains(text, "{") && strings.Contains(text, "}") && strings.Contains(text, ":") && !json.Valid(data))
 }
 
-func mapFinding(f analyze.Finding, primaryPath string, body []byte, support map[string][]byte) Finding {
-	result := Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message, Path: primaryPath}
-	file := ""
-	if f.SourceRange != nil {
-		file = strings.ReplaceAll(f.SourceRange.File, "\\", "/")
-	}
-	content := body
-	// Analyzer paths describe semantic fields (for example command/foo/body),
-	// while the projection deliberately exposes only canonical paths.
-	if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
-		name := strings.TrimPrefix(file, "support/")
-		if data, ok := support[name]; ok {
-			result.Path, content = path.Join("support", name), data
-		}
-	}
-	if f.SourceRange != nil && f.SourceRange.Line > 0 {
-		start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
-		result.StartByte, result.EndByte = int64(start), int64(end)
-	}
-	return result
-}
-
-func lineColumnBytes(content []byte, line, column int) (int, int) {
-	if line < 1 {
-		return 0, 0
-	}
-	start := 0
-	for current := 1; current < line; current++ {
-		n := bytes.IndexByte(content[start:], '\n')
-		if n < 0 {
-			return len(content), len(content)
-		}
-		start += n + 1
-	}
-	if column > 1 {
-		for i, current := start, 1; i < len(content) && current < column; current++ {
-			_, size := utf8.DecodeRune(content[i:])
-			i += size
-			start = i
-		}
-	}
-	if start >= len(content) {
-		return start, start
-	}
-	_, size := utf8.DecodeRune(content[start:])
-	return start, start + size
-}
-
 func canonicalJSON(m Manifest) ([]byte, error) {
 	copy := m
 	copy.ManifestDigest = ""
@@ -426,7 +354,6 @@ func Verify(manifest Manifest, payload []byte, expected string) error {
 		return fmt.Errorf("invalid inspection manifest")
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
-	fileSizes := make(map[string]int64, len(manifest.Files))
 	primary := false
 	for _, file := range manifest.Files {
 		if file.Path == manifest.PrimaryPath {
@@ -450,22 +377,9 @@ func Verify(manifest Manifest, payload []byte, expected string) error {
 			return fmt.Errorf("invalid inspection file %q", file.Path)
 		}
 		seen[file.Path] = struct{}{}
-		fileSizes[file.Path] = file.Size
 	}
 	if !primary {
 		return fmt.Errorf("inspection manifest is missing primary file")
-	}
-	for _, finding := range manifest.Findings {
-		if finding.Code == "" || finding.Severity == "" || finding.Path == "" || finding.StartByte < 0 || finding.EndByte < 0 || finding.StartByte > finding.EndByte {
-			return fmt.Errorf("invalid inspection finding")
-		}
-		size, exists := fileSizes[finding.Path]
-		if !exists {
-			return fmt.Errorf("inspection finding references unknown path %q", finding.Path)
-		}
-		if finding.EndByte > size {
-			return fmt.Errorf("inspection finding range exceeds file %q", finding.Path)
-		}
 	}
 	canonical, err := json.Marshal(manifest)
 	if err != nil {

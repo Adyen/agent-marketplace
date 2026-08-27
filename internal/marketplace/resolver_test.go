@@ -21,13 +21,123 @@ import (
 )
 
 func TestResolverRejectsCachedBroadRevocationWithoutOverride(t *testing.T) {
-	err := enforceMarketplaceRevocation(store.ResourceRevision{
+	err := enforceMarketplaceRevocation(revokedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
-		Revocation:    &store.Revocation{Kind: store.RevocationSource, TargetID: "src"},
-	}, nil)
+	}, "src"), nil)
 	if err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("broad cached revocation error = %v, want revoked error", err)
+	}
+}
+
+func TestPrepareLocatorRejectsAssessmentBeforeMirrorDownload(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	archive := "sha256:" + strings.Repeat("b", 64)
+	artifactRequests := 0
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/sources/source", func(w http.ResponseWriter, _ *http.Request) {
+		writeTestSource(w, store.Source{ID: "src", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+	})
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(rejectedRevision(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+			ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest(archive),
+		}))
+	})
+	mux.HandleFunc("/api/v1/artifacts/", func(w http.ResponseWriter, _ *http.Request) {
+		artifactRequests++
+		http.Error(w, "must not download", http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	_, err := (&Resolver{Cache: NewCache(t.TempDir())}).PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Source: "source", Kind: "skill", Name: "review"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "assessment rejected") {
+		t.Fatalf("PrepareLocator error = %v, want assessment rejection", err)
+	}
+	if artifactRequests != 0 {
+		t.Fatalf("rejected assessment caused %d artifact downloads", artifactRequests)
+	}
+}
+
+func TestResolverRejectsCachedAssessmentBeforeArtifactRead(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	archive := "sha256:" + strings.Repeat("b", 64)
+	cache := NewCache(t.TempDir())
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
+	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest}
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rejectedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest(archive),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteArtifact(archive, []byte("invalid but must remain unread")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkArtifactVerified(archive); err != nil {
+		t.Fatal(err)
+	}
+	_, errs := (&Resolver{Cache: cache}).Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: entry.URL, InstanceID: entry.InstanceID, Resources: []config.MarketplaceResourcePin{pin}}}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "assessment rejected") {
+		t.Fatalf("cached rejected assessment errors = %v", errs)
+	}
+}
+
+func TestIndexOnlyResolverRejectsAssessmentBeforeSourceAcquisition(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	digest := "sha256:" + strings.Repeat("c", 64)
+	sourceRequests := 0
+	mux := http.NewServeMux()
+	serveWellKnown(mux, "mp")
+	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(rejectAssessment(assessedRevisionOccurrence(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+			ContentDigest: store.RevisionDigest(digest),
+		}, commit, manifest)))
+	})
+	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, _ *http.Request) {
+		sourceRequests++
+		http.Error(w, "must not acquire source", http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}, nil, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "assessment rejected") {
+		t.Fatalf("index-only rejected assessment errors = %v", errs)
+	}
+	if sourceRequests != 0 {
+		t.Fatalf("rejected assessment caused %d source acquisition requests", sourceRequests)
+	}
+}
+
+func TestPreparedInstallPreviewUsesAssessmentFindings(t *testing.T) {
+	digest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	assessment := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: digest,
+	})
+	assessment.Assessment.AssessmentDigest = ""
+	assessment.Assessment.AnalyzerVersion = "analyzer-v2"
+	assessment.Assessment.Findings = []store.Finding{{Code: "policy.example", Severity: "warning", Policy: "warn", Message: "review this", Location: &store.FindingLocation{Path: "SKILL.md", Line: 4, Column: 2}}}
+	finalized, err := store.FinalizeResourceAssessment(assessment.Assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment.Assessment = finalized
+	preview := (&PreparedInstall{
+		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Digest: string(digest)},
+		Revision: assessment,
+	}).Preview()
+	if len(preview.Findings) != 1 {
+		t.Fatalf("preview findings = %#v, want current assessment finding", preview.Findings)
+	}
+	finding := preview.Findings[0]
+	if finding.Code != "policy.example" || finding.AnalyzerVersion != "analyzer-v2" || finding.File != "SKILL.md" || finding.Line != 4 || finding.Column != 2 {
+		t.Fatalf("preview assessment finding = %#v", finding)
 	}
 }
 
@@ -72,7 +182,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src"),
@@ -81,7 +191,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 		},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 
 	var requestCount int
 	mux := http.NewServeMux()
@@ -214,10 +324,10 @@ func TestResolverDoesNotMarkArtifactVerifiedBeforeResourceDecode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(rev) })
@@ -259,10 +369,10 @@ func TestResolverCachedNoFetchFailsClosedBeforeHTTP(t *testing.T) {
 	if requests != 0 {
 		t.Fatalf("missing metadata made %d HTTP requests", requests)
 	}
-	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", digest, store.ResourceRevision{
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", digest, assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	})); err != nil {
 		t.Fatal(err)
 	}
 	_, errs = r.Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
@@ -302,7 +412,7 @@ func TestResolverInspect(t *testing.T) {
 
 	sum := sha256.Sum256([]byte("payload"))
 	contentDigest := "sha256:" + hex.EncodeToString(sum[:])
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src"),
@@ -311,7 +421,7 @@ func TestResolverInspect(t *testing.T) {
 		},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000"),
-	}
+	})
 
 	var artifactRequested bool
 	mux := http.NewServeMux()
@@ -366,11 +476,11 @@ func TestResolverInspect(t *testing.T) {
 
 func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
-	}
+	})
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
@@ -415,11 +525,11 @@ func TestResolverInfersRequiredFromMarketplaceOwner(t *testing.T) {
 func TestMergeLayersStampsOrganizationMarketplaceRequired(t *testing.T) {
 	const instanceID = "org-marketplace"
 	digest := "sha256:" + strings.Repeat("a", 64)
-	revision := store.ResourceRevision{
+	revision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: instanceID, Source: "source", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
-	}
+	})
 
 	mux := http.NewServeMux()
 	serveWellKnown(mux, instanceID)
@@ -495,7 +605,7 @@ func TestResolverRevoked(t *testing.T) {
 		t.Fatalf("MarkArtifactVerified: %v", err)
 	}
 
-	rev := store.ResourceRevision{
+	rev := revokedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src"),
@@ -504,12 +614,7 @@ func TestResolverRevoked(t *testing.T) {
 		},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-		Revocation: &store.Revocation{
-			Kind:     store.RevocationRevision,
-			TargetID: contentDigest,
-			Reason:   "compromised",
-		},
-	}
+	}, contentDigest)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
@@ -611,23 +716,24 @@ func TestResolverValidatesRevisionIdentity(t *testing.T) {
 	if err := validatePin(entry, pin); err != nil {
 		t.Fatalf("opaque pin revision rejected: %v", err)
 	}
-	valid := store.ResourceRevision{
+	valid := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: digest,
 		ArchiveDigest: archive,
-	}
+	})
 	if err := validateResourceRevision(entry, pin, valid); err != nil {
 		t.Fatalf("valid revision rejected: %v", err)
 	}
 
-	invalid := valid
-	invalid.Coordinate.Marketplace = "other"
+	invalidCoordinate := valid.Coordinate
+	invalidCoordinate.Marketplace = "other"
+	invalid := assessedRevision(store.ResourceRevision{Coordinate: invalidCoordinate, ContentDigest: valid.ContentDigest, ArchiveDigest: valid.ArchiveDigest})
 	if err := validateResourceRevision(entry, pin, invalid); err == nil || !strings.Contains(err.Error(), "coordinate mismatch") {
 		t.Fatalf("invalid coordinate error = %v", err)
 	}
 
-	invalid = valid
-	invalid.ContentDigest = store.RevisionDigest("sha256:" + strings.Repeat("c", 64))
+	invalidDigest := store.RevisionDigest("sha256:" + strings.Repeat("c", 64))
+	invalid = assessedRevision(store.ResourceRevision{Coordinate: valid.Coordinate, ContentDigest: invalidDigest, ArchiveDigest: valid.ArchiveDigest})
 	if err := validateResourceRevision(entry, pin, invalid); err == nil || !strings.Contains(err.Error(), "content digest mismatch") {
 		t.Fatalf("invalid content digest error = %v", err)
 	}
@@ -638,7 +744,7 @@ func TestResolverValidatesArtifactManifestIdentity(t *testing.T) {
 	archive := "sha256:" + strings.Repeat("b", 64)
 	entry := config.MarketplaceEntry{InstanceID: "mp"}
 	pin := config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "old-source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: digest}
-	rev := store.ResourceRevision{ArchiveDigest: store.ArchiveDigest(archive)}
+	rev := store.AssessedResourceRevision{ResourceRevision: store.ResourceRevision{ArchiveDigest: store.ArchiveDigest(archive)}}
 	artifact := hccartifact.CanonicalArtifact{}
 	artifact.Manifest.Kind = "skill"
 	artifact.Manifest.Name = "review"
@@ -715,11 +821,11 @@ func TestResolvePinWithArtifactRetainsVerifiedArtifactWhenCacheIsTampered(t *tes
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
 	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: canonical.Manifest.ContentDigest}
 	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
@@ -754,11 +860,11 @@ func TestResolvePinWithArtifactRetainsVerifiedArtifactWhenCacheIsTampered(t *tes
 func TestLatestRevisionUsesSourceSlugRoute(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	archiveDigest := "sha256:" + strings.Repeat("b", 64)
-	revision := store.ResourceRevision{
+	revision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
@@ -784,11 +890,11 @@ func TestLatestRevisionUsesSourceSlugRoute(t *testing.T) {
 func TestPrepareLocatorRejectsExactRevisionDigestMismatch(t *testing.T) {
 	requestedDigest := "sha256:" + strings.Repeat("a", 64)
 	responseDigest := "sha256:" + strings.Repeat("b", 64)
-	revision := store.ResourceRevision{
+	revision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(responseDigest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64)),
-	}
+	})
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/source-slug", func(w http.ResponseWriter, r *http.Request) {
@@ -829,11 +935,11 @@ func TestPrepareLocatorPrefetchesMirrorArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 	mux := http.NewServeMux()
 	serveWellKnown(mux, "mp")
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {

@@ -62,17 +62,27 @@ const wellKnown = {
 }
 
 function resource(item, contentDigest = item.content_digest, revocation) {
-  const effectiveRevocation = revocation === undefined && item.name === 'deploy-preview' ? { reason: 'security review' } : revocation
+  const coordinate = { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }
+  const reason = revocation?.reason ?? (revocation === undefined && item.name === 'deploy-preview' ? 'security review' : '')
   return {
-    coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name },
+    coordinate,
     content_digest: contentDigest,
     archive_digest: `sha256:${'c'.repeat(64)}`,
-    analyzer_version: 'e2e-analyzer-1',
-    acquisition: 'mirror',
-    provenance: { observed_from: 'mock-marketplace', inspection_manifest_digest: inspectionDigest },
-    findings: [],
     license: 'MIT',
-    ...(effectiveRevocation ? { revocation: effectiveRevocation } : {}),
+    description: item.description,
+    assessment: {
+      coordinate,
+      content_digest: contentDigest,
+      assessment_digest: `sha256:${'6'.repeat(64)}`,
+      analyzer_version: 'e2e-analyzer-2',
+      policy_digest: `sha256:${'7'.repeat(64)}`,
+      decision: 'allow',
+      findings: item.name === 'secure-review' ? [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 }, message: 'External reference requires review.' }] : [],
+      inspection_manifest_digest: inspectionDigest,
+      assessed_at: '2026-01-02T03:04:05Z',
+    },
+    occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
+    ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
   }
 }
 
@@ -159,7 +169,7 @@ const server = createServer((request, response) => {
         { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: Buffer.byteLength(notesContent), inspection_class: 'text' },
         { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: Buffer.byteLength(configContent), inspection_class: 'text' },
         { path: 'support/tool.bin', content_digest: `sha256:${'2'.repeat(64)}`, media_type: 'application/octet-stream', size: 4, inspection_class: 'metadata' },
-      ], findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 0, end_byte: 1, message: 'External reference requires review.' }] })
+      ] })
     }
     return sendJson(response, 200, resource(item, requestedRevision, requestedRevision === previousDigest && item.name === 'secure-review' ? { reason: 'superseded policy' } : undefined))
   }

@@ -54,6 +54,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/resources/{source}/{kind}/{name}/revisions",
 		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}",
 		"/api/v1/manifests/{source-revision}",
+		"/api/v1/assessments/sha256/{digest}",
 		"/api/v1/inspection/sha256/{digest}",
 		"/api/v1/content/sha256/{digest}",
 		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection",
@@ -78,7 +79,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceCoordinate", "InspectionManifest", "InspectionFile", "InspectionFinding"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
@@ -312,7 +313,11 @@ func TestOpenAPIResourceRevisionRequiresCompleteCoordinate(t *testing.T) {
 	components := doc["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
 	revision := schemas["ResourceRevision"].(map[string]any)
-	coordinate := revision["properties"].(map[string]any)["coordinate"].(map[string]any)
+	coordinateRef := revision["properties"].(map[string]any)["coordinate"].(map[string]any)
+	if coordinateRef["$ref"] != "#/components/schemas/ResourceCoordinate" {
+		t.Fatalf("ResourceRevision.coordinate ref = %#v", coordinateRef["$ref"])
+	}
+	coordinate := schemas["ResourceCoordinate"].(map[string]any)
 	required := coordinate["required"].([]any)
 	if len(required) != 4 {
 		t.Fatalf("ResourceRevision.coordinate required fields = %#v, want all four identity fields", required)

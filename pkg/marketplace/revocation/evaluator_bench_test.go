@@ -19,10 +19,10 @@ func BenchmarkEvaluatorLookupOverlay(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	revision := store.ResourceRevision{
+	revision := store.AssessedResourceRevision{ResourceRevision: store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "skill-127"},
 		ContentDigest: "sha256:000000000000000000000000000000000000000000000000000000000000007f",
-	}
+	}}
 
 	b.ReportAllocs()
 	b.ResetTimer()

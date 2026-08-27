@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -77,7 +77,7 @@ func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
 		if kind == "mcpserver" || kind == "collection" {
 			body = []byte(`{"name":"safe"}`)
 		}
-		projection, err := inspection.Build(coord, revision, body, map[string][]byte{"diagram.svg": []byte("<svg>unsafe</svg>"), "notes.txt": []byte("safe")}, nil, 10, 1024, 4096)
+		projection, err := inspection.Build(coord, revision, body, map[string][]byte{"diagram.svg": []byte("<svg>unsafe</svg>"), "notes.txt": []byte("safe")}, 10, 1024, 4096)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,26 @@ func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
 		if err := blobs.Put(ctx, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload); err != nil {
 			t.Fatal(err)
 		}
-		if err := meta.PutResourceRevision(ctx, store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}); err != nil {
+		resource := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision)}
+		commit := strings.Repeat(string('1'+byte(i)), 40)
+		manifest := store.RevisionDigest("sha256:" + strings.Repeat(string('1'+byte(i)), 64))
+		if err := meta.PutResourceRevision(ctx, resource); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: src.ID, Ref: src.Ref, Commit: commit, SourceRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: resource.ContentDigest, Commit: commit, ManifestDigest: manifest}); err != nil {
+			t.Fatal(err)
+		}
+		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{Coordinate: coord, ContentDigest: resource.ContentDigest, AnalyzerVersion: "test/v1", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("f", 64)), Decision: store.AssessmentDecisionAllow, InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest), AssessedAt: time.Now().UTC()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+			t.Fatal(err)
+		}
+		if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,9 +177,7 @@ func TestPublicMCPArtifactIsDownloadable(t *testing.T) {
 		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "remote"},
 		ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(archive),
 	}
-	if err := meta.PutResourceRevision(ctx, revision); err != nil {
-		t.Fatal(err)
-	}
+	publishAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("d", 64)), strings.Repeat("e", 40))
 	if err := blobs.Put(ctx, revision.ArchiveDigest, artifactData); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +221,7 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 		"config.yaml": []byte("safe: true\\n"),
 		"pixel.png":   {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0},
 	}
-	projection, err := inspection.Build(coord, revision, body, support, []analyze.Finding{{Code: "warn", Severity: analyze.OutcomeWarn, PolicyOutcome: analyze.OutcomeWarn, SourceRange: analyze.SourceRangeAt("skill/review/body", string(body), 2)}}, 10, 1024, 4096)
+	projection, err := inspection.Build(coord, revision, body, support, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,14 +252,33 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 	if err := blobs.Put(ctx, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutResourceRevision(ctx, store.ResourceRevision{Coordinate: coord, ContentDigest: revision, Findings: []store.Finding{{Code: "warn", Severity: analyze.OutcomeWarn}}, Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}, Revocation: &store.Revocation{Kind: store.RevocationRevision, TargetID: "revoked", Reason: "test"}}); err != nil {
+	resource := store.ResourceRevision{Coordinate: coord, ContentDigest: revision}
+	if err := meta.PutResourceRevision(ctx, resource); err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("e", 40)
+	manifest := store.RevisionDigest("sha256:" + strings.Repeat("d", 64))
+	if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: src.ID, Ref: src.Ref, Commit: commit, SourceRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: revision, Commit: commit, ManifestDigest: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{Coordinate: coord, ContentDigest: revision, AnalyzerVersion: "test/v1", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("f", 64)), Decision: store.AssessmentDecisionWarn, Findings: []store.Finding{{Code: "warn", Severity: "warn"}}, InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest), AssessedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
 		t.Fatal(err)
 	}
 
-	server := NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, blobs)
+	server := NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}, Revocations: config.Revocations{Revisions: []string{coord.String() + "@" + revision}}}, meta, blobs)
 	testServer := httptest.NewServer(server.PublicHandler())
 	defer testServer.Close()
 	base := testServer.URL + "/api/v1/resources/source/skill/review/revisions/" + revision

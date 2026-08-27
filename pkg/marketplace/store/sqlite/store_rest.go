@@ -14,7 +14,7 @@ import (
 
 func (s *Store) GetSourceOccurrence(ctx context.Context, source store.SourceID, commit string) (store.SourceOccurrence, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT source_id, ref, revision_commit, manifest_digest, acquisition,
+		`SELECT source_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, occurred_at
 		 FROM source_occurrences WHERE source_id=? AND revision_commit=?`,
 		source, commit,
@@ -25,13 +25,17 @@ func (s *Store) GetSourceOccurrence(ctx context.Context, source store.SourceID, 
 func (s *Store) scanSourceOccurrence(rows *sql.Rows) (store.SourceOccurrence, error) {
 	var occ store.SourceOccurrence
 	var mirrored sql.NullString
+	var rootsJSON string
 	var occurred int64
 	err := rows.Scan(
-		&occ.SourceID, &occ.Ref, &occ.Commit, &occ.SourceRevisionManifestDigest,
+		&occ.SourceID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.SourceRevisionManifestDigest,
 		&occ.Acquisition, &mirrored, &occurred,
 	)
 	if err != nil {
 		return store.SourceOccurrence{}, err
+	}
+	if err := unmarshalJSON([]byte(rootsJSON), &occ.Roots); err != nil {
+		return store.SourceOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
 	}
 	occ.MirroredArtifactDigest = store.ArchiveDigest(mirrored.String)
 	occ.OccurredAt = microToTime(occurred)
@@ -41,9 +45,10 @@ func (s *Store) scanSourceOccurrence(rows *sql.Rows) (store.SourceOccurrence, er
 func (s *Store) scanSourceOccurrenceRow(row *sql.Row) (store.SourceOccurrence, error) {
 	var occ store.SourceOccurrence
 	var mirrored sql.NullString
+	var rootsJSON string
 	var occurred int64
 	err := row.Scan(
-		&occ.SourceID, &occ.Ref, &occ.Commit, &occ.SourceRevisionManifestDigest,
+		&occ.SourceID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.SourceRevisionManifestDigest,
 		&occ.Acquisition, &mirrored, &occurred,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -52,12 +57,19 @@ func (s *Store) scanSourceOccurrenceRow(row *sql.Row) (store.SourceOccurrence, e
 	if err != nil {
 		return store.SourceOccurrence{}, err
 	}
+	if err := unmarshalJSON([]byte(rootsJSON), &occ.Roots); err != nil {
+		return store.SourceOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
+	}
 	occ.MirroredArtifactDigest = store.ArchiveDigest(mirrored.String)
 	occ.OccurredAt = microToTime(occurred)
 	return occ, nil
 }
 
 func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurrence) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.putSourceOccurrence(ctx, occ) })
+}
+
+func (s *Store) putSourceOccurrence(ctx context.Context, occ store.SourceOccurrence) error {
 	if err := occ.Acquisition.Validate(); err != nil {
 		return err
 	}
@@ -65,11 +77,19 @@ func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurre
 		occ.OccurredAt = time.Now().UTC()
 	}
 	mirrored := string(occ.MirroredArtifactDigest)
-	err := execWithBusyRetry(ctx, s.q,
+	roots := occ.Roots
+	if roots == nil {
+		roots = []store.SourceRoot{}
+	}
+	rootsJSON, err := marshalJSON(roots)
+	if err != nil {
+		return err
+	}
+	err = execWithBusyRetry(ctx, s.q,
 		`INSERT OR IGNORE INTO source_occurrences
-		 (source_id, ref, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
-		 VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
-		occ.SourceID, occ.Ref, occ.Commit, occ.SourceRevisionManifestDigest,
+		 (source_id, ref, roots, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
+		 VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		occ.SourceID, occ.Ref, rootsJSON, occ.Commit, occ.SourceRevisionManifestDigest,
 		occ.Acquisition, mirrored, timeToMicro(occ.OccurredAt),
 	)
 	if err != nil {
@@ -83,14 +103,52 @@ func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurre
 	if !occ.Equal(existing) {
 		return fmt.Errorf("%w: source occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
 	}
-	return nil
+	_, err = s.q.ExecContext(ctx, `INSERT OR IGNORE INTO source_heads (source_id, revision_commit) VALUES (?, ?)`, occ.SourceID, occ.Commit)
+	return err
+}
+
+func (s *Store) SetSourceHead(ctx context.Context, source store.SourceID, commit, expectedCommit string) error {
+	return s.withTx(ctx, func(tx *Store) error {
+		var current string
+		err := tx.q.QueryRowContext(ctx, `SELECT revision_commit FROM source_heads WHERE source_id=?`, source).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			if expectedCommit != "" {
+				return fmt.Errorf("%w: source %q head changed", store.ErrConflict, source)
+			}
+			_, err = tx.q.ExecContext(ctx, `INSERT INTO source_heads (source_id, revision_commit) VALUES (?, ?)`, source, commit)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if current == commit {
+			return nil
+		}
+		if current != expectedCommit {
+			return fmt.Errorf("%w: source %q head changed from %q to %q", store.ErrConflict, source, expectedCommit, current)
+		}
+		result, err := tx.q.ExecContext(ctx, `UPDATE source_heads SET revision_commit=? WHERE source_id=? AND revision_commit=?`, commit, source, expectedCommit)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return fmt.Errorf("%w: source %q head changed", store.ErrConflict, source)
+		}
+		return nil
+	})
 }
 
 func (s *Store) LatestSourceOccurrence(ctx context.Context, source store.SourceID) (store.SourceOccurrence, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT source_id, ref, revision_commit, manifest_digest, acquisition,
-		        mirrored_artifact_digest, occurred_at
-		 FROM source_occurrences WHERE source_id=? ORDER BY occurred_at DESC, revision_commit DESC LIMIT 1`,
+		`SELECT so.source_id, so.ref, so.roots, so.revision_commit, so.manifest_digest, so.acquisition,
+		        so.mirrored_artifact_digest, so.occurred_at
+		 FROM source_heads sh
+		 JOIN source_occurrences so ON so.source_id=sh.source_id AND so.revision_commit=sh.revision_commit
+		 WHERE sh.source_id=?`,
 		source,
 	)
 	return s.scanSourceOccurrenceRow(row)
@@ -544,21 +602,25 @@ func (s *Store) leaseError(ctx context.Context, id store.JobID, workerID string,
 
 func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT DISTINCT archive_digest AS digest
+		`SELECT DISTINCT archive_digest AS digest, 0 AS inspection
 		 FROM resource_revisions
 		 WHERE archive_digest IS NOT NULL AND archive_digest != ''
 		UNION
-		 SELECT DISTINCT manifest_digest AS digest
+		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection
 		 FROM source_occurrences
 		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''
 		UNION
-		 SELECT DISTINCT mirrored_artifact_digest AS digest
+		 SELECT DISTINCT mirrored_artifact_digest AS digest, 0 AS inspection
 		 FROM source_occurrences
 		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''
 		UNION
-		 SELECT DISTINCT manifest_digest AS digest
+		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection
 		 FROM collection_revisions
-		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''`,
+		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''
+		UNION
+		 SELECT DISTINCT inspection_manifest_digest AS digest, 1 AS inspection
+		 FROM resource_assessments
+		 WHERE inspection_manifest_digest IS NOT NULL AND inspection_manifest_digest != ''`,
 	)
 	if err != nil {
 		return err
@@ -567,7 +629,8 @@ func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 
 	for rows.Next() {
 		var digest string
-		if err := rows.Scan(&digest); err != nil {
+		var inspection int
+		if err := rows.Scan(&digest, &inspection); err != nil {
 			return err
 		}
 		exists, err := blobs.Exists(ctx, store.ArchiveDigest(digest))
@@ -576,6 +639,11 @@ func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 		}
 		if !exists {
 			return fmt.Errorf("%w: %s", store.ErrBlobMissing, digest)
+		}
+		if inspection == 1 {
+			if err := store.CheckInspectionBlobs(ctx, blobs, store.RevisionDigest(digest)); err != nil {
+				return err
+			}
 		}
 	}
 	return rows.Err()

@@ -28,20 +28,17 @@ export type ExactSourceOccurrence = Schemas['ExactSourceOccurrence']
 export type ResourceListItem = Schemas['ResourceListItem']
 export type InspectionManifest = Schemas['InspectionManifest']
 export type InspectionFile = Schemas['InspectionFile']
-export type InspectionFinding = Schemas['InspectionFinding']
+export type AssessmentFinding = Schemas['AssessmentFinding']
+export type ResourceAssessment = Schemas['ResourceAssessment']
+export type ResourceOccurrence = Schemas['ResourceOccurrence']
 export type SearchResult = JsonResponse<'searchResources'>
 
 type GeneratedResourceRevision = JsonResponse<'getResource'>
 
-// Validation permits bounded extension fields returned by existing servers and
-// normalizes them to safer browser-facing structures while retaining the
-// generated required fields.
-export type ResourceRevision = Omit<GeneratedResourceRevision, 'coordinate' | 'findings' | 'provenance' | 'revocation'> & {
-  coordinate: Record<string, string>
-  acquisition?: string
-  findings?: unknown[]
-  provenance?: Record<string, unknown>
-  revocation?: Record<string, unknown>
+// Findings are rendered defensively so clients can retain byte-range fields
+// from schema revisions where source_range is richer than today's string.
+export type ResourceRevision = Omit<GeneratedResourceRevision, 'assessment'> & {
+  assessment: Omit<GeneratedResourceRevision['assessment'], 'findings'> & { findings?: unknown[] }
 }
 
 export interface SearchParams {

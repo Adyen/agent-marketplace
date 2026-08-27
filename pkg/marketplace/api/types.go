@@ -63,6 +63,7 @@ type WellKnown struct {
 type ExactSourceOccurrence struct {
 	SourceID                     store.SourceID        `json:"source_id"`
 	Ref                          string                `json:"ref"`
+	Roots                        []store.SourceRoot    `json:"roots"`
 	Commit                       string                `json:"commit"`
 	SourceRevisionManifestDigest store.RevisionDigest  `json:"source_revision_manifest_digest"`
 	Acquisition                  store.AcquisitionMode `json:"acquisition"`

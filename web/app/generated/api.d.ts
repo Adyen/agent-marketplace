@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/assessments/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an immutable resource assessment by digest */
+        get: operations["getResourceAssessment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -371,6 +388,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AssessmentFinding: {
+            code: string;
+            location?: components["schemas"]["FindingLocation"];
+            message?: string;
+            policy?: string;
+            severity: string;
+        };
         Capabilities: {
             acquisition_modes: ("index-only" | "mirror")[];
             api_versions: "v1"[];
@@ -387,8 +411,16 @@ export interface components {
             /** Format: date-time */
             occurred_at: string;
             ref: string;
+            roots: components["schemas"]["SourceRoot"][];
             source_id: string;
             source_revision_manifest_digest: string;
+        };
+        FindingLocation: {
+            column?: number;
+            end_byte?: number;
+            line?: number;
+            path: string;
+            start_byte?: number;
         };
         InspectionFile: {
             content_digest: string;
@@ -400,21 +432,9 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
-        InspectionFinding: {
-            code: string;
-            /** Format: int64 */
-            end_byte?: number;
-            message?: string;
-            path: string;
-            policy?: string;
-            severity: string;
-            /** Format: int64 */
-            start_byte?: number;
-        };
         InspectionManifest: {
             coordinate: components["schemas"]["ResourceCoordinate"];
             files: components["schemas"]["InspectionFile"][];
-            findings?: components["schemas"]["InspectionFinding"][];
             /** @enum {string} */
             primary_path: "SKILL.md" | "COMMAND.md" | "AGENT.md" | "HOOK.md" | ".mcp.json" | "COLLECTION.json";
             revision_digest: string;
@@ -442,6 +462,19 @@ export interface components {
              */
             url?: string;
         };
+        ResourceAssessment: {
+            analyzer_version: string;
+            /** Format: date-time */
+            assessed_at: string;
+            assessment_digest: string;
+            content_digest: string;
+            coordinate: components["schemas"]["ResourceCoordinate"];
+            /** @enum {string} */
+            decision: "allow" | "warn" | "reject";
+            findings?: components["schemas"]["AssessmentFinding"][];
+            inspection_manifest_digest: string;
+            policy_digest: string;
+        };
         ResourceCoordinate: {
             kind: string;
             marketplace: string;
@@ -450,7 +483,7 @@ export interface components {
         };
         ResourceListItem: {
             /**
-             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `blocked` means the revision is listed for transparency but is not installable, because policy rejected it (a reject-severity finding is present) or because a mirrored source published no artifact for it. `revoked` means an operator revoked the revision. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
+             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `blocked` means the revision is listed for transparency but is not installable, because its current assessment explicitly rejected it or because a mirrored source published no artifact for it. `revoked` means an operator revoked the revision. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
              * @enum {string}
              */
             availability?: "available" | "blocked" | "revoked";
@@ -469,29 +502,30 @@ export interface components {
             source_id: string;
             source_slug?: string;
         };
-        ResourceRevision: {
-            analyzer_version?: string;
-            archive_digest?: string;
+        ResourceOccurrence: {
+            commit: string;
             content_digest: string;
-            coordinate: {
-                /** @enum {string} */
-                kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                marketplace: string;
-                name: string;
-                source: string;
-            };
+            coordinate: components["schemas"]["ResourceCoordinate"];
+            manifest_digest: string;
+        };
+        ResourceRevision: {
+            archive_digest?: string;
+            assessment: components["schemas"]["ResourceAssessment"];
+            content_digest: string;
+            coordinate: components["schemas"]["ResourceCoordinate"];
             /** @description Author-written one-line summary from the upstream registry, bounded and normalized identically to ResourceListItem.description. */
             description?: string;
-            findings?: {
-                [key: string]: unknown;
-            }[];
             license?: string;
-            provenance?: {
-                [key: string]: unknown;
-            };
-            revocation?: {
-                [key: string]: unknown;
-            };
+            occurrence: components["schemas"]["ResourceOccurrence"];
+            revocation?: components["schemas"]["Revocation"];
+        };
+        Revocation: {
+            /** Format: date-time */
+            applied_at: string;
+            /** @enum {string} */
+            kind: "source" | "coordinate" | "revision";
+            reason: string;
+            target_id: string;
         };
         SearchResult: {
             items: components["schemas"]["ResourceListItem"][];
@@ -524,6 +558,7 @@ export interface components {
             /** Format: date-time */
             occurred_at: string;
             ref: string;
+            roots: components["schemas"]["SourceRoot"][];
             source_id: string;
             source_revision_manifest_digest: string;
         };
@@ -602,6 +637,44 @@ export interface operations {
                 content: {
                     "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
                 };
+            };
+        };
+    };
+    getResourceAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable analyzer-independent resource assessment */
+            200: {
+                headers: {
+                    /** @description public, max-age=31536000, immutable */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceAssessment"];
+                };
+            };
+            /** @description Invalid assessment digest path */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Assessment not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -135,7 +135,7 @@ func (e *Evaluator) Targets() []store.RevisionRevocationTarget {
 // Effective returns the live effective revocation for rev. A broader
 // declaration never exempts a revision; specificity only selects the primary
 // reason reported to callers.
-func (e *Evaluator) Effective(rev store.ResourceRevision) *store.Revocation {
+func (e *Evaluator) Effective(rev store.AssessedResourceRevision) *store.Revocation {
 	if e == nil {
 		return nil
 	}
@@ -157,13 +157,15 @@ func (e *Evaluator) Effective(rev store.ResourceRevision) *store.Revocation {
 }
 
 // Apply returns a copy of rev with its effective revocation overlaid.
-func (e *Evaluator) Apply(rev store.ResourceRevision) store.ResourceRevision {
+func (e *Evaluator) Apply(rev store.AssessedResourceRevision) store.AssessedResourceRevision {
 	rev.Revocation = e.Effective(rev)
 	return rev
 }
 
 // IsRevoked reports whether rev is effectively revoked.
-func (e *Evaluator) IsRevoked(rev store.ResourceRevision) bool { return e.Effective(rev) != nil }
+func (e *Evaluator) IsRevoked(rev store.AssessedResourceRevision) bool {
+	return e.Effective(rev) != nil
+}
 
 // ExactIdentity returns the canonical key used by the evaluator.
 func ExactIdentity(coordinate store.ResourceCoordinate, digest store.RevisionDigest) string {

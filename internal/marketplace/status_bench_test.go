@@ -22,11 +22,11 @@ func BenchmarkMarketplaceStatusInspection(b *testing.B) {
 			writeTestWellKnown(w, "mp")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "resource-" + strconv.Itoa(pinCount)},
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -35,10 +35,10 @@ func BenchmarkMarketplaceStatusInspection(b *testing.B) {
 	for i := range pins {
 		name := "resource-" + strconv.Itoa(i)
 		pins[i] = config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: name, Revision: "v1", Digest: contentDigest}
-		if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", name, contentDigest, store.ResourceRevision{
+		if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", name, contentDigest, assessedRevision(store.ResourceRevision{
 			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: name},
 			ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-		}); err != nil {
+		})); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -4,6 +4,20 @@ import { RESOURCE_KINDS } from '../../app/types/marketplace'
 import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_SOURCE_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeSourceSummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
+function revisionPayload(contentDigest: string, overrides: Record<string, unknown> = {}) {
+  const coordinate = { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' }
+  return {
+    coordinate,
+    content_digest: contentDigest,
+    assessment: {
+      coordinate, content_digest: contentDigest, assessment_digest: 'sha256:' + '1'.repeat(64), analyzer_version: 'analyzer-v2',
+      policy_digest: 'sha256:' + '2'.repeat(64), decision: 'allow', findings: [], inspection_manifest_digest: 'sha256:' + '3'.repeat(64), assessed_at: '2026-01-02T03:04:05Z',
+    },
+    occurrence: { coordinate, content_digest: contentDigest, commit: 'a'.repeat(40), manifest_digest: 'sha256:' + '4'.repeat(64) },
+    ...overrides,
+  }
+}
+
 const params: SearchParams = {
   q: 'code review & deploy',
   kind: 'skill',
@@ -67,10 +81,7 @@ describe('Marketplace API URL handling', () => {
     const digest = 'sha256:' + 'b'.repeat(64)
     expect(resourcePath('/api/v1', 'team/tools', 'skill', 'code review')).toBe('/api/v1/resources/team%2Ftools/skill/code%20review')
     expect(resourceRevisionPath('/api/v1', 'team/tools', 'skill', 'code review', digest)).toBe('/api/v1/resources/team%2Ftools/skill/code%20review/revisions/sha256%3A' + 'b'.repeat(64))
-    const api = createMarketplaceApi(async () => ({
-      coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' },
-      content_digest: digest,
-    }))
+    const api = createMarketplaceApi(async () => revisionPayload(digest))
     await expect(api.getResource('team/tools', 'skill', 'code review')).resolves.toMatchObject({ content_digest: digest })
   })
 
@@ -79,8 +90,8 @@ describe('Marketplace API URL handling', () => {
     const revokedDigest = 'sha256:' + 'b'.repeat(64)
     expect(resourceRevisionsPath('/api/v1', 'team/tools', 'skill', 'code review')).toBe('/api/v1/resources/team%2Ftools/skill/code%20review/revisions')
     const payload = [
-      { coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' }, content_digest: latestDigest },
-      { coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'code review' }, content_digest: revokedDigest, revocation: { reason: 'policy' } },
+      revisionPayload(latestDigest),
+      revisionPayload(revokedDigest, { revocation: { kind: 'revision', target_id: revokedDigest, reason: 'policy', applied_at: '2026-01-03T03:04:05Z' } }),
     ]
     const api = createMarketplaceApi(async request => request.endsWith('/revisions') ? payload : payload[0])
     await expect(api.listResourceRevisions('team/tools', 'skill', 'code review')).resolves.toMatchObject([
@@ -109,6 +120,7 @@ describe('Marketplace API URL handling', () => {
     const historyPayload = [{
       source_id: 'source-id',
       ref: 'main',
+      roots: [{ path: 'skills', source_harness: 'factory' }],
       commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       source_revision_manifest_digest: 'sha256:' + 'a'.repeat(64),
       acquisition: 'mirror',
@@ -124,7 +136,7 @@ describe('Marketplace API URL handling', () => {
 
   it('accepts only canonical source occurrence fields and digests', () => {
     const base = {
-      source_id: 'source-id', ref: 'main', source_revision_manifest_digest: 'sha256:' + 'b'.repeat(64), acquisition: 'index-only', occurred_at: '2026-01-02T03:04:05Z',
+      source_id: 'source-id', ref: 'main', roots: [{ path: 'skills', source_harness: 'factory' }], source_revision_manifest_digest: 'sha256:' + 'b'.repeat(64), acquisition: 'index-only', occurred_at: '2026-01-02T03:04:05Z',
     }
     const commit = 'c'.repeat(40)
     expect(normalizeSourceHistory([{ ...base, commit }])[0].commit).toBe(commit)
@@ -144,36 +156,21 @@ describe('Marketplace API URL handling', () => {
   it('rejects a revision response whose digest or coordinate differs from the request', async () => {
     const requestedDigest = 'sha256:' + 'd'.repeat(64)
     const returnedDigest = 'sha256:' + 'e'.repeat(64)
-    const api = createMarketplaceApi(async () => ({
-      coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' },
-      content_digest: returnedDigest,
-    }))
+    const api = createMarketplaceApi(async () => revisionPayload(returnedDigest))
 
-    await expect(api.getResourceRevision('source', 'skill', 'review', requestedDigest)).rejects.toThrow(/does not match requested digest/)
+    await expect(api.getResourceRevision('team/tools', 'skill', 'code review', requestedDigest)).rejects.toThrow(/does not match requested digest/)
 
-    expect(() => normalizeResourceRevision({
-      coordinate: { marketplace: 'marketplace', source: 'other-source', kind: 'skill', name: 'review' },
-      content_digest: requestedDigest,
-    }, { sourceId: 'source', kind: 'skill', name: 'review', contentDigest: requestedDigest })).toThrow(/coordinate.source does not match/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest), { sourceId: 'other-source', kind: 'skill', name: 'code review', contentDigest: requestedDigest })).toThrow(/coordinate.source does not match/)
 
-    expect(() => normalizeResourceRevision({
-      coordinate: { source: 'source', kind: 'skill', name: 'review' },
-      content_digest: requestedDigest,
-    })).toThrow(/coordinate.marketplace/)
-    expect(() => normalizeResourceRevision({
-      coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' },
-      content_digest: requestedDigest,
-      archive_digest: 'sha256:archive',
-    })).toThrow(/archive_digest.*SHA-256 digest/)
-    expect(() => normalizeResourceRevision({
-      coordinate: { marketplace: 'marketplace', source: 'source', kind: 'rule', name: 'review' },
-      content_digest: requestedDigest,
-    })).toThrow(/coordinate.kind is unsupported/)
-    expect(() => normalizeResourceRevision({
-      coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' },
-      content_digest: requestedDigest,
-      acquisition: 'index',
-    })).toThrow(/acquisition is unsupported/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest, { coordinate: { source: 'team/tools', kind: 'skill', name: 'code review' } }))).toThrow(/coordinate.marketplace/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest, { archive_digest: 'sha256:archive' }))).toThrow(/archive_digest.*SHA-256 digest/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest, { coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'rule', name: 'code review' } }))).toThrow(/coordinate.kind is unsupported/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest, { acquisition: 'index' }))).toThrow(/acquisition is unsupported/)
+    expect(() => normalizeResourceRevision(revisionPayload(requestedDigest, { findings: [] }))).toThrow(/findings is unsupported/)
+    expect(() => normalizeResourceRevision({ coordinate: revisionPayload(requestedDigest).coordinate, content_digest: requestedDigest })).toThrow(/assessment must be an object/)
+    const mismatched = revisionPayload(requestedDigest)
+    mismatched.assessment.content_digest = returnedDigest
+    expect(() => normalizeResourceRevision(mismatched)).toThrow(/assessment.content_digest does not match/)
   })
 
   it('selects text and raster response handling for inspection content', async () => {
@@ -196,13 +193,12 @@ describe('Marketplace API URL handling', () => {
     const payload = {
       schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
       files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 10, inspection_class: 'text' }],
-      findings: [{ code: 'warn', severity: 'warn', path: 'SKILL.md', start_byte: 1, end_byte: 2 }],
     }
     const api = createMarketplaceApi(async () => payload)
     await expect(api.getResourceInspection('source', 'skill', 'review', digest)).resolves.toMatchObject({ primary_path: 'SKILL.md' })
     expect(() => normalizeInspectionManifest({ ...payload, files: [{ ...payload.files[0], media_type: 'text/plain' }] })).toThrow(/primary media policy/)
     expect(() => normalizeInspectionManifest({ ...payload, files: [{ ...payload.files[0] }, { ...payload.files[0], path: 'support/COMMAND.md' }] })).toThrow(/path is not canonical/)
-    expect(() => normalizeInspectionManifest({ ...payload, findings: [{ code: 'warn', severity: 'warn', start_byte: 3, end_byte: 2 }] })).toThrow(/inverted byte range/)
+    expect(() => normalizeInspectionManifest({ ...payload, findings: [{ code: 'warn', severity: 'warn' }] })).toThrow(/findings are unsupported/)
   })
 
   it('accepts API-only well-known metadata without browser templates', () => {

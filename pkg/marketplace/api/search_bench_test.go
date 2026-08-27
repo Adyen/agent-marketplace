@@ -73,11 +73,10 @@ func benchRevision(source store.SourceID, marketplace store.MarketplaceID, i int
 			Kind:        KindSkill,
 			Name:        fmt.Sprintf("skill-%04d", i),
 		},
-		ContentDigest:   store.RevisionDigest(fmt.Sprintf("sha256:%064d", i)),
-		ArchiveDigest:   store.ArchiveDigest(fmt.Sprintf("sha256:%064d", i)),
-		AnalyzerVersion: "1.0.0",
-		License:         "MIT",
-		Description:     benchDescription,
+		ContentDigest: store.RevisionDigest(fmt.Sprintf("sha256:%064d", i)),
+		ArchiveDigest: store.ArchiveDigest(fmt.Sprintf("sha256:%064d", i)),
+		License:       "MIT",
+		Description:   benchDescription,
 	}
 }
 

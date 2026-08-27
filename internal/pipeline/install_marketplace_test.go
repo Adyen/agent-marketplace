@@ -56,10 +56,14 @@ func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactSource(t *testing
 }
 
 func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "collection-source", Kind: "collection", Name: "secure"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
 	root := &marketplace.PreparedInstall{
 		Entry:              config.MarketplaceEntry{Alias: "public", URL: "https://market.example", InstanceID: "mp"},
 		Pin:                config.MarketplaceResourcePin{SourceID: "collection-source", SourceSlug: "collections", Kind: "collection", Name: "secure", Revision: "root-revision", Digest: "root-digest", Acquisition: config.MarketplaceAcquisitionMirror},
-		Revision:           store.ResourceRevision{Findings: []store.Finding{{Code: "collection-policy", Severity: "warning", Policy: "warn", Message: "review collection"}}},
+		Revision:           testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "collection-policy", Severity: "warning", Policy: "warn", Message: "review collection"}}),
 		CollectionManifest: hccartifact.CollectionManifest{Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example", Ref: "main", Path: "collections/secure", Generator: "test"}},
 		CollectionMembers: []*marketplace.PreparedInstall{
 			{
@@ -71,7 +75,7 @@ func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t 
 			},
 			{
 				Pin:      config.MarketplaceResourcePin{SourceID: "a-source", SourceSlug: "a", Kind: "command", Name: "alpha", Revision: "a-revision", Digest: "a-digest", Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: strings.Repeat("c", 40), SourceManifestDigest: "sha256:" + strings.Repeat("d", 64)},
-				Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Findings: []hccartifact.CanonicalFinding{{Code: "exec", Severity: "high", PolicyOutcome: "warn"}}, Capabilities: []string{"execute"}}},
+				Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"execute"}}},
 			},
 		},
 	}
@@ -99,9 +103,13 @@ func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t 
 }
 
 func TestMarketplaceCollectionConsentEvaluatesRevisionBeforeLeaves(t *testing.T) {
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "collection-source", Kind: "collection", Name: "secure"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
 	root := &marketplace.PreparedInstall{
 		Pin:               config.MarketplaceResourcePin{Kind: "collection", Name: "secure"},
-		Revision:          store.ResourceRevision{Findings: []store.Finding{{Code: "collection-block", Severity: "high", Policy: "reject", Message: "blocked collection"}}},
+		Revision:          testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "collection-block", Severity: "high", Policy: "reject", Message: "blocked collection"}}),
 		CollectionMembers: []*marketplace.PreparedInstall{{Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Findings: []hccartifact.CanonicalFinding{{Code: "leaf-block", PolicyOutcome: "reject"}}}}}},
 	}
 	if err := evaluateMarketplaceConsent(root, true); err == nil || !strings.Contains(err.Error(), "collection-block") {
@@ -142,21 +150,25 @@ func TestMarketplaceLocatorSupportsBrowserAndAdHocEndpoint(t *testing.T) {
 }
 
 func TestMarketplaceConsentRejectsPolicyFindingAndRequiresRiskAcceptance(t *testing.T) {
-	plan := &marketplace.PreparedInstall{Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{
-		Findings:     []hccartifact.CanonicalFinding{{Code: "exec", Severity: "high", PolicyOutcome: "warn"}},
-		Capabilities: []string{"command:exec"},
-	}}}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	plan := &marketplace.PreparedInstall{
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "exec", Severity: "high", Policy: "warn"}}),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"command:exec"}}},
+	}
 	if err := evaluateMarketplaceConsent(plan, false); err == nil || !strings.Contains(err.Error(), "risk acceptance") {
 		t.Fatalf("consent error = %v", err)
 	}
 	if err := evaluateMarketplaceConsent(plan, true); err != nil {
 		t.Fatalf("accepted risk rejected: %v", err)
 	}
-	plan.Artifact.Manifest.Findings[0].PolicyOutcome = "reject"
+	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "reject"}})
 	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "cannot bypass") {
 		t.Fatalf("policy rejection error = %v", err)
 	}
-	plan.Artifact.Manifest.Findings[0].PolicyOutcome = "block"
+	plan.Revision = testAssessedResourceRevision(t, revision, store.AssessmentDecisionReject, []store.Finding{{Code: "exec", Severity: "high", Policy: "block"}})
 	if err := evaluateMarketplaceConsent(plan, true); err == nil || !strings.Contains(err.Error(), "unknown policy outcome") {
 		t.Fatalf("unknown policy outcome error = %v", err)
 	}
@@ -289,7 +301,17 @@ func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) 
 }
 
 func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
-	plan := &marketplace.PreparedInstall{Pin: config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "slug", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), Digest: "sha256:" + strings.Repeat("a", 64)}, Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}, Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Findings: []hccartifact.CanonicalFinding{{Code: "secret", Severity: "high", Message: "line 1\nsecret=do-not-log\x1b[31m\u202e", File: "skills/review/SKILL.md\tunsafe", Line: 12, Analyzer: "scanner\r", PolicyOutcome: "warn"}}, Capabilities: []string{"exec\x1b\n"}, Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example\nunsafe", Ref: "main\u202e", Path: "skills/review", Generator: "scanner\x1b"}}}}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(digest),
+	}
+	plan := &marketplace.PreparedInstall{
+		Pin:      config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "slug", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
+		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
+		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "secret", Severity: "high", Message: "line 1\nsecret=do-not-log\x1b[31m\u202e", Location: &store.FindingLocation{Path: "skills/review/SKILL.md\tunsafe", Line: 12}, Policy: "warn"}}, "scanner\r"),
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"exec\x1b\n"}, Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example\nunsafe", Ref: "main\u202e", Path: "skills/review", Generator: "scanner\x1b"}}},
+	}
 	preview, err := marketplaceInstallPreview(plan)
 	if err != nil {
 		t.Fatal(err)

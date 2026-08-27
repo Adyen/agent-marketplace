@@ -31,8 +31,14 @@ type SourceRevisionPublication struct {
 	// Occurrence is the source commit occurrence to publish.
 	Occurrence SourceOccurrence
 
+	ExpectedHeadCommit string
+
 	// Resources are the resource revisions to publish.
 	Resources []ResourceRevision
+
+	ResourceOccurrences []ResourceOccurrence
+
+	Assessments []ResourceAssessment
 
 	// Collection is retained for compatibility with callers publishing one
 	// collection revision.
@@ -72,22 +78,31 @@ func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobSt
 		return err
 	}
 
-	immutableDigests := collectionManifestDigests(req)
 	for _, u := range uploads {
-		if _, immutable := immutableDigests[u.Digest]; immutable {
-			if err := putImmutableBlob(ctx, blobs, u); err != nil {
-				return fmt.Errorf("upload immutable collection blob %s: %w", u.Digest, err)
-			}
-			continue
-		}
-		if err := blobs.Put(ctx, u.Digest, u.Data); err != nil {
-			return fmt.Errorf("upload blob %s: %w", u.Digest, err)
+		if err := putImmutableBlob(ctx, blobs, u); err != nil {
+			return fmt.Errorf("upload immutable blob %s: %w", u.Digest, err)
 		}
 	}
 
 	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
 		for _, rev := range req.Resources {
 			if err := tx.PutResourceRevision(txCtx, rev); err != nil {
+				return err
+			}
+		}
+		if err := tx.PutSourceOccurrence(txCtx, req.Occurrence); err != nil {
+			return err
+		}
+		for _, occurrence := range req.ResourceOccurrences {
+			if err := tx.PutResourceOccurrence(txCtx, occurrence); err != nil {
+				return err
+			}
+		}
+		for _, assessment := range req.Assessments {
+			if err := tx.PutResourceAssessment(txCtx, assessment); err != nil {
+				return err
+			}
+			if err := tx.SetCurrentResourceAssessment(txCtx, assessment); err != nil {
 				return err
 			}
 		}
@@ -101,7 +116,7 @@ func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobSt
 				return err
 			}
 		}
-		return tx.PutSourceOccurrence(txCtx, req.Occurrence)
+		return tx.SetSourceHead(txCtx, req.Occurrence.SourceID, req.Occurrence.Commit, req.ExpectedHeadCommit)
 	})
 }
 
@@ -116,7 +131,7 @@ type ResourceRevisionPublication struct {
 func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, pub ResourceRevisionPublication) error {
 	archive := string(pub.Revision.ArchiveDigest)
 	if archive != "" && len(pub.ArchiveBytes) > 0 {
-		if err := blobs.Put(ctx, pub.Revision.ArchiveDigest, pub.ArchiveBytes); err != nil {
+		if err := putImmutableBlob(ctx, blobs, BlobUpload{Digest: pub.Revision.ArchiveDigest, Data: pub.ArchiveBytes}); err != nil {
 			return fmt.Errorf("upload resource archive %s: %w", pub.Revision.ArchiveDigest, err)
 		}
 	}
@@ -136,33 +151,25 @@ func validateSourceRevisionPublication(req SourceRevisionPublication) error {
 }
 
 // validateInspectionPublication prevents a metadata transaction from exposing
-// a revision whose immutable inspection projection was not uploaded as part of
-// the same publication. Legacy callers that omit Provenance are retained for
-// compatibility; Marketplace ingest always stamps it, so published revisions
-// cannot bypass this check.
+// an assessment whose immutable inspection projection was not uploaded as part
+// of the same publication.
 func validateInspectionPublication(req SourceRevisionPublication, uploads []BlobUpload) error {
-	strict := len(req.InspectionBlobs) > 0
-	for _, rev := range req.Resources {
-		if rev.Provenance != nil && rev.Provenance.InspectionManifestDigest != "" {
-			strict = true
-		}
-	}
-	if !strict {
+	if len(req.InspectionBlobs) == 0 && len(req.Assessments) == 0 {
 		return nil
 	}
 	byDigest := make(map[ArchiveDigest][]byte, len(uploads))
 	for _, upload := range uploads {
 		byDigest[upload.Digest] = upload.Data
 	}
-	for _, rev := range req.Resources {
-		if rev.Provenance == nil {
-			return fmt.Errorf("resource revision %s has incomplete inspection projection", rev.Coordinate)
+	for _, assessment := range req.Assessments {
+		if err := assessment.Validate(); err != nil {
+			return err
 		}
-		digest := rev.Provenance.InspectionManifestDigest
-		if digest == "" {
-			return fmt.Errorf("resource revision %s has incomplete inspection projection", rev.Coordinate)
+		rev, ok := resourceRevisionFor(req.Resources, assessment.Coordinate, assessment.ContentDigest)
+		if !ok {
+			return fmt.Errorf("assessment %s has no resource revision", assessment.AssessmentDigest)
 		}
-		data, ok := byDigest[ArchiveDigest(digest)]
+		data, ok := byDigest[ArchiveDigest(assessment.InspectionManifestDigest)]
 		if !ok || len(data) == 0 {
 			return fmt.Errorf("resource revision %s inspection manifest is missing", rev.Coordinate)
 		}
@@ -184,27 +191,16 @@ type inspectionPublicationFile struct {
 	InspectionClass string `json:"inspection_class"`
 }
 
-type inspectionPublicationFinding struct {
-	Code      string `json:"code"`
-	Severity  string `json:"severity"`
-	Policy    string `json:"policy,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Path      string `json:"path,omitempty"`
-	StartByte int64  `json:"start_byte,omitempty"`
-	EndByte   int64  `json:"end_byte,omitempty"`
-}
-
 type inspectionPublicationManifest struct {
-	SchemaVersion  string                         `json:"schema_version"`
-	Coordinate     ResourceCoordinate             `json:"coordinate"`
-	RevisionDigest string                         `json:"revision_digest"`
-	PrimaryPath    string                         `json:"primary_path"`
-	Files          []inspectionPublicationFile    `json:"files"`
-	Findings       []inspectionPublicationFinding `json:"findings,omitempty"`
+	SchemaVersion  string                      `json:"schema_version"`
+	Coordinate     ResourceCoordinate          `json:"coordinate"`
+	RevisionDigest string                      `json:"revision_digest"`
+	PrimaryPath    string                      `json:"primary_path"`
+	Files          []inspectionPublicationFile `json:"files"`
 }
 
 // validateInspectionManifestBytes mirrors inspection.Verify's canonical
-// identity, path, media, and finding-range checks. The store package cannot
+// identity, path, and media checks. The store package cannot
 // call inspection.Verify directly because inspection's projection types use
 // store coordinates; publication additionally verifies every exposed body
 // before making the revision visible.
@@ -236,7 +232,6 @@ func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs ma
 		return errors.New("identity or revision digest is invalid")
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
-	fileSizes := make(map[string]int64, len(manifest.Files))
 	primary := false
 	for _, file := range manifest.Files {
 		if file.Path == "" || file.ContentDigest == "" || file.Size < 0 || !validInspectionDigest(file.ContentDigest) || !allowedInspectionFile(file.MediaType, file.InspectionClass) {
@@ -258,7 +253,6 @@ func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs ma
 		} else if !canonicalInspectionSupportPath(file.Path) {
 			return fmt.Errorf("non-canonical file path %q", file.Path)
 		}
-		fileSizes[file.Path] = file.Size
 		bodyRequired := file.InspectionClass == "text" || file.InspectionClass == "image"
 		if bodyRequired {
 			body, ok := blobs[ArchiveDigest(file.ContentDigest)]
@@ -273,13 +267,37 @@ func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs ma
 	if !primary {
 		return errors.New("primary file is missing")
 	}
-	for _, finding := range manifest.Findings {
-		if finding.Code == "" || finding.Severity == "" || finding.Path == "" || finding.StartByte < 0 || finding.EndByte < 0 || finding.StartByte > finding.EndByte {
-			return fmt.Errorf("invalid finding range for %q", finding.Path)
+	return nil
+}
+
+func CheckInspectionBlobs(ctx context.Context, blobs BlobStore, digest RevisionDigest) error {
+	data, err := blobs.Get(ctx, ArchiveDigest(digest))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrBlobMissing, digest)
 		}
-		size, ok := fileSizes[finding.Path]
-		if !ok || finding.EndByte > size {
-			return fmt.Errorf("invalid finding range for %q", finding.Path)
+		return err
+	}
+	if contentDigest(data) != string(digest) {
+		return fmt.Errorf("%w: inspection manifest %s has different bytes", ErrConflict, digest)
+	}
+	var manifest inspectionPublicationManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("decode inspection manifest %s: %w", digest, err)
+	}
+	for _, file := range manifest.Files {
+		if file.InspectionClass != "text" && file.InspectionClass != "image" {
+			continue
+		}
+		body, err := blobs.Get(ctx, ArchiveDigest(file.ContentDigest))
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrBlobMissing, file.ContentDigest)
+		}
+		if err != nil {
+			return err
+		}
+		if int64(len(body)) != file.Size || contentDigest(body) != file.ContentDigest {
+			return fmt.Errorf("%w: inspection body %s has different bytes", ErrConflict, file.ContentDigest)
 		}
 	}
 	return nil
@@ -729,9 +747,8 @@ func collectionManifestDigests(req SourceRevisionPublication) map[ArchiveDigest]
 }
 
 // immutableBlobStore is implemented by adapters that can atomically preserve a
-// first writer. The read-before-write fallback still protects adapters without
-// this optional capability from replacing an existing differing collection
-// blob.
+// first writer. The read-before-write fallback protects adapters without this
+// optional capability from replacing existing digest-addressed bytes.
 type immutableBlobStore interface {
 	PutImmutable(context.Context, ArchiveDigest, []byte) error
 }
@@ -739,7 +756,7 @@ type immutableBlobStore interface {
 func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) error {
 	if existing, err := blobs.Get(ctx, upload.Digest); err == nil {
 		if !bytes.Equal(existing, upload.Data) {
-			return fmt.Errorf("%w: collection blob %s already contains different data", ErrConflict, upload.Digest)
+			return fmt.Errorf("%w: blob %s already contains different data", ErrConflict, upload.Digest)
 		}
 		return nil
 	} else if !errors.Is(err, ErrNotFound) {

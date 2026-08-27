@@ -16,6 +16,58 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+func assessedRevision(revision store.ResourceRevision, inspectionDigest ...string) store.AssessedResourceRevision {
+	inspection := "sha256:" + strings.Repeat("d", 64)
+	if len(inspectionDigest) > 0 {
+		inspection = inspectionDigest[0]
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest,
+		AnalyzerVersion: "test-analyzer", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+		Decision: store.AssessmentDecisionAllow, InspectionManifestDigest: store.RevisionDigest(inspection),
+		AssessedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return store.AssessedResourceRevision{
+		ResourceRevision: revision,
+		Assessment:       assessment,
+		Occurrence: store.ResourceOccurrence{
+			Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest,
+			Commit: strings.Repeat("a", 40), ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64)),
+		},
+	}
+}
+
+func assessedRevisionOccurrence(revision store.ResourceRevision, commit, manifestDigest string) store.AssessedResourceRevision {
+	assessed := assessedRevision(revision)
+	assessed.Occurrence.Commit = commit
+	assessed.Occurrence.ManifestDigest = store.RevisionDigest(manifestDigest)
+	return assessed
+}
+
+func rejectedRevision(revision store.ResourceRevision) store.AssessedResourceRevision {
+	return rejectAssessment(assessedRevision(revision))
+}
+
+func rejectAssessment(assessed store.AssessedResourceRevision) store.AssessedResourceRevision {
+	assessed.Assessment.Decision = store.AssessmentDecisionReject
+	assessed.Assessment.AssessmentDigest = ""
+	assessment, err := store.FinalizeResourceAssessment(assessed.Assessment)
+	if err != nil {
+		panic(err)
+	}
+	assessed.Assessment = assessment
+	return assessed
+}
+
+func revokedRevision(revision store.ResourceRevision, target string) store.AssessedResourceRevision {
+	assessed := assessedRevision(revision)
+	assessed.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: target, Reason: "test", AppliedAt: time.Now().UTC()}
+	return assessed
+}
+
 func writeTestWellKnown(w http.ResponseWriter, instanceID string) {
 	_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com", "https://example.com"))
 }
@@ -163,11 +215,11 @@ func TestClientInspectionMethodsVerifyProvenanceAndContent(t *testing.T) {
 	revision := "sha256:" + strings.Repeat("a", 64)
 	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
 	body := []byte("# review\\n")
-	projection, err := inspection.Build(coord, revision, body, map[string][]byte{"notes.txt": []byte("notes")}, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coord, revision, body, map[string][]byte{"notes.txt": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}
+	rev := assessedRevision(store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision)}, projection.Manifest.ManifestDigest)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/revisions/"+revision):
@@ -207,11 +259,11 @@ func TestClientInspectionMethodsVerifyProvenanceAndContent(t *testing.T) {
 func TestClientInspectionRejectsProvenanceMismatch(t *testing.T) {
 	revision := "sha256:" + strings.Repeat("a", 64)
 	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
-	projection, err := inspection.Build(coord, revision, []byte("# review\\n"), nil, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coord, revision, []byte("# review\\n"), nil, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64))}}
+	rev := assessedRevision(store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision)}, "sha256:"+strings.Repeat("b", 64))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/revisions/"+revision) {
 			_ = json.NewEncoder(w).Encode(rev)
@@ -373,15 +425,12 @@ func TestClientEscapesDynamicPathSegments(t *testing.T) {
 			t.Fatalf("request path = %q, want escaped dynamic segments", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"coordinate": map[string]string{
-				"marketplace": "mp",
-				"source":      "src/with space",
-				"kind":        "skill",
-				"name":        "name/part",
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
+			Coordinate: store.ResourceCoordinate{
+				Marketplace: "mp", Source: "src/with space", Kind: "skill", Name: "name/part",
 			},
-			"content_digest": "sha256:" + strings.Repeat("a", 64),
-		})
+			ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+		}))
 	}))
 	defer server.Close()
 
@@ -397,10 +446,10 @@ func TestClientEscapesDynamicPathSegments(t *testing.T) {
 func TestClientBindsResourceResponsesToRequestedCoordinate(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "other"},
 			ContentDigest: store.RevisionDigest(digest),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -423,10 +472,10 @@ func TestClientBindsResourceSourceAfterSourceResolution(t *testing.T) {
 		case "/api/v1/sources/source-slug":
 			writeTestSource(w, store.Source{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		default:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "other-source", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(digest),
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -466,7 +515,7 @@ func TestClientBindsSourceOccurrenceToRequestedSourceAndCommit(t *testing.T) {
 	manifest := "sha256:" + strings.Repeat("b", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-			SourceID: "other-source", Ref: "main", Commit: commit,
+			SourceID: "other-source", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: commit,
 			SourceRevisionManifestDigest: store.RevisionDigest(manifest),
 			Acquisition:                  store.AcquisitionIndexOnly,
 			AcquisitionOrigin:            "https://example.com/repo.git",
@@ -488,7 +537,7 @@ func TestClientBindsSourceOccurrenceCommitToRequestedCommit(t *testing.T) {
 	requestedCommit := strings.Repeat("a", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-			SourceID: "source", Ref: "main", Commit: strings.Repeat("b", 40),
+			SourceID: "source", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: strings.Repeat("b", 40),
 			SourceRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)),
 			Acquisition:                  store.AcquisitionIndexOnly,
 			AcquisitionOrigin:            "https://example.com/repo.git",
@@ -538,19 +587,19 @@ func TestValidateAcquisitionOrigin(t *testing.T) {
 
 func TestClientRejectsNonCanonicalResourceMetadata(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	revision := store.ResourceRevision{
+	revision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
-		Provenance:    &store.Provenance{Commit: "abc123", ManifestDigest: store.RevisionDigest(digest)},
-	}
+	})
+	revision.Occurrence.Commit = "abc123"
 	if err := validateAPIResourceRevision(revision); err == nil {
-		t.Fatal("resource revision accepted a development provenance commit")
+		t.Fatal("resource revision accepted a development occurrence commit")
 	}
-	collectionRevision := store.ResourceRevision{
+	collectionRevision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "collection", Name: "bundle"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest(digest),
-	}
+	})
 	if err := validateAPIResourceRevision(collectionRevision); err == nil || !strings.Contains(err.Error(), "virtual collection") {
 		t.Fatalf("collection archive revision validation = %v", err)
 	}
