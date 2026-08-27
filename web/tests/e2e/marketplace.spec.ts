@@ -91,7 +91,8 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
     await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
-    await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
+    await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
+    await expect(page.getByText(`sha256:${'6'.repeat(64)}`, { exact: true })).toBeVisible()
     await expect(page.getByText('remote-reference', { exact: true })).toBeVisible()
   })
 

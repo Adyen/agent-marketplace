@@ -19,6 +19,7 @@ if (!isSha256Digest(revision)) throw createError({ statusCode: 404, statusMessag
 const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
+const { data: sourceRecord } = await useAsyncData(`marketplace-source:${source}`, () => api.getSource(source))
 const { data: resource, pending, error, refresh } = await useAsyncData(
   revisionAsyncDataKey(source, kind, name, revision),
   () => api.getResourceRevision(source, kind, name, revision),
@@ -72,7 +73,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :acquisition="sourceRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

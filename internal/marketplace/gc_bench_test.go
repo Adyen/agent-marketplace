@@ -19,11 +19,11 @@ func BenchmarkMarketplaceGarbageCollectReachability(b *testing.B) {
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: "https://marketplace.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin},
 	}}}
-	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	})); err != nil {
 		b.Fatalf("WriteResourceRevision: %v", err)
 	}
 	if _, err := c.WriteArtifact(archiveDigest, []byte("artifact")); err != nil {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, mergeFindings, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLocator, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
+import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLocator, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
 import type { ResourceAvailability } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
@@ -66,91 +66,65 @@ describe('shortDigest', () => {
   })
 })
 
-describe('mergeFindings', () => {
-  // The inspection manifest adds a path and byte range to the same analyzer
-  // finding the revision record reports without one.
-  const located = { code: 'remote-reference', severity: 'reject', policy: 'reject', message: 'blocked', path: 'SKILL.md', start_byte: 1, end_byte: 2 }
-  const unlocated = { code: 'remote-reference', severity: 'reject', policy: 'reject', message: 'blocked', source_range: 'SKILL.md:1' }
-
-  it('lists a finding reported by both the manifest and the revision record once, keeping the located copy', () => {
-    const merged = mergeFindings([located], [unlocated])
-    expect(merged).toHaveLength(1)
-    expect(merged[0]).toMatchObject({ index: 0, code: 'remote-reference', severity: 'reject', policy: 'reject', path: 'SKILL.md', startByte: 1, endByte: 2 })
+describe('assessmentFindings', () => {
+  it('preserves every authoritative assessment finding without merging duplicates', () => {
+    const finding = { code: 'remote-reference', severity: 'warn', location: { path: 'SKILL.md', line: 4, column: 2 } }
+    const details = assessmentFindings([finding, { ...finding }])
+    expect(details).toHaveLength(2)
+    expect(details[0]).toMatchObject({ index: 0, path: 'SKILL.md', line: 4, column: 2 })
+    expect(details[1]).toMatchObject({ index: 1, path: 'SKILL.md' })
   })
 
-  it('drops an identical repeat within one group', () => {
-    expect(mergeFindings([located, { ...located }])).toHaveLength(1)
-  })
-
-  it('keeps the revision record copy when no manifest reported the finding', () => {
-    expect(mergeFindings(undefined, [unlocated])).toMatchObject([{ index: 0, code: 'remote-reference', path: '' }])
-  })
-
-  it('keeps two occurrences of one code at different locations', () => {
-    const merged = mergeFindings([located, { ...located, start_byte: 8, end_byte: 9 }])
-    expect(merged.map(entry => [entry.index, entry.startByte])).toEqual([[0, 1], [1, 8]])
-  })
-
-  it('keeps distinct findings and indexes them over the merged list', () => {
-    const merged = mergeFindings([located], [{ ...unlocated, code: 'shell-exec' }])
-    expect(merged.map(entry => [entry.index, entry.code])).toEqual([[0, 'remote-reference'], [1, 'shell-exec']])
-  })
-
-  it('coerces missing and hostile fields into renderable defaults', () => {
-    expect(mergeFindings([null, 'text', { code: 5, start_byte: -1 }])).toEqual([
-      { index: 0, code: 'Unspecified finding', severity: 'Unspecified', policy: '', message: '', path: '', startByte: undefined, endByte: undefined },
-    ])
+  it('supports canonical assessment locations', () => {
+    expect(assessmentFindings([{ code: 'x', severity: 'warn', location: { path: 'SKILL.md', line: 2, column: 3, start_byte: 3, end_byte: 5 } }])[0]).toMatchObject({ path: 'SKILL.md', line: 2, column: 3, startByte: 3, endByte: 5 })
   })
 
   it('returns an empty list for absent findings', () => {
-    expect(mergeFindings(undefined, undefined)).toEqual([])
+    expect(assessmentFindings(undefined)).toEqual([])
   })
 })
 
 describe('resourceAvailability', () => {
-  const archive = { archive_digest: 'sha256:' + 'a'.repeat(64) }
+  const assessment = (decision: 'allow' | 'warn' | 'reject', findings: Array<{ code: string; severity: string; policy?: string }> = []) => ({
+    coordinate: { marketplace: 'market', source: 'source', kind: 'skill', name: 'review' },
+    content_digest: 'sha256:' + 'a'.repeat(64), assessment_digest: 'sha256:' + 'b'.repeat(64), analyzer_version: 'v2',
+    policy_digest: 'sha256:' + 'c'.repeat(64), decision, findings, inspection_manifest_digest: 'sha256:' + 'd'.repeat(64), assessed_at: '2026-01-01T00:00:00Z',
+  })
+  const archive = { archive_digest: 'sha256:' + 'a'.repeat(64), assessment: assessment('allow') }
   const rejectFinding = { code: 'shell-exec', severity: 'reject', policy: 'reject' }
 
-  it('calls a revision available only when it is unrevoked, unrejected, and has an artifact', () => {
-    const revision = { ...archive, findings: [{ code: 'metadata-check', severity: 'low' }] }
-    expect(resourceAvailability(revision)).toBe('available')
-    expect(resourceAvailabilityCopy(revision)).toMatchObject({ label: 'Available', color: 'success', installable: true, installNotice: '' })
+  it('calls a revision available only when it is unrevoked, allowed or warned, and has an artifact', () => {
+    expect(resourceAvailability(archive)).toBe('available')
+    expect(resourceAvailabilityCopy(archive)).toMatchObject({ label: 'Available', color: 'success', installable: true, installNotice: '' })
   })
 
   it('reports revocation ahead of every other signal', () => {
-    const revision = { ...archive, findings: [rejectFinding], revocation: { reason: 'security' } }
+    const revision = { ...archive, assessment: assessment('reject', [rejectFinding]), revocation: { kind: 'revision' as const, target_id: 'digest', reason: 'security', applied_at: '2026-01-01T00:00:00Z' } }
     expect(resourceAvailability(revision)).toBe('revoked')
     expect(resourceAvailabilityCopy(revision).label).toBe('Revoked')
   })
 
-  it('ignores an empty revocation record', () => {
-    expect(resourceAvailability({ ...archive, revocation: {} })).toBe('available')
+  it('uses the assessment decision rather than finding severity as policy authority', () => {
+    expect(resourceAvailability({ ...archive, assessment: assessment('reject') })).toBe('policy-blocked')
+    expect(resourceAvailability({ ...archive, assessment: assessment('allow', [rejectFinding]) })).toBe('available')
   })
 
-  it('reports a reject-severity finding as blocked by policy even when an artifact is present', () => {
-    const revision = { ...archive, findings: [rejectFinding] }
-    expect(resourceAvailability(revision)).toBe('policy-blocked')
-    expect(resourceAvailabilityCopy(revision)).toMatchObject({ label: 'Blocked by policy', color: 'error', installable: false })
+  it('reports a missing mirror artifact without a reject decision as unavailable', () => {
+    const revision = { assessment: assessment('warn', [rejectFinding]) }
+    expect(resourceAvailability(revision, 'mirror', 'skill')).toBe('no-artifact')
+    expect(resourceAvailabilityCopy(revision, 'mirror', 'skill')).toMatchObject({ label: 'No installable artifact', color: 'warning', installable: false })
   })
 
-  it('reports a stripped artifact as blocked by policy when the analyzer rejected the revision', () => {
-    expect(resourceAvailability({ findings: [rejectFinding] })).toBe('policy-blocked')
-  })
-
-  it('matches reject severity regardless of case', () => {
-    expect(resourceAvailability({ ...archive, findings: [{ severity: 'REJECT' }] })).toBe('policy-blocked')
-  })
-
-  it('reports a missing artifact without a reject finding as having no installable artifact', () => {
-    const revision = { findings: [{ code: 'metadata-check', severity: 'low' }] }
-    expect(resourceAvailability(revision)).toBe('no-artifact')
-    expect(resourceAvailabilityCopy(revision)).toMatchObject({ label: 'No installable artifact', color: 'warning', installable: false })
+  it('does not require archive digests for index-only resources or collections', () => {
+    const revision = { assessment: assessment('allow') }
+    expect(resourceAvailability(revision, 'index-only', 'skill')).toBe('available')
+    expect(resourceAvailability(revision, 'mirror', 'collection')).toBe('available')
   })
 
   const blockedStates: Array<[ResourceAvailability, Parameters<typeof resourceAvailability>[0]]> = [
-    ['revoked', { ...archive, revocation: { reason: 'security' } }],
-    ['policy-blocked', { ...archive, findings: [rejectFinding] }],
-    ['no-artifact', { findings: [] }],
+    ['revoked', { ...archive, revocation: { kind: 'revision', target_id: 'digest', reason: 'security', applied_at: '2026-01-01T00:00:00Z' } }],
+    ['policy-blocked', { ...archive, assessment: assessment('reject') }],
+    ['no-artifact', { assessment: assessment('allow') }],
   ]
 
   it.each(blockedStates)('never offers an install command in the %s state', (state, revision) => {

@@ -411,11 +411,12 @@ marketplaces:
         digest: `+contentDigest+`
 `)
 	mpCache := marketplace.DefaultCache()
-	if _, err := mpCache.WriteResourceRevision("https://marketplace.example", "src", "skill", "review", contentDigest, store.ResourceRevision{
+	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(referencedArchive),
-	}); err != nil {
+	})
+	if _, err := mpCache.WriteResourceRevision("https://marketplace.example", "src", "skill", "review", contentDigest, revision); err != nil {
 		t.Fatalf("WriteResourceRevision: %v", err)
 	}
 	if _, err := mpCache.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {

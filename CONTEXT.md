@@ -81,12 +81,20 @@ The stable Marketplace identity of a resource, composed from its source identity
 _Avoid_: Installed name, harness path
 
 **Resource revision**:
-An immutable canonical content and metadata state of a resource coordinate, identified by its content digest. The same resource revision may occur in more than one source commit.
-_Avoid_: Source occurrence, branch, mutable tag
+An immutable canonical content state of a resource coordinate, identified by its content digest. Its artifact contains only intrinsic resource data, and the same resource revision may occur in more than one source commit or receive more than one resource assessment.
+_Avoid_: Resource assessment, source occurrence, branch, mutable tag
+
+**Resource assessment**:
+An immutable, content-addressed analyzer and operator-policy decision about one exact resource revision. Assessments retain findings and an inspection projection reference; one assessment is selected as current without changing the resource revision.
+_Avoid_: Resource revision, revocation, safety certification
 
 **Source occurrence**:
-The appearance of a resource revision in one exact source repository commit.
-_Avoid_: Resource revision, mutable ref
+One exact source repository commit, the source roots used to ingest it, and its analyzer-independent source revision manifest.
+_Avoid_: Resource occurrence, resource revision, mutable ref
+
+**Resource occurrence**:
+The membership of one exact resource revision in one source occurrence.
+_Avoid_: Source occurrence, resource revision, current assessment
 
 **Installed name**:
 The local, user-facing name under which a resource is materialized into a harness. It may be shorter than, and must not be confused with, its resource coordinate.
@@ -129,8 +137,8 @@ The revocation outcome for a resource revision when any active revision-, coordi
 _Avoid_: Deleted resource, stored revision metadata
 
 **Inspection projection**:
-A bounded, immutable representation of a resource revision that exposes every textual file, contained raster previews, binary-file identity, and security findings before installation.
-_Avoid_: Resource artifact, live preview, safety certification
+A bounded, immutable, analyzer-independent representation of a resource revision that exposes every textual file, contained raster previews, and binary-file identity before installation. Resource assessment findings reference its canonical paths and byte ranges.
+_Avoid_: Resource assessment, resource artifact, live preview, safety certification
 
 **Marketplace installation**:
 A consumer configuration record that pins a resource coordinate to an exact Marketplace instance, resource revision, canonical content digest, acquisition mode, optional mirrored artifact digest, exact source occurrence for index-only acquisition, and optional installed name.
@@ -141,7 +149,7 @@ A reason a resource pin remains installed: either direct user selection or selec
 _Avoid_: Resource dependency, duplicate pin
 
 **Security finding**:
-A versioned analyzer observation about potentially dangerous or hidden resource content. A finding communicates evidence and policy outcome; it is not a claim that a resource is safe or malicious.
+A versioned analyzer observation retained by a resource assessment about potentially dangerous or hidden resource content. A finding communicates evidence; the assessment carries the operator-policy decision and is not a claim that a resource is safe or malicious.
 _Avoid_: Safety certification
 
 **Revoked revision**:

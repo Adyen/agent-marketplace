@@ -14,7 +14,7 @@ func BenchmarkBuild(b *testing.B) {
 	support := map[string][]byte{"notes.txt": []byte("support notes")}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := Build(coordinate, revision, body, support, nil, 10, 4096, 16384); err != nil {
+		if _, err := Build(coordinate, revision, body, support, 10, 4096, 16384); err != nil {
 			b.Fatal(err)
 		}
 	}

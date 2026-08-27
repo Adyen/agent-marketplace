@@ -56,11 +56,12 @@ func TestPrepareLocatorRejectsRevokedCollectionBeforeFetchingManifest(t *testing
 		case "/api/v1/sources/src":
 			writeTestSource(w, store.Source{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case "/api/v1/resources/src/collection/bundle":
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			revision := assessedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(contentDigest),
-				Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: contentDigest, Reason: "test", AppliedAt: time.Now().UTC()},
 			})
+			revision.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: contentDigest, Reason: "test", AppliedAt: time.Now().UTC()}
+			_ = json.NewEncoder(w).Encode(revision)
 		default:
 			if strings.HasPrefix(r.URL.Path, "/api/v1/manifests/") {
 				manifestRequests++
@@ -72,7 +73,7 @@ func TestPrepareLocatorRejectsRevokedCollectionBeforeFetchingManifest(t *testing
 
 	resolver := &Resolver{HTTPClient: server.Client()}
 	_, err := resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Source: "src", Kind: "collection", Name: "bundle"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "collection revision") || !strings.Contains(err.Error(), "revoked") {
+	if err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("PrepareLocator error = %v, want revoked collection error", err)
 	}
 	if manifestRequests != 0 {

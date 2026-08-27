@@ -113,7 +113,7 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				revErr = validateResourceRevision(entry, pin, rev)
 			}
 			if revErr == nil {
-				revErr = enforceMarketplaceRevocation(rev, policy)
+				revErr = enforceMarketplaceUse(rev, policy)
 			}
 			if revErr != nil {
 				errs = append(errs, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, revErr))
@@ -171,7 +171,7 @@ func blockedCollectionForPin(pin config.MarketplaceResourcePin, blocked map[stri
 // already-expanded collection. Expanded leaves are persisted independently, so
 // resolving only their pins would otherwise bypass an exact revocation of a
 // nested collection revision.
-func (r *Resolver) enforceExpandedCollectionRevocations(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, rootPin config.MarketplaceResourcePin, rootRevision store.ResourceRevision, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) error {
+func (r *Resolver) enforceExpandedCollectionRevocations(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, rootPin config.MarketplaceResourcePin, rootRevision store.AssessedResourceRevision, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) error {
 	manifest, _, err := r.collectionManifest(ctx, client, cache, string(rootRevision.ContentDigest), mode)
 	if err != nil {
 		return fmt.Errorf("inspect collection manifest graph: %w", err)
@@ -252,7 +252,7 @@ func (r *Resolver) enforceNestedCollectionRevocations(ctx context.Context, clien
 		if err := validateResourceRevision(entry, nestedPin, nestedRevision); err != nil {
 			return fmt.Errorf("nested collection %q revision metadata: %w", member.Name, err)
 		}
-		if err := enforceMarketplaceRevocation(nestedRevision, policy); err != nil {
+		if err := enforceMarketplaceUse(nestedRevision, policy); err != nil {
 			return fmt.Errorf("nested collection %q revision: %w", member.Name, err)
 		}
 		nested, _, err := r.collectionManifest(ctx, client, cache, member.Revision, mode)
@@ -302,7 +302,21 @@ func marketplacePinRequired(source config.Source) bool {
 	return source == config.Organization
 }
 
-func enforceMarketplaceRevocation(rev store.ResourceRevision, policy resolver.MarketplaceRevocationPolicy) error {
+func enforceMarketplaceAssessment(rev store.AssessedResourceRevision) error {
+	if rev.Assessment.Decision == store.AssessmentDecisionReject {
+		return fmt.Errorf("assessment rejected revision")
+	}
+	return nil
+}
+
+func enforceMarketplaceUse(rev store.AssessedResourceRevision, policy resolver.MarketplaceRevocationPolicy) error {
+	if err := enforceMarketplaceAssessment(rev); err != nil {
+		return err
+	}
+	return enforceMarketplaceRevocation(rev, policy)
+}
+
+func enforceMarketplaceRevocation(rev store.AssessedResourceRevision, policy resolver.MarketplaceRevocationPolicy) error {
 	if rev.Revocation == nil {
 		return nil
 	}
@@ -421,7 +435,7 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 		InstalledName:         pin.InstalledName,
 		Revoked:               rev.Revocation != nil,
 	}
-	if err := enforceMarketplaceRevocation(rev, policy); err != nil {
+	if err := enforceMarketplaceUse(rev, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
 
@@ -519,8 +533,8 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
-	if mode != resolver.MarketplaceResolveModeRefresh && (rev.Provenance == nil || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != pin.SourceCommit || rev.Provenance.ManifestDigest != store.RevisionDigest(pin.SourceManifestDigest)) {
-		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached source occurrence digest mismatch: revision provenance does not match pinned source occurrence")
+	if mode != resolver.MarketplaceResolveModeRefresh && (rev.Occurrence.Coordinate.Source != store.SourceID(pin.SourceID) || rev.Occurrence.Commit != pin.SourceCommit || rev.Occurrence.ManifestDigest != store.RevisionDigest(pin.SourceManifestDigest)) {
+		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("cached source occurrence digest mismatch: revision occurrence does not match pinned source occurrence")
 	}
 	name := pin.Name
 	if pin.InstalledName != "" {
@@ -536,7 +550,7 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		InstalledName: pin.InstalledName, Revoked: rev.Revocation != nil,
 	}
 	artifact.Ref = pin.SourceCommit
-	if err := enforceMarketplaceRevocation(rev, policy); err != nil {
+	if err := enforceMarketplaceUse(rev, policy); err != nil {
 		return artifact, hccartifact.CanonicalArtifact{}, err
 	}
 	var origin string
@@ -558,8 +572,8 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		if occ.SourceRevisionManifestDigest != store.RevisionDigest(pin.SourceManifestDigest) {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("source manifest digest mismatch: occurrence %q, pin %q", occ.SourceRevisionManifestDigest, pin.SourceManifestDigest)
 		}
-		if rev.Provenance == nil || rev.Provenance.SourceID != occ.SourceID || rev.Provenance.SourceID != store.SourceID(pin.SourceID) || rev.Provenance.Commit != occ.Commit || rev.Provenance.ManifestDigest != occ.SourceRevisionManifestDigest {
-			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("resource revision provenance does not match exact source occurrence")
+		if rev.Occurrence.Coordinate.Source != occ.SourceID || rev.Occurrence.Coordinate.Source != store.SourceID(pin.SourceID) || rev.Occurrence.Commit != occ.Commit || rev.Occurrence.ManifestDigest != occ.SourceRevisionManifestDigest {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("resource revision occurrence does not match exact source occurrence")
 		}
 		origin = strings.TrimSpace(occ.AcquisitionOrigin)
 		if err := validateAcquisitionOrigin(origin); err != nil {
@@ -587,6 +601,9 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		}
 		source.Origins = []string{origin}
 		source.Ref = occ.Ref
+		if len(occ.Roots) > 0 {
+			source.Roots = append([]store.SourceRoot(nil), occ.Roots...)
+		}
 		source.Acquisition = store.AcquisitionIndexOnly
 		acquired, err := acquire.CloneAtCommit(ctx, origin, occ.Ref, occ.Commit, acquire.Credentials{}, acquire.Limits{RepositoryBytes: 100 * 1024 * 1024, FileCount: 1024, FileBytes: 2 * 1024 * 1024}, 5*time.Minute)
 		if err != nil {
@@ -873,71 +890,71 @@ func mustIRKind(kind string) ir.ResourceKind {
 	return value
 }
 
-func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, identity IndexOnlyIdentity, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
+func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, identity IndexOnlyIdentity, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
-		return store.ResourceRevision{}, err
+		return store.AssessedResourceRevision{}, err
 	}
 	if mode != resolver.MarketplaceResolveModeRefresh && mode != resolver.MarketplaceResolveModeInspect {
 		rev, ok, err := cache.ReadIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 		if err != nil {
-			return store.ResourceRevision{}, fmt.Errorf("read cached index-only revision: %w", err)
+			return store.AssessedResourceRevision{}, fmt.Errorf("read cached index-only revision: %w", err)
 		}
 		if ok {
 			return rev, nil
 		}
 		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-			return store.ResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact source occurrence")
+			return store.AssessedResourceRevision{}, fmt.Errorf("missing cached index-only revision metadata for exact source occurrence")
 		}
-		return store.ResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
+		return store.AssessedResourceRevision{}, fmt.Errorf("index-only revision metadata is missing from cache")
 	}
 	if client == nil {
-		return store.ResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
+		return store.AssessedResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
 	}
 	rev, err := client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 	if err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
+		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
-		return store.ResourceRevision{}, err
+		return store.AssessedResourceRevision{}, err
 	}
 	if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("write index-only revision cache: %w", err)
+		return store.AssessedResourceRevision{}, fmt.Errorf("write index-only revision cache: %w", err)
 	}
 	return rev, nil
 }
 
-func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.ResourceRevision, error) {
+func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
-		return store.ResourceRevision{}, err
+		return store.AssessedResourceRevision{}, err
 	}
 	if mode != resolver.MarketplaceResolveModeRefresh {
 		rev, ok, err := cache.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 		if err != nil {
-			return store.ResourceRevision{}, fmt.Errorf("read cached revision: %w", err)
+			return store.AssessedResourceRevision{}, fmt.Errorf("read cached revision: %w", err)
 		}
 		if ok {
 			return rev, nil
 		}
 		if mode == resolver.MarketplaceResolveModeCached {
-			return store.ResourceRevision{}, fmt.Errorf("resource revision not in cache")
+			return store.AssessedResourceRevision{}, fmt.Errorf("resource revision not in cache")
 		}
 		if mode == resolver.MarketplaceResolveModeCachedNoFetch {
-			return store.ResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
+			return store.AssessedResourceRevision{}, fmt.Errorf("resource revision metadata is missing from cache")
 		}
 	}
 
 	if client == nil {
-		return store.ResourceRevision{}, fmt.Errorf("cached no-fetch resolver has no Marketplace client")
+		return store.AssessedResourceRevision{}, fmt.Errorf("cached no-fetch resolver has no Marketplace client")
 	}
 	rev, err := client.GetResourceRevision(ctx, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
 	if err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
+		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
 	if err := validateResourceRevision(entry, pin, rev); err != nil {
-		return store.ResourceRevision{}, err
+		return store.AssessedResourceRevision{}, err
 	}
 	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
-		return store.ResourceRevision{}, fmt.Errorf("write revision cache: %w", err)
+		return store.AssessedResourceRevision{}, fmt.Errorf("write revision cache: %w", err)
 	}
 	return rev, nil
 }
@@ -970,7 +987,10 @@ func validatePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePi
 	return nil
 }
 
-func validateResourceRevision(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision) error {
+func validateResourceRevision(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision) error {
+	if err := validateAPIResourceRevision(rev); err != nil {
+		return fmt.Errorf("invalid assessed resource revision: %w", err)
+	}
 	want := store.ResourceCoordinate{
 		Marketplace: store.MarketplaceID(entry.InstanceID),
 		Source:      store.SourceID(pin.SourceID),
@@ -994,9 +1014,6 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 			return fmt.Errorf("revision archive digest %q: %w", rev.ArchiveDigest, err)
 		}
 	}
-	if rev.Provenance != nil && rev.Provenance.SourceID != "" && rev.Provenance.SourceID != store.SourceID(pin.SourceID) {
-		return fmt.Errorf("revision provenance source ID mismatch: metadata %q, pin %q", rev.Provenance.SourceID, pin.SourceID)
-	}
 	acquisition := pin.Acquisition
 	if acquisition == "" {
 		acquisition = config.MarketplaceAcquisitionMirror
@@ -1009,9 +1026,6 @@ func validateResourceRevision(entry config.MarketplaceEntry, pin config.Marketpl
 
 func validateReconstructedArtifactIdentity(pin config.MarketplaceResourcePin, artifact hccartifact.CanonicalArtifact) error {
 	manifest := artifact.Manifest
-	if manifest.SourceID != pin.SourceID {
-		return fmt.Errorf("re-ingested resource provenance source ID mismatch: got %q, want %q", manifest.SourceID, pin.SourceID)
-	}
 	if manifest.ContentDigest != pin.Digest {
 		return fmt.Errorf("re-ingested content digest mismatch: got %q, want %q", manifest.ContentDigest, pin.Digest)
 	}
@@ -1021,7 +1035,7 @@ func validateReconstructedArtifactIdentity(pin config.MarketplaceResourcePin, ar
 	return nil
 }
 
-func validateArtifactManifest(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.ResourceRevision, artifact hccartifact.CanonicalArtifact) error {
+func validateArtifactManifest(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision, artifact hccartifact.CanonicalArtifact) error {
 	manifest := artifact.Manifest
 	if manifest.Kind != pin.Kind {
 		return fmt.Errorf("artifact manifest kind mismatch: got %q, want %q", manifest.Kind, pin.Kind)

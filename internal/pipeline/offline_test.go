@@ -48,10 +48,11 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
 		SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
 	}}}
-	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, store.ResourceRevision{
+	revision := testAssessedResourceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	}, store.AssessmentDecisionAllow, nil)
+	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, revision); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,15 +121,15 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rootRevision := store.ResourceRevision{
+	rootRevision := testAssessedResourceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
 		ContentDigest: store.RevisionDigest(rootDigest),
-	}
-	leafRevision := store.ResourceRevision{
+	}, store.AssessmentDecisionAllow, nil)
+	leafRevision := testAssessedResourceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(leafDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	}, store.AssessmentDecisionAllow, nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":

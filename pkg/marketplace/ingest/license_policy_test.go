@@ -139,13 +139,9 @@ func TestApplyPolicyToResultLicenseConditions(t *testing.T) {
 			if got.Rejected != tc.wantReject {
 				t.Fatalf("Rejected = %v, want %v (findings %#v)", got.Rejected, tc.wantReject, got.Findings)
 			}
-			// A rejected resource must lose its installable artifact; anything
-			// else must keep it.
-			if tc.wantReject && (got.RawArchive != nil || got.ArchiveDigest != "") {
-				t.Fatalf("rejected result kept its artifact: digest %q, %d archive bytes", got.ArchiveDigest, len(got.RawArchive))
-			}
-			if !tc.wantReject && (got.RawArchive == nil || got.ArchiveDigest == "") {
-				t.Fatalf("accepted result lost its artifact: digest %q, %d archive bytes", got.ArchiveDigest, len(got.RawArchive))
+			// Policy changes installability without changing intrinsic artifact identity.
+			if got.RawArchive == nil || got.ArchiveDigest == "" {
+				t.Fatalf("assessment erased the intrinsic artifact: digest %q, %d archive bytes", got.ArchiveDigest, len(got.RawArchive))
 			}
 
 			for _, code := range tc.wantNoCodes {
@@ -203,8 +199,8 @@ func TestApplyPolicyToResultUndeclaredLicenseDefaultsToReject(t *testing.T) {
 	if !got.Rejected {
 		t.Fatalf("undeclared license was not rejected by default: %#v", got)
 	}
-	if got.RawArchive != nil || got.ArchiveDigest != "" {
-		t.Fatalf("default reject did not strip the artifact: digest %q, %d bytes", got.ArchiveDigest, len(got.RawArchive))
+	if got.RawArchive == nil || got.ArchiveDigest == "" {
+		t.Fatalf("default reject erased intrinsic artifact identity: digest %q, %d bytes", got.ArchiveDigest, len(got.RawArchive))
 	}
 	if _, ok := findingWithCode(got.Findings, analyze.PolicyLicenseUndeclared); !ok {
 		t.Fatalf("expected %q finding, got %#v", analyze.PolicyLicenseUndeclared, got.Findings)
@@ -307,11 +303,14 @@ func TestBuildSourceRevisionUndeclaredLicenseRejectedByDefault(t *testing.T) {
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
-	if skill.ArchiveDigest != "" {
-		t.Fatalf("undeclared license should not stay installable: archive digest %q", skill.ArchiveDigest)
+	if skill.ArchiveDigest == "" {
+		t.Fatal("undeclared license assessment must not erase intrinsic archive identity")
+	}
+	if decision := resourceAssessmentFor(t, rev.Assessments, "skill").Decision; decision != store.AssessmentDecisionReject {
+		t.Fatalf("assessment decision = %q, want reject", decision)
 	}
 	var codes []string
-	for _, f := range skill.Findings {
+	for _, f := range resourceAssessmentFor(t, rev.Assessments, "skill").Findings {
 		codes = append(codes, f.Code)
 		if f.Code == analyze.PolicyLicenseNotAllowed {
 			t.Errorf("undeclared license reported as disallowed: %+v", f)
@@ -350,7 +349,7 @@ func TestBuildSourceRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) 
 		t.Fatalf("warn must keep the resource installable, but the artifact was stripped")
 	}
 	var found bool
-	for _, f := range skill.Findings {
+	for _, f := range resourceAssessmentFor(t, rev.Assessments, "skill").Findings {
 		if f.Code == analyze.PolicyLicenseUndeclared {
 			found = true
 			if f.Severity != analyze.OutcomeWarn {
@@ -362,7 +361,7 @@ func TestBuildSourceRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) 
 		}
 	}
 	if !found {
-		t.Fatalf("expected a %q finding, got %#v", analyze.PolicyLicenseUndeclared, skill.Findings)
+		t.Fatalf("expected a %q finding, got %#v", analyze.PolicyLicenseUndeclared, resourceAssessmentFor(t, rev.Assessments, "skill").Findings)
 	}
 }
 
@@ -384,7 +383,7 @@ func TestBuildSourceRevisionUndeclaredLicenseAllowRecordsNothing(t *testing.T) {
 	if skill.ArchiveDigest == "" {
 		t.Fatalf("allow must keep the resource installable, but the artifact was stripped")
 	}
-	for _, f := range skill.Findings {
+	for _, f := range resourceAssessmentFor(t, rev.Assessments, "skill").Findings {
 		if f.Code == analyze.PolicyLicenseUndeclared || f.Code == analyze.PolicyLicenseNotAllowed {
 			t.Errorf("allow must record no license finding: %+v", f)
 		}
@@ -410,7 +409,7 @@ func TestBuildSourceRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
 	if skill.ArchiveDigest == "" {
 		t.Fatalf("no allowlist must not strip the artifact")
 	}
-	for _, f := range skill.Findings {
+	for _, f := range resourceAssessmentFor(t, rev.Assessments, "skill").Findings {
 		if f.Code == analyze.PolicyLicenseUndeclared || f.Code == analyze.PolicyLicenseNotAllowed {
 			t.Errorf("no allowlist must produce no license finding: %+v", f)
 		}
@@ -440,7 +439,7 @@ func TestBuildSourceRevisionResolvesLicenseFileDeclaration(t *testing.T) {
 	if skill.ArchiveDigest == "" {
 		t.Fatal("recognized Apache-2.0 license should remain installable")
 	}
-	for _, f := range skill.Findings {
+	for _, f := range resourceAssessmentFor(t, rev.Assessments, "skill").Findings {
 		if f.Code == analyze.PolicyLicenseNotAllowed {
 			t.Errorf("recognized Apache-2.0 license was rejected: %+v", f)
 		}

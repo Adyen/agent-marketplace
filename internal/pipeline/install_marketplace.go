@@ -423,9 +423,13 @@ type marketplacePreviewLeaf struct {
 func marketplacePreviewFindings(values []hccartifact.CanonicalFinding) []marketplacePreviewFinding {
 	findings := make([]marketplacePreviewFinding, 0, len(values))
 	for _, finding := range values {
+		analyzer := finding.Analyzer
+		if analyzer == "" {
+			analyzer = finding.AnalyzerVersion
+		}
 		findings = append(findings, marketplacePreviewFinding{
 			Code: marketplace.TerminalString(finding.Code), Severity: marketplace.TerminalString(finding.Severity), Message: marketplace.TerminalString(finding.Message),
-			File: marketplace.TerminalString(finding.File), Line: finding.Line, Analyzer: marketplace.TerminalString(finding.Analyzer),
+			File: marketplace.TerminalString(finding.File), Line: finding.Line, Analyzer: marketplace.TerminalString(analyzer),
 			PolicyOutcome: marketplace.TerminalString(finding.PolicyOutcome),
 		})
 	}

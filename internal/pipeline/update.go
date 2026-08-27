@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 var dottedVersionRefPattern = regexp.MustCompile(`^(.*?)(\d+)$`)
@@ -363,16 +364,14 @@ func validateMarketplaceUpdateArtifact(plan *marketplace.PreparedInstall) error 
 	if plan == nil || plan.Artifact.Manifest.ContentDigest != plan.Pin.Digest {
 		return fmt.Errorf("verified artifact content digest does not match prepared pin")
 	}
-	for _, finding := range plan.Artifact.Manifest.Findings {
-		switch strings.ToLower(strings.TrimSpace(finding.PolicyOutcome)) {
-		case "allow", "warn":
-		case "reject":
-			return fmt.Errorf("latest revision is rejected by policy (%s: %s)", marketplace.QuoteTerminal(finding.Code), marketplace.QuoteTerminal(finding.Message))
-		default:
-			return fmt.Errorf("latest revision has unknown policy outcome %q", marketplace.QuoteTerminal(finding.PolicyOutcome))
-		}
+	switch plan.Revision.Assessment.Decision {
+	case store.AssessmentDecisionAllow, store.AssessmentDecisionWarn:
+		return nil
+	case store.AssessmentDecisionReject:
+		return fmt.Errorf("latest revision is rejected by policy")
+	default:
+		return fmt.Errorf("latest revision has unknown assessment decision %q", marketplace.QuoteTerminal(string(plan.Revision.Assessment.Decision)))
 	}
-	return nil
 }
 
 func hasUnsupportedMarketplacePlan(plans []marketplaceUpdatePlan) bool {

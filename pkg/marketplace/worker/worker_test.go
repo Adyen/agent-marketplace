@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,14 +141,14 @@ func TestRefreshLicenseAllowlistRejects(t *testing.T) {
 		Name:        "review",
 	}
 	rev := getRevision(t, ctx, meta, coord)
-	if rev.ArchiveDigest != "" {
-		t.Fatalf("rejected resource should not have an archive digest")
+	if rev.ArchiveDigest == "" {
+		t.Fatalf("rejected resource should retain its intrinsic archive digest")
 	}
-	if len(rev.Findings) == 0 {
-		t.Fatalf("rejected resource should have findings")
+	if len(rev.Assessment.Findings) == 0 || rev.Assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("rejected resource assessment = %#v", rev.Assessment)
 	}
 
-	t.Logf("rejected skill findings: %d", len(rev.Findings))
+	t.Logf("rejected skill findings: %d", len(rev.Assessment.Findings))
 }
 
 func TestRefreshIndexOnly(t *testing.T) {
@@ -287,6 +288,81 @@ func TestReindex(t *testing.T) {
 	}
 }
 
+type externallyCompletingStore struct {
+	store.MetadataStore
+	once sync.Once
+}
+
+func (s *externallyCompletingStore) GetJob(ctx context.Context, id store.JobID) (store.Job, error) {
+	s.once.Do(func() {
+		leased, err := s.LeaseJob(ctx, "refresh", "other-worker", time.Minute)
+		if err == nil && leased.ID == id {
+			_ = s.CompleteJob(ctx, id, "other-worker")
+		}
+	})
+	return s.MetadataStore.GetJob(ctx, id)
+}
+
+func TestReindexReturnsWhenAnotherWorkerCompletesItsJob(t *testing.T) {
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+	cfg := createTestConfig(t, repoDir)
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{Config: cfg, MetadataStore: &externallyCompletingStore{MetadataStore: meta}, BlobStore: blobs}
+	if err := Reindex(context.Background(), deps, cfg, cfg.Sources[0].Slug); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+}
+
+func TestReindexSameCommitAdvancesAssessment(t *testing.T) {
+	ctx := context.Background()
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+	cfg := createTestConfig(t, repoDir)
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
+	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+		t.Fatalf("first Reindex: %v", err)
+	}
+	commit, err := testCommit(repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstOccurrence, err := meta.GetSourceOccurrence(ctx, store.SourceID(cfg.Sources[0].ID), commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
+	deps.Config = cfg
+	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+		t.Fatalf("second Reindex: %v", err)
+	}
+	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+		t.Fatalf("unchanged Reindex: %v", err)
+	}
+	secondOccurrence, err := meta.GetSourceOccurrence(ctx, store.SourceID(cfg.Sources[0].ID), commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstOccurrence.SourceRevisionManifestDigest != secondOccurrence.SourceRevisionManifestDigest {
+		t.Fatalf("source occurrence changed across assessment: %s != %s", firstOccurrence.SourceRevisionManifestDigest, secondOccurrence.SourceRevisionManifestDigest)
+	}
+	coord := store.ResourceCoordinate{Marketplace: "test-mp", Source: store.SourceID(cfg.Sources[0].ID), Kind: "skill", Name: "review"}
+	revision, err := meta.GetLatestResourceRevision(ctx, coord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessments, err := meta.ListResourceAssessments(ctx, coord, revision.ContentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assessments) != 2 || revision.Assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("assessments = %d, current decision = %q", len(assessments), revision.Assessment.Decision)
+	}
+}
+
 func createTestRepo(tb testing.TB) (string, func()) {
 	tb.Helper()
 	dir := tb.TempDir()
@@ -383,7 +459,7 @@ func openTestStores(tb testing.TB) (*sqlite.Store, *fsblob.Store) {
 	return meta, blobs
 }
 
-func getRevision(tb testing.TB, ctx context.Context, meta store.MetadataStore, coord store.ResourceCoordinate) store.ResourceRevision {
+func getRevision(tb testing.TB, ctx context.Context, meta store.MetadataStore, coord store.ResourceCoordinate) store.AssessedResourceRevision {
 	tb.Helper()
 	revs, err := meta.ListResourceRevisions(ctx, coord)
 	if err != nil {

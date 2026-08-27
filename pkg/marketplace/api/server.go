@@ -18,7 +18,6 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -76,6 +75,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/sources/", s.methodGet(s.handleSources))
 	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
 	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
+	publicMux.HandleFunc("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
 	publicMux.HandleFunc("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.HandleFunc("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.HandleFunc("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
@@ -408,7 +408,7 @@ func (s *Server) handleSourceOccurrence(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, ExactSourceOccurrence{
-		SourceID: occurrence.SourceID, Ref: occurrence.Ref, Commit: occurrence.Commit,
+		SourceID: occurrence.SourceID, Ref: occurrence.Ref, Roots: occurrence.Roots, Commit: occurrence.Commit,
 		SourceRevisionManifestDigest: occurrence.SourceRevisionManifestDigest,
 		Acquisition:                  occurrence.Acquisition, AcquisitionOrigin: origin,
 		OccurredAt: occurrence.OccurredAt,
@@ -659,10 +659,10 @@ func (s *Server) getResourceInspection(ctx context.Context, sourceSlug, kind, na
 	if err != nil {
 		return inspection.Manifest{}, nil, err
 	}
-	if rev.Provenance == nil || !isCanonicalSHA256Digest(string(rev.Provenance.InspectionManifestDigest)) {
+	if !isCanonicalSHA256Digest(string(rev.Assessment.InspectionManifestDigest)) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
-	manifestDigest := string(rev.Provenance.InspectionManifestDigest)
+	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
 	payload, err := s.blobs.Get(ctx, store.ArchiveDigest(manifestDigest))
 	if err != nil {
 		return inspection.Manifest{}, nil, err
@@ -700,6 +700,36 @@ var (
 	errInvalidInspectionRevision = errors.New("invalid inspection revision")
 	errInspectionUnavailable     = errors.New("inspection unavailable")
 )
+
+func (s *Server) handleAssessmentDigest(w http.ResponseWriter, r *http.Request) {
+	digest, ok := digestPath(r.URL.Path, "/api/v1/assessments/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid assessment digest")
+		return
+	}
+	assessment, err := s.meta.GetResourceAssessment(r.Context(), store.AssessmentDigest(digest))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "assessment not found")
+			return
+		}
+		slog.Error("assessment fetch failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
+		return
+	}
+	if assessment.AssessmentDigest != store.AssessmentDigest(digest) || assessment.Coordinate.Marketplace != s.mpID || validatePublicResourceAssessment(assessment) != nil {
+		slog.Error("assessment contains invalid public metadata", "digest", digest)
+		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
+		return
+	}
+	payload, err := json.Marshal(assessment)
+	if err != nil {
+		slog.Error("assessment encoding failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
+		return
+	}
+	writeImmutable(w, "application/json", payload)
+}
 
 func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) {
 	digest, ok := digestPath(r.URL.Path, "/api/v1/inspection/")
@@ -811,16 +841,6 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	revoked, err := s.manifestEffectivelyRevoked(r.Context(), store.RevisionDigest(digest))
-	if err != nil {
-		slog.Error("manifest revocation lookup failed", "digest", digest, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
-		return
-	}
-	if revoked {
-		writeError(w, http.StatusGone, "manifest is revoked")
-		return
-	}
 	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -844,6 +864,20 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Error("manifest blob is invalid", "digest", digest, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+		return
+	}
+	restriction, err := s.manifestRestriction(r.Context(), store.RevisionDigest(digest), data)
+	if err != nil {
+		slog.Error("manifest ownership lookup failed", "digest", digest, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
+		return
+	}
+	switch restriction {
+	case AvailabilityRevoked:
+		writeError(w, http.StatusGone, "manifest is revoked")
+		return
+	case AvailabilityBlocked:
+		writeError(w, http.StatusForbidden, "manifest is blocked by assessment")
 		return
 	}
 
@@ -872,8 +906,12 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
-	if s.artifactRevokedForRevisions(revisions) {
+	switch s.resourceOwnerRestriction(revisions) {
+	case AvailabilityRevoked:
 		writeError(w, http.StatusGone, "artifact is revoked")
+		return
+	case AvailabilityBlocked:
+		writeError(w, http.StatusForbidden, "artifact is blocked by assessment")
 		return
 	}
 	data, err := s.blobs.Get(r.Context(), digest)
@@ -1076,7 +1114,7 @@ func revocationKey(kind store.RevocationKind, targetID string) string {
 	return string(kind) + "\x00" + targetID
 }
 
-func (s *Server) applyEffectiveRevocation(rev store.ResourceRevision) store.ResourceRevision {
+func (s *Server) applyEffectiveRevocation(rev store.AssessedResourceRevision) store.AssessedResourceRevision {
 	if s.revocations == nil {
 		return rev
 	}
@@ -1086,8 +1124,8 @@ func (s *Server) applyEffectiveRevocation(rev store.ResourceRevision) store.Reso
 // latestEffectiveRevisions expects revisions grouped by coordinate with the
 // latest revision first. It preserves the store's latest non-revoked selection
 // while evaluating revocations from the live operator configuration.
-func latestEffectiveRevisions(revs []store.ResourceRevision, evaluator *revocation.Evaluator) []store.ResourceRevision {
-	selected := make([]store.ResourceRevision, 0, len(revs))
+func latestEffectiveRevisions(revs []store.AssessedResourceRevision, evaluator *revocation.Evaluator) []store.AssessedResourceRevision {
+	selected := make([]store.AssessedResourceRevision, 0, len(revs))
 	seen := make(map[store.ResourceCoordinate]struct{}, len(revs))
 	for _, revision := range revs {
 		if _, ok := seen[revision.Coordinate]; ok {
@@ -1105,43 +1143,66 @@ func latestEffectiveRevisions(revs []store.ResourceRevision, evaluator *revocati
 	return selected
 }
 
-// artifactRevokedForRevisions withholds an artifact when any exact revision
-// using those bytes is effectively revoked; direct digest lookup has no
-// coordinate in its URL and therefore cannot safely make a narrower decision.
-func (s *Server) artifactRevokedForRevisions(revisions []store.ResourceRevision) bool {
+// resourceOwnerRestriction withholds digest-addressed bytes when any owning
+// current assessment rejects them or any owning revision is effectively
+// revoked. A digest route has no coordinate and therefore cannot safely make a
+// narrower authorization decision.
+func (s *Server) resourceOwnerRestriction(revisions []store.AssessedResourceRevision) Availability {
+	restriction := AvailabilityAvailable
 	for _, revision := range revisions {
 		if s.applyEffectiveRevocation(revision).Revocation != nil {
-			return true
+			return AvailabilityRevoked
+		}
+		if revision.Assessment.Decision == store.AssessmentDecisionReject {
+			restriction = AvailabilityBlocked
 		}
 	}
-	return false
+	return restriction
 }
 
-// Collection manifests use the collection revision's content digest rather
-// than an archive digest. Resolve every immutable revision carrying that digest
-// so source and coordinate declarations are enforced as well as exact ones.
-func (s *Server) manifestEffectivelyRevoked(ctx context.Context, digest store.RevisionDigest) (bool, error) {
+// manifestRestriction resolves all current assessments that own a source or
+// collection manifest. Source manifest entries provide the content digests
+// needed to find historical owners without relying on the current source head.
+func (s *Server) manifestRestriction(ctx context.Context, digest store.RevisionDigest, payload []byte) (Availability, error) {
 	if s.revocations == nil {
-		return false, s.revocationErr
+		return AvailabilityBlocked, s.revocationErr
 	}
-	revisions, err := s.meta.ListResourceRevisionsByContentDigest(ctx, s.mpID, digest)
+	owners := make([]store.AssessedResourceRevision, 0)
+	collections, err := s.meta.ListResourceRevisionsByContentDigest(ctx, s.mpID, digest)
 	if err != nil {
-		return false, err
+		return AvailabilityBlocked, err
 	}
-	for _, revision := range revisions {
-		if revision.Coordinate.Kind == "collection" && s.applyEffectiveRevocation(revision).Revocation != nil {
-			return true, nil
+	for _, revision := range collections {
+		if revision.Coordinate.Kind == KindCollection {
+			owners = append(owners, revision)
 		}
 	}
-	// A published collection manifest can be addressed before its metadata row
-	// is present in a test/imported store. Exact declarations remain authoritative
-	// in that case, just as they were before the broader lookup existed.
+	var sourceManifest struct {
+		Resources []struct {
+			ContentDigest store.RevisionDigest `json:"content_digest"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(payload, &sourceManifest); err != nil {
+		return AvailabilityBlocked, err
+	}
+	for _, resource := range sourceManifest.Resources {
+		revisions, err := s.meta.ListResourceRevisionsByContentDigest(ctx, s.mpID, resource.ContentDigest)
+		if err != nil {
+			return AvailabilityBlocked, err
+		}
+		owners = append(owners, revisions...)
+	}
+	if restriction := s.resourceOwnerRestriction(owners); restriction != AvailabilityAvailable {
+		return restriction, nil
+	}
+	// An exact collection declaration remains authoritative even when metadata
+	// has not yet been imported for the immutable manifest.
 	for _, target := range s.revocations.Targets() {
-		if target.Coordinate.Marketplace == s.mpID && target.Coordinate.Kind == "collection" && target.ContentDigest == digest {
-			return true, nil
+		if target.Coordinate.Marketplace == s.mpID && target.Coordinate.Kind == KindCollection && target.ContentDigest == digest {
+			return AvailabilityRevoked, nil
 		}
 	}
-	return false, nil
+	return AvailabilityAvailable, nil
 }
 
 // sourceIndex loads every source once so a listing can resolve slugs and
@@ -1162,19 +1223,17 @@ func (s *Server) sourceIndex(ctx context.Context) (map[store.SourceID]store.Sour
 // instance, using only what the listing already holds.
 //
 // A rejected revision is stored and indexed on purpose, for transparency, but
-// its artifact is stripped at ingest. Two independent signals of that survive
-// into the revision: the reject-severity finding that caused it, and the
-// missing archive digest. The archive check is qualified by acquisition mode
-// because an index-only source legitimately has no archive, and a collection
-// is addressed by its manifest digest rather than an archive.
-func resourceAvailability(rev store.ResourceRevision, src store.Source) Availability {
+// it is never installable. The explicit current assessment decision is the
+// authority; findings are explanatory and must not be reinterpreted as policy.
+// The archive check is qualified by acquisition mode because an index-only
+// source legitimately has no archive, and a collection is addressed by its
+// manifest digest rather than an archive.
+func resourceAvailability(rev store.AssessedResourceRevision, src store.Source) Availability {
 	if rev.Revocation != nil {
 		return AvailabilityRevoked
 	}
-	for _, finding := range rev.Findings {
-		if finding.Severity == analyze.OutcomeReject {
-			return AvailabilityBlocked
-		}
+	if rev.Assessment.Decision == store.AssessmentDecisionReject {
+		return AvailabilityBlocked
 	}
 	if src.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
@@ -1186,7 +1245,7 @@ func resourceAvailability(rev store.ResourceRevision, src store.Source) Availabi
 	return AvailabilityAvailable
 }
 
-func (s *Server) resourceToListItem(rev store.ResourceRevision, sources map[store.SourceID]store.Source, score float64) ResourceListItem {
+func (s *Server) resourceToListItem(rev store.AssessedResourceRevision, sources map[store.SourceID]store.Source, score float64) ResourceListItem {
 	src := sources[rev.Coordinate.Source]
 	item := ResourceListItem{
 		SourceID:      string(rev.Coordinate.Source),
@@ -1302,6 +1361,14 @@ func validatePublicSourceOccurrence(occ store.SourceOccurrence) error {
 	if !IsCanonicalGitCommit(occ.Commit) {
 		return errors.New("source occurrence commit is not canonical")
 	}
+	if len(occ.Roots) == 0 {
+		return errors.New("source occurrence roots are missing")
+	}
+	for i, root := range occ.Roots {
+		if strings.TrimSpace(root.Path) == "" {
+			return fmt.Errorf("source occurrence root %d has no path", i)
+		}
+	}
 	if !isCanonicalSHA256Digest(string(occ.SourceRevisionManifestDigest)) {
 		return errors.New("source occurrence manifest digest is not canonical")
 	}
@@ -1317,7 +1384,7 @@ func validatePublicSourceOccurrence(occ store.SourceOccurrence) error {
 	return nil
 }
 
-func validatePublicResourceRevision(rev store.ResourceRevision) error {
+func validatePublicResourceRevision(rev store.AssessedResourceRevision) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Source)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return errors.New("resource coordinate is incomplete")
@@ -1328,27 +1395,41 @@ func validatePublicResourceRevision(rev store.ResourceRevision) error {
 	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
 		return errors.New("resource content digest is not canonical")
 	}
-	if coord.Kind == "collection" && rev.ArchiveDigest != "" {
+	if coord.Kind == KindCollection && rev.ArchiveDigest != "" {
 		return errors.New("virtual collection resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
 		return errors.New("resource archive digest is not canonical")
 	}
-	if rev.Provenance != nil {
-		if rev.Provenance.Commit != "" && !IsCanonicalGitCommit(rev.Provenance.Commit) {
-			return errors.New("resource provenance commit is not canonical")
-		}
-		if rev.Provenance.ManifestDigest != "" && !isCanonicalSHA256Digest(string(rev.Provenance.ManifestDigest)) {
-			return errors.New("resource provenance manifest digest is not canonical")
-		}
-		if rev.Provenance.InspectionManifestDigest != "" && !isCanonicalSHA256Digest(string(rev.Provenance.InspectionManifestDigest)) {
-			return errors.New("resource provenance inspection manifest digest is not canonical")
-		}
+	if err := validatePublicResourceAssessment(rev.Assessment); err != nil {
+		return err
+	}
+	if rev.Assessment.Coordinate != coord || rev.Assessment.ContentDigest != rev.ContentDigest {
+		return errors.New("resource assessment identity does not match revision")
+	}
+	if rev.Occurrence.Coordinate != coord || rev.Occurrence.ContentDigest != rev.ContentDigest {
+		return errors.New("resource occurrence identity does not match revision")
+	}
+	if !IsCanonicalGitCommit(rev.Occurrence.Commit) {
+		return errors.New("resource occurrence commit is not canonical")
+	}
+	if !isCanonicalSHA256Digest(string(rev.Occurrence.ManifestDigest)) {
+		return errors.New("resource occurrence manifest digest is not canonical")
 	}
 	return nil
 }
 
-func validatePublicResourceRevisionMatches(rev store.ResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
+func validatePublicResourceAssessment(assessment store.ResourceAssessment) error {
+	if err := assessment.Validate(); err != nil {
+		return err
+	}
+	if !IsMarketplaceKind(assessment.Coordinate.Kind) {
+		return errors.New("resource assessment coordinate kind is invalid")
+	}
+	return nil
+}
+
+func validatePublicResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
 	if err := validatePublicResourceRevision(rev); err != nil {
 		return err
 	}

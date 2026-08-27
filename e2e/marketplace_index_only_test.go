@@ -45,12 +45,26 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		t.Fatalf("build source revision: %v", err)
 	}
 
-	var revisions []store.ResourceRevision
+	var revisions []store.AssessedResourceRevision
 	for _, revision := range built.Resources {
 		if revision.Coordinate.Kind == "collection" {
 			continue
 		}
-		revisions = append(revisions, revision)
+		var assessment store.ResourceAssessment
+		for _, candidate := range built.Assessments {
+			if candidate.Coordinate == revision.Coordinate && candidate.ContentDigest == revision.ContentDigest {
+				assessment = candidate
+				break
+			}
+		}
+		var occurrence store.ResourceOccurrence
+		for _, candidate := range built.ResourceOccurrences {
+			if candidate.Coordinate == revision.Coordinate && candidate.ContentDigest == revision.ContentDigest {
+				occurrence = candidate
+				break
+			}
+		}
+		revisions = append(revisions, store.AssessedResourceRevision{ResourceRevision: revision, Assessment: assessment, Occurrence: occurrence})
 	}
 	if len(revisions) != 5 {
 		t.Fatalf("source resources = %d, want all five materialized kinds", len(revisions))
@@ -64,7 +78,7 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("marketplace-id", "https://example.invalid"))
 		case strings.Contains(r.URL.Path, "/occurrences/"):
-			_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{SourceID: "source-id", Ref: "main", Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: currentOrigin, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{SourceID: "source-id", Ref: "main", Roots: source.Roots, Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: currentOrigin, OccurredAt: time.Now().UTC()})
 		case strings.Contains(r.URL.Path, "/sources/"):
 			_ = json.NewEncoder(w).Encode(mpapi.PublicSource{ID: "source-id", Slug: "source", Origins: []string{currentOrigin}, Ref: "main", Roots: source.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 		case strings.Contains(r.URL.Path, "/resources/"):

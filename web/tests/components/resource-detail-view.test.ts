@@ -16,14 +16,26 @@ const stubs = {
 
 const digest = 'sha256:' + 'c'.repeat(64)
 
+const coordinate = { marketplace: 'marketplace', source: 'team/tools', kind: 'skill' as const, name: 'review' }
+const assessmentBase = {
+  coordinate,
+  content_digest: digest,
+  assessment_digest: 'sha256:' + '1'.repeat(64),
+  analyzer_version: 'analyzer-v2',
+  policy_digest: 'sha256:' + '2'.repeat(64),
+  decision: 'allow' as const,
+  inspection_manifest_digest: 'sha256:' + '3'.repeat(64),
+  assessed_at: '2026-01-02T03:04:05Z',
+}
+const occurrence = { coordinate, content_digest: digest, commit: 'a'.repeat(40), manifest_digest: 'sha256:' + '4'.repeat(64) }
+const revocation = { kind: 'revision' as const, target_id: digest, reason: 'security', applied_at: '2026-01-03T03:04:05Z' }
 const resource = {
-  coordinate: { marketplace: 'marketplace', source: 'team/tools', kind: 'skill', name: 'review' },
+  coordinate,
   content_digest: digest,
   archive_digest: 'sha256:' + 'a'.repeat(64),
-  acquisition: 'mirror',
   license: 'Apache-2.0',
-  provenance: { repository: 'https://example.test/repo', commit: 'a'.repeat(40) },
-  findings: [{ code: 'metadata-check', severity: 'low', policy: 'content-policy', message: '<script>not markup</script>' }],
+  assessment: { ...assessmentBase, findings: [{ code: 'metadata-check', severity: 'low', policy: 'content-policy', message: '<script>not markup</script>' }] },
+  occurrence,
 }
 
 describe('ResourceDetailView', () => {
@@ -36,7 +48,7 @@ describe('ResourceDetailView', () => {
     // The heading is the resource coordinate, which is both the URL and the
     // CLI argument, so the source is part of the identifier.
     expect(wrapper.get('h1').text()).toBe('team-tools/review')
-    expect(wrapper.text()).toContain('mirror')
+    expect(wrapper.text()).toContain('analyzer-v2')
     expect(wrapper.text()).toContain('Apache-2.0')
     expect(wrapper.text()).toContain('<script>not markup</script>')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
@@ -57,7 +69,7 @@ describe('ResourceDetailView', () => {
         resource,
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         revisions: [
-          { ...resource, content_digest: previousDigest, revocation: { reason: 'policy' } },
+          { ...resource, content_digest: previousDigest, revocation: { ...revocation, reason: 'policy' } },
         ],
       },
       global: { stubs },
@@ -72,12 +84,11 @@ describe('ResourceDetailView', () => {
   it('renders only sanitized Markdown and an escaped raw view from the inspection projection', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
-        resource,
+        resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: '<script>finding</script>', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
-          findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: '<script>finding</script>' }],
         },
         primaryContent: '# Hello\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert(1)</script>',
       },
@@ -185,7 +196,7 @@ describe('ResourceDetailView', () => {
   it('announces revoked content and keeps copy controls keyboard accessible', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
-        resource: { ...resource, revocation: { reason: 'security' } },
+        resource: { ...resource, revocation },
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
       },
       global: { stubs },
@@ -202,7 +213,7 @@ describe('ResourceDetailView', () => {
   it('calls a policy-rejected revision blocked and withholds the install command', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
-        resource: { ...resource, archive_digest: undefined, findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] },
+        resource: { ...resource, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] } },
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
       },
       global: { stubs },
@@ -212,7 +223,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).not.toContain('Available')
     expect(wrapper.get('[role="alert"]').text()).toContain('The security policy rejected this revision')
     expect(wrapper.find('code').exists()).toBe(false)
-    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the security policy rejected this revision')
+    expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the current assessment rejects this revision')
     expect(wrapper.get('[role="status"]').text()).toContain('Metadata and inspection remain available.')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
@@ -243,8 +254,8 @@ describe('ResourceDetailView', () => {
         resource,
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         revisions: [
-          { ...resource, content_digest: rejectedDigest, archive_digest: undefined, findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject' }] },
-          { ...resource, content_digest: strippedDigest, archive_digest: undefined, findings: [] },
+          { ...resource, content_digest: rejectedDigest, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject' }] } },
+          { ...resource, content_digest: strippedDigest, archive_digest: undefined, assessment: { ...assessmentBase, findings: [] } },
         ],
       },
       global: { stubs },
@@ -259,23 +270,22 @@ describe('ResourceDetailView', () => {
     expect(rows[2]?.text()).toContain('Current')
   })
 
-  it('lists a finding reported by both the manifest and the revision record only once', () => {
+  it('uses assessment finding locations for highlighting', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
-        resource: { ...resource, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', source_range: 'SKILL.md:1' }] },
+        resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
         source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
-          findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', path: 'SKILL.md', start_byte: 1, end_byte: 2, message: 'references a remote host' }],
         },
         primaryContent: '# Hello',
       },
       global: { stubs },
     })
 
-    expect(wrapper.findAll('[aria-label="Security findings"]')).toHaveLength(1)
     expect(wrapper.findAll('[aria-label="Security findings"] > li')).toHaveLength(1)
     expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md:1-2')
+    expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference')
   })
 })

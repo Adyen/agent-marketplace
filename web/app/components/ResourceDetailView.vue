@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
+import { computed, ref, watch } from 'vue'
+import { resourceInspectionFilePath } from '~/lib/api'
+import { assessmentFindings, installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
@@ -8,6 +9,7 @@ import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem
 type Props = {
   resource: ResourceRevision
   source: string
+  acquisition?: string
   kind: ResourceKind
   name: string
   canonicalUrl: string
@@ -32,10 +34,10 @@ const listItem = computed<ResourceListItem>(() => ({
 const browserUrl = computed(() => resourceLocator(listItem.value, props.canonicalUrl))
 const command = computed(() => installCommand(listItem.value, props.canonicalUrl))
 // Install status is derived from what the Marketplace actually reports:
-// revocation, reject-severity analyzer findings, and whether an installable
+// revocation, the nested assessment decision, and whether an installable
 // artifact exists. Every state stays browsable and inspectable.
-const availability = computed(() => resourceAvailability(props.resource))
-const availabilityCopy = computed(() => resourceAvailabilityCopy(props.resource))
+const availability = computed(() => resourceAvailability(props.resource, props.acquisition, props.kind))
+const availabilityCopy = computed(() => resourceAvailabilityCopy(props.resource, props.acquisition, props.kind))
 // Saturation carries the verdict and nothing else, so the status marker is the
 // one coloured element in the header.
 const statusDotClass = computed(() => {
@@ -50,8 +52,7 @@ const commandAvailable = computed(() => availabilityCopy.value.installable && Bo
 const installNotice = computed(() => availabilityCopy.value.installNotice
   || (command.value ? '' : 'Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.'))
 const browserAvailable = computed(() => Boolean(browserUrl.value))
-const acquisition = computed(() => props.resource.acquisition || valueFromRecord(props.resource.provenance, 'acquisition') || 'Not specified')
-const provenanceEntries = computed(() => Object.entries(props.resource.provenance ?? {}))
+const occurrenceEntries = computed(() => Object.entries(props.resource.occurrence))
 const showRevisionHistory = computed(() => props.revisions !== undefined)
 const revisionHistory = computed(() => {
   if (!props.revisions) return []
@@ -62,26 +63,78 @@ const revisionHistory = computed(() => {
     return true
   })
 })
-const {
-  binaryFiles,
-  findings,
-  highlightedContent,
-  imageFiles,
-  inspectionFileURL,
-  loadingDigest,
-  renderedContent,
-  selectableFiles,
-  selectedContent,
-  selectedContentUnavailable,
-  selectedDigest,
-  selectedFile,
-  selectedFindingDetails,
-  selectedImageURL,
-  selectedIsImage,
-  selectedIsMarkdown,
-  selectedIsPrimary,
-  textFiles,
-} = useResourceInspectionPreview(props)
+// The nested assessment is the sole authority for findings. Inspection
+// manifests only describe safely previewable files.
+const findings = computed(() => assessmentFindings(props.resource.assessment.findings))
+const primaryFile = computed(() => props.inspection?.files.find(file => file.path === props.inspection?.primary_path))
+const selectedDigest = ref('')
+const loadedContents = ref<Record<string, string>>({})
+const unavailableContents = ref<Record<string, boolean>>({})
+const loadingDigest = ref('')
+const selectedFile = computed(() => props.inspection?.files.find(file => file.content_digest === selectedDigest.value) ?? primaryFile.value)
+const selectedIsPrimary = computed(() => selectedFile.value?.path === props.inspection?.primary_path)
+const selectedIsMarkdown = computed(() => selectedFile.value?.media_type === 'text/markdown')
+const selectedIsImage = computed(() => selectedIsPrimary.value && selectedFile.value?.inspection_class === 'image')
+const selectedImageURL = computed(() => selectedFile.value && selectedIsImage.value
+  ? resourceInspectionFilePath(props.apiBase, props.source, props.kind, props.name, props.resource.content_digest, selectedFile.value.content_digest)
+  : '')
+const selectedContent = computed(() => {
+  if (!selectedFile.value || selectedFile.value.inspection_class !== 'text') return undefined
+  if (selectedIsPrimary.value) return props.primaryContent
+  return loadedContents.value[selectedFile.value.content_digest]
+})
+const selectedContentUnavailable = computed(() => Boolean(selectedFile.value && selectedFile.value.inspection_class === 'text' && (
+  unavailableContents.value[selectedFile.value.content_digest] || (selectedIsPrimary.value && props.primaryContent === undefined)
+)))
+const displayFindings = computed(() => findings.value.map(finding => {
+  if (finding.path !== selectedFile.value?.path || selectedContent.value === undefined || finding.startByte !== undefined) return finding
+  const range = lineColumnByteRange(selectedContent.value, finding.line, finding.column)
+  return range ? { ...finding, ...range } : finding
+}))
+const selectedFindingDetails = computed(() => displayFindings.value.filter(finding => finding.path === selectedFile.value?.path))
+const renderedContent = computed(() => selectedContent.value === undefined ? '' : renderSafeMarkdown(selectedContent.value))
+const highlightedContent = computed(() => selectedContent.value === undefined ? '' : highlightEscapedRawText(selectedContent.value, selectedFindingDetails.value.map(finding => ({
+  index: finding.index,
+  startByte: finding.startByte,
+  endByte: finding.endByte,
+  label: `${finding.code} (${finding.severity})`,
+}))))
+const textFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'text' && file.path !== props.inspection?.primary_path) ?? [])
+const selectableFiles = computed(() => {
+  const primary = primaryFile.value
+  return primary ? [primary, ...textFiles.value] : textFiles.value
+})
+const imageFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'image' && file.path !== props.inspection?.primary_path) ?? [])
+const binaryFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'metadata') ?? [])
+
+watch(() => props.inspection?.revision_digest, () => {
+  selectedDigest.value = primaryFile.value?.content_digest ?? ''
+  loadedContents.value = {}
+  unavailableContents.value = {}
+}, { immediate: true })
+
+watch(selectedDigest, digest => {
+  if (!digest || digest === primaryFile.value?.content_digest) return
+  const file = props.inspection?.files.find(candidate => candidate.content_digest === digest)
+  if (!file || file.inspection_class !== 'text' || loadedContents.value[digest] !== undefined || unavailableContents.value[digest]) return
+  if (!props.loadInspectionFile) {
+    unavailableContents.value = { ...unavailableContents.value, [digest]: true }
+    return
+  }
+  loadingDigest.value = digest
+  void props.loadInspectionFile(file).then(content => {
+    if (typeof content !== 'string') throw new Error('inspection text response was not text')
+    loadedContents.value = { ...loadedContents.value, [digest]: content }
+  }).catch(() => {
+    unavailableContents.value = { ...unavailableContents.value, [digest]: true }
+  }).finally(() => {
+    if (loadingDigest.value === digest) loadingDigest.value = ''
+  })
+})
+
+function inspectionFileURL(digest: string): string {
+  return resourceInspectionFilePath(props.apiBase, props.source, props.kind, props.name, props.resource.content_digest, digest)
+}
 
 function revisionURL(revision: ResourceRevision): string {
   return resourceLocator({
@@ -97,9 +150,19 @@ function isCurrentRevision(revision: ResourceRevision): boolean {
   return revision.content_digest === props.resource.content_digest
 }
 
-function valueFromRecord(record: Record<string, unknown> | undefined, key: string): string {
-  const value = record?.[key]
-  return value === undefined ? '' : formatValue(value)
+function lineColumnByteRange(content: string, line: number | undefined, column: number | undefined): { startByte: number; endByte: number } | undefined {
+  if (line === undefined || line < 1) return undefined
+  const lines = content.split('\n')
+  const lineText = lines[line - 1]
+  if (lineText === undefined) return undefined
+  const prefix = lines.slice(0, line - 1).join('\n') + (line > 1 ? '\n' : '')
+  const characters = [...lineText]
+  const characterIndex = Math.max(0, (column ?? 1) - 1)
+  if (characterIndex > characters.length) return undefined
+  const before = characters.slice(0, characterIndex).join('')
+  const highlighted = characters[characterIndex] ?? ''
+  const startByte = new TextEncoder().encode(prefix + before).length
+  return { startByte, endByte: startByte + new TextEncoder().encode(highlighted).length }
 }
 
 function formatValue(value: unknown): string {
@@ -124,6 +187,7 @@ function formatValue(value: unknown): string {
           <h1 class="mt-1 break-words font-mono text-2xl tracking-tight">
             <span class="text-muted">{{ sourceLabel(listItem) }}/</span><span class="font-medium text-highlighted">{{ name }}</span>
           </h1>
+          <p v-if="resource.description" class="mt-2 text-sm leading-6 text-muted">{{ resource.description }}</p>
         </div>
       </div>
       <span class="inline-flex shrink-0 items-center gap-2 text-sm">
@@ -140,9 +204,13 @@ function formatValue(value: unknown): string {
         <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Content digest</dt>
         <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.content_digest }}</dd>
       </div>
+      <div class="sm:col-span-2">
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Archive digest</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.archive_digest || 'not stored' }}</dd>
+      </div>
       <div>
-        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Acquisition</dt>
-        <dd class="mt-1 font-mono text-sm text-highlighted">{{ acquisition }}</dd>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Source commit</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.occurrence.commit }}</dd>
       </div>
       <div>
         <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">License</dt>
@@ -150,7 +218,23 @@ function formatValue(value: unknown): string {
       </div>
       <div>
         <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Analyzer</dt>
-        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.analyzer_version || 'not recorded' }}</dd>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.assessment.analyzer_version }}</dd>
+      </div>
+      <div>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Assessment digest</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.assessment.assessment_digest }}</dd>
+      </div>
+      <div>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Assessment decision</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.assessment.decision }}</dd>
+      </div>
+      <div>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Policy digest</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.assessment.policy_digest }}</dd>
+      </div>
+      <div>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Assessed at</dt>
+        <dd class="mt-1 font-mono text-sm text-highlighted">{{ resource.assessment.assessed_at }}</dd>
       </div>
     </dl>
 
@@ -162,7 +246,7 @@ function formatValue(value: unknown): string {
 
     <section v-else-if="availability === 'policy-blocked'" role="alert" aria-live="assertive" class="border-b border-default py-6" aria-labelledby="policy-block-heading">
       <h2 id="policy-block-heading" class="text-lg font-semibold text-error">The security policy rejected this revision</h2>
-      <p class="mt-2 text-sm leading-6 text-muted">The analyzer reported findings at reject severity, so this Marketplace kept the revision indexed for inspection and removed its installable artifact. Read the metadata, inspection preview, and findings below. There is nothing to install.</p>
+      <p class="mt-2 text-sm leading-6 text-muted">The authoritative assessment rejected this revision, so this Marketplace keeps it indexed for inspection but blocks its artifact from serving and installation. Read the metadata, inspection preview, and findings below. There is nothing to install.</p>
     </section>
 
     <section v-if="showRevisionHistory" class="border-b border-default py-6" aria-labelledby="revision-history-heading">
@@ -229,27 +313,27 @@ function formatValue(value: unknown): string {
     </section>
 
     <section class="border-b border-default py-6" aria-labelledby="provenance-heading">
-      <h2 id="provenance-heading" class="text-lg font-semibold text-highlighted">Provenance</h2>
-      <dl v-if="provenanceEntries.length" class="mt-4 divide-y divide-default rounded-xl border border-default">
-        <div v-for="([key, value], index) in provenanceEntries" :key="`${key}-${index}`" class="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(8rem,0.35fr)_1fr] sm:gap-4">
+      <h2 id="provenance-heading" class="text-lg font-semibold text-highlighted">Source occurrence</h2>
+      <dl v-if="occurrenceEntries.length" class="mt-4 divide-y divide-default rounded-xl border border-default">
+        <div v-for="([key, value], index) in occurrenceEntries" :key="`${key}-${index}`" class="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(8rem,0.35fr)_1fr] sm:gap-4">
           <dt class="break-words text-sm font-medium text-muted">{{ key }}</dt>
           <dd class="break-words text-sm text-highlighted">{{ formatValue(value) }}</dd>
         </div>
       </dl>
-      <p v-else class="mt-3 text-sm text-muted">No provenance metadata was provided.</p>
+      <p v-else class="mt-3 text-sm text-muted">No source occurrence metadata was provided.</p>
     </section>
 
     <section class="border-b border-default py-6" aria-labelledby="findings-heading">
       <h2 id="findings-heading" class="text-lg font-semibold text-highlighted">Security findings</h2>
-      <p v-if="findings.length" class="mt-2 text-sm leading-6 text-muted">Every finding the analyzer reported for this revision, listed once. The revision record and the inspection manifest report the same analyzer run.</p>
+      <p v-if="findings.length" class="mt-2 text-sm leading-6 text-muted">Every finding reported by this revision's assessment.</p>
       <ul v-if="findings.length" class="mt-4 space-y-3" aria-label="Security findings">
-        <li v-for="finding in findings" :id="`finding-${finding.index}`" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
+        <li v-for="finding in displayFindings" :id="`finding-${finding.index}`" :key="finding.index" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-highlighted">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span class="font-semibold">{{ finding.code }}</span>
             <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
             <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
           </div>
-          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}:{{ finding.startByte ?? 0 }}-{{ finding.endByte ?? finding.startByte ?? 0 }}</p>
+          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}<template v-if="finding.startByte !== undefined">:{{ finding.startByte }}-{{ finding.endByte ?? finding.startByte }}</template><template v-else-if="finding.line !== undefined">:{{ finding.line }}<template v-if="finding.column !== undefined">:{{ finding.column }}</template></template></p>
           <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
           <a v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" :href="`#finding-highlight-${finding.index}`" class="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">View highlighted range</a>
         </li>

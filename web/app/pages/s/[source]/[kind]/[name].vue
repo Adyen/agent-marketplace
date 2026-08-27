@@ -17,6 +17,7 @@ if (!isResourceKind(kindValue)) throw createError({ statusCode: 404, statusMessa
 const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
+const { data: sourceRecord } = await useAsyncData(`marketplace-source:${source}`, () => api.getSource(source))
 const { data: resource, pending, error, refresh } = await useAsyncData(
   resourceAsyncDataKey(source, kind, name),
   () => api.getResource(source, kind, name),
@@ -79,7 +80,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :acquisition="sourceRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

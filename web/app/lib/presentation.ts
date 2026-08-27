@@ -123,56 +123,30 @@ export type FindingDetails = {
   path: string
   startByte?: number
   endByte?: number
+  line?: number
+  column?: number
 }
 
-/** Severity the analyzer reports when its policy rejects a revision. */
-const REJECT_SEVERITY = 'reject'
-
-/**
- * Normalize the analyzer findings carried by a revision or an inspection
- * manifest. Findings are unvalidated remote data, so every field is coerced to
- * a bounded, renderable shape.
- */
+/** Normalize the findings from the revision's authoritative assessment. */
 export function findingDetails(value: unknown, index: number): FindingDetails {
   const record = isRecord(value) ? value : {}
+  const location = isRecord(record.location) ? record.location : {}
   return {
     index,
     code: stringField(record.code) || 'Unspecified finding',
     severity: stringField(record.severity) || 'Unspecified',
     policy: stringField(record.policy),
     message: stringField(record.message),
-    path: stringField(record.path),
-    startByte: nonNegativeInteger(record.start_byte),
-    endByte: nonNegativeInteger(record.end_byte),
+    path: stringField(location.path),
+    startByte: nonNegativeInteger(location.start_byte),
+    endByte: nonNegativeInteger(location.end_byte),
+    line: nonNegativeInteger(location.line),
+    column: nonNegativeInteger(location.column),
   }
 }
 
-/**
- * Normalize several finding arrays into one list, dropping repeats. The
- * revision record and the inspection manifest project the same analyzer run:
- * the manifest adds a file path and byte range, the revision record does not.
- * Rendering both verbatim shows the reader the same warning twice with no way
- * to tell the copies apart, so an unlocated finding is dropped when the same
- * code, severity, policy, and message is already listed with a location. Pass
- * the located group first. Indexes are assigned over the merged list so they
- * stay usable as element identifiers.
- */
-export function mergeFindings(...groups: Array<readonly unknown[] | undefined>): FindingDetails[] {
-  const seenExact = new Set<string>()
-  const seenIdentity = new Set<string>()
-  const merged: FindingDetails[] = []
-  for (const group of groups) {
-    for (const value of group ?? []) {
-      const finding = findingDetails(value, merged.length)
-      const identity = [finding.code, finding.severity, finding.policy, finding.message].join('\u0000')
-      const exact = [identity, finding.path, finding.startByte, finding.endByte].join('\u0000')
-      if (seenExact.has(exact) || (finding.path === '' && seenIdentity.has(identity))) continue
-      seenExact.add(exact)
-      seenIdentity.add(identity)
-      merged.push(finding)
-    }
-  }
-  return merged
+export function assessmentFindings(findings: readonly unknown[] | undefined): FindingDetails[] {
+  return (findings ?? []).map(findingDetails)
 }
 
 export type ResourceAvailability = 'available' | 'revoked' | 'policy-blocked' | 'no-artifact'
@@ -204,7 +178,7 @@ export const RESOURCE_AVAILABILITY: Record<ResourceAvailability, ResourceAvailab
     label: 'Blocked by policy',
     color: 'error',
     installable: false,
-    installNotice: 'Installation is disabled because the security policy rejected this revision and removed its artifact. Metadata and inspection remain available.',
+    installNotice: 'Installation is disabled because the current assessment rejects this revision and blocks its artifact from serving. Metadata and inspection remain available.',
   },
   'no-artifact': {
     label: 'No installable artifact',
@@ -214,34 +188,28 @@ export const RESOURCE_AVAILABILITY: Record<ResourceAvailability, ResourceAvailab
   },
 }
 
-type RevisionAvailabilityFields = Pick<ResourceRevision, 'archive_digest' | 'findings' | 'revocation'>
+type RevisionAvailabilityFields = Pick<ResourceRevision, 'archive_digest' | 'assessment' | 'revocation'>
 
 /** True when the Marketplace has marked this exact revision as revoked. */
 export function isRevoked(revision: Pick<ResourceRevision, 'revocation'>): boolean {
   return Boolean(revision.revocation && Object.keys(revision.revocation).length)
 }
 
-/** True when the analyzer reported at least one reject-severity finding. */
-export function hasRejectFinding(findings: readonly unknown[] | undefined): boolean {
-  return mergeFindings(findings).some(finding => finding.severity.toLowerCase() === REJECT_SEVERITY)
-}
-
 /**
- * Derive what a revision's install status actually is. Revocation, a
- * reject-severity finding, and a missing artifact each make a revision
- * uninstallable; only a revision with none of them may be called available.
- * Every state stays fully browsable and inspectable.
+ * Derive installability from the authoritative assessment decision, operator
+ * revocation, and artifact presence. Finding severities are presentation data;
+ * they never override the assessment decision.
  */
-export function resourceAvailability(revision: RevisionAvailabilityFields): ResourceAvailability {
+export function resourceAvailability(revision: RevisionAvailabilityFields, acquisition?: string, kind?: ResourceKind): ResourceAvailability {
   if (isRevoked(revision)) return 'revoked'
-  if (hasRejectFinding(revision.findings)) return 'policy-blocked'
-  if (!revision.archive_digest) return 'no-artifact'
+  if (revision.assessment.decision === 'reject') return 'policy-blocked'
+  if (!revision.archive_digest && acquisition !== 'index-only' && kind !== 'collection') return 'no-artifact'
   return 'available'
 }
 
 /** Badge and gating copy for a revision's derived install status. */
-export function resourceAvailabilityCopy(revision: RevisionAvailabilityFields): ResourceAvailabilityCopy {
-  return RESOURCE_AVAILABILITY[resourceAvailability(revision)]
+export function resourceAvailabilityCopy(revision: RevisionAvailabilityFields, acquisition?: string, kind?: ResourceKind): ResourceAvailabilityCopy {
+  return RESOURCE_AVAILABILITY[resourceAvailability(revision, acquisition, kind)]
 }
 
 /**

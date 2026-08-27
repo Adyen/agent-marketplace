@@ -15,16 +15,17 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
-			ContentDigest: store.RevisionDigest(contentDigest),
-			ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
-		})
+		_ = json.NewEncoder(w).Encode(revision)
 	}))
 	defer server.Close()
 

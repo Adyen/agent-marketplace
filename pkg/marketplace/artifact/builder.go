@@ -38,8 +38,8 @@ type BuildResult struct {
 }
 
 // BuildResourceArtifact analyzes a resource, extracts capabilities, and produces a
-// canonical tar.gz artifact. If the analyzer rejects the resource, no artifact
-// or raw archive is emitted.
+// canonical tar.gz artifact. Analyzer findings and policy decisions are returned
+// alongside, but are not embedded in or allowed to suppress the intrinsic archive.
 func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.FileSet, opts analyze.Options) (BuildResult, error) {
 	if r == nil {
 		return BuildResult{}, fmt.Errorf("nil resource")
@@ -59,28 +59,10 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		return BuildResult{}, fmt.Errorf("analyze: %w", err)
 	}
 
-	if report.Rejected {
-		return BuildResult{
-			Name:          base.Manifest.Name,
-			Kind:          base.Manifest.Kind,
-			License:       opts.Source.License,
-			Description:   description,
-			ContentDigest: base.Manifest.ContentDigest,
-			Findings:      report.Findings,
-			Capabilities:  caps,
-			Rejected:      true,
-			RejectReason:  "policy rejected one or more findings",
-		}, nil
-	}
-
-	base.Manifest.AnalyzerVersion = analyzerVersion(opts)
+	// Only properties derived from the resource belong in the canonical archive.
+	// Analyzer output, policy decisions, and source occurrence metadata are stored
+	// separately by Marketplace so re-analysis cannot change resource identity.
 	base.Manifest.Capabilities = caps
-	base.Manifest.Findings = ToCanonicalFindings(report.Findings)
-	base.Manifest.License = opts.Source.License
-	base.Manifest.Provenance = provenanceFromSource(opts)
-	base.Manifest.Revision = opts.Source.Ref
-	base.Manifest.SourceID = opts.Source.ID
-	base.Manifest.SourceSlug = opts.Source.Slug
 
 	raw, digest, err := hccartifact.Encode(base)
 	if err != nil {
@@ -99,11 +81,15 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		return BuildResult{}, fmt.Errorf("revision digest: %w", err)
 	}
 
+	rejectReason := ""
+	if report.Rejected {
+		rejectReason = "policy rejected one or more findings"
+	}
 	return BuildResult{
 		Artifact:       artifact,
 		Name:           artifact.Manifest.Name,
 		Kind:           artifact.Manifest.Kind,
-		License:        base.Manifest.License,
+		License:        opts.Source.License,
 		Description:    description,
 		RawArchive:     raw,
 		ContentDigest:  base.Manifest.ContentDigest,
@@ -111,7 +97,8 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		RevisionDigest: revisionDigest,
 		Findings:       report.Findings,
 		Capabilities:   caps,
-		Rejected:       false,
+		Rejected:       report.Rejected,
+		RejectReason:   rejectReason,
 	}, nil
 }
 
@@ -133,28 +120,20 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	caps := ExtractCapabilities(c)
 	description := ExtractDescription(c)
 
-	if report.Rejected {
-		return BuildResult{
-			Description:  description,
-			Findings:     report.Findings,
-			Capabilities: caps,
-			Rejected:     true,
-			RejectReason: "policy rejected one or more collection findings",
-		}, nil
-	}
-
 	manifest, err := hccartifact.CollectionFromIR(c)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("collection from IR: %w", err)
 	}
-	manifest.Provenance = provenanceFromSource(opts)
 	if manifest.SupportedSchemas == nil {
 		manifest.SupportedSchemas = []string{hccartifact.CollectionSchemaV1}
 	}
 	seenMemberRevisions := make(map[string]string, len(memberResults))
+	findings := append([]analyze.Finding(nil), report.Findings...)
+	rejected := report.Rejected
 	for _, member := range memberResults {
 		if member.Rejected {
-			return BuildResult{}, fmt.Errorf("collection member %s/%q is rejected and has no publishable leaf artifact", member.Kind, member.Name)
+			rejected = true
+			findings = append(findings, member.Findings...)
 		}
 		kind := member.Kind
 		if kind == "" {
@@ -188,13 +167,8 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 			ArtifactVersion:  hccartifact.CanonicalArtifactSchemaV1,
 			Kind:             "collection",
 			Name:             c.Name(),
-			Revision:         opts.Source.Ref,
 			ContentDigest:    manifestDigest,
-			License:          opts.Source.License,
-			AnalyzerVersion:  analyzerVersion(opts),
 			Capabilities:     caps,
-			Findings:         ToCanonicalFindings(report.Findings),
-			Provenance:       provenanceFromSource(opts),
 			SupportedSchemas: []string{hccartifact.CanonicalArtifactSchemaV1},
 		},
 		Payload: payload,
@@ -204,7 +178,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 	if len(memberResults) > 0 {
 		revManifest := SourceRevisionManifest{
 			SchemaVersion: SourceRevisionSchemaV1,
-			Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
+			Generator:     SourceRevisionGeneratorV1,
 		}
 		for _, mr := range memberResults {
 			kind := mr.Kind
@@ -220,7 +194,6 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 				Name:          name,
 				ContentDigest: mr.ContentDigest,
 				ArchiveDigest: mr.ArchiveDigest,
-				Rejected:      mr.Rejected,
 			})
 		}
 		_, digest, err := EncodeSourceRevisionManifest(revManifest)
@@ -230,51 +203,39 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		revisionDigest = digest
 	}
 
+	rejectReason := ""
+	if rejected {
+		rejectReason = "policy rejected the collection or one of its members"
+	}
 	return BuildResult{
 		Artifact:        artifact,
 		Name:            c.Name(),
 		Kind:            "collection",
-		License:         artifact.Manifest.License,
+		License:         opts.Source.License,
 		Description:     description,
 		ManifestPayload: payload,
 		ManifestDigest:  manifestDigest,
 		ContentDigest:   manifestDigest,
 		RevisionDigest:  revisionDigest,
-		Findings:        report.Findings,
+		Findings:        findings,
 		Capabilities:    caps,
-		Rejected:        false,
+		Rejected:        rejected,
+		RejectReason:    rejectReason,
 	}, nil
 }
 
-func analyzerVersion(opts analyze.Options) string {
-	if opts.Version != "" {
-		return opts.Version
-	}
-	return analyze.AnalyzerVersionV1
-}
-
-func provenanceFromSource(opts analyze.Options) hccartifact.CanonicalProvenance {
-	return hccartifact.CanonicalProvenance{
-		RegistryURL: opts.Source.RegistryURL,
-		Ref:         opts.Source.Ref,
-		Path:        opts.Source.Path,
-		Generator:   fmt.Sprintf("agent-marketplace artifact v%s", analyzerVersion(opts)),
-	}
-}
-
-func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, opts analyze.Options) (string, error) {
+func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, _ analyze.Options) (string, error) {
 	if r == nil {
 		return "", nil
 	}
 	rev := SourceRevisionManifest{
 		SchemaVersion: SourceRevisionSchemaV1,
-		Generator:     fmt.Sprintf("agent-marketplace source-revision v%s", analyzerVersion(opts)),
+		Generator:     SourceRevisionGeneratorV1,
 		Resources: []RevisionResource{{
 			Kind:          r.Kind().String(),
 			Name:          r.Name(),
 			ContentDigest: contentDigest,
 			ArchiveDigest: archiveDigest,
-			Rejected:      false,
 		}},
 	}
 	_, digest, err := EncodeSourceRevisionManifest(rev)

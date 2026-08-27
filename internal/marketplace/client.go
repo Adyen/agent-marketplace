@@ -250,18 +250,18 @@ func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, st
 }
 
 // GetResourceRevision fetches a specific revision of a resource.
-func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.ResourceRevision, error) {
+func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.AssessedResourceRevision, error) {
 	return c.getResourceRevision(ctx, source, source, kind, name, revision)
 }
 
 // GetResourceRevisionForSource keeps a slug in the route while validating the
 // immutable Source ID returned by the Marketplace.
-func (c *Client) GetResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name, revision string) (store.ResourceRevision, error) {
+func (c *Client) GetResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name, revision string) (store.AssessedResourceRevision, error) {
 	return c.getResourceRevision(ctx, routeSource, sourceID, kind, name, revision)
 }
 
-func (c *Client) getResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name, revision string) (store.ResourceRevision, error) {
-	var rev store.ResourceRevision
+func (c *Client) getResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name, revision string) (store.AssessedResourceRevision, error) {
+	var rev store.AssessedResourceRevision
 	if err := validateSHA256Digest(revision); err != nil {
 		return rev, fmt.Errorf("revision digest %q: %w", revision, err)
 	}
@@ -302,22 +302,22 @@ func (c *Client) GetResourceInspectionFile(ctx context.Context, source, kind, na
 	return c.getResourceInspectionContent(ctx, source, kind, name, revision, fileDigest)
 }
 
-func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, store.ResourceRevision, error) {
+func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, store.AssessedResourceRevision, error) {
 	var manifest inspection.Manifest
 	if !mpapi.IsMarketplaceKind(kind) {
-		return manifest, store.ResourceRevision{}, fmt.Errorf("inspection kind %q is invalid", kind)
+		return manifest, store.AssessedResourceRevision{}, fmt.Errorf("inspection kind %q is invalid", kind)
 	}
 	if strings.TrimSpace(source) == "" || strings.TrimSpace(name) == "" {
-		return manifest, store.ResourceRevision{}, fmt.Errorf("inspection coordinate is incomplete")
+		return manifest, store.AssessedResourceRevision{}, fmt.Errorf("inspection coordinate is incomplete")
 	}
 	rev, err := c.getResourceRevision(ctx, source, "", kind, name, revision)
 	if err != nil {
 		return manifest, rev, err
 	}
-	if rev.Provenance == nil || rev.Provenance.InspectionManifestDigest == "" {
-		return manifest, rev, fmt.Errorf("resource revision has no inspection manifest provenance")
+	if rev.Assessment.InspectionManifestDigest == "" {
+		return manifest, rev, fmt.Errorf("resource revision has no inspection manifest assessment")
 	}
-	manifestDigest := string(rev.Provenance.InspectionManifestDigest)
+	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
 	if err := validateSHA256Digest(manifestDigest); err != nil {
 		return manifest, rev, fmt.Errorf("inspection manifest provenance: %w", err)
 	}
@@ -384,18 +384,18 @@ func (c *Client) getResourceInspectionContent(ctx context.Context, source, kind,
 }
 
 // GetLatestResourceRevision fetches the latest revision of a resource.
-func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.ResourceRevision, error) {
+func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.AssessedResourceRevision, error) {
 	return c.getLatestResourceRevision(ctx, source, source, kind, name)
 }
 
 // GetLatestResourceRevisionForSource keeps a slug in the route while validating
 // the immutable Source ID returned by the Marketplace.
-func (c *Client) GetLatestResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name string) (store.ResourceRevision, error) {
+func (c *Client) GetLatestResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name string) (store.AssessedResourceRevision, error) {
 	return c.getLatestResourceRevision(ctx, routeSource, sourceID, kind, name)
 }
 
-func (c *Client) getLatestResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name string) (store.ResourceRevision, error) {
-	var rev store.ResourceRevision
+func (c *Client) getLatestResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name string) (store.AssessedResourceRevision, error) {
+	var rev store.AssessedResourceRevision
 	segments := []string{"api", "v1", "resources", routeSource, kind, name}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
@@ -704,8 +704,13 @@ func validateAPIExactSourceOccurrence(occ mpapi.ExactSourceOccurrence, source st
 	if occ.Commit != commit || !mpapi.IsCanonicalGitCommit(occ.Commit) {
 		return fmt.Errorf("occurrence commit is not the requested full commit")
 	}
-	if strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.AcquisitionOrigin) == "" || occ.OccurredAt.IsZero() {
+	if strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.AcquisitionOrigin) == "" || len(occ.Roots) == 0 || occ.OccurredAt.IsZero() {
 		return fmt.Errorf("source occurrence fields are incomplete")
+	}
+	for i, root := range occ.Roots {
+		if strings.TrimSpace(root.Path) == "" {
+			return fmt.Errorf("source occurrence root %d is incomplete", i)
+		}
 	}
 	if err := validateSHA256Digest(string(occ.SourceRevisionManifestDigest)); err != nil {
 		return fmt.Errorf("source manifest digest: %w", err)
@@ -818,7 +823,7 @@ func validateAPISource(src mpapi.PublicSource) error {
 	return nil
 }
 
-func validateAPIResourceRevision(rev store.ResourceRevision) error {
+func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Source)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return fmt.Errorf("resource coordinate is incomplete")
@@ -837,20 +842,25 @@ func validateAPIResourceRevision(rev store.ResourceRevision) error {
 			return fmt.Errorf("archive digest: %w", err)
 		}
 	}
-	if rev.Provenance != nil {
-		if rev.Provenance.Commit != "" && !mpapi.IsCanonicalGitCommit(rev.Provenance.Commit) {
-			return fmt.Errorf("provenance commit is not canonical")
-		}
-		if rev.Provenance.ManifestDigest != "" {
-			if err := validateSHA256Digest(string(rev.Provenance.ManifestDigest)); err != nil {
-				return fmt.Errorf("provenance manifest digest: %w", err)
-			}
-		}
+	if err := rev.Assessment.Validate(); err != nil {
+		return fmt.Errorf("assessment: %w", err)
+	}
+	if rev.Assessment.Coordinate != rev.Coordinate || rev.Assessment.ContentDigest != rev.ContentDigest {
+		return fmt.Errorf("assessment identity does not match resource revision")
+	}
+	if rev.Occurrence.Coordinate != rev.Coordinate || rev.Occurrence.ContentDigest != rev.ContentDigest {
+		return fmt.Errorf("occurrence identity does not match resource revision")
+	}
+	if !mpapi.IsCanonicalGitCommit(rev.Occurrence.Commit) {
+		return fmt.Errorf("occurrence commit is not canonical")
+	}
+	if err := validateSHA256Digest(string(rev.Occurrence.ManifestDigest)); err != nil {
+		return fmt.Errorf("occurrence manifest digest: %w", err)
 	}
 	return nil
 }
 
-func validateAPIResourceRevisionMatches(rev store.ResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest) error {
+func validateAPIResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest) error {
 	if err := validateAPIResourceRevision(rev); err != nil {
 		return err
 	}

@@ -110,6 +110,7 @@ export function normalizeSourceOccurrence(input: unknown, label = 'source occurr
   return {
     source_id: requiredString(object.source_id, `${label}.source_id`),
     ref: requiredString(object.ref, `${label}.ref`),
+    roots: requiredArray(object.roots, `${label}.roots`).map((root, index) => normalizeSourceRoot(root, `${label}.roots[${index}]`)),
     commit: requiredCommit(object.commit, `${label}.commit`),
     source_revision_manifest_digest: requiredDigest(object.source_revision_manifest_digest, `${label}.source_revision_manifest_digest`),
     acquisition: requiredAcquisition(object.acquisition, `${label}.acquisition`),
@@ -180,32 +181,107 @@ export type ExpectedResourceCoordinate = {
 
 export function normalizeResourceRevision(input: unknown, expected?: ExpectedResourceCoordinate): ResourceRevision {
   const object = asObject(input, 'resource revision')
-  const coordinate = stringRecord(object.coordinate, 'coordinate')
-  for (const field of ['marketplace', 'source', 'name']) {
-    requiredString(coordinate[field], `coordinate.${field}`)
+  for (const legacyField of ['analyzer_version', 'findings', 'provenance', 'acquisition']) {
+    if (object[legacyField] !== undefined) throw new ApiValidationError(`${legacyField} is unsupported; use assessment or occurrence`)
   }
-  const coordinateKind = requiredString(coordinate.kind, 'coordinate.kind')
-  if (!isResourceKind(coordinateKind)) throw new ApiValidationError('coordinate.kind is unsupported')
+  const coordinate = normalizeResourceCoordinate(object.coordinate, 'coordinate')
   const digest = requiredDigest(object.content_digest, 'content_digest')
   if (expected?.contentDigest !== undefined && digest !== expected.contentDigest) {
     throw new ApiValidationError(`content_digest does not match requested digest ${expected.contentDigest}`)
   }
   validateRequestedCoordinate(coordinate, expected)
+
+  const assessmentObject = asObject(object.assessment, 'assessment')
+  const assessmentCoordinate = normalizeMatchingCoordinate(assessmentObject.coordinate, coordinate, 'assessment.coordinate')
+  const assessmentContentDigest = matchingDigest(assessmentObject.content_digest, digest, 'assessment.content_digest')
+  const decision = requiredString(assessmentObject.decision, 'assessment.decision')
+  if (!['allow', 'warn', 'reject'].includes(decision)) throw new ApiValidationError('assessment.decision is unsupported')
+  const findings = assessmentObject.findings === undefined ? undefined : boundedArray(assessmentObject.findings, 'assessment.findings').map((value, index) => {
+    const finding = asObject(value, `assessment.findings[${index}]`)
+    const locationObject = finding.location === undefined ? undefined : asObject(finding.location, `assessment.findings[${index}].location`)
+    const startByte = locationObject?.start_byte === undefined ? undefined : boundedInteger(locationObject.start_byte, `assessment.findings[${index}].location.start_byte`)
+    const endByte = locationObject?.end_byte === undefined ? undefined : boundedInteger(locationObject.end_byte, `assessment.findings[${index}].location.end_byte`)
+    if (startByte !== undefined && endByte !== undefined && startByte > endByte) throw new ApiValidationError(`assessment.findings[${index}].location has an inverted byte range`)
+    const location = locationObject === undefined ? undefined : {
+      path: requiredString(locationObject.path, `assessment.findings[${index}].location.path`),
+      ...(locationObject.line === undefined ? {} : { line: boundedInteger(locationObject.line, `assessment.findings[${index}].location.line`) }),
+      ...(locationObject.column === undefined ? {} : { column: boundedInteger(locationObject.column, `assessment.findings[${index}].location.column`) }),
+      ...(startByte === undefined ? {} : { start_byte: startByte }),
+      ...(endByte === undefined ? {} : { end_byte: endByte }),
+    }
+    return {
+      code: requiredString(finding.code, `assessment.findings[${index}].code`),
+      severity: requiredString(finding.severity, `assessment.findings[${index}].severity`),
+      ...optionalString(finding, 'policy'),
+      ...optionalString(finding, 'message'),
+      ...(location === undefined ? {} : { location }),
+    }
+  })
+  const assessment: ResourceRevision['assessment'] = {
+    coordinate: assessmentCoordinate,
+    content_digest: assessmentContentDigest,
+    assessment_digest: requiredDigest(assessmentObject.assessment_digest, 'assessment.assessment_digest'),
+    analyzer_version: requiredString(assessmentObject.analyzer_version, 'assessment.analyzer_version'),
+    policy_digest: requiredDigest(assessmentObject.policy_digest, 'assessment.policy_digest'),
+    decision: decision as ResourceRevision['assessment']['decision'],
+    ...(findings === undefined ? {} : { findings }),
+    inspection_manifest_digest: requiredDigest(assessmentObject.inspection_manifest_digest, 'assessment.inspection_manifest_digest'),
+    assessed_at: dateTimeString(assessmentObject.assessed_at, 'assessment.assessed_at'),
+  }
+
+  const occurrenceObject = asObject(object.occurrence, 'occurrence')
+  const occurrence: ResourceRevision['occurrence'] = {
+    coordinate: normalizeMatchingCoordinate(occurrenceObject.coordinate, coordinate, 'occurrence.coordinate'),
+    content_digest: matchingDigest(occurrenceObject.content_digest, digest, 'occurrence.content_digest'),
+    commit: requiredCommit(occurrenceObject.commit, 'occurrence.commit'),
+    manifest_digest: requiredDigest(occurrenceObject.manifest_digest, 'occurrence.manifest_digest'),
+  }
+
+  const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
+  const revocationKind = revocationObject === undefined ? undefined : requiredString(revocationObject.kind, 'revocation.kind')
+  if (revocationKind !== undefined && !['source', 'coordinate', 'revision'].includes(revocationKind)) throw new ApiValidationError('revocation.kind is unsupported')
   return {
     coordinate,
     content_digest: digest,
     ...(object.archive_digest === undefined ? {} : { archive_digest: requiredDigest(object.archive_digest, 'archive_digest') }),
-    ...optionalString(object, 'analyzer_version'),
     ...optionalString(object, 'license'),
-    ...optionalAcquisition(object),
-    findings: boundedUnknownArray(object.findings, 'findings'),
-    provenance: boundedUnknownRecord(object.provenance, 'provenance'),
-    revocation: boundedUnknownRecord(object.revocation, 'revocation'),
+    ...optionalString(object, 'description'),
+    assessment,
+    occurrence,
+    ...(revocationObject === undefined ? {} : { revocation: {
+      kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],
+      target_id: requiredString(revocationObject.target_id, 'revocation.target_id'),
+      reason: requiredString(revocationObject.reason, 'revocation.reason'),
+      applied_at: dateTimeString(revocationObject.applied_at, 'revocation.applied_at'),
+    } }),
   }
+}
+
+function normalizeResourceCoordinate(input: unknown, label: string): ResourceRevision['coordinate'] {
+  const coordinate = stringRecord(input, label)
+  for (const field of ['marketplace', 'source', 'name']) requiredString(coordinate[field], `${label}.${field}`)
+  const kind = requiredString(coordinate.kind, `${label}.kind`)
+  if (!isResourceKind(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
+  return { marketplace: coordinate.marketplace!, source: coordinate.source!, kind, name: coordinate.name! }
+}
+
+function normalizeMatchingCoordinate(input: unknown, expected: ResourceRevision['coordinate'], label: string): ResourceRevision['coordinate'] {
+  const coordinate = normalizeResourceCoordinate(input, label)
+  for (const field of ['marketplace', 'source', 'kind', 'name'] as const) {
+    if (coordinate[field] !== expected[field]) throw new ApiValidationError(`${label}.${field} does not match resource coordinate`)
+  }
+  return coordinate
+}
+
+function matchingDigest(input: unknown, expected: string, label: string): string {
+  const digest = requiredDigest(input, label)
+  if (digest !== expected) throw new ApiValidationError(`${label} does not match content_digest`)
+  return digest
 }
 
 export function normalizeInspectionManifest(input: unknown, expected?: ExpectedResourceCoordinate): InspectionManifest {
   const object = asObject(input, 'inspection manifest')
+  if (object.findings !== undefined) throw new ApiValidationError('inspection manifest findings are unsupported; use assessment findings')
   if (requiredString(object.schema_version, 'schema_version') !== 'v1') throw new ApiValidationError('unsupported inspection schema')
   const coordinate = stringRecord(object.coordinate, 'coordinate') as InspectionManifest['coordinate']
   for (const [field, value] of Object.entries(coordinate)) requiredString(value, `coordinate.${field}`)
@@ -242,31 +318,7 @@ export function normalizeInspectionManifest(input: unknown, expected?: ExpectedR
     }
   })
   if (!seenPaths.has(primaryPath)) throw new ApiValidationError('inspection primary file is missing')
-  const rawFindings = object.findings
-  const findings = rawFindings === undefined ? undefined : boundedUnknownArray(rawFindings!, 'findings')!.map((value, index) => {
-    const finding = asObject(value, `findings[${index}]`)
-    const start = finding.start_byte === undefined ? undefined : boundedInteger(finding.start_byte, `findings[${index}].start_byte`)
-    const end = finding.end_byte === undefined ? undefined : boundedInteger(finding.end_byte, `findings[${index}].end_byte`)
-    if (start !== undefined && end !== undefined && start > end) throw new ApiValidationError(`findings[${index}] has an inverted byte range`)
-    const findingPath = requiredString(finding.path, `findings[${index}].path`)
-    if (!seenPaths.has(findingPath)) throw new ApiValidationError(`findings[${index}] references an unknown path`)
-    if ((start === undefined) !== (end === undefined)) throw new ApiValidationError(`findings[${index}] must include both range endpoints`)
-    const file = files.find(candidate => candidate.path === findingPath)
-    if (file && end !== undefined && end > file.size) throw new ApiValidationError(`findings[${index}] range exceeds file size`)
-    return {
-      code: requiredString(finding.code, `findings[${index}].code`),
-      severity: requiredString(finding.severity, `findings[${index}].severity`),
-      ...(finding.policy === undefined ? {} : { policy: boundedString(finding.policy, `findings[${index}].policy`) }),
-      ...(finding.message === undefined ? {} : { message: boundedString(finding.message, `findings[${index}].message`) }),
-      path: findingPath,
-      ...(start === undefined ? {} : { start_byte: start }),
-      ...(end === undefined ? {} : { end_byte: end }),
-    }
-  })
-  return {
-    schema_version: 'v1', coordinate, revision_digest: revision, primary_path: primaryPath, files,
-    ...(findings === undefined ? {} : { findings }),
-  }
+  return { schema_version: 'v1', coordinate, revision_digest: revision, primary_path: primaryPath, files }
 }
 
 function inspectionPrimaryPath(kind: ResourceKind): InspectionManifest['primary_path'] {
@@ -397,11 +449,6 @@ function optionalString(object: Record<string, unknown>, key: string): Record<st
   return object[key] === undefined ? {} : { [key]: boundedString(object[key], key) }
 }
 
-function optionalAcquisition(object: Record<string, unknown>): Record<string, Source['acquisition']> {
-  if (object.acquisition === undefined) return {}
-  return { acquisition: requiredAcquisition(object.acquisition, 'acquisition') }
-}
-
 function stringArray(value: unknown, label: string): string[] {
   return boundedArray(value, label).map((item, index) => boundedString(item, `${label}[${index}]`))
 }
@@ -434,11 +481,6 @@ function requiredEnumArray<const Value extends string>(value: unknown, label: st
 function boundedArray(value: unknown, label: string, maxLength = MAX_ARRAY_LENGTH): unknown[] {
   if (!Array.isArray(value) || value.length > maxLength) throw new ApiValidationError(`${label} must be a bounded array of at most ${maxLength} entries`)
   return value
-}
-
-function boundedUnknownArray(value: unknown, label: string): unknown[] | undefined {
-  if (value === undefined) return undefined
-  return boundedArray(value, label).map((item, index) => boundedUnknown(item, `${label}[${index}]`))
 }
 
 function stringRecord(value: unknown, label: string): Record<string, string> {

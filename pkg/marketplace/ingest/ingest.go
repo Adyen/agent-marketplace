@@ -4,6 +4,8 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
@@ -33,12 +36,14 @@ import (
 
 // Revision is the result of ingesting a single source commit.
 type Revision struct {
-	Occurrence      store.SourceOccurrence
-	Resources       []store.ResourceRevision
-	ExtraBlobs      []store.BlobUpload
-	InspectionBlobs []store.BlobUpload
-	ManifestPayload []byte
-	ManifestDigest  store.RevisionDigest
+	Occurrence          store.SourceOccurrence
+	Resources           []store.ResourceRevision
+	ResourceOccurrences []store.ResourceOccurrence
+	Assessments         []store.ResourceAssessment
+	ExtraBlobs          []store.BlobUpload
+	InspectionBlobs     []store.BlobUpload
+	ManifestPayload     []byte
+	ManifestDigest      store.RevisionDigest
 	// CollectionManifests contains standalone canonical collection manifests.
 	// They are uploaded by the worker under their manifest content digest; the
 	// collection remains virtual and its tar archive is never used for install.
@@ -72,14 +77,20 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	policy := effectivePolicy(cfg, source.PolicyOverrides)
 	limits := effectiveLimits(cfg.Policy.Limits, source.PolicyOverrides)
 	license := effectiveLicensePolicy(cfg.Policy, source.PolicyOverrides)
+	policyDigest, err := resourcePolicyDigest(policy, limits, license)
+	if err != nil {
+		return rev, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, limits.IngestionDuration.Duration())
 	defer cancel()
 
 	type processed struct {
-		entry        catalog.Entry
-		result       artifact.BuildResult
-		supportFiles map[string]string
+		entry             catalog.Entry
+		result            artifact.BuildResult
+		supportFiles      map[string]string
+		inspectionBody    []byte
+		inspectionSupport analyze.FileSet
 	}
 
 	var processedResults []processed
@@ -171,15 +182,16 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			}
 			rawArchive, rawArchiveDigest := r.RawArchive, r.ArchiveDigest
 			r = applyPolicyToResult(r, source.ID, limits, license, source.Acquisition)
-			if source.Acquisition == store.AcquisitionIndexOnly && !r.Rejected && len(rawArchive) > 0 {
+			if source.Acquisition == store.AcquisitionIndexOnly && len(rawArchive) > 0 {
 				resourceArchives[key] = rawArchive
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
 			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
 			primary, projectionSupport := inspectionInput(entry.Resource, r, files)
+			p.inspectionBody, p.inspectionSupport = primary, projectionSupport
 			projection, err := inspection.Build(
 				store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: kind, Name: entry.Name},
-				r.ContentDigest, primary, projectionSupport, r.Findings,
+				r.ContentDigest, primary, projectionSupport,
 				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 			)
 			if err != nil {
@@ -312,9 +324,6 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		if source.Acquisition != store.AcquisitionMirror {
 			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition", name)
 		}
-		if r.Rejected {
-			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q is rejected and has no publishable standalone manifest", name)
-		}
 		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(r.ManifestPayload))
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("decode collection %q manifest: %w", name, err)
@@ -337,7 +346,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		primary, projectionSupport := inspectionInput(entry.Resource, r, nil)
 		projection, err := inspection.Build(
 			store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: "collection", Name: entry.Name},
-			r.ContentDigest, primary, projectionSupport, r.Findings,
+			r.ContentDigest, primary, projectionSupport,
 			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 		)
 		if err != nil {
@@ -366,7 +375,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			}
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
 		}
-		processedResults = append(processedResults, processed{entry: entry, result: r})
+		body, support := inspectionInput(entry.Resource, r, nil)
+		processedResults = append(processedResults, processed{entry: entry, result: r, inspectionBody: body, inspectionSupport: support})
 	}
 
 	// Validate every published collection against the complete set of manifests
@@ -374,7 +384,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	// Leaves list from becoming part of the immutable publication.
 	publishedCollectionManifests := make(map[string]hccartifact.CollectionManifest, len(collectionEntries))
 	for _, p := range processedResults {
-		if p.entry.Kind != hccir.KindCollection || p.result.Rejected {
+		if p.entry.Kind != hccir.KindCollection {
 			continue
 		}
 		collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(p.result.ManifestPayload))
@@ -394,7 +404,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 	var manifest artifact.SourceRevisionManifest
 	manifest.SchemaVersion = artifact.SourceRevisionSchemaV1
-	manifest.Generator = fmt.Sprintf("agent-marketplace source-revision v%s", analyze.AnalyzerVersionV1)
+	manifest.Generator = artifact.SourceRevisionGeneratorV1
 	manifest.Resources = make([]artifact.RevisionResource, 0, len(processedResults))
 
 	for _, p := range processedResults {
@@ -413,7 +423,6 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			ContentDigest: contentDigest,
 			ArchiveDigest: archiveDigest,
 			SupportFiles:  p.supportFiles,
-			Rejected:      p.result.Rejected,
 		})
 	}
 
@@ -425,6 +434,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	occ := store.SourceOccurrence{
 		SourceID:                     source.ID,
 		Ref:                          source.Ref,
+		Roots:                        append([]store.SourceRoot(nil), source.Roots...),
 		Commit:                       commit,
 		SourceRevisionManifestDigest: store.RevisionDigest(digest),
 		Acquisition:                  source.Acquisition,
@@ -432,6 +442,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	}
 
 	var resources []store.ResourceRevision
+	var resourceOccurrences []store.ResourceOccurrence
+	var assessments []store.ResourceAssessment
 	var extraBlobs []store.BlobUpload
 	var collectionManifests []store.BlobUpload
 	var collections []store.CollectionRevision
@@ -451,29 +463,30 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			archiveDigest = ""
 		}
 		rev := store.ResourceRevision{
-			Coordinate:      coord,
-			ContentDigest:   store.RevisionDigest(contentDigest),
-			ArchiveDigest:   store.ArchiveDigest(archiveDigest),
-			AnalyzerVersion: analyze.AnalyzerVersionV1,
-			Findings:        toStoreFindings(p.result.Findings),
-			License:         p.result.License,
-			Description:     p.result.Description,
-			Provenance: &store.Provenance{
-				InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
-				SourceID:                 source.ID,
-				Commit:                   commit,
-				ManifestDigest:           store.RevisionDigest(digest),
-			},
+			Coordinate:    coord,
+			ContentDigest: store.RevisionDigest(contentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+			License:       p.result.License,
+			Description:   p.result.Description,
 		}
-		if p.result.Rejected {
-			rev.ArchiveDigest = ""
-			if kind != "collection" {
-				rev.ContentDigest = store.RevisionDigest(p.result.ContentDigest)
-			}
+		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+			Coordinate:               coord,
+			ContentDigest:            rev.ContentDigest,
+			AnalyzerVersion:          analyze.AnalyzerVersionV1,
+			PolicyDigest:             policyDigest,
+			Decision:                 assessmentDecision(p.result),
+			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport),
+			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
+			AssessedAt:               time.Now().UTC(),
+		})
+		if err != nil {
+			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, p.entry.Name, err)
 		}
 		resources = append(resources, rev)
+		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: store.RevisionDigest(digest)})
+		assessments = append(assessments, assessment)
 
-		if kind == "collection" && !p.result.Rejected {
+		if kind == "collection" {
 			if p.result.ManifestDigest == "" || len(p.result.ManifestPayload) == 0 {
 				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", p.entry.Name)
 			}
@@ -498,7 +511,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			collections = append(collections, store.CollectionRevision{ID: p.result.ManifestDigest, SourceID: source.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest), Members: members})
 		}
 
-		if kind != "collection" && !p.result.Rejected && source.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
+		if kind != "collection" && source.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
 		}
 	}
@@ -506,6 +519,8 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	return Revision{
 		Occurrence:            occ,
 		Resources:             resources,
+		ResourceOccurrences:   resourceOccurrences,
+		Assessments:           assessments,
 		ExtraBlobs:            append(extraBlobs, collectionManifests...),
 		InspectionBlobs:       inspectionBlobs,
 		CollectionManifests:   collectionManifests,
@@ -1043,11 +1058,9 @@ func licenseDecisionAttrs(r artifact.BuildResult, sourceID store.SourceID, lp li
 	}
 }
 
-// rejectOnLicense marks r rejected, strips its installable artifact, records the
-// reason, and logs the decision.
+// rejectOnLicense marks r rejected, records the reason, and logs the decision.
 func rejectOnLicense(r *artifact.BuildResult, sourceID store.SourceID, lp licensePolicy, code, message string) {
 	r.Rejected = true
-	stripArchive(r)
 	r.Findings = append(r.Findings, analyze.Finding{
 		Code:     code,
 		Severity: analyze.OutcomeReject,
@@ -1116,66 +1129,111 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 }
 
 func applyPolicyToResult(r artifact.BuildResult, sourceID store.SourceID, limits config.Limits, license licensePolicy, mode store.AcquisitionMode) artifact.BuildResult {
-	if r.Rejected {
-		stripArchive(&r)
-		return r
+	if !r.Rejected {
+		var stop bool
+		r, stop = applyLicensePolicy(r, sourceID, license)
+		if !stop && limits.ArtifactBytes > 0 && len(r.RawArchive) > int(limits.ArtifactBytes) {
+			artifactSize := len(r.RawArchive)
+			r.Rejected = true
+			r.Findings = append(r.Findings, analyze.Finding{
+				Code:     analyze.PolicyArtifactTooLarge,
+				Severity: analyze.OutcomeReject,
+				Message:  fmt.Sprintf("artifact size %d exceeds limit %d", artifactSize, limits.ArtifactBytes),
+			})
+			slog.Warn("artifact policy decision",
+				"code", analyze.PolicyArtifactTooLarge,
+				"source", sourceID,
+				"kind", r.Kind,
+				"resource", r.Name,
+				"artifact_bytes", artifactSize,
+				"limit_bytes", limits.ArtifactBytes,
+				"outcome", analyze.OutcomeReject,
+			)
+		}
 	}
-
-	r, stop := applyLicensePolicy(r, sourceID, license)
-	if stop {
-		return r
-	}
-
-	if limits.ArtifactBytes > 0 && len(r.RawArchive) > int(limits.ArtifactBytes) {
-		artifactSize := len(r.RawArchive)
-		r.Rejected = true
-		stripArchive(&r)
-		r.Findings = append(r.Findings, analyze.Finding{
-			Code:     analyze.PolicyArtifactTooLarge,
-			Severity: analyze.OutcomeReject,
-			Message:  fmt.Sprintf("artifact size %d exceeds limit %d", artifactSize, limits.ArtifactBytes),
-		})
-		slog.Warn("artifact policy decision",
-			"code", analyze.PolicyArtifactTooLarge,
-			"source", sourceID,
-			"kind", r.Kind,
-			"resource", r.Name,
-			"artifact_bytes", artifactSize,
-			"limit_bytes", limits.ArtifactBytes,
-			"outcome", analyze.OutcomeReject,
-		)
-		return r
-	}
-
 	if mode == store.AcquisitionIndexOnly {
 		stripArchive(&r)
 	}
-
 	return r
 }
 
-func toStoreFindings(findings []analyze.Finding) []store.Finding {
+func assessmentDecision(result artifact.BuildResult) store.AssessmentDecision {
+	if result.Rejected {
+		return store.AssessmentDecisionReject
+	}
+	for _, finding := range result.Findings {
+		if finding.PolicyOutcome == analyze.OutcomeWarn || finding.Severity == analyze.OutcomeWarn {
+			return store.AssessmentDecisionWarn
+		}
+	}
+	return store.AssessmentDecisionAllow
+}
+
+func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license licensePolicy) (store.PolicyDigest, error) {
+	allowlist := append([]string(nil), license.allowlist...)
+	sort.Strings(allowlist)
+	payload, err := json.Marshal(struct {
+		Policy            analyze.Policy `json:"policy"`
+		Limits            config.Limits  `json:"limits"`
+		LicenseAllowlist  []string       `json:"license_allowlist"`
+		LicenseUndeclared string         `json:"license_undeclared"`
+	}{policy, limits, allowlist, license.undeclared})
+	if err != nil {
+		return "", fmt.Errorf("encode assessment policy: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return store.PolicyDigest("sha256:" + hex.EncodeToString(sum[:])), nil
+}
+
+func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte, support analyze.FileSet) []store.Finding {
 	out := make([]store.Finding, 0, len(findings))
 	for _, f := range findings {
-		var sr string
+		finding := store.Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message}
 		if f.SourceRange != nil {
-			sr = f.SourceRange.File
-			if f.SourceRange.Line > 0 {
-				sr = fmt.Sprintf("%s:%d", sr, f.SourceRange.Line)
-				if f.SourceRange.Column > 0 {
-					sr = fmt.Sprintf("%s:%d", sr, f.SourceRange.Column)
+			location := &store.FindingLocation{Path: primaryPath, Line: f.SourceRange.Line, Column: f.SourceRange.Column}
+			file := strings.ReplaceAll(f.SourceRange.File, "\\", "/")
+			content := body
+			if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
+				name := strings.TrimPrefix(file, "support/")
+				if data, ok := support[name]; ok {
+					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
 				}
 			}
+			if f.SourceRange.Line > 0 {
+				start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
+				location.StartByte, location.EndByte = int64(start), int64(end)
+			}
+			finding.Location = location
 		}
-		out = append(out, store.Finding{
-			Code:        f.Code,
-			Severity:    f.Severity,
-			Policy:      f.PolicyOutcome,
-			Message:     f.Message,
-			SourceRange: sr,
-		})
+		out = append(out, finding)
 	}
 	return out
+}
+
+func lineColumnBytes(content []byte, line, column int) (int, int) {
+	if line < 1 {
+		return 0, 0
+	}
+	start := 0
+	for current := 1; current < line; current++ {
+		n := bytes.IndexByte(content[start:], '\n')
+		if n < 0 {
+			return len(content), len(content)
+		}
+		start += n + 1
+	}
+	if column > 1 {
+		for i, current := start, 1; i < len(content) && current < column; current++ {
+			_, size := utf8.DecodeRune(content[i:])
+			i += size
+			start = i
+		}
+	}
+	if start >= len(content) {
+		return start, start
+	}
+	_, size := utf8.DecodeRune(content[start:])
+	return start, start + size
 }
 
 func appendUpload(existing []store.BlobUpload, digest store.ArchiveDigest, data []byte) []store.BlobUpload {

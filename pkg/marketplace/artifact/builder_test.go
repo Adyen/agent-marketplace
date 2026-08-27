@@ -65,8 +65,47 @@ func TestBuildResourceArtifactRejects(t *testing.T) {
 	if !result.Rejected {
 		t.Fatal("expected rejected artifact")
 	}
-	if len(result.RawArchive) > 0 {
-		t.Fatal("rejected artifact should not have raw archive")
+	if len(result.RawArchive) == 0 || result.ArchiveDigest == "" {
+		t.Fatal("rejected resource should still have its intrinsic archive")
+	}
+}
+
+func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
+	s := ir.NewSkill("review", "Review", "Review carefully.", nil, nil, ir.SourceRef{})
+	s.AllowedTools = []string{"read_file"}
+
+	warnOpts := analyze.DefaultOptions()
+	warnOpts.Version = "analyzer-v1"
+	warnOpts.Source = analyze.Source{RegistryURL: "https://example.com/one.git", Ref: "main", Path: "skills/review", ID: "one", Slug: "one", License: "MIT"}
+	warn, err := BuildResourceArtifact(context.Background(), s, nil, warnOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warn.Rejected || len(warn.Findings) == 0 {
+		t.Fatalf("expected accepted resource with findings: rejected=%v findings=%v", warn.Rejected, warn.Findings)
+	}
+
+	rejectOpts := analyze.DefaultOptions()
+	rejectOpts.Version = "analyzer-v2"
+	rejectOpts.Policy = analyze.Policy{Name: "strict", Outcomes: map[string]string{analyze.FindingToolGrant: analyze.OutcomeReject}}
+	rejectOpts.Source = analyze.Source{RegistryURL: "https://example.com/two.git", Ref: "release", Path: "other/review", ID: "two", Slug: "two", License: "Apache-2.0"}
+	rejected, err := BuildResourceArtifact(context.Background(), s, nil, rejectOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rejected.Rejected || len(rejected.Findings) == 0 {
+		t.Fatalf("expected rejected resource with findings: rejected=%v findings=%v", rejected.Rejected, rejected.Findings)
+	}
+
+	if !bytes.Equal(warn.RawArchive, rejected.RawArchive) || warn.ArchiveDigest != rejected.ArchiveDigest {
+		t.Fatalf("analyzer changed intrinsic archive: warn=%q rejected=%q", warn.ArchiveDigest, rejected.ArchiveDigest)
+	}
+	manifest := rejected.Artifact.Manifest
+	if manifest.AnalyzerVersion != "" || len(manifest.Findings) != 0 {
+		t.Fatalf("canonical manifest contains analyzer output: %#v", manifest)
+	}
+	if manifest.SourceID != "" || manifest.SourceSlug != "" || manifest.Revision != "" || manifest.Provenance.RegistryURL != "" || manifest.Provenance.Ref != "" || manifest.Provenance.Path != "" {
+		t.Fatalf("canonical manifest contains occurrence provenance: %#v", manifest)
 	}
 }
 
@@ -115,7 +154,7 @@ func TestBuildCollectionManifestNil(t *testing.T) {
 	}
 }
 
-func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
+func TestBuildCollectionManifestIgnoresMemberAssessment(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
 	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "source-id"}
@@ -146,11 +185,14 @@ func TestBuildCollectionManifestWithRejectedMember(t *testing.T) {
 		{Kind: ir.KindSkill, Name: "bad"},
 	}, nil, nil, ir.SourceRef{})
 
-	_, err = BuildCollectionManifest(ctx, c, []BuildResult{accepted, rejected}, opts)
-	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("no publishable leaf artifact")) {
-		t.Fatalf("expected rejected leaf to be refused by flat collection validation, got %v", err)
+	collection, err := BuildCollectionManifest(ctx, c, []BuildResult{accepted, rejected}, opts)
+	if err != nil {
+		t.Fatalf("BuildCollectionManifest: %v", err)
 	}
-
-	// A rejected leaf cannot be represented by an exact flat collection because
-	// there is no leaf artifact/revision to publish.
+	if !bytes.Contains(collection.ManifestPayload, []byte(`"name":"bad"`)) {
+		t.Fatalf("collection identity omitted assessed member: %s", collection.ManifestPayload)
+	}
+	if !collection.Rejected || len(collection.Findings) == 0 {
+		t.Fatalf("collection assessment did not reflect rejected member: %#v", collection)
+	}
 }

@@ -102,14 +102,13 @@ public:mattpocock-skills/skill/grill-me
 https://marketplace.example/s/mattpocock-skills/skill/grill-me
 ```
 
-A resource revision is immutable canonical content and metadata. It contains:
+A resource revision is immutable canonical content and intrinsic metadata. It contains:
 
 - canonical resource-content digest;
-- analyzer version and security findings;
-- license and provenance metadata;
-- revocation state.
+- analyzer-independent artifact digest;
+- author license and description metadata.
 
-A source occurrence connects one resource revision to an exact source commit, source revision manifest, acquisition mode, and optional mirrored artifact digest. Resource revisions change only when canonical content or metadata changes; source occurrences and source revision history still record every successfully indexed source commit. Artifact blobs deduplicate by digest.
+A resource occurrence connects one resource revision to an exact source occurrence. A source occurrence records the exact commit, source roots, analyzer-independent source revision manifest, acquisition mode, and optional mirrored artifact digest. A separately content-addressed resource assessment records analyzer version, policy identity, findings, inspection projection, and an explicit allow, warn, or reject decision. Reassessment advances a current pointer without changing resource or source-occurrence identity. Active revocation remains separate control-plane state. Artifact blobs deduplicate by digest.
 
 ### Installed name
 
@@ -299,7 +298,7 @@ assets/<contained support files>
 licenses/<applicable license and notice files>
 ```
 
-The versioned manifest records kind, name, Source ID, resource revision, canonical content digest, supported schema version, capability metadata, security findings, license, and source identity provenance. Commit-specific provenance and the artifact digest are stored outside the archive in the source revision manifest and metadata store, avoiding both self-reference and duplicate artifacts for unchanged content across commits.
+The versioned manifest records only intrinsic resource data: kind, name, canonical content digest, supported schema version, and capability metadata. Source occurrence metadata, analyzer findings, policy decisions, and revocation stay outside the archive in their respective immutable records or live control-plane state, avoiding both self-reference and duplicate artifacts across commits and reassessments.
 
 The payload preserves resource semantics and supporting files, not source-layout accidents. Original source paths are provenance metadata only. Clients decode the canonical form and compile it into selected harness targets.
 
