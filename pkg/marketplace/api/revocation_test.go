@@ -79,12 +79,11 @@ func TestSearchAppliesSourceAndCoordinateRevocations(t *testing.T) {
 			if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
 				t.Fatal(err)
 			}
-			if err := meta.PutResourceRevision(ctx, store.ResourceRevision{
+			revision := store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
-			}); err != nil {
-				t.Fatal(err)
 			}
+			publishAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("c", 64)), strings.Repeat("e", 40))
 			server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "mp"}, Revocations: test.cfg}, meta, fsblob.New(t.TempDir())).PublicHandler())
 			defer server.Close()
 			resp, err := http.Get(server.URL + "/api/v1/search?q=review")
@@ -125,12 +124,8 @@ func TestSearchSelectsLatestEffectiveNonRevokedRevision(t *testing.T) {
 	}
 	newer := older
 	newer.ContentDigest = store.RevisionDigest("sha256:" + strings.Repeat("b", 64))
-	if err := meta.PutResourceRevision(ctx, older); err != nil {
-		t.Fatal(err)
-	}
-	if err := meta.PutResourceRevision(ctx, newer); err != nil {
-		t.Fatal(err)
-	}
+	publishAssessedTestRevision(ctx, t, meta, older, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("c", 64)), strings.Repeat("e", 40))
+	publishAssessedTestRevision(ctx, t, meta, newer, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("c", 64)), strings.Repeat("e", 40))
 	cfg := config.Config{
 		Instance:    config.Instance{ID: "mp"},
 		Revocations: config.Revocations{Revisions: []string{"mp/src/skill/review@" + string(newer.ContentDigest)}},

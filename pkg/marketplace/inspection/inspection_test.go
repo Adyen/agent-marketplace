@@ -1,25 +1,25 @@
 package inspection
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func TestBuildCanonicalSkillProjection(t *testing.T) {
 	body := []byte("# Review\nRead carefully.\n")
 	support := map[string][]byte{"notes.md": []byte("notes")}
-	projection, err := Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), body, support, []analyze.Finding{{Code: "finding", Severity: analyze.OutcomeWarn, PolicyOutcome: analyze.OutcomeWarn, Message: "check", SourceRange: analyze.SourceRangeAt("skill/review/body", string(body), 2)}}, 10, 1024, 4096)
+	projection, err := Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), body, support, 10, 1024, 4096)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if projection.Manifest.PrimaryPath != "SKILL.md" || len(projection.Manifest.Files) != 2 {
 		t.Fatalf("manifest = %#v", projection.Manifest)
 	}
-	if projection.Manifest.Findings[0].Path != "SKILL.md" || projection.Manifest.Findings[0].EndByte <= projection.Manifest.Findings[0].StartByte {
-		t.Fatalf("finding range = %#v", projection.Manifest.Findings[0])
+	if bytes.Contains(projection.Payload, []byte(`"findings"`)) {
+		t.Fatalf("inspection payload contains analyzer findings: %s", projection.Payload)
 	}
 	if err := Verify(projection.Manifest, projection.Payload, projection.Manifest.ManifestDigest); err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -29,11 +29,31 @@ func TestBuildCanonicalSkillProjection(t *testing.T) {
 	}
 }
 
+func TestBuildProjectionIsAnalyzerIndependent(t *testing.T) {
+	// Build deliberately has no analyzer version, findings, or policy-decision
+	// input: the inspection identity is a projection of files only.
+	buildFilesOnly := Build
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
+	revision := "sha256:" + strings.Repeat("a", 64)
+	body := []byte("# Review\nRead carefully.\n")
+	first, err := buildFilesOnly(coordinate, revision, body, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildFilesOnly(coordinate, revision, body, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Payload, second.Payload) || first.Manifest.ManifestDigest != second.Manifest.ManifestDigest {
+		t.Fatalf("file projection is unstable: first=%q second=%q", first.Manifest.ManifestDigest, second.Manifest.ManifestDigest)
+	}
+}
+
 func TestBuildRejectsBoundsAndHidesSVGBody(t *testing.T) {
-	if _, err := Build(store.ResourceCoordinate{Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), []byte("body"), nil, nil, 1, 3, 100); err == nil {
+	if _, err := Build(store.ResourceCoordinate{Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), []byte("body"), nil, 1, 3, 100); err == nil {
 		t.Fatal("oversized primary content accepted")
 	}
-	projection, err := Build(store.ResourceCoordinate{Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), []byte("body"), map[string][]byte{"diagram.svg": []byte("<svg></svg>")}, nil, 3, 100, 100)
+	projection, err := Build(store.ResourceCoordinate{Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), []byte("body"), map[string][]byte{"diagram.svg": []byte("<svg></svg>")}, 3, 100, 100)
 	if err != nil {
 		t.Fatalf("Build SVG: %v", err)
 	}
@@ -63,7 +83,7 @@ func TestBuildProducesCanonicalProjectionForEveryMarketplaceKind(t *testing.T) {
 				"opaque.bin":  {0x00, 0xff, 0x01},
 			}
 			coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: kind, Name: "example"}
-			projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, support, nil, 10, 1024, 4096)
+			projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, support, 10, 1024, 4096)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +107,7 @@ func TestBuildProducesCanonicalProjectionForEveryMarketplaceKind(t *testing.T) {
 func TestVerifyRequiresCanonicalPrimaryMediaAndReferencedBodyPolicy(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "mcpserver", Name: "remote"}
 	body := []byte(`{"name":"remote"}`)
-	projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, map[string][]byte{"notes.md": []byte("notes")}, nil, 10, 1024, 4096)
+	projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, map[string][]byte{"notes.md": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +127,7 @@ func TestVerifyRequiresCanonicalPrimaryMediaAndReferencedBodyPolicy(t *testing.T
 		t.Fatal("support body with mismatched media accepted")
 	}
 
-	projection, err = Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("b", 64), []byte("# review\n"), map[string][]byte{"notes.md": []byte("# notes\n")}, nil, 10, 1024, 4096)
+	projection, err = Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("b", 64), []byte("# review\n"), map[string][]byte{"notes.md": []byte("# notes\n")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +149,11 @@ func TestBuildRejectsUnsafeAndDuplicateSupportPathsAndManifestBounds(t *testing.
 		{"notes.txt": []byte("x"), "./notes.txt": []byte("y")},
 		{"COMMAND.md": []byte("x")},
 	} {
-		if _, err := Build(coordinate, digest, []byte("body"), support, nil, 10, 100, 100, 10000); err == nil {
+		if _, err := Build(coordinate, digest, []byte("body"), support, 10, 100, 100, 10000); err == nil {
 			t.Fatalf("unsafe or duplicate support paths accepted: %#v", support)
 		}
 	}
-	if _, err := Build(coordinate, digest, []byte("body"), nil, []analyze.Finding{{Code: strings.Repeat("x", 32), Message: strings.Repeat("y", 256)}}, 10, 1000, 1000, 32); err == nil {
+	if _, err := Build(coordinate, digest, []byte("body"), map[string][]byte{strings.Repeat("x", 256) + ".txt": []byte("x")}, 10, 1000, 1000, 32); err == nil {
 		t.Fatal("oversized serialized inspection manifest accepted")
 	}
 }

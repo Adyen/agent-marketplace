@@ -17,11 +17,11 @@ func BenchmarkValidateResourceRevision(b *testing.B) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	entry := config.MarketplaceEntry{InstanceID: "mp"}
 	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest}
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
-	}
+	})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := validateResourceRevision(entry, pin, rev); err != nil {
@@ -52,11 +52,11 @@ func BenchmarkResolveCachedNoFetch(b *testing.B) {
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
 	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest}
-	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	})); err != nil {
 		b.Fatal(err)
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: entry.URL, InstanceID: entry.InstanceID, Resources: []config.MarketplaceResourcePin{pin}}}}

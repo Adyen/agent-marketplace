@@ -64,10 +64,10 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build reference revision: %v", err)
 	}
-	var revision store.ResourceRevision
+	var revision store.AssessedResourceRevision
 	for _, candidate := range built.Resources {
 		if candidate.Coordinate.Kind == "skill" && candidate.Coordinate.Name == "review" {
-			revision = candidate
+			revision = assessedRevisionOccurrence(candidate, commit, string(built.ManifestDigest))
 			break
 		}
 	}
@@ -80,9 +80,9 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/occurrences/"):
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
+			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: source.Roots, Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
 		default:
-			_ = json.NewEncoder(w).Encode(api.PublicSource{ID: "src", Slug: "source", Origins: []string{origin}, Ref: "main", Roots: source.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+			_ = json.NewEncoder(w).Encode(api.PublicSource{ID: "src", Slug: "source", Origins: []string{origin}, Ref: "main", Roots: []store.SourceRoot{{Path: ".wrong", SourceHarness: "factory"}}, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 		}
 	})
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
@@ -185,10 +185,10 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build first revision: %v", err)
 	}
-	var oldResource store.ResourceRevision
+	var oldResource store.AssessedResourceRevision
 	for _, candidate := range old.Resources {
 		if candidate.Coordinate.Kind == "skill" && candidate.Coordinate.Name == "review" {
-			oldResource = candidate
+			oldResource = assessedRevision(candidate)
 			break
 		}
 	}
@@ -215,14 +215,11 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
-			Coordinate: oldResource.Coordinate, ContentDigest: oldResource.ContentDigest,
-			Provenance: &store.Provenance{SourceID: "src", Commit: secondCommit, ManifestDigest: old.ManifestDigest},
-		})
+		_ = json.NewEncoder(w).Encode(assessedRevisionOccurrence(oldResource.ResourceRevision, secondCommit, string(old.ManifestDigest)))
 	})
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/occurrences/") {
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Commit: secondCommit, SourceRevisionManifestDigest: old.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "file://" + repo, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: source.Roots, Commit: secondCommit, SourceRevisionManifestDigest: old.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "file://" + repo, OccurredAt: time.Now().UTC()})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(api.PublicSource{ID: "src", Slug: "source", Origins: []string{"file://" + repo}, Ref: "main", Roots: source.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
@@ -241,14 +238,14 @@ func TestIndexOnlyResolverRejectsDisallowedOriginBeforeGit(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifest := "sha256:" + strings.Repeat("b", 64)
 	content := "sha256:" + strings.Repeat("c", 64)
-	revision := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(content), Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifest)}}
+	revision := assessedRevisionOccurrence(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(content)}, commit, manifest)
 	var sourceRequests int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		sourceRequests++
-		_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://evil.example/repo.git", OccurredAt: time.Now().UTC()})
+		_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://evil.example/repo.git", OccurredAt: time.Now().UTC()})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -286,11 +283,10 @@ func TestIndexOnlyResolverRejectsBareLocalOriginBeforeGit(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	revision := store.ResourceRevision{
+	revision := assessedRevisionOccurrence(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(content),
-		Provenance:    &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifest)},
-	}
+	}, commit, manifest)
 	occurrenceRequests, sourceRequests := 0, 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
@@ -298,7 +294,7 @@ func TestIndexOnlyResolverRejectsBareLocalOriginBeforeGit(t *testing.T) {
 	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/occurrences/") {
 			occurrenceRequests++
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
 			return
 		}
 		sourceRequests++
@@ -320,11 +316,11 @@ func TestIndexOnlyResolverRejectsBareLocalOriginBeforeGit(t *testing.T) {
 	}
 }
 
-func TestReconstructedArtifactIdentityRequiresPinnedSourceID(t *testing.T) {
+func TestReconstructedArtifactIdentityIsAnalyzerIndependent(t *testing.T) {
 	pin := config.MarketplaceResourcePin{SourceID: "requested", Kind: "skill", Name: "review", Digest: "sha256:" + strings.Repeat("a", 64)}
 	artifact := hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{SourceID: "other", Kind: "skill", Name: "review", ContentDigest: pin.Digest}}
-	if err := validateReconstructedArtifactIdentity(pin, artifact); err == nil || !strings.Contains(err.Error(), "source ID") {
-		t.Fatalf("identity validation error = %v, want source ID mismatch", err)
+	if err := validateReconstructedArtifactIdentity(pin, artifact); err != nil {
+		t.Fatalf("analyzer-independent identity validation failed: %v", err)
 	}
 }
 
@@ -376,12 +372,6 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 		stageFault bool
 	}{
 		{name: "decode", artifact: func() []byte { return []byte("not an archive") }},
-		{name: "identity", artifact: func() []byte {
-			bad := canonical
-			bad.Manifest.SourceID = "other"
-			raw, _, _ := hccartifact.Encode(bad)
-			return raw
-		}},
 		{name: "content", artifact: func() []byte {
 			bad := canonical
 			bad.Manifest.ContentDigest = "sha256:" + strings.Repeat("c", 64)
@@ -396,11 +386,10 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := NewCache(t.TempDir())
-			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-				Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifest)},
-			}); err != nil {
+			}, commit, manifest)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := cache.WriteIndexOnlyArtifact(identity, pin.Digest, tc.artifact()); err != nil {

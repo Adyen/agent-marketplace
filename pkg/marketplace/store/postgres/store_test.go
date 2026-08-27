@@ -200,47 +200,84 @@ func TestSourceCRUD(t *testing.T) {
 	}
 }
 
-func TestResourceRevisionCRUD(t *testing.T) {
+func TestResourceRevisionWithTwoAssessmentsAndCurrentPointer(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-
-	coord := store.ResourceCoordinate{
-		Marketplace: store.MarketplaceID("mp-test"),
-		Source:      store.SourceID("src-1"),
-		Kind:        "skill",
-		Name:        "grill-me",
-	}
+	coord := store.ResourceCoordinate{Marketplace: "mp-test", Source: "src-1", Kind: "skill", Name: "grill-me"}
 	rev := store.ResourceRevision{
-		Coordinate:      coord,
-		ContentDigest:   store.RevisionDigest("sha256:1111111111111111111111111111111111111111111111111111111111111111"),
-		ArchiveDigest:   store.ArchiveDigest("sha256:2222222222222222222222222222222222222222222222222222222222222222"),
-		AnalyzerVersion: "analyzer/v1",
-		Findings: []store.Finding{
-			{Code: "hidden-control", Severity: "warning", Policy: "flag", Message: "found control"},
-		},
-		License: "MIT",
+		Coordinate: coord, ContentDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		ArchiveDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222", License: "MIT",
 	}
 	if err := s.PutResourceRevision(ctx, rev); err != nil {
-		t.Fatalf("PutResourceRevision: %v", err)
+		t.Fatal(err)
 	}
-
-	got, err := s.GetResourceRevision(ctx, coord, rev.ContentDigest)
+	if err := s.PutResourceRevision(ctx, rev); err != nil {
+		t.Fatalf("exact idempotent PutResourceRevision: %v", err)
+	}
+	conflict := rev
+	conflict.License = "Apache-2.0"
+	if err := s.PutResourceRevision(ctx, conflict); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("changed immutable revision error = %v, want ErrConflict", err)
+	}
+	manifest := store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333")
+	if err := s.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+		Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: "abc123", ManifestDigest: manifest,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assessment := func(version, policy string, decision store.AssessmentDecision) store.ResourceAssessment {
+		t.Helper()
+		value, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+			Coordinate: coord, ContentDigest: rev.ContentDigest, AnalyzerVersion: version,
+			PolicyDigest: store.PolicyDigest(policy), Decision: decision,
+			Findings:                 []store.Finding{{Code: version, Severity: "warning", Policy: "flag", Message: "finding"}},
+			InspectionManifestDigest: "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+			AssessedAt:               time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	first := assessment("analyzer/v1", "sha256:4444444444444444444444444444444444444444444444444444444444444444", store.AssessmentDecisionWarn)
+	second := assessment("analyzer/v2", "sha256:5555555555555555555555555555555555555555555555555555555555555555", store.AssessmentDecisionAllow)
+	for _, value := range []store.ResourceAssessment{first, second} {
+		if err := s.PutResourceAssessment(ctx, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetCurrentResourceAssessment(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
+		SourceID: coord.Source, Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: manifest,
+		Acquisition: store.AcquisitionMirror,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetLatestResourceRevision(ctx, coord)
 	if err != nil {
-		t.Fatalf("GetResourceRevision: %v", err)
+		t.Fatal(err)
 	}
-	if got.ContentDigest != rev.ContentDigest || got.ArchiveDigest != rev.ArchiveDigest {
-		t.Fatalf("GetResourceRevision returned %+v, want %+v", got, rev)
+	if got.Assessment.AssessmentDigest != first.AssessmentDigest {
+		t.Fatalf("current assessment = %q, want first %q", got.Assessment.AssessmentDigest, first.AssessmentDigest)
 	}
-	if len(got.Findings) != 1 || got.Findings[0].Code != "hidden-control" {
-		t.Fatalf("findings lost: %+v", got.Findings)
+	if err := s.SetCurrentResourceAssessment(ctx, second); err != nil {
+		t.Fatal(err)
 	}
-
-	all, err := s.ListResourceRevisions(ctx, coord)
+	got, err = s.GetResourceRevision(ctx, coord, rev.ContentDigest)
 	if err != nil {
-		t.Fatalf("ListResourceRevisions: %v", err)
+		t.Fatal(err)
 	}
-	if len(all) != 1 {
-		t.Fatalf("ListResourceRevisions returned %d revisions, want 1", len(all))
+	if got.Assessment.AssessmentDigest != second.AssessmentDigest || got.Occurrence.Commit != "abc123" {
+		t.Fatalf("projection = %+v, want second assessment and current occurrence", got)
+	}
+	assessments, err := s.ListResourceAssessments(ctx, coord, rev.ContentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assessments) != 2 {
+		t.Fatalf("ListResourceAssessments returned %d, want 2", len(assessments))
 	}
 }
 
@@ -251,6 +288,7 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 	occ := store.SourceOccurrence{
 		SourceID:                     store.SourceID("src-1"),
 		Ref:                          "main",
+		Roots:                        []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
 		Commit:                       "abc123",
 		SourceRevisionManifestDigest: store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333"),
 		Acquisition:                  store.AcquisitionMirror,
@@ -265,7 +303,7 @@ func TestSourceOccurrenceCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSourceOccurrence: %v", err)
 	}
-	if got.Commit != occ.Commit || got.MirroredArtifactDigest != occ.MirroredArtifactDigest {
+	if got.Commit != occ.Commit || got.MirroredArtifactDigest != occ.MirroredArtifactDigest || len(got.Roots) != 1 || got.Roots[0] != occ.Roots[0] {
 		t.Fatalf("GetSourceOccurrence returned %+v, want %+v", got, occ)
 	}
 

@@ -53,6 +53,13 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	if len(merged.Origins) == 0 {
 		return fmt.Errorf("source %q has no origin", source.ID)
 	}
+	expectedHead := ""
+	head, err := deps.MetadataStore.LatestSourceOccurrence(ctx, source.ID)
+	if err == nil {
+		expectedHead = head.Commit
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("load source %q head: %w", source.ID, err)
+	}
 	origin := merged.Origins[len(merged.Origins)-1]
 
 	creds, err := toAcquireCredentials(cfgSource.Credentials, cfgSource.CAFile)
@@ -78,12 +85,15 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	}
 
 	pub := store.SourceRevisionPublication{
-		Occurrence:      rev.Occurrence,
-		Resources:       rev.Resources,
-		Collections:     rev.Collections,
-		ManifestPayload: rev.ManifestPayload,
-		ExtraBlobs:      rev.ExtraBlobs,
-		InspectionBlobs: rev.InspectionBlobs,
+		Occurrence:          rev.Occurrence,
+		ExpectedHeadCommit:  expectedHead,
+		Resources:           rev.Resources,
+		ResourceOccurrences: rev.ResourceOccurrences,
+		Assessments:         rev.Assessments,
+		Collections:         rev.Collections,
+		ManifestPayload:     rev.ManifestPayload,
+		ExtraBlobs:          rev.ExtraBlobs,
+		InspectionBlobs:     rev.InspectionBlobs,
 	}
 	if err := store.PublishSourceRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
@@ -324,7 +334,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 		Kind:           "refresh",
 		Payload:        payloadBytes,
 		MaxAttempts:    1,
-		IdempotencyKey: fmt.Sprintf("manual-%s-%d", source.ID, time.Now().Unix()),
+		IdempotencyKey: fmt.Sprintf("manual-%s-%s", source.ID, jobID),
 	}
 	if err := job.Enqueue(ctx, deps.MetadataStore, j); err != nil {
 		return fmt.Errorf("enqueue reindex job: %w", err)
@@ -337,25 +347,44 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 	}
 
 	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		requested, err := deps.MetadataStore.GetJob(ctx, jobID)
+		if err != nil {
+			return fmt.Errorf("load reindex job: %w", err)
+		}
+		switch requested.Status {
+		case job.Completed:
+			return nil
+		case job.Failed:
+			source, sourceErr := deps.MetadataStore.GetSource(ctx, store.SourceID(cfgSource.ID))
+			if sourceErr == nil && source.RefreshError != "" {
+				return errors.New(source.RefreshError)
+			}
+			return fmt.Errorf("reindex job %q failed", jobID)
 		}
 
 		leased, err := job.Lease(ctx, deps.MetadataStore, "refresh", workerID, leaseDuration)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				time.Sleep(100 * time.Millisecond)
+				timer := time.NewTimer(100 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
 				continue
 			}
 			return fmt.Errorf("lease reindex job: %w", err)
 		}
 
 		if err := processRefreshJob(ctx, deps, leased, workerID); err != nil {
-			return err
-		}
-
-		if string(leased.ID) == string(jobID) {
-			return nil
+			if leased.ID == jobID {
+				return err
+			}
+			slog.Error("unrelated refresh failed during reindex", "job", leased.ID, "err", err)
 		}
 	}
 }

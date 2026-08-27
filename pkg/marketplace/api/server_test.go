@@ -87,14 +87,9 @@ func TestServerRoutes(t *testing.T) {
 			Kind:        KindSkill,
 			Name:        "review",
 		},
-		ContentDigest:   store.RevisionDigest(canonicalArtifact.Manifest.ContentDigest),
-		ArchiveDigest:   store.ArchiveDigest(artifactDigest),
-		AnalyzerVersion: "1.0.0",
-		License:         "MIT",
-		Provenance: &store.Provenance{
-			SourceID: src.ID,
-			Commit:   strings.Repeat("a", 40),
-		},
+		ContentDigest: store.RevisionDigest(canonicalArtifact.Manifest.ContentDigest),
+		ArchiveDigest: store.ArchiveDigest(artifactDigest),
+		License:       "MIT",
 	}
 	manifestData, manifestDigest, err := marketplaceartifact.CanonicalSourceRevisionPayload(marketplaceartifact.SourceRevisionManifest{
 		SchemaVersion: marketplaceartifact.SourceRevisionSchemaV1,
@@ -109,7 +104,8 @@ func TestServerRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build source manifest: %v", err)
 	}
-	rev.Provenance.ManifestDigest = store.RevisionDigest(manifestDigest)
+	manifest := store.RevisionDigest(manifestDigest)
+	commit := strings.Repeat("a", 40)
 	if err := meta.PutResourceRevision(ctx, rev); err != nil {
 		t.Fatalf("put resource revision: %v", err)
 	}
@@ -118,20 +114,49 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put artifact blob: %v", err)
 	}
 
-	if err := blobs.Put(ctx, store.ArchiveDigest(rev.Provenance.ManifestDigest), manifestData); err != nil {
+	if err := blobs.Put(ctx, store.ArchiveDigest(manifest), manifestData); err != nil {
 		t.Fatalf("put manifest blob: %v", err)
 	}
 
 	occ := store.SourceOccurrence{
 		SourceID:                     src.ID,
 		Ref:                          src.Ref,
-		Commit:                       rev.Provenance.Commit,
-		SourceRevisionManifestDigest: rev.Provenance.ManifestDigest,
+		Roots:                        src.Roots,
+		Commit:                       commit,
+		SourceRevisionManifestDigest: manifest,
 		Acquisition:                  src.Acquisition,
 		OccurredAt:                   time.Now().UTC(),
 	}
 	if err := meta.PutSourceOccurrence(ctx, occ); err != nil {
 		t.Fatalf("put source occurrence: %v", err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: manifest}); err != nil {
+		t.Fatalf("put resource occurrence: %v", err)
+	}
+	inspectionBody := []byte("# Review\n")
+	projection, err := inspection.Build(rev.Coordinate, string(rev.ContentDigest), inspectionBody, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "1.0.0",
+		PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("c", 64)), Decision: store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest), AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+		t.Fatal(err)
+	}
+	if err := blobs.Put(ctx, store.ArchiveDigest(assessment.InspectionManifestDigest), projection.Payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := blobs.Put(ctx, store.ArchiveDigest(inspection.Digest(inspectionBody)), inspectionBody); err != nil {
+		t.Fatal(err)
 	}
 
 	emptySource := src
@@ -151,8 +176,9 @@ func TestServerRoutes(t *testing.T) {
 		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{
 			SourceID:                     boundedSource.ID,
 			Ref:                          boundedSource.Ref,
+			Roots:                        boundedSource.Roots,
 			Commit:                       fmt.Sprintf("%040x", i+1),
-			SourceRevisionManifestDigest: rev.Provenance.ManifestDigest,
+			SourceRevisionManifestDigest: manifest,
 			Acquisition:                  boundedSource.Acquisition,
 			OccurredAt:                   time.Unix(int64(i+1), 0).UTC(),
 		}); err != nil {
@@ -317,7 +343,7 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	// manifest
-	resp = mustGet(t, public.URL+"/api/v1/manifests/"+string(rev.Provenance.ManifestDigest))
+	resp = mustGet(t, public.URL+"/api/v1/manifests/"+string(manifest))
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("manifest status %d: %s", resp.StatusCode, body)
@@ -529,6 +555,7 @@ func TestPublicBoundaryValidationRejectsDevelopmentFormats(t *testing.T) {
 	occurrence := store.SourceOccurrence{
 		SourceID:                     "source",
 		Ref:                          "main",
+		Roots:                        []store.SourceRoot{{Path: ".agents"}},
 		Commit:                       strings.Repeat("a", 40),
 		SourceRevisionManifestDigest: store.RevisionDigest(validDigest),
 		Acquisition:                  store.AcquisitionIndexOnly,
@@ -547,9 +574,19 @@ func TestPublicBoundaryValidationRejectsDevelopmentFormats(t *testing.T) {
 		}
 	}
 
-	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: "source", Kind: KindSkill, Name: "review"},
-		ContentDigest: store.RevisionDigest(validDigest),
+	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Source: "source", Kind: KindSkill, Name: "review"}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: coordinate, ContentDigest: store.RevisionDigest(validDigest), AnalyzerVersion: "test/v1",
+		PolicyDigest: store.PolicyDigest(validDigest), Decision: store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest(validDigest), AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := store.AssessedResourceRevision{
+		ResourceRevision: store.ResourceRevision{Coordinate: coordinate, ContentDigest: store.RevisionDigest(validDigest)},
+		Assessment:       assessment,
+		Occurrence:       store.ResourceOccurrence{Coordinate: coordinate, ContentDigest: store.RevisionDigest(validDigest), Commit: strings.Repeat("a", 40), ManifestDigest: store.RevisionDigest(validDigest)},
 	}
 	if err := validatePublicResourceRevision(revision); err != nil {
 		t.Fatalf("canonical resource revision rejected: %v", err)
@@ -558,10 +595,10 @@ func TestPublicBoundaryValidationRejectsDevelopmentFormats(t *testing.T) {
 	if err := validatePublicResourceRevision(revision); err == nil {
 		t.Fatal("resource revision with incomplete coordinate accepted")
 	}
-	revision.Coordinate.Name = "review"
-	revision.Provenance = &store.Provenance{Commit: "refs/heads/main"}
+	revision.Coordinate = coordinate
+	revision.Occurrence.Commit = "refs/heads/main"
 	if err := validatePublicResourceRevision(revision); err == nil {
-		t.Fatal("resource revision with symbolic provenance commit accepted")
+		t.Fatal("resource revision with symbolic occurrence commit accepted")
 	}
 }
 
@@ -578,15 +615,16 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 		t.Fatalf("put source: %v", err)
 	}
 	cfg := config.Config{Instance: config.Instance{ID: "marketplace"}}
-	revision := store.ResourceRevision{
+	intrinsic := store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: KindSkill, Name: "review"},
 		ContentDigest: digest,
 	}
-
-	badCoordinate := revision
-	badCoordinate.Coordinate.Name = "other"
-	badDigest := revision
-	badDigest.ContentDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherCoordinate := intrinsic
+	otherCoordinate.Coordinate.Name = "other"
+	badCoordinate := testAssessedRevision(t, otherCoordinate, store.AssessmentDecisionAllow)
+	otherDigest := intrinsic
+	otherDigest.ContentDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	badDigest := testAssessedRevision(t, otherDigest, store.AssessmentDecisionAllow)
 
 	for _, tc := range []struct {
 		name string
@@ -594,7 +632,7 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 		meta store.MetadataStore
 	}{
 		{name: "latest", path: "/api/v1/resources/source-slug/skill/review", meta: &mismatchedResourceStore{MetadataStore: meta, latest: badCoordinate}},
-		{name: "list", path: "/api/v1/resources/source-slug/skill/review/revisions", meta: &mismatchedResourceStore{MetadataStore: meta, revisions: []store.ResourceRevision{badCoordinate}}},
+		{name: "list", path: "/api/v1/resources/source-slug/skill/review/revisions", meta: &mismatchedResourceStore{MetadataStore: meta, revisions: []store.AssessedResourceRevision{badCoordinate}}},
 		{name: "exact coordinate", path: "/api/v1/resources/source-slug/skill/review/revisions/" + digest, meta: &mismatchedResourceStore{MetadataStore: meta, exact: badCoordinate}},
 		{name: "exact digest", path: "/api/v1/resources/source-slug/skill/review/revisions/" + digest, meta: &mismatchedResourceStore{MetadataStore: meta, exact: badDigest}},
 	} {
@@ -612,20 +650,20 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 
 type mismatchedResourceStore struct {
 	store.MetadataStore
-	latest    store.ResourceRevision
-	exact     store.ResourceRevision
-	revisions []store.ResourceRevision
+	latest    store.AssessedResourceRevision
+	exact     store.AssessedResourceRevision
+	revisions []store.AssessedResourceRevision
 }
 
-func (s *mismatchedResourceStore) GetLatestResourceRevision(context.Context, store.ResourceCoordinate) (store.ResourceRevision, error) {
+func (s *mismatchedResourceStore) GetLatestResourceRevision(context.Context, store.ResourceCoordinate) (store.AssessedResourceRevision, error) {
 	return s.latest, nil
 }
 
-func (s *mismatchedResourceStore) GetResourceRevision(context.Context, store.ResourceCoordinate, store.RevisionDigest) (store.ResourceRevision, error) {
+func (s *mismatchedResourceStore) GetResourceRevision(context.Context, store.ResourceCoordinate, store.RevisionDigest) (store.AssessedResourceRevision, error) {
 	return s.exact, nil
 }
 
-func (s *mismatchedResourceStore) ListResourceRevisions(context.Context, store.ResourceCoordinate) ([]store.ResourceRevision, error) {
+func (s *mismatchedResourceStore) ListResourceRevisions(context.Context, store.ResourceCoordinate) ([]store.AssessedResourceRevision, error) {
 	return s.revisions, nil
 }
 
@@ -672,7 +710,16 @@ func TestServerAppliesLiveExactRevocationToDiscoveryAndArtifacts(t *testing.T) {
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: "review"},
 		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: archive,
 	}
-	if err := meta.PutResourceRevision(ctx, revision); err != nil {
+	inspectionBody := []byte("# Review\n")
+	projection, err := inspection.Build(revision.Coordinate, string(revision.ContentDigest), inspectionBody, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := publishAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest(projection.Manifest.ManifestDigest), strings.Repeat("e", 40))
+	if err := blobs.Put(ctx, store.ArchiveDigest(assessment.InspectionManifestDigest), projection.Payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := blobs.Put(ctx, store.ArchiveDigest(inspection.Digest(inspectionBody)), inspectionBody); err != nil {
 		t.Fatal(err)
 	}
 	if err := blobs.Put(ctx, archive, []byte("artifact")); err != nil {

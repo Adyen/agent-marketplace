@@ -24,6 +24,19 @@ func sha256Digest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
+func assessmentFor(t *testing.T, rev store.ResourceRevision, inspectionDigest string) store.ResourceAssessment {
+	t.Helper()
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest,
+		AnalyzerVersion: "test/v1", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("b", 64)),
+		Decision: store.AssessmentDecisionAllow, InspectionManifestDigest: store.RevisionDigest(inspectionDigest), AssessedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return assessment
+}
+
 func openAtomicStores(t *testing.T) (*sqlite.Store, *fsblob.Store) {
 	t.Helper()
 	dir := t.TempDir()
@@ -40,12 +53,14 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
 	body := []byte("# review\\n")
-	projection, err := inspection.Build(coordinate, string(revision), body, nil, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coordinate, string(revision), body, nil, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
+	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
 	base := store.SourceRevisionPublication{
-		Resources:       []store.ResourceRevision{{Coordinate: coordinate, ContentDigest: revision, Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}},
+		Resources:       []store.ResourceRevision{resource},
+		Assessments:     []store.ResourceAssessment{assessmentFor(t, resource, projection.Manifest.ManifestDigest)},
 		InspectionBlobs: []store.BlobUpload{{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload}, {Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body}},
 	}
 	for _, tc := range []struct {
@@ -58,8 +73,7 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 			bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
 			bad.InspectionBlobs[0].Data = append([]byte(" "), bad.InspectionBlobs[0].Data...)
 			bad.InspectionBlobs[0].Digest = store.ArchiveDigest(sha256Digest(bad.InspectionBlobs[0].Data))
-			bad.Resources = append([]store.ResourceRevision(nil), base.Resources...)
-			bad.Resources[0].Provenance = &store.Provenance{InspectionManifestDigest: store.RevisionDigest(bad.InspectionBlobs[0].Digest)}
+			bad.Assessments = []store.ResourceAssessment{assessmentFor(t, resource, string(bad.InspectionBlobs[0].Digest))}
 			return bad
 		}, want: "not canonical JSON"},
 		{name: "wrong body size", build: func() store.SourceRevisionPublication {
@@ -76,8 +90,7 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 			bad := base
 			bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
 			bad.InspectionBlobs[0] = store.BlobUpload{Digest: store.ArchiveDigest(badDigest), Data: badPayload}
-			bad.Resources = append([]store.ResourceRevision(nil), base.Resources...)
-			bad.Resources[0].Provenance = &store.Provenance{InspectionManifestDigest: store.RevisionDigest(badDigest)}
+			bad.Assessments = []store.ResourceAssessment{assessmentFor(t, resource, badDigest)}
 			return bad
 		}, want: "digest or size"},
 	} {
@@ -92,11 +105,12 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
-	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\n"), map[string][]byte{"notes.md": []byte("notes\n")}, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\n"), map[string][]byte{"notes.md": []byte("notes\n")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := store.SourceRevisionPublication{Resources: []store.ResourceRevision{{Coordinate: coordinate, ContentDigest: revision, Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}}}
+	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
+	base := store.SourceRevisionPublication{Resources: []store.ResourceRevision{resource}, Assessments: []store.ResourceAssessment{assessmentFor(t, resource, projection.Manifest.ManifestDigest)}}
 	for digest, data := range projection.Bodies {
 		base.InspectionBlobs = append(base.InspectionBlobs, store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: data})
 	}
@@ -116,8 +130,7 @@ func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *
 		bad := base
 		bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
 		bad.InspectionBlobs[len(bad.InspectionBlobs)-1] = store.BlobUpload{Digest: store.ArchiveDigest(sha256Digest(payload)), Data: payload}
-		bad.Resources = append([]store.ResourceRevision(nil), base.Resources...)
-		bad.Resources[0].Provenance = &store.Provenance{InspectionManifestDigest: store.RevisionDigest(sha256Digest(payload))}
+		bad.Assessments = []store.ResourceAssessment{assessmentFor(t, resource, sha256Digest(payload))}
 		return bad
 	}
 
@@ -129,11 +142,11 @@ func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *
 		{name: "unknown field", build: func(t *testing.T) store.SourceRevisionPublication {
 			t.Helper()
 			payload := []byte(strings.TrimSuffix(string(projection.Payload), "}") + `,"unknown":true}`)
-			return publicationWithInspectionPayload(base, payload)
+			return publicationWithInspectionPayload(t, base, payload)
 		}, want: "unknown field"},
 		{name: "trailing JSON", build: func(t *testing.T) store.SourceRevisionPublication {
 			payload := append(append([]byte(nil), projection.Payload...), []byte("null")...)
-			return publicationWithInspectionPayload(base, payload)
+			return publicationWithInspectionPayload(t, base, payload)
 		}, want: "trailing JSON"},
 		{name: "wrong primary media", build: func(t *testing.T) store.SourceRevisionPublication {
 			return mutate(t, func(manifest *inspection.Manifest) { manifest.Files[0].MediaType = inspection.MediaPlain })
@@ -151,20 +164,19 @@ func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *
 	}
 }
 
-func publicationWithInspectionPayload(base store.SourceRevisionPublication, payload []byte) store.SourceRevisionPublication {
+func publicationWithInspectionPayload(t *testing.T, base store.SourceRevisionPublication, payload []byte) store.SourceRevisionPublication {
 	bad := base
 	badDigest := sha256Digest(payload)
 	bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
 	bad.InspectionBlobs[len(bad.InspectionBlobs)-1] = store.BlobUpload{Digest: store.ArchiveDigest(badDigest), Data: payload}
-	bad.Resources = append([]store.ResourceRevision(nil), base.Resources...)
-	bad.Resources[0].Provenance = &store.Provenance{InspectionManifestDigest: store.RevisionDigest(badDigest)}
+	bad.Assessments = []store.ResourceAssessment{assessmentFor(t, base.Resources[0], badDigest)}
 	return bad
 }
 
 func TestPublishSourceRevisionRejectsInspectionSupportPrimaryAlias(t *testing.T) {
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
-	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\\n"), map[string][]byte{"notes.txt": []byte("notes")}, nil, 10, 1024, 4096)
+	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\\n"), map[string][]byte{"notes.txt": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +194,10 @@ func TestPublishSourceRevisionRejectsInspectionSupportPrimaryAlias(t *testing.T)
 	for digest, data := range projection.Bodies {
 		uploads = append(uploads, store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: data})
 	}
+	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
 	err = store.PublishSourceRevision(context.Background(), nil, nil, store.SourceRevisionPublication{
-		Resources:       []store.ResourceRevision{{Coordinate: coordinate, ContentDigest: revision, Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(manifestDigest)}}},
+		Resources:       []store.ResourceRevision{resource},
+		Assessments:     []store.ResourceAssessment{assessmentFor(t, resource, string(manifestDigest))},
 		InspectionBlobs: uploads,
 	})
 	if err == nil || !strings.Contains(err.Error(), "non-canonical file path") {
@@ -228,9 +242,15 @@ func TestPublishSourceRevision(t *testing.T) {
 	}
 	rev := store.ResourceRevision{
 		Coordinate:    coord,
-		ContentDigest: store.RevisionDigest("sha256:content123"),
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 		ArchiveDigest: archiveDigest,
 	}
+	body := []byte("# member\n")
+	projection, err := inspection.Build(coord, string(rev.ContentDigest), body, nil, 10, 1024, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := assessmentFor(t, rev, projection.Manifest.ManifestDigest)
 
 	occ := store.SourceOccurrence{
 		SourceID:                     src.ID,
@@ -243,10 +263,13 @@ func TestPublishSourceRevision(t *testing.T) {
 	}
 
 	req := store.SourceRevisionPublication{
-		Occurrence:      occ,
-		Resources:       []store.ResourceRevision{rev},
-		ManifestPayload: manifest,
-		ExtraBlobs:      []store.BlobUpload{{Digest: archiveDigest, Data: archive}},
+		Occurrence:          occ,
+		Resources:           []store.ResourceRevision{rev},
+		ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: occ.Commit, ManifestDigest: manifestDigest}},
+		Assessments:         []store.ResourceAssessment{assessment},
+		ManifestPayload:     manifest,
+		ExtraBlobs:          []store.BlobUpload{{Digest: archiveDigest, Data: archive}},
+		InspectionBlobs:     []store.BlobUpload{{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload}, {Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body}},
 	}
 
 	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
@@ -445,7 +468,7 @@ func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
 func TestPublishSourceRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
-	req, leafCoord := collectionPublicationFixture(t)
+	req, _ := collectionPublicationFixture(t)
 	manifest, _, err := hccartifact.DecodeCollectionManifest(strings.NewReader(string(req.ExtraBlobs[0].Data)))
 	if err != nil {
 		t.Fatal(err)
@@ -461,7 +484,6 @@ func TestPublishSourceRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *te
 	req.Resources[1].ContentDigest = store.RevisionDigest(digest)
 	req.Collections[0].ID = digest
 	req.Collections[0].ManifestDigest = store.RevisionDigest(digest)
-	req.Resources[0].Provenance = &store.Provenance{SourceID: leafCoord.Source, Commit: "abc123", ManifestDigest: req.Occurrence.SourceRevisionManifestDigest}
 	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
 		t.Fatalf("mixed mirror/index-only publication failed: %v", err)
 	}

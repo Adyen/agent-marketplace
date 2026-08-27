@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,32 @@ func seedDescriptionFixture(t *testing.T, s *postgres.Store, name, description s
 	if err := s.PutResourceRevision(ctx, rev); err != nil {
 		t.Fatalf("PutResourceRevision: %v", err)
 	}
+	manifest := store.RevisionDigest(digestOf("c"))
+	if err := s.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: "commit-1", ManifestDigest: manifest,
+	}); err != nil {
+		t.Fatalf("PutResourceOccurrence: %v", err)
+	}
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "analyzer/v1",
+		PolicyDigest: store.PolicyDigest(digestOf("d")), Decision: store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest(digestOf("e")), AssessedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("FinalizeResourceAssessment: %v", err)
+	}
+	if err := s.PutResourceAssessment(ctx, assessment); err != nil {
+		t.Fatalf("PutResourceAssessment: %v", err)
+	}
+	if err := s.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+		t.Fatalf("SetCurrentResourceAssessment: %v", err)
+	}
+	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
+		SourceID: rev.Coordinate.Source, Ref: "main", Commit: "commit-1",
+		SourceRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror,
+	}); err != nil {
+		t.Fatalf("PutSourceOccurrence: %v", err)
+	}
 	return rev
 }
 
@@ -69,17 +96,17 @@ func TestDescriptionRoundTripsThroughEveryReadPath(t *testing.T) {
 		assert(t, got.Description)
 	})
 
-	for name, list := range map[string]func() ([]store.ResourceRevision, error){
-		"ListResourceRevisions": func() ([]store.ResourceRevision, error) {
+	for name, list := range map[string]func() ([]store.AssessedResourceRevision, error){
+		"ListResourceRevisions": func() ([]store.AssessedResourceRevision, error) {
 			return s.ListResourceRevisions(ctx, rev.Coordinate)
 		},
-		"ListResourceRevisionsByArchiveDigest": func() ([]store.ResourceRevision, error) {
+		"ListResourceRevisionsByArchiveDigest": func() ([]store.AssessedResourceRevision, error) {
 			return s.ListResourceRevisionsByArchiveDigest(ctx, "mp", rev.ArchiveDigest)
 		},
-		"ListResourceRevisionsByContentDigest": func() ([]store.ResourceRevision, error) {
+		"ListResourceRevisionsByContentDigest": func() ([]store.AssessedResourceRevision, error) {
 			return s.ListResourceRevisionsByContentDigest(ctx, "mp", rev.ContentDigest)
 		},
-		"SearchResourceRevisions": func() ([]store.ResourceRevision, error) {
+		"SearchResourceRevisions": func() ([]store.AssessedResourceRevision, error) {
 			return s.SearchResourceRevisions(ctx, store.ResourceSearchFilter{Marketplace: "mp", Query: "review"})
 		},
 	} {
@@ -115,126 +142,46 @@ func TestPutResourceRevisionBoundsDescription(t *testing.T) {
 	}
 }
 
-// Re-publishing a coordinate must update the description through the upsert's
-// DO UPDATE branch rather than silently keeping the old value.
-func TestPutResourceRevisionUpdatesDescriptionOnConflict(t *testing.T) {
+func TestPutResourceRevisionConflictsInsteadOfUpdatingDescription(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 	rev := seedDescriptionFixture(t, s, "review", "original description")
 
 	rev.Description = testDescription
-	if err := s.PutResourceRevision(ctx, rev); err != nil {
-		t.Fatalf("re-put: %v", err)
+	if err := s.PutResourceRevision(ctx, rev); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("re-put error = %v, want ErrConflict", err)
 	}
-
 	got, err := s.GetResourceRevision(ctx, rev.Coordinate, rev.ContentDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Description != testDescription {
-		t.Fatalf("description after upsert = %q, want %q", got.Description, testDescription)
+	if got.Description != "original description" {
+		t.Fatalf("immutable description changed to %q", got.Description)
 	}
 }
 
-// A deployed PostgreSQL instance already holds rows written before the
-// description column existed. Opening such a schema must migrate it in place
-// without losing data.
-func TestMigrationAddsDescriptionToPreExistingSchema(t *testing.T) {
+func TestLegacyMigrationEpochFailsClearly(t *testing.T) {
 	ctx := context.Background()
 	dsn := testDSN(t)
 	schema := testSchema(t)
 	t.Cleanup(func() { dropSchema(t, dsn, schema) })
-
 	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	quoted := pgx.Identifier{schema}.Sanitize()
-	for _, statement := range []string{
-		"DROP SCHEMA IF EXISTS " + quoted + " CASCADE",
-		"CREATE SCHEMA " + quoted,
-		"SET search_path TO " + quoted,
-		`CREATE TABLE marketplace_schema_migrations (version INTEGER PRIMARY KEY, applied_at BIGINT NOT NULL)`,
-		`INSERT INTO marketplace_schema_migrations (version, applied_at) VALUES (0, 1), (1, 1), (2, 1)`,
-		`CREATE TABLE marketplaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, canonical_url TEXT NOT NULL,
-			instance_metadata TEXT NOT NULL DEFAULT '{}')`,
-		`CREATE TABLE sources (
-			id TEXT PRIMARY KEY, slug TEXT NOT NULL, aliases TEXT NOT NULL DEFAULT '[]',
-			origins TEXT NOT NULL DEFAULT '[]', ref TEXT NOT NULL, roots TEXT NOT NULL DEFAULT '[]',
-			acquisition TEXT NOT NULL, publisher TEXT NOT NULL DEFAULT '{}', license TEXT,
-			credentials_ref TEXT, policy_overrides TEXT NOT NULL DEFAULT '{}',
-			listed BOOLEAN NOT NULL DEFAULT true, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
-			refresh_status TEXT NOT NULL DEFAULT 'unknown', refresh_error TEXT,
-			refreshed_at BIGINT NOT NULL DEFAULT 0)`,
-		`CREATE TABLE resource_revisions (
-			marketplace_id TEXT NOT NULL, source_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
-			content_digest TEXT NOT NULL, archive_digest TEXT, analyzer_version TEXT,
-			findings TEXT NOT NULL DEFAULT '[]', license TEXT, provenance TEXT, revocation TEXT,
-			created_at BIGINT NOT NULL DEFAULT 0,
-			PRIMARY KEY (marketplace_id, source_id, kind, name, content_digest))`,
-		`CREATE TABLE source_occurrences (
-			source_id TEXT NOT NULL, ref TEXT NOT NULL, revision_commit TEXT NOT NULL,
-			manifest_digest TEXT NOT NULL, acquisition TEXT NOT NULL, mirrored_artifact_digest TEXT,
-			occurred_at BIGINT NOT NULL, PRIMARY KEY (source_id, revision_commit))`,
-		`CREATE TABLE collection_revisions (
-			id TEXT PRIMARY KEY, source_id TEXT NOT NULL, manifest_digest TEXT NOT NULL,
-			members TEXT NOT NULL DEFAULT '[]', created_at BIGINT NOT NULL)`,
-		`CREATE TABLE revocations (
-			kind TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL,
-			applied_at BIGINT NOT NULL, PRIMARY KEY (kind, target_id))`,
-		`CREATE TABLE jobs (
-			id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload BYTEA NOT NULL, status TEXT NOT NULL,
-			lease_until BIGINT, attempt INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 1,
-			backoff BIGINT NOT NULL DEFAULT 0, idempotency_key TEXT, worker_id TEXT,
-			created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`,
-		`INSERT INTO marketplaces (id, name, canonical_url) VALUES ('mp', 'Marketplace', 'https://mp.test')`,
-		`INSERT INTO sources (id, slug, ref, acquisition, listed, created_at, updated_at)
-			VALUES ('src', 'src', 'main', 'mirror', true, 1, 1)`,
-		`INSERT INTO resource_revisions
-			(marketplace_id, source_id, kind, name, content_digest, archive_digest, license, created_at)
-			VALUES ('mp', 'src', 'skill', 'legacy', '` + digestOf("c") + `', '` + digestOf("d") + `', 'Apache-2.0', 1)`,
-	} {
-		timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
-		_, err := db.ExecContext(timeout, statement)
-		cancel()
-		if err != nil {
-			t.Fatalf("seed legacy schema: %v\nstatement: %s", err, statement)
-		}
-	}
-
-	s := postgres.NewWithSchema(dsn, schema)
-	if err := s.Open(ctx); err != nil {
-		t.Fatalf("Open pre-existing schema: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-
-	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "legacy"}
-	got, err := s.GetLatestResourceRevision(ctx, coord)
-	if err != nil {
-		t.Fatalf("read migrated row: %v", err)
-	}
-	if got.Description != "" {
-		t.Fatalf("migrated row description = %q, want empty", got.Description)
-	}
-	if got.License != "Apache-2.0" {
-		t.Fatalf("migrated row lost data: license = %q, want Apache-2.0", got.License)
-	}
-	if got.ArchiveDigest != store.ArchiveDigest(digestOf("d")) {
-		t.Fatalf("migrated row lost its archive digest: %q", got.ArchiveDigest)
-	}
-
-	updated := got
-	updated.Description = testDescription
-	if err := s.PutResourceRevision(ctx, updated); err != nil {
-		t.Fatalf("write description to migrated schema: %v", err)
-	}
-	reread, err := s.GetLatestResourceRevision(ctx, coord)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reread.Description != testDescription {
-		t.Fatalf("description = %q, want %q", reread.Description, testDescription)
+	defer func() { _ = db.Close() }()
+	quoted := pgx.Identifier{schema}.Sanitize()
+	for _, statement := range []string{
+		"CREATE SCHEMA " + quoted,
+		`CREATE TABLE ` + quoted + `.marketplace_schema_migrations (version INTEGER PRIMARY KEY, applied_at BIGINT NOT NULL)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := postgres.NewWithSchema(dsn, schema)
+	err = s.Open(ctx)
+	if err == nil || !strings.Contains(err.Error(), "legacy PostgreSQL metadata schema") {
+		t.Fatalf("Open error = %v, want clear legacy schema error", err)
 	}
 }

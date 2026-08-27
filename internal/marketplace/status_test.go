@@ -38,12 +38,11 @@ func TestInspectPreservesPinStates(t *testing.T) {
 			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		rev := store.ResourceRevision{
+		rev := revokedRevision(store.ResourceRevision{
 			Coordinate:    coordinate,
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
-			Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: "revoked"},
-		}
+		}, "revoked")
 		_ = json.NewEncoder(w).Encode(rev)
 	}))
 	defer server.Close()
@@ -100,11 +99,11 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -112,10 +111,10 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
 		SourceID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest,
 	}}}
-	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "cached", contentDigest, store.ResourceRevision{
+	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "cached", contentDigest, assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
 	if _, err := cache.WriteArtifact(archiveDigest, []byte("artifact")); err != nil {
@@ -153,10 +152,10 @@ func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
 		{SourceID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest},
 		{SourceID: "src", Kind: "skill", Name: "missing", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64)},
 	}}
-	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "cached", contentDigest, store.ResourceRevision{
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "cached", contentDigest, assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
 	if _, err := cache.WriteArtifact(archiveDigest, []byte("cached artifact")); err != nil {
@@ -236,10 +235,10 @@ func TestInspectMalformedMetadataRemainsCacheError(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "broken"},
 			ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -274,13 +273,13 @@ func TestInspectQueriesLatestAndPreservesExactStateOnLatestFailure(t *testing.T)
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + oldDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(oldDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)})
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(oldDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
 		case "/api/v1/resources/source-slug/skill/review":
 			if latestFails {
 				http.Error(w, "latest unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(newDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)})
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(newDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
 		default:
 			http.NotFound(w, r)
 		}
@@ -307,11 +306,11 @@ func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.
 	manifestDigest := "sha256:" + strings.Repeat("6", 64)
 	commit := strings.Repeat("a", 40)
 	cases := []struct {
-		name       string
-		latestProv *store.Provenance
+		name             string
+		latestOccurrence store.ResourceOccurrence
 	}{
-		{name: "commit", latestProv: &store.Provenance{SourceID: "src", Commit: strings.Repeat("b", 40), ManifestDigest: store.RevisionDigest(manifestDigest)}},
-		{name: "manifest", latestProv: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("7", 64))}},
+		{name: "commit", latestOccurrence: store.ResourceOccurrence{Commit: strings.Repeat("b", 40), ManifestDigest: store.RevisionDigest(manifestDigest)}},
+		{name: "manifest", latestOccurrence: store.ResourceOccurrence{Commit: commit, ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("7", 64))}},
 	}
 
 	for _, tc := range cases {
@@ -321,12 +320,13 @@ func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.
 				Revision: commit, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly,
 				SourceCommit: commit, SourceManifestDigest: manifestDigest,
 			}
-			pinned := store.ResourceRevision{
+			pinned := assessedRevisionOccurrence(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
-				ContentDigest: store.RevisionDigest(contentDigest), Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)},
-			}
+				ContentDigest: store.RevisionDigest(contentDigest),
+			}, commit, manifestDigest)
 			latest := pinned
-			latest.Provenance = tc.latestProv
+			latest.Occurrence.Commit = tc.latestOccurrence.Commit
+			latest.Occurrence.ManifestDigest = tc.latestOccurrence.ManifestDigest
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.URL.Path == "/.well-known/agent-marketplace.json":
@@ -335,7 +335,7 @@ func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.
 					_ = json.NewEncoder(w).Encode(pinned)
 				case strings.HasSuffix(r.URL.Path, "/occurrences/"+commit):
 					_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-						SourceID: "src", Ref: "main", Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifestDigest),
+						SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifestDigest),
 						Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://git.example/repo.git", OccurredAt: time.Now().UTC(),
 					})
 				case r.URL.Path == "/api/v1/resources/source-slug/skill/review":
@@ -368,16 +368,15 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + pinnedDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(pinnedDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-			})
+			}))
 		case "/api/v1/resources/source-slug/skill/review":
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(latestDigest),
-				Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: latestDigest},
-			})
+			}, latestDigest))
 		default:
 			http.NotFound(w, r)
 		}
@@ -402,11 +401,10 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 
 func TestApplyCachedStateTreatsBroadCachedRevocationAsRevoked(t *testing.T) {
 	status := PinStatus{Cache: CacheStateArtifactVerified, MetadataCached: true, ArtifactVerified: true}
-	cached := store.ResourceRevision{
+	cached := revokedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
-		Revocation:    &store.Revocation{Kind: store.RevocationSource, TargetID: "source-id", Reason: "withdrawn"},
-	}
+	}, "source-id")
 	applyCachedState(&status, cached, true, nil)
 	if status.State != PinStateRevoked {
 		t.Fatalf("cached broad revocation state = %q, want revoked", status.State)
@@ -434,7 +432,7 @@ func TestInspectRendersCollectionAsVirtualPin(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)})
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)}))
 	}))
 	defer server.Close()
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{SourceID: "src", Kind: "collection", Name: "bundle", Revision: "v1", Digest: digest}}}
@@ -515,11 +513,10 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := NewCache(t.TempDir())
-			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, store.ResourceRevision{
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-				Provenance: &store.Provenance{SourceID: "src", Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)},
-			}); err != nil {
+			}, commit, manifestDigest)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := cache.WriteIndexOnlyArtifact(identity, pin.Digest, raw); err != nil {

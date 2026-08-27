@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	marketresolver "github.com/Adyen/agent-marketplace/internal/resolver"
@@ -42,16 +41,15 @@ func TestPrepareLocatorRejectsRevokedNestedCollectionBeforeManifestFetch(t *test
 		case "/api/v1/sources/nested":
 			writeTestSource(w, store.Source{ID: "nested", Slug: "nested", Origins: []string{"https://example.com/nested"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case "/api/v1/resources/src/collection/bundle":
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(rootDigest),
-			})
+			}))
 		case "/api/v1/resources/nested/collection/inner/revisions/" + nestedDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "nested", Kind: "collection", Name: "inner"},
 				ContentDigest: store.RevisionDigest(nestedDigest),
-				Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: "mp/nested/collection/inner@" + nestedDigest, AppliedAt: time.Now().UTC()},
-			})
+			}, "mp/nested/collection/inner@"+nestedDigest))
 		default:
 			if strings.HasPrefix(r.URL.Path, "/api/v1/manifests/"+nestedDigest) {
 				nestedManifestRequests++
@@ -94,17 +92,16 @@ func TestResolveChecksExpandedCollectionRootBeforeSkipping(t *testing.T) {
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/src/collection/bundle/revisions/" + rootDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(rootDigest),
-				Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: rootTarget, Reason: "test", AppliedAt: time.Now().UTC()},
-			})
+			}, rootTarget))
 		case "/api/v1/resources/src/skill/review/revisions/" + leafDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(leafDigest),
 				ArchiveDigest: store.ArchiveDigest(archiveDigest),
-			})
+			}))
 		case "/api/v1/manifests/" + rootDigest:
 			_, _ = w.Write(rootPayload)
 		default:
@@ -164,16 +161,15 @@ func TestResolveBlocksExpandedLeavesWhenNestedCollectionIsRevoked(t *testing.T) 
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/root-source/collection/bundle/revisions/" + rootDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "root-source", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(rootDigest)})
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "root-source", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(rootDigest)}))
 		case "/api/v1/resources/nested-source/collection/inner/revisions/" + nestedDigest:
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{
+			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
 				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "nested-source", Kind: "collection", Name: "inner"},
 				ContentDigest: store.RevisionDigest(nestedDigest),
-				Revocation:    &store.Revocation{Kind: store.RevocationRevision, TargetID: "mp/nested-source/collection/inner@" + nestedDigest, Reason: "test", AppliedAt: time.Now().UTC()},
-			})
+			}, "mp/nested-source/collection/inner@"+nestedDigest))
 		case "/api/v1/resources/leaf-source/skill/review/revisions/" + leafDigest:
 			leafRevisionRequests++
-			_ = json.NewEncoder(w).Encode(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "leaf-source", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(leafDigest), ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64))})
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "leaf-source", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(leafDigest), ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64))}))
 		case "/api/v1/manifests/" + rootDigest:
 			_, _ = w.Write(rootPayload)
 		case "/api/v1/manifests/" + nestedDigest:

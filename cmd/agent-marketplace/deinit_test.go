@@ -899,12 +899,12 @@ marketplaces:
 	}
 	assertFactorySkillExists(t, homeDir, "org-review")
 	return deinitMarketplaceScenario{
-		homeDir: homeDir, cache: marketplace.DefaultCache(), revision: revision,
+		homeDir: homeDir, cache: marketplace.DefaultCache(), revision: revision.ResourceRevision,
 		requests: &requests, failEndpoint: &failEndpoint,
 	}
 }
 
-func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.MarketplaceResourcePin, store.ResourceRevision, []byte) {
+func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.MarketplaceResourcePin, store.AssessedResourceRevision, []byte) {
 	t.Helper()
 	canonical, err := hccartifact.FromIR(ir.NewSkill(name, name+" description", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -921,11 +921,11 @@ func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.Marke
 		SourceID: sourceID, Kind: "skill", Name: name,
 		Revision: "refs/heads/main", Digest: contentDigest,
 	}
-	revision := store.ResourceRevision{
+	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "deinit-marketplace", Source: store.SourceID(sourceID), Kind: "skill", Name: name},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}
+	})
 	return pin, revision, raw
 }
 

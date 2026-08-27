@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,15 +24,24 @@ type (
 	// artifact archive.
 	ArchiveDigest string
 
+	// AssessmentDigest is the content-addressed identity of a resource
+	// assessment.
+	AssessmentDigest string
+
+	// PolicyDigest identifies the exact policy used to assess a resource.
+	PolicyDigest string
+
 	// JobID uniquely identifies a durable job.
 	JobID string
 )
 
-func (m MarketplaceID) String() string  { return string(m) }
-func (s SourceID) String() string       { return string(s) }
-func (r RevisionDigest) String() string { return string(r) }
-func (a ArchiveDigest) String() string  { return string(a) }
-func (j JobID) String() string          { return string(j) }
+func (m MarketplaceID) String() string    { return string(m) }
+func (s SourceID) String() string         { return string(s) }
+func (r RevisionDigest) String() string   { return string(r) }
+func (a ArchiveDigest) String() string    { return string(a) }
+func (a AssessmentDigest) String() string { return string(a) }
+func (p PolicyDigest) String() string     { return string(p) }
+func (j JobID) String() string            { return string(j) }
 
 // ResourceCoordinate identifies a resource revision lineage.
 type ResourceCoordinate struct {
@@ -273,8 +283,52 @@ type Finding struct {
 	// Message is a human-readable description.
 	Message string `json:"message"`
 
-	// SourceRange is an optional source location, when available.
-	SourceRange string `json:"source_range,omitempty"`
+	Location *FindingLocation `json:"location,omitempty"`
+}
+
+type FindingLocation struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line,omitempty"`
+	Column    int    `json:"column,omitempty"`
+	StartByte int64  `json:"start_byte,omitempty"`
+	EndByte   int64  `json:"end_byte,omitempty"`
+}
+
+// AssessmentDecision is the explicit outcome of a resource assessment.
+type AssessmentDecision string
+
+const (
+	// AssessmentDecisionAllow permits use of the assessed resource.
+	AssessmentDecisionAllow AssessmentDecision = "allow"
+
+	// AssessmentDecisionWarn permits use while surfacing assessment findings.
+	AssessmentDecisionWarn AssessmentDecision = "warn"
+
+	// AssessmentDecisionReject refuses use of the assessed resource.
+	AssessmentDecisionReject AssessmentDecision = "reject"
+)
+
+// ResourceAssessment is an immutable assessment of one exact resource revision.
+// Its AssessmentDigest identifies every field except AssessedAt and the digest
+// itself.
+type ResourceAssessment struct {
+	Coordinate ResourceCoordinate `json:"coordinate"`
+
+	ContentDigest RevisionDigest `json:"content_digest"`
+
+	AssessmentDigest AssessmentDigest `json:"assessment_digest"`
+
+	AnalyzerVersion string `json:"analyzer_version"`
+
+	PolicyDigest PolicyDigest `json:"policy_digest"`
+
+	Decision AssessmentDecision `json:"decision"`
+
+	Findings []Finding `json:"findings,omitempty"`
+
+	InspectionManifestDigest RevisionDigest `json:"inspection_manifest_digest"`
+
+	AssessedAt time.Time `json:"assessed_at"`
 }
 
 // Provenance records source identity metadata for a resource revision.
@@ -331,13 +385,6 @@ type ResourceRevision struct {
 	// ArchiveDigest is the artifact archive digest, when mirrored.
 	ArchiveDigest ArchiveDigest `json:"archive_digest,omitempty"`
 
-	// AnalyzerVersion is the deterministic analyzer version that produced
-	// Findings.
-	AnalyzerVersion string `json:"analyzer_version,omitempty"`
-
-	// Findings are the analyzer findings for this revision.
-	Findings []Finding `json:"findings,omitempty"`
-
 	// License is the SPDX license identifier for this revision.
 	License string `json:"license,omitempty"`
 
@@ -345,21 +392,33 @@ type ResourceRevision struct {
 	// originates in a third-party registry, so it is bounded and normalized by
 	// BoundDescription before it is stored or served.
 	Description string `json:"description,omitempty"`
-
-	// Provenance is optional source identity metadata.
-	Provenance *Provenance `json:"provenance,omitempty"`
-
-	// Revocation is the revocation state for this revision, if any.
-	Revocation *Revocation `json:"revocation,omitempty"`
 }
 
-// SourceOccurrence connects a resource revision to an exact source commit.
+// ResourceOccurrence records one resource revision's membership in a source occurrence.
+type ResourceOccurrence struct {
+	Coordinate     ResourceCoordinate `json:"coordinate"`
+	ContentDigest  RevisionDigest     `json:"content_digest"`
+	Commit         string             `json:"commit"`
+	ManifestDigest RevisionDigest     `json:"manifest_digest"`
+}
+
+// AssessedResourceRevision is the current read projection for one immutable resource revision.
+type AssessedResourceRevision struct {
+	ResourceRevision
+	Assessment ResourceAssessment `json:"assessment"`
+	Occurrence ResourceOccurrence `json:"occurrence"`
+	Revocation *Revocation        `json:"revocation,omitempty"`
+}
+
+// SourceOccurrence connects a source revision manifest to an exact source commit.
 type SourceOccurrence struct {
 	// SourceID identifies the source lineage.
 	SourceID SourceID `json:"source_id"`
 
 	// Ref is the resolved Git ref.
 	Ref string `json:"ref"`
+
+	Roots []SourceRoot `json:"roots"`
 
 	// Commit is the exact source commit.
 	Commit string `json:"commit"`
@@ -383,6 +442,7 @@ type SourceOccurrence struct {
 func (o SourceOccurrence) Equal(other SourceOccurrence) bool {
 	return o.SourceID == other.SourceID &&
 		o.Ref == other.Ref &&
+		slices.Equal(o.Roots, other.Roots) &&
 		o.Commit == other.Commit &&
 		o.SourceRevisionManifestDigest == other.SourceRevisionManifestDigest &&
 		o.Acquisition == other.Acquisition &&

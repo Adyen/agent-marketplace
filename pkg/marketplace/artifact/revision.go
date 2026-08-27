@@ -13,7 +13,8 @@ import (
 
 const (
 	// SourceRevisionSchemaV1 is the current source revision manifest schema.
-	SourceRevisionSchemaV1 = "v1"
+	SourceRevisionSchemaV1    = "v1"
+	SourceRevisionGeneratorV1 = "agent-marketplace source-revision/v1"
 )
 
 // SourceRevisionManifest lists all resources produced from a single source
@@ -37,7 +38,6 @@ type RevisionResource struct {
 	ContentDigest string            `json:"content_digest"`
 	ArchiveDigest string            `json:"archive_digest,omitempty"`
 	SupportFiles  map[string]string `json:"support_files,omitempty"`
-	Rejected      bool              `json:"rejected,omitempty"`
 }
 
 // RevisionDigest returns the sha256 digest of a canonical JSON payload.

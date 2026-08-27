@@ -79,6 +79,7 @@ func TestPlanMarketplaceUpdateSkipsUnchangedWithoutArtifactFetch(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	fixture.latestDigest = fixture.pin.Digest
 	fixture.latest.ContentDigest = store.RevisionDigest(fixture.latestDigest)
+	fixture.latest = testAssessedResourceRevision(t, fixture.latest.ResourceRevision, store.AssessmentDecisionAllow, nil)
 	fixture.artifactRequests = 0
 	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{fixture.pin}}
 	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
@@ -101,34 +102,44 @@ func TestMarketplaceOccurrenceComparisonPreservesUpdatePlanningContract(t *testi
 	pin := config.MarketplaceResourcePin{
 		Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
 	}
+	intrinsic := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("e", 64)),
+	}
+	occurrence := func(commit, manifestDigest string) store.AssessedResourceRevision {
+		revision := testAssessedResourceRevision(t, intrinsic, store.AssessmentDecisionAllow, nil)
+		revision.Occurrence.Commit = commit
+		revision.Occurrence.ManifestDigest = store.RevisionDigest(manifestDigest)
+		return revision
+	}
 	cases := []struct {
 		name    string
 		pin     config.MarketplaceResourcePin
-		latest  store.ResourceRevision
+		latest  store.AssessedResourceRevision
 		changed bool
 	}{
 		{
 			name: "same occurrence", pin: pin,
-			latest: store.ResourceRevision{Provenance: &store.Provenance{Commit: commit, ManifestDigest: store.RevisionDigest(manifestDigest)}},
+			latest: occurrence(commit, manifestDigest),
 		},
 		{
 			name: "different commit", pin: pin,
-			latest:  store.ResourceRevision{Provenance: &store.Provenance{Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest(manifestDigest)}},
+			latest:  occurrence(strings.Repeat("c", 40), manifestDigest),
 			changed: true,
 		},
 		{
 			name: "different manifest", pin: pin,
-			latest:  store.ResourceRevision{Provenance: &store.Provenance{Commit: commit, ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64))}},
+			latest:  occurrence(commit, "sha256:"+strings.Repeat("d", 64)),
 			changed: true,
 		},
 		{
-			name: "missing provenance", pin: pin,
-			latest:  store.ResourceRevision{},
+			name: "missing occurrence", pin: pin,
+			latest:  occurrence("", ""),
 			changed: true,
 		},
 		{
-			name: "mirror ignores provenance", pin: config.MarketplaceResourcePin{Acquisition: config.MarketplaceAcquisitionMirror},
-			latest: store.ResourceRevision{Provenance: &store.Provenance{Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64))}},
+			name: "mirror ignores occurrence", pin: config.MarketplaceResourcePin{Acquisition: config.MarketplaceAcquisitionMirror},
+			latest: occurrence(strings.Repeat("c", 40), "sha256:"+strings.Repeat("d", 64)),
 		},
 	}
 	for _, tc := range cases {
@@ -147,9 +158,8 @@ func TestPlanMarketplaceUpdatePreparesSameContentForChangedIndexOccurrence(t *te
 	pin.Acquisition = config.MarketplaceAcquisitionIndexOnly
 	pin.SourceCommit = strings.Repeat("a", 40)
 	pin.SourceManifestDigest = "sha256:" + strings.Repeat("b", 64)
-	fixture.latest.Provenance = &store.Provenance{
-		SourceID: "src", Commit: strings.Repeat("c", 40), ManifestDigest: store.RevisionDigest(pin.SourceManifestDigest),
-	}
+	fixture.latest.Occurrence.Commit = strings.Repeat("c", 40)
+	fixture.latest.Occurrence.ManifestDigest = store.RevisionDigest(pin.SourceManifestDigest)
 	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{pin}}
 	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
 
@@ -192,16 +202,14 @@ func TestPlanMarketplaceUpdateFailureDoesNotMutateConfig(t *testing.T) {
 func TestMarketplaceUpdateRejectsPolicyRejectionWithoutConsent(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	plan := &marketplace.PreparedInstall{
-		Pin: config.MarketplaceResourcePin{Digest: digest},
-		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{
-			ContentDigest: digest,
-			Findings:      []hccartifact.CanonicalFinding{{Code: "danger", Message: "blocked", PolicyOutcome: "reject"}},
-		}},
+		Pin:      config.MarketplaceResourcePin{Digest: digest},
+		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{ContentDigest: digest}},
+		Revision: store.AssessedResourceRevision{Assessment: store.ResourceAssessment{Decision: store.AssessmentDecisionReject}},
 	}
 	if err := validateMarketplaceUpdateArtifact(plan); err == nil || !strings.Contains(err.Error(), "rejected by policy") {
 		t.Fatalf("policy rejection error = %v", err)
 	}
-	plan.Artifact.Manifest.Findings[0].PolicyOutcome = "warn"
+	plan.Revision.Assessment.Decision = store.AssessmentDecisionWarn
 	plan.Artifact.Manifest.Capabilities = []string{"command:exec"}
 	if err := validateMarketplaceUpdateArtifact(plan); err != nil {
 		t.Fatalf("warn/capability update should not require consent: %v", err)
@@ -295,6 +303,7 @@ func TestUpdateSkipsUnchangedMarketplacePinWithoutTargetSet(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	fixture.latestDigest = fixture.pin.Digest
 	fixture.latest.ContentDigest = store.RevisionDigest(fixture.latestDigest)
+	fixture.latest = testAssessedResourceRevision(t, fixture.latest.ResourceRevision, store.AssessmentDecisionAllow, nil)
 	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
@@ -349,7 +358,7 @@ type marketplaceUpdateFixture struct {
 	repoRoot         string
 	configPath       string
 	pin              config.MarketplaceResourcePin
-	latest           store.ResourceRevision
+	latest           store.AssessedResourceRevision
 	latestDigest     string
 	archiveDigest    string
 	artifact         []byte
@@ -376,7 +385,7 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 		pin:          config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "old-source", Kind: "skill", Name: "review", Revision: "old-revision", Digest: digestOld, Acquisition: config.MarketplaceAcquisitionMirror},
 		latestDigest: latestDigest, archiveDigest: archiveDigest, artifact: raw,
 	}
-	fixture.latest = store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}
+	fixture.latest = testAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}, store.AssessmentDecisionAllow, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))

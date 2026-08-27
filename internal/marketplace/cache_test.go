@@ -162,7 +162,7 @@ func TestCacheResourceRevisionRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	c := NewCache(tmp)
 
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src"),
@@ -172,7 +172,7 @@ func TestCacheResourceRevisionRoundTrip(t *testing.T) {
 		ContentDigest: store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333"),
 		ArchiveDigest: store.ArchiveDigest("sha256:4444444444444444444444444444444444444444444444444444444444444444"),
 		License:       "MIT",
-	}
+	})
 
 	p, err := c.WriteResourceRevision("https://marketplace.example", "src", "skill", "review", "sha256:3333333333333333333333333333333333333333333333333333333333333333", rev)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestCacheSanitizesSourceIDWithSlash(t *testing.T) {
 	tmp := t.TempDir()
 	c := NewCache(tmp)
 
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src/with/slash"),
@@ -232,7 +232,7 @@ func TestCacheSanitizesSourceIDWithSlash(t *testing.T) {
 			Name:        "review",
 		},
 		ContentDigest: store.RevisionDigest("sha256:6666666666666666666666666666666666666666666666666666666666666666"),
-	}
+	})
 
 	p, err := c.WriteResourceRevision("https://marketplace.example", "src/with/slash", "skill", "review", "sha256:6666666666666666666666666666666666666666666666666666666666666666", rev)
 	if err != nil {
@@ -258,10 +258,10 @@ func TestCacheWriteMethodsRejectSymlinkedDirectories(t *testing.T) {
 	metadataRevision := "sha256:" + strings.Repeat("3", 64)
 	baseURL := "https://marketplace.example"
 	sourceID, kind, name := "src", "skill", "review"
-	revision := store.ResourceRevision{
+	revision := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: store.SourceID(sourceID), Kind: kind, Name: name},
 		ContentDigest: store.RevisionDigest(metadataRevision),
-	}
+	})
 
 	tests := []struct {
 		name        string
@@ -573,7 +573,7 @@ func BenchmarkCacheWriteReadArtifact(b *testing.B) {
 func BenchmarkCacheWriteReadResourceRevision(b *testing.B) {
 	tmp := b.TempDir()
 	c := NewCache(tmp)
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
 			Source:      store.SourceID("src"),
@@ -583,12 +583,7 @@ func BenchmarkCacheWriteReadResourceRevision(b *testing.B) {
 		ContentDigest: store.RevisionDigest("sha256:7777777777777777777777777777777777777777777777777777777777777777"),
 		ArchiveDigest: store.ArchiveDigest("sha256:8888888888888888888888888888888888888888888888888888888888888888"),
 		License:       "MIT",
-		Provenance: &store.Provenance{
-			SourceID:       store.SourceID("test"),
-			Commit:         "abc123",
-			ManifestDigest: store.RevisionDigest("sha256:9999999999999999999999999999999999999999999999999999999999999999"),
-		},
-	}
+	})
 	for i := 0; i < b.N; i++ {
 		if _, err := c.WriteResourceRevision("https://marketplace.example", "src", "skill", "review", "sha256:7777777777777777777777777777777777777777777777777777777777777777", rev); err != nil {
 			b.Fatalf("WriteResourceRevision: %v", err)
@@ -606,11 +601,11 @@ func TestCacheGarbageCollectPreservesReferencedMirrorArchive(t *testing.T) {
 	orphanArchive := "sha256:" + strings.Repeat("3", 64)
 	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://marketplace.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
-	rev := store.ResourceRevision{
+	rev := assessedRevision(store.ResourceRevision{
 		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(referencedArchive),
-	}
+	})
 	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
 		t.Fatalf("WriteResourceRevision: %v", err)
 	}

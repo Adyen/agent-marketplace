@@ -319,6 +319,31 @@ paths:
               schema:
                 type: object
 
+  /api/v1/assessments/sha256/{digest}:
+    get:
+      operationId: getResourceAssessment
+      summary: Get an immutable resource assessment by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Immutable analyzer-independent resource assessment
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: public, max-age=31536000, immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceAssessment"
+        "400": { description: Invalid assessment digest path }
+        "404": { description: Assessment not found }
+
   /api/v1/inspection/sha256/{digest}:
     get:
       operationId: getInspectionManifest
@@ -714,6 +739,7 @@ components:
       required:
         - source_id
         - ref
+        - roots
         - commit
         - source_revision_manifest_digest
         - acquisition
@@ -723,6 +749,10 @@ components:
           type: string
         ref:
           type: string
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceRoot"
         commit:
           type: string
           pattern: "^[0-9a-f]{40}$"
@@ -749,6 +779,7 @@ components:
       required:
         - source_id
         - ref
+        - roots
         - commit
         - source_revision_manifest_digest
         - acquisition
@@ -759,6 +790,10 @@ components:
           type: string
         ref:
           type: string
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceRoot"
         commit:
           type: string
           pattern: "^[0-9a-f]{40}$"
@@ -843,9 +878,9 @@ components:
             Whether this revision can be installed from this instance, so a
             list card can show availability without fetching each resource.
             `available` means installable. `blocked` means the revision is
-            listed for transparency but is not installable, because policy
-            rejected it (a reject-severity finding is present) or because a
-            mirrored source published no artifact for it. `revoked` means an
+            listed for transparency but is not installable, because its current
+            assessment explicitly rejected it or because a mirrored source
+            published no artifact for it. `revoked` means an
             operator revoked the revision. Optional: an instance that cannot
             determine availability omits the field, and clients must treat an
             absent value as unknown rather than as `available`.
@@ -859,46 +894,17 @@ components:
 
     ResourceRevision:
       type: object
-      required:
-        - coordinate
-        - content_digest
+      additionalProperties: false
+      required: [coordinate, content_digest, assessment, occurrence]
       properties:
         coordinate:
-          type: object
-          required:
-            - marketplace
-            - source
-            - kind
-            - name
-          properties:
-            marketplace:
-              type: string
-            source:
-              type: string
-            kind:
-              type: string
-              enum:
-                - skill
-                - command
-                - subagent
-                - hook
-                - mcpserver
-                - collection
-            name:
-              type: string
+          $ref: "#/components/schemas/ResourceCoordinate"
         content_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
         archive_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
-        analyzer_version:
-          type: string
-        findings:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
         license:
           type: string
         description:
@@ -907,12 +913,74 @@ components:
           description: >-
             Author-written one-line summary from the upstream registry, bounded
             and normalized identically to ResourceListItem.description.
-        provenance:
-          type: object
-          additionalProperties: true
+        assessment:
+          $ref: "#/components/schemas/ResourceAssessment"
+        occurrence:
+          $ref: "#/components/schemas/ResourceOccurrence"
         revocation:
-          type: object
-          additionalProperties: true
+          $ref: "#/components/schemas/Revocation"
+
+    ResourceAssessment:
+      type: object
+      additionalProperties: false
+      required: [coordinate, content_digest, assessment_digest, analyzer_version, policy_digest, decision, inspection_manifest_digest, assessed_at]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        assessment_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        analyzer_version: { type: string, minLength: 1 }
+        policy_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        decision: { type: string, enum: [allow, warn, reject] }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/AssessmentFinding" }
+        inspection_manifest_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        assessed_at: { type: string, format: date-time }
+
+    AssessmentFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity]
+      properties:
+        code: { type: string }
+        severity: { type: string }
+        policy: { type: string }
+        message: { type: string }
+        location:
+          $ref: "#/components/schemas/FindingLocation"
+
+    FindingLocation:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1 }
+        line: { type: integer, minimum: 1 }
+        column: { type: integer, minimum: 1 }
+        start_byte: { type: integer, minimum: 0 }
+        end_byte: { type: integer, minimum: 0 }
+
+    ResourceOccurrence:
+      type: object
+      additionalProperties: false
+      required: [coordinate, content_digest, commit, manifest_digest]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        commit: { type: string, pattern: "^[0-9a-f]{40}$" }
+        manifest_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+
+    Revocation:
+      type: object
+      additionalProperties: false
+      required: [kind, target_id, reason, applied_at]
+      properties:
+        kind: { type: string, enum: [source, coordinate, revision] }
+        target_id: { type: string }
+        reason: { type: string }
+        applied_at: { type: string, format: date-time }
 
     InspectionManifest:
       type: object
@@ -929,9 +997,6 @@ components:
         files:
           type: array
           items: { $ref: "#/components/schemas/InspectionFile" }
-        findings:
-          type: array
-          items: { $ref: "#/components/schemas/InspectionFinding" }
 
     InspectionFile:
       type: object
@@ -943,19 +1008,6 @@ components:
         media_type: { type: string, enum: [text/markdown, text/plain, application/json, application/yaml, image/png, image/jpeg, image/gif, image/webp, application/octet-stream] }
         size: { type: integer, format: int64, minimum: 0 }
         inspection_class: { type: string, enum: [text, image, metadata] }
-
-    InspectionFinding:
-      type: object
-      additionalProperties: false
-      required: [code, severity, path]
-      properties:
-        code: { type: string }
-        severity: { type: string }
-        policy: { type: string }
-        message: { type: string }
-        path: { type: string }
-        start_byte: { type: integer, format: int64, minimum: 0 }
-        end_byte: { type: integer, format: int64, minimum: 0 }
 
     ResourceCoordinate:
       type: object

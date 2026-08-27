@@ -438,7 +438,7 @@ func (s *Store) GetSourceBySlug(ctx context.Context, slug string) (store.Source,
 
 func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.SourceOccurrence, error) {
 	rows, err := s.q.QueryContext(ctx,
-		fmt.Sprintf(`SELECT source_id, ref, revision_commit, manifest_digest, acquisition,
+		fmt.Sprintf(`SELECT source_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, occurred_at
 		 FROM source_occurrences WHERE source_id=? ORDER BY occurred_at DESC, revision_commit DESC
 		 LIMIT %d`, store.MaxSourceHistoryEntries),
@@ -460,6 +460,7 @@ func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.S
 	return out, rows.Err()
 }
 
+/* Legacy analyzer-coupled resource implementation retained only in history.
 // -- Resource revisions --
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows so a single scan
@@ -674,3 +675,4 @@ func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.Resour
 
 	return s.collectResourceRevisions(rows)
 }
+*/

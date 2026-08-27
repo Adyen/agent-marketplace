@@ -43,7 +43,7 @@ When distinct source paths publish the same kind and source-local name, ingestio
 
 While an allowlist is configured, ingestion distinguishes two conditions, because they are not the same thing:
 
-- **Disallowed** — the resource declares a license that the allowlist does not contain. The operator has seen that license and excluded it, so the resource is rejected, its installable artifact is stripped, and it is reported as `marketplace.policy.license-not-allowed` naming the declared license.
+- **Disallowed** — the resource declares a license that the allowlist does not contain. The operator has seen that license and excluded it, so the resource is rejected, its intrinsic artifact is blocked from serving and installation, and it is reported as `marketplace.policy.license-not-allowed` naming the declared license.
 - **Undeclared** — the resource declares no license at all. Nothing is known about its terms, which is not the same as knowing they are unacceptable, so the outcome is the operator's choice. It is reported as `marketplace.policy.license-undeclared`, never as `license-not-allowed`.
 
 `policy.license_undeclared` selects that outcome and accepts `reject`, `warn`, or `allow`:

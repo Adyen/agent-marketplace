@@ -231,7 +231,7 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	primary, support := inspectionInput(mcp, marketplaceartifact.BuildResult{Artifact: artifact}, nil)
 	projection, err := inspection.Build(
 		store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: "mcpserver", Name: "hostile"},
-		"sha256:"+strings.Repeat("a", 64), primary, support, nil, 10, 4096, 8192,
+		"sha256:"+strings.Repeat("a", 64), primary, support, 10, 4096, 8192,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -283,8 +283,27 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	}
 	revision := "sha256:" + strings.Repeat("a", 64)
 	coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "hostile"}
-	if err := meta.PutResourceRevision(ctx, store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision), Provenance: &store.Provenance{InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest)}}); err != nil {
+	resource := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision)}
+	commit := strings.Repeat("c", 40)
+	manifestDigest := store.RevisionDigest("sha256:" + strings.Repeat("d", 64))
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{Coordinate: coord, ContentDigest: resource.ContentDigest, AnalyzerVersion: analyze.AnalyzerVersionV1, PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("b", 64)), Decision: store.AssessmentDecisionWarn, InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest), AssessedAt: time.Now().UTC()})
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, put := range []func() error{
+		func() error { return meta.PutResourceRevision(ctx, resource) },
+		func() error {
+			return meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: source.ID, Ref: source.Ref, Commit: commit, SourceRevisionManifestDigest: manifestDigest, Acquisition: source.Acquisition, OccurredAt: time.Now().UTC()})
+		},
+		func() error {
+			return meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: resource.ContentDigest, Commit: commit, ManifestDigest: manifestDigest})
+		},
+		func() error { return meta.PutResourceAssessment(ctx, assessment) },
+		func() error { return meta.SetCurrentResourceAssessment(ctx, assessment) },
+	} {
+		if err := put(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var logs bytes.Buffer
@@ -328,6 +347,7 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 	}
 
 	cfg := testConfig(t, repoDir)
+	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
 	source := store.Source{
 		ID:          store.SourceID("src-test"),
 		Slug:        "example-source",
@@ -361,6 +381,9 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 	key := "skill/review"
 	if len(rev.ResourceArchives[key]) == 0 || rev.ResourceArchiveDigest[key] == "" {
 		t.Fatalf("index-only revision should retain a local archive for consumer materialization")
+	}
+	if assessment := resourceAssessmentFor(t, rev.Assessments, "skill"); assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("assessment decision = %q, want reject", assessment.Decision)
 	}
 }
 
@@ -586,12 +609,49 @@ func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	if skill == nil {
 		t.Fatalf("expected skill resource revision")
 	}
-	if skill.ArchiveDigest != "" {
-		t.Fatalf("rejected resource should not have an archive digest")
+	if skill.ArchiveDigest == "" {
+		t.Fatal("rejected assessment should not erase intrinsic archive identity")
 	}
-	if len(skill.Findings) == 0 {
-		t.Fatalf("rejected resource should have findings")
+	assessment := resourceAssessmentFor(t, rev.Assessments, "skill")
+	if len(assessment.Findings) == 0 || assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("rejected resource assessment = %#v", assessment)
 	}
+}
+
+func TestSourceRevisionIdentityIgnoresPolicyAssessment(t *testing.T) {
+	ctx := context.Background()
+	repoDir := createIngestRepo(t)
+	commit := mustRepoCommit(t, repoDir)
+	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	allowed, err := BuildSourceRevision(ctx, testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("allowed BuildSourceRevision: %v", err)
+	}
+	blockedConfig := testConfig(t, repoDir)
+	blockedConfig.Policy.LicenseAllowlist = []string{"Apache-2.0"}
+	blocked, err := BuildSourceRevision(ctx, blockedConfig, "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("blocked BuildSourceRevision: %v", err)
+	}
+	if allowed.ManifestDigest != blocked.ManifestDigest {
+		t.Fatalf("source manifest digest changed with policy: %s != %s", allowed.ManifestDigest, blocked.ManifestDigest)
+	}
+	allowedSkill := resourceRevisionFor(t, allowed.Resources, "skill")
+	blockedSkill := resourceRevisionFor(t, blocked.Resources, "skill")
+	if allowedSkill.ArchiveDigest == "" || allowedSkill.ArchiveDigest != blockedSkill.ArchiveDigest {
+		t.Fatalf("archive digest changed with policy: %s != %s", allowedSkill.ArchiveDigest, blockedSkill.ArchiveDigest)
+	}
+}
+
+func resourceAssessmentFor(tb testing.TB, assessments []store.ResourceAssessment, kind string) store.ResourceAssessment {
+	tb.Helper()
+	for _, assessment := range assessments {
+		if assessment.Coordinate.Kind == kind {
+			return assessment
+		}
+	}
+	tb.Fatalf("no %s resource assessment was built", kind)
+	return store.ResourceAssessment{}
 }
 
 // resourceRevisionFor returns the built revision for a kind, so description
@@ -641,7 +701,7 @@ func TestBuildSourceRevisionCarriesDescriptions(t *testing.T) {
 }
 
 // A policy-rejected resource stays listed for transparency, so it must keep
-// its description even though its artifact is stripped.
+// its intrinsic metadata while its assessment blocks installation.
 func TestBuildSourceRevisionKeepsDescriptionWhenRejected(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
@@ -669,8 +729,11 @@ func TestBuildSourceRevisionKeepsDescriptionWhenRejected(t *testing.T) {
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
-	if skill.ArchiveDigest != "" {
-		t.Fatalf("rejected resource should not have an archive digest")
+	if skill.ArchiveDigest == "" {
+		t.Fatal("rejected assessment should retain intrinsic archive identity")
+	}
+	if assessment := resourceAssessmentFor(t, rev.Assessments, "skill"); assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("assessment decision = %q, want reject", assessment.Decision)
 	}
 	if skill.Description != "Review code" {
 		t.Fatalf("rejected resource lost its description: %q", skill.Description)

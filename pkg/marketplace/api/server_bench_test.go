@@ -56,8 +56,7 @@ func BenchmarkServerSearch(b *testing.B) {
 				Kind:        KindSkill,
 				Name:        fmt.Sprintf("skill-%04d", i),
 			},
-			ContentDigest:   store.RevisionDigest(fmt.Sprintf("sha256:%064d", i)),
-			AnalyzerVersion: "1.0.0",
+			ContentDigest: store.RevisionDigest(fmt.Sprintf("sha256:%064d", i)),
 		}
 		if err := meta.PutResourceRevision(ctx, rev); err != nil {
 			b.Fatalf("put resource revision: %v", err)
