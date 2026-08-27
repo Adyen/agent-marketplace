@@ -206,6 +206,311 @@ registries:
 	}
 }
 
+func TestRemoveStaleExplicitSelectionFromRepoConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-repo.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - keeper
+      - removed-upstream
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatalf("stale selection remains in repo config: %v", cfg.Registries[0].Skills.Include)
+	}
+}
+
+func TestRemoveMalformedExplicitSelection(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "malformed-remove.git")
+	writeFile(t, filepath.Join(working, "skills", "broken", "SKILL.md"), "---\nname: broken\ndescription: \"unterminated\n---\n")
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - broken
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "broken"); err != nil {
+		t.Fatalf("remove malformed selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "broken") {
+		t.Fatal("malformed selection remains in config")
+	}
+}
+
+func TestRemoveStaleExplicitSelectionPreservesInheritedTagDisable(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-tags.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+tags:
+  - security
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - removed-upstream
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale tag-selected selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") || !containsStr(cfg.Registries[0].Skills.Exclude, "removed-upstream") {
+		t.Fatalf("expected stale tag-selected selection to move from include to exclude: %#v", cfg.Registries[0].Skills)
+	}
+}
+
+func TestRemoveStaleExplicitSelectionInfersUserScope(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-user.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	writeConfig(t, globalPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - removed-upstream
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - keeper
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale user selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatalf("stale selection remains in user config: %v", cfg.Registries[0].Skills.Include)
+	}
+}
+
+func TestRemoveStaleExplicitSelectionRequiresKindDisambiguation(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-kind.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - deploy
+    commands:
+      - deploy
+`)
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("remove", "deploy"); err == nil || !strings.Contains(err.Error(), "ambiguous across kinds") {
+		t.Fatalf("expected kind ambiguity, got %v", err)
+	}
+	if out, err := executeCommand("remove", "--kind", "command", "deploy"); err != nil {
+		t.Fatalf("remove stale command failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Commands.Include, "deploy") {
+		t.Fatal("stale command selection remains in config")
+	}
+	if !containsStr(cfg.Registries[0].Skills.Include, "deploy") {
+		t.Fatal("kind-disambiguated removal deleted the skill selection")
+	}
+}
+
+func TestRemoveStaleExplicitSelectionRequiresScopeDisambiguation(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-scope.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	writeConfig(t, globalPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - removed-upstream
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, repoPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - keeper
+      - removed-upstream
+`)
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("remove", "removed-upstream"); err == nil || !strings.Contains(err.Error(), "multiple config layers") {
+		t.Fatalf("expected scope ambiguity, got %v", err)
+	}
+	if out, err := executeCommand("remove", "--scope", "user", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale user selection failed: %v\n%s", err, out)
+	}
+	globalCfg, err := config.LoadConfigFromPath(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoCfg, err := config.LoadConfigFromPath(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(globalCfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatal("stale user selection remains in config")
+	}
+	if !containsStr(repoCfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatal("scope-disambiguated removal deleted the repo selection")
+	}
+}
+
+func TestRemoveStaleExplicitSelectionFromLocalConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-local.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - keeper
+`)
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	writeFile(t, localPath, `registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      include:
+        - removed-upstream
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "--scope", "local", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale local selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatal("stale local selection remains in config")
+	}
+}
+
+func TestRemoveStaleExplicitSelectionUsesFromToDisambiguateRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	originA, workingA := createBareRepoWithWorkingClone(t, "stale-from-a.git")
+	writeSkill(t, workingA, "keeper-a", "Keeper A", nil)
+	commitAndPushAll(t, workingA, "setup")
+	originB, workingB := createBareRepoWithWorkingClone(t, "stale-from-b.git")
+	writeSkill(t, workingB, "keeper-b", "Keeper B", nil)
+	commitAndPushAll(t, workingB, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+originA+`
+    ref: main
+    skills:
+      - removed-upstream
+  - url: `+originB+`
+    ref: main
+    skills:
+      - removed-upstream
+`)
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("remove", "removed-upstream"); err == nil || !strings.Contains(err.Error(), "multiple registries") {
+		t.Fatalf("expected registry ambiguity, got %v", err)
+	}
+	if out, err := executeCommand("remove", "--from", originA, "removed-upstream"); err != nil {
+		t.Fatalf("remove stale registry selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") {
+		t.Fatal("stale selection remains in selected registry")
+	}
+	if !containsStr(cfg.Registries[1].Skills.Include, "removed-upstream") {
+		t.Fatal("registry-disambiguated removal deleted the other selection")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // tag-selected skill remove → repo exclude (not personal exclude)
 // ---------------------------------------------------------------------------

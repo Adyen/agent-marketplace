@@ -1093,6 +1093,33 @@ registries:
 
 	// ===== remove command =====
 	{
+		Name: "remove/stale_explicit_selection",
+		Desc: "Given an explicitly selected skill that is absent upstream, When remove is run, Then its selection is removed from config",
+		Registries: []RegistryDef{
+			{Name: "stale-remove", Skills: []Skill{{Name: "keeper"}}},
+		},
+		GlobalCfg: `
+registries: []
+`,
+		RepoCfg: `
+registries:
+  - url: {{REG:stale-remove}}
+    ref: main
+    skills:
+      - keeper
+      - removed-upstream
+`,
+		Steps: []Step{
+			{Args: []string{"remove", "removed-upstream"}, MustPass: true,
+				OutContains: []string{"Removed removed-upstream"},
+				FileNotContains: map[string]string{
+					"/workspace/.agents/config.yaml": "removed-upstream",
+				}},
+			{Args: []string{"sync"}, MustPass: true,
+				OutNotContains: []string{"removed-upstream"}},
+		},
+	},
+	{
 		Name: "remove/install_then_remove_roundtrip",
 		Desc: "Given a skill synced to machine scope, When remove --scope user is run and re-synced, Then the skill is gone from the filesystem",
 		Registries: []RegistryDef{

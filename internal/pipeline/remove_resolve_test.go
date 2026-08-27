@@ -189,6 +189,110 @@ func TestResolvedResourceInRegistry_EntryPathOwnsDiscoveredSubPath(t *testing.T)
 	}
 }
 
+func TestExplicitRemovalSelectionsRejectsLowerPrecedenceScope(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{{
+			URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}},
+		}}}},
+	}
+	_, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeUser, true)
+	if err == nil || !strings.Contains(err.Error(), "not selected at user scope") {
+		t.Fatalf("expected ineffective lower-precedence scope to be rejected, got %v", err)
+	}
+}
+
+func TestExplicitRemovalSelectionsInRegistryInfersKindAndRequired(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{{
+			URL: "registry", Ref: "main", Required: true, Commands: config.KindSelector{Include: []string{"gone"}},
+		}}}},
+	}
+	got, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", 0, false, ScopeRepo, "registry", "main", "")
+	if err != nil || len(got) != 1 || got[0].Kind != ir.KindCommand || !got[0].Required {
+		t.Fatalf("expected required command selection, got %#v, %v", got, err)
+	}
+}
+
+func TestExplicitRemovalSelectionsInRegistryRejectsLowerPrecedenceScope(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{{
+			URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}},
+		}}}},
+	}
+	_, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeUser, "registry", "main", "")
+	if err == nil || !strings.Contains(err.Error(), "not selected at user scope") {
+		t.Fatalf("expected ineffective lower-precedence scope to be rejected, got %v", err)
+	}
+}
+
+func TestExplicitRemovalSelectionInheritsTopLevelTags(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{
+			Tags:       []string{"security"},
+			Registries: []config.RegistryEntry{{URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}}},
+		}},
+	}
+	got, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err != nil || len(got) != 1 || !got[0].AutoSelected {
+		t.Fatalf("expected inherited tags to mark selection auto-selected, got %#v, %v", got, err)
+	}
+}
+
+func TestExplicitRemovalSelectionInheritsRequiredStatus(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{
+			Skills:     config.KindSelector{Include: []string{"gone"}},
+			Registries: []config.RegistryEntry{{URL: "registry", Ref: "main", Required: true}},
+		}},
+	}
+	got, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err != nil || len(got) != 1 || !got[0].Required {
+		t.Fatalf("expected inherited required selection, got %#v, %v", got, err)
+	}
+}
+
+func TestExplicitRemovalSelectionDoesNotInheritRequiredThroughOverride(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{
+			Skills: config.KindSelector{Include: []string{"gone"}},
+			Registries: []config.RegistryEntry{
+				{URL: "required", Ref: "main", Required: true, Skills: config.KindSelector{Include: []string{}}},
+				{URL: "optional", Ref: "main"},
+			},
+		}},
+	}
+	got, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err != nil || len(got) != 1 || got[0].Required {
+		t.Fatalf("expected optional inherited selection, got %#v, %v", got, err)
+	}
+}
+
+func TestExplicitRemovalSelectionsInRegistryRejectsRefCollisionWithoutDuplicateSelection(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
+			{URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}},
+			{URL: "registry", Ref: "release"},
+		}}},
+	}
+	_, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, "registry", "main", "")
+	if err == nil || !strings.Contains(err.Error(), "different refs") {
+		t.Fatalf("expected ref collision to fail safely, got %v", err)
+	}
+}
+
+func TestExplicitRemovalSelectionsRejectsSameRegistryAtMultipleRefs(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
+			{URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}},
+			{URL: "registry", Ref: "release", Skills: config.KindSelector{Include: []string{"gone"}}},
+		}}},
+	}
+	_, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err == nil || !strings.Contains(err.Error(), "multiple refs") {
+		t.Fatalf("expected multi-ref removal to fail safely, got %v", err)
+	}
+}
+
 func TestRegistryPathOwns(t *testing.T) {
 	cases := []struct {
 		entry, artifact string

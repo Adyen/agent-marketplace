@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -88,10 +89,12 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, fmt.Errorf("resource name is required")
 	}
 
-	mergedCfg, repoCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
+	effectiveCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
 	if err != nil {
 		return nil, err
 	}
+	mergedCfg := effectiveCfg.Merged
+	repoCfg := effectiveCfg.Repo.Config
 
 	// Check if the arg refers to a collection in the merged config.
 	if isCollectionInstalled(mergedCfg, name) {
@@ -123,7 +126,22 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 	if target == nil {
-		return nil, fmt.Errorf("resource %q is not currently enabled", name)
+		selections, err := explicitRemovalSelections(effectiveCfg, opts.RepoRoot, name, opts.Kind, opts.HasKind, opts.Scope, opts.ScopeSpecified)
+		if err != nil {
+			return nil, err
+		}
+		if len(selections) == 0 {
+			return nil, fmt.Errorf("resource %q is not currently enabled", name)
+		}
+		slog.Info("removing unresolved explicit selection", "name", name, "kind", skill.KindLabel(selections[0].Kind), "source", selections[0].Source.String(), "selection_sites", len(selections))
+		if err := removeExplicitSelections(opts.RepoRoot, selections, opts.Scope, opts.ScopeSpecified); err != nil {
+			return nil, err
+		}
+		if err := silentSync(ctx, opts.RepoRoot); err != nil {
+			return nil, err
+		}
+		inferredUserScope := !opts.ScopeSpecified && inferExplicitRemoveScope(selections[0].Source) == ScopeUser
+		return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 	}
 
 	// required:true skills are immune to remove from any scope.
@@ -170,12 +188,352 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 }
 
-func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg *config.Config, repoCfg *config.Config, err error) {
+func loadRemoveConfig(ctx context.Context, repoRoot string) (config.EffectiveConfig, error) {
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
-		return nil, nil, errors.Join(ec.Errors...)
+		return config.EffectiveConfig{}, errors.Join(ec.Errors...)
 	}
-	return ec.Merged, ec.Repo.Config, nil
+	return ec, nil
+}
+
+type explicitRemovalSelection struct {
+	Kind           ir.ResourceKind
+	Name           string
+	Source         config.Source
+	ConfigPath     string
+	RegistryURL    string
+	RegistryPath   string
+	Ref            string
+	Required       bool
+	AutoSelected   bool
+	AutoRegistries []config.RegistryEntry
+	TopLevel       bool
+}
+
+func explicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, scopeSpecified bool) ([]explicitRemovalSelection, error) {
+	selections := allExplicitRemovalSelections(ec, repoRoot, name)
+	if hasKind {
+		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool { return selection.Kind != kind })
+	} else if labels := explicitKindLabels(selections); len(labels) > 1 {
+		return nil, fmt.Errorf("resource %q is ambiguous across kinds (%s); rerun with --kind", name, strings.Join(labels, ", "))
+	}
+	if len(selections) == 0 {
+		return nil, nil
+	}
+
+	if scopeSpecified {
+		selectionKind := selections[0].Kind
+		targetSource := scopeToConfigSource(scope)
+		exact := slices.Clone(selections)
+		exact = slices.DeleteFunc(exact, func(selection explicitRemovalSelection) bool { return selection.Source != targetSource })
+		if len(exact) > 0 {
+			selections = exact
+		} else {
+			selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+				return targetSource.Precedence() <= selection.Source.Precedence() || config.ValidateScopeBoundary(selection.Source, targetSource) != nil
+			})
+			if len(selections) == 0 {
+				return nil, fmt.Errorf("%s %q is not selected at %s scope", skill.KindLabel(selectionKind), name, scope)
+			}
+		}
+	} else if sources := explicitSelectionSources(selections); len(sources) > 1 {
+		return nil, explicitScopeAmbiguityError(name, selections)
+	}
+	if len(selections) == 0 {
+		return nil, nil
+	}
+
+	hasTopLevel := slices.ContainsFunc(selections, func(selection explicitRemovalSelection) bool { return selection.TopLevel })
+	if !hasTopLevel && distinctExplicitRegistryCount(selections) > 1 {
+		return nil, explicitRegistryAmbiguityError(name, selections)
+	}
+	return selections, nil
+}
+
+func allExplicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name string) []explicitRemovalSelection {
+	var selections []explicitRemovalSelection
+	selections = appendConfigExplicitSelections(selections, ec.Organization.Config, ec.Organization.Path, config.Organization, name)
+	selections = appendConfigExplicitSelections(selections, ec.User.Config, ec.User.Path, config.UserPersonal, name)
+	selections = appendConfigExplicitSelections(selections, ec.Repo.Config, ec.Repo.Path, config.RepoCommitted, name)
+	return appendLocalExplicitSelections(selections, ec.Local, config.LocalConfigPath(repoRoot), name)
+}
+
+func explicitRemovalSelectionsInRegistry(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, url, ref, path string) ([]explicitRemovalSelection, error) {
+	selections := allExplicitRemovalSelections(ec, repoRoot, name)
+	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(url))
+	selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+		return selection.TopLevel || config.NormalizeGitURL(strings.TrimSpace(selection.RegistryURL)) != normalizedURL || !registryPathOwns(path, selection.RegistryPath)
+	})
+	if len(explicitSelectionRefs(selections)) > 1 || registryRefCollisionAtScope(ec, scope, normalizedURL) {
+		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", url)
+	}
+	if strings.TrimSpace(ref) != "" {
+		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+			return strings.TrimSpace(selection.Ref) != strings.TrimSpace(ref)
+		})
+	}
+	if hasKind {
+		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool { return selection.Kind != kind })
+	} else if labels := explicitKindLabels(selections); len(labels) > 1 {
+		return nil, fmt.Errorf("resource %q is ambiguous across kinds (%s); rerun with --kind", name, strings.Join(labels, ", "))
+	}
+	if len(selections) > 0 {
+		targetSource := scopeToConfigSource(scope)
+		exact := slices.Clone(selections)
+		exact = slices.DeleteFunc(exact, func(selection explicitRemovalSelection) bool { return selection.Source != targetSource })
+		if len(exact) > 0 {
+			selections = exact
+		} else {
+			selectionKind := selections[0].Kind
+			selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+				return targetSource.Precedence() <= selection.Source.Precedence() || config.ValidateScopeBoundary(selection.Source, targetSource) != nil
+			})
+			if len(selections) == 0 {
+				return nil, fmt.Errorf("%s %q is not selected at %s scope", skill.KindLabel(selectionKind), name, scope)
+			}
+		}
+	}
+	if strings.TrimSpace(path) == "" && distinctExplicitRegistryCount(selections) > 1 {
+		return nil, explicitRegistryAmbiguityError(name, selections)
+	}
+	return selections, nil
+}
+
+func appendConfigExplicitSelections(dst []explicitRemovalSelection, cfg *config.Config, path string, source config.Source, name string) []explicitRemovalSelection {
+	if cfg == nil {
+		return dst
+	}
+	autoRegistries := autoSelectingRegistries(cfg.Registries, cfg.Tags)
+	for _, kind := range config.AllKinds {
+		if stringListContains(cfg.SelectorForKind(kind).Include, name) {
+			required := slices.ContainsFunc(cfg.Registries, func(entry config.RegistryEntry) bool {
+				return entry.Required && entry.SelectorForKind(kind).Include == nil
+			})
+			dst = append(dst, explicitRemovalSelection{Kind: kind, Name: name, Source: source, ConfigPath: path, Required: required, AutoSelected: len(autoRegistries) > 0, AutoRegistries: autoRegistries, TopLevel: true})
+		}
+		for _, entry := range cfg.Registries {
+			if stringListContains(entry.SelectorForKind(kind).Include, name) {
+				autoSelected := entry.Default || len(entry.Tags) > 0 || (entry.Tags == nil && len(cfg.Tags) > 0)
+				dst = append(dst, explicitRemovalSelection{Kind: kind, Name: name, Source: source, ConfigPath: path, RegistryURL: entry.URL, RegistryPath: entry.Path, Ref: entry.Ref, Required: entry.Required, AutoSelected: autoSelected})
+			}
+		}
+	}
+	return dst
+}
+
+func appendLocalExplicitSelections(dst []explicitRemovalSelection, cfg *config.LocalConfig, path, name string) []explicitRemovalSelection {
+	if cfg == nil {
+		return dst
+	}
+	autoRegistries := autoSelectingRegistries(cfg.Registries, nil)
+	for _, kind := range config.AllKinds {
+		if stringListContains(cfg.SelectorForKind(kind).Include, name) {
+			required := slices.ContainsFunc(cfg.Registries, func(entry config.RegistryEntry) bool {
+				return entry.Required && entry.SelectorForKind(kind).Include == nil
+			})
+			dst = append(dst, explicitRemovalSelection{Kind: kind, Name: name, Source: config.RepoPersonal, ConfigPath: path, Required: required, AutoSelected: len(autoRegistries) > 0, AutoRegistries: autoRegistries, TopLevel: true})
+		}
+		for _, entry := range cfg.Registries {
+			if stringListContains(entry.SelectorForKind(kind).Include, name) {
+				dst = append(dst, explicitRemovalSelection{Kind: kind, Name: name, Source: config.RepoPersonal, ConfigPath: path, RegistryURL: entry.URL, RegistryPath: entry.Path, Ref: entry.Ref, Required: entry.Required, AutoSelected: entry.Default || len(entry.Tags) > 0})
+			}
+		}
+	}
+	return dst
+}
+
+func autoSelectingRegistries(entries []config.RegistryEntry, inheritedTags []string) []config.RegistryEntry {
+	var selected []config.RegistryEntry
+	for _, entry := range entries {
+		if entry.Default || len(entry.Tags) > 0 || (entry.Tags == nil && len(inheritedTags) > 0) {
+			selected = append(selected, entry)
+		}
+	}
+	return selected
+}
+
+func explicitKindLabels(selections []explicitRemovalSelection) []string {
+	labels := make([]string, 0, len(selections))
+	for _, selection := range selections {
+		label := skill.KindLabel(selection.Kind)
+		if !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	slices.Sort(labels)
+	return labels
+}
+
+func explicitSelectionSources(selections []explicitRemovalSelection) []config.Source {
+	var sources []config.Source
+	for _, selection := range selections {
+		if !slices.Contains(sources, selection.Source) {
+			sources = append(sources, selection.Source)
+		}
+	}
+	return sources
+}
+
+func distinctExplicitRegistryCount(selections []explicitRemovalSelection) int {
+	keys := make(map[string]struct{}, len(selections))
+	for _, selection := range selections {
+		keys[config.NormalizeGitURL(selection.RegistryURL)+"\x00"+strings.TrimSpace(selection.Ref)+"\x00"+strings.TrimSpace(selection.RegistryPath)] = struct{}{}
+	}
+	return len(keys)
+}
+
+func explicitSelectionRefs(selections []explicitRemovalSelection) []string {
+	var refs []string
+	for _, selection := range selections {
+		ref := strings.TrimSpace(selection.Ref)
+		if !slices.Contains(refs, ref) {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func registryRefCollisionAtScope(ec config.EffectiveConfig, scope Scope, normalizedURL string) bool {
+	var entries []config.RegistryEntry
+	switch scope {
+	case ScopeUser:
+		if ec.User.Config != nil {
+			entries = ec.User.Config.Registries
+		}
+	case ScopeLocal:
+		if ec.Local != nil {
+			entries = ec.Local.Registries
+		}
+	default:
+		if ec.Repo.Config != nil {
+			entries = ec.Repo.Config.Registries
+		}
+	}
+	refsByPath := make(map[string][]string)
+	for _, entry := range entries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
+			continue
+		}
+		path := strings.TrimSpace(entry.Path)
+		ref := strings.TrimSpace(entry.Ref)
+		if !slices.Contains(refsByPath[path], ref) {
+			refsByPath[path] = append(refsByPath[path], ref)
+		}
+		if len(refsByPath[path]) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func explicitScopeAmbiguityError(name string, selections []explicitRemovalSelection) error {
+	return fmt.Errorf("%s %q is explicitly selected in multiple config layers; rerun with --scope (%s)", skill.KindLabel(selections[0].Kind), name, strings.Join(explicitSelectionScopes(selections), ", "))
+}
+
+func explicitSelectionScopes(selections []explicitRemovalSelection) []string {
+	var scopes []string
+	for _, selection := range selections {
+		scope := string(inferExplicitRemoveScope(selection.Source))
+		if !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+	slices.Sort(scopes)
+	return scopes
+}
+
+func explicitRegistryAmbiguityError(name string, selections []explicitRemovalSelection) error {
+	if len(explicitSelectionRefs(selections)) > 1 {
+		first := selections[0]
+		sameLocation := true
+		for _, selection := range selections[1:] {
+			if config.NormalizeGitURL(selection.RegistryURL) != config.NormalizeGitURL(first.RegistryURL) || strings.TrimSpace(selection.RegistryPath) != strings.TrimSpace(first.RegistryPath) {
+				sameLocation = false
+				break
+			}
+		}
+		if sameLocation {
+			return fmt.Errorf("%s %q is selected from the same registry path at multiple refs; automatic removal cannot safely distinguish those entries", skill.KindLabel(first.Kind), name)
+		}
+	}
+	var locations []string
+	for _, selection := range selections {
+		location := fmt.Sprintf("--kind %s --from %q", skill.KindLabel(selection.Kind), selection.RegistryURL)
+		if selection.Ref != "" {
+			location += fmt.Sprintf(" --ref %q", selection.Ref)
+		}
+		if selection.RegistryPath != "" {
+			location += fmt.Sprintf(" --path %q", selection.RegistryPath)
+		}
+		if !slices.Contains(locations, location) {
+			locations = append(locations, location)
+		}
+	}
+	return fmt.Errorf("%s %q is explicitly selected from multiple registries; rerun with one of: %s", skill.KindLabel(selections[0].Kind), name, strings.Join(locations, "; "))
+}
+
+func inferExplicitRemoveScope(source config.Source) Scope {
+	if source == config.RepoPersonal {
+		return ScopeLocal
+	}
+	if source.IsMachineScope() {
+		return ScopeUser
+	}
+	return ScopeRepo
+}
+
+func removeExplicitSelections(repoRoot string, selections []explicitRemovalSelection, scope Scope, scopeSpecified bool) error {
+	for _, selection := range selections {
+		if selection.Required {
+			return fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(selection.Kind), selection.Name)
+		}
+	}
+	for _, selection := range selections {
+		effectiveScope := scope
+		if !scopeSpecified {
+			effectiveScope = inferExplicitRemoveScope(selection.Source)
+		}
+		targetSource := scopeToConfigSource(effectiveScope)
+		if targetSource == selection.Source && selection.Source.IsWritable() {
+			if selection.TopLevel {
+				if err := config.RemoveResourceFromConfig(selection.ConfigPath, selection.Kind, selection.Name); err != nil {
+					return err
+				}
+				if selection.AutoSelected {
+					if err := config.AddKindExcludeToConfig(selection.ConfigPath, selection.Kind, selection.Name); err != nil {
+						return err
+					}
+					for _, entry := range selection.AutoRegistries {
+						if err := config.DisableResourceWithShadowFallback(selection.ConfigPath, entry.URL, entry.Path, entry.Ref, selection.Kind, selection.Name); err != nil {
+							return err
+						}
+					}
+				}
+			} else {
+				if err := config.DisableResourceWithShadowFallback(selection.ConfigPath, selection.RegistryURL, selection.RegistryPath, selection.Ref, selection.Kind, selection.Name); err != nil {
+					return err
+				}
+				if selection.AutoSelected {
+					if err := config.DisableResourceWithShadowFallback(selection.ConfigPath, selection.RegistryURL, selection.RegistryPath, selection.Ref, selection.Kind, selection.Name); err != nil {
+						return err
+					}
+				}
+			}
+			continue
+		}
+		targetPath, err := scopedConfigPath(repoRoot, effectiveScope)
+		if err != nil {
+			return err
+		}
+		if selection.TopLevel {
+			if err := config.AddKindExcludeToConfig(targetPath, selection.Kind, selection.Name); err != nil {
+				return err
+			}
+		} else if err := config.DisableResourceWithShadowFallback(targetPath, selection.RegistryURL, selection.RegistryPath, selection.Ref, selection.Kind, selection.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func excludeCollectionMember(repoRoot string, scope Scope, target *resolver.ResolvedArtifact, name string) error {
@@ -661,10 +1019,11 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// all, and (b) handle the cross-layer case where the entry is enabled in
 	// a lower-precedence layer (e.g. committed project config) but the user
 	// wants to suppress it at a higher scope (e.g. config.local.yaml).
-	mergedCfg, _, err := loadRemoveConfig(ctx, repoRoot)
+	effectiveCfg, err := loadRemoveConfig(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}
+	mergedCfg := effectiveCfg.Merged
 	// findRegistryInMerged returns the lowest-precedence layer that defines the
 	// registry (MergeLayers appends org→user→repo→local in order). When that
 	// layer is below the target scope, the registry is inherited and cannot be
@@ -753,6 +1112,17 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	resolvedKind := opts.Kind
 	if target != nil {
 		resolvedKind = target.Kind
+	} else {
+		selections, err := explicitRemovalSelectionsInRegistry(effectiveCfg, repoRoot, name, opts.Kind, opts.HasKind, opts.Scope, fromURL, fromRef, fromPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(selections) > 0 {
+			if selections[0].Required {
+				return nil, fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(selections[0].Kind), name)
+			}
+			resolvedKind = selections[0].Kind
+		}
 	}
 
 	// Cross-layer named exclude: when the entry lives only in a lower layer,
