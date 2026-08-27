@@ -154,14 +154,13 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane             pane
-	driftReport      materialize.DriftReport
-	errs             []error
-	warnings         []error
-	syncing          bool
-	refreshing       bool
-	refreshToken     int
-	nextRefreshToken int
+	pane        pane
+	driftReport materialize.DriftReport
+	errs        []error
+	warnings    []error
+	syncing     bool
+	refreshing  bool
+	requests    requestState
 
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config
@@ -210,6 +209,11 @@ type Model struct {
 	spinner spinner.Model
 
 	detailViewport viewport.Model
+
+	// detailKey is the stable row identity of the resource whose full detail
+	// pane is open. It keeps an accepted snapshot rebuild anchored to the same
+	// resource even when rows are inserted or reordered.
+	detailKey string
 
 	toast    string
 	toastExp time.Time

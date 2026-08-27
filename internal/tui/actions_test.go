@@ -783,7 +783,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir)()
+	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
 	if _, ok := msg.(reloadMsg); !ok {
 		t.Fatalf("runUpdateCmd returned %T, want reloadMsg", msg)
 	}

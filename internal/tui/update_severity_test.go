@@ -75,7 +75,7 @@ registries:
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir)()
+	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
 	if done, ok := msg.(updateDoneMsg); ok {
 		t.Fatalf("runUpdateCmd failed on warning-only diagnostics: %v", done.err)
 	}

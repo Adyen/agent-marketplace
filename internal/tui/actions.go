@@ -23,6 +23,7 @@ import (
 )
 
 type snapshotLoadedMsg struct {
+	generation           requestGeneration
 	rows                 []row
 	driftReport          materialize.DriftReport
 	catalogs             map[string][]catalog.Entry
@@ -41,7 +42,6 @@ type snapshotLoadedMsg struct {
 type reloadMsg snapshotLoadedMsg
 type refreshLoadedMsg struct {
 	snapshotLoadedMsg
-	refreshToken int
 }
 
 type toastMsg struct {
@@ -70,14 +70,16 @@ type syncDoneMsg struct {
 }
 
 type updateDoneMsg struct {
-	err error
+	generation requestGeneration
+	err        error
 }
 
 // detailContentMsg carries the glamour-rendered SKILL.md content for the
 // full-screen detail view. Produced by loadDetailContent (async tea.Cmd)
 // and consumed in Update to populate the viewport.
 type detailContentMsg struct {
-	content string
+	generation requestGeneration
+	content    string
 }
 
 type catalogLoadMode int
@@ -96,18 +98,19 @@ var (
 	discoverCatalog  = catalog.Discover
 )
 
-func loadSnapshot(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+func loadSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot.generation = generation
+		return snapshot
 	}
 }
 
-func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, refreshToken int) tea.Cmd {
+func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return refreshLoadedMsg{
-			snapshotLoadedMsg: readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh),
-			refreshToken:      refreshToken,
-		}
+		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snapshot.generation = generation
+		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
 }
 
@@ -731,9 +734,9 @@ func ReadSkillMarkdown(path string) (string, error) {
 // loadDetailContent reads and glamour-renders a skill's SKILL.md in a
 // background goroutine so the TUI can transition to the detail pane
 // immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row) tea.Cmd {
+func loadDetailContent(r row, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return detailContentMsg{content: renderDetailFullContent(r)}
+		return detailContentMsg{generation: generation, content: renderDetailFullContent(r)}
 	}
 }
 
@@ -760,11 +763,12 @@ var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 }
 
 // runUpdateCmd reloads catalogs (clone/pull), materializes refreshed resources, and reloads state.
-func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
 		snap := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snap.generation = generation
 		if snap.mergedCfg == nil && len(snap.errs) > 0 {
-			return updateDoneMsg{err: errors.Join(snap.errs...)}
+			return updateDoneMsg{generation: generation, err: errors.Join(snap.errs...)}
 		}
 		report, err := materialize.Run(ctx, repoRoot, snap.resolved, materialize.WithMaterializationModes(snap.materializationModes))
 		var errs []error
@@ -774,7 +778,7 @@ func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
 			errs = append(errs, err)
 		}
 		if len(errs) > 0 {
-			return updateDoneMsg{err: errors.Join(errs...)}
+			return updateDoneMsg{generation: generation, err: errors.Join(errs...)}
 		}
 		// Preserve warning-level diagnostics so the TUI can display them and
 		// tests can observe that a warning-only update really did emit a warning.
