@@ -20,21 +20,26 @@ func TestCloneValidRepo(t *testing.T) {
 		"README.md": "hello",
 	})
 
-	res, err := Clone(context.Background(), repo, "main", Credentials{}, Limits{}, time.Minute)
-	if err != nil {
-		t.Fatalf("Clone: %v", err)
-	}
-	defer func() { _ = res.Release() }()
+	runGitTestCommand(t, repo, "git", "update-ref", "refs/pull/1/head", "HEAD")
+	for _, ref := range []string{"refs/heads/main", "origin/main", "refs/pull/1/head"} {
+		t.Run(ref, func(t *testing.T) {
+			res, err := Clone(context.Background(), repo, ref, Credentials{}, Limits{}, time.Minute)
+			if err != nil {
+				t.Fatalf("Clone: %v", err)
+			}
+			defer func() { _ = res.Release() }()
 
-	data, err := os.ReadFile(filepath.Join(res.Dir, "README.md"))
-	if err != nil {
-		t.Fatalf("read cloned README: %v", err)
-	}
-	if string(data) != "hello" {
-		t.Fatalf("README = %q, want hello", data)
-	}
-	if len(res.Commit) != 40 {
-		t.Fatalf("commit = %q, want 40-char hex", res.Commit)
+			data, err := os.ReadFile(filepath.Join(res.Dir, "README.md"))
+			if err != nil {
+				t.Fatalf("read cloned README: %v", err)
+			}
+			if string(data) != "hello" {
+				t.Fatalf("README = %q, want hello", data)
+			}
+			if len(res.Commit) != 40 {
+				t.Fatalf("commit = %q, want 40-char hex", res.Commit)
+			}
+		})
 	}
 }
 
@@ -68,16 +73,16 @@ func TestCloneAtCommitRequiresAndChecksOutExactCommit(t *testing.T) {
 }
 
 func TestCloneAtCommitDoesNotFollowMovingRefTip(t *testing.T) {
-	repo := createGitRepo(t, map[string]string{"README.md": "first"})
+	repo := createGitRepo(t, map[string]string{"selected/value.txt": "first", "unrelated/ignored.txt": "ignored"})
 	firstBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := strings.TrimSpace(string(firstBytes))
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("second"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "selected", "value.txt"), []byte("second"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "add", "README.md")
+	cmd := exec.Command("git", "add", "selected/value.txt")
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git add: %v\n%s", err, out)
@@ -96,7 +101,7 @@ func TestCloneAtCommitDoesNotFollowMovingRefTip(t *testing.T) {
 		t.Fatal("test repository did not create two commits")
 	}
 
-	res, err := CloneAtCommit(context.Background(), repo, "main", first, Credentials{}, Limits{}, time.Minute)
+	res, err := CloneAtCommit(context.Background(), repo, "main", first, Credentials{}, Limits{}, time.Minute, "selected")
 	if err != nil {
 		t.Fatalf("CloneAtCommit pinned commit: %v", err)
 	}
@@ -104,12 +109,33 @@ func TestCloneAtCommitDoesNotFollowMovingRefTip(t *testing.T) {
 	if res.Commit != first {
 		t.Fatalf("commit = %q, want pinned %q", res.Commit, first)
 	}
-	got, err := os.ReadFile(filepath.Join(res.Dir, "README.md"))
+	got, err := os.ReadFile(filepath.Join(res.Dir, "selected", "value.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "first" {
 		t.Fatalf("pinned tree = %q, want first; ref tip was %s", got, second)
+	}
+	if _, err := os.Stat(filepath.Join(res.Dir, "unrelated")); !os.IsNotExist(err) {
+		t.Fatalf("unselected root exists or returned unexpected error: %v", err)
+	}
+}
+
+func TestCloneAcceptsCommitRef(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{"selected/value.txt": "value"})
+	commitBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.TrimSpace(string(commitBytes))
+
+	res, err := Clone(context.Background(), repo, commit, Credentials{}, Limits{}, time.Minute, "selected")
+	if err != nil {
+		t.Fatalf("Clone commit ref: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+	if res.Commit != commit {
+		t.Fatalf("commit = %q, want %q", res.Commit, commit)
 	}
 }
 
@@ -128,6 +154,46 @@ func TestCloneInvalidRef(t *testing.T) {
 	_, err := Clone(context.Background(), repo, "--bad", Credentials{}, Limits{}, time.Minute)
 	if err == nil {
 		t.Fatalf("expected error for option-like ref")
+	}
+}
+
+func TestCloneOnlyAcquiresSelectedRoots(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{
+		"skills[team]/review/SKILL.md": "---\nname: review\ndescription: Review code\n---\nReview.\n",
+		"large.bin":                    strings.Repeat("x", 1024),
+	})
+
+	runGitTestCommand(t, repo, "git", "config", "uploadpack.allowFilter", "true")
+	limits := Limits{RepositoryBytes: 128, FileCount: 2, FileBytes: 128}
+	res, err := Clone(context.Background(), "file://"+repo, "main", Credentials{}, limits, time.Minute, "skills[team]")
+	if err != nil {
+		t.Fatalf("Clone selected root: %v", err)
+	}
+	defer func() { _ = res.Release() }()
+
+	if _, err := os.Stat(filepath.Join(res.Dir, ".git", "shallow")); err != nil {
+		t.Fatalf("clone is not shallow: %v", err)
+	}
+	promisor, err := exec.Command("git", "-C", res.Dir, "config", "--get", "remote.origin.promisor").Output()
+	if err != nil || strings.TrimSpace(string(promisor)) != "true" {
+		t.Fatalf("partial clone promisor = %q, err = %v", promisor, err)
+	}
+	if _, err := os.Stat(filepath.Join(res.Dir, "skills[team]", "review", "SKILL.md")); err != nil {
+		t.Fatalf("selected skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(res.Dir, "large.bin")); !os.IsNotExist(err) {
+		t.Fatalf("unselected file exists or returned unexpected error: %v", err)
+	}
+}
+
+func TestCloneRejectsInvalidRoot(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{"README.md": "hello"})
+	for _, root := range []string{"../skills", "/skills", "-skills", "skills\n/*"} {
+		t.Run(root, func(t *testing.T) {
+			if _, err := Clone(context.Background(), repo, "main", Credentials{}, Limits{}, time.Minute, root); err == nil {
+				t.Fatalf("Clone accepted invalid root %q", root)
+			}
+		})
 	}
 }
 
@@ -288,8 +354,8 @@ func TestCloneContextCancel(t *testing.T) {
 	cancel()
 
 	_, err := Clone(ctx, repo, "main", Credentials{}, Limits{}, time.Minute)
-	if err == nil {
-		t.Fatalf("expected error for cancelled context")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Clone error = %v, want context cancellation", err)
 	}
 }
 

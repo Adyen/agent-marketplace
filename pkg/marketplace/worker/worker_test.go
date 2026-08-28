@@ -102,6 +102,40 @@ func TestRefreshEndToEnd(t *testing.T) {
 	}
 }
 
+func TestRefreshAcquiresOnlyConfiguredRoots(t *testing.T) {
+	ctx := context.Background()
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+
+	unrelated := filepath.Join(repoDir, "unrelated", "large.bin")
+	if err := os.MkdirAll(filepath.Dir(unrelated), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unrelated, make([]byte, 128*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "add unrelated content"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	cfg := createTestConfig(t, repoDir)
+	cfg.Policy.Limits.RepositoryBytes = 64 * 1024
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
+	if err := EnsureMarketplace(ctx, &deps); err != nil {
+		t.Fatalf("EnsureMarketplace: %v", err)
+	}
+
+	if err := Refresh(ctx, deps, store.Source{ID: store.SourceID(cfg.Sources[0].ID)}); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+}
+
 func TestRefreshLicenseAllowlistRejects(t *testing.T) {
 	ctx := context.Background()
 
