@@ -605,7 +605,11 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 			source.Roots = append([]store.SourceRoot(nil), occ.Roots...)
 		}
 		source.Acquisition = store.AcquisitionIndexOnly
-		acquired, err := acquire.CloneAtCommit(ctx, origin, occ.Ref, occ.Commit, acquire.Credentials{}, acquire.Limits{RepositoryBytes: 100 * 1024 * 1024, FileCount: 1024, FileBytes: 2 * 1024 * 1024}, 5*time.Minute)
+		roots := make([]string, len(occ.Roots))
+		for i := range occ.Roots {
+			roots[i] = occ.Roots[i].Path
+		}
+		acquired, err := acquire.CloneAtCommit(ctx, origin, occ.Ref, occ.Commit, acquire.Credentials{}, acquire.Limits{RepositoryBytes: 100 * 1024 * 1024, FileCount: 1024, FileBytes: 2 * 1024 * 1024}, 5*time.Minute, roots...)
 		if err != nil {
 			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("unavailable exact source commit: %w", err)
 		}

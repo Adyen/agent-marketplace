@@ -56,26 +56,30 @@ func (r *Result) Release() error {
 // Clone fetches origin at ref into an isolated temporary directory, resolves
 // the ref to an exact commit, and enforces repository bounds. The caller must
 // call Result.Release to clean up the workspace.
-func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
-	return clone(ctx, origin, ref, "", cred, limits, timeout)
+func Clone(ctx context.Context, origin, ref string, cred Credentials, limits Limits, timeout time.Duration, roots ...string) (*Result, error) {
+	return clone(ctx, origin, ref, "", roots, cred, limits, timeout)
 }
 
 // CloneAtCommit fetches origin and checks out exactly commit. It never falls
 // back to the ref's current tip; the commit must be present in the clone and
 // must remain the checked-out HEAD.
-func CloneAtCommit(ctx context.Context, origin, ref, commit string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
+func CloneAtCommit(ctx context.Context, origin, ref, commit string, cred Credentials, limits Limits, timeout time.Duration, roots ...string) (*Result, error) {
 	if !isFullCommit(commit) {
 		return nil, fmt.Errorf("validate commit: %q is not a full lowercase Git commit", commit)
 	}
-	return clone(ctx, origin, ref, commit, cred, limits, timeout)
+	return clone(ctx, origin, ref, commit, roots, cred, limits, timeout)
 }
 
-func clone(ctx context.Context, origin, ref, exactCommit string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
+func clone(ctx context.Context, origin, ref, exactCommit string, roots []string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
 	if err := cache.ValidateGitURL(origin); err != nil {
 		return nil, fmt.Errorf("validate origin: %w", err)
 	}
 	if err := cache.ValidateGitRef(ref); err != nil {
 		return nil, fmt.Errorf("validate ref: %w", err)
+	}
+	roots, err := normalizeRoots(roots)
+	if err != nil {
+		return nil, err
 	}
 
 	dir, err := os.MkdirTemp("", "marketplace-acquire-")
@@ -91,8 +95,9 @@ func clone(ctx context.Context, origin, ref, exactCommit string, cred Credential
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
+	keepWorkspace := false
 	defer func() {
-		if err != nil {
+		if !keepWorkspace {
 			_ = workspace.cleanup()
 			_ = os.RemoveAll(dir)
 		}
@@ -105,24 +110,53 @@ func clone(ctx context.Context, origin, ref, exactCommit string, cred Credential
 		defer cancel()
 	}
 
-	args := append(hardenedGitArgs(), "clone", "--no-checkout", "--", origin, dir)
-	if _, err := runGit(cloneCtx, workspace.env(), "", args); err != nil {
-		return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
+	if _, err := runGit(cloneCtx, workspace.env(), "", append(hardenedGitArgs(), "init", "--", dir)); err != nil {
+		return nil, fmt.Errorf("initialize clone workspace for %q: %w", redactedOrigin, err)
+	}
+	if _, err := runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "remote", "add", "origin", origin)); err != nil {
+		return nil, fmt.Errorf("configure clone origin %q: %w", redactedOrigin, err)
+	}
+	fetchOutput, err := runGit(cloneCtx, workspace.env(), dir, fetchArgs(ref, exactCommit == ""))
+	if err != nil {
+		if exactCommit != "" || !strings.Contains(err.Error(), "dumb http transport does not support shallow capabilities") {
+			return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
+		}
+		slog.Info("acquire shallow fetch unsupported; retrying without depth", "origin", redactedOrigin)
+		fetchOutput, err = runGit(cloneCtx, workspace.env(), dir, fetchArgs(ref, false))
+		if err != nil {
+			return nil, fmt.Errorf("clone %q: %w", redactedOrigin, err)
+		}
+	}
+	if strings.Contains(string(fetchOutput), "filtering not recognized by server, ignoring") {
+		slog.Warn("acquire server ignored partial clone filter", "origin", redactedOrigin)
 	}
 
 	commit := exactCommit
 	if commit == "" {
-		commit, err = cache.ResolveRemoteRef(dir, ref)
+		out, err := runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "rev-parse", "--verify", "FETCH_HEAD^{commit}"))
 		if err != nil {
 			return nil, fmt.Errorf("resolve ref %q in %q: %w", ref, redactedOrigin, err)
 		}
+		commit = strings.TrimSpace(string(out))
 	} else {
 		if _, err := runGit(cloneCtx, workspace.env(), dir, append(hardenedGitArgs(), "cat-file", "-e", commit+"^{commit}")); err != nil {
 			return nil, fmt.Errorf("exact commit %q is unavailable in %q: %w", commit, redactedOrigin, err)
 		}
 	}
 
-	if err := enforceTreeLimits(cloneCtx, workspace.env(), dir, commit, limits); err != nil {
+	if len(roots) > 0 {
+		patterns := make([]string, len(roots))
+		for i, root := range roots {
+			patterns[i] = "/" + escapeSparsePattern(root) + "/"
+		}
+		sparseArgs := append(hardenedGitArgs(), "sparse-checkout", "set", "--no-cone", "--stdin")
+		if _, err := runGitInput(cloneCtx, workspace.env(), dir, sparseArgs, strings.Join(patterns, "\n")+"\n"); err != nil {
+			return nil, fmt.Errorf("configure sparse checkout in %q: %w", redactedOrigin, err)
+		}
+		slog.Debug("acquire sparse checkout configured", "origin", redactedOrigin, "roots", roots)
+	}
+
+	if err := enforceTreeLimits(cloneCtx, workspace.env(), dir, commit, roots, limits); err != nil {
 		return nil, err
 	}
 
@@ -153,6 +187,7 @@ func clone(ctx context.Context, origin, ref, exactCommit string, cred Credential
 	}
 
 	slog.Debug("acquire clone end", "origin", redactedOrigin, "ref", ref, "commit", commit, "dir", dir)
+	keepWorkspace = true
 	return &Result{Dir: dir, Commit: commit, cleanup: cleanup}, nil
 }
 
@@ -167,16 +202,62 @@ func hardenedGitArgs() []string {
 	}
 }
 
+func fetchArgs(ref string, shallow bool) []string {
+	args := append(hardenedGitArgs(), "fetch", "--filter=blob:none", "--no-tags")
+	if shallow {
+		args = append(args, "--depth=1")
+	}
+	ref = strings.TrimPrefix(ref, "refs/remotes/origin/")
+	ref = strings.TrimPrefix(ref, "origin/")
+	return append(args, "origin", ref)
+}
+
+func normalizeRoots(roots []string) ([]string, error) {
+	out := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		valid := root != "" && root == strings.TrimSpace(root)
+		for i := 0; valid && i < len(root); i++ {
+			valid = root[i] >= 0x20 && root[i] != 0x7f
+		}
+		root = filepath.Clean(root)
+		if root == "." && valid {
+			return nil, nil
+		}
+		if !valid || filepath.IsAbs(root) || root == ".." || strings.HasPrefix(root, ".."+string(filepath.Separator)) || strings.HasPrefix(root, "-") {
+			return nil, fmt.Errorf("validate root: %q must be a relative repository path", root)
+		}
+		root = filepath.ToSlash(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out, nil
+}
+
+func escapeSparsePattern(path string) string {
+	return strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[").Replace(path)
+}
+
 func runGit(ctx context.Context, env []string, dir string, args []string) ([]byte, error) {
+	return runGitInput(ctx, env, dir, args, "")
+}
+
+func runGitInput(ctx context.Context, env []string, dir string, args []string, input string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = env
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		redacted := redact.URL(string(out))
 		redactedArgs := redact.Strings(args)
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: context cancelled", strings.Join(redactedArgs, " "))
+			return nil, fmt.Errorf("git %s: %w", strings.Join(redactedArgs, " "), ctx.Err())
 		}
 		cmdStr := strings.Join(redactedArgs, " ")
 		if redacted == "" {
@@ -297,8 +378,12 @@ func scriptExt() string {
 	return ".sh"
 }
 
-func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string, limits Limits) error {
+func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string, roots []string, limits Limits) error {
 	args := append(hardenedGitArgs(), "ls-tree", "-r", "-l", commit)
+	if len(roots) > 0 {
+		args = append(args, "--")
+		args = append(args, roots...)
+	}
 	out, err := runGit(ctx, env, repoDir, args)
 	if err != nil {
 		return fmt.Errorf("list tree for %q: %w", commit, err)
