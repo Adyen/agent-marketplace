@@ -35,21 +35,21 @@ func (s syncOutputStyle) paint(color, text string) string {
 	return color + text + syncReset
 }
 
-func (s syncOutputStyle) warningMark() string {
-	return s.paint(syncYellow, "⚠")
+func (s syncOutputStyle) warningPrefix() string {
+	return s.paint(syncYellow, "warning:")
 }
 
 func (s syncOutputStyle) count(label string, count int, severity string) string {
-	mark, color := "✓", syncGreen
+	color := syncGreen
 	if count > 0 {
 		switch severity {
 		case "warning":
-			mark, color = "⚠", syncYellow
+			color = syncYellow
 		case "error":
-			mark, color = "✗", syncRed
+			color = syncRed
 		}
 	}
-	return s.paint(color, fmt.Sprintf("%s %s %d", mark, label, count))
+	return s.paint(color, fmt.Sprintf("%s %d", label, count))
 }
 
 func writeSyncSummary(out io.Writer, style syncOutputStyle, written, removed, malformed, errors int) error {

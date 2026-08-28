@@ -158,7 +158,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			if err := printMalformedDetail(out, syncResult.CatalogLoad.Malformed); err != nil {
 				return err
 			}
-		} else if err := printMalformedHint(out, malformedCount, style.warningMark()); err != nil {
+		} else if err := printMalformedHint(out, malformedCount, style.warningPrefix()); err != nil {
 			return err
 		}
 	}
@@ -178,7 +178,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 		if _, err := fmt.Fprintln(out); err != nil {
 			return err
 		}
-		if err := writeSyncWarnings(out, syncResult.Warnings, verbose, style.warningMark()); err != nil {
+		if err := writeSyncWarnings(out, syncResult.Warnings, verbose, style.warningPrefix()); err != nil {
 			return err
 		}
 	}
@@ -250,7 +250,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	if _, err := fmt.Fprintln(out); err != nil {
 		return err
 	}
-	return newSyncCommandError(errs, true, "✗")
+	return newSyncCommandError(errs, true, "error:")
 }
 
 // dedupIssues drops later occurrences of the same underlying problem while

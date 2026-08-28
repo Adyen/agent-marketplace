@@ -108,7 +108,7 @@ registries:
 		}
 	}
 
-	if !strings.Contains(output, "✗ Errors 3") {
+	if !strings.Contains(output, "Errors 3") {
 		t.Errorf("sync summary does not report three distinct errors; output:\n%s", output)
 	}
 	if got := strings.Count(output, "Devin documents the http and sse remote transports"); got != 1 {

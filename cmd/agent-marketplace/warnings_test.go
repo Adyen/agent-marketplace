@@ -148,11 +148,11 @@ func TestWriteSyncIssuesGroupsResolverWarningsByProblem(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := writeSyncIssues(&out, issues, false, "⚠"); err != nil {
+	if err := writeSyncIssues(&out, issues, false, "warning:"); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if count := strings.Count(got, "⚠ "); count != 2 {
+	if count := strings.Count(got, "warning: "); count != 2 {
 		t.Fatalf("resolver warnings rendered as %d top-level problems, want 2 grouped problems:\n%s", count, got)
 	}
 	for _, want := range []string{"selected resources were not found (2 resources)", "resources are provided by multiple registries (2 resources)", `skill "alpha"`, `command "beta"`, `skill "gamma"`, `skill "delta"`} {
@@ -162,7 +162,7 @@ func TestWriteSyncIssuesGroupsResolverWarningsByProblem(t *testing.T) {
 	}
 
 	var verbose bytes.Buffer
-	if err := writeSyncIssues(&verbose, issues, true, "⚠"); err != nil {
+	if err := writeSyncIssues(&verbose, issues, true, "warning:"); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`skill "alpha" (registry-a@main)`, `skill "gamma" (using registry-a (others: registry-b))`} {
@@ -175,8 +175,8 @@ func TestWriteSyncIssuesGroupsResolverWarningsByProblem(t *testing.T) {
 		&resolver.NameCollisionError{Kind: ir.KindSkill, Name: "gamma", Sources: []string{"registry-a", "registry-b"}},
 		&resolver.NameCollisionError{Kind: ir.KindCommand, Name: "delta", Sources: []string{"registry-b", "registry-c"}},
 	}
-	errorOutput := newSyncCommandError(errors, false, "✗").Error()
-	if count := strings.Count(errorOutput, "✗ "); count != 1 {
+	errorOutput := newSyncCommandError(errors, false, "error:").Error()
+	if count := strings.Count(errorOutput, "error: "); count != 1 {
 		t.Fatalf("resolver errors rendered as %d top-level problems, want 1 grouped problem:\n%s", count, errorOutput)
 	}
 	if !strings.Contains(errorOutput, "resources are provided by multiple registries (2 resources)") {
@@ -198,12 +198,12 @@ func TestWriteSyncIssuesGroupsDistinctProblemsByDiagnosticCode(t *testing.T) {
 	}
 
 	var warnings bytes.Buffer
-	if err := writeSyncIssues(&warnings, issues, false, "⚠"); err != nil {
+	if err := writeSyncIssues(&warnings, issues, false, "warning:"); err != nil {
 		t.Fatal(err)
 	}
 	outputs := map[string]string{
 		"warnings": warnings.String(),
-		"errors":   newSyncCommandError(issues, false, "✗").Error(),
+		"errors":   newSyncCommandError(issues, false, "error:").Error(),
 	}
 	for name, got := range outputs {
 		t.Run(name, func(t *testing.T) {
