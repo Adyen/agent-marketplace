@@ -285,7 +285,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case configWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
 		if msg.err != nil {
+			m.finishOperation(msg.operation)
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.pendingExcludeAction = nil
 			m.toast = fmt.Sprintf("error: %v", msg.err)
@@ -298,7 +302,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			recordControlledErrorSpan(m.ctx, action, msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
-		m.recordOperationSuccess(operationMutation)
 		action := "Enabled"
 		if !msg.enabled {
 			action = "Disabled"
@@ -308,21 +311,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
-		if msg.enabled && m.pendingExcludeAction != nil {
+		if !msg.followUp && msg.enabled && m.pendingExcludeAction != nil {
 			act := *m.pendingExcludeAction
 			m.pendingExcludeAction = nil
-			exclCmd := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act)
-			// Re-load snapshot to reflect the config change, then
-			// the exclude cmd runs concurrently.
-			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), exclCmd, toastExpiryCmd(2*time.Second))
+			if followUp := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act); followUp != nil {
+				exclCmd := correlateOperation(followUp, msg.operation, true)
+				generation := m.beginRequest(requestSnapshot)
+				return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), exclCmd, toastExpiryCmd(2*time.Second))
+			}
 		}
 		m.pendingExcludeAction = nil
+		m.finishOperation(msg.operation)
+		m.recordOperationSuccess(operationMutation)
 		// Re-load snapshot to reflect the config change.
 		generation := m.beginRequest(requestSnapshot)
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
 		if msg.err != nil {
 			m.recordOperationFailure(operationTargets, diagnosticMutation, msg.err)
 			m.toast = fmt.Sprintf("error: %v", msg.err)
@@ -421,6 +430,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
 		if msg.err != nil {
 			m.recordOperationFailure(operationEditor, diagnosticEditor, msg.err)
 			m.toast = fmt.Sprintf("editor error: %v", msg.err)

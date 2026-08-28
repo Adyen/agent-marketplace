@@ -87,8 +87,9 @@ func TestEditConfigMsgReloadsSnapshot(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
 	m.pane = paneList
+	operation, _ := m.beginOperation(operationEditor)
 
-	mi, cmd := m.Update(editConfigPathMsg{path: "/repo/.agents/config.yaml"})
+	mi, cmd := m.Update(editConfigPathMsg{operation: operation, path: "/repo/.agents/config.yaml"})
 	m = mi.(Model)
 
 	if cmd == nil {
@@ -103,8 +104,9 @@ func TestEditConfigMsgErrorIsRecorded(t *testing.T) {
 	priorErr := errors.New("prior")
 	editorErr := errors.New("boom")
 	m.errs = []error{priorErr}
+	operation, _ := m.beginOperation(operationEditor)
 
-	mi, cmd := m.Update(editConfigPathMsg{path: "/repo/.agents/config.yaml", err: editorErr})
+	mi, cmd := m.Update(editConfigPathMsg{operation: operation, path: "/repo/.agents/config.yaml", err: editorErr})
 	m = mi.(Model)
 
 	// The command is a delayed toast expiry timer; do not invoke it here.

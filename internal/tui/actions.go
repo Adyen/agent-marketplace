@@ -62,6 +62,8 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 }
 
 type configWrittenMsg struct {
+	operation operationID
+	followUp  bool
 	skillName string
 	enabled   bool
 	err       error

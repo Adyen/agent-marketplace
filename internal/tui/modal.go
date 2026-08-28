@@ -359,6 +359,19 @@ func competingRegistryURLs(rows []row, kind ir.ResourceKind, name, ownURL string
 	return urls
 }
 
+func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		return m, operationBlockedCmd()
+	}
+	m.pane = paneList
+	recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
+	if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+		m.pendingExcludeAction = &act
+	}
+	return m, correlateOperation(runScopedToggle(m.repoRoot, act), operation, false)
+}
+
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).
 func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -371,38 +384,18 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
-		act := scopedToggleAction(m.modalSkill, scopeGlobal)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
 	case key.Matches(msg, m.keys.ToggleProject):
-		act := scopedToggleAction(m.modalSkill, scopeProject)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
 	case key.Matches(msg, m.keys.ToggleLocal):
-		act := scopedToggleAction(m.modalSkill, scopeLocal)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		return m, runScopedToggle(m.repoRoot, act)
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):
 		if m.modalSkill.Artifact.Source.IsMachineScope() {
 			return m, func() tea.Msg {
 				return toastMsg{text: "Cannot exclude org/user skill at local level — use [g] instead", duration: 2 * time.Second}
 			}
 		}
-		act := scopedToggleAction(m.modalSkill, scopeLocalExclude)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		return m, runScopedToggle(m.repoRoot, act)
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocalExclude))
 	}
 	return m, nil
 }

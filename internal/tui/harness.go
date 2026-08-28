@@ -34,6 +34,7 @@ type harnessModalState struct {
 }
 
 type harnessWrittenMsg struct {
+	operation  operationID
 	scopeLabel string
 	err        error
 }
@@ -238,9 +239,13 @@ func (m Model) handleHarnessModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
 		}
+		operation, ok := m.beginOperation(operationTargets)
+		if !ok {
+			return m, operationBlockedCmd()
+		}
 		scope := m.harnessModal.scope
 		m.pane = paneList
-		return m, runHarnessSaveCmd(m.repoRoot, scope, harnesses)
+		return m, correlateOperation(runHarnessSaveCmd(m.repoRoot, scope, harnesses), operation, false)
 	}
 	return m, nil
 }
