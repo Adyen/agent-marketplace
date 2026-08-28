@@ -51,6 +51,15 @@ func benchRepo(b *testing.B) string {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\nlicense: MIT\n---\nReview.\n"), 0o644); err != nil {
 		b.Fatalf("write skill: %v", err)
 	}
+	references := filepath.Join(skillDir, "references")
+	if err := os.MkdirAll(references, 0o755); err != nil {
+		b.Fatalf("mkdir references: %v", err)
+	}
+	for i := range 200 {
+		if err := os.WriteFile(filepath.Join(references, fmt.Sprintf("reference-%d.md", i)), []byte(fmt.Sprintf("reference %d\n", i)), 0o644); err != nil {
+			b.Fatalf("write reference: %v", err)
+		}
+	}
 	unrelated := filepath.Join(repo, "unrelated")
 	if err := os.MkdirAll(unrelated, 0o755); err != nil {
 		b.Fatalf("mkdir unrelated: %v", err)

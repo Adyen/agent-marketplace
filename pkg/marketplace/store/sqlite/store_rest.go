@@ -420,15 +420,10 @@ func (s *Store) LeaseJob(ctx context.Context, kind, workerID string, leaseDurati
 }
 
 func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
-	now := time.Now().UTC()
-	nowMicro := timeToMicro(now)
-	leaseUntil := now.Add(leaseDuration)
-	leaseMicro := timeToMicro(leaseUntil)
-	updatedMicro := timeToMicro(now)
-
 	const maxAttempts = 100
 	for i := 0; i < maxAttempts; i++ {
-		var id string
+		nowMicro := timeToMicro(time.Now().UTC())
+		var id store.JobID
 		row := s.q.QueryRowContext(ctx,
 			`SELECT id FROM jobs
 			 WHERE kind=?
@@ -446,29 +441,48 @@ func (s *Store) leaseJob(ctx context.Context, kind, workerID string, leaseDurati
 		if err != nil {
 			return store.Job{}, err
 		}
-
-		res, err := s.q.ExecContext(ctx,
-			`UPDATE jobs
-			 SET status=?, worker_id=?, lease_until=?, attempt=attempt+1, updated_at=?
-			 WHERE id=? AND kind=? AND attempt < max_attempts
-			   AND (status=? OR status=? OR (status=? AND lease_until <= ?))
-			   AND (lease_until IS NULL OR lease_until <= ?)`,
-			store.JobStatusLeased, workerID, leaseMicro, updatedMicro,
-			id, kind, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased, nowMicro, nowMicro,
-		)
-		if err != nil {
-			return store.Job{}, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return store.Job{}, err
-		}
-		if n == 0 {
+		leased, err := s.leaseJobByID(ctx, id, workerID, leaseDuration)
+		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
-		return s.getJob(ctx, store.JobID(id))
+		return leased, err
 	}
 	return store.Job{}, store.ErrNotFound
+}
+
+func (s *Store) LeaseJobByID(ctx context.Context, id store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	var leased store.Job
+	err := s.withTx(ctx, func(tx *Store) error {
+		var err error
+		leased, err = tx.leaseJobByID(ctx, id, workerID, leaseDuration)
+		return err
+	})
+	return leased, err
+}
+
+func (s *Store) leaseJobByID(ctx context.Context, id store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	now := time.Now().UTC()
+	nowMicro := timeToMicro(now)
+	res, err := s.q.ExecContext(ctx,
+		`UPDATE jobs
+		 SET status=?, worker_id=?, lease_until=?, attempt=attempt+1, updated_at=?
+		 WHERE id=? AND attempt < max_attempts
+		   AND (status=? OR status=? OR (status=? AND lease_until <= ?))
+		   AND (lease_until IS NULL OR lease_until <= ?)`,
+		store.JobStatusLeased, workerID, timeToMicro(now.Add(leaseDuration)), nowMicro,
+		id, store.JobStatusPending, store.JobStatusFailed, store.JobStatusLeased, nowMicro, nowMicro,
+	)
+	if err != nil {
+		return store.Job{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return store.Job{}, err
+	}
+	if n == 0 {
+		return store.Job{}, store.ErrNotFound
+	}
+	return s.getJob(ctx, id)
 }
 
 func (s *Store) ExtendLease(ctx context.Context, id store.JobID, workerID string, d time.Duration) error {

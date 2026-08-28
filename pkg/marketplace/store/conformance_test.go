@@ -158,6 +158,34 @@ func TestConformance(t *testing.T) {
 	}
 }
 
+func TestConformanceLeaseJobByIDLeavesOlderJobPending(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	jobs := []store.Job{
+		{ID: "older", Kind: "index-source", Payload: []byte(`{}`), MaxAttempts: 1, CreatedAt: time.Now().Add(-time.Hour)},
+		{ID: "target", Kind: "index-source", Payload: []byte(`{}`), MaxAttempts: 1},
+	}
+	for _, item := range jobs {
+		if err := meta.EnqueueJob(ctx, item); err != nil {
+			t.Fatalf("EnqueueJob: %v", err)
+		}
+	}
+	leased, err := meta.LeaseJobByID(ctx, jobs[1].ID, "worker", time.Minute)
+	if err != nil {
+		t.Fatalf("LeaseJobByID: %v", err)
+	}
+	if leased.ID != jobs[1].ID {
+		t.Fatalf("leased job = %q, want %q", leased.ID, jobs[1].ID)
+	}
+	older, err := meta.GetJob(ctx, jobs[0].ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if older.Status != store.JobStatusPending {
+		t.Fatalf("older job status = %q, want %q", older.Status, store.JobStatusPending)
+	}
+}
+
 func TestConformanceJobLeaseExpiry(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
