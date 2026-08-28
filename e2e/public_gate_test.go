@@ -370,25 +370,41 @@ marketplaces:
     instance_id: e2e-public-gate
     alias: public
 `, endpoint))
-	result := consumer.RunAM("install", "public:public-source/skill/skill-one", "--yes")
-	if result.ExitCode != 0 {
-		t.Fatalf("Marketplace mirror install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	for _, locator := range []string{
+		"public:public-source/skill/skill-one",
+		"public:public-source/command/command-one",
+		"public:public-source/subagent/agent-one",
+		"public:public-source/hook/PreToolUse-command",
+		"public:public-source/mcpserver/server-one",
+	} {
+		result := consumer.RunAM("install", locator, "--yes")
+		if result.ExitCode != 0 {
+			t.Fatalf("Marketplace mirror install %s failed (exit %d):\n%s", locator, result.ExitCode, result.Combined)
+		}
 	}
-	consumer.AssertRepoFactorySkillExists("skill-one")
+	for _, path := range []string{
+		"/workspace/.factory/skills/skill-one/SKILL.md",
+		"/workspace/.factory/commands/command-one.md",
+		"/workspace/.factory/droids/agent-one.md",
+		"/workspace/.factory/hooks/hooks.json",
+		"/workspace/.factory/mcp.json",
+	} {
+		consumer.AssertFileExists(path)
+	}
 	if !strings.Contains(consumer.ReadFile("/workspace/.factory/skills/skill-one/SKILL.md"), "hostile-safe skill") {
 		t.Fatal("Marketplace mirror install produced the wrong skill content")
 	}
-	result = consumer.RunAM("sync")
-	if result.ExitCode != 0 {
-		t.Fatalf("Marketplace mirror repeat sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	config := consumer.ReadFile("/workspace/.agents/config.yaml")
+	for _, value := range []string{"kind: skill", "kind: command", "kind: subagent", "kind: hook", "kind: mcpserver", "direct: true", "acquisition: mirror"} {
+		if !strings.Contains(config, value) {
+			t.Fatalf("Marketplace pin config missing %q:\n%s", value, config)
+		}
 	}
-	result = consumer.RunAM("sync", "--offline")
-	if result.ExitCode != 0 {
-		t.Fatalf("Marketplace mirror offline sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	result = consumer.RunAM("sync", "--check")
-	if result.ExitCode != 0 {
-		t.Fatalf("Marketplace mirror sync --check reported drift (exit %d):\n%s", result.ExitCode, result.Combined)
+	for _, args := range [][]string{{"sync"}, {"sync", "--offline"}, {"sync", "--check"}} {
+		result := consumer.RunAM(args...)
+		if result.ExitCode != 0 {
+			t.Fatalf("Marketplace mirror %s failed (exit %d):\n%s", strings.Join(args, " "), result.ExitCode, result.Combined)
+		}
 	}
 }
 

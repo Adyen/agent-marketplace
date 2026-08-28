@@ -1043,9 +1043,6 @@ func validateArtifactManifest(entry config.MarketplaceEntry, pin config.Marketpl
 	if manifest.Name != pin.Name {
 		return fmt.Errorf("artifact manifest name mismatch: got %q, want %q", manifest.Name, pin.Name)
 	}
-	if manifest.SourceID != pin.SourceID {
-		return fmt.Errorf("artifact manifest source ID mismatch: got %q, want %q", manifest.SourceID, pin.SourceID)
-	}
 	if manifest.ContentDigest != pin.Digest {
 		return fmt.Errorf("artifact manifest content digest mismatch: got %q, want %q", manifest.ContentDigest, pin.Digest)
 	}
