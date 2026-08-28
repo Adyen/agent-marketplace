@@ -150,6 +150,19 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
 }
 
+func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
+	selection := m.selectionKeyForRebuild()
+	m.rows = msg.rows
+	m.driftReport = msg.driftReport
+	m.mergedCfg = msg.mergedCfg
+	m.resolved = msg.resolved
+	m.localExcludes = msg.localExcludes
+	m.globalHarnesses = msg.globalHarnesses
+	m.projectHarnesses = msg.projectHarnesses
+	m.recomputeView()
+	m.restoreSelectionAfterRebuild(selection)
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -221,16 +234,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshing = false
 			return m, nil
 		}
-		selection := m.selectionKeyForRebuild()
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
-		m.restoreSelectionAfterRebuild(selection)
+		m.applySnapshotData(msg)
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
@@ -253,16 +257,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			return m, nil
 		}
-		selection := m.selectionKeyForRebuild()
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
-		m.restoreSelectionAfterRebuild(selection)
+		m.applySnapshotData(msg.snapshotLoadedMsg)
 		return m, nil
 
 	case reloadMsg:
@@ -279,16 +274,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
-		selection := m.selectionKeyForRebuild()
-		m.rows = snapshot.rows
-		m.driftReport = snapshot.driftReport
-		m.mergedCfg = snapshot.mergedCfg
-		m.resolved = snapshot.resolved
-		m.localExcludes = snapshot.localExcludes
-		m.globalHarnesses = snapshot.globalHarnesses
-		m.projectHarnesses = snapshot.projectHarnesses
-		m.recomputeView()
-		m.restoreSelectionAfterRebuild(selection)
+		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
 		return m, toastExpiryCmd(2 * time.Second)
@@ -407,17 +393,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncing = false
 		if msg.snapshot.generation != 0 {
-			selection := m.selectionKeyForRebuild()
 			m.applySnapshotStatus(msg.snapshot)
-			m.rows = msg.snapshot.rows
-			m.driftReport = msg.snapshot.driftReport
-			m.mergedCfg = msg.snapshot.mergedCfg
-			m.resolved = msg.snapshot.resolved
-			m.localExcludes = msg.snapshot.localExcludes
-			m.globalHarnesses = msg.snapshot.globalHarnesses
-			m.projectHarnesses = msg.snapshot.projectHarnesses
-			m.recomputeView()
-			m.restoreSelectionAfterRebuild(selection)
+			m.applySnapshotData(msg.snapshot)
 		}
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.
