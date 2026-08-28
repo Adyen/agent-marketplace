@@ -50,7 +50,7 @@ registries:
 		t.Fatalf("expected sync command to succeed: %v\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "Installed 1, Removed 0, Malformed 0, Errors 0") {
+	if !strings.Contains(output, "Installed 1  Removed 0  Malformed 0  Errors 0") {
 		t.Fatalf("expected sync summary with installs, got %q", output)
 	}
 
@@ -118,6 +118,7 @@ harnesses:
 registries:
   - url: `+registry+`
     subagents:
+      - reviewer
       - worker-generic
 `)
 
@@ -125,14 +126,36 @@ registries:
 
 	output, err := executeCommand("sync")
 	if err != nil {
-		t.Fatalf("expected sync command to succeed for windsurf subagent drop warning: %v\n%s", err, output)
+		t.Fatalf("expected sync command to succeed for windsurf subagent drop warnings: %v\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "Errors 0") {
-		t.Fatalf("expected sync summary with zero errors, got %q", output)
+	if !strings.Contains(output, "Installed 0  Removed 0  Malformed 0  Errors 0") {
+		t.Fatalf("expected severity-marked sync summary, got %q", output)
 	}
-	if !strings.Contains(output, "warning: subagent.windsurf.no-primitive: Windsurf has no subagent primitive; resource was dropped") {
-		t.Fatalf("expected windsurf subagent warning in output, got %q", output)
+	if !strings.Contains(output, "Errors 0\n\nwarning: subagent.windsurf.no-primitive") {
+		t.Fatalf("expected warnings to be visually separated from the summary, got %q", output)
+	}
+	if got := strings.Count(output, "subagent.windsurf.no-primitive"); got != 1 {
+		t.Fatalf("expected one grouped windsurf diagnostic, got %d:\n%s", got, output)
+	}
+	if !strings.Contains(output, "resource was dropped (2 resources)") || !strings.Contains(output, "reviewer, worker-generic") {
+		t.Fatalf("expected grouped resource count and names, got %q", output)
+	}
+	if strings.Contains(output, "\x1b[") {
+		t.Fatalf("non-terminal sync output contains ANSI escapes: %q", output)
+	}
+
+	verboseOutput, err := executeCommand("sync", "--verbose")
+	if err != nil {
+		t.Fatalf("expected verbose sync to succeed for grouped warnings: %v\n%s", err, verboseOutput)
+	}
+	if got := strings.Count(verboseOutput, "subagent.windsurf.no-primitive"); got != 1 {
+		t.Fatalf("verbose sync rendered the grouped diagnostic %d times:\n%s", got, verboseOutput)
+	}
+	for _, source := range []string{"reviewer (agents/reviewer.md:1)", "worker-generic (agents/worker-generic.md:1)"} {
+		if !strings.Contains(verboseOutput, source) {
+			t.Errorf("verbose grouped warning missing %q:\n%s", source, verboseOutput)
+		}
 	}
 }
 
@@ -159,7 +182,7 @@ registries:
 		t.Fatalf("expected sync command to fail, got success with output %q", output)
 	}
 
-	if !strings.Contains(output, "Installed 0, Removed 0, Malformed 0, Errors 1") {
+	if !strings.Contains(output, "Installed 0  Removed 0  Malformed 0  Errors 1") {
 		t.Fatalf("expected sync summary with one error, got %q", output)
 	}
 }
@@ -217,7 +240,7 @@ func TestSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
 		t.Fatalf("expected no hint when no registries configured, got %q", output)
 	}
 
-	if !strings.Contains(output, "Installed 0, Removed 0, Malformed 0, Errors 0") {
+	if !strings.Contains(output, "Installed 0  Removed 0  Malformed 0  Errors 0") {
 		t.Fatalf("expected zero counts, got %q", output)
 	}
 }
@@ -301,7 +324,10 @@ registries:
 	}
 
 	if !strings.Contains(output, "Malformed 1") {
-		t.Fatalf("expected sync summary with malformed count, got %q", output)
+		t.Fatalf("expected warning-marked malformed count, got %q", output)
+	}
+	if !strings.Contains(output, "\n\nwarning: 1 resource was dropped from the catalog after failing validation") {
+		t.Fatalf("expected a visually separated malformed-resource warning, got %q", output)
 	}
 
 	// Default (non-verbose) output must not list the malformed details.
@@ -360,7 +386,7 @@ registries:
 		t.Fatalf("expected no hint when skills are already synced, got %q", output)
 	}
 
-	if !strings.Contains(output, "Installed 0, Removed 0") {
+	if !strings.Contains(output, "Installed 0  Removed 0") {
 		t.Fatalf("expected zero install/remove counts on second sync, got %q", output)
 	}
 }
