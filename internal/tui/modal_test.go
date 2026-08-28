@@ -523,3 +523,18 @@ func TestRenderToggleModalNoCollisionWarningWithoutError(t *testing.T) {
 		t.Fatalf("did not expect collision warning without error, got:\n%s", out)
 	}
 }
+
+func TestCompactToggleModalDoesNotAdvertiseMachineExclude(t *testing.T) {
+	r := mkRow("required", withGlobal)
+	r.Artifact.Source = config.Organization
+	m := NewModel("/repo", "/home")
+	m.width = 50
+	m.height = 12
+	m.pane = paneToggleModal
+	m.modalSkill = r
+
+	out := renderToggleModal(m)
+	if !contains(out, "[e] unavailable") || contains(out, "[e] exclude") {
+		t.Fatalf("machine-scoped compact actions are misleading:\n%s", out)
+	}
+}

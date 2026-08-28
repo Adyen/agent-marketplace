@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -47,6 +48,7 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 
 	level := resolveLevel(opts)
 	if !resolveEnabled(opts) {
+		recordManagedTerminalHandler(nil)
 		logger := slog.New(disabledHandler(level, opts.Debug || envBool("AGENT_MARKETPLACE_DEBUG"), stderr)).With(baseAttrs(opts)...)
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, nil
@@ -57,12 +59,14 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 		wrapped := fmt.Errorf("initialize log directory %q: %w", filepath.Dir(path), err)
 		_, writeErr := fmt.Fprintf(stderr, "agent-marketplace: %v; using stderr fallback\n", wrapped)
 		logger := fallbackLogger(stderr, level, opts)
+		recordManagedTerminalHandler(nil)
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, errors.Join(wrapped, writeErr)
 	}
 	if err := verifyWritable(path); err != nil {
 		_, writeErr := fmt.Fprintf(stderr, "agent-marketplace: %v; using stderr fallback\n", err)
 		logger := fallbackLogger(stderr, level, opts)
+		recordManagedTerminalHandler(nil)
 		slog.SetDefault(logger)
 		return logger, func() error { return nil }, errors.Join(err, writeErr)
 	}
@@ -82,9 +86,46 @@ func Init(opts Options) (*slog.Logger, func() error, error) {
 		handlers = append(handlers, slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 	}
 
+	recordManagedTerminalHandler(slog.New(handlers[0]).With(baseAttrs(opts)...).Handler())
 	logger := slog.New(multiHandler{handlers: handlers}).With(baseAttrs(opts)...)
 	slog.SetDefault(logger)
 	return logger, writer.Close, nil
+}
+
+// terminalSession records the managed (non-stderr) handler from the most
+// recent Init so a terminal session can keep logging to the managed file
+// without touching the live screen.
+var terminalSession struct {
+	mu      sync.Mutex
+	managed slog.Handler
+}
+
+func recordManagedTerminalHandler(handler slog.Handler) {
+	terminalSession.mu.Lock()
+	defer terminalSession.mu.Unlock()
+	terminalSession.managed = handler
+}
+
+// BeginTerminalSession swaps the process-wide default logger so no record
+// reaches stderr while a TUI owns the alternate screen: stderr IS the live
+// terminal there, and mirrored log lines would corrupt the frame or inject
+// untrusted bytes. Records keep flowing to the managed log file; when no
+// managed file exists (logging disabled or unavailable), records are
+// discarded for the duration of the session instead.
+//
+// The returned function restores the previous default logger. Restores are
+// independent: nested sessions restore into their own predecessor.
+func BeginTerminalSession() (restore func()) {
+	previous := slog.Default()
+	terminalSession.mu.Lock()
+	managed := terminalSession.managed
+	terminalSession.mu.Unlock()
+	if managed == nil {
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	} else {
+		slog.SetDefault(slog.New(managed))
+	}
+	return func() { slog.SetDefault(previous) }
 }
 
 func fallbackLogger(stderr io.Writer, level slog.Level, opts Options) *slog.Logger {
