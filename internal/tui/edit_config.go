@@ -46,11 +46,22 @@ func renderEditConfigModal(m Model) string {
 
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"})
 
+	if compactTerminalLayout(m) {
+		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
+		var b strings.Builder
+		b.WriteString(title + "\n")
+		b.WriteString(keyStyle.Render("[g]") + " edit global config\n")
+		b.WriteString(keyStyle.Render("[p]") + " edit project config\n")
+		b.WriteString(keyStyle.Render("[l]") + " edit local config\n")
+		b.WriteString(keyStyle.Render("[esc]") + " cancel")
+		return compactModalStyle(styleEditConfigModal, m).Render(b.String())
+	}
+
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	fmt.Fprintf(&b, "  Global:    %s\n", dimStyle.Render(globalPath))
-	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(projectPath))
-	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(localPath))
+	fmt.Fprintf(&b, "  Global:    %s\n", dimStyle.Render(sanitizeTerminalData(globalPath, terminalSingleLine)))
+	fmt.Fprintf(&b, "  Project:   %s\n", dimStyle.Render(sanitizeTerminalData(projectPath, terminalSingleLine)))
+	fmt.Fprintf(&b, "  Local:     %s\n\n", dimStyle.Render(sanitizeTerminalData(localPath, terminalSingleLine)))
 
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
 
@@ -120,7 +131,7 @@ func openEditorCmd(path string) tea.Cmd {
 			return editConfigPathMsg{path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
 		}
 		c := exec.Command(parts[0], append(parts[1:], path)...)
-		return tea.ExecProcess(c, func(err error) tea.Msg {
+		return tea.Exec(newEditorProcess(c), func(err error) tea.Msg {
 			slog.Debug("config editor process exited", "editor", editor, "path", path, "err", err)
 			return editConfigPathMsg{path: path, err: err}
 		})()

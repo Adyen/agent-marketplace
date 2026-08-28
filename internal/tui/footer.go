@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -27,7 +26,6 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount())))
 	}
 
-	// Error count
 	if len(m.errs) > 0 {
 		leftParts = append(leftParts, styleFooterError.Render(fmt.Sprintf("! %d errors", len(m.errs))))
 	}
@@ -35,31 +33,51 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("⚠ %d warnings", len(m.warnings))))
 	}
 
-	// Shortcuts: driven from the centralized keyMap via help.Model.
-	leftParts = append(leftParts, m.help.ShortHelpView(m.keys.ShortHelp()))
-
-	left := strings.Join(leftParts, "  ")
-
-	// Toast notification is rendered on the right side of the footer,
-	// positioned in the bottom-right corner as a temporary notification.
-	if m.toast != "" && !m.toastExp.IsZero() {
-		toast := styleToast.Render(m.toast)
-		// Keep the footer within the terminal width, even when the left
-		// content and toast cannot both fit.
-		if m.width <= 0 {
-			return ""
+	status := strings.Join(leftParts, "  ")
+	if compactTerminalLayout(m) {
+		actions := "?:help · s:sync · q:quit"
+		if m.failuresOrDrift() {
+			actions = "e:errors · r:reload · q:quit"
 		}
-		toastWidth := lipgloss.Width(toast)
-		if toastWidth >= m.width {
-			return ansi.Truncate(toast, m.width, "")
+		if m.filterActive {
+			actions = "enter apply · esc cancel · q quit"
 		}
-		leftWidth := m.width - toastWidth - 1
-		if leftWidth < 0 {
-			return ansi.Truncate(toast, m.width, "")
+		if m.toast != "" && !m.toastExp.IsZero() {
+			status = styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
 		}
-		left = ansi.Truncate(left, leftWidth, "")
-		return left + " " + toast
+		return footerWithRight(status, actions, m.width)
 	}
 
-	return left
+	bindings := m.keys.ShortHelp()
+	if len(bindings) > 0 {
+		bindings = bindings[:len(bindings)-1]
+	}
+	leftParts = append(leftParts, m.help.ShortHelpView(bindings))
+	right := "q quit"
+	if m.toast != "" && !m.toastExp.IsZero() {
+		right += " · " + styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine))
+	}
+	return footerWithRight(strings.Join(leftParts, "  "), right, m.width)
+}
+
+func (m Model) failuresOrDrift() bool {
+	if len(m.errs) > 0 {
+		return true
+	}
+	return m.driftAssessment == driftFailed || (m.driftAssessment == driftReady && !m.driftReport.InSync())
+}
+
+func footerWithRight(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rightWidth := ansi.StringWidth(right)
+	if rightWidth >= width {
+		return ansi.Truncate(right, width, "")
+	}
+	left = ansi.Truncate(left, width-rightWidth-1, "")
+	if left == "" {
+		return right
+	}
+	return left + " " + right
 }
