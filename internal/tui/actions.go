@@ -92,6 +92,8 @@ type updateDoneMsg struct {
 type detailContentMsg struct {
 	generation requestGeneration
 	content    string
+	width      int
+	keepScroll bool
 }
 
 type catalogLoadMode int
@@ -759,9 +761,14 @@ func ReadSkillMarkdown(path string) (string, error) {
 // loadDetailContent reads and glamour-renders a skill's SKILL.md in a
 // background goroutine so the TUI can transition to the detail pane
 // immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row, generation requestGeneration) tea.Cmd {
+func loadDetailContent(r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
-		return detailContentMsg{generation: generation, content: renderDetailFullContent(r)}
+		return detailContentMsg{
+			generation: generation,
+			content:    renderDetailFullContent(r, width),
+			width:      width,
+			keepScroll: keepScroll,
+		}
 	}
 }
 

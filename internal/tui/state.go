@@ -221,11 +221,15 @@ type Model struct {
 	spinner spinner.Model
 
 	detailViewport viewport.Model
+	helpViewport   viewport.Model
+	errorsViewport viewport.Model
 
 	// detailKey is the stable row identity of the resource whose full detail
 	// pane is open. It keeps an accepted snapshot rebuild anchored to the same
 	// resource even when rows are inserted or reordered.
-	detailKey string
+	detailKey          string
+	detailRenderWidth  int
+	detailStickyBottom bool
 
 	toast    string
 	toastExp time.Time

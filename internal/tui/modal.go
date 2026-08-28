@@ -262,7 +262,7 @@ func renderToggleModal(m Model) string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"}).
-		Render(fmt.Sprintf(`"%s"`, r.Artifact.Name))
+		Render(fmt.Sprintf(`"%s"`, sanitizeTerminalData(r.Artifact.Name, terminalSingleLine)))
 
 	check := func(on bool) string {
 		if on {
@@ -279,6 +279,21 @@ func renderToggleModal(m Model) string {
 			return "yes"
 		}
 		return "no"
+	}
+
+	if compactTerminalLayout(m) {
+		keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).Bold(true)
+		var b strings.Builder
+		b.WriteString(title + "\n")
+		if hasCollisionError(m.errs, r.Artifact.Kind, r.Artifact.Name) {
+			b.WriteString("Name collision: choose one source.\n")
+		}
+		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
+		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally))
+		b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
+		b.WriteString(keyStyle.Render("[l]") + " local   " + keyStyle.Render("[e]") + " exclude\n")
+		b.WriteString(keyStyle.Render("[esc]") + " cancel")
+		return compactModalStyle(styleToggleModal, m).Render(b.String())
 	}
 
 	var b strings.Builder

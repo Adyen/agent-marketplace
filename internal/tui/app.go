@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -45,6 +46,8 @@ func NewModel(repoRoot, homeDir string) Model {
 		spinner:        sp,
 		searchInput:    si,
 		detailViewport: viewport.New(80, 24),
+		helpViewport:   viewport.New(80, 23),
+		errorsViewport: viewport.New(80, 23),
 		keys:           defaultKeyMap,
 		help:           newHelpModel(),
 	}
@@ -151,14 +154,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		oldWidth, oldHeight := m.width, m.height
+		detailAtBottom := m.pane == paneDetail && m.detailViewport.AtBottom()
 		m.width = msg.Width
 		m.height = msg.Height
 		m.detailViewport.Width = msg.Width
-		m.detailViewport.Height = msg.Height
+		m.detailViewport.Height = max(1, msg.Height-1)
+		m.helpViewport.Width = msg.Width
+		m.helpViewport.Height = max(1, msg.Height-1)
+		m.errorsViewport.Width = msg.Width
+		m.errorsViewport.Height = max(1, msg.Height-1)
 		m.clampListOffset()
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
+		if !m.belowMinimumTerminal() && m.pane == paneDetail && msg.Width != m.detailRenderWidth {
+			if rerender := m.rerenderDetailAtWidth(msg.Width); rerender != nil {
+				m.detailStickyBottom = detailAtBottom
+				return m, rerender
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -175,12 +189,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.pane == paneDetail {
-			var cmd tea.Cmd
-			m.detailViewport, cmd = m.detailViewport.Update(msg)
-			return m, cmd
+		if m.belowMinimumTerminal() {
+			return m, nil
 		}
-		return m, nil
+		var cmd tea.Cmd
+		switch m.pane {
+		case paneDetail:
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+		case paneHelp:
+			m.helpViewport.SetContent(renderHelp(m))
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+		case paneErrors:
+			m.errorsViewport.SetContent(renderErrors(m))
+			m.errorsViewport, cmd = m.errorsViewport.Update(msg)
+		}
+		return m, cmd
 
 	case snapshotLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -448,14 +471,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case detailContentMsg:
-		if m.pane != paneDetail {
-			m.cancelRequest(requestDetail)
-			m.acceptsRequest(requestDetail, msg.generation)
+		if m.pane != paneDetail || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
 		}
-		if !m.acceptsRequest(requestDetail, msg.generation) {
+		if msg.width > 0 && msg.width != m.width {
+			return m, m.rerenderDetailAtWidth(m.width)
+		}
+		renderedWidth := msg.width
+		if renderedWidth == 0 {
+			renderedWidth = m.width
+		}
+		m.detailRenderWidth = renderedWidth
+		if msg.keepScroll {
+			offset := m.detailViewport.YOffset
+			stickyBottom := m.detailStickyBottom || m.detailViewport.AtBottom()
+			m.detailStickyBottom = false
+			m.detailViewport.SetContent(msg.content)
+			if stickyBottom {
+				m.detailViewport.GotoBottom()
+			} else {
+				m.detailViewport.SetYOffset(offset)
+			}
 			return m, nil
 		}
+		m.detailStickyBottom = false
 		m.detailViewport.SetContent(msg.content)
 		m.detailViewport.GotoTop()
 		return m, nil
@@ -495,6 +534,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	if m.belowMinimumTerminal() {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 
 	// Overlays take priority
 	switch m.pane {
@@ -503,7 +548,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		m.helpViewport.SetContent(renderHelp(m))
+		if key.Matches(msg, m.keys.Top) {
+			m.helpViewport.GotoTop()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Bottom) {
+			m.helpViewport.GotoBottom()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.helpViewport, cmd = m.helpViewport.Update(msg)
+		return m, cmd
 
 	case paneDetail:
 		return m.handleDetailKey(msg)
@@ -513,7 +569,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		m.errorsViewport.SetContent(renderErrors(m))
+		if key.Matches(msg, m.keys.Top) {
+			m.errorsViewport.GotoTop()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Bottom) {
+			m.errorsViewport.GotoBottom()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.errorsViewport, cmd = m.errorsViewport.Update(msg)
+		return m, cmd
 
 	case paneConfirm:
 		return m.handleConfirmKey(msg)
@@ -632,7 +699,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			generation := m.beginRequest(requestDetail)
 			m.enterDetailPane()
 			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			return m, loadDetailContent(r, generation)
+			return m, loadDetailContent(r, generation, m.width, false)
 		}
 		return m, nil
 
@@ -788,14 +855,17 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Top):
 		m.detailViewport.GotoTop()
+		m.detailStickyBottom = false
 		return m, nil
 
 	case key.Matches(msg, m.keys.Bottom):
 		m.detailViewport.GotoBottom()
+		m.detailStickyBottom = false
 		return m, nil
 	}
 	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
 	// wheel) to the viewport, which handles scroll offset and clamping.
+	m.detailStickyBottom = false
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
@@ -813,15 +883,25 @@ func (m *Model) enterDetailPane() {
 		m.detailKey = ""
 	}
 
-	// Compute full-screen viewport dimensions (no header/footer in detail
-	// overlay — the viewport fills the terminal).
 	m.detailViewport.Width = m.width
-	m.detailViewport.Height = m.height
-
-	// Show a placeholder immediately; the real content arrives via
-	// detailContentMsg.
+	m.detailViewport.Height = max(1, m.height-1)
+	m.detailRenderWidth = m.width
+	m.detailStickyBottom = false
 	m.detailViewport.SetContent("Loading…")
 	m.detailViewport.GotoTop()
+}
+
+func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
+	if m.detailKey == "" {
+		return nil
+	}
+	for _, r := range m.rows {
+		if rowKey(r) == m.detailKey && r.Artifact.Path != "" {
+			generation := m.beginRequest(requestDetail)
+			return loadDetailContent(r, generation, width, true)
+		}
+	}
+	return nil
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -859,16 +939,26 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.belowMinimumTerminal() {
+		return renderResizeRequired(m)
+	}
+
 	// Full-screen overlays.
 	switch m.pane {
 	case paneHelp:
-		return renderHelp(m)
+		m.helpViewport.Width = m.width
+		m.helpViewport.Height = max(1, m.height-1)
+		m.helpViewport.SetContent(renderHelp(m))
+		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ scroll · esc/? close · Ctrl+C quit", m.width, m.height)
 	case paneErrors:
-		return renderErrors(m)
+		m.errorsViewport.Width = m.width
+		m.errorsViewport.Height = max(1, m.height-1)
+		m.errorsViewport.SetContent(renderErrors(m))
+		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
-		return renderConfirm(m)
+		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneDetail:
-		return m.detailViewport.View()
+		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ scroll · Ctrl+C quit", m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()
@@ -979,7 +1069,7 @@ func paneWidths(totalWidth int) (listWidth, detailWidth int) {
 }
 
 func renderHeader(m Model) string {
-	repoName := filepathBase(m.repoRoot)
+	repoName := sanitizeTerminalData(filepathBase(m.repoRoot), terminalSingleLine)
 	title := styleHeader.Render(fmt.Sprintf(" agent-marketplace — %s ", repoName))
 	return title
 }
@@ -1073,41 +1163,42 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string) error {
-	// Initialise the glamour renderer while we still own the terminal
-	// (before tea.WithAltScreen swaps to the alt buffer).  WithAutoStyle
-	// sends an OSC 11 query to detect dark/light background; inside
-	// alt-screen the response is swallowed, causing a 5 s timeout.
+	applyTerminalBackground()
 	initRenderer()
 
-	m := NewModel(repoRoot, homeDir)
-	m.ctx = ctxOrBackground(ctx)
-
-	tel := telemetry.TelemetryFromContext(m.ctx)
+	model := NewModel(repoRoot, homeDir)
+	model.ctx = ctxOrBackground(ctx)
+	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {
-		m.ctx, m.sessionSpan = tel.StartSpan(m.ctx, "agent_marketplace.tui.session", nil)
+		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
+	defer model.sessionSpan.End()
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	finalModel, err := p.Run()
+	seedTerminalSize(&model, os.Stdout)
+	restoreLogs := logging.BeginTerminalSession()
+	defer restoreLogs()
 
-	m.sessionSpan.End()
+	return runTUIModel(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+}
 
-	// An interrupt (e.g. external SIGINT) is a legitimate exit path,
-	// not an error worth reporting to the user.
-	if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {
-		slog.Debug("tui exited via interrupt", "err", err)
+func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
+	return runWithTerminalGuard(defaultTerminalIO(), func() (tea.Model, error) {
+		return tea.NewProgram(model, options...).Run()
+	})
+}
+
+func finishTUIRun(finalModel tea.Model, err error) error {
+	if errors.Is(err, tea.ErrInterrupted) {
+		slog.Debug("tui exited via interrupt")
 		return nil
 	}
 	if err != nil {
-		slog.Error("tui exited with error", "err", err)
-		return err
+		slog.Error("tui exited with error", "interrupted", false)
+		return sanitizeReturnedError(err)
 	}
-	// Surface sync errors from the sync+quit flow so failed syncs don't
-	// exit cleanly. The error was already shown as a toast in the TUI;
-	// propagating it lets the caller (cobra) print it to stderr.
 	if fm, ok := finalModel.(Model); ok && fm.syncQuitErr != nil {
-		slog.Error("tui sync+quit reported sync error", "err", fm.syncQuitErr)
-		return fm.syncQuitErr
+		slog.Error("tui sync+quit reported sync error")
+		return sanitizeReturnedError(fm.syncQuitErr)
 	}
 	return nil
 }

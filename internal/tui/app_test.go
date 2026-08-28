@@ -113,6 +113,8 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		refreshing:   true,
 		requests:     requestState{next: 1, snapshot: 1},
+		width:        80,
+		height:       24,
 		keys:         defaultKeyMap,
 		help:         newHelpModel(),
 	}
@@ -166,7 +168,7 @@ func TestDownKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.width = 50
-	m.height = 8
+	m.height = 12
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 5), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -193,7 +195,7 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 		mkRow("omega", withGlobal),
 	}
 	m := NewModel(t.TempDir(), t.TempDir())
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 9})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{generation: 1, rows: rows})
 	m = loaded.(Model)
 	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
@@ -217,7 +219,7 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.width = 100
-	m.height = 8
+	m.height = 20
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 4), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -226,7 +228,7 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m.cursor = 2
 	m.clampListOffset()
 
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	out := updated.(Model).View()
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
@@ -263,8 +265,8 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
-			if tc.height >= 2 && !strings.Contains(out, "~ drift unavailable") {
-				t.Fatalf("View() omitted the truthful pre-snapshot footer from a %d-line terminal: %q", tc.height, out)
+			if tc.height >= 2 && !strings.Contains(out, "q") {
+				t.Fatalf("below-minimum recovery omitted quit guidance from a %d-line terminal: %q", tc.height, out)
 			}
 		})
 	}
