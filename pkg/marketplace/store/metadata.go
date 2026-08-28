@@ -100,6 +100,7 @@ type MetadataStore interface {
 	GetJob(ctx context.Context, id JobID) (Job, error)
 	EnqueueJob(ctx context.Context, job Job) error
 	LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (Job, error)
+	LeaseJobByID(ctx context.Context, id JobID, workerID string, leaseDuration time.Duration) (Job, error)
 	ExtendLease(ctx context.Context, id JobID, workerID string, d time.Duration) error
 	ReleaseJob(ctx context.Context, id JobID, workerID string) error
 	CompleteJob(ctx context.Context, id JobID, workerID string) error

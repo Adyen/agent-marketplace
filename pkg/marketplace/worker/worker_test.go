@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
@@ -346,6 +347,38 @@ func TestReindexReturnsWhenAnotherWorkerCompletesItsJob(t *testing.T) {
 	deps := Deps{Config: cfg, MetadataStore: &externallyCompletingStore{MetadataStore: meta}, BlobStore: blobs}
 	if err := Reindex(context.Background(), deps, cfg, cfg.Sources[0].Slug); err != nil {
 		t.Fatalf("Reindex: %v", err)
+	}
+}
+
+func TestReindexDoesNotProcessUnrelatedRefreshJobs(t *testing.T) {
+	ctx := context.Background()
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+	cfg := createTestConfig(t, repoDir)
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+
+	unrelated := job.Job{
+		ID:          "unrelated",
+		Kind:        "refresh",
+		Payload:     []byte(`{"source_id":"missing-source"}`),
+		MaxAttempts: 1,
+		CreatedAt:   time.Now().Add(-time.Hour),
+	}
+	if err := job.Enqueue(ctx, meta, unrelated); err != nil {
+		t.Fatalf("enqueue unrelated job: %v", err)
+	}
+
+	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
+	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+	got, err := meta.GetJob(ctx, unrelated.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != job.Pending {
+		t.Fatalf("unrelated job status = %q, want %q", got.Status, job.Pending)
 	}
 }
 

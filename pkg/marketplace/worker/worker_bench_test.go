@@ -6,9 +6,45 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+type slowUnrelatedSourceStore struct {
+	store.MetadataStore
+	delay time.Duration
+}
+
+func (s slowUnrelatedSourceStore) LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	time.Sleep(s.delay)
+	return s.MetadataStore.LeaseJob(ctx, kind, workerID, leaseDuration)
+}
+
+func BenchmarkReindexWithUnrelatedBacklog(b *testing.B) {
+	ctx := context.Background()
+	repoDir, cleanup := createTestRepo(b)
+	defer cleanup()
+	cfg := createTestConfig(b, repoDir)
+	meta, blobs := openTestStores(b)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{Config: cfg, MetadataStore: slowUnrelatedSourceStore{MetadataStore: meta, delay: 100 * time.Millisecond}, BlobStore: blobs}
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		for j := range 10 {
+			id := store.JobID(fmt.Sprintf("unrelated-%d-%d", i, j))
+			if err := job.Enqueue(ctx, meta, job.Job{ID: id, Kind: "refresh", Payload: []byte(`{"source_id":"missing-source"}`), MaxAttempts: 1}); err != nil {
+				b.Fatalf("enqueue unrelated job: %v", err)
+			}
+		}
+		b.StartTimer()
+		if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+			b.Fatalf("Reindex: %v", err)
+		}
+	}
+}
 
 func BenchmarkRefresh(b *testing.B) {
 	ctx := context.Background()

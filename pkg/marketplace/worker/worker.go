@@ -369,7 +369,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 			return fmt.Errorf("reindex job %q failed", jobID)
 		}
 
-		leased, err := job.Lease(ctx, deps.MetadataStore, "refresh", workerID, leaseDuration)
+		leased, err := deps.MetadataStore.LeaseJobByID(ctx, jobID, workerID, leaseDuration)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				timer := time.NewTimer(100 * time.Millisecond)
@@ -385,10 +385,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 		}
 
 		if err := processRefreshJob(ctx, deps, leased, workerID); err != nil {
-			if leased.ID == jobID {
-				return err
-			}
-			slog.Error("unrelated refresh failed during reindex", "job", leased.ID, "err", err)
+			return err
 		}
 	}
 }

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -379,7 +378,7 @@ func scriptExt() string {
 }
 
 func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string, roots []string, limits Limits) error {
-	args := append(hardenedGitArgs(), "ls-tree", "-r", "-l", commit)
+	args := append(hardenedGitArgs(), "ls-tree", "-r", commit)
 	if len(roots) > 0 {
 		args = append(args, "--")
 		args = append(args, roots...)
@@ -389,7 +388,6 @@ func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string
 		return fmt.Errorf("list tree for %q: %w", commit, err)
 	}
 
-	var total int64
 	var count int
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -401,26 +399,15 @@ func enforceTreeLimits(ctx context.Context, env []string, repoDir, commit string
 			continue
 		}
 		fields := strings.Fields(meta)
-		if len(fields) < 4 {
+		if len(fields) < 3 {
 			continue
 		}
-		typ, sizeStr := fields[1], fields[3]
+		typ := fields[1]
 		if typ != "blob" {
 			// Reject submodules and other non-blob tree entries.
 			return fmt.Errorf("%w: tree contains non-blob entry %q (type %s)", ErrLimitExceeded, path, typ)
 		}
-		size, err := strconv.ParseInt(sizeStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("parse tree size for %q: %w", path, err)
-		}
-		if limits.FileBytes > 0 && size > limits.FileBytes {
-			return fmt.Errorf("%w: tree entry %q size %d exceeds file_bytes limit %d", ErrLimitExceeded, path, size, limits.FileBytes)
-		}
-		total += size
 		count++
-		if limits.RepositoryBytes > 0 && total > limits.RepositoryBytes {
-			return fmt.Errorf("%w: tree size %d exceeds repository_bytes limit %d", ErrLimitExceeded, total, limits.RepositoryBytes)
-		}
 		if limits.FileCount > 0 && count > limits.FileCount {
 			return fmt.Errorf("%w: tree entry count %d exceeds file_count limit %d", ErrLimitExceeded, count, limits.FileCount)
 		}

@@ -197,14 +197,49 @@ func TestCloneRejectsInvalidRoot(t *testing.T) {
 	}
 }
 
+func TestEnforceTreeLimitsDoesNotFetchMissingBlobs(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{
+		"selected/a.txt": "a",
+		"selected/b.txt": "b",
+	})
+	runGitTestCommand(t, repo, "git", "config", "uploadpack.allowFilter", "true")
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	workspace, err := newWorkspace(Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = workspace.cleanup() }()
+	ctx := context.Background()
+	if _, err := runGit(ctx, workspace.env(), "", append(hardenedGitArgs(), "init", "--", cloneDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, workspace.env(), cloneDir, append(hardenedGitArgs(), "remote", "add", "origin", "file://"+repo)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, workspace.env(), cloneDir, fetchArgs("main", true)); err != nil {
+		t.Fatal(err)
+	}
+	commitBytes, err := runGit(ctx, workspace.env(), cloneDir, append(hardenedGitArgs(), "rev-parse", "FETCH_HEAD^{commit}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, workspace.env(), cloneDir, append(hardenedGitArgs(), "remote", "set-url", "origin", "file:///missing")); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceTreeLimits(ctx, workspace.env(), cloneDir, strings.TrimSpace(string(commitBytes)), []string{"selected"}, Limits{FileCount: 2}); err != nil {
+		t.Fatalf("enforceTreeLimits fetched missing blobs: %v", err)
+	}
+}
+
 func TestCloneEnforcesFileBytes(t *testing.T) {
 	repo := createGitRepo(t, map[string]string{
 		"small.txt": strings.Repeat("x", 100),
 		"large.txt": strings.Repeat("x", 200),
 	})
+	runGitTestCommand(t, repo, "git", "config", "uploadpack.allowFilter", "true")
 
 	limits := Limits{RepositoryBytes: 1024 * 1024, FileCount: 1024, FileBytes: 150}
-	_, err := Clone(context.Background(), repo, "main", Credentials{}, limits, time.Minute)
+	_, err := Clone(context.Background(), "file://"+repo, "main", Credentials{}, limits, time.Minute)
 	if err == nil {
 		t.Fatalf("expected error for file exceeding file_bytes")
 	}
