@@ -256,8 +256,13 @@ type NameCollisionError struct {
 }
 
 func (e *NameCollisionError) Error() string {
-	return fmt.Sprintf("%s %q is provided by multiple registries: %s", skill.KindLabel(e.Kind), e.Name, strings.Join(redact.Strings(e.Sources), ", "))
+	return fmt.Sprintf("%s is provided by multiple registries: %s", e.Resource(), e.Source())
 }
+
+func (e *NameCollisionError) Resource() string {
+	return fmt.Sprintf("%s %q", skill.KindLabel(e.Kind), e.Name)
+}
+func (e *NameCollisionError) Source() string { return strings.Join(redact.Strings(e.Sources), ", ") }
 
 // Remediation returns a user-facing hint about how to resolve the name collision.
 func (e *NameCollisionError) Remediation() string {
@@ -287,8 +292,14 @@ type NameCollisionWarning struct {
 }
 
 func (e *NameCollisionWarning) Error() string {
-	runnersUp := strings.Join(redact.Strings(e.RunnersUp), ", ")
-	return fmt.Sprintf("%s %q is provided by multiple registries; using %s (others: %s)", skill.KindLabel(e.Kind), e.Name, redact.URL(e.Winner), runnersUp)
+	return fmt.Sprintf("%s is provided by multiple registries; %s", e.Resource(), e.Source())
+}
+
+func (e *NameCollisionWarning) Resource() string {
+	return fmt.Sprintf("%s %q", skill.KindLabel(e.Kind), e.Name)
+}
+func (e *NameCollisionWarning) Source() string {
+	return fmt.Sprintf("using %s (others: %s)", redact.URL(e.Winner), strings.Join(redact.Strings(e.RunnersUp), ", "))
 }
 
 // Remediation returns a user-facing hint about how to resolve the name collision
@@ -474,12 +485,17 @@ type SelectedNotFoundError struct {
 }
 
 func (e *SelectedNotFoundError) Error() string {
-	msg := fmt.Sprintf("%s %q was selected but not found in %s", skill.KindLabel(e.Kind), e.Name, e.location())
+	msg := fmt.Sprintf("%s was selected but not found in %s", e.Resource(), e.Source())
 	if e.Hint != "" {
 		msg += "; " + e.Hint
 	}
 	return msg
 }
+
+func (e *SelectedNotFoundError) Resource() string {
+	return fmt.Sprintf("%s %q", skill.KindLabel(e.Kind), e.Name)
+}
+func (e *SelectedNotFoundError) Source() string { return e.location() }
 
 // location renders the registry location the resource was looked for in. For a
 // path-less collection member it names every searched location rather than
