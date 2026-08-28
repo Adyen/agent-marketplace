@@ -41,7 +41,7 @@ func BenchmarkWriteSyncWarnings(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := writeSyncWarnings(io.Discard, warnings, false, "⚠"); err != nil {
+		if err := writeSyncWarnings(io.Discard, warnings, false, "warning:"); err != nil {
 			b.Fatal(err)
 		}
 	}
