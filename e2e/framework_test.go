@@ -665,8 +665,8 @@ func (e *Env) WriteLocalConfig(content string) {
 	e.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(content))
 }
 
-// WriteOrgConfig writes the organization config to the managed location
-// (/etc/agent-marketplace/config.yaml in the sandbox).
+// WriteOrgConfig writes the canonical v2 organization config to the managed
+// location (/etc/agent-marketplace/config.yaml in the sandbox).
 func (e *Env) WriteOrgConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)

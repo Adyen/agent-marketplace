@@ -18,6 +18,7 @@ defineProps<{
         <NuxtLink v-if="breadcrumb.to" :to="breadcrumb.to" class="truncate text-sm text-muted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">{{ breadcrumb.label }}</NuxtLink>
         <span v-else class="truncate text-sm text-muted" aria-current="page">{{ breadcrumb.label }}</span>
       </template>
+      <GitHubLink class="ml-auto" />
     </div>
   </header>
 </template>

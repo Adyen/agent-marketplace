@@ -84,7 +84,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot})
 
 	if len(result.TargetHarnesses) == 0 {
-		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; add `harnesses` to ~/.agents/config.yaml.\n"); err != nil {
+		if _, err := fmt.Fprintf(errOut, "No target harness set configured; add `harnesses` to your project or user config.\n"); err != nil {
 			return err
 		}
 	}

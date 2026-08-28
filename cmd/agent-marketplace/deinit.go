@@ -127,7 +127,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 		// cache GC. An incomplete view must fail closed: an empty resolved set
 		// would otherwise look like proof that all organization-owned output and
 		// cache entries are safe to remove.
-		orgArtifacts, err := resolveOrgOwnedArtifacts(repoRoot)
+		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
 		if err != nil {
 			slog.Error("deinit could not resolve organization-owned artifacts; refusing teardown", "error", err)
 			if _, werr := fmt.Fprintf(out, "error: could not resolve organization-owned artifacts; refusing teardown: %v\n", err); werr != nil {
@@ -142,7 +142,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	opts = append(opts, materialize.WithMaterializationModes(modes))
-	report, err := materialize.Run(context.Background(), repoRoot, resolvedArtifacts, opts...)
+	report, err := materialize.Run(ctx, repoRoot, resolvedArtifacts, opts...)
 	if err != nil {
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
@@ -290,7 +290,7 @@ func removeEmptyDir(dir string) {
 // set is configured, there is no org-owned output to preserve, so the function
 // returns an empty slice rather than defaulting artifacts to a target the user
 // never requested.
-func resolveOrgOwnedArtifacts(repoRoot string) ([]resolver.ResolvedArtifact, error) {
+func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
 	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot:         repoRoot,

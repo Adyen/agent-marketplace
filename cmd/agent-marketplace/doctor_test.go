@@ -720,18 +720,10 @@ registries: []
 		"state: managed",
 		"validation: valid",
 		"is writable by group or other (mode",
-		"CONFIGURATION ERRORS",
-		"line 2: repository committed configuration cannot declare top-level harnesses",
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected doctor output to contain %q, got:\n%s", needle, output)
 		}
 	}
 
-	managedIdx := strings.Index(output, "MANAGED INSTALLATION")
-	configIdx := strings.Index(output, "CONFIGURATION ERRORS")
-	errIdx := strings.Index(output, "line 2: repository committed configuration cannot declare top-level harnesses")
-	if managedIdx >= configIdx || configIdx >= errIdx {
-		t.Fatalf("expected configuration error to appear in CONFIGURATION ERRORS after MANAGED INSTALLATION, got:\n%s", output)
-	}
 }

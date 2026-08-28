@@ -12,7 +12,7 @@ import (
 )
 
 // layerKind identifies which Configuration Layer is being loaded so that
-// strict validation can reject forbidden fields per ADR 0002.
+// strict layer-aware validation can reject forbidden fields.
 type layerKind int
 
 const (
@@ -57,6 +57,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":                 true,
 		"backup":               true,
 		"logging":              true,
+		"telemetry":            true,
 	},
 	userLayer: {
 		"apiVersion":           true,
@@ -74,9 +75,11 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"tags":                 true,
 		"backup":               true,
 		"logging":              true,
+		"telemetry":            true,
 	},
 	repoLayer: {
 		"apiVersion":           true,
+		"harnesses":            true,
 		"allowed_registries":   true,
 		"allowed_marketplaces": true,
 		"registries":           true,
@@ -133,15 +136,14 @@ func resolveAlias(n *yaml.Node) *yaml.Node {
 	return n
 }
 
-// loadV3Config loads a strict Config from raw YAML. It implements the v2
-// canonical schema and accepts "agent-marketplace/v3" as a compatibility
-// alias for the same schema. It validates the YAML node against the
-// per-layer allowlist, decodes with KnownFields, and then runs structural
-// validation.
+// loadV3Config loads a strict agent-marketplace/v2 or /v3 Config from raw
+// YAML. v2 is canonical; v3 is accepted as a compatibility alias. It
+// validates the YAML node against the per-layer allowlist, decodes with
+// KnownFields, and then runs structural validation.
 func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		var cfg Config
-		if err := cfg.validate(requireHarnesses, kind != localLayer); err != nil {
+		if err := cfg.validate(requireHarnesses, kind != localLayer, kind.name()); err != nil {
 			return nil, []error{fmt.Errorf("validate empty %s config: %w", kind.name(), err)}
 		}
 		return &cfg, nil
@@ -185,7 +187,7 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 	// apiVersion is required for Config-schema files (org/user/repo) but
 	// optional for local configs, which are generated without it.
 	requireAPIVersion := kind != localLayer
-	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion); err != nil {
+	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion, kind.name()); err != nil {
 		nodeErrs = append(nodeErrs, err)
 	}
 
@@ -195,11 +197,9 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 	return &cfg, nil
 }
 
-// loadV3LocalConfig loads a strict LocalConfig from raw YAML. It
-// implements the v2 canonical schema and accepts "agent-marketplace/v3" as
-// a compatibility alias for the same schema. It validates the YAML node
-// against the repository personal allowlist and then runs structural
-// validation.
+// loadV3LocalConfig loads a strict repository personal config from raw YAML.
+// It validates the YAML node against the repository personal allowlist and
+// then runs structural validation.
 func loadV3LocalConfig(data []byte) (*LocalConfig, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return &LocalConfig{}, nil

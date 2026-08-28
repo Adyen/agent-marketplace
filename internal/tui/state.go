@@ -33,6 +33,7 @@ const (
 	paneConfirm
 	paneToggleModal
 	paneInitModal
+	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
 )
@@ -211,10 +212,11 @@ type Model struct {
 	// modalSkill is the row whose state is displayed in paneToggleModal.
 	// Captured at modal-open time so rapid reloads can't change what the
 	// user is acting on mid-interaction.
-	modalSkill   row
-	harnessModal harnessModalState
-	initModal    initModalState
-	operations   operationState
+	modalSkill      row
+	harnessModal    harnessModalState
+	initModal       initModalState
+	migrationPrompt migrationPrompt
+	operations      operationState
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

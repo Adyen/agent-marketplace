@@ -81,7 +81,19 @@ type configMutation struct {
 // Update refreshes pinned registries, explicitly advances eligible Marketplace
 // pins, and syncs enabled resources. Marketplace plans are completely prepared
 // before any config mutation.
-func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
+func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retErr error) {
+	tel := telemetry.TelemetryFromContext(ctx)
+	var updateSpan telemetry.Span
+	if tel != nil {
+		ctx, updateSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.update", updateOptionAttrs(opts))
+	}
+	defer func() {
+		if updateSpan != (telemetry.Span{}) {
+			updateSpan.SetAttributes(updateResultAttrs(result, retErr))
+			updateSpan.End()
+		}
+	}()
+
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 
@@ -134,7 +146,7 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 			if err != nil {
 				return nil, err
 			}
-			bumps, err = bumpRepoRegistryRefs(configPath, repoCfg)
+			bumps, err = bumpRepoRegistryRefs(ctx, configPath, repoCfg)
 			if err != nil {
 				return nil, rollbackFailedConfigEdit(configPath, snapshot, err)
 			}
@@ -190,7 +202,7 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		slog.Info("update skipping sync", "reason", "only unsupported or unchanged Marketplace pins")
 	}
 
-	result := &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}
+	result = &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}
 	for _, plan := range plans {
 		result.MarketplacePins = append(result.MarketplacePins, plan.MarketplacePinUpdate)
 		if plan.Updated {

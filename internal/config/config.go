@@ -329,6 +329,10 @@ type Config struct {
 	// on []string loses the distinction).
 	AllowedRegistries   *[]string `yaml:"allowed_registries,omitempty"`
 	AllowedMarketplaces *[]string `yaml:"allowed_marketplaces,omitempty"`
+
+	// Telemetry is the machine-scope telemetry policy. It is only allowed in
+	// the organization and user-personal configuration layers.
+	Telemetry *telemetryconfig.TelemetryConfig `yaml:"telemetry,omitempty"`
 }
 
 // SelectorForKind returns the top-level KindSelector for the given resource
@@ -379,10 +383,9 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 type LocalConfig struct {
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
-	// "agent-marketplace/v2" by hand (or copy it from a sibling config).
-	// It is accepted but not required; when present it must match
-	// APIVersionV2 or APIVersionV3, where v2 is canonical and v3 is
-	// accepted as a compatibility alias. Without this field the strict
+	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
+	// from a sibling config). It is accepted but not required; when present it
+	// must match one of the supported API versions. Without this field the strict
 	// (KnownFields) decoder rejects any hand-added apiVersion line.
 	APIVersion   string             `yaml:"apiVersion,omitempty"`
 	Registries   []RegistryEntry    `yaml:"registries,omitempty"`
@@ -789,8 +792,8 @@ func (e *ScopeBoundaryError) Error() string {
 const (
 	// APIVersionV2 is the canonical apiVersion sentinel.
 	APIVersionV2 = "agent-marketplace/v2"
-	// APIVersionV3 is an alias that is still accepted for reading but
-	// should not be emitted by generators or documentation.
+	// APIVersionV3 is an alias accepted for reading but not emitted by
+	// generators or documentation.
 	APIVersionV3 = "agent-marketplace/v3"
 )
 
@@ -812,9 +815,9 @@ func (c Config) ValidateWithoutHarnesses() error {
 func (c Config) validate(requireHarnesses, requireAPIVersion bool, layer string) error {
 	var errs []error
 
-	// v2 is canonical; v3 is retained as a compatibility alias.
-	// apiVersion is required on Config-schema files (global/repo/org) but
-	// optional on local configs, which are generated without it.
+	// v2 is canonical; v3 is retained as a compatibility alias. apiVersion is
+	// required on Config-schema files (global/repo/org) but optional on local
+	// configs, which are generated without it.
 	if v := strings.TrimSpace(c.APIVersion); v == "" {
 		if requireAPIVersion {
 			errs = append(errs, fmt.Errorf("missing apiVersion: add %q", APIVersionV2))
