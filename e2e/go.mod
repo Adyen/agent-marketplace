@@ -2,7 +2,10 @@ module github.com/Adyen/agent-marketplace/e2e
 
 go 1.26.6
 
-require github.com/Adyen/agent-marketplace v0.0.0
+require (
+	github.com/Adyen/agent-marketplace v0.0.0
+	github.com/creack/pty v1.1.24
+)
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.1 // indirect
