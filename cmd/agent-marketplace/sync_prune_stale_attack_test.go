@@ -206,7 +206,7 @@ func TestSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
 	t.Logf("output:\n%s\nerr: %v", output, err)
 
 	first := strings.SplitN(output, "\n", 2)[0]
-	if !strings.HasPrefix(first, "Installed ") {
+	if !strings.HasPrefix(first, "✓ Installed ") {
 		t.Fatalf("unexpected first line %q", first)
 	}
 	if strings.HasSuffix(first, "Errors 0") {

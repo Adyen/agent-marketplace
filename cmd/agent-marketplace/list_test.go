@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -419,28 +418,6 @@ func extractAndStripHarnesses(content string) (string, []string) {
 	content = harnessesRegex.ReplaceAllString(content, "")
 	content = strings.TrimSpace(content)
 	return content, parsed.Harnesses
-}
-
-func mergeGlobalHarnesses(t *testing.T, harnesses []string) {
-	t.Helper()
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("user home dir: %v", err)
-	}
-	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	var cfg config.Config
-	if data, err := os.ReadFile(globalPath); err == nil {
-		_ = yaml.Unmarshal(data, &cfg)
-	}
-	if cfg.APIVersion == "" {
-		cfg.APIVersion = config.APIVersionV2
-	}
-	cfg.Harnesses = harnesses
-	out, err := yaml.Marshal(&cfg)
-	if err != nil {
-		t.Fatalf("marshal global config: %v", err)
-	}
-	writeFile(t, globalPath, string(out))
 }
 
 func ensureGlobalConfig(t *testing.T) {
