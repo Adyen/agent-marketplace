@@ -49,14 +49,11 @@ const (
 // value, the header value or the OAuth member behind them.
 // TestDiagIssueReportsNothingBeyondTheDiagnostic pins that.
 type diagIssue struct {
-	code             string
-	resource         string
-	source           string
-	hint             string
-	msg              string
-	message          string
-	presentationKey  string
-	presentationText string
+	code     string
+	resource string
+	source   string
+	hint     string
+	msg      string
 	// key is the dedup identity, computed once at construction. It is a field
 	// rather than a computation in DedupKey() because DedupKey() is called
 	// inside dedupIssues' loop and the identity cannot change afterwards.
@@ -73,18 +70,13 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	message := sanitizeDiagText(d.Message, maxDiagMessageLen)
 	hint := sanitizeDiagText(d.Hint, maxDiagHintLen)
 	issue := &diagIssue{
-		code:             d.Code,
-		resource:         resource,
-		source:           source,
-		hint:             hint,
-		msg:              renderDiagMessage(d.Code, message, resource, source),
-		message:          message,
-		presentationText: renderDiagMessage(d.Code, message, "", ""),
+		code:     d.Code,
+		resource: resource,
+		source:   source,
+		hint:     hint,
+		msg:      renderDiagMessage(d.Code, message, resource, source),
 	}
 	issue.key = diagDedupKey(d, issue)
-	if d.Code != "" && resource != "" {
-		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
-	}
 	return issue
 }
 
@@ -153,12 +145,7 @@ func DedupIssues(issues []error) []error {
 func (i *diagIssue) Error() string { return i.msg }
 
 // Resource identifies the catalog resource for grouped CLI warning output.
-func (i *diagIssue) Resource() string          { return i.resource }
-func (i *diagIssue) Source() string            { return i.source }
-func (i *diagIssue) PresentationKey() string   { return i.presentationKey }
-func (i *diagIssue) PresentationText() string  { return i.presentationText }
-func (i *diagIssue) DiagnosticCode() string    { return i.code }
-func (i *diagIssue) DiagnosticMessage() string { return i.message }
+func (i *diagIssue) Resource() string { return i.resource }
 
 // Remediation satisfies resolver.Remediable so the CLI renders the
 // compiler-authored Hint the same way it renders resolver remediation, for

@@ -377,11 +377,11 @@ with ownership and handwritten-content preservation independent of output mode.
 ## Codex
 
 Codex is an opt-in harness target. In the TUI, press `H` and tick **Codex**, or
-add it to the machine-wide target set:
+add it to the effective target set:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory, codex]
 ```
 
@@ -441,7 +441,7 @@ Devin CLI is a harness target. Select it the same way as any other target:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory, devin]
 ```
 

@@ -193,6 +193,9 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	if !strings.Contains(content, "apiVersion: agent-marketplace/v2") || !strings.Contains(content, "factory") {
 		t.Fatalf("expected v2 config with factory, got:\n%s", content)
 	}
+	if !strings.Contains(content, "telemetry:") || !strings.Contains(content, "level: basic") {
+		t.Fatalf("expected telemetry consent to be written, got:\n%s", content)
+	}
 }
 
 func TestInitDeduplicatesHarnesses(t *testing.T) {

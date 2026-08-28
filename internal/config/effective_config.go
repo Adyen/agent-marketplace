@@ -33,8 +33,9 @@ func SetTestOrganizationConfigPath(t testing.TB, path string) {
 	}
 }
 
-func SetTestOrganizationConfigPath(t testing.TB, path string) {
-	SetTestV3OrganizationConfigPath(t, path)
+// SetTestV3OrganizationConfigPath retains compatibility with existing tests.
+func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
+	SetTestOrganizationConfigPath(t, path)
 }
 
 // OrganizationConfigPath returns the fixed filesystem path of the externally
@@ -43,8 +44,8 @@ func OrganizationConfigPath() string {
 	return organizationConfigPath("")
 }
 
-// organizationConfigPath returns the fixed organization config path,
-// honoring the explicit override and the test-only package-level override.
+// organizationConfigPath returns the fixed organization config path, honoring
+// the explicit override and the test-only package-level override.
 func organizationConfigPath(override string) string {
 	if override != "" {
 		return override

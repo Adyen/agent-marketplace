@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { resourceInspectionFilePath } from '~/lib/api'
-import { assessmentFindings, installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
+import { computed } from 'vue'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
@@ -63,78 +62,27 @@ const revisionHistory = computed(() => {
     return true
   })
 })
-// The nested assessment is the sole authority for findings. Inspection
-// manifests only describe safely previewable files.
-const findings = computed(() => assessmentFindings(props.resource.assessment.findings))
-const primaryFile = computed(() => props.inspection?.files.find(file => file.path === props.inspection?.primary_path))
-const selectedDigest = ref('')
-const loadedContents = ref<Record<string, string>>({})
-const unavailableContents = ref<Record<string, boolean>>({})
-const loadingDigest = ref('')
-const selectedFile = computed(() => props.inspection?.files.find(file => file.content_digest === selectedDigest.value) ?? primaryFile.value)
-const selectedIsPrimary = computed(() => selectedFile.value?.path === props.inspection?.primary_path)
-const selectedIsMarkdown = computed(() => selectedFile.value?.media_type === 'text/markdown')
-const selectedIsImage = computed(() => selectedIsPrimary.value && selectedFile.value?.inspection_class === 'image')
-const selectedImageURL = computed(() => selectedFile.value && selectedIsImage.value
-  ? resourceInspectionFilePath(props.apiBase, props.source, props.kind, props.name, props.resource.content_digest, selectedFile.value.content_digest)
-  : '')
-const selectedContent = computed(() => {
-  if (!selectedFile.value || selectedFile.value.inspection_class !== 'text') return undefined
-  if (selectedIsPrimary.value) return props.primaryContent
-  return loadedContents.value[selectedFile.value.content_digest]
-})
-const selectedContentUnavailable = computed(() => Boolean(selectedFile.value && selectedFile.value.inspection_class === 'text' && (
-  unavailableContents.value[selectedFile.value.content_digest] || (selectedIsPrimary.value && props.primaryContent === undefined)
-)))
-const displayFindings = computed(() => findings.value.map(finding => {
-  if (finding.path !== selectedFile.value?.path || selectedContent.value === undefined || finding.startByte !== undefined) return finding
-  const range = lineColumnByteRange(selectedContent.value, finding.line, finding.column)
-  return range ? { ...finding, ...range } : finding
-}))
-const selectedFindingDetails = computed(() => displayFindings.value.filter(finding => finding.path === selectedFile.value?.path))
-const renderedContent = computed(() => selectedContent.value === undefined ? '' : renderSafeMarkdown(selectedContent.value))
-const highlightedContent = computed(() => selectedContent.value === undefined ? '' : highlightEscapedRawText(selectedContent.value, selectedFindingDetails.value.map(finding => ({
-  index: finding.index,
-  startByte: finding.startByte,
-  endByte: finding.endByte,
-  label: `${finding.code} (${finding.severity})`,
-}))))
-const textFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'text' && file.path !== props.inspection?.primary_path) ?? [])
-const selectableFiles = computed(() => {
-  const primary = primaryFile.value
-  return primary ? [primary, ...textFiles.value] : textFiles.value
-})
-const imageFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'image' && file.path !== props.inspection?.primary_path) ?? [])
-const binaryFiles = computed(() => props.inspection?.files.filter(file => file.inspection_class === 'metadata') ?? [])
-
-watch(() => props.inspection?.revision_digest, () => {
-  selectedDigest.value = primaryFile.value?.content_digest ?? ''
-  loadedContents.value = {}
-  unavailableContents.value = {}
-}, { immediate: true })
-
-watch(selectedDigest, digest => {
-  if (!digest || digest === primaryFile.value?.content_digest) return
-  const file = props.inspection?.files.find(candidate => candidate.content_digest === digest)
-  if (!file || file.inspection_class !== 'text' || loadedContents.value[digest] !== undefined || unavailableContents.value[digest]) return
-  if (!props.loadInspectionFile) {
-    unavailableContents.value = { ...unavailableContents.value, [digest]: true }
-    return
-  }
-  loadingDigest.value = digest
-  void props.loadInspectionFile(file).then(content => {
-    if (typeof content !== 'string') throw new Error('inspection text response was not text')
-    loadedContents.value = { ...loadedContents.value, [digest]: content }
-  }).catch(() => {
-    unavailableContents.value = { ...unavailableContents.value, [digest]: true }
-  }).finally(() => {
-    if (loadingDigest.value === digest) loadingDigest.value = ''
-  })
-})
-
-function inspectionFileURL(digest: string): string {
-  return resourceInspectionFilePath(props.apiBase, props.source, props.kind, props.name, props.resource.content_digest, digest)
-}
+const {
+  binaryFiles,
+  displayFindings,
+  findings,
+  highlightedContent,
+  imageFiles,
+  inspectionFileURL,
+  loadingDigest,
+  renderedContent,
+  selectableFiles,
+  selectedContent,
+  selectedContentUnavailable,
+  selectedDigest,
+  selectedFile,
+  selectedFindingDetails,
+  selectedImageURL,
+  selectedIsImage,
+  selectedIsMarkdown,
+  selectedIsPrimary,
+  textFiles,
+} = useResourceInspectionPreview(props)
 
 function revisionURL(revision: ResourceRevision): string {
   return resourceLocator({
@@ -148,21 +96,6 @@ function revisionURL(revision: ResourceRevision): string {
 
 function isCurrentRevision(revision: ResourceRevision): boolean {
   return revision.content_digest === props.resource.content_digest
-}
-
-function lineColumnByteRange(content: string, line: number | undefined, column: number | undefined): { startByte: number; endByte: number } | undefined {
-  if (line === undefined || line < 1) return undefined
-  const lines = content.split('\n')
-  const lineText = lines[line - 1]
-  if (lineText === undefined) return undefined
-  const prefix = lines.slice(0, line - 1).join('\n') + (line > 1 ? '\n' : '')
-  const characters = [...lineText]
-  const characterIndex = Math.max(0, (column ?? 1) - 1)
-  if (characterIndex > characters.length) return undefined
-  const before = characters.slice(0, characterIndex).join('')
-  const highlighted = characters[characterIndex] ?? ''
-  const startByte = new TextEncoder().encode(prefix + before).length
-  return { startByte, endByte: startByte + new TextEncoder().encode(highlighted).length }
 }
 
 function formatValue(value: unknown): string {

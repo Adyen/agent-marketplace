@@ -54,15 +54,15 @@ registries:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated {
-		t.Fatalf("expected user config to be unchanged (already valid v2): %+v", result)
+		t.Fatalf("expected valid user config to be unchanged: %+v", result)
 	}
-	if !result.RepoMigrated {
-		t.Fatalf("expected repo to be migrated: %+v", result)
+	if result.RepoMigrated {
+		t.Fatalf("expected valid repository config to be unchanged: %+v", result)
 	}
 
 	userData := readConfigString(t, userPath)
 	if !strings.Contains(userData, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected user config to be v2, got:\n%s", userData)
+		t.Fatalf("expected user config to remain v2, got:\n%s", userData)
 	}
 	if !strings.Contains(userData, "harnesses:") {
 		t.Fatalf("expected user harnesses to be preserved, got:\n%s", userData)
@@ -70,7 +70,7 @@ registries:
 
 	repoData := readConfigString(t, repoPath)
 	if !strings.Contains(repoData, "apiVersion: agent-marketplace/v2") {
-		t.Fatalf("expected repo config to be v2, got:\n%s", repoData)
+		t.Fatalf("expected repo config to remain v2, got:\n%s", repoData)
 	}
 	if !strings.Contains(repoData, "harnesses:") || !strings.Contains(repoData, "- factory") {
 		t.Fatalf("expected repo harnesses to be preserved, got:\n%s", repoData)
@@ -427,7 +427,7 @@ registries:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated || result.RepoMigrated {
-		t.Fatalf("expected no migration for already-valid v2 configs: %+v", result)
+		t.Fatalf("expected valid v2 configs to remain unchanged: %+v", result)
 	}
 
 	repoCfg, errs := loadV3Config([]byte(readConfigString(t, repoPath)), repoLayer, false)
@@ -574,7 +574,7 @@ skills:
 		t.Fatalf("expected migration to succeed: %v", err)
 	}
 	if result.UserMigrated {
-		t.Fatalf("expected user to be unchanged (already valid v2)")
+		t.Fatalf("expected user config to remain unchanged")
 	}
 	if result.RepoMigrated {
 		t.Fatalf("expected repo to be skipped because it shares the user path")

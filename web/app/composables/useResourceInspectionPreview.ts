@@ -1,11 +1,11 @@
 import { computed, ref, watch } from 'vue'
 import { resourceInspectionFilePath } from '~/lib/api'
-import { mergeFindings } from '~/lib/presentation'
+import { assessmentFindings } from '~/lib/presentation'
 import { highlightEscapedRawText, renderSafeMarkdown } from '~/lib/markdown'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceRevision } from '~/types/marketplace'
 
 type ResourceInspectionPreviewOptions = {
-  resource: Pick<ResourceRevision, 'content_digest' | 'findings'>
+  resource: Pick<ResourceRevision, 'content_digest' | 'assessment'>
   source: string
   kind: ResourceKind
   name: string
@@ -15,16 +15,26 @@ type ResourceInspectionPreviewOptions = {
   loadInspectionFile?: (file: InspectionFile) => Promise<string | Blob>
 }
 
+function lineColumnByteRange(content: string, line: number | undefined, column: number | undefined): { startByte: number; endByte: number } | undefined {
+  if (line === undefined || line < 1) return undefined
+  const lines = content.split('\n')
+  const lineText = lines[line - 1]
+  if (lineText === undefined) return undefined
+  const prefix = lines.slice(0, line - 1).join('\n') + (line > 1 ? '\n' : '')
+  const characters = [...lineText]
+  const characterIndex = Math.max(0, (column ?? 1) - 1)
+  if (characterIndex > characters.length) return undefined
+  const before = characters.slice(0, characterIndex).join('')
+  const highlighted = characters[characterIndex] ?? ''
+  const startByte = new TextEncoder().encode(prefix + before).length
+  return { startByte, endByte: startByte + new TextEncoder().encode(highlighted).length }
+}
+
 export function useResourceInspectionPreview(options: ResourceInspectionPreviewOptions) {
   const inspection = computed(() => options.inspection)
   const primaryContent = computed(() => options.primaryContent)
   const resourceDigest = computed(() => options.resource.content_digest)
-  // The revision record and the inspection manifest project the same analyzer
-  // run and in practice repeat each other. Merge them into one list so a reader
-  // sees each finding once; the manifest goes first because it carries the file
-  // path and byte range that the revision record drops.
-  const findings = computed(() => mergeFindings(inspection.value?.findings, options.resource.findings))
-  const locatedFindings = computed(() => findings.value.filter(finding => finding.path !== ''))
+  const findings = computed(() => assessmentFindings(options.resource.assessment.findings))
   const primaryFile = computed(() => inspection.value?.files.find(file => file.path === inspection.value?.primary_path))
   const selectedDigest = ref('')
   const loadedContents = ref<Record<string, string>>({})
@@ -45,7 +55,12 @@ export function useResourceInspectionPreview(options: ResourceInspectionPreviewO
   const selectedContentUnavailable = computed(() => Boolean(selectedFile.value && selectedFile.value.inspection_class === 'text' && (
     unavailableContents.value[selectedFile.value.content_digest] || (selectedIsPrimary.value && primaryContent.value === undefined)
   )))
-  const selectedFindingDetails = computed(() => locatedFindings.value.filter(finding => finding.path === selectedFile.value?.path))
+  const displayFindings = computed(() => findings.value.map(finding => {
+    if (finding.path !== selectedFile.value?.path || selectedContent.value === undefined || finding.startByte !== undefined) return finding
+    const range = lineColumnByteRange(selectedContent.value, finding.line, finding.column)
+    return range ? { ...finding, ...range } : finding
+  }))
+  const selectedFindingDetails = computed(() => displayFindings.value.filter(finding => finding.path === selectedFile.value?.path))
   const renderedContent = computed(() => selectedContent.value === undefined ? '' : renderSafeMarkdown(selectedContent.value))
   const highlightedContent = computed(() => selectedContent.value === undefined ? '' : highlightEscapedRawText(selectedContent.value, selectedFindingDetails.value.map(finding => ({
     index: finding.index,
@@ -92,6 +107,7 @@ export function useResourceInspectionPreview(options: ResourceInspectionPreviewO
 
   return {
     binaryFiles,
+    displayFindings,
     findings,
     highlightedContent,
     imageFiles,

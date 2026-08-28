@@ -57,21 +57,13 @@ type migrationFile struct {
 // MigrateConfigFiles performs structural remediation on user personal,
 // repository committed, and repository personal config files in one
 // transactional pass. It does not rewrite a valid v2 or v3 config to another
-// schema version unless changes are required; when changes are required the
-// output is canonicalized to agent-marketplace/v2. All inputs are validated
-// before any file is written.
+// schema version; when changes are required, output is canonicalized to v2.
+// All inputs are validated before any file is written.
 //
-// The machine-wide target harness set is chosen as follows:
-//  1. Harnesses already present in the user personal config.
-//  2. The explicit harnesses argument.
-//  3. Harnesses declared in the repository committed config (moved to user).
-//  4. If none of the above are available, ErrHarnessesRequired is returned.
-//
-// The following structural fixes are applied:
-//   - Top-level harnesses, backup, and logging are removed from repo configs.
-//   - Top-level harnesses, backup, logging, and allowed_registries are removed
-//     from local configs.
-//   - Legacy collections sequences are converted to the {include: [...]} form.
+// When initializing a missing user personal config, the target harness set is
+// chosen from existing user harnesses first, then the explicit harnesses
+// argument. Repository harnesses remain project-scoped and are never moved to
+// the user config.
 func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*MigrateResult, error) {
 	slog.Info("migrating config files",
 		"user", paths.User,
@@ -169,7 +161,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 			if err := migrateFileNode(f, nil); err != nil {
 				return nil, err
 			}
-			for _, key := range []string{"harnesses", "backup", "logging", "allowed_registries"} {
+			for _, key := range []string{"harnesses", "backup", "logging", "allowed_registries", "allowed_marketplaces"} {
 				if removeMappingKeyByName(f.root, key) {
 					f.modified = true
 				}
@@ -290,8 +282,8 @@ func resolveMigrationTargetHarnesses(files map[string]*migrationFile, explicitHa
 }
 
 // migrateFileNode sets harnesses when provided and converts legacy
-// collections. It tracks whether any change was made. The caller is responsible
-// for canonicalizing the apiVersion after all structural edits.
+// collections. It tracks whether any change was made. The caller is
+// responsible for canonicalizing apiVersion after structural edits.
 func migrateFileNode(f *migrationFile, harnesses []string) error {
 	if f == nil || !f.exists {
 		return nil
@@ -323,12 +315,10 @@ func migrateFileNode(f *migrationFile, harnesses []string) error {
 	return nil
 }
 
-// canonicalizeMigrationAPIVersion ensures the file declares a valid apiVersion.
-// If the file was modified and declares v3, it is rewritten to the canonical v2.
-// If apiVersion is missing, it is inserted as v2. Unsupported values are also
-// replaced with v2. When no modifications were made and the apiVersion is
-// already valid, the document is left untouched so valid v3 aliases remain
-// readable and stable.
+// canonicalizeMigrationAPIVersion ensures the file declares a valid
+// apiVersion. Valid v2 and v3 files are left untouched when no structural
+// remediation is needed. New or structurally remediated files use canonical
+// v2; this keeps migration from forcing a schema-version rewrite on users.
 func canonicalizeMigrationAPIVersion(f *migrationFile) {
 	if f == nil || !f.exists {
 		return

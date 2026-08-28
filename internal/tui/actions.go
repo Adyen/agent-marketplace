@@ -43,6 +43,7 @@ type snapshotLoadedMsg struct {
 	warnings             []error
 	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
+	pendingMigration     migrationPrompt
 }
 
 type reloadMsg snapshotLoadedMsg
@@ -163,69 +164,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	})
 	defer releaseExactLease()
 
-	if len(resolvedResult.ConfigErrors) > 0 {
-		return snapshotLoadedMsg{errs: resolvedResult.ConfigErrors}
-	}
-	if len(resolvedResult.CatalogErrors) > 0 {
-		// Separate overlap warnings from hard errors.
-		var hardErrs []error
-		var overlapWarnings []error
-		for _, err := range resolvedResult.CatalogErrors {
-			if catalog.IsOverlapWarning(err) {
-				overlapWarnings = append(overlapWarnings, err)
-			} else {
-				hardErrs = append(hardErrs, err)
-			}
-		}
-		if len(hardErrs) > 0 {
-			return snapshotLoadedMsg{errs: hardErrs, warnings: overlapWarnings}
-		}
-		// No hard errors; carry overlap warnings forward to the final warnings.
-		// Store them in a temp var since `warnings` is declared below.
-		catalogOverlapWarnings = overlapWarnings
-	}
-
-	// Use materialize dry-run to compute drift instead of drift.Compute.
-	var resolvedNames []string
-	for _, r := range resolvedResult.Resolved {
-		resolvedNames = append(resolvedNames, skill.ResourceKey(r.Kind, r.Name))
-	}
-	dryRunReport, _ := materialize.Run(context.Background(), repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
-	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
-
-	rows := buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-
-	var errs []error
-	var warnings []error
-
-	// Surface overlap warnings from catalog loading.
-	warnings = append(warnings, catalogOverlapWarnings...)
-
-	// Surface malformed skills as warnings in the errors overlay so the
-	// user can see them when pressing 'e' without scrolling to the bottom
-	// of the scope tree.
-	for _, m := range resolvedResult.CatalogLoad.Malformed {
-		warnings = append(warnings, fmt.Errorf("malformed skill %q (%s): %w", m.DirName, m.Path, m.Error))
-	}
-
-	for _, err := range resolvedResult.ResolveErrors {
-		if resolver.IsSoftSelectedNotFound(err) {
-			warnings = append(warnings, err)
-			continue
-		}
-		if resolver.IsNameCollision(err) {
-			warnings = append(warnings, err)
-			continue
-		}
-		if resolver.IsWarning(err) {
-			continue
-		}
-		errs = append(errs, err)
-	}
-
-	return snapshotLoadedMsg{
-		rows:                 rows,
-		driftReport:          driftReport,
+	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
 		resolved:             resolvedResult.Resolved,
 		mergedCfg:            resolvedResult.LoadedCfg,
@@ -236,6 +175,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 		targetHarnesses:      resolvedResult.TargetHarnesses,
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
+		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
 		errs:                 errs,
 		warnings:             warnings,

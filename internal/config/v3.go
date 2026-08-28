@@ -12,7 +12,7 @@ import (
 )
 
 // layerKind identifies which Configuration Layer is being loaded so that
-// strict validation can reject forbidden fields per ADR 0002.
+// strict layer-aware validation can reject forbidden fields.
 type layerKind int
 
 const (
@@ -83,6 +83,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 	repoLayer: {
 		"include":              true,
 		"apiVersion":           true,
+		"harnesses":            true,
 		"allowed_registries":   true,
 		"allowed_marketplaces": true,
 		"registries":           true,
@@ -140,11 +141,10 @@ func resolveAlias(n *yaml.Node) *yaml.Node {
 	return n
 }
 
-// loadV3Config loads a strict Config from raw YAML. It implements the v2
-// canonical schema and accepts "agent-marketplace/v3" as a compatibility
-// alias for the same schema. It validates the YAML node against the
-// per-layer allowlist, decodes with KnownFields, and then runs structural
-// validation.
+// loadV3Config loads a strict agent-marketplace/v2 or /v3 Config from raw
+// YAML. v2 is canonical; v3 is accepted as a compatibility alias. It
+// validates the YAML node against the per-layer allowlist, decodes with
+// KnownFields, and then runs structural validation.
 func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, []error) {
 	return loadV3ConfigWithAPIVersion(data, kind, requireHarnesses, kind != localLayer)
 }
@@ -203,11 +203,9 @@ func loadV3ConfigWithAPIVersion(data []byte, kind layerKind, requireHarnesses, r
 	return &cfg, nil
 }
 
-// loadV3LocalConfig loads a strict LocalConfig from raw YAML. It
-// implements the v2 canonical schema and accepts "agent-marketplace/v3" as
-// a compatibility alias for the same schema. It validates the YAML node
-// against the repository personal allowlist and then runs structural
-// validation.
+// loadV3LocalConfig loads a strict repository personal config from raw YAML.
+// It validates the YAML node against the repository personal allowlist and
+// then runs structural validation.
 func loadV3LocalConfig(data []byte) (*LocalConfig, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return &LocalConfig{}, nil
