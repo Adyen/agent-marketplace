@@ -44,6 +44,8 @@ func TestColorFGBGBackgroundSelectionIsEnvironmentOnly(t *testing.T) {
 }
 
 func TestTerminalBackgroundSelectionSetsLipglossCacheWithoutProbing(t *testing.T) {
+	previous := lipgloss.HasDarkBackground()
+	t.Cleanup(func() { lipgloss.SetHasDarkBackground(previous) })
 	// COLORFGBG declares a LIGHT background. Environment-only selection must
 	// seed the lipgloss background cache with light, so no renderer ever
 	// issues an OSC 11 query (which would race or hang once Bubble Tea owns

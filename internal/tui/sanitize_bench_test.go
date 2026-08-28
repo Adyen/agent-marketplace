@@ -13,6 +13,7 @@ func BenchmarkSanitizeTerminalData(b *testing.B) {
 	}{
 		{name: "benign", value: "ordinary printable registry metadata", mode: terminalSingleLine},
 		{name: "hostile", value: strings.Repeat("safe\x1b]52;c;c2VjcmV0\x07\u202e\n", 32), mode: terminalSingleLine},
+		{name: "markdown entities", value: strings.Repeat("body &#27;[2J &#x202E; &Tab; &#4294967323;\n", 32), mode: terminalMarkdownBody},
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			b.ReportAllocs()

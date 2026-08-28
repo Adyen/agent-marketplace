@@ -153,7 +153,15 @@ func (s *diagnosticStore) recordOperationFailure(operation operationKind, catego
 		})
 	}
 	diagnostics = deduplicateDiagnostics(diagnostics)
-	s.operations = append(s.operations, diagnostics...)
+	originalLength := len(s.operations)
+	kept := s.operations[:0]
+	for _, diagnostic := range s.operations {
+		if diagnostic.operation != operation {
+			kept = append(kept, diagnostic)
+		}
+	}
+	clear(s.operations[len(kept):originalLength])
+	s.operations = append(kept, diagnostics...)
 	slog.Error("tui operation failed", "operation", operation, "category", category, "attempt", attempt, "error_count", len(diagnostics))
 }
 
@@ -183,13 +191,7 @@ func (s diagnosticStore) all() []tuiDiagnostic {
 }
 
 func diagnosticErrors(diagnostics []tuiDiagnostic) []error {
-	errs := make([]error, 0, len(diagnostics))
-	for _, diagnostic := range diagnostics {
-		if diagnostic.severity == diagnosticError && diagnostic.err != nil {
-			errs = append(errs, diagnostic.err)
-		}
-	}
-	return errs
+	return diagnosticValues(diagnostics, diagnosticError)
 }
 
 func diagnosticsFromLegacy(errs, warnings []error) []tuiDiagnostic {

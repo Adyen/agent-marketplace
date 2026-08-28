@@ -32,6 +32,27 @@ func TestSanitizeTerminalDataFixtures(t *testing.T) {
 	}
 }
 
+func TestNeedsSanitizingAgreesWithTransform(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		mode  terminalDataMode
+	}{
+		{value: "ordinary printable text", mode: terminalSingleLine},
+		{value: "line one\nline two", mode: terminalMarkdownBody},
+		{value: "line one\nline two", mode: terminalSingleLine},
+		{value: "unsafe\x1b[2J", mode: terminalSingleLine},
+		{value: "bidi\u202e", mode: terminalSingleLine},
+		{value: string([]byte{'x', 0xff, 'y'}), mode: terminalSingleLine},
+		{value: "encoded &#27;[2J", mode: terminalMarkdownBody},
+		{value: "benign &amp; entity", mode: terminalMarkdownBody},
+	} {
+		changed := sanitizeTerminalData(test.value, test.mode) != test.value
+		if got := terminalDataNeedsSanitizing(test.value, test.mode); got != changed {
+			t.Fatalf("needsSanitizing(%q, %v) = %v, transform changed=%v", test.value, test.mode, got, changed)
+		}
+	}
+}
+
 func TestSanitizedPrintableUnicodeRetainsPhysicalWidth(t *testing.T) {
 	input := "A界e\u0301"
 	got := sanitizeTerminalData(input, terminalSingleLine)

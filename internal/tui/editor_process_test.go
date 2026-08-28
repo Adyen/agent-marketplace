@@ -46,6 +46,11 @@ func editorHelperCmd(t *testing.T, env ...string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestEditorLifecycleHelper$")
 	cmd.Env = append(os.Environ(), append([]string{"TUI_EDITOR_HELPER=1"}, env...)...)
+	t.Cleanup(func() {
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+		}
+	})
 	return cmd
 }
 
@@ -75,8 +80,8 @@ func TestEditorProcessNormalExitIsReaped(t *testing.T) {
 
 func TestEditorProcessNonzeroExitPropagates(t *testing.T) {
 	falsePath, err := exec.LookPath("false")
-	if errors.Is(err, exec.ErrNotFound) {
-		t.Skip("false(1) not available")
+	if err != nil {
+		t.Skipf("false(1) not usable: %v", err)
 	}
 	p := newEditorProcess(exec.Command(falsePath))
 	runErr := p.Run()
