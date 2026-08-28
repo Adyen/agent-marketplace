@@ -784,8 +784,15 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	defer restoreLocal()
 
 	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
-	if _, ok := msg.(reloadMsg); !ok {
-		t.Fatalf("runUpdateCmd returned %T, want reloadMsg", msg)
+	done, ok := msg.(updateDoneMsg)
+	if !ok {
+		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("runUpdateCmd failed: %v", done.err)
+	}
+	if done.snapshot.generation != 1 {
+		t.Fatalf("snapshot generation = %d, want 1", done.snapshot.generation)
 	}
 	if _, err := os.Lstat(filepath.Join(homeDir, ".factory", "skills", "refresh-me")); err != nil {
 		t.Fatalf("expected TUI update to materialize refresh-me in ~/.factory: %v", err)

@@ -263,8 +263,8 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
-			if tc.height >= 2 && !strings.Contains(out, "~ in sync") {
-				t.Fatalf("View() omitted the persistent footer from a %d-line terminal: %q", tc.height, out)
+			if tc.height >= 2 && !strings.Contains(out, "~ drift unavailable") {
+				t.Fatalf("View() omitted the truthful pre-snapshot footer from a %d-line terminal: %q", tc.height, out)
 			}
 		})
 	}

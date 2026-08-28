@@ -76,18 +76,18 @@ registries:
 	defer restoreLocal()
 
 	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
-	if done, ok := msg.(updateDoneMsg); ok {
+	done, ok := msg.(updateDoneMsg)
+	if !ok {
+		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)
+	}
+	if done.err != nil {
 		t.Fatalf("runUpdateCmd failed on warning-only diagnostics: %v", done.err)
 	}
-	reload, ok := msg.(reloadMsg)
-	if !ok {
-		t.Fatalf("runUpdateCmd returned %T, want reloadMsg", msg)
-	}
 	var warningText strings.Builder
-	for _, w := range reload.warnings {
-		warningText.WriteString(w.Error())
+	for _, warning := range done.snapshot.warnings {
+		warningText.WriteString(warning.Error())
 	}
 	if !strings.Contains(warningText.String(), "subagent.windsurf.no-primitive") {
-		t.Fatalf("expected the warning-only update to emit subagent.windsurf.no-primitive, got warnings: %v", reload.warnings)
+		t.Fatalf("expected the warning-only update to emit subagent.windsurf.no-primitive, got warnings: %v", done.snapshot.warnings)
 	}
 }

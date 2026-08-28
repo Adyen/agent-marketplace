@@ -15,6 +15,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
+type driftAssessment uint8
+
+const (
+	driftUnknown driftAssessment = iota
+	driftReady
+	driftFailed
+)
+
 type pane int
 
 const (
@@ -154,13 +162,16 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane        pane
-	driftReport materialize.DriftReport
-	errs        []error
-	warnings    []error
-	syncing     bool
-	refreshing  bool
-	requests    requestState
+	pane            pane
+	driftReport     materialize.DriftReport
+	driftAssessment driftAssessment
+	diagnostics     diagnosticStore
+	errs            []error
+	warnings        []error
+	syncing         bool
+	refreshing      bool
+	requests        requestState
+	rowsStale       bool
 
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config

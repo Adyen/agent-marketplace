@@ -19,6 +19,8 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" syncing..."))
 	} else if m.refreshing {
 		leftParts = append(leftParts, m.spinner.View()+styleFooterRefreshing.Render(" refreshing cache..."))
+	} else if m.driftAssessment != driftReady {
+		leftParts = append(leftParts, styleDriftPending.Render("~ drift unavailable"))
 	} else if m.driftReport.InSync() {
 		leftParts = append(leftParts, styleDriftOK.Render("~ in sync"))
 	} else {
