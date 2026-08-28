@@ -125,6 +125,27 @@ func TestWriteGroupedWarningsIncludesRemediationForResourceGroup(t *testing.T) {
 	}
 }
 
+func TestWriteSyncIssuesGroupsSelectedNotFoundWarnings(t *testing.T) {
+	issues := []error{
+		&resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "alpha", URL: "registry-a", Ref: "main"},
+		&resolver.SelectedNotFoundError{Kind: ir.KindCommand, Name: "beta", URL: "registry-b", Ref: "main"},
+	}
+
+	var out bytes.Buffer
+	if err := writeSyncWarnings(&out, issues, false, "warning:"); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Count(got, "warning:") != 1 {
+		t.Fatalf("selected-not-found warnings rendered separately:\n%s", got)
+	}
+	for _, want := range []string{"selected resources were not found (2 resources)", `skill "alpha"`, `command "beta"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("grouped warning is missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 	warning := &resolver.UnmetRequirementWarning{
 		ResourceKind: ir.KindSkill,

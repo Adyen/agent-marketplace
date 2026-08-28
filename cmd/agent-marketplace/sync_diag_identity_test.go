@@ -104,50 +104,15 @@ registries:
 
 	combined := output + "\n" + err.Error()
 
-	// The three lines are distinguishable: no two of them are byte-identical.
-	seen := make(map[string]int)
-	for _, line := range strings.Split(err.Error(), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "mcp.devin.transport-unsupported") {
-			continue
-		}
-		seen[line]++
+	if got := strings.Count(err.Error(), "mcp.devin.transport-unsupported"); got != 1 {
+		t.Fatalf("diagnostic message rendered %d times, want one grouped error:\n%v", got, err)
 	}
-	if len(seen) != len(names) {
-		t.Fatalf("expected %d distinct transport-unsupported lines, got %d: %#v", len(names), len(seen), seen)
+	if !strings.Contains(err.Error(), "(3 resources)") {
+		t.Errorf("grouped error does not report three affected resources: %v", err)
 	}
-	for line, count := range seen {
-		if count != 1 {
-			t.Errorf("line %q printed %d times; identical failures from one resource must collapse", line, count)
-		}
-	}
-
-	// Every error line names ITS resource, which is what makes the three
-	// otherwise identical failures tellable apart.
 	for _, name := range names {
-		want := `resource "` + name + `"`
-		named := 0
-		for line := range seen {
-			if strings.Contains(line, want) {
-				named++
-			}
-		}
-		if named != 1 {
-			t.Errorf("%d error lines name %s, want exactly 1; output:\n%s\nerror: %v", named, want, output, err)
-		}
-	}
-
-	// The source file IS named, on the error line itself rather than merely
-	// somewhere in the output. Unlike the previous skill fixture, where each
-	// resource had its own skills/<name>/SKILL.md, all three MCP servers are
-	// defined in ONE `.mcp.json`, so a per-name DISTINCT source path is not a
-	// meaningful assertion here — the shared path is the truth, and it is
-	// asserted on all three lines instead. That differing source paths keep two
-	// diagnostics with the same code and resource apart is pinned one layer
-	// down by internal/pipeline's diagIssue dedup-key tests.
-	for line := range seen {
-		if !strings.Contains(line, ".mcp.json") {
-			t.Errorf("error line %q does not name its source file %q", line, ".mcp.json")
+		if !strings.Contains(err.Error(), name+" (.mcp.json") {
+			t.Errorf("grouped error does not name %q with its source file: %v", name, err)
 		}
 	}
 
