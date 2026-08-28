@@ -523,7 +523,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 			return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 		}, operation, false)
 	}
-	if act.enable && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
 	return m, correlateOperation(runScopedToggle(m.repoRoot, act), operation, false)
@@ -541,23 +541,9 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
-		act := scopedToggleAction(m.modalSkill, scopeGlobal)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && !act.isMarketplace && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
 	case key.Matches(msg, m.keys.ToggleProject):
-		act := scopedToggleAction(m.modalSkill, scopeProject)
-		m.pane = paneList
-		recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-		cmd := runScopedToggle(m.repoRoot, act)
-		if act.enable && !act.isMarketplace && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
-			m.pendingExcludeAction = &act
-		}
-		return m, cmd
+		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
 	case key.Matches(msg, m.keys.ToggleLocal):
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):

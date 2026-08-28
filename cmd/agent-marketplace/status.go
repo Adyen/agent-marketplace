@@ -246,7 +246,7 @@ func runStatusContext(ctx context.Context, out io.Writer, now time.Time) error {
 		dryRunReport:        dryRunReport,
 		targetHarnesses:     targetHarnesses,
 		targetSource:        result.TargetHarnessSource,
-		harnessTargets:      buildHarnessTargetRows(repoRoot, targetHarnesses),
+		harnessTargets:      harnessTargets,
 		marketplaceStatuses: result.MarketplaceStatuses,
 	}); err != nil {
 		return err

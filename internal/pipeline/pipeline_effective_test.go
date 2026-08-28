@@ -145,6 +145,36 @@ registries: []
 	}
 }
 
+func TestSync_AcceptsV2OrganizationConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	orgPath := filepath.Join(dir, "org.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+registries: []
+`)
+
+	result := Sync(context.Background(), ResolveOptions{
+		RepoRoot: dir,
+		NoBackup: true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: orgPath,
+			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
+			RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+			LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+		},
+	})
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected sync to accept v2 organization config, got: %v", result.Errors)
+	}
+	if !reflect.DeepEqual(result.TargetHarnesses, []hcc.Target{hcc.TargetFactory}) {
+		t.Fatalf("expected v2 organization target harness [factory], got %v", result.TargetHarnesses)
+	}
+}
+
 func TestSync_NoLegacyOrgFallbackUnmanaged(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

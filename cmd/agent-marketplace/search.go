@@ -133,7 +133,11 @@ func writeSearchJSON(out io.Writer, results []marketplace.SearchResult, errs []m
 		Results []marketplace.SearchResult `json:"results"`
 		Errors  []jsonError                `json:"errors,omitempty"`
 	}
-	p := payload{Results: results}
+	outputResults := append([]marketplace.SearchResult(nil), results...)
+	for i := range outputResults {
+		outputResults[i].Score = 0
+	}
+	p := payload{Results: outputResults}
 	for _, e := range errs {
 		p.Errors = append(p.Errors, jsonError{
 			Marketplace: e.Marketplace,
@@ -153,7 +157,7 @@ func writeSearchTable(out io.Writer, results []marketplace.SearchResult) error {
 	}
 
 	writer := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "MARKETPLACE\tSOURCE\tKIND\tNAME\tSCORE\tDESCRIPTION"); err != nil {
+	if _, err := fmt.Fprintln(writer, "MARKETPLACE\tSOURCE\tKIND\tNAME\tDESCRIPTION"); err != nil {
 		return err
 	}
 	for _, r := range results {
@@ -161,12 +165,11 @@ func writeSearchTable(out io.Writer, results []marketplace.SearchResult) error {
 		if description == "" && len(r.Metadata) > 0 {
 			description = firstMetadataValue(r.Metadata, "license", "tags")
 		}
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%.2g\t%s\n",
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n",
 			marketplace.QuoteTerminal(r.Marketplace),
 			marketplace.QuoteTerminal(r.SourceSlug),
 			marketplace.QuoteTerminal(r.Kind),
 			marketplace.QuoteTerminal(r.Name),
-			r.Score,
 			marketplace.QuoteTerminal(description),
 		); err != nil {
 			return err

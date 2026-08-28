@@ -26,7 +26,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 |---|---|
 | CLI sync, not git submodules | No submodule friction; marketplace UX for browsing/installing |
 | Harness-compilation materialization | Native per-harness outputs instead of one-size-fits-all symlinks |
-| v2/v3 organization config with machine-wide Target Harness Set | `/etc/agent-marketplace/config.yaml` is the managed external org layer; v2 is canonical and v3 is a compatibility alias; user-personal `harnesses` wins, org is fallback, repo/local top-level `harnesses` forbidden; per-entry `harnesses` narrows the set |
+| v2/v3 organization config with project target harnesses | `/etc/agent-marketplace/config.yaml` is the managed external org layer; v2 is canonical and v3 is a compatibility alias; project `harnesses` wins, then user, then org; per-entry `harnesses` narrows the set |
 | Multi-resource kinds (skill/command/subagent/hook/mcp) | Full IR fidelity; same selection/exclude UX across all kinds |
 | Tags in `metadata.tags` | Uses the spec's extension point; no deviation |
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |
@@ -65,8 +65,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace sync --check` — check drift without reconciling; exits 1 if out of sync
 - `agent-marketplace update` / `update --bump` — pull latest for pinned refs
 - `agent-marketplace status` — show resources, harnesses, targets, refs, cache freshness, source layer, drift, errors. Includes a `HARNESS TARGETS` table with capabilities and repo/machine roots
-- `agent-marketplace migrate --harnesses <targets>` — remediate structural issues in config files; leaves valid v2 files untouched and accepts v3 as a compatibility alias (v1 configs are rejected). Migration never adds `devin`
-- `agent-marketplace convert --from <harness> --to <harness> --out <dir> <path>` — one-shot layout conversion; `claude`, `factory`, `cursor`, `windsurf`, `gemini`, and `devin` are valid in both directions
+- `agent-marketplace migrate --harnesses <targets>` — remediate structural config issues while preserving valid v2/v3 files; v2 is canonical and v3 is a compatibility alias (v1 configs are rejected). Migration never adds `devin` or `codex` implicitly
+- `agent-marketplace convert --from <harness> --to <harness> --out <dir> <path>` — one-shot layout conversion; `claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex` are valid in both directions
 - `agent-marketplace doctor` — show local harness/root diagnostics and non-blocking Devin CLI compatibility guidance
 - `agent-marketplace doctor --repair` — preview or interactively repair Devin and Codex shared-aggregate ownership state
 - `agent-marketplace doctor --repair --yes` — adopt exact current desired matches without prompting; destructive orphan removal and conflict replacement still require interactive confirmation

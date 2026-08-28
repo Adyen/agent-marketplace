@@ -83,6 +83,9 @@ marketplaces:
 	if !strings.Contains(output, `"marketplace": "public"`) {
 		t.Fatalf("expected marketplace annotation, got:\n%s", output)
 	}
+	if strings.Contains(output, `"score"`) {
+		t.Fatalf("expected score to be omitted from JSON output, got:\n%s", output)
+	}
 }
 
 func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
@@ -177,6 +180,9 @@ marketplaces:
 	}
 	if !strings.Contains(output, "MARKETPLACE") {
 		t.Fatalf("expected table header, got:\n%s", output)
+	}
+	if strings.Contains(output, "SCORE") {
+		t.Fatalf("expected score column to be omitted from table output, got:\n%s", output)
 	}
 }
 

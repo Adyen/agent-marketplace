@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandRemediatesV2UserAndRepo(t *testing.T) {
+func TestMigrateCommandPreservesValidV2UserAndRepo(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -57,7 +57,7 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated repo config to load: %v", err)
 	}
-	if repoCfg.APIVersion != "agent-marketplace/v2" {
+	if repoCfg.APIVersion != config.APIVersionV2 {
 		t.Fatalf("expected repo apiVersion v2, got %q", repoCfg.APIVersion)
 	}
 	if !equalStrings(repoCfg.Harnesses, []string{"factory"}) {
@@ -79,7 +79,7 @@ tags:
 	if err != nil {
 		t.Fatalf("expected migrated global config to load: %v", err)
 	}
-	if globalCfg.APIVersion != "agent-marketplace/v2" {
+	if globalCfg.APIVersion != config.APIVersionV2 {
 		t.Fatalf("expected global apiVersion v2, got %q", globalCfg.APIVersion)
 	}
 	if !equalStrings(globalCfg.Harnesses, []string{"factory"}) {

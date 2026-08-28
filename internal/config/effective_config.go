@@ -32,14 +32,19 @@ func SetTestOrganizationConfigPath(t testing.TB, path string) {
 	}
 }
 
+// SetTestV3OrganizationConfigPath retains compatibility with existing tests.
+func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
+	SetTestOrganizationConfigPath(t, path)
+}
+
 // OrganizationConfigPath returns the fixed filesystem path of the externally
 // managed organization configuration.
 func OrganizationConfigPath() string {
 	return organizationConfigPath("")
 }
 
-// organizationConfigPath returns the fixed organization config path,
-// honoring the explicit override and the test-only package-level override.
+// organizationConfigPath returns the fixed organization config path, honoring
+// the explicit override and the test-only package-level override.
 func organizationConfigPath(override string) string {
 	if override != "" {
 		return override
@@ -233,10 +238,10 @@ func globalConfigPath() (string, error) {
 }
 
 // loadEffectiveOrganization reads the externally managed organization config
-// at path. It is loaded with strict per-layer rules and stamped Organization.
-// Windows is always treated as unmanaged. A missing file is valid (unmanaged).
-// A present file whose apiVersion is not "agent-marketplace/v2" or
-// "agent-marketplace/v3" is a hard error. Any other read error is a hard error.
+// at path. It accepts the canonical v2 schema and the v3 compatibility alias,
+// loading both with strict per-layer rules. Windows is always treated as
+// unmanaged. A missing file is valid (unmanaged). Any other read error is a
+// hard error.
 func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
@@ -272,8 +277,8 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 
 // LoadOrganizationConfig reads the externally managed organization config at
 // the default path. It returns nil when the file is missing. It returns an
-// error when the file is present but cannot be read or does not declare
-// apiVersion "agent-marketplace/v2" or "agent-marketplace/v3".
+// error when the file is present but cannot be read or declares an unsupported
+// apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
 	lr, _ := loadEffectiveOrganization(path)

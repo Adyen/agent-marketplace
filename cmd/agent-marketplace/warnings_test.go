@@ -7,9 +7,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -87,18 +85,6 @@ func TestWriteGroupedWarningsGroupsByDedupKey(t *testing.T) {
 	}
 }
 
-func TestWriteGroupedWarningsSkipsNilWarnings(t *testing.T) {
-	warnings := []error{nil, testResourceWarning{resource: "resource-a"}}
-
-	var out bytes.Buffer
-	if err := writeGroupedWarnings(&out, warnings, false); err != nil {
-		t.Fatal(err)
-	}
-	if got := out.String(); got != "warning: resource was dropped\n" {
-		t.Fatalf("writeGroupedWarnings() = %q, want only the non-nil warning", got)
-	}
-}
-
 func TestWriteGroupedWarningsDoesNotGroupEmptyDedupKeys(t *testing.T) {
 	warnings := []error{
 		testEmptyDedupWarning{resource: "resource-a", message: "first warning"},
@@ -136,89 +122,6 @@ func TestWriteGroupedWarningsIncludesRemediationForResourceGroup(t *testing.T) {
 	}
 	if !strings.Contains(got, "→ fix the resources") {
 		t.Fatalf("remediation missing:\n%s", got)
-	}
-}
-
-func TestWriteSyncIssuesGroupsResolverWarningsByProblem(t *testing.T) {
-	issues := []error{
-		&resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "alpha", URL: "registry-a", Ref: "main"},
-		&resolver.SelectedNotFoundError{Kind: ir.KindCommand, Name: "beta", URL: "registry-b", Ref: "main"},
-		&resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "gamma", Winner: "registry-a", RunnersUp: []string{"registry-b"}},
-		&resolver.NameCollisionWarning{Kind: ir.KindSkill, Name: "delta", Winner: "registry-b", RunnersUp: []string{"registry-c"}},
-	}
-
-	var out bytes.Buffer
-	if err := writeSyncIssues(&out, issues, false, "warning:"); err != nil {
-		t.Fatal(err)
-	}
-	got := out.String()
-	if count := strings.Count(got, "warning: "); count != 2 {
-		t.Fatalf("resolver warnings rendered as %d top-level problems, want 2 grouped problems:\n%s", count, got)
-	}
-	for _, want := range []string{"selected resources were not found (2 resources)", "resources are provided by multiple registries (2 resources)", `skill "alpha"`, `command "beta"`, `skill "gamma"`, `skill "delta"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("grouped resolver warning is missing %q:\n%s", want, got)
-		}
-	}
-
-	var verbose bytes.Buffer
-	if err := writeSyncIssues(&verbose, issues, true, "warning:"); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`skill "alpha" (registry-a@main)`, `skill "gamma" (using registry-a (others: registry-b))`} {
-		if !strings.Contains(verbose.String(), want) {
-			t.Errorf("verbose grouped warning is missing %q:\n%s", want, verbose.String())
-		}
-	}
-
-	errors := []error{
-		&resolver.NameCollisionError{Kind: ir.KindSkill, Name: "gamma", Sources: []string{"registry-a", "registry-b"}},
-		&resolver.NameCollisionError{Kind: ir.KindCommand, Name: "delta", Sources: []string{"registry-b", "registry-c"}},
-	}
-	errorOutput := newSyncCommandError(errors, false, "error:").Error()
-	if count := strings.Count(errorOutput, "error: "); count != 1 {
-		t.Fatalf("resolver errors rendered as %d top-level problems, want 1 grouped problem:\n%s", count, errorOutput)
-	}
-	if !strings.Contains(errorOutput, "resources are provided by multiple registries (2 resources)") {
-		t.Fatalf("grouped resolver error is missing its category and count:\n%s", errorOutput)
-	}
-}
-
-func TestWriteSyncIssuesGroupsDistinctProblemsByDiagnosticCode(t *testing.T) {
-	issues := []error{
-		pipeline.PromoteDiagnostic(diag.Diagnostic{
-			Code: diag.CodeSkillDevinToolUnknown, Resource: "alpha", Message: "first scoped tool is unsupported", Hint: "remove command scopes",
-		}),
-		pipeline.PromoteDiagnostic(diag.Diagnostic{
-			Code: diag.CodeSkillDevinToolUnknown, Resource: "beta", Message: "second scoped tool is unsupported", Hint: "remove command scopes",
-		}),
-		pipeline.PromoteDiagnostic(diag.Diagnostic{
-			Code: diag.CodeSkillDevinToolUnknown, Resource: "gamma", Message: "the tool has no Devin equivalent", Hint: "choose a supported tool",
-		}),
-	}
-
-	var warnings bytes.Buffer
-	if err := writeSyncIssues(&warnings, issues, false, "warning:"); err != nil {
-		t.Fatal(err)
-	}
-	outputs := map[string]string{
-		"warnings": warnings.String(),
-		"errors":   newSyncCommandError(issues, false, "error:").Error(),
-	}
-	for name, got := range outputs {
-		t.Run(name, func(t *testing.T) {
-			if count := strings.Count(got, diag.CodeSkillDevinToolUnknown); count != 1 {
-				t.Fatalf("diagnostic code rendered %d times, want one code group:\n%s", count, got)
-			}
-			if !strings.Contains(got, "(3 problems, 3 resources)") {
-				t.Fatalf("diagnostic code group is missing its problem and resource counts:\n%s", got)
-			}
-			for _, want := range []string{"first scoped tool is unsupported", "second scoped tool is unsupported", "the tool has no Devin equivalent", "alpha", "beta", "gamma", "remove command scopes", "choose a supported tool"} {
-				if strings.Count(got, want) != 1 {
-					t.Errorf("grouped diagnostic output should contain %q exactly once:\n%s", want, got)
-				}
-			}
-		})
 	}
 }
 

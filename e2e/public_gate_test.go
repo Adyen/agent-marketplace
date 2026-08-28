@@ -77,7 +77,7 @@ resources:
 	collectionDigest := publicGateCollection(t, server.URL)
 	assertPublicGateRoutes(t, server.URL, []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}, skillDigest)
 	assertPublicGateArtifactIntegrity(t, server.URL, "skill", "skill-one")
-	assertNoSecrets(t, server.URL, []string{"MARKETPLACE_PRIVATE_TOKEN", "private-origin-secret", "refresh-token"})
+	assertPublicGateNoSecrets(t, server.URL, []string{"MARKETPLACE_PRIVATE_TOKEN", "private-origin-secret", "refresh-token"})
 	assertMarketplaceConsumerRoundTrip(t, server.URL)
 
 	server.Close()
@@ -473,7 +473,7 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 	}
 }
 
-func assertNoSecrets(t *testing.T, base string, secrets []string) {
+func assertPublicGateNoSecrets(t *testing.T, base string, secrets []string) {
 	t.Helper()
 	for _, path := range []string{"/.well-known/agent-marketplace.json", "/api/v1/instance", "/api/v1/sources/public-source", "/api/v1/search"} {
 		body := getPublicGate(t, base+path)
