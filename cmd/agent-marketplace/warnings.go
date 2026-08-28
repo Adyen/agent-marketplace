@@ -23,6 +23,8 @@ type warningDedupKey interface {
 type warningPresentation interface {
 	PresentationKey() string
 	PresentationText() string
+	DiagnosticCode() string
+	DiagnosticMessage() string
 }
 
 type warningSource interface {
@@ -36,12 +38,38 @@ type warningDetail struct {
 
 type warningGroup struct {
 	warning      error
+	code         string
+	message      string
 	presentation string
 	resources    []string
 	details      []warningDetail
 	seenResource map[string]struct{}
 	seenDetail   map[string]struct{}
 }
+
+type syncIssueGroup struct {
+	code     string
+	problems []*warningGroup
+}
+
+type syncResolverIssue struct {
+	err         error
+	key         string
+	text        string
+	resource    string
+	source      string
+	remediation string
+}
+
+func (i *syncResolverIssue) Error() string             { return i.err.Error() }
+func (i *syncResolverIssue) Unwrap() error             { return i.err }
+func (i *syncResolverIssue) Resource() string          { return i.resource }
+func (i *syncResolverIssue) Source() string            { return i.source }
+func (i *syncResolverIssue) PresentationKey() string   { return i.key }
+func (i *syncResolverIssue) PresentationText() string  { return i.text }
+func (i *syncResolverIssue) DiagnosticCode() string    { return "" }
+func (i *syncResolverIssue) DiagnosticMessage() string { return "" }
+func (i *syncResolverIssue) Remediation() string       { return i.remediation }
 
 func writeGroupedWarnings(out io.Writer, warnings []error, verbose bool) error {
 	for _, group := range groupWarnings(warnings) {
@@ -68,8 +96,77 @@ func writeSyncWarnings(out io.Writer, warnings []error, verbose bool, prefix str
 	return writeSyncIssues(out, warnings, verbose, prefix)
 }
 
+func presentSyncResolverIssues(issues []error) []error {
+	selectedNotFound, nameCollisions := 0, 0
+	for _, issue := range issues {
+		switch typed := issue.(type) {
+		case *resolver.SelectedNotFoundError:
+			if typed.Via == "" && typed.Hint == "" && typed.RequestedPath == "" && len(typed.CandidatePaths) == 0 {
+				selectedNotFound++
+			}
+		case *resolver.NameCollisionWarning, *resolver.NameCollisionError:
+			nameCollisions++
+		}
+	}
+	if selectedNotFound < 2 && nameCollisions < 2 {
+		return issues
+	}
+
+	var presented []error
+	for index, issue := range issues {
+		replacement, changed := presentSyncResolverIssue(issue, selectedNotFound > 1, nameCollisions > 1)
+		if changed && presented == nil {
+			presented = append(make([]error, 0, len(issues)), issues[:index]...)
+		}
+		if presented != nil {
+			if changed {
+				presented = append(presented, replacement)
+			} else {
+				presented = append(presented, issue)
+			}
+		}
+	}
+	if presented == nil {
+		return issues
+	}
+	return presented
+}
+
+func presentSyncResolverIssue(issue error, groupSelectedNotFound, groupNameCollisions bool) (error, bool) {
+	switch typed := issue.(type) {
+	case *resolver.SelectedNotFoundError:
+		if !groupSelectedNotFound || typed.Via != "" || typed.Hint != "" || typed.RequestedPath != "" || len(typed.CandidatePaths) > 0 {
+			return issue, false
+		}
+		return &syncResolverIssue{
+			err: issue, key: "resolver.selected-not-found", text: "selected resources were not found", resource: typed.Resource(), source: typed.Source(),
+			remediation: "run 'agent-marketplace status' to diagnose; remove stale selections with 'agent-marketplace remove <name> [--kind <kind>]'",
+		}, true
+	case *resolver.NameCollisionWarning:
+		if !groupNameCollisions {
+			return issue, false
+		}
+		return &syncResolverIssue{
+			err: issue, key: "resolver.name-collision", text: "resources are provided by multiple registries", resource: typed.Resource(), source: typed.Source(),
+			remediation: "to prefer a different source, exclude its current winner with 'agent-marketplace remove <name> --from <winning-registry>'",
+		}, true
+	case *resolver.NameCollisionError:
+		if !groupNameCollisions {
+			return issue, false
+		}
+		return &syncResolverIssue{
+			err: issue, key: "resolver.name-collision", text: "resources are provided by multiple registries", resource: typed.Resource(), source: typed.Source(),
+			remediation: "exclude each conflicting resource from one registry with 'agent-marketplace remove <name> --from <registry>'",
+		}, true
+	default:
+		return issue, false
+	}
+}
+
 func writeSyncIssues(out io.Writer, issues []error, verbose bool, prefix string) error {
-	for _, group := range groupWarnings(issues) {
+	problems := groupWarnings(presentSyncResolverIssues(issues))
+	if len(problems) == 1 {
+		group := problems[0]
 		text := group.warning.Error()
 		if group.presentation != "" {
 			text = group.presentation
@@ -85,12 +182,119 @@ func writeSyncIssues(out io.Writer, issues []error, verbose bool, prefix string)
 			}
 		}
 		if remediable := warningRemediation(group.warning); remediable != nil {
-			if _, err := fmt.Fprintf(out, "  → %s\n", remediable.Remediation()); err != nil {
+			_, err := fmt.Fprintf(out, "  → %s\n", remediable.Remediation())
+			return err
+		}
+		return nil
+	}
+	for _, group := range groupSyncIssues(problems) {
+		if len(group.problems) == 1 {
+			if err := writeSyncIssue(out, group.problems[0], verbose, prefix, "", true); err != nil {
+				return err
+			}
+			continue
+		}
+		resources := syncIssueResourceCount(group)
+		suffix := fmt.Sprintf(" (%d problems)", len(group.problems))
+		if resources > 0 {
+			suffix = fmt.Sprintf(" (%d problems, %d resources)", len(group.problems), resources)
+		}
+		if _, err := fmt.Fprintf(out, "%s %s%s\n", prefix, group.code, suffix); err != nil {
+			return err
+		}
+		for _, problem := range group.problems {
+			if err := writeSyncIssue(out, problem, verbose, "", "  ", false); err != nil {
+				return err
+			}
+		}
+		if err := writeSyncIssueRemediations(out, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeSyncIssue(out io.Writer, group *warningGroup, verbose bool, prefix, indent string, remediation bool) error {
+	text := group.warning.Error()
+	if group.presentation != "" {
+		text = group.presentation
+	}
+	if group.message != "" && indent != "" {
+		text = group.message
+	}
+	text += warningGroupSuffix(group)
+	if indent == "" {
+		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, text); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(out, "%s%s\n", indent, text); err != nil {
+		return err
+	}
+	if len(group.resources) > 0 && (group.presentation != "" || len(group.resources) > 1) {
+		resources, suffix := warningResources(group, verbose)
+		if _, err := fmt.Fprintf(out, "%s  %s%s\n", indent, strings.Join(resources, ", "), suffix); err != nil {
+			return err
+		}
+	}
+	if remediation {
+		if remediable := warningRemediation(group.warning); remediable != nil {
+			if _, err := fmt.Fprintf(out, "%s  → %s\n", indent, remediable.Remediation()); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func writeSyncIssueRemediations(out io.Writer, group *syncIssueGroup) error {
+	seen := make(map[string]struct{}, len(group.problems))
+	for _, problem := range group.problems {
+		remediable := warningRemediation(problem.warning)
+		if remediable == nil {
+			continue
+		}
+		hint := remediable.Remediation()
+		if hint == "" {
+			continue
+		}
+		if _, ok := seen[hint]; ok {
+			continue
+		}
+		seen[hint] = struct{}{}
+		if _, err := fmt.Fprintf(out, "  → %s\n", hint); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func groupSyncIssues(problems []*warningGroup) []*syncIssueGroup {
+	groups := make([]*syncIssueGroup, 0, len(problems))
+	byCode := make(map[string]*syncIssueGroup, len(problems))
+	for _, problem := range problems {
+		if problem.code == "" {
+			groups = append(groups, &syncIssueGroup{problems: []*warningGroup{problem}})
+			continue
+		}
+		group := byCode[problem.code]
+		if group == nil {
+			group = &syncIssueGroup{code: problem.code}
+			byCode[problem.code] = group
+			groups = append(groups, group)
+		}
+		group.problems = append(group.problems, problem)
+	}
+	return groups
+}
+
+func syncIssueResourceCount(group *syncIssueGroup) int {
+	resources := make(map[string]struct{})
+	for _, problem := range group.problems {
+		for _, resource := range problem.resources {
+			resources[resource] = struct{}{}
+		}
+	}
+	return len(resources)
 }
 
 type syncCommandError struct {
@@ -135,6 +339,10 @@ func groupWarnings(warnings []error) []*warningGroup {
 			group = &warningGroup{warning: warning}
 			if presentationKey != "" {
 				group.presentation = presentation.PresentationText()
+			}
+			if presentation != nil {
+				group.code = presentation.DiagnosticCode()
+				group.message = presentation.DiagnosticMessage()
 			}
 			groups = append(groups, group)
 		}
