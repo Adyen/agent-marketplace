@@ -73,11 +73,11 @@ func renderErrors(m Model) string {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			b.WriteString(styleErrorMsg.Render("• " + err.Error()))
+			b.WriteString(styleErrorMsg.Render("• " + sanitizeTerminalData(err.Error(), terminalSingleLine)))
 			b.WriteString("\n")
 			var r resolver.Remediable
 			if errors.As(err, &r) {
-				b.WriteString(styleErrorMsg.Render("  → " + r.Remediation()))
+				b.WriteString(styleErrorMsg.Render("  → " + sanitizeTerminalData(r.Remediation(), terminalSingleLine)))
 				b.WriteString("\n")
 			}
 		}
@@ -90,12 +90,12 @@ func renderErrors(m Model) string {
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))
 		b.WriteString("\n\n")
 		for _, w := range m.warnings {
-			b.WriteString(styleWarningMsg.Render("• " + w.Error()))
+			b.WriteString(styleWarningMsg.Render("• " + sanitizeTerminalData(w.Error(), terminalSingleLine)))
 			b.WriteString("\n")
 			// Print remediation hint for remediable warnings
 			var r resolver.Remediable
 			if errors.As(w, &r) {
-				b.WriteString(styleWarningMsg.Render("  → " + r.Remediation()))
+				b.WriteString(styleWarningMsg.Render("  → " + sanitizeTerminalData(r.Remediation(), terminalSingleLine)))
 				b.WriteString("\n")
 			}
 		}
@@ -110,7 +110,7 @@ func renderErrors(m Model) string {
 func renderConfirm(m Model) string {
 	return styleHelpOverlay.Render(
 		styleConfirmTitle.Render("Confirm") +
-			"\n\n" + m.confirmMsg +
+			"\n\n" + sanitizeTerminalData(m.confirmMsg, terminalSingleLine) +
 			"\n\ny = yes · n = no · esc = cancel",
 	)
 }
