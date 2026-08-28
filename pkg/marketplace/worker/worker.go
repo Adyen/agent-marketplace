@@ -72,8 +72,12 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 		FileCount:       deps.Config.Policy.Limits.FileCount,
 		FileBytes:       deps.Config.Policy.Limits.FileBytes,
 	}
+	roots := make([]string, len(merged.Roots))
+	for i := range merged.Roots {
+		roots[i] = merged.Roots[i].Path
+	}
 
-	res, err := acquire.Clone(ctx, origin, merged.Ref, creds, limits, deps.Config.Policy.Limits.CloneDuration.Duration())
+	res, err := acquire.Clone(ctx, origin, merged.Ref, creds, limits, deps.Config.Policy.Limits.CloneDuration.Duration(), roots...)
 	if err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
