@@ -265,8 +265,8 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
-			if tc.height >= 2 && !strings.Contains(out, "q") {
-				t.Fatalf("below-minimum recovery omitted quit guidance from a %d-line terminal: %q", tc.height, out)
+			if tc.height >= 2 && !strings.Contains(out, "q quit") {
+				t.Fatalf("view omitted quit guidance from a %d-line terminal: %q", tc.height, out)
 			}
 		})
 	}

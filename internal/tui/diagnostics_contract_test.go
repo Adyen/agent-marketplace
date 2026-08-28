@@ -104,6 +104,17 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	}
 }
 
+func TestLatestFailureReplacesPreviousFailureForSameOperation(t *testing.T) {
+	first := errors.New("first failure")
+	latest := errors.New("latest failure")
+	var diagnostics diagnosticStore
+	diagnostics.recordOperationFailure(operationSync, diagnosticSync, first)
+	diagnostics.recordOperationFailure(operationSync, diagnosticSync, latest)
+	if len(diagnostics.operations) != 1 || !errors.Is(diagnostics.operations[0].err, latest) {
+		t.Fatalf("retained operation diagnostics = %+v", diagnostics.operations)
+	}
+}
+
 func TestSnapshotDiagnosticsDeduplicateStableIdentity(t *testing.T) {
 	duplicate := errors.New("same failure")
 	m := NewModel(t.TempDir(), t.TempDir())

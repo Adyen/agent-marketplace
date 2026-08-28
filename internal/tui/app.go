@@ -475,7 +475,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.width > 0 && msg.width != m.width {
-			return m, m.rerenderDetailAtWidth(m.width)
+			if rerender := m.rerenderDetailAtWidth(m.width); rerender != nil {
+				return m, rerender
+			}
 		}
 		renderedWidth := msg.width
 		if renderedWidth == 0 {

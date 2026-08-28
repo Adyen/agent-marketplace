@@ -291,7 +291,12 @@ func renderToggleModal(m Model) string {
 		fmt.Fprintf(&b, "Global %s  Project %s\n", check(r.EnabledGlobal), check(r.EnabledProject))
 		fmt.Fprintf(&b, "Local %s  Excluded %s\n", check(r.EnabledLocal), yesno(r.ExcludedLocally))
 		b.WriteString(keyStyle.Render("[g]") + " global  " + keyStyle.Render("[p]") + " project\n")
-		b.WriteString(keyStyle.Render("[l]") + " local   " + keyStyle.Render("[e]") + " exclude\n")
+		b.WriteString(keyStyle.Render("[l]") + " local   ")
+		if r.Artifact.Source.IsMachineScope() {
+			b.WriteString(styleDim.Render("[e] unavailable") + "\n")
+		} else {
+			b.WriteString(keyStyle.Render("[e]") + " exclude\n")
+		}
 		b.WriteString(keyStyle.Render("[esc]") + " cancel")
 		return compactModalStyle(styleToggleModal, m).Render(b.String())
 	}

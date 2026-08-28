@@ -84,12 +84,35 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	assertTerminalBounds(t, m.View(), 50, 12)
 }
 
+func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {
+	r := mkRow("missing-source", withProject)
+	r.Artifact.Path = ""
+	m := modelWithSelectedRow(t, r)
+	m.width = 80
+	m.height = 24
+	generation := m.beginRequest(requestDetail)
+	m.enterDetailPane()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	m = updated.(Model)
+	updated, cmd := m.Update(detailContentMsg{
+		generation: generation,
+		content:    "No content available",
+		width:      80,
+	})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatal("source-less detail scheduled an impossible rerender")
+	}
+	if view := m.detailViewport.View(); !strings.Contains(view, "No content available") {
+		t.Fatalf("delivered content was not applied: %q", view)
+	}
+}
+
 func TestMarkdownRendererCacheIsBoundedAndConcurrentSafe(t *testing.T) {
 	cache := &markdownRendererCache{renderers: make(map[int]*glamour.TermRenderer)}
 	cache.init("dark")
 	var wait sync.WaitGroup
 	for width := 20; width < 40; width++ {
-		width := width
 		wait.Add(1)
 		go func() {
 			defer wait.Done()

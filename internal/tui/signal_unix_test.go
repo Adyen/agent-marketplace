@@ -26,7 +26,11 @@ func (m signalContractModel) Init() tea.Cmd {
 		if err := os.MkdirAll(filepath.Dir(m.marker), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(m.marker, []byte("apiVersion: agent-marketplace/v2\nharnesses: ["), 0o644); err != nil {
+		tmp := m.marker + ".tmp"
+		if err := os.WriteFile(tmp, []byte("apiVersion: agent-marketplace/v2\nharnesses: ["), 0o644); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, m.marker); err != nil {
 			return err
 		}
 		select {}

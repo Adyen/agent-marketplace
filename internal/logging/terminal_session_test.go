@@ -109,9 +109,15 @@ func TestTerminalSessionRestoreIsIndependent(t *testing.T) {
 
 	var stderr bytes.Buffer
 	logPath := filepath.Join(t.TempDir(), "agent-marketplace.log")
-	if _, _, err := Init(Options{Debug: true, FilePath: logPath, Stderr: &stderr}); err != nil {
+	_, closeLog, err := Init(Options{Debug: true, FilePath: logPath, Stderr: &stderr})
+	if err != nil {
 		t.Fatalf("Init returned error: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := closeLog(); err != nil {
+			t.Errorf("close log: %v", err)
+		}
+	})
 
 	first := BeginTerminalSession()
 	slog.Debug("session-one")

@@ -101,6 +101,16 @@ func sanitizeMarkdownForTerminal(value string) string {
 	return sanitizeTerminalData(value, terminalMarkdownBody)
 }
 
+var unsafeNamedMarkdownEntities = [...]struct {
+	name string
+	rune rune
+}{
+	{name: "&Tab;", rune: '\t'},
+	{name: "&NewLine;", rune: '\n'},
+	{name: "&lrm;", rune: '\u200e'},
+	{name: "&rlm;", rune: '\u200f'},
+}
+
 func unsafeMarkdownEntity(value string) (consumed int, decoded rune, ok bool) {
 	if len(value) < 3 || value[0] != '&' {
 		return 0, 0, false
@@ -109,15 +119,7 @@ func unsafeMarkdownEntity(value string) (consumed int, decoded rune, ok bool) {
 		return unsafeNumericMarkdownEntity(value)
 	}
 
-	for _, entity := range []struct {
-		name string
-		rune rune
-	}{
-		{name: "&Tab;", rune: '\t'},
-		{name: "&NewLine;", rune: '\n'},
-		{name: "&lrm;", rune: '\u200e'},
-		{name: "&rlm;", rune: '\u200f'},
-	} {
+	for _, entity := range unsafeNamedMarkdownEntities {
 		if strings.HasPrefix(value, entity.name) {
 			return len(entity.name), entity.rune, true
 		}

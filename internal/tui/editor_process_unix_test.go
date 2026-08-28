@@ -64,10 +64,10 @@ func TestBlockingEditorSignaledExternallyIsForwardedBoundedAndReaped(t *testing.
 			p.grace = 300 * time.Millisecond
 
 			runErr := make(chan error, 1)
-			started := time.Now()
 			go func() { runErr <- p.Run() }()
 
 			waitForEditorMarker(t, marker)
+			started := time.Now()
 			signalSelf(t, tc.sig)
 
 			select {
@@ -160,10 +160,7 @@ func TestEditorProcessKeepsTerminalProcessGroup(t *testing.T) {
 	// Start is writing it (a data race the cross-process marker alone
 	// cannot make visible to the race detector).
 	marker := filepath.Join(t.TempDir(), "editor-ready")
-	p := newEditorProcess(editorHelperCmd(t,
-		"TUI_EDITOR_HELPER_MARKER="+marker,
-		"TUI_EDITOR_HELPER_PGID=1",
-	))
+	p := newEditorProcess(editorHelperCmd(t, "TUI_EDITOR_HELPER_MARKER="+marker))
 	p.grace = 300 * time.Millisecond
 
 	runErr := make(chan error, 1)
