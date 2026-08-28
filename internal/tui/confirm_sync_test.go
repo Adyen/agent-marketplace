@@ -225,7 +225,7 @@ func TestUpdateDoneMsgClearsQuitAfterSync(t *testing.T) {
 	m.syncing = true
 	m.quitAfterSync = true // stale from a previous sync+quit confirm
 
-	updated, cmd := m.Update(updateDoneMsg{err: nil})
+	updated, cmd := m.Update(updateDoneMsg{generation: 1, err: nil})
 	got := updated.(Model)
 
 	if got.syncing {
