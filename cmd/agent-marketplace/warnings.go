@@ -317,6 +317,9 @@ func groupWarnings(warnings []error) []*warningGroup {
 	byDedupKey := make(map[string]*warningGroup, len(warnings))
 	byPresentationKey := make(map[string]*warningGroup, len(warnings))
 	for _, warning := range warnings {
+		if warning == nil {
+			continue
+		}
 		message := warning.Error()
 		group := byMessage[message]
 		var presentation warningPresentation

@@ -87,6 +87,18 @@ func TestWriteGroupedWarningsGroupsByDedupKey(t *testing.T) {
 	}
 }
 
+func TestWriteGroupedWarningsSkipsNilWarnings(t *testing.T) {
+	warnings := []error{nil, testResourceWarning{resource: "resource-a"}}
+
+	var out bytes.Buffer
+	if err := writeGroupedWarnings(&out, warnings, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "warning: resource was dropped\n" {
+		t.Fatalf("writeGroupedWarnings() = %q, want only the non-nil warning", got)
+	}
+}
+
 func TestWriteGroupedWarningsDoesNotGroupEmptyDedupKeys(t *testing.T) {
 	warnings := []error{
 		testEmptyDedupWarning{resource: "resource-a", message: "first warning"},
