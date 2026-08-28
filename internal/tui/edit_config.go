@@ -19,8 +19,9 @@ import (
 
 // editConfigPathMsg is emitted after the editor exits so the TUI reloads.
 type editConfigPathMsg struct {
-	path string
-	err  error
+	operation operationID
+	path      string
+	err       error
 }
 
 var styleEditConfigModal = lipgloss.NewStyle().
@@ -93,9 +94,13 @@ func (m Model) handleEditConfigModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openConfigEditor(scope, path string) (tea.Model, tea.Cmd) {
+	operation, ok := m.beginOperation(operationEditor)
+	if !ok {
+		return m, operationBlockedCmd()
+	}
 	slog.Debug("opening config editor", "scope", scope, "path", path)
 	m.pane = paneList
-	return m, openEditorCmd(path)
+	return m, correlateOperation(openEditorCmd(path), operation, false)
 }
 
 // openEditorCmd returns a tea.Cmd that suspends the TUI and launches $EDITOR

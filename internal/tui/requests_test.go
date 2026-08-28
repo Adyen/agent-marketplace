@@ -38,6 +38,31 @@ func TestAcceptedRequestCompletionCannotReplay(t *testing.T) {
 	}
 }
 
+func TestMutationOperationsSerializeAndRejectStaleCompletions(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	first, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("first operation was blocked")
+	}
+	if _, ok := m.beginOperation(operationEditor); ok {
+		t.Fatal("overlapping operation was accepted")
+	}
+	m.finishOperation(first)
+	second, ok := m.beginOperation(operationEditor)
+	if !ok {
+		t.Fatal("second operation was blocked after first completed")
+	}
+
+	updated, cmd := m.Update(configWrittenMsg{operation: first, skillName: "stale", err: errors.New("stale failure")})
+	m = updated.(Model)
+	if cmd != nil || len(m.errs) != 0 {
+		t.Fatalf("stale operation changed state: cmd=%v errors=%v", cmd, m.errs)
+	}
+	if !m.operations.accepts(second) {
+		t.Fatal("stale completion cleared the active operation")
+	}
+}
+
 func TestDelayedDetailCannotOverwriteNewSelection(t *testing.T) {
 	m := modelWithSelectedRow(t, mkRow("alpha", withProject))
 	m.width = 80

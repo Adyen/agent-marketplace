@@ -207,6 +207,7 @@ type Model struct {
 	modalSkill   row
 	harnessModal harnessModalState
 	initModal    initModalState
+	operations   operationState
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
