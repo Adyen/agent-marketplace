@@ -133,6 +133,20 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
 }
 
+func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
+	assessment := msg.driftAssessment
+	if assessment == driftUnknown {
+		if len(msg.errs) > 0 || len(diagnosticErrors(msg.diagnostics)) > 0 {
+			assessment = driftFailed
+		} else {
+			assessment = driftReady
+		}
+	}
+	m.driftAssessment = assessment
+	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
+	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -173,25 +187,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
+		m.applySnapshotStatus(msg)
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
-			m.warnings = msg.warnings
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
-			m.warnings = msg.warnings
+		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
 			return m, nil
 		}
 		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
 		m.mergedCfg = msg.mergedCfg
 		m.resolved = msg.resolved
 		m.localExcludes = msg.localExcludes
@@ -212,20 +221,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
+		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
+		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			return m, nil
 		}
 		selection := m.selectionKeyForRebuild()
 		m.rows = msg.rows
 		m.driftReport = msg.driftReport
-		m.errs = msg.errs
 		m.mergedCfg = msg.mergedCfg
 		m.resolved = msg.resolved
 		m.localExcludes = msg.localExcludes
@@ -248,11 +255,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.syncing = false
 		m.refreshing = false
+		m.applySnapshotStatus(snapshot)
 		selection := m.selectionKeyForRebuild()
 		m.rows = snapshot.rows
 		m.driftReport = snapshot.driftReport
-		m.errs = snapshot.errs
-		m.warnings = snapshot.warnings
 		m.mergedCfg = snapshot.mergedCfg
 		m.resolved = snapshot.resolved
 		m.localExcludes = snapshot.localExcludes
@@ -280,7 +286,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case configWrittenMsg:
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.pendingExcludeAction = nil
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
@@ -292,6 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			recordControlledErrorSpan(m.ctx, action, msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationMutation)
 		action := "Enabled"
 		if !msg.enabled {
 			action = "Disabled"
@@ -317,13 +324,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case harnessWrittenMsg:
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationTargets, diagnosticMutation, msg.err)
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "harness", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationTargets)
 		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
@@ -334,12 +342,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationSync, diagnosticSync, msg.err)
 			m.toast = fmt.Sprintf("sync error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("sync failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
+			m.recordOperationSuccess(operationSync)
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -365,17 +374,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		}
 		m.syncing = false
+		if msg.snapshot.generation != 0 {
+			selection := m.selectionKeyForRebuild()
+			m.applySnapshotStatus(msg.snapshot)
+			m.rows = msg.snapshot.rows
+			m.driftReport = msg.snapshot.driftReport
+			m.mergedCfg = msg.snapshot.mergedCfg
+			m.resolved = msg.snapshot.resolved
+			m.localExcludes = msg.snapshot.localExcludes
+			m.globalHarnesses = msg.snapshot.globalHarnesses
+			m.projectHarnesses = msg.snapshot.projectHarnesses
+			m.recomputeView()
+			m.restoreSelectionAfterRebuild(selection)
+		}
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.
 		m.quitAfterSync = false
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationUpdate, diagnosticUpdate, msg.err)
 			m.toast = fmt.Sprintf("update error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		} else {
+			m.recordOperationSuccess(operationUpdate)
 			m.toast = "Update complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -383,13 +406,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case migrationDoneMsg:
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
 			m.toast = fmt.Sprintf("migration error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("migration failed", "count", msg.count, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationMigration)
 		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
@@ -398,13 +422,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editConfigPathMsg:
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationEditor, diagnosticEditor, msg.err)
 			m.toast = fmt.Sprintf("editor error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("config editor result handled", "path", msg.path, "reload", false, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "edit_config", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationEditor)
 		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
 		generation := m.beginRequest(requestSnapshot)
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
@@ -660,6 +685,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Space on a skill row: open the toggle modal so the user picks
 		// which config file to write.
+		if m.rowsStale {
+			return m, func() tea.Msg {
+				return toastMsg{text: "reload before changing broken state", duration: 2 * time.Second}
+			}
+		}
 		r, ok := m.selectedRow()
 		if !ok {
 			return m, nil
@@ -680,7 +710,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		if m.driftReport.InSync() {
+		if m.driftAssessment == driftReady && m.driftReport.InSync() {
 			recordActionSpan(m.ctx, "sync", map[string]string{"skipped": "in_sync"})
 			return m, func() tea.Msg {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
