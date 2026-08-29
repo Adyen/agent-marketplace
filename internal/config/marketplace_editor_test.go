@@ -265,6 +265,53 @@ func TestEnsureMarketplaceEntryRejectsUnsafeIdentityAndDuplicate(t *testing.T) {
 	}
 }
 
+func TestEnsureMarketplaceEntrySerializesIdentityConflicts(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []MarketplaceEntry
+	}{
+		{name: "same URL different instance", entries: []MarketplaceEntry{{URL: "https://market.example", InstanceID: "one"}, {URL: "https://market.example", InstanceID: "two"}}},
+		{name: "same instance different URL", entries: []MarketplaceEntry{{URL: "https://one.example", InstanceID: "same"}, {URL: "https://two.example", InstanceID: "same"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			start := make(chan struct{})
+			errs := make(chan error, len(tc.entries))
+			var wg sync.WaitGroup
+			for _, entry := range tc.entries {
+				wg.Add(1)
+				go func(entry MarketplaceEntry) {
+					defer wg.Done()
+					<-start
+					errs <- EnsureMarketplaceEntryInConfig(path, entry)
+				}(entry)
+			}
+			close(start)
+			wg.Wait()
+			close(errs)
+			succeeded, failed := 0, 0
+			for err := range errs {
+				if err == nil {
+					succeeded++
+				} else {
+					failed++
+				}
+			}
+			if succeeded != 1 || failed != 1 {
+				t.Fatalf("succeeded/failed = %d/%d, want 1/1", succeeded, failed)
+			}
+			cfg, err := LoadConfigFromPath(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Marketplaces) != 1 {
+				t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+			}
+		})
+	}
+}
+
 func TestEnsureMarketplacePinFailsClosedAndPreservesBytes(t *testing.T) {
 	tests := []string{
 		"marketplaces:\n  - https://market.example\n",

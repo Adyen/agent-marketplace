@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"sort"
@@ -42,6 +43,118 @@ func isMarketplaceInstall(opts InstallOptions) bool {
 	}
 	_, err := marketplace.ParseMarketplaceLocator(raw)
 	return err == nil
+}
+
+func isMarketplaceEndpointRegistration(opts InstallOptions) bool {
+	if len(opts.Args) != 1 || strings.TrimSpace(opts.Marketplace) != "" || strings.TrimSpace(opts.FromURL) != "" {
+		return false
+	}
+	raw := strings.TrimSpace(opts.Args[0])
+	if !strings.HasPrefix(strings.ToLower(raw), "http://") && !strings.HasPrefix(strings.ToLower(raw), "https://") {
+		return false
+	}
+	if _, err := marketplace.ParseMarketplaceLocator(raw); err == nil {
+		return false
+	}
+	_, err := marketplace.NormalizeMarketplaceURL(raw)
+	return err == nil
+}
+
+func registerMarketplaceEndpoint(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*InstallResult, error) {
+	if opts.HasKind {
+		return nil, fmt.Errorf("--kind is only supported when installing a resource")
+	}
+	endpoint, err := marketplace.NormalizeMarketplaceURL(opts.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	allowed := []string(nil)
+	if ec != nil && ec.Merged != nil && ec.Merged.AllowedMarketplaces != nil {
+		allowed = *ec.Merged.AllowedMarketplaces
+	}
+	if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{{URL: endpoint}}, allowed); err != nil {
+		return nil, fmt.Errorf("marketplace endpoint rejected before network access: %w", err)
+	}
+
+	slog.Info("registering Marketplace endpoint", "url", endpoint, "config_path", configPath, "scope", opts.Scope)
+	client, err := marketplace.NewClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		if parsed := ParseGitWebURL(endpoint); parsed.Ok {
+			return nil, fmt.Errorf("marketplace %s well-known document: %w; if this is a Git registry, use --from %q instead", endpoint, err, endpoint)
+		}
+		return nil, fmt.Errorf("marketplace %s well-known document: %w", endpoint, err)
+	}
+	canonical, err := marketplace.NormalizeMarketplaceURL(wellKnown.CanonicalURL)
+	if err != nil {
+		return nil, fmt.Errorf("marketplace %s reported an invalid canonical URL: %w", endpoint, err)
+	}
+	if canonical != endpoint {
+		return nil, fmt.Errorf("marketplace endpoint %q reports canonical URL %q; install the canonical URL explicitly", endpoint, canonical)
+	}
+	entry := config.MarketplaceEntry{URL: canonical, InstanceID: wellKnown.InstanceID}
+	if errs := config.ValidateMarketplaceEntries([]config.MarketplaceEntry{entry}); len(errs) > 0 {
+		return nil, fmt.Errorf("invalid Marketplace identity: %w", errors.Join(errs...))
+	}
+
+	targetSource := installScopeSource(opts.Scope)
+	var existingPath string
+	if ec != nil && ec.Merged != nil {
+		for _, configured := range ec.Merged.Marketplaces {
+			configuredURL, normalizeErr := marketplace.NormalizeMarketplaceURL(configured.URL)
+			if normalizeErr != nil {
+				continue
+			}
+			sameURL := configuredURL == canonical
+			sameInstance := configured.InstanceID == entry.InstanceID
+			switch {
+			case sameURL && !sameInstance:
+				return nil, fmt.Errorf("marketplace endpoint %s is configured with instance ID %q but now reports %q", canonical, configured.InstanceID, entry.InstanceID)
+			case sameInstance && !sameURL:
+				return nil, fmt.Errorf("marketplace instance %q is already configured at %s; endpoint migration must be explicit", entry.InstanceID, configuredURL)
+			case sameURL && sameInstance && configured.Source.Precedence() <= targetSource.Precedence() && existingPath == "":
+				existingPath = marketplaceRegistrationConfigPath(ec, configured.Source, configPath)
+			}
+		}
+	}
+	if existingPath != "" {
+		slog.Info("Marketplace endpoint already configured", "url", canonical, "instance_id", entry.InstanceID, "config_path", existingPath)
+		return &InstallResult{MarketplaceEndpoint: canonical, MarketplaceConfigPath: existingPath, MarketplaceAlreadyConfigured: true}, nil
+	}
+	if err := config.EnsureMarketplaceEntryInConfig(configPath, entry); err != nil {
+		return nil, fmt.Errorf("write Marketplace endpoint: %w", err)
+	}
+	slog.Info("Marketplace endpoint registered", "url", canonical, "instance_id", entry.InstanceID, "config_path", configPath)
+	return &InstallResult{MarketplaceEndpoint: canonical, MarketplaceConfigPath: configPath}, nil
+}
+
+func installScopeSource(scope Scope) config.Source {
+	switch scope {
+	case ScopeUser:
+		return config.UserPersonal
+	case ScopeLocal:
+		return config.RepoPersonal
+	default:
+		return config.RepoCommitted
+	}
+}
+
+func marketplaceRegistrationConfigPath(ec *config.EffectiveConfig, source config.Source, targetPath string) string {
+	switch source {
+	case config.Organization:
+		return ec.Organization.Path
+	case config.UserPersonal:
+		return ec.User.Path
+	case config.RepoCommitted:
+		return ec.Repo.Path
+	case config.RepoPersonal:
+		return targetPath
+	default:
+		return targetPath
+	}
 }
 
 func installMarketplace(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*InstallResult, error) {

@@ -51,6 +51,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace search [query] --marketplace <alias|url|all>` — search one or all Marketplace endpoints
 - `agent-marketplace search [query] --output json` — structured search output with per-endpoint errors
 - `agent-marketplace install <resource>` / `install --tag <tag>` / `install --scope {user,repo,local}` — add resource to target config layer and sync
+- `agent-marketplace install <marketplace-endpoint>` — register a Marketplace endpoint; defaults to user scope, honors an explicit scope, and is a no-op when the same identity exists in that scope or a broader one
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
