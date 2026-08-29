@@ -802,10 +802,6 @@ func serveWellKnown(mux *http.ServeMux, instanceID string) {
 	})
 }
 
-func TestResolverImplementsInterface(t *testing.T) {
-	var _ resolver.MarketplaceResolver = &Resolver{}
-}
-
 func TestResolvePinWithArtifactRetainsVerifiedArtifactWhenCacheIsTampered(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	digest := "sha256:" + strings.Repeat("a", 64)

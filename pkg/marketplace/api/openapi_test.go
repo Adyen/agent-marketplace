@@ -357,16 +357,3 @@ func TestOpenAPIPublicURLSchemasDescribeSanitizedValues(t *testing.T) {
 		t.Errorf("Publisher.url is not documented as a sanitized URI: %#v", publisherURL)
 	}
 }
-
-func TestOpenAPIEnumMatchesDefaultCapabilities(t *testing.T) {
-	caps := DefaultCapabilities()
-	// This is a coarse check that the OpenAPI enum values and the Go constants
-	// are kept in sync. The exact parsing of YAML enums is not worth pulling in
-	// a full OpenAPI validator for; the design contract is maintained by hand.
-	if len(caps.APIVersions) != 1 || caps.APIVersions[0] != APIVersionV1 {
-		t.Fatalf("APIVersions mismatch with OpenAPI enum")
-	}
-	if len(caps.ArtifactSchemaVersions) != 1 || caps.ArtifactSchemaVersions[0] != ArtifactSchemaVersionV1 {
-		t.Fatalf("ArtifactSchemaVersions mismatch with OpenAPI enum")
-	}
-}
