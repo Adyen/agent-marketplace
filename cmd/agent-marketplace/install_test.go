@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +14,327 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
+
+func TestInstallMarketplaceEndpointAddsItToUserConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
+	defer server.Close()
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL)
+	if err != nil {
+		t.Fatalf("install Marketplace endpoint: %v\n%s", err, output)
+	}
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if output != "Added Marketplace "+server.URL+" to "+configPath+"\n" {
+		t.Fatalf("output = %q", output)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("load user config: %v", err)
+	}
+	if len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].URL != server.URL || cfg.Marketplaces[0].InstanceID != "marketplace-instance" || len(cfg.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("marketplaces = %#v", cfg.Marketplaces)
+	}
+}
+
+func TestInstallMarketplaceEndpointSupportsPathPrefix(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
+	defer server.Close()
+	endpoint := server.URL + "/services/marketplace"
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", endpoint)
+	if err != nil {
+		t.Fatalf("install path-prefixed Marketplace endpoint: %v\n%s", err, output)
+	}
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if output != "Added Marketplace "+endpoint+" to "+configPath+"\n" {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestInstallBareGitProjectURLRetainsFromGuidance(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	url := server.URL + "/group/project"
+	withWorkingDir(t, t.TempDir())
+
+	_, err := executeCommand("install", url)
+	if err == nil || !strings.Contains(err.Error(), "well-known document") || !strings.Contains(err.Error(), "--from") {
+		t.Fatalf("bare Git URL error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("bare Git URL made %d requests, want 1", requests)
+	}
+}
+
+func TestInstallMarketplaceEndpointUsesExplicitRepoAndLocalScopes(t *testing.T) {
+	for _, scope := range []string{"repo", "local"} {
+		t.Run(scope, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
+			defer server.Close()
+			workspace, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, workspace)
+
+			output, err := executeCommand("install", server.URL, "--scope", scope)
+			if err != nil {
+				t.Fatalf("install Marketplace endpoint at %s scope: %v\n%s", scope, err, output)
+			}
+			name := "config.yaml"
+			if scope == "local" {
+				name = "config.local.yaml"
+			}
+			configPath := filepath.Join(workspace, ".agents", name)
+			if output != "Added Marketplace "+server.URL+" to "+configPath+"\n" {
+				t.Fatalf("output = %q", output)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read %s config: %v", scope, err)
+			}
+			if !strings.Contains(string(data), "instance_id: marketplace-instance") {
+				t.Fatalf("config = %s", data)
+			}
+			if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("user config should not be written, stat error = %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallMarketplaceEndpointRepeatPreservesUserConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	requests := 0
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", &requests)
+	defer server.Close()
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("install", server.URL); err != nil {
+		t.Fatalf("first registration: %v\n%s", err, output)
+	}
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("install", server.URL)
+	if err != nil {
+		t.Fatalf("repeat registration: %v\n%s", err, output)
+	}
+	if output != "Marketplace "+server.URL+" is already configured in "+configPath+"\n" {
+		t.Fatalf("output = %q", output)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("repeat registration changed config:\nbefore:\n%safter:\n%s", before, after)
+	}
+	if requests != 2 {
+		t.Fatalf("repeat registration made %d well-known requests, want 2", requests)
+	}
+}
+
+func TestInstallMarketplaceEndpointIsIdempotentInBroaderScope(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
+	defer server.Close()
+	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: "+server.URL+"\n    instance_id: marketplace-instance\n")
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("install", server.URL)
+	if err != nil {
+		t.Fatalf("repeat organization Marketplace registration: %v\n%s", err, output)
+	}
+	if output != "Marketplace "+server.URL+" is already configured in "+organizationPath+"\n" {
+		t.Fatalf("output = %q", output)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("idempotent registration wrote user config, stat error = %v", err)
+	}
+}
+
+func TestInstallMarketplaceEndpointPromotesFromNarrowerScope(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
+	defer server.Close()
+	workspace := t.TempDir()
+	repoPath := filepath.Join(workspace, ".agents", "config.yaml")
+	writeConfig(t, repoPath, "marketplaces:\n  - url: "+server.URL+"\n    instance_id: marketplace-instance")
+	withWorkingDir(t, workspace)
+
+	output, err := executeCommand("install", server.URL)
+	if err != nil {
+		t.Fatalf("promote repo Marketplace registration: %v\n%s", err, output)
+	}
+	userPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if output != "Added Marketplace "+server.URL+" to "+userPath+"\n" {
+		t.Fatalf("output = %q", output)
+	}
+	cfg, err := config.LoadConfigFromPath(userPath)
+	if err != nil || len(cfg.Marketplaces) != 1 {
+		t.Fatalf("user Marketplace config = %#v, %v", cfg, err)
+	}
+}
+
+func TestInstallMarketplaceEndpointRejectsPolicyBeforeNetwork(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	requests := 0
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", &requests)
+	defer server.Close()
+	organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+	writeFile(t, organizationPath, "apiVersion: agent-marketplace/v2\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	withWorkingDir(t, t.TempDir())
+
+	_, err := executeCommand("install", server.URL)
+	if err == nil || !strings.Contains(err.Error(), "rejected before network access") {
+		t.Fatalf("policy error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("blocked registration made %d request(s)", requests)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("blocked registration wrote user config, stat error = %v", err)
+	}
+}
+
+func TestInstallMarketplaceEndpointRejectsCanonicalURLMismatch(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	server := newMarketplaceEndpointServer(t, "marketplace-instance", "https://canonical.example", nil)
+	defer server.Close()
+	withWorkingDir(t, t.TempDir())
+
+	_, err := executeCommand("install", server.URL)
+	if err == nil || !strings.Contains(err.Error(), `reports canonical URL "https://canonical.example"`) {
+		t.Fatalf("canonical mismatch error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("canonical mismatch wrote user config, stat error = %v", err)
+	}
+}
+
+func TestInstallMarketplaceEndpointRejectsInvalidWellKnownWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		status int
+		body   string
+	}{
+		{name: "malformed JSON", status: http.StatusOK, body: "{"},
+		{name: "missing identity", status: http.StatusOK, body: `{}`},
+		{name: "server error", status: http.StatusInternalServerError, body: `unavailable`},
+		{name: "path-prefixed endpoint", path: "/services/marketplace", status: http.StatusOK, body: "{"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			withWorkingDir(t, t.TempDir())
+
+			_, err := executeCommand("install", server.URL+tc.path)
+			if err == nil || !strings.Contains(err.Error(), "well-known document") {
+				t.Fatalf("invalid well-known error = %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("invalid well-known document wrote user config, stat error = %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallMarketplaceEndpointRejectsIdentityConflictsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name          string
+		configuredURL string
+		configuredID  string
+		serverID      string
+		want          string
+	}{
+		{name: "same URL different instance", configuredID: "old-instance", serverID: "new-instance", want: "now reports"},
+		{name: "same instance different URL", configuredURL: "https://other.example", configuredID: "marketplace-instance", serverID: "marketplace-instance", want: "migration must be explicit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			server := newMarketplaceEndpointServer(t, tc.serverID, "", nil)
+			defer server.Close()
+			configuredURL := tc.configuredURL
+			if configuredURL == "" {
+				configuredURL = server.URL
+			}
+			configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+			writeConfig(t, configPath, "marketplaces:\n  - url: "+configuredURL+"\n    instance_id: "+tc.configuredID)
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, t.TempDir())
+
+			_, err = executeCommand("install", server.URL)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("identity conflict error = %v", err)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("identity conflict changed config:\nbefore:\n%safter:\n%s", before, after)
+			}
+		})
+	}
+}
+
+func newMarketplaceEndpointServer(t *testing.T, instanceID, canonicalURL string, requests *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests != nil {
+			*requests++
+		}
+		if !strings.HasSuffix(r.URL.Path, "/.well-known/agent-marketplace.json") {
+			http.NotFound(w, r)
+			return
+		}
+		canonical := canonicalURL
+		if canonical == "" {
+			basePath := strings.TrimSuffix(r.URL.Path, "/.well-known/agent-marketplace.json")
+			canonical = "http://" + r.Host + basePath
+		}
+		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, canonical))
+	}))
+}
 
 func TestInstallCommandNormalizesMCPKindForMarketplace(t *testing.T) {
 	kind, ok, err := parseOptionalKind("mcp")
