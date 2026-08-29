@@ -61,6 +61,11 @@ export function installCommand(item: ResourceListItem, browserBase: string): str
   return locator ? `agent-marketplace install "${locator}"` : ''
 }
 
+export function marketplaceInstallCommand(canonicalUrl: string): string {
+  const canonical = safeCanonicalUrl(canonicalUrl)
+  return canonical ? `agent-marketplace install ${canonical}` : ''
+}
+
 /**
  * Hex characters kept after the algorithm prefix when a digest is shortened.
  * Twelve is enough to recognize a revision by eye while keeping a 71-character

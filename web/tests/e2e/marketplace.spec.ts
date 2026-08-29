@@ -41,6 +41,38 @@ test.describe('Marketplace browser discovery', () => {
     expect(detailStyle).toEqual(homepageStyle)
   })
 
+  test('identifies this Marketplace with its CLI install command', async ({ page }) => {
+    await page.goto('/')
+
+    await expect(page.getByRole('heading', { name: 'Install this Marketplace' })).toBeVisible()
+    await expect(page.locator('[data-testid="command-text"]')).toHaveText(`agent-marketplace install ${appURL}`)
+    const copyButton = page.getByRole('button', { name: 'Copy Marketplace install command' })
+    await expect(copyButton).toBeEnabled()
+
+    // The copy control must look clickable before it is hovered and must react
+    // when it is. This theme resolves bg-muted and bg-elevated to the same ink
+    // shade, so a hover fill can be perfectly valid CSS and still be invisible
+    // against the block behind it. Only comparing rendered colour catches that.
+    const styles = () => copyButton.evaluate((el) => {
+      const s = getComputedStyle(el)
+      return { bg: s.backgroundColor, color: s.color, cursor: s.cursor }
+    })
+    const blockBg = await page.locator('[data-testid="command-text"]').evaluate(el => getComputedStyle(el.parentElement as Element).backgroundColor)
+    const rest = await styles()
+    expect(rest.cursor).toBe('pointer')
+    expect(rest.bg).not.toBe(blockBg)
+
+    // The fill is transitioned, so it settles a frame after the pointer arrives.
+    await copyButton.hover()
+    await expect.poll(async () => (await styles()).bg).not.toBe(rest.bg)
+    const hovered = await styles()
+    expect(hovered.bg).not.toBe(blockBg)
+    expect(hovered.color).not.toBe(rest.color)
+
+    await copyButton.click()
+    await expect(page.getByRole('button', { name: 'Marketplace install command copied' })).toBeVisible()
+  })
+
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()

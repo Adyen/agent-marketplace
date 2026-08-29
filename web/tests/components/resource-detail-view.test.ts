@@ -4,10 +4,13 @@ import { describe, expect, it } from 'vitest'
 import ResourceDetailView from '../../app/components/ResourceDetailView.vue'
 
 import ResourceFingerprint from '../../app/components/ResourceFingerprint.vue'
+import CommandBlock from '../../app/components/CommandBlock.vue'
 
 const stubs = {
   // Rendered for real: it is derived from untrusted digest input.
   ResourceFingerprint,
+  // Rendered for real: it decides whether the command is shown at all.
+  CommandBlock,
   NuxtLink: defineComponent({ props: { to: { type: [String, Object], default: '' } }, setup(props, { attrs, slots }) { return () => h('a', { ...attrs, href: String(props.to) }, slots.default?.()) } }),
   UIcon: defineComponent({ setup: () => () => h('span') }),
   UBadge: defineComponent({ setup(_, { attrs, slots }) { return () => h('span', attrs, slots.default?.()) } }),
