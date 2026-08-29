@@ -278,18 +278,15 @@ function formatValue(value: unknown): string {
       <h2 id="acquisition-heading" class="text-lg font-semibold text-highlighted">Copy exact pin</h2>
       <p class="mt-2 text-sm leading-6 text-muted">The command and browser URL include this revision's content digest. Installation remains a local CLI action.</p>
       <div class="mt-4 grid gap-3">
-        <code v-if="commandAvailable" class="block break-all rounded-xl bg-muted px-4 py-3 font-mono text-sm text-highlighted">{{ command }}</code>
+        <CommandBlock :command="command" :label="`pinned CLI install command for ${name}`" :disabled="!commandAvailable" />
         <p v-if="installNotice" role="status" class="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">{{ installNotice }}</p>
         <div class="flex flex-wrap gap-2">
-          <UButton size="sm" color="primary" variant="soft" icon="i-lucide-terminal" :aria-label="`Copy pinned CLI install command for ${name}`" :disabled="!commandAvailable" @click="copy(command, 'command')">
-            {{ copied === 'command' ? 'Copied command' : 'Copy pinned command' }}
-          </UButton>
           <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-link" :aria-label="`Copy pinned browser URL for ${name}`" :disabled="!browserAvailable" @click="copy(browserUrl, 'url')">
             {{ copied === 'url' ? 'Copied URL' : 'Copy pinned URL' }}
           </UButton>
         </div>
-        <p v-if="(commandAvailable || browserAvailable) && copyError" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
-        <p class="sr-only" aria-live="polite">{{ copied === 'command' ? 'Pinned CLI install command copied.' : copied === 'url' ? 'Pinned browser URL copied.' : '' }}</p>
+        <p v-if="browserAvailable && copyError === 'url'" role="alert" class="text-sm text-error">Clipboard access failed. Copy the displayed value manually.</p>
+        <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Pinned browser URL copied.' : '' }}</p>
       </div>
     </section>
   </article>
