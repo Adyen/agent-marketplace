@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLocator, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
+import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, marketplaceInstallCommand, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLocator, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
 import type { ResourceAvailability } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
@@ -9,6 +9,11 @@ describe('copy-only resource actions', () => {
     expect(resourceLatestLocator(item, 'https://market.example')).toBe('https://market.example/s/source-team/skill/code%20review')
     expect(url).toBe('https://market.example/s/source-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
     expect(installCommand(item, 'https://market.example')).toBe(`agent-marketplace install "${url}"`)
+  })
+
+  it('builds an install command for this Marketplace endpoint', () => {
+    expect(marketplaceInstallCommand('https://market.example/')).toBe('agent-marketplace install https://market.example')
+    expect(marketplaceInstallCommand('https://market.example/path?token=secret')).toBe('')
   })
 
   it('does not generate a copy link for a source ID with an encoded slash', () => {

@@ -2,7 +2,7 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, SearchParams } from '~/types/marketplace'
 import { apiPath } from '~/lib/api'
-import { listAvailabilityCopy, safeCanonicalUrl } from '~/lib/presentation'
+import { listAvailabilityCopy, marketplaceInstallCommand, safeCanonicalUrl } from '~/lib/presentation'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
 
 const route = useRoute()
@@ -51,6 +51,7 @@ const currentPage = computed(() => Math.floor(searchParams.value.offset / search
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
 const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
+const marketplaceCommand = computed(() => marketplaceInstallCommand(metadata.value?.canonical_url ?? ''))
 const apiEndpoint = computed(() => apiPath(config.public.apiBase, '/search'))
 const hasFilters = computed(() => Boolean(searchParams.value.q || searchParams.value.kind || searchParams.value.source))
 
@@ -145,7 +146,22 @@ useHead({
             <span class="text-muted">Installation happens in your CLI.</span>
           </h1>
 
-          <form class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end" role="search" @submit.prevent="submitSearch">
+          <!-- Agent Marketplace speaks to many Marketplaces, so this instance
+               says once, in the shape of the command that adopts it, which one
+               it is. It sits with the hero rather than between the search
+               controls and the entries they filter. The heading deliberately
+               avoids the mono-uppercase field-label style used below it: the
+               block is a command to take, not a control to fill in. -->
+          <section v-if="marketplaceCommand" class="mt-4 max-w-3xl" aria-labelledby="marketplace-install-heading">
+            <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h2 id="marketplace-install-heading" class="text-sm font-semibold text-highlighted">Install this Marketplace</h2>
+              <p class="text-xs text-dimmed">Agent Marketplace reads many Marketplaces — this command adds this one.</p>
+            </div>
+
+            <CommandBlock :command="marketplaceCommand" label="Marketplace install command" class="mt-2" />
+          </section>
+
+          <form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end" role="search" @submit.prevent="submitSearch">
             <div class="min-w-0 flex-1">
               <label for="search-query" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Search</label>
               <UInput id="search-query" v-model="draft.q" size="md" icon="i-lucide-search" placeholder="code review, deploy, database" autocomplete="off" class="w-full" />
