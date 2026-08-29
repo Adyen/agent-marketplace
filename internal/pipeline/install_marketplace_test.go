@@ -189,14 +189,6 @@ func TestMarketplaceKindComparisonNormalizesMCPProtocolKind(t *testing.T) {
 	}
 }
 
-func TestMarketplaceConsentChecksCancellationBeforeMutation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := ctx.Err(); err == nil {
-		t.Fatal("expected canceled context")
-	}
-}
-
 func TestMarketplaceCollisionWorksWithoutConfiguredRegistries(t *testing.T) {
 	plan := &marketplace.PreparedInstall{
 		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review"},

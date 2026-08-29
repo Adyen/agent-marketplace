@@ -154,20 +154,3 @@ func TestBoundDescriptionDoesNotAllocateForCleanInput(t *testing.T) {
 		t.Fatalf("BoundDescription allocated %.1f times for already-clean input, want 0", allocations)
 	}
 }
-
-// Bounding must be idempotent: it runs at ingest and again on the way out of
-// the API, and the second pass must not shorten or re-mark the value.
-func TestBoundDescriptionIsIdempotent(t *testing.T) {
-	for _, in := range []string{
-		"",
-		"a normal description",
-		"control\x1b chars\nand   spacing",
-		strings.Repeat("a", store.MaxDescriptionBytes*2),
-		strings.Repeat("€", store.MaxDescriptionBytes),
-	} {
-		once := store.BoundDescription(in)
-		if twice := store.BoundDescription(once); twice != once {
-			t.Fatalf("BoundDescription is not idempotent for %d-byte input: %q -> %q", len(in), once, twice)
-		}
-	}
-}

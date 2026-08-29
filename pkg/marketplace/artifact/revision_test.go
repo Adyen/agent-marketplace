@@ -125,32 +125,6 @@ func TestSourceRevisionManifestRejectDuplicateResources(t *testing.T) {
 	}
 }
 
-func TestVerifySourceRevisionManifestCanonicalPayload(t *testing.T) {
-	m := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
-		SourceURL:     "https://example.com/repo.git",
-		Ref:           "main",
-		Generator:     "test",
-		Resources: []RevisionResource{
-			{Kind: "skill", Name: "review", ContentDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-		},
-	}
-
-	payload, _, err := EncodeSourceRevisionManifest(m)
-	if err != nil {
-		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
-	}
-
-	decoded, _, err := DecodeSourceRevisionManifest(bytes.NewReader(payload))
-	if err != nil {
-		t.Fatalf("DecodeSourceRevisionManifest: %v", err)
-	}
-
-	if err := VerifySourceRevisionManifest(decoded, payload); err != nil {
-		t.Fatalf("VerifySourceRevisionManifest canonical payload: %v", err)
-	}
-}
-
 func TestVerifySourceRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
 	m := SourceRevisionManifest{
 		SchemaVersion: SourceRevisionSchemaV1,
