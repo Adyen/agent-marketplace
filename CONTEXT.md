@@ -56,6 +56,10 @@ _Avoid_: Registry, registry service
 The canonical HTTP API location of one Marketplace, identified by a stable Marketplace instance ID.
 _Avoid_: Source origin, Marketplace alias
 
+**Marketplace endpoint registration**:
+A consumer configuration record that makes a Marketplace endpoint available for discovery without selecting any resource.
+_Avoid_: Marketplace installation, resource pin
+
 **Source repository**:
 A Git repository that remains the publishing source of truth for resources indexed by a Marketplace.
 _Avoid_: Marketplace, artifact store

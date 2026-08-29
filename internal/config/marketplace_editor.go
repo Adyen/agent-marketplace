@@ -428,7 +428,14 @@ func ensureMarketplaceEntryInConfig(configPath string, entry MarketplaceEntry) e
 	}
 	var match *yaml.Node
 	for _, candidate := range entries {
-		if candidate.canonicalURL != canonicalURL || candidate.entry.InstanceID != entry.InstanceID {
+		sameURL := candidate.canonicalURL == canonicalURL
+		sameInstance := candidate.entry.InstanceID == entry.InstanceID
+		switch {
+		case sameURL && !sameInstance:
+			return fmt.Errorf("config %q already assigns Marketplace URL %q to instance_id %q", configPath, canonicalURL, candidate.entry.InstanceID)
+		case sameInstance && !sameURL:
+			return fmt.Errorf("config %q already assigns Marketplace instance_id %q to URL %q", configPath, entry.InstanceID, candidate.canonicalURL)
+		case !sameURL:
 			continue
 		}
 		if match != nil {

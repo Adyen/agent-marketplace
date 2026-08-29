@@ -24,20 +24,22 @@ import (
 
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
-	RepoRoot      string
-	Args          []string // resource name args (0 or 1)
-	Tag           string   // --tag flag
-	InstallAll    bool     // --all flag
-	Registry      string   // --registry filter for --all
-	Kind          ir.ResourceKind
-	HasKind       bool
-	Scope         Scope
-	FromURL       string // --from flag: ad-hoc registry URL
-	FromRef       string // --ref flag: git ref for --from
-	FromPath      string // --path flag: subdirectory for --from
-	InstalledName string // --as for Marketplace installs
-	AcceptRisk    bool   // --accept-risk/--yes for Marketplace installs
-	Marketplace   string // --marketplace alias or endpoint selector
+	RepoRoot       string
+	Args           []string // resource name args (0 or 1)
+	Tag            string   // --tag flag
+	InstallAll     bool     // --all flag
+	Registry       string   // --registry filter for --all
+	Kind           ir.ResourceKind
+	HasKind        bool
+	Scope          Scope
+	ScopeSpecified bool
+	FromURL        string // --from flag: ad-hoc registry URL
+	FromRef        string // --ref flag: git ref for --from
+	FromPath       string // --path flag: subdirectory for --from
+	InstalledName  string // --as for Marketplace installs
+	AcceptRisk     bool   // --accept-risk/--yes for Marketplace installs
+	Marketplace    string // --marketplace alias or endpoint selector
+	CatalogOption  []catalog.LoadOption
 
 	// LocalConfigDir overrides the directory where the local config
 	// (config.local.yaml) is written. Set by the Install function when
@@ -69,11 +71,14 @@ func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
 
 // InstallResult holds the outcome of an install operation.
 type InstallResult struct {
-	Installed           []string
-	IsCollection        bool
-	CollectionLabel     string
-	RequirementWarnings []error
-	MarketplacePreview  string
+	Installed                    []string
+	IsCollection                 bool
+	CollectionLabel              string
+	RequirementWarnings          []error
+	MarketplacePreview           string
+	MarketplaceEndpoint          string
+	MarketplaceConfigPath        string
+	MarketplaceAlreadyConfigured bool
 }
 
 type resourceIdentity struct {
@@ -84,6 +89,11 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and single-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	marketplaceEndpointRequested := isMarketplaceEndpointRegistration(opts)
+	if marketplaceEndpointRequested && !opts.ScopeSpecified {
+		opts.Scope = ScopeUser
+	}
+
 	tel := telemetry.TelemetryFromContext(ctx)
 	var installSpan telemetry.Span
 	if tel != nil {
@@ -103,7 +113,8 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
-	marketplaceInstallRequested := isMarketplaceInstall(opts)
+	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
+	marketplaceMutationRequested := marketplaceInstallRequested || marketplaceEndpointRequested
 
 	// Guard: when the resolved repo root is the home directory and scope is
 	// repo (default), the project config path collapses into the global
@@ -143,7 +154,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// genuinely absent. A non-NotExist stat error (permission, I/O)
 			// must be surfaced instead of clobbering an existing config.
 			if _, statErr := os.Stat(cwdProjectConfig); errors.Is(statErr, os.ErrNotExist) {
-				if marketplaceInstallRequested {
+				if marketplaceMutationRequested {
 					repoRoot = filepath.Clean(cwd)
 					configPath = config.ProjectConfigPath(repoRoot)
 					opts.RepoRoot = repoRoot
@@ -220,6 +231,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, errors.Join(ec.Errors...)
 	}
 
+	if marketplaceEndpointRequested {
+		return registerMarketplaceEndpoint(ctx, opts, configPath, &ec)
+	}
 	if marketplaceInstallRequested {
 		return installMarketplace(ctx, opts, configPath, &ec)
 	}

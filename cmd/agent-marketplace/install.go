@@ -29,8 +29,8 @@ func newInstallCmd() *cobra.Command {
 	var marketplace string
 
 	cmd := &cobra.Command{
-		Use:   "install [resource-name]",
-		Short: "Add a resource or tag to the repo config and sync it",
+		Use:   "install [resource-name|marketplace-endpoint]",
+		Short: "Install a resource or configure a Marketplace endpoint",
 		Args: func(cmd *cobra.Command, args []string) error {
 			tag = strings.TrimSpace(tag)
 			registry = strings.TrimSpace(registry)
@@ -79,7 +79,7 @@ func newInstallCmd() *cobra.Command {
 			case marketplace != "" && len(args) != 1:
 				return fmt.Errorf("--marketplace accepts exactly one Marketplace resource locator")
 			case tag == "" && len(args) != 1 && marketplace == "":
-				return fmt.Errorf("accepts exactly one skill name argument, --tag, --all, or --from")
+				return fmt.Errorf("accepts exactly one resource name or Marketplace endpoint, --tag, --all, or --from")
 			case len(args) == 1 && looksLikeMarketplaceLocator(args[0]):
 				return nil
 			case marketplace != "" && len(args) == 1:
@@ -99,14 +99,14 @@ func newInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runInstall(cmd.Context(), cmd.OutOrStdout(), args, tag, installAll, registry, scope, kindFilter, fromURL, fromRef, fromPath, installedName, acceptRisk || assumeYes, marketplace)
+			return runInstall(cmd.Context(), cmd.OutOrStdout(), args, tag, installAll, registry, scope, cmd.Flags().Changed("scope"), kindFilter, fromURL, fromRef, fromPath, installedName, acceptRisk || assumeYes, marketplace)
 		},
 	}
 
 	cmd.Flags().StringVar(&tag, "tag", "", "Install all skills matching a tag")
 	cmd.Flags().BoolVar(&installAll, "all", false, "Install every discovered skill from the configured registries")
 	cmd.Flags().StringVar(&registry, "registry", "", "Limit --all to one configured registry URL")
-	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
+	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo, user, or local (Marketplace endpoints default to user; resources default to repo)")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, or mcp")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Install directly from a registry URL; skill name is inferred from web URLs pointing to a specific resource")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
@@ -119,7 +119,7 @@ func newInstallCmd() *cobra.Command {
 	return cmd
 }
 
-func runInstall(ctx context.Context, out io.Writer, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
+func runInstall(ctx context.Context, out io.Writer, args []string, tag string, installAll bool, registry string, scope pipeline.Scope, scopeSpecified bool, kindFilter, fromURL, fromRef, fromPath, installedName string, acceptRisk bool, marketplace string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
@@ -135,6 +135,7 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 		Kind:                kind,
 		HasKind:             hasKind,
 		Scope:               scope,
+		ScopeSpecified:      scopeSpecified,
 		FromURL:             fromURL,
 		FromRef:             fromRef,
 		FromPath:            fromPath,
@@ -149,6 +150,15 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 			if _, writeErr := fmt.Fprintln(out, consentErr.Preview); writeErr != nil {
 				return writeErr
 			}
+		}
+		return err
+	}
+
+	if result.MarketplaceEndpoint != "" {
+		if result.MarketplaceAlreadyConfigured {
+			_, err = fmt.Fprintf(out, "Marketplace %s is already configured in %s\n", result.MarketplaceEndpoint, result.MarketplaceConfigPath)
+		} else {
+			_, err = fmt.Fprintf(out, "Added Marketplace %s to %s\n", result.MarketplaceEndpoint, result.MarketplaceConfigPath)
 		}
 		return err
 	}
@@ -179,7 +189,7 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 // literal resource name.
 func looksLikeRegistryURL(arg string) bool {
 	parsed := pipeline.ParseGitWebURL(arg)
-	return parsed.Ok
+	return parsed.Ok && parsed.Ref != ""
 }
 
 func looksLikeMarketplaceLocator(arg string) bool {
