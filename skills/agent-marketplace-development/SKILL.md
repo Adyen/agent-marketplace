@@ -422,6 +422,33 @@ snap := readSnapshot(repoRoot, homeDir, catalogLoadCached)
 Never let tests reach the real `~/.agents/` or `~/.cache/` — always
 mock via the swap helpers.
 
+### The organization layer is already isolated — don't re-arrange it
+
+`testutil.IsolatedHome()` covers `~`, but the organization layer sits at
+a fixed absolute path (`/etc/agent-marketplace/config.yaml`) that no
+`HOME` override reaches. So under `go test` an unset override resolves
+to a nonexistent path instead of the real file
+(`config.organizationConfigPath`), and a test that loads effective
+config sees an absent organization layer.
+
+Do not reproduce this per package. It used to be a per-package chore,
+which meant one omission was enough: a test reaching the real file
+inherited that machine's registries and cloned them over the network,
+presenting as a ten-minute hang rather than a failure.
+
+To exercise an organization config, name one explicitly:
+
+```go
+config.SetTestOrganizationConfigPath(t, orgPath)       // package-level, restored on cleanup
+config.LoadEffective(ctx, config.LoadEffectiveOptions{ // or per call
+    OrganizationPath: orgPath,
+})
+```
+
+E2E is separate: it drives the built binary rather than a test binary,
+so the sandbox points it at its own `etc/` through
+`AGENT_MARKETPLACE_V3_ORG_CONFIG` under the `e2e` build tag.
+
 ## Debugging Recipes
 
 ### "My toggle doesn't update the UI"
