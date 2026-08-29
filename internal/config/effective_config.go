@@ -44,14 +44,32 @@ func OrganizationConfigPath() string {
 	return organizationConfigPath("")
 }
 
+// unsetTestOrganizationConfigPath stands in for the organization layer when a
+// test binary never chose a path. It names a file no test creates, so the
+// layer reads as absent instead of as whatever the machine happens to have.
+var unsetTestOrganizationConfigPath = filepath.Join(os.TempDir(), "agent-marketplace-tests-must-not-read-the-real-organization-config.yaml")
+
 // organizationConfigPath returns the fixed organization config path, honoring
 // the explicit override and the test-only package-level override.
+//
+// Under `go test` an unset override resolves to a path that does not exist
+// rather than to the real file. The organization layer lives at an absolute
+// path outside HOME, so isolating HOME does not isolate it, and a test that
+// reaches it stops testing the code and starts testing the developer's
+// machine: it inherits real registries and fetches them over the network.
+// Defaulting to the real file made that the reward for forgetting to opt out,
+// which is the wrong way round, and every package pays for one omission.
+// Tests that mean to exercise an organization config still name one through
+// SetTestOrganizationConfigPath or LoadEffectiveOptions.OrganizationPath.
 func organizationConfigPath(override string) string {
 	if override != "" {
 		return override
 	}
 	if testOrganizationConfigPath != "" {
 		return testOrganizationConfigPath
+	}
+	if testing.Testing() {
+		return unsetTestOrganizationConfigPath
 	}
 	return defaultOrganizationConfigPath
 }
