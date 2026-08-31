@@ -29,11 +29,15 @@ Non-raw evidence is always terminal-sanitized, credential-redacted, rescanned, b
 
 `exploratory-supplement.v1.json` is the additive handoff for the bounded exploratory agent. It is bound to a deterministic results hash, sanitizes advisory text, may request additional optional flows, and cannot contain deterministic status fields or override required outcomes.
 
+## Controlled detector fixtures
+
+Fixture-only sessions use the selected `node-pty` transport with the same versioned wrapper boundary and direct `@xterm/headless` product-cell rendering. Ten deliberately broken fixtures prove blank frame, real right-edge clipping, hang timeout, control injection, unexpected exit, leaked descendant, panic, product restoration, returned-error, and SIGKILL classifications. Product bytes and cells are evaluated before harness recovery; owned-PTY reset bytes, lifecycle probes, and complete process cleanup are evaluated separately.
+
 Product-flow orchestration, the release-equivalent binary container, and baseline execution land in later TUI-QA-02 stack layers.
 
 ## Driver decision
 
-The selected driver is `@microsoft/tui-test@0.0.4` (MIT, published 2026-04-04). Its `node-pty` boundary and `@xterm/headless` cell model provide semantic locators, terminal cells, resize, keyboard, mouse, signal, and raw trace capabilities in one adapter. `node-pty@1.2.0-beta.11` is a direct exact dependency rather than an optional transitive dependency, so installation cannot succeed while silently omitting the PTY backend. Both packages exceed the repository's seven-day minimum release age.
+The selected driver is `@microsoft/tui-test@0.0.4` (MIT, published 2026-04-04). Its `node-pty` boundary and `@xterm/headless` cell model provide semantic locators, terminal cells, resize, keyboard, mouse, signal, and raw trace capabilities in one adapter. `node-pty@1.2.0-beta.11` is a direct exact dependency rather than an optional transitive dependency, so installation cannot succeed while silently omitting the PTY backend. `@xterm/headless@6.0.0` is also direct and exact for fixture-only product-cell reconstruction. All selected versions exceed the repository's seven-day minimum release age.
 
 A byte-oriented Go PTY/expect implementation was rejected for this layer because it would require building and maintaining a second terminal emulator or reducing assertions to raw byte matching. Raw bytes remain evidence, but the workbench also needs terminal-cell semantics.
 
