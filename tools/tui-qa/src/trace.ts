@@ -1,7 +1,7 @@
 import { TARGET_EXIT_BOUNDARY_VERSION } from "./protocol.js";
 
 const ESC = String.fromCharCode(27);
-const TARGET_EXIT_BOUNDARY = /\nAM_TUI_QA_TARGET_EXIT_BOUNDARY version=(\d+) code=(?:null|-?\d+) signal=(?:none|[A-Z0-9]+)\n/g;
+const TARGET_EXIT_BOUNDARY = /\r?\nAM_TUI_QA_TARGET_EXIT_BOUNDARY version=(\d+) code=(?:null|-?\d+) signal=(?:none|[A-Z0-9]+)\r?\n/g;
 const DEC_MODE = new RegExp(`${ESC}\\[\\?([0-9]+(?:;[0-9]+)*)([hl])`, "g");
 
 export interface TraceSegments {
