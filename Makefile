@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BINARY := agent-marketplace
 RELEASE_BINARY := $(BINARY)-$(VERSION)
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+LDFLAGS := -ldflags "-X main.version=$(VERSION) -X github.com/Adyen/agent-marketplace/internal/telemetry.BuildVersion=$(VERSION)"
 GO := go
 CMD := ./cmd/agent-marketplace
 
@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe telemetry-up telemetry-down telemetry-smoke $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -60,15 +60,15 @@ version:
 # Cross-compilation targets
 darwin-arm64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-arm64 $(CMD)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-arm64 $(CMD)
 
 darwin-amd64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-amd64 $(CMD)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-darwin-amd64 $(CMD)
 
 linux-amd64:
 	@mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(RELEASE_EXTRA_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-amd64 $(CMD)
 
 release: $(PLATFORMS)
 
@@ -79,6 +79,7 @@ release: $(PLATFORMS)
 RELEASE_TELEMETRY_ENDPOINT ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT)
 RELEASE_TELEMETRY_RETENTION_URL ?= $(AGENT_MARKETPLACE_RELEASE_TELEMETRY_RETENTION_URL)
 RELEASE_EXTRA_LDFLAGS := -X main.version=$(VERSION) \
+	-X github.com/Adyen/agent-marketplace/internal/telemetry.BuildVersion=$(VERSION) \
 	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectEndpoint=$(RELEASE_TELEMETRY_ENDPOINT) \
 	-X github.com/Adyen/agent-marketplace/internal/telemetry.DefaultProjectRetentionURL=$(RELEASE_TELEMETRY_RETENTION_URL)
 
@@ -143,3 +144,17 @@ e2e:
 			-v $$(pwd)/e2e/e2e-report.json:/src/e2e/e2e-report.json \
 			$(E2E_IMAGE); \
 	fi
+
+TELEMETRY_COMPOSE := docker compose -f compose.telemetry.yaml
+
+telemetry-up:
+	$(TELEMETRY_COMPOSE) up --build -d receiver prometheus grafana
+	@echo "Receiver:   http://127.0.0.1:$${TELEMETRY_RECEIVER_PORT:-4318}"
+	@echo "Prometheus: http://127.0.0.1:$${TELEMETRY_PROMETHEUS_PORT:-9090}"
+	@echo "Grafana:    http://127.0.0.1:$${TELEMETRY_GRAFANA_PORT:-3000}/d/agent-marketplace-telemetry"
+
+telemetry-down:
+	$(TELEMETRY_COMPOSE) down --remove-orphans
+
+telemetry-smoke:
+	./scripts/telemetry-stack-smoke.sh

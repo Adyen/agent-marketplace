@@ -548,7 +548,7 @@ func TestTelemetryReceiverCommandRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("receiver --help failed: %v\n%s", err, output)
 	}
-	for _, flag := range []string{"--listen", "--storage-dir", "--max-installations"} {
+	for _, flag := range []string{"--listen", "--storage-dir", "--max-installations", "--max-series", "--max-request-ids"} {
 		if !strings.Contains(output, flag) {
 			t.Fatalf("receiver help missing %q flag:\n%s", flag, output)
 		}

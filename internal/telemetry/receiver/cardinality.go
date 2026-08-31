@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -106,6 +107,24 @@ func (c *cardinality) Remove(id string) error {
 	return nil
 }
 
+func (c *cardinality) Replace(ids map[string]struct{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(ids) > c.max {
+		return fmt.Errorf("cardinality budget contains %d installations, maximum is %d", len(ids), c.max)
+	}
+	previous := c.seen
+	c.seen = make(map[string]struct{}, len(ids))
+	for id := range ids {
+		c.seen[id] = struct{}{}
+	}
+	if err := c.saveLocked(); err != nil {
+		c.seen = previous
+		return err
+	}
+	return nil
+}
+
 // Count returns the current number of unique installation IDs.
 func (c *cardinality) Count() int {
 	c.mu.RLock()
@@ -122,6 +141,7 @@ func (c *cardinality) saveLocked() error {
 	for id := range c.seen {
 		ids = append(ids, id)
 	}
+	sort.Strings(ids)
 
 	path := filepath.Join(c.dir, budgetFileName)
 	tmp := path + ".tmp"
@@ -131,11 +151,31 @@ func (c *cardinality) saveLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshal cardinality budget file: %w", err)
 	}
-	if err := os.WriteFile(tmp, data, recordFilePerm); err != nil {
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, recordFilePerm)
+	if err != nil {
+		return fmt.Errorf("open cardinality budget file: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("write cardinality budget file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync cardinality budget file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close cardinality budget file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("rename cardinality budget file: %w", err)
+	}
+	dir, err := os.Open(c.dir)
+	if err != nil {
+		return fmt.Errorf("open cardinality directory: %w", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync cardinality directory: %w", err)
 	}
 	return nil
 }

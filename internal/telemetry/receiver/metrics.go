@@ -29,6 +29,7 @@ var (
 		string(tmcfg.ResourceAttrCommandName): {}, string(tmcfg.ResourceAttrHarnesses): {},
 		string(tmcfg.ResourceAttrManaged): {}, string(tmcfg.ResourceAttrOutcomeCode): {},
 	}
+	prometheusLabelEscaper = strings.NewReplacer(`\`, `\\`, "\n", `\n`, `"`, `\"`)
 )
 
 var activeInstallationWindows = []struct {
@@ -305,12 +306,17 @@ func (s *Server) recordRequest(result, reason string) {
 
 func (s *Server) rejectMetrics(w http.ResponseWriter, status int, message, reason string) {
 	s.recordRequest("rejected", reason)
+	s.cfg.Logger.Warn("telemetry request rejected", "status", status, "reason", reason)
 	http.Error(w, message, status)
 }
 
 func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.maintainRetention(); err != nil {
+		http.Error(w, "retention maintenance failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -336,7 +342,7 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 		requests[labels] = count
 	}
 	activeInstallations := make(map[string]int64, len(activeInstallationWindows))
-	now := time.Now().UTC()
+	now := s.cfg.Now().UTC()
 	for _, seenAt := range s.installationSeen {
 		for _, window := range activeInstallationWindows {
 			if !seenAt.Before(now.Add(-window.duration)) {
@@ -508,7 +514,7 @@ func labelSet(labels ...[2]string) string {
 }
 
 func escapeLabelValue(value string) string {
-	return strings.NewReplacer(`\`, `\\`, "\n", `\n`, `"`, `\"`).Replace(value)
+	return prometheusLabelEscaper.Replace(value)
 }
 
 func writeMetricHeader(w http.ResponseWriter, name, help, metricType string) {

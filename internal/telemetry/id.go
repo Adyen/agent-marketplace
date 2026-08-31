@@ -56,7 +56,7 @@ func LoadInstallationID(path string) (string, error) {
 		return "", fmt.Errorf("read installation id: %w", err)
 	}
 
-	id, err := generateInstallationID()
+	id, err := generateRandomID()
 	if err != nil {
 		slog.Error("failed to generate installation id", "path", path, "error", err)
 		return "", err
@@ -168,10 +168,10 @@ func ResetInstallationID(path string) error {
 	return nil
 }
 
-func generateInstallationID() (string, error) {
+func generateRandomID() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate installation id: %w", err)
+		return "", fmt.Errorf("generate random id: %w", err)
 	}
 	return hex.EncodeToString(b), nil
 }

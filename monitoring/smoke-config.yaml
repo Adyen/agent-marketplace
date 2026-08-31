@@ -1,0 +1,8 @@
+apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+telemetry:
+  level: basic
+  endpoint: http://receiver:4318
+  retention_policy: https://example.invalid/telemetry-retention
+  allow_insecure: true

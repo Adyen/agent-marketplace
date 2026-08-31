@@ -1,15 +1,16 @@
 package telemetry
 
-// Release-configurable defaults for the project telemetry endpoint. Core logic
-// intentionally leaves the actual values empty so release configuration can set
-// them via -X linker flags without editing this package.
+// Release-configurable values are empty in source and injected with linker
+// flags by release builds.
 var (
 	DefaultProjectEndpoint     = ""
 	DefaultProjectRetentionURL = ""
+	BuildVersion               = ""
 )
 
 const (
 	DefaultInstallationIDSubpath = "telemetry/installation-id"
+	RequestIDHeader              = "X-Agent-Marketplace-Request-ID"
 
 	// DefaultInstallationIDCardinalityBudget is the maximum number of unique
 	// installation.id values the community telemetry receiver accepts. It is

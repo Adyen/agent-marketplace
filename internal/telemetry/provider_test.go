@@ -21,6 +21,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestCLIVersionPrefersInjectedBuildVersion(t *testing.T) {
+	previous := BuildVersion
+	BuildVersion = "v9.8.7"
+	t.Cleanup(func() { BuildVersion = previous })
+	if got := cliVersion(); got != "v9.8.7" {
+		t.Fatalf("cli version = %q", got)
+	}
+}
+
 func TestNewDeliversMetricsAndTraces(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)

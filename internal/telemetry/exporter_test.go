@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -556,6 +557,42 @@ func TestQueueTransportClassifiesHTTPFailures(t *testing.T) {
 				t.Fatal("response body was not closed")
 			}
 		})
+	}
+}
+
+func TestQueueTransportPreservesRequestID(t *testing.T) {
+	root := t.TempDir()
+	q := NewQueue(root)
+	var sentID string
+	transport := &queueTransport{
+		inner: exporterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			sentID = req.Header.Get(RequestIDHeader)
+			return nil, errors.New("response lost")
+		}),
+		queue: q, route: "primary", signal: queueSubdirMetrics,
+	}
+	_, err := transport.RoundTrip(httptest.NewRequest(http.MethodPost, "http://example.test/v1/metrics", strings.NewReader("payload")))
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+	if len(sentID) != 64 {
+		t.Fatalf("request id length = %d, want 64", len(sentID))
+	}
+	entries, err := os.ReadDir(filepath.Join(root, queueSubdirMetrics))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("queued entries = %d, err = %v", len(entries), err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, queueSubdirMetrics, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	queuedHeader := http.Header(envelope.Headers).Get(RequestIDHeader)
+	if envelope.RequestID != sentID || queuedHeader != sentID {
+		t.Fatalf("queued request id = %q, header = %q, want %q", envelope.RequestID, queuedHeader, sentID)
 	}
 }
 

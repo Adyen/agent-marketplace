@@ -551,6 +551,9 @@ func buildResource(ctx context.Context, installationID, schemaVersion string) (*
 }
 
 func cliVersion() string {
+	if BuildVersion != "" {
+		return BuildVersion
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "dev"

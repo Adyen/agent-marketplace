@@ -2,11 +2,14 @@ package receiver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -28,7 +31,10 @@ import (
 // binds to when no other address is configured.
 const DefaultListenAddr = "localhost:4318"
 
-const DefaultPrometheusSeriesBudget = 10000
+const (
+	DefaultPrometheusSeriesBudget = 10000
+	DefaultRequestIDBudget        = 1000000
+)
 
 // Config is the receiver runtime configuration. All fields have sensible
 // defaults except StorageDir, which is required.
@@ -37,7 +43,9 @@ type Config struct {
 	StorageDir       string
 	MaxInstallations int
 	MaxSeries        int
+	MaxRequestIDs    int
 	Logger           *slog.Logger
+	Now              func() time.Time
 }
 
 // Server is a minimal OTLP/HTTP metrics receiver for community telemetry.
@@ -58,10 +66,17 @@ type Server struct {
 	durationHistograms map[durationLabels]*aggregatedHistogram
 	requestCounts      map[requestLabels]int64
 	installationSeen   map[string]time.Time
+	requestDigests     map[string]requestReceipt
+	retentionDay       string
 	totalMetrics       int64
 	processMetrics     int64
 
 	ln net.Listener
+}
+
+type requestReceipt struct {
+	digest     string
+	receivedAt time.Time
 }
 
 type parsedRequest struct {
@@ -73,6 +88,45 @@ type parsedRequest struct {
 	invocations    map[invocationLabels]int64
 	durations      map[durationLabels]*aggregatedHistogram
 	metricCount    int64
+}
+
+func newRequestRecord(p *parsedRequest, receivedAt time.Time, requestID, digest string) *requestRecord {
+	record := &requestRecord{
+		ReceivedAt: receivedAt, InstallationID: p.installationID, SchemaVersion: p.schemaVersion,
+		Commands: p.commands, Harnesses: p.harnesses, MetricCount: p.metricCount, RequestID: requestID, PayloadSHA256: digest,
+		Resource: &storedResource{CLIVersion: p.resourceLabels.cliVersion, OSName: p.resourceLabels.osName, Arch: p.resourceLabels.arch},
+	}
+	for _, labels := range sortedInvocationLabels(p.invocations) {
+		record.Invocations = append(record.Invocations, storedInvocation{
+			Arch: labels.arch, CLIVersion: labels.cliVersion, CommandName: labels.commandName,
+			Managed: labels.managed, OSName: labels.osName, OutcomeCode: labels.outcomeCode, Count: p.invocations[labels],
+		})
+	}
+	for _, labels := range sortedDurationLabelsMap(p.durations) {
+		histogram := p.durations[labels]
+		record.Durations = append(record.Durations, storedDuration{
+			CommandName: labels.commandName, OutcomeCode: labels.outcomeCode,
+			Buckets: append([]uint64(nil), histogram.buckets...), Count: histogram.count, Sum: histogram.sum,
+		})
+	}
+	return record
+}
+
+func sortedDurationLabelsMap(histograms map[durationLabels]*aggregatedHistogram) []durationLabels {
+	values := make(map[durationLabels]aggregatedHistogram, len(histograms))
+	for labels, histogram := range histograms {
+		values[labels] = *histogram
+	}
+	return sortedDurationLabels(values)
+}
+
+func newServerState(cfg Config, store *storage, budget *cardinality) *Server {
+	return &Server{
+		cfg: cfg, storage: store, budget: budget,
+		commandCounts: make(map[string]int64), harnessCounts: make(map[string]int64), processHarnesses: make(map[string]int64),
+		invocationCounts: make(map[invocationLabels]int64), durationHistograms: make(map[durationLabels]*aggregatedHistogram),
+		requestCounts: make(map[requestLabels]int64), installationSeen: make(map[string]time.Time), requestDigests: make(map[string]requestReceipt),
+	}
 }
 
 // DefaultStorageDir returns the default receiver storage directory based on
@@ -104,22 +158,17 @@ func New(cfg Config) (*Server, error) {
 	if cfg.MaxSeries <= 0 {
 		cfg.MaxSeries = DefaultPrometheusSeriesBudget
 	}
+	if cfg.MaxRequestIDs <= 0 {
+		cfg.MaxRequestIDs = DefaultRequestIDBudget
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-
-	s := &Server{
-		cfg:                cfg,
-		storage:            newStorage(cfg.StorageDir),
-		budget:             newCardinality(cfg.StorageDir, cfg.MaxInstallations),
-		commandCounts:      make(map[string]int64),
-		harnessCounts:      make(map[string]int64),
-		processHarnesses:   make(map[string]int64),
-		invocationCounts:   make(map[invocationLabels]int64),
-		durationHistograms: make(map[durationLabels]*aggregatedHistogram),
-		requestCounts:      make(map[requestLabels]int64),
-		installationSeen:   make(map[string]time.Time),
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
+
+	s := newServerState(cfg, newStorage(cfg.StorageDir), newCardinality(cfg.StorageDir, cfg.MaxInstallations))
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("/v1/metrics", s.handleMetrics)
@@ -135,14 +184,27 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.lease = lease
-	if err := s.budget.Load(); err != nil {
+	if err := s.storage.prune(cfg.Now()); err != nil {
 		_ = s.Close()
-		return nil, fmt.Errorf("load cardinality budget: %w", err)
+		return nil, fmt.Errorf("prune telemetry records: %w", err)
 	}
 	if err := s.storage.load(s.restoreRecord); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("load telemetry records: %w", err)
 	}
+	if used := s.prometheusSeriesUsedLocked(); used > cfg.MaxSeries {
+		_ = s.Close()
+		return nil, fmt.Errorf("retained prometheus series %d exceed configured maximum %d", used, cfg.MaxSeries)
+	}
+	installations := make(map[string]struct{}, len(s.installationSeen))
+	for id := range s.installationSeen {
+		installations[id] = struct{}{}
+	}
+	if err := s.budget.Replace(installations); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("reconcile cardinality budget: %w", err)
+	}
+	s.retentionDay = cfg.Now().UTC().Format("2006-01-02")
 
 	return s, nil
 }
@@ -155,6 +217,49 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) Close() error {
 	return s.lease.Close()
+}
+
+func (s *Server) maintainRetention() error {
+	s.ingestMu.Lock()
+	defer s.ingestMu.Unlock()
+	return s.maintainRetentionLocked()
+}
+
+func (s *Server) maintainRetentionLocked() error {
+	now := s.cfg.Now().UTC()
+	day := now.Format("2006-01-02")
+	if day == s.retentionDay {
+		return nil
+	}
+	if err := s.storage.prune(now); err != nil {
+		return err
+	}
+	cutoff := retentionCutoff(now)
+	s.mu.RLock()
+	installations := make(map[string]struct{}, len(s.installationSeen))
+	for id, seenAt := range s.installationSeen {
+		if !seenAt.Before(cutoff) {
+			installations[id] = struct{}{}
+		}
+	}
+	s.mu.RUnlock()
+	if err := s.budget.Replace(installations); err != nil {
+		return err
+	}
+	for id, receipt := range s.requestDigests {
+		if receipt.receivedAt.Before(cutoff) {
+			delete(s.requestDigests, id)
+		}
+	}
+	s.mu.Lock()
+	for id, seenAt := range s.installationSeen {
+		if seenAt.Before(cutoff) {
+			delete(s.installationSeen, id)
+		}
+	}
+	s.mu.Unlock()
+	s.retentionDay = day
+	return nil
 }
 
 // Start binds the configured address and serves until ctx is cancelled. It
@@ -230,9 +335,38 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		s.rejectMetrics(w, http.StatusBadRequest, err.Error(), "invalid_payload")
 		return
 	}
+	requestIDs := r.Header.Values(telemetry.RequestIDHeader)
+	if len(requestIDs) > 1 {
+		s.rejectMetrics(w, http.StatusBadRequest, "multiple request ids", "request_id")
+		return
+	}
+	requestID := r.Header.Get(telemetry.RequestIDHeader)
+	if requestID != "" && !installationIDPattern.MatchString(requestID) {
+		s.rejectMetrics(w, http.StatusBadRequest, "invalid request id", "request_id")
+		return
+	}
+	digestBytes := sha256.Sum256(body)
+	digest := hex.EncodeToString(digestBytes[:])
 
 	s.ingestMu.Lock()
 	defer s.ingestMu.Unlock()
+	if err := s.maintainRetentionLocked(); err != nil {
+		s.rejectMetrics(w, http.StatusInternalServerError, "retention maintenance failed", "retention")
+		return
+	}
+	if previous, exists := s.requestDigests[requestID]; requestID != "" && exists {
+		if previous.digest != digest {
+			s.rejectMetrics(w, http.StatusConflict, "request id payload mismatch", "request_id_conflict")
+			return
+		}
+		s.recordRequest("duplicate", "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if requestID != "" && len(s.requestDigests) >= s.cfg.MaxRequestIDs {
+		s.rejectMetrics(w, http.StatusTooManyRequests, "request id budget exceeded", "request_id_budget")
+		return
+	}
 	if s.wouldExceedSeriesBudget(parsed) {
 		s.rejectMetrics(w, http.StatusTooManyRequests, "prometheus series budget exceeded", "series_budget")
 		return
@@ -255,14 +389,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record := &requestRecord{
-		ReceivedAt:     time.Now().UTC(),
-		InstallationID: parsed.installationID,
-		SchemaVersion:  parsed.schemaVersion,
-		Commands:       parsed.commands,
-		Harnesses:      parsed.harnesses,
-		MetricCount:    parsed.metricCount,
-	}
+	record := newRequestRecord(parsed, s.cfg.Now().UTC(), requestID, digest)
 	if err := s.storage.append(record); err != nil {
 		s.cfg.Logger.Error("failed to persist metrics", "error", err)
 		if !installationKnown {
@@ -275,6 +402,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.updateCounts(parsed, record.ReceivedAt)
+	if requestID != "" {
+		s.requestDigests[requestID] = requestReceipt{digest: digest, receivedAt: record.ReceivedAt}
+	}
 	s.recordRequest("accepted", "")
 	s.cfg.Logger.Debug("accepted metrics", "metric_count", parsed.metricCount)
 	w.WriteHeader(http.StatusOK)
@@ -392,7 +522,10 @@ func (s *Server) parseResourceMetrics(rm *mpb.ResourceMetrics) (*parsedRequest, 
 func (s *Server) updateCounts(p *parsedRequest, receivedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.applyParsedLocked(p, receivedAt)
+}
 
+func (s *Server) applyParsedLocked(p *parsedRequest, receivedAt time.Time) {
 	s.applyAdoptionLocked(receivedAt, p.installationID, p.commands, p.harnesses, p.metricCount)
 	s.processMetrics += p.metricCount
 	for k, v := range p.harnesses {
@@ -406,13 +539,95 @@ func (s *Server) updateCounts(p *parsedRequest, receivedAt time.Time) {
 	}
 }
 
+func parsedRequestFromRecord(record *requestRecord) (*parsedRequest, error) {
+	if record.Resource == nil {
+		return nil, nil
+	}
+	parsed := &parsedRequest{
+		installationID: record.InstallationID, schemaVersion: record.SchemaVersion, metricCount: record.MetricCount,
+		resourceLabels: resourceLabels{cliVersion: record.Resource.CLIVersion, osName: record.Resource.OSName, arch: record.Resource.Arch},
+		commands:       record.Commands, harnesses: record.Harnesses,
+		invocations: make(map[invocationLabels]int64, len(record.Invocations)), durations: make(map[durationLabels]*aggregatedHistogram, len(record.Durations)),
+	}
+	if err := validateResourceLabels(parsed.resourceLabels); err != nil {
+		return nil, err
+	}
+	for _, stored := range record.Invocations {
+		labels := invocationLabels{
+			arch: stored.Arch, cliVersion: stored.CLIVersion, commandName: stored.CommandName,
+			managed: stored.Managed, osName: stored.OSName, outcomeCode: stored.OutcomeCode,
+		}
+		if labels.arch != parsed.resourceLabels.arch || labels.cliVersion != parsed.resourceLabels.cliVersion || labels.osName != parsed.resourceLabels.osName ||
+			!commandNamePattern.MatchString(labels.commandName) || (labels.managed != "true" && labels.managed != "false") ||
+			(labels.outcomeCode != "success" && labels.outcomeCode != "error") || stored.Count < 0 {
+			return nil, errors.New("stored telemetry record has invalid invocation")
+		}
+		if err := addInt64(parsed.invocations, labels, stored.Count); err != nil {
+			return nil, err
+		}
+	}
+	for _, stored := range record.Durations {
+		labels := durationLabels{commandName: stored.CommandName, outcomeCode: stored.OutcomeCode}
+		if !commandNamePattern.MatchString(labels.commandName) || (labels.outcomeCode != "success" && labels.outcomeCode != "error") ||
+			len(stored.Buckets) != len(tmcfg.CommandDurationBucketBoundaries)+1 || math.IsNaN(stored.Sum) || math.IsInf(stored.Sum, 0) || stored.Sum < 0 {
+			return nil, errors.New("stored telemetry record has invalid duration")
+		}
+		var count uint64
+		for _, bucket := range stored.Buckets {
+			if math.MaxUint64-count < bucket {
+				return nil, errors.New("stored telemetry duration bucket overflow")
+			}
+			count += bucket
+		}
+		if count != stored.Count {
+			return nil, errors.New("stored telemetry duration bucket count mismatch")
+		}
+		point := durationPoint{labels: labels, buckets: stored.Buckets, count: stored.Count, sum: stored.Sum}
+		var err error
+		parsed.durations[labels], err = mergeHistogram(parsed.durations[labels], point)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return parsed, nil
+}
+
 func (s *Server) restoreRecord(record *requestRecord) error {
 	if err := validateStoredRecord(record); err != nil {
 		return err
 	}
+	parsed, err := parsedRequestFromRecord(record)
+	if err != nil {
+		return err
+	}
+	if parsed != nil {
+		if record.RequestID != "" {
+			if previous, exists := s.requestDigests[record.RequestID]; exists {
+				if previous.digest != record.PayloadSHA256 {
+					return errors.New("stored telemetry request id payload mismatch")
+				}
+				return nil
+			}
+			if len(s.requestDigests) >= s.cfg.MaxRequestIDs {
+				return errors.New("stored telemetry request id budget exceeded")
+			}
+		}
+		if s.wouldOverflow(parsed) {
+			return errors.New("stored metric aggregation overflow")
+		}
+		s.mu.Lock()
+		s.applyParsedLocked(parsed, record.ReceivedAt)
+		s.requestCounts[requestLabels{result: "accepted"}]++
+		s.mu.Unlock()
+		if record.RequestID != "" {
+			s.requestDigests[record.RequestID] = requestReceipt{digest: record.PayloadSHA256, receivedAt: record.ReceivedAt}
+		}
+		return nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !canAddInt64(s.totalMetrics, record.MetricCount) {
+	if !canAddInt64(s.totalMetrics, record.MetricCount) || !canAddInt64(s.processMetrics, record.MetricCount) {
 		return errors.New("stored metric count overflow")
 	}
 	for command, count := range record.Commands {
@@ -421,11 +636,16 @@ func (s *Server) restoreRecord(record *requestRecord) error {
 		}
 	}
 	for harness, count := range record.Harnesses {
-		if !canAddInt64(s.harnessCounts[harness], count) {
+		if !canAddInt64(s.harnessCounts[harness], count) || !canAddInt64(s.processHarnesses[harness], count) {
 			return errors.New("stored harness count overflow")
 		}
 	}
 	s.applyAdoptionLocked(record.ReceivedAt, record.InstallationID, record.Commands, record.Harnesses, record.MetricCount)
+	s.processMetrics += record.MetricCount
+	for harness, count := range record.Harnesses {
+		s.processHarnesses[harness] += count
+	}
+	s.requestCounts[requestLabels{result: "accepted"}]++
 	return nil
 }
 
@@ -438,6 +658,12 @@ func validateStoredRecord(record *requestRecord) error {
 	}
 	if record.SchemaVersion != tmcfg.SchemaVersion || record.MetricCount <= 0 {
 		return errors.New("stored telemetry record has invalid schema or metric count")
+	}
+	if record.RequestID != "" && (!installationIDPattern.MatchString(record.RequestID) || record.Resource == nil) {
+		return errors.New("stored telemetry record has invalid request id")
+	}
+	if record.Resource != nil && !installationIDPattern.MatchString(record.PayloadSHA256) {
+		return errors.New("stored telemetry record has invalid payload digest")
 	}
 	for command, count := range record.Commands {
 		if len(command) > 128 || !commandNamePattern.MatchString(command) || count < 0 {
@@ -471,6 +697,10 @@ func (s *Server) applyAdoptionLocked(receivedAt time.Time, installationID string
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.maintainRetention(); err != nil {
+		http.Error(w, "retention maintenance failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -508,6 +738,10 @@ type healthSummary struct {
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.maintainRetention(); err != nil {
+		http.Error(w, "retention maintenance failed", http.StatusInternalServerError)
 		return
 	}
 

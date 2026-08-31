@@ -113,6 +113,35 @@ func TestDrainDiscardsMalformedPayloadAndContinues(t *testing.T) {
 	}
 }
 
+func TestDrainPreservesRequestID(t *testing.T) {
+	requestID := strings.Repeat("d", 64)
+	var receivedID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedID = r.Header.Get(RequestIDHeader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	q := NewQueue(t.TempDir())
+	data, err := json.Marshal(Envelope{
+		Route: "primary", Signal: queueSubdirMetrics, URL: server.URL,
+		Payload: base64.StdEncoding.EncodeToString([]byte("payload")), RequestID: requestID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Push(context.Background(), Route{Name: "primary", Signal: queueSubdirMetrics}, data); err != nil {
+		t.Fatal(err)
+	}
+	tel := &Telemetry{queue: q, sendClients: map[string]*http.Client{"primary": http.DefaultClient}}
+	if err := tel.drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if receivedID != requestID {
+		t.Fatalf("request id = %q, want %q", receivedID, requestID)
+	}
+}
+
 func TestQueueUnsupportedSignal(t *testing.T) {
 	dir := t.TempDir()
 	q := NewQueue(dir)

@@ -53,6 +53,9 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 			req.Header.Add(k, v)
 		}
 	}
+	if env.RequestID != "" {
+		req.Header.Set(RequestIDHeader, env.RequestID)
+	}
 	req.ContentLength = int64(len(body))
 
 	resp, err := client.Do(req)

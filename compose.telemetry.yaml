@@ -1,0 +1,81 @@
+services:
+  receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile.telemetry-receiver
+      args:
+        VERSION: compose
+        GO_BUILD_IMAGE: ${TELEMETRY_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_RUNTIME_IMAGE: ${TELEMETRY_ALPINE_RUNTIME_IMAGE:-alpine:3.22}
+    command:
+      - telemetry
+      - receiver
+      - --listen=0.0.0.0:4318
+      - --storage-dir=/var/lib/agent-marketplace/telemetry
+      - --max-series=10000
+      - --max-request-ids=1000000
+    ports:
+      - "127.0.0.1:${TELEMETRY_RECEIVER_PORT:-4318}:4318"
+    volumes:
+      - receiver-data:/var/lib/agent-marketplace/telemetry
+    restart: unless-stopped
+
+  prometheus:
+    image: ${TELEMETRY_PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    depends_on:
+      receiver:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${TELEMETRY_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: ${TELEMETRY_GRAFANA_IMAGE:-grafana/grafana:13.2.0}
+    depends_on:
+      - prometheus
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "127.0.0.1:${TELEMETRY_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/agent-marketplace-telemetry-dashboard.json:/var/lib/grafana/dashboards/agent-marketplace-telemetry-dashboard.json:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+  smoke-event:
+    build:
+      context: .
+      dockerfile: Dockerfile.telemetry-receiver
+      args:
+        VERSION: compose-smoke
+        GO_BUILD_IMAGE: ${TELEMETRY_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_RUNTIME_IMAGE: ${TELEMETRY_ALPINE_RUNTIME_IMAGE:-alpine:3.22}
+    depends_on:
+      receiver:
+        condition: service_healthy
+    volumes:
+      - ./monitoring/smoke-config.yaml:/etc/agent-marketplace/config.yaml:ro
+      - smoke-data:/var/lib/agent-marketplace/client
+    environment:
+      HOME: /tmp/agent-marketplace-home
+      XDG_STATE_HOME: /var/lib/agent-marketplace/client
+    command:
+      - doctor
+    profiles:
+      - smoke
+
+volumes:
+  receiver-data:
+  prometheus-data:
+  grafana-data:
+  smoke-data:

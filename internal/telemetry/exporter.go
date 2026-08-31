@@ -403,6 +403,15 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	innerReq.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(payload)), nil
 	}
+	requestID := innerReq.Header.Get(RequestIDHeader)
+	if requestID == "" {
+		generated, err := generateRandomID()
+		if err != nil {
+			return nil, err
+		}
+		requestID = generated
+		innerReq.Header.Set(RequestIDHeader, requestID)
+	}
 
 	resp, err := qt.inner.RoundTrip(innerReq)
 	if err != nil || (resp != nil && resp.StatusCode/100 != 2) {
@@ -436,12 +445,13 @@ func (qt *queueTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		)
 
 		env := Envelope{
-			Route:   qt.route,
-			Signal:  qt.signal,
-			URL:     req.URL.String(),
-			Headers: copyHeaderMap(req.Header),
-			Payload: base64.StdEncoding.EncodeToString(payload),
-			Created: time.Now().Unix(),
+			Route:     qt.route,
+			Signal:    qt.signal,
+			URL:       req.URL.String(),
+			Headers:   copyHeaderMap(innerReq.Header),
+			Payload:   base64.StdEncoding.EncodeToString(payload),
+			Created:   time.Now().Unix(),
+			RequestID: requestID,
 		}
 
 		envBytes, marshalErr := json.Marshal(env)

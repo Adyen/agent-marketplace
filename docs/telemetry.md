@@ -163,7 +163,7 @@ See [`telemetry-retention.md`](./telemetry-retention.md) for the full policy.
 
 - Check status: `agent-marketplace telemetry status`.
 - Last delivery failure is shown in status and also written to
-  `$XDG_STATE_HOME/agent-marketplace/telemetry/last-failure.json`.
+  `$XDG_STATE_HOME/agent-marketplace/telemetry/last-delivery-failure`.
 - Pending records indicate queued exports; the next telemetry-enabled command
   drains them oldest-first.
 - Use `telemetry purge` to remove queued records and diagnostic payloads.

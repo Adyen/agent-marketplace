@@ -37,12 +37,13 @@ func (r Route) String() string { return r.Name + "/" + r.Signal }
 // field holds a base64-encoded OTLP export request body. URL and Headers are
 // preserved so the payload can be replayed to the same endpoint during drain.
 type Envelope struct {
-	Route   string              `json:"route"`
-	Signal  string              `json:"signal"`
-	URL     string              `json:"url"`
-	Headers map[string][]string `json:"headers"`
-	Payload string              `json:"payload"`
-	Created int64               `json:"created"`
+	Route     string              `json:"route"`
+	Signal    string              `json:"signal"`
+	URL       string              `json:"url"`
+	Headers   map[string][]string `json:"headers"`
+	Payload   string              `json:"payload"`
+	Created   int64               `json:"created"`
+	RequestID string              `json:"request_id,omitempty"`
 }
 
 // Queue is a bounded, durable queue of serialized OTLP export requests.
@@ -153,14 +154,33 @@ func (q *Queue) Push(ctx context.Context, route Route, data []byte) error {
 	path := filepath.Join(subdir, name)
 	tmp := path + ".tmp"
 
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		slog.Error("failed to write queue file", "path", tmp, "error", err)
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		slog.Error("failed to open queue file", "path", tmp, "error", err)
+		return fmt.Errorf("open queue file: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("write queue file: %w", err)
 	}
-
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync queue file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close queue file: %w", err)
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		slog.Error("failed to rename queue file", "tmp", tmp, "path", path, "error", err)
 		return fmt.Errorf("rename queue file: %w", err)
+	}
+	directory, err := os.Open(subdir)
+	if err != nil {
+		return fmt.Errorf("open queue directory: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync queue directory: %w", err)
 	}
 
 	slog.Debug("queue payload stored", "path", path)

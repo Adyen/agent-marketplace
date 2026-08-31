@@ -11,13 +11,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
-    -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
+    -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION} -X github.com/Adyen/agent-marketplace/internal/telemetry.BuildVersion=${VERSION}" \
     -o /out/agent-marketplace ./cmd/agent-marketplace
 
 FROM ${ALPINE_RUNTIME_IMAGE}
 RUN addgroup -S -g 1000 marketplace && adduser -S -u 1000 -G marketplace marketplace \
     && apk add --no-cache ca-certificates \
-    && mkdir -p /var/lib/agent-marketplace/telemetry \
+    && mkdir -p /var/lib/agent-marketplace/telemetry /var/lib/agent-marketplace/client \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace
 WORKDIR /app
 COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace

@@ -46,6 +46,7 @@ telemetry:
 - The client-side `ValidateCardinalityBudget` helper documents the contract; the server is the enforcing authority.
 - To raise the installation budget, restart the receiver with `--max-installations`.
 - Prometheus adoption series have a separate 10,000-series default budget. Use `--max-series` to override it; new label combinations are rejected with HTTP `429` after the limit is reached.
+- Retry deduplication retains at most 1,000,000 request IDs by default. Use `--max-request-ids` to adjust the bound; new IDs are rejected with HTTP `429` at capacity while known retries remain idempotent.
 
 ## Dashboards
 
@@ -59,8 +60,13 @@ telemetry:
 - `GET /metrics` exposes Prometheus counters, histograms, and gauges for adoption and receiver health. It never exposes `installation.id` as a label.
 - Import [`monitoring/agent-marketplace-telemetry-dashboard.json`](../monitoring/agent-marketplace-telemetry-dashboard.json) into Grafana and select the Prometheus datasource and scrape job.
 - Configure Prometheus or VictoriaMetrics to scrape the receiver's `/metrics` path. Keep this operator endpoint private even when `/v1/metrics` is available through a public ingress.
+- Retained-total panels use cumulative counters and show the first accepted event. Rate and rate-derived percentile panels require at least two scrapes and intentionally describe observed change rather than retained totals.
 
-The receiver restores retained adoption totals, last-receive time, and rolling active-installation windows from its JSONL files after a restart. Prometheus counters intentionally restart from zero so `rate` and `increase` do not interpret replayed records as new traffic. Run one receiver process per storage directory; startup fails while another process holds that directory's advisory lock.
+The receiver restores retained Prometheus counters, duration histograms, adoption totals, last-receive time, rolling active-installation windows, and admitted series from its JSONL files after a restart. Export requests carry a durable request ID, so replay after an ambiguous HTTP response returns success without applying the same delta twice. Daily records outside the retained 30 UTC date partitions are pruned automatically at startup and on the first request each UTC day. Run one receiver process per storage directory; startup fails while another process holds that directory's advisory lock. The receiver requires Unix advisory locking and is not supported on Windows.
+
+For a local end-to-end stack, run `make telemetry-up`. It starts the receiver, Prometheus, and Grafana with the datasource and dashboard provisioned; Grafana is available at `http://127.0.0.1:3000/d/agent-marketplace-telemetry`. Run `docker compose -f compose.telemetry.yaml run --rm smoke-event` to emit one CLI event, `make telemetry-smoke` for an isolated end-to-end check, and `make telemetry-down` to stop the persistent stack without deleting its volumes. This loopback-only development stack enables anonymous Grafana Viewer access and must not be exposed through a proxy or public interface.
+
+Environments that mirror public images can set `TELEMETRY_GO_BUILD_IMAGE`, `TELEMETRY_ALPINE_RUNTIME_IMAGE`, `TELEMETRY_PROMETHEUS_IMAGE`, and `TELEMETRY_GRAFANA_IMAGE`. Host ports can be changed with `TELEMETRY_RECEIVER_PORT`, `TELEMETRY_PROMETHEUS_PORT`, and `TELEMETRY_GRAFANA_PORT`.
 
 ## Starting the receiver
 

@@ -43,8 +43,8 @@
       "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
       "id": 4,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"editorMode": "code", "expr": "sum(increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range]))", "instant": true, "legendFormat": "Invocations", "refId": "A"}],
-      "title": "Invocations",
+      "targets": [{"editorMode": "code", "expr": "sum(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"})", "instant": true, "legendFormat": "Invocations", "refId": "A"}],
+      "title": "Invocations (retained)",
       "type": "stat"
     },
     {
@@ -53,7 +53,7 @@
       "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
       "id": 5,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"editorMode": "code", "expr": "100 * sum(increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\",outcome_code=\"error\"}[$__range])) / clamp_min(sum(increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range])), 1)", "instant": true, "legendFormat": "Error ratio", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "100 * sum(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\",outcome_code=\"error\"}) / clamp_min(sum(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}), 1)", "instant": true, "legendFormat": "Error ratio", "refId": "A"}],
       "title": "Error ratio",
       "type": "stat"
     },
@@ -63,8 +63,8 @@
       "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
       "id": 6,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(agent_marketplace_receiver_command_duration_milliseconds_bucket{job=~\"$job\",command_name=~\"$command\"}[$__rate_interval])))", "instant": true, "legendFormat": "p95", "refId": "A"}],
-      "title": "Command duration p95 (all versions)",
+      "targets": [{"editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (agent_marketplace_receiver_command_duration_milliseconds_bucket{job=~\"$job\",command_name=~\"$command\"}))", "instant": true, "legendFormat": "p95", "refId": "A"}],
+      "title": "Command duration p95 (retained, all versions)",
       "type": "stat"
     },
     {
@@ -101,7 +101,7 @@
       "gridPos": {"h": 8, "w": 6, "x": 12, "y": 6},
       "id": 10,
       "options": {"displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "namePlacement": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
-      "targets": [{"editorMode": "code", "expr": "sum by (command_name) (increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range]))", "instant": true, "legendFormat": "{{command_name}}", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (command_name) (agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"})", "instant": true, "legendFormat": "{{command_name}}", "refId": "A"}],
       "title": "Invocations by command",
       "type": "bargauge"
     },
@@ -111,7 +111,7 @@
       "gridPos": {"h": 8, "w": 6, "x": 18, "y": 6},
       "id": 11,
       "options": {"displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "namePlacement": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
-      "targets": [{"editorMode": "code", "expr": "sum by (harness) (increase(agent_marketplace_receiver_harness_invocations_total{job=~\"$job\",harness=~\"$harness\"}[$__range]))", "instant": true, "legendFormat": "{{harness}}", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (harness) (agent_marketplace_receiver_harness_invocations_total{job=~\"$job\",harness=~\"$harness\"})", "instant": true, "legendFormat": "{{harness}}", "refId": "A"}],
       "title": "Invocations by harness (all commands/versions)",
       "type": "bargauge"
     },
@@ -121,7 +121,7 @@
       "gridPos": {"h": 7, "w": 8, "x": 0, "y": 14},
       "id": 12,
       "options": {"displayLabels": ["name", "percent"], "legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "targets": [{"editorMode": "code", "expr": "sum by (managed) (increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range]))", "instant": true, "legendFormat": "managed={{managed}}", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (managed) (agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"})", "instant": true, "legendFormat": "managed={{managed}}", "refId": "A"}],
       "title": "Managed vs unmanaged",
       "type": "piechart"
     },
@@ -131,7 +131,7 @@
       "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14},
       "id": 13,
       "options": {"displayLabels": ["name", "percent"], "legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "targets": [{"editorMode": "code", "expr": "sum by (cli_version) (increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range]))", "instant": true, "legendFormat": "{{cli_version}}", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (cli_version) (agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"})", "instant": true, "legendFormat": "{{cli_version}}", "refId": "A"}],
       "title": "CLI versions",
       "type": "piechart"
     },
@@ -141,7 +141,7 @@
       "gridPos": {"h": 7, "w": 8, "x": 16, "y": 14},
       "id": 14,
       "options": {"displayLabels": ["name", "percent"], "legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "targets": [{"editorMode": "code", "expr": "sum by (os_name, arch) (increase(agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"}[$__range]))", "instant": true, "legendFormat": "{{os_name}}/{{arch}}", "refId": "A"}],
+      "targets": [{"editorMode": "code", "expr": "sum by (os_name, arch) (agent_marketplace_receiver_invocations_total{job=~\"$job\",command_name=~\"$command\",cli_version=~\"$cli_version\"})", "instant": true, "legendFormat": "{{os_name}}/{{arch}}", "refId": "A"}],
       "title": "Platforms",
       "type": "piechart"
     },

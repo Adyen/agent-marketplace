@@ -116,16 +116,315 @@ func postProto(t *testing.T, client *http.Client, url string, req *metricspb.Exp
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
+	return postBytes(t, client, url, body, "")
+}
+
+func postBytes(t *testing.T, client *http.Client, url string, body []byte, requestID string) *http.Response {
+	t.Helper()
 	r, err := http.NewRequest(http.MethodPost, url+"/v1/metrics", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
 	r.Header.Set("Content-Type", "application/x-protobuf")
+	if requestID != "" {
+		r.Header.Set("X-Agent-Marketplace-Request-ID", requestID)
+	}
 	resp, err := client.Do(r)
 	if err != nil {
 		t.Fatalf("post metrics: %v", err)
 	}
 	return resp
+}
+
+func getBody(t *testing.T, client *http.Client, url string) string {
+	t.Helper()
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("get %s: %v", url, err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read %s: %v", url, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get %s: status %d: %s", url, resp.StatusCode, body)
+	}
+	return string(body)
+}
+
+func TestServerDeduplicatesRequestReplay(t *testing.T) {
+	dir := t.TempDir()
+	requestID := strings.Repeat("a", 64)
+	body, err := proto.Marshal(makeMetricsRequest("dedupe", "sync", "factory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	first, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstServer := httptest.NewServer(first.Handler())
+	for range 2 {
+		resp := postBytes(t, client, firstServer.URL, body, requestID)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("replay status = %d, want 200", resp.StatusCode)
+		}
+	}
+	if output := getBody(t, client, firstServer.URL+"/metrics"); !strings.Contains(output, `command_name="sync",managed="true",os_name="darwin",outcome_code="success"} 1`) {
+		t.Fatalf("duplicate request changed invocation count:\n%s", output)
+	}
+	firstServer.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restarted.Close() }()
+	restartedServer := httptest.NewServer(restarted.Handler())
+	defer restartedServer.Close()
+	resp := postBytes(t, client, restartedServer.URL, body, requestID)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart replay status = %d, want 200", resp.StatusCode)
+	}
+	if output := getBody(t, client, restartedServer.URL+"/metrics"); !strings.Contains(output, `command_name="sync",managed="true",os_name="darwin",outcome_code="success"} 1`) {
+		t.Fatalf("durable duplicate request changed invocation count:\n%s", output)
+	}
+}
+
+func TestServerBoundsRequestIDDeduplication(t *testing.T) {
+	s, err := New(Config{StorageDir: t.TempDir(), MaxRequestIDs: 1, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	body, err := proto.Marshal(makeMetricsRequest("request-budget", "sync", "factory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, requestID := range []string{strings.Repeat("e", 64), strings.Repeat("f", 64)} {
+		resp := postBytes(t, http.DefaultClient, ts.URL, body, requestID)
+		_ = resp.Body.Close()
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusTooManyRequests
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("request %d status = %d, want %d", i, resp.StatusCode, want)
+		}
+	}
+}
+
+func TestServerPersistsOnlyValidatedTelemetryFields(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	request := makeMetricsRequest("private-fields", "sync", "factory")
+	secret := "/Users/alexander/private?token=secret"
+	request.ResourceMetrics[0].SchemaUrl = secret
+	request.ResourceMetrics[0].ScopeMetrics[0].Scope = &commonpb.InstrumentationScope{Name: secret, Version: secret}
+	resp := postProto(t, http.DefaultClient, ts.URL, request)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post status = %d", resp.StatusCode)
+	}
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("stored record contains ignored OTLP data: %s", data)
+	}
+}
+
+func TestServerRejectsRequestIDPayloadMismatch(t *testing.T) {
+	s, err := New(Config{StorageDir: t.TempDir(), Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	requestID := strings.Repeat("b", 64)
+
+	for i, command := range []string{"sync", "list"} {
+		body, err := proto.Marshal(makeMetricsRequest("conflict", command, "factory"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := postBytes(t, client, ts.URL, body, requestID)
+		_ = resp.Body.Close()
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusConflict
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("request %d status = %d, want %d", i, resp.StatusCode, want)
+		}
+	}
+}
+
+func TestServerRecoversTornFinalRecord(t *testing.T) {
+	dir := t.TempDir()
+	client := &http.Client{Timeout: 5 * time.Second}
+	first, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstServer := httptest.NewServer(first.Handler())
+	resp := postProto(t, client, firstServer.URL, makeMetricsRequest("first", "sync", "factory"))
+	_ = resp.Body.Close()
+	firstServer.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, time.Now().UTC().Format("2006-01-02")+".jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, recordFilePerm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"received_at":`); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+
+	restarted, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatalf("restart after torn tail: %v", err)
+	}
+	defer func() { _ = restarted.Close() }()
+	restartedServer := httptest.NewServer(restarted.Handler())
+	defer restartedServer.Close()
+	resp = postProto(t, client, restartedServer.URL, makeMetricsRequest("second", "list", "factory"))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post after recovery status = %d", resp.StatusCode)
+	}
+	output := getBody(t, client, restartedServer.URL+"/v1/dashboard.json")
+	if !strings.Contains(output, `"list":1`) || !strings.Contains(output, `"sync":1`) {
+		t.Fatalf("recovered dashboard missing valid records: %s", output)
+	}
+}
+
+func TestServerPrunesExpiredRecords(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().UTC().AddDate(0, 0, -31)
+	installationID := strings.Repeat("c", 64)
+	record := requestRecord{
+		ReceivedAt: old, InstallationID: installationID, SchemaVersion: tmcfg.SchemaVersion,
+		Commands: map[string]int64{"sync": 1}, Harnesses: map[string]int64{"factory": 1}, MetricCount: 2,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, old.Format("2006-01-02")+".jsonl")
+	if err := os.WriteFile(path, append(data, '\n'), recordFilePerm); err != nil {
+		t.Fatal(err)
+	}
+	budget, err := json.Marshal(budgetFile{InstallationIDs: []string{installationID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, budgetFileName), budget, recordFilePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expired record file still exists: %v", err)
+	}
+	if s.budget.Count() != 0 {
+		t.Fatalf("expired installation remains in budget: %d", s.budget.Count())
+	}
+}
+
+func TestServerKeepsThirtyUTCDatePartitions(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 1, 31, 23, 59, 0, 0, time.UTC)
+	records := []requestRecord{
+		{ReceivedAt: time.Date(2026, 1, 1, 23, 59, 0, 0, time.UTC), InstallationID: strings.Repeat("1", 64), SchemaVersion: tmcfg.SchemaVersion, Commands: map[string]int64{"sync": 1}, Harnesses: map[string]int64{"factory": 1}, MetricCount: 2},
+		{ReceivedAt: time.Date(2026, 1, 2, 0, 1, 0, 0, time.UTC), InstallationID: strings.Repeat("2", 64), SchemaVersion: tmcfg.SchemaVersion, Commands: map[string]int64{"list": 1}, Harnesses: map[string]int64{"factory": 1}, MetricCount: 2},
+	}
+	for i := range records {
+		data, err := json.Marshal(&records[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, records[i].ReceivedAt.Format("2006-01-02")+".jsonl")
+		if err := os.WriteFile(path, append(data, '\n'), recordFilePerm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s, err := New(Config{StorageDir: dir, Logger: discardLogger(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	dashboard := getBody(t, http.DefaultClient, ts.URL+"/v1/dashboard.json")
+	if strings.Contains(dashboard, `"sync":1`) || !strings.Contains(dashboard, `"list":1`) {
+		t.Fatalf("retention boundary dashboard: %s", dashboard)
+	}
+}
+
+func TestServerPrunesExpiredRecordsWhileRunning(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s, err := New(Config{StorageDir: t.TempDir(), Logger: discardLogger(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	body, err := proto.Marshal(makeMetricsRequest("expired", "sync", "factory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := postBytes(t, client, ts.URL, body, strings.Repeat("0", 64))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post status = %d", resp.StatusCode)
+	}
+
+	now = now.AddDate(0, 0, 31)
+	output := getBody(t, client, ts.URL+"/metrics")
+	if !strings.Contains(output, `agent_marketplace_receiver_invocations_total{`) {
+		t.Fatalf("retention made a live counter decrease:\n%s", output)
+	}
+	if !strings.Contains(output, `agent_marketplace_receiver_active_installations{window="30d"} 0`) {
+		t.Fatalf("expired installation remains active:\n%s", output)
+	}
+	if s.budget.Count() != 0 {
+		t.Fatalf("expired installation remains in budget: %d", s.budget.Count())
+	}
+	if len(s.requestDigests) != 0 {
+		t.Fatalf("expired request ids remain: %d", len(s.requestDigests))
+	}
 }
 
 func TestServerSchemaValidation(t *testing.T) {
@@ -417,6 +716,34 @@ func TestServerPrometheusRequestMetrics(t *testing.T) {
 	}
 }
 
+func TestServerLogsBoundedRejectionReason(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	s, err := New(Config{StorageDir: t.TempDir(), Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/metrics", strings.NewReader("not protobuf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if !strings.Contains(logs.String(), `"reason":"invalid_payload"`) || !strings.Contains(logs.String(), `"status":400`) {
+		t.Fatalf("missing bounded rejection fields: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "not protobuf") {
+		t.Fatalf("rejection log contains payload: %s", logs.String())
+	}
+}
+
 func TestServerRejectsAccumulationOverflow(t *testing.T) {
 	s, err := New(Config{StorageDir: t.TempDir(), Logger: discardLogger()})
 	if err != nil {
@@ -480,6 +807,58 @@ func TestServerPrometheusSeriesBudget(t *testing.T) {
 	}
 }
 
+func TestServerSeriesBudgetSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	client := &http.Client{Timeout: 5 * time.Second}
+	first, err := New(Config{StorageDir: dir, MaxSeries: 14, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstServer := httptest.NewServer(first.Handler())
+	resp := postProto(t, client, firstServer.URL, makeMetricsRequest("first", "sync", "factory"))
+	_ = resp.Body.Close()
+	firstServer.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(Config{StorageDir: dir, MaxSeries: 14, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restarted.Close() }()
+	restartedServer := httptest.NewServer(restarted.Handler())
+	defer restartedServer.Close()
+	resp = postProto(t, client, restartedServer.URL, makeMetricsRequest("second", "list", "factory"))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("new series after restart status = %d, want 429", resp.StatusCode)
+	}
+	output := getBody(t, client, restartedServer.URL+"/metrics")
+	if !strings.Contains(output, "agent_marketplace_receiver_series_budget_used 14") {
+		t.Fatalf("series budget was not restored:\n%s", output)
+	}
+}
+
+func TestServerRejectsReducedSeriesLimitBelowRetainedUsage(t *testing.T) {
+	dir := t.TempDir()
+	first, err := New(Config{StorageDir: dir, MaxSeries: 14, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(first.Handler())
+	resp := postProto(t, http.DefaultClient, ts.URL, makeMetricsRequest("series-limit", "sync", "factory"))
+	_ = resp.Body.Close()
+	ts.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if restarted, err := New(Config{StorageDir: dir, MaxSeries: 13, Logger: discardLogger()}); err == nil {
+		_ = restarted.Close()
+		t.Fatal("expected retained series above the configured limit to reject startup")
+	}
+}
+
 func TestServerRestoresAdoptionState(t *testing.T) {
 	dir := t.TempDir()
 	first, err := New(Config{StorageDir: dir, Logger: discardLogger()})
@@ -522,17 +901,16 @@ func TestServerRestoresAdoptionState(t *testing.T) {
 		}
 	}
 	for _, historicalSeries := range []string{
-		`agent_marketplace_receiver_invocations_total{`,
-		`agent_marketplace_receiver_harness_invocations_total{`,
-		`agent_marketplace_receiver_command_duration_milliseconds_bucket{`,
-		`agent_marketplace_receiver_requests_total{`,
+		`agent_marketplace_receiver_invocations_total{arch="arm64",cli_version="v3.0.1",command_name="sync",managed="true",os_name="darwin",outcome_code="success"} 1`,
+		`agent_marketplace_receiver_harness_invocations_total{harness="factory"} 1`,
+		`agent_marketplace_receiver_command_duration_milliseconds_count{command_name="sync",outcome_code="success"} 1`,
+		`agent_marketplace_receiver_requests_total{reason="",result="accepted"} 1`,
+		`agent_marketplace_receiver_datapoints_total 2`,
+		`agent_marketplace_receiver_series_budget_used 14`,
 	} {
-		if strings.Contains(string(body), historicalSeries) {
-			t.Fatalf("restart replayed historical records into Prometheus counters:\n%s", body)
+		if !strings.Contains(string(body), historicalSeries) {
+			t.Fatalf("restart did not restore %q:\n%s", historicalSeries, body)
 		}
-	}
-	if !strings.Contains(string(body), "agent_marketplace_receiver_datapoints_total 0") {
-		t.Fatalf("restart did not reset data-point counter:\n%s", body)
 	}
 
 	resp, err = client.Get(restartedServer.URL + "/v1/dashboard.json")
@@ -635,19 +1013,46 @@ func TestServerCardinalityRejection(t *testing.T) {
 	}
 }
 
-func TestServerRejectsCorruptCardinalityBudget(t *testing.T) {
+func TestServerRejectsReducedCardinalityLimitBelowRetainedUsage(t *testing.T) {
+	dir := t.TempDir()
+	first, err := New(Config{StorageDir: dir, MaxInstallations: 2, Logger: discardLogger()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(first.Handler())
+	for _, id := range []string{"first", "second"} {
+		resp := postProto(t, http.DefaultClient, ts.URL, makeMetricsRequest(id, "sync", "factory"))
+		_ = resp.Body.Close()
+	}
+	ts.Close()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if restarted, err := New(Config{StorageDir: dir, MaxInstallations: 1, Logger: discardLogger()}); err == nil {
+		_ = restarted.Close()
+		t.Fatal("expected retained installation usage above the configured limit to reject startup")
+	}
+}
+
+func TestServerRepairsCorruptCardinalityBudget(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, budgetFileName)
 	if err := os.WriteFile(path, []byte("{"), recordFilePerm); err != nil {
 		t.Fatalf("write corrupt budget: %v", err)
 	}
 
-	_, err := New(Config{StorageDir: dir, Logger: discardLogger()})
-	if err == nil {
-		t.Fatal("expected corrupt cardinality budget to reject server startup")
+	s, err := New(Config{StorageDir: dir, Logger: discardLogger()})
+	if err != nil {
+		t.Fatalf("rebuild cardinality budget: %v", err)
 	}
-	if !strings.Contains(err.Error(), "load cardinality budget") {
-		t.Fatalf("expected cardinality load error, got %v", err)
+	defer func() { _ = s.Close() }()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file budgetFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("repaired cardinality budget is invalid: %v", err)
 	}
 }
 

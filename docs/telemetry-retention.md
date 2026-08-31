@@ -45,7 +45,7 @@ On export failure the payload is retained for manual review.
 
 ## Retention period
 
-The community receiver stores accepted requests as JSON-lines, one file per calendar day. Data is retained for **30 days** from the date it was received. After 30 days the daily files are eligible for deletion by the operator.
+The community receiver stores accepted requests as JSON-lines, one file per UTC calendar day and retains **30 UTC date partitions**, including the current date. The receiver removes older daily files at startup and during the first request on each new UTC day. Request deduplication and active-installation state expire with those files; cumulative Prometheus counters remain monotonic while the process runs and are rebuilt from retained files after a restart.
 
 Queued telemetry payloads on the CLI are retained for **7 days** or until the 5 MiB queue cap is reached, whichever comes first.
 
@@ -60,8 +60,8 @@ Dashboard summaries (`/v1/dashboard.json`) are intentionally low-cardinality and
 To remove data before the automatic retention period:
 
 1. Stop the receiver process.
-2. Remove the relevant files from the storage directory. Daily files are named `YYYY-MM-DD.jsonl` and the cardinality state is stored in `cardinality.json`.
-3. Restart the receiver. It will rebuild its in-memory adoption counters from the remaining files but will not reconstruct data points that have been deleted.
+2. Remove the relevant `YYYY-MM-DD.jsonl` files from the storage directory.
+3. Restart the receiver. It rebuilds `cardinality.json` and all in-memory dashboard and Prometheus state from the remaining files.
 
 To reset an individual installation ID, a user can run `agent-marketplace telemetry reset-id`, which deletes the local installation ID file and purges any queued payloads.
 
