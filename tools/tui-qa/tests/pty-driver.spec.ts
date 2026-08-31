@@ -19,6 +19,23 @@ const toolRoot = fs.existsSync(path.join(moduleRoot, "dist", "pty-wrapper.js")) 
 const wrapper = path.join(toolRoot, "dist", "pty-wrapper.js");
 const fixture = path.join(toolRoot, "fixtures", "driver-capabilities.sh");
 
+interface ViewableTerminal {
+  getViewableBuffer(): string[][];
+}
+
+const visibleText = (terminal: ViewableTerminal): string => terminal.getViewableBuffer().map((row) => row.join("")).join("\n");
+
+const waitForVisibleMatch = async (terminal: ViewableTerminal, pattern: RegExp, timeoutMs = 5_000): Promise<string> => {
+  const deadline = Date.now() + timeoutMs;
+  let visible = visibleText(terminal);
+  while (!pattern.test(visible) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    visible = visibleText(terminal);
+  }
+  if (!pattern.test(visible)) throw new Error(`terminal content did not match ${pattern}: ${visible}`);
+  return visible;
+};
+
 test.use({
   columns: 80,
   rows: 24,
@@ -47,9 +64,10 @@ test("real PTY supports resize, input, mouse, signals, cells, and owned recovery
 
   await expect(terminal.getByText("observed-size=30 100", { strict: false })).toBeVisible({ timeout: 5_000 });
 
-  const visible = terminal.getViewableBuffer().map((row) => row.join("")).join("\n");
+  const mouseInput = /input-hex=\s*1b\s+5b\s+3c\s+30\s+3b\s+33\s+3b\s+33\s+4d/;
+  const visible = await waitForVisibleMatch(terminal, mouseInput);
   assert.match(visible, /input-hex=\s*1b\s+5b\s+42/);
-  assert.match(visible, /input-hex=\s*1b\s+5b\s+3c\s+30\s+3b\s+33\s+3b\s+33\s+4d/);
+  assert.match(visible, mouseInput);
   assert.match(visible, /6b\s+65\s+79\s+62\s+6f\s+61\s+72\s+64\s+20\s+70\s+61\s+73\s+74\s+65/);
   const sanitized = escapeTerminal(visible);
   assert.equal(sanitized.includes(String.fromCharCode(27)), false);
