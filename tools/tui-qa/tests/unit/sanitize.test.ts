@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { escapeTerminal } from "../../src/sanitize.js";
+import {
+  allowedEnv,
+  escapeTerminal,
+  markdownCodeFence,
+  markdownInline,
+  redactCredentialShaped,
+  redactURLCredentials,
+  sanitizeMultiline,
+  scanForSecrets,
+  scanValueForSecrets
+} from "../../src/sanitize.js";
 
 const ESC = String.fromCharCode(27);
+const bearerValue = `Bearer ${"abcdefghijklmnop"}`;
+const githubToken = `ghp_${"abcdefghijklmnopqrst"}`;
+const awsAccessKey = `AKIA${"ABCDEFGHIJKLMNOP"}`;
+const privateKeyBlock = ["-----BEGIN ", "PRIVATE KEY-----\nprivate-body\n-----END ", "PRIVATE KEY-----"].join("");
 
 describe("escapeTerminal", () => {
   it("neutralizes CSI and OSC sequences", () => {
@@ -26,5 +40,42 @@ describe("escapeTerminal", () => {
 
   it("preserves ordinary printable Unicode", () => {
     assert.equal(escapeTerminal("标题 e◌́ 缓存 😀"), "标题 e◌́ 缓存 😀");
+  });
+});
+
+describe("credential safety", () => {
+  it("redacts URL, assignment, and bearer credential shapes", () => {
+    assert.equal(redactURLCredentials("https://user:pass@example.invalid/path"), "https://***@example.invalid/path");
+    const redacted = redactCredentialShaped(
+      `token=super-secret Authorization: ${bearerValue} ${githubToken} ${awsAccessKey}\n${privateKeyBlock}`
+    );
+    for (const secret of ["super-secret", "abcdefghijklmnop", "ghp_", "AKIA", "private-body"]) {
+      assert.equal(redacted.includes(secret), false, secret);
+    }
+    assert.deepEqual(scanValueForSecrets({ redacted }), []);
+  });
+
+  it("detects known secret shapes and sanitizes multiline output", () => {
+    assert.deepEqual(scanForSecrets(awsAccessKey), ["aws-access-key"]);
+    const sanitized = sanitizeMultiline(`safe\n${ESC}[31m token=super-secret`);
+    assert.equal(sanitized.includes(ESC), false);
+    assert.equal(sanitized.includes("super-secret"), false);
+    assert.ok(sanitized.includes("\n"));
+  });
+
+  it("allowlists environment metadata without inheriting secrets", () => {
+    assert.deepEqual(allowedEnv({ TERM: "xterm", GITHUB_TOKEN: "hidden", AM_TUI_QA_ROWS: "24" }), {
+      AM_TUI_QA_ROWS: "24",
+      TERM: "xterm"
+    });
+  });
+});
+
+describe("Markdown safety", () => {
+  it("escapes inline and fence-breaking structure", () => {
+    assert.equal(markdownInline("[x](https://evil) `code`"), "\\[x\\]\\(https://evil\\) \\`code\\`");
+    const fenced = markdownCodeFence("before```after token=super-secret");
+    assert.equal(fenced.includes("super-secret"), false);
+    assert.ok(fenced.includes("\\`\\`\\`"));
   });
 });
