@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/Adyen/agent-marketplace/internal/materialize"
+
 // flat-items helpers on Model: the cursor indexes into m.flatItems, which is
 // computed from filteredRows + activeTab + per-tab foldState. These helpers
 // keep the transformation and fold-state mutation in one place.
@@ -127,6 +129,63 @@ func (m *Model) expandAllSections() {
 		return
 	}
 	st.foldedSections = make(map[string]bool)
+}
+
+// rowKey is the stable identity of a resource row across snapshot rebuilds.
+// Registry coordinates disambiguate same-name resources while the source path
+// keeps malformed and otherwise unattributed rows distinct.
+func rowKey(r row) string {
+	if r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned {
+		return "orphan\x00" + r.DriftItem.Name
+	}
+	malformed := "0"
+	if r.IsMalformed {
+		malformed = "1"
+	}
+	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + r.Artifact.CatalogKey + "\x00" + r.RegistryURL + "\x00" + r.RegistryRef + "\x00" + r.RegistryPath + "\x00" + r.Artifact.Path + "\x00" + malformed
+}
+
+// flatItemKey adds a namespace to row and section identities so a snapshot
+// rebuild cannot confuse a section path with resource data.
+func flatItemKey(item flatItem) string {
+	if item.Kind == flatSection {
+		return "section\x00" + item.SectionPath
+	}
+	return "row\x00" + rowKey(item.Row)
+}
+
+func (m Model) selectionKey() string {
+	if m.cursor < 0 || m.cursor >= len(m.flatItems) {
+		return ""
+	}
+	return flatItemKey(m.flatItems[m.cursor])
+}
+
+func (m *Model) restoreSelectionKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, item := range m.flatItems {
+		if flatItemKey(item) == key {
+			m.cursor = i
+			m.clampListOffset()
+			return true
+		}
+	}
+	return false
+}
+
+// selectionKeyForRebuild anchors an open detail pane to the resource being
+// read; otherwise it captures the list item under the cursor.
+func (m Model) selectionKeyForRebuild() string {
+	if m.pane == paneDetail && m.detailKey != "" {
+		return "row\x00" + m.detailKey
+	}
+	return m.selectionKey()
+}
+
+func (m *Model) restoreSelectionAfterRebuild(key string) {
+	m.restoreSelectionKey(key)
 }
 
 // recomputeView is called after any input change (rows/filter/fold/tab). It

@@ -60,7 +60,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace doctor` — show local harness/root diagnostics and non-blocking Devin CLI compatibility guidance
 - `agent-marketplace doctor --repair` — preview or interactively repair Devin and Codex shared-aggregate ownership state
 - `agent-marketplace doctor --repair --yes` — adopt exact current desired matches without prompting; destructive orphan removal and conflict replacement still require interactive confirmation
-- `agent-marketplace tui` — launch interactive browser (default on bare TTY invocation); `H` opens the harness modal
+- `agent-marketplace tui` — launch interactive browser (default on bare TTY invocation); `H` opens the harness modal. Normative TUI behavior is in [`docs/tui-product-contract.md`](./docs/tui-product-contract.md)
 
 ## Tech Stack
 
