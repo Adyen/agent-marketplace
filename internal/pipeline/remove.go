@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -255,7 +256,41 @@ func allExplicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name stri
 	selections = appendConfigExplicitSelections(selections, ec.Organization.Config, ec.Organization.Path, config.Organization, name)
 	selections = appendConfigExplicitSelections(selections, ec.User.Config, ec.User.Path, config.UserPersonal, name)
 	selections = appendConfigExplicitSelections(selections, ec.Repo.Config, ec.Repo.Path, config.RepoCommitted, name)
-	return appendLocalExplicitSelections(selections, ec.Local, config.LocalConfigPath(repoRoot), name)
+	selections = appendLocalExplicitSelections(selections, ec.Local, config.LocalConfigPath(repoRoot), name)
+	return slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+		return !explicitRemovalSelectionEnabled(selection, ec.Merged)
+	})
+}
+
+func explicitRemovalSelectionEnabled(selection explicitRemovalSelection, cfg *config.Config) bool {
+	if cfg == nil {
+		return true
+	}
+	if !selection.TopLevel {
+		return !resolver.ArtifactIsCrossLayerExcluded(explicitRemovalArtifact(selection, selection.RegistryURL, selection.RegistryPath, selection.Ref), cfg.Registries)
+	}
+	found := false
+	for _, entry := range cfg.Registries {
+		if entry.Source != selection.Source || !stringListContains(entry.SelectorForKind(selection.Kind).Include, selection.Name) {
+			continue
+		}
+		found = true
+		if !resolver.ArtifactIsCrossLayerExcluded(explicitRemovalArtifact(selection, entry.URL, entry.Path, entry.Ref), cfg.Registries) {
+			return true
+		}
+	}
+	return !found
+}
+
+func explicitRemovalArtifact(selection explicitRemovalSelection, url, path, ref string) resolver.ResolvedArtifact {
+	return resolver.ResolvedArtifact{
+		Entry:        catalog.Entry{Kind: selection.Kind, Name: selection.Name},
+		RegistryURL:  url,
+		RegistryPath: path,
+		Ref:          ref,
+		Source:       selection.Source,
+		Required:     selection.Required,
+	}
 }
 
 func explicitRemovalSelectionsInRegistry(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, url, ref, path string) ([]explicitRemovalSelection, error) {

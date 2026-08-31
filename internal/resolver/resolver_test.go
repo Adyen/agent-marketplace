@@ -2951,6 +2951,94 @@ func TestLocalExcludeSuppressesRepoPersonalResource(t *testing.T) {
 	}
 }
 
+func TestCrossLayerExcludeSuppressesSelectedNotFound(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Skills: ks("test")},
+		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
+	}}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}
+	catalogs[cfg.Registries[1].CatalogKey] = []catalog.Entry{}
+	_, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("expected user exclude to suppress organization not-found warning, got %v", errs)
+	}
+}
+
+func TestCrossLayerExcludeDoesNotSuppressRequiredSelectedNotFound(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Required: true, Skills: ks("test")},
+		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
+	}}
+	setCatalogKeys(cfg)
+
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}
+	catalogs[cfg.Registries[1].CatalogKey] = []catalog.Entry{}
+	_, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 1 || !IsSelectedNotFound(errs[0]) {
+		t.Fatalf("expected required not-found error to survive user exclude, got %v", errs)
+	}
+}
+
+func TestCrossLayerExcludeDoesNotHideLaterRequiredDuplicate(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Skills: ks("test")},
+		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Required: true, Skills: ks("test")},
+		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{}
+	for _, entry := range cfg.Registries {
+		catalogs[entry.CatalogKey] = []catalog.Entry{}
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 1 || !IsSelectedNotFound(errs[0]) || IsSoftSelectedNotFound(errs[0]) {
+		t.Fatalf("expected later required duplicate to remain a hard error, got %v", errs)
+	}
+}
+
+func TestDuplicateMissingSelectionPreservesRequiredPolicy(t *testing.T) {
+	for _, requiredFirst := range []bool{false, true} {
+		entries := []config.RegistryEntry{
+			{URL: "git@example.com:skills.git", Ref: "main", Source: config.Organization, Skills: ks("test")},
+			{URL: "git@example.com:skills.git", Ref: "main", Source: config.Organization, Required: true, Skills: ks("test")},
+		}
+		if requiredFirst {
+			entries[0], entries[1] = entries[1], entries[0]
+		}
+		cfg := &config.Config{Registries: entries}
+		setCatalogKeys(cfg)
+		_, errs := Resolve(cfg, map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}, nil)
+		hardRequired := false
+		for _, err := range errs {
+			hardRequired = hardRequired || (IsSelectedNotFound(err) && !IsSoftSelectedNotFound(err))
+		}
+		if !hardRequired {
+			t.Fatalf("requiredFirst=%v: expected required duplicate to remain a hard error, got %v", requiredFirst, errs)
+		}
+	}
+}
+
+func TestCrossLayerExcludePreservesHigherLayerDuplicateMiss(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Skills: ks("test")},
+		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: ks("test")},
+		{URL: "git@example.com:other", Ref: "main", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{}
+	for _, entry := range cfg.Registries {
+		catalogs[entry.CatalogKey] = []catalog.Entry{}
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 1 || !IsSelectedNotFound(errs[0]) {
+		t.Fatalf("expected user-personal miss to survive equal-precedence exclude, got %v", errs)
+	}
+}
+
 // TestLocalCrossLayerExcludeValidationForRepoPersonal verifies that
 // validateCrossLayerExcludes correctly handles RepoPersonal-sourced registry
 // entries. A RepoPersonal entry that tries to exclude a machine-scope

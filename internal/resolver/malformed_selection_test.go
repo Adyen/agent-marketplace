@@ -36,6 +36,28 @@ func malformedFixture(catalogKey string, entries ...skill.MalformedSkill) map[st
 	return map[string][]skill.MalformedSkill{catalogKey: entries}
 }
 
+func TestCrossLayerExcludeSuppressesSelectedMalformed(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:infra.git", Ref: "main", Source: config.Organization, Skills: ks("broken-skill")},
+		{URL: "git@example.com:infra", Ref: "main", Source: config.UserPersonal, Skills: kse(nil, []string{"broken-skill"})},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {},
+		cfg.Registries[1].CatalogKey: {},
+	}
+	malformed := malformedFixture(cfg.Registries[0].CatalogKey, skill.MalformedSkill{
+		DirName: "broken-skill",
+		Path:    "/cache/infra/skills/broken-skill",
+		Error:   errors.New("invalid frontmatter"),
+	})
+
+	_, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed))
+	if len(errs) != 0 {
+		t.Fatalf("expected user exclude to suppress organization malformed warning, got %v", errs)
+	}
+}
+
 // TestResolveSelectedButMalformedReportsParseErrorInsteadOfRemovalGuess covers
 // the previously-untested intersection of "selected" and "malformed": the skill
 // exists upstream, failed ingest validation, and was therefore dropped from

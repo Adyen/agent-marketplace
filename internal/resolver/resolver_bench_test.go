@@ -278,6 +278,37 @@ func BenchmarkResolveCrossLayerExcludes(b *testing.B) {
 	}
 }
 
+func BenchmarkResolveUnresolvedCrossLayerExcludes(b *testing.B) {
+	const registries, perRegistry = 20, 20
+	cfg := &config.Config{}
+	catalogs := map[string][]catalog.Entry{}
+	excludes := make([]string, 0, registries*perRegistry)
+	for r := 0; r < registries; r++ {
+		url := fmt.Sprintf("git@example.com:stale-%02d.git", r)
+		includes := make([]string, 0, perRegistry)
+		for s := 0; s < perRegistry; s++ {
+			name := fmt.Sprintf("stale-%02d-%02d", r, s)
+			includes = append(includes, name)
+			excludes = append(excludes, name)
+		}
+		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
+			URL: url, Ref: "main", Source: config.Organization, Skills: config.KindSelector{Include: includes},
+		})
+		catalogs[cache.CatalogKeyForEntry(url, "main", "")] = []catalog.Entry{}
+	}
+	cfg.Registries = append(cfg.Registries, config.RegistryEntry{
+		URL: "git@example.com:excluder.git", Ref: "main", Source: config.UserPersonal, Skills: config.KindSelector{Exclude: excludes},
+	})
+	catalogs[cache.CatalogKeyForEntry("git@example.com:excluder.git", "main", "")] = []catalog.Entry{}
+	setCatalogKeys(cfg)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Resolve(cfg, catalogs, nil)
+	}
+}
+
 // BenchmarkResolveLocalSelections covers local includes that are already
 // resolved and local includes that require scanning configured catalogs.
 func BenchmarkResolveLocalSelections(b *testing.B) {

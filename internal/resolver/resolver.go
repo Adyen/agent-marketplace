@@ -1571,7 +1571,10 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 			selectedSkill, found := byName[selected]
 			if !found {
-				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
+				if selectedEntryIsCrossLayerExcluded(entry, selected, cfg.Registries) {
+					continue
+				}
+				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref, required: entry.Required}
 				if _, reported := reportedNotFound[notFoundKey]; !reported {
 					reportedNotFound[notFoundKey] = struct{}{}
 					// Correlate before blaming. The resource may be absent from
@@ -1860,9 +1863,10 @@ type resourceSelection struct {
 
 type missingResource struct {
 	resourceSelection
-	url  string
-	path string
-	ref  string
+	url      string
+	path     string
+	ref      string
+	required bool
 }
 
 type resourceSelections []resourceSelection
@@ -2109,6 +2113,17 @@ func validateCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Re
 	return warns
 }
 
+func selectedEntryIsCrossLayerExcluded(entry config.RegistryEntry, selected resourceSelection, entries []config.RegistryEntry) bool {
+	return ArtifactIsCrossLayerExcluded(ResolvedArtifact{
+		Entry:        catalog.Entry{Kind: selected.kind, Name: selected.name},
+		RegistryURL:  entry.URL,
+		RegistryPath: entry.Path,
+		Ref:          entry.Ref,
+		Source:       entry.Source,
+		Required:     entry.Required,
+	}, entries)
+}
+
 // applyCrossLayerExcludes removes any resolved skill whose name appears in the
 // Exclude list of a registry entry from a higher-precedence Source layer,
 // unless the skill is Required=true. This allows a repo config to opt out of
@@ -2127,48 +2142,44 @@ func applyCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Regis
 	}
 
 	filtered := make([]ResolvedArtifact, 0, len(resolved))
-	for _, s := range resolved {
-		if s.Required {
-			filtered = append(filtered, s)
-			continue
-		}
-		excluded := false
-		for _, entry := range entries {
-			if entry.Source.Precedence() <= s.Source.Precedence() {
-				continue
-			}
-			if s.Source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
-				continue
-			}
-			// Organization defaults may only be suppressed by User Personal
-			// configuration, not by repository layers.
-			if s.Source == config.Organization && entry.Source != config.UserPersonal {
-				continue
-			}
-			for _, ex := range entryResourceExcludes(entry) {
-				if ex.kind == s.Kind && strings.TrimSpace(ex.name) == s.Name {
-					excluded = true
-					break
-				}
-			}
-			// Check ExcludeAll scoped by registry URL AND path to prevent
-			// cross-registry and cross-path bleed.
-			if !excluded && entry.SelectorForKind(s.Kind).ExcludeAll {
-				if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) &&
-					pathScopeCovers(entry.Path, s.RegistryPath) {
-					excluded = true
-				}
-			}
-			if excluded {
-				break
-			}
-		}
-		if !excluded {
-			filtered = append(filtered, s)
+	for _, artifact := range resolved {
+		if !ArtifactIsCrossLayerExcluded(artifact, entries) {
+			filtered = append(filtered, artifact)
 		}
 	}
-
 	return filtered
+}
+
+func ArtifactIsCrossLayerExcluded(artifact ResolvedArtifact, entries []config.RegistryEntry) bool {
+	if artifact.Required {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Source.Precedence() <= artifact.Source.Precedence() {
+			continue
+		}
+		if artifact.Source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
+			continue
+		}
+		// Organization defaults may only be suppressed by User Personal
+		// configuration, not by repository layers.
+		if artifact.Source == config.Organization && entry.Source != config.UserPersonal {
+			continue
+		}
+		selector := entry.SelectorForKind(artifact.Kind)
+		for _, excluded := range selector.Exclude {
+			if strings.TrimSpace(excluded) == artifact.Name {
+				return true
+			}
+		}
+		// Check ExcludeAll scoped by registry URL AND path to prevent
+		// cross-registry and cross-path bleed.
+		if selector.ExcludeAll && config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(artifact.RegistryURL) &&
+			pathScopeCovers(entry.Path, artifact.RegistryPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func indexCatalog(entries []catalog.Entry) map[resourceSelection]catalog.Entry {

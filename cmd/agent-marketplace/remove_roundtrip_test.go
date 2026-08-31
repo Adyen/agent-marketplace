@@ -340,6 +340,56 @@ registries:
 	}
 }
 
+func TestRemoveStaleOrganizationSelectionSuppressesSubsequentWarning(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "stale-org.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	orgPath := filepath.Join(t.TempDir(), "org-config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+harnesses:
+  - factory
+registries:
+  - url: `+origin+`
+    ref: main
+    path: skills
+    skills:
+      include:
+        - test
+`)
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    path: skills
+    skills:
+      include:
+        - keeper
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	withWorkingDir(t, repoRoot)
+
+	if output, err := executeCommand("remove", "test"); err != nil {
+		t.Fatalf("remove stale organization selection failed: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("remove", "test"); err == nil || !strings.Contains(err.Error(), "not currently enabled") {
+		t.Fatalf("second remove should report the selection is already disabled, got %v\n%s", err, output)
+	}
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync after remove failed: %v\n%s", err, output)
+	}
+	if strings.Contains(output, `skill "test" was selected but not found`) {
+		t.Fatalf("stale organization selection warning survived removal:\n%s", output)
+	}
+}
+
 func TestRemoveStaleExplicitSelectionRequiresKindDisambiguation(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
