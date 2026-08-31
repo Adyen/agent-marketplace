@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,63 @@ func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 	}
 	if m.pane != paneList {
 		t.Fatalf("modal should close on action, got pane=%v", m.pane)
+	}
+}
+
+func TestModalGlobalCollisionWithRepoRelativeCompetitorFailsBeforeWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+	selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
+	competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+	m := NewModel(repoRoot, homeDir)
+	m.pane = paneToggleModal
+	m.modalSkill = selected
+	m.rows = []row{selected, competitor}
+	m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected global toggle command")
+	}
+	msg, ok := cmd().(configWrittenMsg)
+	if !ok {
+		t.Fatalf("expected configWrittenMsg, got %T", msg)
+	}
+	var globalRelativeErr *config.GlobalRelativeRegistryError
+	if !errors.As(msg.err, &globalRelativeErr) {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %v", msg.err)
+	}
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if data, err := os.ReadFile(globalConfig); err == nil && strings.Contains(string(data), "remote.git") {
+		t.Fatalf("primary registry was written before collision policy failed:\n%s", string(data))
+	}
+	if m.pendingExcludeAction != nil {
+		t.Fatal("collision follow-up remained pending after preflight failure")
+	}
+}
+
+func TestModalLocalCollisionDoesNotScheduleUnsupportedFollowUp(t *testing.T) {
+	for _, key := range []rune{'l', 'e'} {
+		t.Run(string(key), func(t *testing.T) {
+			selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
+			competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.pane = paneToggleModal
+			m.modalSkill = selected
+			m.rows = []row{selected, competitor}
+			m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
+
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+			m = updated.(Model)
+			if cmd == nil {
+				t.Fatal("expected local toggle command")
+			}
+			if m.pendingExcludeAction != nil {
+				t.Fatal("unsupported local collision follow-up was scheduled")
+			}
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -645,25 +646,15 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 			// directory is reported clearly instead of falling through to the
 			// autodetect/ingest failure path (which can yield a misleading
 			// "no recognizable Claude layout" error).
-			info, err := os.Stat(catalogKey)
-			if err != nil {
+			if err := config.ValidateLocalRegistryPath(catalogKey); err != nil {
 				if mode == LoadModeCachedNoFetch {
 					// No local registry present and we are forbidden from fetching;
 					// skip it so teardown/dry-run paths remain read-only.
+					slog.Debug("local registry skipped in no-fetch mode", "path", catalogKey, "error", err)
 					continue
 				}
-				if errors.Is(err, os.ErrNotExist) {
-					errs = append(errs, fmt.Errorf("local registry path does not exist: %s", catalogKey))
-				} else {
-					errs = append(errs, fmt.Errorf("stat local registry path %q: %w", catalogKey, err))
-				}
-				continue
-			}
-			if !info.IsDir() {
-				if mode == LoadModeCachedNoFetch {
-					continue
-				}
-				errs = append(errs, fmt.Errorf("local registry path is not a directory: %s", catalogKey))
+				slog.Warn("local registry validation failed", "path", catalogKey, "error", err)
+				errs = append(errs, err)
 				continue
 			}
 

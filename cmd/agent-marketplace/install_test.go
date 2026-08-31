@@ -1140,6 +1140,47 @@ registries:
 	}
 }
 
+func TestInstallCommandRejectsUserScopeCollectionFromRepoRelativeRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	registryRoot := filepath.Join(repoRoot, "local-registry", "skills")
+	skillDir := filepath.Join(registryRoot, "audit")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: audit\ndescription: Audit\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	collectionDir := filepath.Join(registryRoot, "collections", "security")
+	if err := os.MkdirAll(collectionDir, 0o755); err != nil {
+		t.Fatalf("mkdir collection: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(collectionDir, "COLLECTION.yaml"), []byte("name: security\nskills:\n  - name: audit\n"), 0o644); err != nil {
+		t.Fatalf("write collection: %v", err)
+	}
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: ./local-registry
+    path: skills
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "security", "--scope", "user")
+	if err == nil {
+		t.Fatalf("expected user-scope collection install to fail, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "repo-relative") || !strings.Contains(combined, "global config") {
+		t.Fatalf("expected repo-relative global config error, got err=%v output=%s", err, output)
+	}
+	globalConfig := filepath.Join(homeDir, ".agents", "config.yaml")
+	if data, readErr := os.ReadFile(globalConfig); readErr == nil && strings.Contains(string(data), "security") {
+		t.Fatalf("repo-relative collection leaked into user config:\n%s", string(data))
+	}
+}
+
 // TestInstallCommandFailsFastOnMissingLocalRegistry verifies that installing
 // from a missing local ad-hoc registry fails before writing a broken entry to
 // the repo config.
@@ -1169,5 +1210,58 @@ registries: []
 		if strings.Contains(string(data), "missing-registry") {
 			t.Fatalf("missing local registry URL leaked into repo config:\n%s", string(data))
 		}
+	}
+}
+
+func TestInstallCommandRejectsTraversingLocalRegistryPathBeforeWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(repoRoot, "local-registry"), 0o755); err != nil {
+		t.Fatalf("mkdir registry: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "outside"), 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, repoConfig, `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", "./local-registry", "--path", "../outside", "some-skill")
+	if err == nil {
+		t.Fatalf("expected traversing local registry path to fail, got output:\n%s", output)
+	}
+	if data, readErr := os.ReadFile(repoConfig); readErr == nil && strings.Contains(string(data), "local-registry") {
+		t.Fatalf("traversing local registry path leaked into repo config:\n%s", string(data))
+	}
+}
+
+func TestInstallCommandFailsFastOnMissingLocalRegistryPath(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(repoRoot, "local-registry"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, repoConfig, `
+registries: []
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", "./local-registry", "--path", "missing", "some-skill")
+	if err == nil {
+		t.Fatalf("expected install --from with missing path to fail, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "local registry path does not exist") {
+		t.Fatalf("expected missing local registry path error, got err=%v output=%s", err, output)
+	}
+	if data, readErr := os.ReadFile(repoConfig); readErr == nil && strings.Contains(string(data), "local-registry") {
+		t.Fatalf("local registry with missing path leaked into repo config:\n%s", string(data))
 	}
 }

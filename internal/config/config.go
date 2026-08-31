@@ -634,20 +634,8 @@ func (e RegistryEntry) IsLocal() bool {
 // config layer because they have no stable meaning outside the repo that
 // contains them.
 func (e RegistryEntry) IsRepoRelativeLocal() bool {
-	if !e.IsLocal() {
-		return false
-	}
 	u := strings.TrimSpace(e.URL)
-	if u == "" {
-		return false
-	}
-	if filepath.IsAbs(u) {
-		return false
-	}
-	if strings.HasPrefix(u, "~/") {
-		return false
-	}
-	return true
+	return u == "." || u == ".." || strings.HasPrefix(u, "./") || strings.HasPrefix(u, "../")
 }
 
 // GlobalRelativeRegistryError is returned when an operation attempts to write a
@@ -662,6 +650,50 @@ func (e *GlobalRelativeRegistryError) Error() string {
 		return "cannot write repo-relative registry to the global config"
 	}
 	return fmt.Sprintf("cannot write repo-relative registry %q to the global config; use an absolute path or a git remote", e.URL)
+}
+
+func ValidateGlobalRegistryWrite(entries ...RegistryEntry) error {
+	for _, entry := range entries {
+		if entry.IsRepoRelativeLocal() {
+			return &GlobalRelativeRegistryError{URL: entry.URL}
+		}
+	}
+	return nil
+}
+
+func validateRegistryWrite(configPath string, entries ...RegistryEntry) error {
+	if !isGlobalConfigPath(configPath) {
+		return nil
+	}
+	return ValidateGlobalRegistryWrite(entries...)
+}
+
+func ValidateRegistryPath(path string) error {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return nil
+	}
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("path must be relative, got absolute %q", p)
+	}
+	if cleaned := filepath.Clean(p); cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must not escape the registry root, got %q", p)
+	}
+	return nil
+}
+
+func ValidateLocalRegistryPath(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("local registry path does not exist: %s", path)
+	}
+	if err != nil {
+		return fmt.Errorf("stat local registry path %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("local registry path is not a directory: %s", path)
+	}
+	return nil
 }
 
 // urlContainsPathTraversal reports whether a registry URL contains a ".." path
@@ -850,12 +882,8 @@ func validateRegistryEntries(registries []RegistryEntry) []error {
 			errs = append(errs, fmt.Errorf("registries[%d].url must not contain '..' path components", i))
 		}
 
-		if p := strings.TrimSpace(registry.Path); p != "" {
-			if filepath.IsAbs(p) {
-				errs = append(errs, fmt.Errorf("registries[%d].path must be relative, got absolute %q", i, p))
-			} else if cleaned := filepath.Clean(p); cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-				errs = append(errs, fmt.Errorf("registries[%d].path must not escape the registry root, got %q", i, p))
-			}
+		if err := ValidateRegistryPath(registry.Path); err != nil {
+			errs = append(errs, fmt.Errorf("registries[%d].%w", i, err))
 		}
 	}
 	return errs

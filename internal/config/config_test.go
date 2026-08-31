@@ -413,7 +413,7 @@ func TestIsRepoRelativeLocal(t *testing.T) {
 		{"../parent/path", "", true},
 		{".", "", true},
 		{"..", "", true},
-		{"./relative.git", "", false}, // .git suffix makes IsLocal false
+		{"./relative.git", "", true},
 		{"not-relative", "", false},
 		{"https://example.com/repo.git", "", false},
 		{"", "", false},
@@ -438,6 +438,23 @@ func TestGlobalRelativeRegistryError(t *testing.T) {
 	}
 	if !strings.Contains(msg, "global config") {
 		t.Fatalf("expected error to mention global config, got %q", msg)
+	}
+}
+
+func TestValidateGlobalRegistryWrite(t *testing.T) {
+	if err := ValidateGlobalRegistryWrite(
+		RegistryEntry{URL: "https://example.com/remote.git"},
+		RegistryEntry{URL: "/absolute/local"},
+	); err != nil {
+		t.Fatalf("expected portable registries to pass: %v", err)
+	}
+
+	err := ValidateGlobalRegistryWrite(
+		RegistryEntry{URL: "https://example.com/remote.git"},
+		RegistryEntry{URL: "./relative.git"},
+	)
+	if _, ok := err.(*GlobalRelativeRegistryError); !ok {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", err, err)
 	}
 }
 
