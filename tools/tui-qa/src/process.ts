@@ -156,6 +156,75 @@ export const cleanupProcessTree = async (
 export const cleanupProcessGroup = async (pgid: number, graceMs = 250): Promise<ProcessCleanupEvidence> =>
   cleanupProcessTree(pgid, pgid, graceMs);
 
+interface RegisteredProcessIdentity {
+  pid: number;
+  pgid: number;
+}
+
+export interface RegisteredProcessCleanupEvidence extends RegisteredProcessIdentity {
+  detected: boolean;
+  identityMatched: boolean;
+  terminated: boolean;
+  remaining: number[];
+  complete: boolean;
+}
+
+const readRegisteredProcess = (file: string): RegisteredProcessIdentity => {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1_024) throw new Error(`invalid registered process file ${file}`);
+  const value: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (typeof value !== "object" || value === null) throw new Error(`invalid registered process identity in ${file}`);
+  const parsed = value as Partial<RegisteredProcessIdentity>;
+  if (!Number.isSafeInteger(parsed.pid) || !Number.isSafeInteger(parsed.pgid) || parsed.pid! <= 1 || parsed.pgid! <= 1) {
+    throw new Error(`invalid registered process identity in ${file}`);
+  }
+  return { pid: parsed.pid!, pgid: parsed.pgid! };
+};
+
+const matchingProcess = (identity: RegisteredProcessIdentity): ProcessRow | undefined =>
+  processTable().find((row) => row.pid === identity.pid && row.pgid === identity.pgid);
+
+const waitForRegisteredProcess = async (identity: RegisteredProcessIdentity, graceMs: number): Promise<boolean> => {
+  const deadline = Date.now() + graceMs;
+  while (matchingProcess(identity) && Date.now() < deadline) await wait(20);
+  return matchingProcess(identity) === undefined;
+};
+
+export const cleanupRegisteredProcess = async (
+  file: string,
+  graceMs = 250
+): Promise<RegisteredProcessCleanupEvidence> => {
+  const identity = readRegisteredProcess(file);
+  const current = processTable().find((row) => row.pid === identity.pid);
+  if (!current) {
+    return { ...identity, detected: false, identityMatched: true, terminated: false, remaining: [], complete: true };
+  }
+  if (current.pgid !== identity.pgid || identity.pid === process.pid) {
+    return {
+      ...identity,
+      detected: true,
+      identityMatched: false,
+      terminated: false,
+      remaining: [identity.pid],
+      complete: false
+    };
+  }
+  signalProcess(identity.pid, "SIGTERM");
+  let complete = await waitForRegisteredProcess(identity, graceMs);
+  if (!complete) {
+    signalProcess(identity.pid, "SIGKILL");
+    complete = await waitForRegisteredProcess(identity, graceMs);
+  }
+  return {
+    ...identity,
+    detected: true,
+    identityMatched: true,
+    terminated: complete,
+    remaining: complete ? [] : [identity.pid],
+    complete
+  };
+};
+
 export const writeProcessCleanupEvidence = (directory: string, evidence: ProcessCleanupEvidence, label = "final"): string => {
   if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new Error(`unsafe process evidence label ${label}`);
   fs.mkdirSync(directory, { recursive: true });
