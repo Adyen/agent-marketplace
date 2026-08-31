@@ -16,7 +16,6 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 
 FROM ${ALPINE_RUNTIME_IMAGE}
 RUN addgroup -S -g 1000 marketplace && adduser -S -u 1000 -G marketplace marketplace \
-    && apk add --no-cache ca-certificates \
     && mkdir -p /var/lib/agent-marketplace/telemetry \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace
 WORKDIR /app
