@@ -1,4 +1,4 @@
-# TUI QA PTY Core
+# TUI QA Workbench Core
 
 This directory contains QA-only tooling for black-box terminal validation of `agent-marketplace`. It is not linked into the production binary.
 
@@ -21,7 +21,15 @@ Each flow attempt receives a validated fresh root containing isolated HOME, XDG 
 
 Native runs provide functional isolation for known application-managed paths; they are not a hostile-code security boundary. `run-containment-selftest.sh` independently proves the Linux boundary supplied by a caller-provided image: read-only root and checkout, read-only binary, writable artifact mount, no runtime network, dropped capabilities, no-new-privileges, PID limit, and symlink escape denial.
 
-Schemas, result aggregation, product-flow classification, the release-equivalent binary container, and baseline reporting land in later TUI-QA-02 stack layers.
+## Results and artifact contracts
+
+`results.v1.json` is the deterministic authority for flow status and exit code. It records immutable invalid reasons, build identity, classifier selections, structured expected/observed failure classes, product restoration separately from harness recovery, assertions, bounded side effects, transformed evidence hashes, and artifact policy. Semantic validation is applied after JSON Schema validation.
+
+Non-raw evidence is always terminal-sanitized, credential-redacted, rescanned, bounded, and hashed during collection. Raw ANSI remains local by default; exceptional upload requires both a synthetic/no-secret attestation and a successful secret scan and remains explicitly marked unsanitized.
+
+`exploratory-supplement.v1.json` is the additive handoff for the bounded exploratory agent. It is bound to a deterministic results hash, sanitizes advisory text, may request additional optional flows, and cannot contain deterministic status fields or override required outcomes.
+
+Product-flow orchestration, the release-equivalent binary container, and baseline execution land in later TUI-QA-02 stack layers.
 
 ## Driver decision
 
