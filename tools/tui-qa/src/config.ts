@@ -1,7 +1,15 @@
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { readBoundedPositiveInt } from "./options.js";
+
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const parentDirectory = path.resolve(moduleDirectory, "..");
+const packageRoot = fs.existsSync(path.join(parentDirectory, "package.json"))
+  ? parentDirectory
+  : path.resolve(parentDirectory, "..");
 
 export const LIMITS = {
   semanticWaitMs: 5_000,
@@ -80,7 +88,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): WorkbenchConfi
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(runId)) {
     throw new Error("AM_TUI_QA_RUN_ID must be 1-100 letters, digits, dots, underscores, or dashes");
   }
-  const repoRoot = path.resolve(env.AM_TUI_QA_REPO_ROOT?.trim() || path.resolve(process.cwd(), "..", ".."));
+  const repoRoot = path.resolve(env.AM_TUI_QA_REPO_ROOT?.trim() || path.resolve(packageRoot, "..", ".."));
   const artifactDir = path.resolve(
     env.AM_TUI_QA_ARTIFACT_DIR?.trim() || path.join(repoRoot, ".local", "agent-marketplace", "qa", "tui", runId)
   );
