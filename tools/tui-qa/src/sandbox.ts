@@ -185,7 +185,10 @@ export interface TreeSummary {
 const SUMMARY_MAX_ENTRIES = 1_000;
 const SUMMARY_MAX_BYTES = 10 * 1024 * 1024;
 
-const within = (candidate: string, root: string): boolean => candidate === root || candidate.startsWith(`${root}${path.sep}`);
+const within = (candidate: string, root: string): boolean => {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+};
 
 const resolveSymlinkTarget = (linkPath: string): string => {
   const target = fs.readlinkSync(linkPath);
