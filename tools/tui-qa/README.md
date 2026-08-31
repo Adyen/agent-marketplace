@@ -15,7 +15,13 @@ This layer provides:
 - terminal-control sanitization for captured cell data;
 - an executable driver smoke covering initial size, resize, special-key input, bracketed paste bytes, mouse input, signal delivery, cell capture, and harness-owned PTY recovery.
 
-Schemas, result aggregation, sandbox policy, Linux containment, product-flow classification, and baseline reporting land in later TUI-QA-02 stack layers. This layer makes no containment claim against hostile code.
+## Sandbox and containment primitives
+
+Each flow attempt receives a validated fresh root containing isolated HOME, XDG roots, temporary directories, Go/npm caches, workspace, registries, logs, backups, ownership state, generated output, process evidence, and artifacts. The tested-process environment is constructed from an allowlist rather than inherited, and controlled Git/editor shims disable hooks, credentials, signing, SSH prompts, and real editor invocation.
+
+Native runs provide functional isolation for known application-managed paths; they are not a hostile-code security boundary. `run-containment-selftest.sh` independently proves the Linux boundary supplied by a caller-provided image: read-only root and checkout, read-only binary, writable artifact mount, no runtime network, dropped capabilities, no-new-privileges, PID limit, and symlink escape denial.
+
+Schemas, result aggregation, product-flow classification, the release-equivalent binary container, and baseline reporting land in later TUI-QA-02 stack layers.
 
 ## Driver decision
 
@@ -40,6 +46,7 @@ From the repository root:
 
 ```sh
 make tui-qa-check
+TUI_QA_CONTAINER_IMAGE=<reviewed-image> tools/tui-qa/run-containment-selftest.sh
 ```
 
 `npm run check` executes unit tests, production TypeScript compilation, test typechecking, and the real PTY driver smoke. A green typecheck without the PTY smoke is not considered driver validation.
