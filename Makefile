@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -111,6 +111,9 @@ devin-probe:
 	@echo "Running local Devin runtime probes (isolated HOME; read-only commands) ..."
 	@AGENT_MARKETPLACE_DEVIN_PROBES=1 DEVIN_PROBE_REQUIRE=$(DEVIN_PROBE_REQUIRE) \
 		$(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
+
+tui-qa-check:
+	cd tools/tui-qa && npm run check
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

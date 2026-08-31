@@ -1,0 +1,27 @@
+{
+  "name": "@adyen/agent-marketplace-tui-qa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Black-box PTY QA workbench for the agent-marketplace TUI. QA-only tooling; never a production dependency.",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run unit && npm run build && npm run typecheck:tests && npm run driver",
+    "driver": "npm run build && tui-test tests/pty-driver.spec.ts",
+    "unit": "tsc -p tsconfig.unit.json && node --test dist-tests/tests/unit/*.test.js",
+    "typecheck:tests": "tsc -p tsconfig.tests.json"
+  },
+  "devDependencies": {
+    "@microsoft/tui-test": "0.0.4",
+    "@types/node": "24.10.1",
+    "node-pty": "1.2.0-beta.11",
+    "typescript": "5.9.3"
+  },
+  "allowScripts": {
+    "@swc/core@1.15.47": true,
+    "node-pty@1.2.0-beta.11": true
+  }
+}

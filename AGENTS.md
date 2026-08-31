@@ -91,6 +91,8 @@ E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
 E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
+Run the QA-only PTY driver, process-supervision, restoration-boundary, and sanitization self-tests with `make tui-qa-check`.
+
 ### Architecture
 
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. The binary runs as a subprocess with `HOME` overridden so it never touches the host filesystem.
