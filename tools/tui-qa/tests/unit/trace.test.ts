@@ -19,6 +19,11 @@ describe("splitTargetTrace", () => {
     assert.equal(assessProductRestoration(product + recovery, { canonical: true, echo: true }).complete, true);
   });
 
+  it("accepts PTY CRLF translation around the boundary", () => {
+    const crlfBoundary = boundary.replace(/\n/g, "\r\n");
+    assert.deepEqual(splitTargetTrace(`product${crlfBoundary}harness`), { target: "product", harness: "harness" });
+  });
+
   it("rejects unsupported versions before boundary-count errors", () => {
     const unsupported = boundary.replace(`version=${TARGET_EXIT_BOUNDARY_VERSION}`, "version=999");
     assert.throws(() => splitTargetTrace(unsupported + boundary), /unsupported target-exit boundary version 999/);
