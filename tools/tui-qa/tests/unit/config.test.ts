@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import path from "node:path";
+import process from "node:process";
 import { describe, it } from "node:test";
 import {
   LIMITS,
@@ -16,6 +18,17 @@ describe("loadConfig", () => {
     assert.equal(config.runClass, "local");
     assert.ok(config.resultsPath.endsWith("results.json"));
     assert.ok(config.reportPath.endsWith("report.md"));
+  });
+
+  it("resolves the repository root independently of the caller working directory", () => {
+    const expected = loadConfig({}).repoRoot;
+    const cwd = process.cwd();
+    try {
+      process.chdir(path.parse(cwd).root);
+      assert.equal(loadConfig({}).repoRoot, expected);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   it("rejects non-positive or invalid numbers instead of widening limits", () => {

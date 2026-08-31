@@ -102,10 +102,9 @@ const walkFiles = (root: string): Array<{ source: string; relative: string; raw:
     for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => compareStrings(a.name, b.name))) {
       if (++entries > MAX_ARTIFACT_FILES) throw new Error(`artifact entry limit exceeded under ${root}`);
       const full = path.join(current, entry.name);
-      const stat = fs.lstatSync(full);
-      if (stat.isSymbolicLink()) throw new Error(`artifact symlink rejected: ${full}`);
-      if (stat.isDirectory()) walk(full);
-      else if (stat.isFile()) {
+      if (entry.isSymbolicLink()) throw new Error(`artifact symlink rejected: ${full}`);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) {
         const relative = path.relative(root, full);
         files.push({ source: full, relative, raw: isRawTrace(relative) });
       }
