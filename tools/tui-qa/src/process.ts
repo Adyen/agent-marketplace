@@ -172,7 +172,9 @@ export interface RegisteredProcessCleanupEvidence extends RegisteredProcessIdent
 const readRegisteredProcess = (file: string): RegisteredProcessIdentity => {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1_024) throw new Error(`invalid registered process file ${file}`);
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<RegisteredProcessIdentity>;
+  const value: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (typeof value !== "object" || value === null) throw new Error(`invalid registered process identity in ${file}`);
+  const parsed = value as Partial<RegisteredProcessIdentity>;
   if (!Number.isSafeInteger(parsed.pid) || !Number.isSafeInteger(parsed.pgid) || parsed.pid! <= 1 || parsed.pgid! <= 1) {
     throw new Error(`invalid registered process identity in ${file}`);
   }

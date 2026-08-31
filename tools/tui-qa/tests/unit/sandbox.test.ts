@@ -170,6 +170,7 @@ describe("symlink boundaries", () => {
     fs.symlinkSync(path.join(root, "cache"), path.join(root, "workspace", "inside"));
     fs.symlinkSync("missing", path.join(root, "workspace", "dangling"));
     rejectSymlinkEscape(path.join(root, "workspace", "inside", "file"), root);
+    rejectSymlinkEscape(path.join(root, "workspace"), path.parse(root).root);
     rejectTreeSymlinkEscapes(path.join(root, "workspace"), root);
     assert.equal(summarize(path.join(root, "workspace"), sha256File, root).symlinks.dangling, "workspace/missing");
   });

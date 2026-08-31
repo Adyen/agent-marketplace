@@ -62,5 +62,9 @@ describe("cleanupRegisteredProcess", () => {
     assert.equal(cleanup.identityMatched, false);
     assert.equal(cleanup.complete, false);
     assert.deepEqual(cleanup.remaining, [process.pid]);
+
+    const invalid = path.join(directory, "invalid.json");
+    fs.writeFileSync(invalid, "null\n", { mode: 0o600 });
+    await assert.rejects(cleanupRegisteredProcess(invalid, 50), /invalid registered process identity/);
   });
 });
