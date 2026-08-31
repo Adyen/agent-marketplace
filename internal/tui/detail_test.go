@@ -224,7 +224,7 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 
 	out := renderDetailFullContent(row{
 		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-	})
+	}, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)
@@ -451,8 +451,8 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	if m2.detailViewport.Width != 120 {
 		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width)
 	}
-	if m2.detailViewport.Height != 40 {
-		t.Fatalf("viewport height should be 40 after resize, got %d", m2.detailViewport.Height)
+	if m2.detailViewport.Height != 39 {
+		t.Fatalf("viewport height should reserve the footer row: got %d, want 39", m2.detailViewport.Height)
 	}
 }
 

@@ -47,9 +47,10 @@ func TestToggleLocalUpdatesBadgeAndGlyph(t *testing.T) {
 	}
 
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{updatedRow},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{updatedRow},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
@@ -98,9 +99,10 @@ func TestToggleProjectOffUpdatesBadgeAndGlyph(t *testing.T) {
 
 	updatedRow := mkRow("audit", withAvailable, withRegistry("sec.git", "security"))
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{updatedRow},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{updatedRow},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
@@ -584,9 +586,10 @@ func TestToggleMovesSkillBetweenSections(t *testing.T) {
 	}
 
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{globalRow, updatedDeploy},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{globalRow, updatedDeploy},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
