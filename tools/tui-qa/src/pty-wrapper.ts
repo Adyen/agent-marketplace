@@ -82,11 +82,9 @@ child.on("close", (code, signal) => {
     process.stdout.fd,
     `\nAM_TUI_QA_TARGET_EXIT_BOUNDARY version=${TARGET_EXIT_BOUNDARY_VERSION} code=${code ?? "null"} signal=${signal ?? "none"}\n`
   );
-  const resetApplied = !beforeReset.ok || beforeReset.canonical !== true || beforeReset.echo !== true || signal === "SIGKILL";
-  if (resetApplied) {
-    spawnSync("stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"] });
-    fs.writeSync(process.stdout.fd, TERMINAL_RESET_SEQUENCE);
-  }
+  const resetApplied = true;
+  spawnSync("stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"] });
+  fs.writeSync(process.stdout.fd, TERMINAL_RESET_SEQUENCE);
   const afterReset = termios();
   const lifecycle = {
     wrapperPid: process.pid,
