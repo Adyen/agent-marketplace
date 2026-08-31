@@ -30,6 +30,7 @@ import (
 const (
 	maxShutdownFlush      = 500 * time.Millisecond
 	preExportDrainTimeout = 250 * time.Millisecond
+	traceBatchTimeout     = time.Second
 )
 
 // Telemetry is the runtime telemetry handle. It exposes only small wrapper
@@ -342,7 +343,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		tpOpts := []sdktrace.TracerProviderOption{
 			sdktrace.WithResource(res),
 			sdktrace.WithBatcher(primaryTraceExp,
-				sdktrace.WithBatchTimeout(24*time.Hour),
+				sdktrace.WithBatchTimeout(traceBatchTimeout),
 				sdktrace.WithExportTimeout(30*time.Second),
 			),
 		}

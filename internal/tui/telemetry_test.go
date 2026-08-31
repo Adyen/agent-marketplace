@@ -75,6 +75,17 @@ func (e *testSpanExporter) findSpan(name string) *tracev1pb.Span {
 	return nil
 }
 
+func (e *testSpanExporter) waitForSpan(name string, timeout time.Duration) *tracev1pb.Span {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if span := e.findSpan(name); span != nil {
+			return span
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil
+}
+
 func attrValue(attrs []*commonpb.KeyValue, key string) string {
 	for _, a := range attrs {
 		if a.Key == key && a.Value != nil {
@@ -129,6 +140,23 @@ func TestRecordActionSpanEmits(t *testing.T) {
 	}
 	if got := attrValue(s.Attributes, "resource.kind"); got != "skill" {
 		t.Fatalf("expected resource.kind attribute %q, got %q", "skill", got)
+	}
+}
+
+func TestRecordActionSpanExportsBeforeTUIShutdown(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+
+	ctx, commandSpan := tel.StartSpan(ctx, "agent_marketplace.command", nil)
+	defer commandSpan.End()
+	ctx, sessionSpan := tel.StartSpan(ctx, "agent_marketplace.tui.session", nil)
+	defer sessionSpan.End()
+
+	recordActionSpan(ctx, "sync", nil)
+
+	if e.waitForSpan("agent_marketplace.tui.action", 2*time.Second) == nil {
+		t.Fatal("expected TUI action span to export while the TUI remains running")
 	}
 }
 
