@@ -37,14 +37,15 @@ telemetry:
 - The queue is capped at 5 MiB and 7 days; oldest records are evicted first.
 - Each enabled invocation drains the queue oldest-first before sending current metrics.
 - Exported payloads do not use automatic SDK retries; failures are queued for the next invocation.
-- Receiver health is available at `GET /health` and dashboard summaries at `GET /v1/dashboard.json`.
+- Receiver health is available at `GET /health`, dashboard summaries at `GET /v1/dashboard.json`, and Prometheus metrics at `GET /metrics`.
 
 ## Cardinality budget
 
 - The default installation-ID cardinality budget is **10,000** unique `installation.id` values.
 - The receiver returns HTTP `429` when the budget is exceeded and logs a warning.
 - The client-side `ValidateCardinalityBudget` helper documents the contract; the server is the enforcing authority.
-- To raise the budget, restart the receiver with `--max-installations`.
+- To raise the installation budget, restart the receiver with `--max-installations`.
+- Prometheus adoption series have a separate 10,000-series default budget. Use `--max-series` to override it; new label combinations are rejected with HTTP `429` after the limit is reached.
 
 ## Dashboards
 
@@ -55,6 +56,11 @@ telemetry:
   - `health.unique_installations` — current unique `installation.id` count.
   - `health.storage_size_bytes` — total byte size of the receiver storage directory.
   - `health.metric_count` — total number of accepted metric data points.
+- `GET /metrics` exposes Prometheus counters, histograms, and gauges for adoption and receiver health. It never exposes `installation.id` as a label.
+- Import [`monitoring/agent-marketplace-telemetry-dashboard.json`](../monitoring/agent-marketplace-telemetry-dashboard.json) into Grafana and select the Prometheus datasource and scrape job.
+- Configure Prometheus or VictoriaMetrics to scrape the receiver's `/metrics` path. Keep this operator endpoint private even when `/v1/metrics` is available through a public ingress.
+
+The receiver restores retained adoption totals, last-receive time, and rolling active-installation windows from its JSONL files after a restart. Prometheus counters intentionally restart from zero so `rate` and `increase` do not interpret replayed records as new traffic. Run one receiver process per storage directory; startup fails while another process holds that directory's advisory lock.
 
 ## Starting the receiver
 

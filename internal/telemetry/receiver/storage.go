@@ -3,9 +3,11 @@ package receiver
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -72,6 +74,42 @@ func (s *storage) append(record *requestRecord) error {
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close record file: %w", err)
+	}
+	return nil
+}
+
+func (s *storage) load(consume func(*requestRecord) error) error {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return fmt.Errorf("read storage directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(s.dir, entry.Name())
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("open record file %q: %w", path, err)
+		}
+		decoder := json.NewDecoder(f)
+		for {
+			var record requestRecord
+			if err := decoder.Decode(&record); err != nil {
+				if err == io.EOF {
+					break
+				}
+				_ = f.Close()
+				return fmt.Errorf("decode record file %q: %w", path, err)
+			}
+			if err := consume(&record); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("restore record file %q: %w", path, err)
+			}
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("close record file %q: %w", path, err)
+		}
 	}
 	return nil
 }

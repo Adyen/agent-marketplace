@@ -16,11 +16,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	amconfig "github.com/Adyen/agent-marketplace/internal/config"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	mpb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestAuthHeaderResolution(t *testing.T) {
@@ -75,6 +79,66 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}
 	if gotHeaders.Get("X-Tenant") != "tenant-42" {
 		t.Fatalf("x-tenant header = %q, want tenant-42", gotHeaders.Get("X-Tenant"))
+	}
+}
+
+func TestMetricExporterUsesDeltaTemporality(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	got := make(chan mpb.AggregationTemporality, 1)
+	expectedResourceAttrs := map[string]struct{}{
+		string(tmcfg.ResourceAttrSchemaVersion):  {},
+		string(tmcfg.ResourceAttrInstallationID): {},
+		string(tmcfg.ResourceAttrCLIVersion):     {},
+		string(tmcfg.ResourceAttrOSName):         {},
+		string(tmcfg.ResourceAttrArch):           {},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+			http.Error(w, "read body", http.StatusBadRequest)
+			return
+		}
+		var request metricspb.ExportMetricsServiceRequest
+		if err := proto.Unmarshal(body, &request); err != nil {
+			t.Errorf("unmarshal metrics: %v", err)
+			http.Error(w, "unmarshal metrics", http.StatusBadRequest)
+			return
+		}
+		resourceAttrs := request.ResourceMetrics[0].Resource.Attributes
+		if len(resourceAttrs) != len(expectedResourceAttrs) {
+			t.Errorf("resource attribute count = %d, want %d", len(resourceAttrs), len(expectedResourceAttrs))
+		}
+		for _, attr := range resourceAttrs {
+			if _, ok := expectedResourceAttrs[attr.Key]; !ok {
+				t.Errorf("unexpected resource attribute %q", attr.Key)
+			}
+		}
+		got <- request.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].GetSum().GetAggregationTemporality()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	state, err := ResolveTelemetryConfig(nil, &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, Endpoint: srv.URL}}, "", "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	tel, err := New(context.Background(), state, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	tel.CommandCounter().Add(context.Background(), 1, nil)
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	select {
+	case temporality := <-got:
+		if temporality != mpb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA {
+			t.Fatalf("temporality = %s, want delta", temporality)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("metric exporter did not send a payload")
 	}
 }
 

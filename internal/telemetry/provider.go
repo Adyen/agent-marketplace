@@ -330,7 +330,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 			"agent_marketplace.command.duration_ms",
 			otelmetric.WithUnit("ms"),
 			otelmetric.WithDescription("Command duration in milliseconds"),
-			otelmetric.WithExplicitBucketBoundaries(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+			otelmetric.WithExplicitBucketBoundaries(tmcfg.CommandDurationBucketBoundaries...),
 		)
 		if err != nil {
 			logger.Error("failed to create command duration histogram", "error", err)

@@ -24,6 +24,7 @@ import (
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -282,6 +283,10 @@ func buildSignalEndpoint(endpoint, signal string) (string, error) {
 	}
 }
 
+func deltaTemporalitySelector(sdkmetric.InstrumentKind) metricdata.Temporality {
+	return metricdata.DeltaTemporality
+}
+
 func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdkmetric.Exporter, error) {
 	slog.Debug("building metric exporter", "endpoint", endpoint)
 
@@ -298,7 +303,7 @@ func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string
 		otlpmetrichttp.WithCompression(otlpmetrichttp.NoCompression),
 		otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}),
 		otlpmetrichttp.WithTimeout(30*time.Second),
-		otlpmetrichttp.WithTemporalitySelector(sdkmetric.DefaultTemporalitySelector),
+		otlpmetrichttp.WithTemporalitySelector(deltaTemporalitySelector),
 		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
 	if err != nil {

@@ -48,9 +48,13 @@ func (c *cardinality) Load() error {
 		return fmt.Errorf("parse cardinality budget file: %w", err)
 	}
 	for _, id := range file.InstallationIDs {
-		if id != "" {
-			c.seen[id] = struct{}{}
+		if !installationIDPattern.MatchString(id) {
+			return fmt.Errorf("invalid installation id in cardinality budget")
 		}
+		if _, duplicate := c.seen[id]; duplicate {
+			return fmt.Errorf("duplicate installation id in cardinality budget")
+		}
+		c.seen[id] = struct{}{}
 	}
 	return nil
 }
@@ -79,6 +83,27 @@ func (c *cardinality) Add(id string) (accepted bool, err error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func (c *cardinality) Contains(id string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.seen[id]
+	return ok
+}
+
+func (c *cardinality) Remove(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.seen[id]; !ok {
+		return nil
+	}
+	delete(c.seen, id)
+	if err := c.saveLocked(); err != nil {
+		c.seen[id] = struct{}{}
+		return err
+	}
+	return nil
 }
 
 // Count returns the current number of unique installation IDs.

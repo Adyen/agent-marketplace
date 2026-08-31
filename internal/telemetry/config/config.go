@@ -63,6 +63,8 @@ var MetricSchemaAttributes = []ResourceAttribute{
 	ResourceAttrOutcomeCode,
 }
 
+var CommandDurationBucketBoundaries = []float64{10, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+
 // TelemetryConfig is the machine-scope telemetry policy. It is only allowed in
 // organization and user-personal configuration layers.
 type TelemetryConfig struct {
