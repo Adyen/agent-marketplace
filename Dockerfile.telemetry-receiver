@@ -1,0 +1,29 @@
+ARG GO_BUILD_IMAGE=golang:1.26-alpine
+ARG ALPINE_RUNTIME_IMAGE=alpine:3.22
+
+FROM --platform=$BUILDPLATFORM ${GO_BUILD_IMAGE} AS build
+
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /out/agent-marketplace ./cmd/agent-marketplace
+
+FROM ${ALPINE_RUNTIME_IMAGE}
+RUN addgroup -S -g 1000 marketplace && adduser -S -u 1000 -G marketplace marketplace \
+    && apk add --no-cache ca-certificates \
+    && mkdir -p /var/lib/agent-marketplace/telemetry \
+    && chown -R marketplace:marketplace /var/lib/agent-marketplace
+WORKDIR /app
+COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
+USER marketplace
+EXPOSE 4318
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget -q -O - -T 5 http://127.0.0.1:4318/health >/dev/null || exit 1
+ENTRYPOINT ["/app/agent-marketplace"]
+CMD ["telemetry", "receiver", "--listen=0.0.0.0:4318", "--storage-dir=/var/lib/agent-marketplace/telemetry"]
