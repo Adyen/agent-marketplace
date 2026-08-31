@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { compareStrings } from "./order.js";
+
 export interface Sandbox {
   root: string;
   home: string;
@@ -208,7 +210,7 @@ export const summarize = (directory: string, digest: (file: string) => string, a
   let truncated = false;
 
   const walk = (current: string): void => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => compareStrings(a.name, b.name))) {
       if (truncated) return;
       entries++;
       if (entries > SUMMARY_MAX_ENTRIES) {
