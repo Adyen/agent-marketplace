@@ -18,6 +18,7 @@ const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const toolRoot = fs.existsSync(path.join(moduleRoot, "dist", "pty-wrapper.js")) ? moduleRoot : path.resolve(moduleRoot, "..", "..");
 const wrapper = path.join(toolRoot, "dist", "pty-wrapper.js");
 const fixture = path.join(toolRoot, "fixtures", "driver-capabilities.sh");
+const modeLeakFixture = path.join(toolRoot, "fixtures", "driver-mode-leak.sh");
 
 interface ViewableTerminal {
   getViewableBuffer(): string[][];
@@ -90,6 +91,37 @@ test("real PTY supports resize, input, mouse, signals, cells, and owned recovery
   assert.equal(lifecycle.boundaryVersion, TARGET_EXIT_BOUNDARY_VERSION);
   assert.deepEqual(lifecycle.targetAtExit, { probeOK: true, canonical: false, echo: false });
   assert.deepEqual(lifecycle.harnessRecovery, { applied: true, probeOK: true, canonical: true, echo: true });
+});
+
+test.describe("leaked terminal modes", () => {
+  const modeDir = path.join(runDir, "mode-leak");
+  const modeLifecycle = path.join(modeDir, "lifecycle");
+  test.use({
+    env: {
+      PATH: process.env.PATH,
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      AM_TUI_QA_LIFECYCLE_DIR: modeLifecycle,
+      AM_TUI_QA_ACTIVE_PID_FILE: path.join(modeDir, "active.pid")
+    },
+    program: {
+      file: process.execPath,
+      args: [wrapper, "--", modeLeakFixture]
+    }
+  });
+
+  test("always resets the harness-owned PTY after the target boundary", async ({ terminal }) => {
+    const exited = new Promise<{ exitCode: number; signal?: number }>((resolve) => terminal.onExit(resolve));
+    assert.equal((await exited).exitCode, 0);
+    const files = fs.readdirSync(modeLifecycle).filter((name) => name.startsWith("lifecycle-") && name.endsWith(".json"));
+    assert.equal(files.length, 1);
+    const lifecycle = JSON.parse(fs.readFileSync(path.join(modeLifecycle, files[0]), "utf8")) as {
+      targetAtExit: { probeOK: boolean; canonical: boolean; echo: boolean };
+      harnessRecovery: { applied: boolean; probeOK: boolean; canonical: boolean; echo: boolean };
+    };
+    assert.deepEqual(lifecycle.targetAtExit, { probeOK: true, canonical: true, echo: true });
+    assert.deepEqual(lifecycle.harnessRecovery, { applied: true, probeOK: true, canonical: true, echo: true });
+  });
 });
 
 test.describe("termios probe failure", () => {
