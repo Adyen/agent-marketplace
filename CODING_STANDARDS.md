@@ -34,9 +34,11 @@ These are review criteria for all code changes. They complement the architecture
 
 - Wrap errors with the failed operation and relevant context while preserving the cause with `%w`. Branch on error identity, not message text.
 - Use structured `slog` fields for meaningful operation boundaries, decisions, counts, durations, and failures. Never log credentials, tokens, headers, or sensitive payloads.
+- When a span owns downstream work, pass the context returned by `StartSpan` to that work so its spans inherit the parent. Discard the returned context only for leaf spans.
 - Treat stable diagnostic codes and severities as public behavior. Add or update tests whenever either changes.
 
 ## Performance
 
 - Performance claims require measurements. A change to a user-visible hot path must retain a representative benchmark beside the affected package and report before/after time and allocation results.
 - Keep setup out of benchmark timing, exercise realistic workloads, and report allocations. Do not trade correctness, determinism, or safety for an unmeasured optimization.
+- End-to-end lifecycle benchmarks must state whether disk I/O and network requests are included. Keep those operations in the timed path using isolated filesystems and local endpoints; if a mock or no-op deliberately narrows the measurement, name and document it as a narrower benchmark rather than presenting it as end-to-end.
