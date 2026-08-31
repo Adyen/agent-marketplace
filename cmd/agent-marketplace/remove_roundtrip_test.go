@@ -561,6 +561,54 @@ registries:
 	}
 }
 
+func TestRemoveFromRejectsUnselectedName(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "remove-from-typo.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+	withWorkingDir(t, repoRoot)
+
+	if _, err := executeCommand("remove", "--from", origin, "typo"); err == nil || !strings.Contains(err.Error(), "not currently enabled") {
+		t.Fatalf("expected unselected name to be rejected, got %v", err)
+	}
+}
+
+func TestRemoveFromRejectsSamePathAtDifferentRefs(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "remove-from-refs.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - keeper
+  - url: `+origin+`
+    ref: release
+`)
+	withWorkingDir(t, repoRoot)
+
+	for _, args := range [][]string{{"remove", "keeper", "--from", origin, "--ref", "main"}, {"remove", "--from", origin, "--ref", "main"}} {
+		if _, err := executeCommand(args...); err == nil || !strings.Contains(err.Error(), "different refs") {
+			t.Fatalf("expected ref collision for %v, got %v", args, err)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // tag-selected skill remove → repo exclude (not personal exclude)
 // ---------------------------------------------------------------------------

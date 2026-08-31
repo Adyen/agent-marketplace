@@ -1557,6 +1557,20 @@ func TestResolveLocalSkillPlusExcludeFavorsExclude(t *testing.T) {
 	}
 }
 
+func TestResolveMissingLocalSkillPlusExcludeSuppressesWarning(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: "git@example.com:repo.git", Ref: "main"}}}
+	setCatalogKeys(cfg)
+	localCfg := &config.LocalConfig{Skills: kse([]string{"missing-skill"}, []string{"missing-skill"})}
+
+	got, errs := Resolve(cfg, map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}, localCfg)
+	if len(errs) != 0 {
+		t.Fatalf("expected local exclude to suppress unresolved warning, got %v", errs)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no resolved resources, got %#v", got)
+	}
+}
+
 func TestResolveSameSkillInMachineAndRepoScopeProducesBothArtifacts(t *testing.T) {
 	// Regression: when a skill appears in both a UserPersonal registry
 	// (machine-scope, path: .factory) and a RepoCommitted registry (repo-scope,

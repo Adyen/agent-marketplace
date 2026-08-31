@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -687,6 +688,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		localSelections = localResourceSelections(localCfg)
 		localExcludes = localResourceExcludes(localCfg)
 		excludeAllKinds = localExcludeAllKinds(localCfg)
+		localSelections = excludeSelections(localSelections, localExcludes, excludeAllKinds)
 	}
 
 	// Propagate top-level Collections.Include to all registry entries so
@@ -1550,6 +1552,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 	// the same false positive, and it is a HARD error, so it must defer too.
 	var collectionNotFoundErrs []deferredCollectionError
 	order := 0
+	suppressedCrossLayer := 0
 
 	for entryIndex, entry := range cfg.Registries {
 		catalogKey := entry.CatalogKey
@@ -1572,6 +1575,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			selectedSkill, found := byName[selected]
 			if !found {
 				if selectedEntryIsCrossLayerExcluded(entry, selected, cfg.Registries) {
+					suppressedCrossLayer++
 					continue
 				}
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref, required: entry.Required}
@@ -1644,6 +1648,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		}
 		errs = append(errs, deferred.err)
 	}
+	logSuppressedSelections("suppressed cross-layer excluded unresolved selections", suppressedCrossLayer)
 
 	return occurrencesByName, errs
 }
@@ -1911,6 +1916,31 @@ func localExcludeAllKinds(localCfg *config.LocalConfig) map[ir.ResourceKind]bool
 		}
 	}
 	return kinds
+}
+
+func excludeSelections(selections, excludes resourceSelections, excludeAllKinds map[ir.ResourceKind]bool) resourceSelections {
+	excluded := make(map[resourceSelection]struct{}, len(excludes))
+	for _, selection := range excludes {
+		excluded[selection] = struct{}{}
+	}
+	suppressed := 0
+	selections = slices.DeleteFunc(selections, func(selection resourceSelection) bool {
+		_, excludedByName := excluded[selection]
+		if excludedByName || excludeAllKinds[selection.kind] {
+			suppressed++
+			return true
+		}
+		return false
+	})
+	logSuppressedSelections("suppressed locally excluded selections", suppressed)
+	return selections
+}
+
+func logSuppressedSelections(message string, count int) {
+	logger := slog.Default()
+	if count > 0 && logger.Enabled(context.Background(), slog.LevelDebug) {
+		logger.Debug(message, "count", count)
+	}
 }
 
 func entryResourceExcludes(entry config.RegistryEntry) resourceSelections {

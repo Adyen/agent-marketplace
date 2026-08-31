@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -290,6 +292,66 @@ func TestExplicitRemovalSelectionsRejectsSameRegistryAtMultipleRefs(t *testing.T
 	_, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
 	if err == nil || !strings.Contains(err.Error(), "multiple refs") {
 		t.Fatalf("expected multi-ref removal to fail safely, got %v", err)
+	}
+}
+
+func TestExplicitRemovalSelectionsRejectsNonSelectingSiblingAtDifferentRef(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
+			{URL: "registry", Ref: "release", Skills: config.KindSelector{Include: []string{"keeper"}}},
+			{URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}},
+		}}},
+	}
+	_, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err == nil || !strings.Contains(err.Error(), "multiple refs") {
+		t.Fatalf("expected same-path ref collision to fail safely, got %v", err)
+	}
+}
+
+func TestRegistryRefCollisionIgnoresDifferentPath(t *testing.T) {
+	ec := config.EffectiveConfig{Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
+		{URL: "registry", Ref: "main"},
+		{URL: "registry", Ref: "main", Path: "plugins"},
+		{URL: "registry", Ref: "release", Path: "plugins"},
+	}}}}
+	if registryRefCollisionAtScope(ec, ScopeRepo, config.NormalizeGitURL("registry"), "") {
+		t.Fatal("root entry should not collide with different-path refs")
+	}
+}
+
+func TestRemoveTopLevelOrganizationSelectionCreatesUserRegistryShadow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	userPath := filepath.Join(dir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	org := &config.Config{
+		Skills:     config.KindSelector{Include: []string{"gone"}},
+		Registries: []config.RegistryEntry{{URL: "registry", Ref: "main"}},
+	}
+	ec := config.EffectiveConfig{
+		Organization: config.LayerResult{Config: org},
+		User:         config.LayerResult{Path: userPath, Config: &config.Config{}},
+		Merged:       config.MergeLayers([]config.Layer{{Source: config.Organization, Config: org}}),
+	}
+
+	selections, err := explicitRemovalSelections(ec, dir, "gone", ir.KindSkill, true, ScopeUser, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeExplicitSelections(dir, selections, ScopeUser, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Registries) != 1 || !stringListContains(cfg.Registries[0].Skills.Exclude, "gone") {
+		t.Fatalf("expected registry-scoped user shadow exclude, got %#v", cfg)
 	}
 }
 
