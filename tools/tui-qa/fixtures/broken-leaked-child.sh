@@ -1,4 +1,2 @@
 #!/bin/sh
-AM_TUI_QA_EDITOR_SPAWN_CHILD=1 "$EDITOR"
-printf 'editor parent exited\n'
-exit 0
+exec "$AM_TUI_QA_NODE" "$AM_TUI_QA_LEAK_HELPER"
