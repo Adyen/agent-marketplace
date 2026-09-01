@@ -18,8 +18,18 @@ export const projectBuildIdentity = (identity: BuildIdentity, repoRoot: string):
     identity.command[index - 1] === "-o" ? "<run-binary>/agent-marketplace" : value.replaceAll(repoRoot, "<repo-root>"))
 });
 
-export const certifyingRun = (contained: boolean, worktreeDirty: boolean, identity: BuildIdentity): boolean =>
-  contained && !worktreeDirty && identity.buildClass === "release-equivalent" && !identity.cgoEnabled;
+export const certifyingRun = (
+  contained: boolean,
+  worktreeDirty: boolean,
+  identity: BuildIdentity,
+  revision: { base: string; head: string }
+): boolean =>
+  contained &&
+  !worktreeDirty &&
+  identity.buildClass === "release-equivalent" &&
+  !identity.cgoEnabled &&
+  /^[0-9a-f]{40,64}$/.test(revision.base) &&
+  /^[0-9a-f]{40,64}$/.test(revision.head);
 
 export const isHarnessLaunchFailure = (output: string): boolean =>
   /spawn .*\b(?:EACCES|ENOENT)\b/.test(output) ||

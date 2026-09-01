@@ -685,7 +685,7 @@ export const runWorkbench = async (config: WorkbenchConfig, options: WorkbenchOp
   const results = newRunResults({
     runId: config.runId,
     runClass: config.runClass,
-    certifying: certifyingRun(process.env.AM_TUI_QA_CONTAINED === "1", worktreeDirty, binary),
+    certifying: certifyingRun(process.env.AM_TUI_QA_CONTAINED === "1", worktreeDirty, binary, { base, head }),
     startedAt,
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - started,

@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import { aggregateAttemptStatuses, certifyingRun, isHarnessLaunchFailure, projectBuildIdentity } from "../../src/workbench-policy.js";
 import type { BuildIdentity } from "../../src/build.js";
 
+const revision = { base: "b".repeat(40), head: "c".repeat(40) };
+
 const identity: BuildIdentity = {
   path: "/private/run/agent-marketplace",
   sha256: "a".repeat(64),
@@ -40,10 +42,11 @@ describe("workbench policy", () => {
   });
 
   it("certifies only clean contained release-equivalent builds", () => {
-    assert.equal(certifyingRun(true, false, identity), true);
-    assert.equal(certifyingRun(false, false, identity), false);
-    assert.equal(certifyingRun(true, true, identity), false);
-    assert.equal(certifyingRun(true, false, { ...identity, buildClass: "instrumented" }), false);
-    assert.equal(certifyingRun(true, false, { ...identity, cgoEnabled: true }), false);
+    assert.equal(certifyingRun(true, false, identity, revision), true);
+    assert.equal(certifyingRun(false, false, identity, revision), false);
+    assert.equal(certifyingRun(true, true, identity, revision), false);
+    assert.equal(certifyingRun(true, false, { ...identity, buildClass: "instrumented" }, revision), false);
+    assert.equal(certifyingRun(true, false, { ...identity, cgoEnabled: true }, revision), false);
+    assert.equal(certifyingRun(true, false, identity, { ...revision, base: "NO_BASE" }), false);
   });
 });
