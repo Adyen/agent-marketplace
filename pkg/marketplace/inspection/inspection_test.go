@@ -11,7 +11,7 @@ import (
 func TestBuildCanonicalSkillProjection(t *testing.T) {
 	body := []byte("# Review\nRead carefully.\n")
 	support := map[string][]byte{"notes.md": []byte("notes")}
-	projection, err := Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), body, support, 10, 1024, 4096)
+	projection, err := Build(store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("a", 64), body, support, 10, 1024, 4096)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestBuildProjectionIsAnalyzerIndependent(t *testing.T) {
 	// Build deliberately has no analyzer version, findings, or policy-decision
 	// input: the inspection identity is a projection of files only.
 	buildFilesOnly := Build
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := "sha256:" + strings.Repeat("a", 64)
 	body := []byte("# Review\nRead carefully.\n")
 	first, err := buildFilesOnly(coordinate, revision, body, nil, 10, 1024, 4096)
@@ -82,7 +82,7 @@ func TestBuildProducesCanonicalProjectionForEveryMarketplaceKind(t *testing.T) {
 				"image.png":   {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a},
 				"opaque.bin":  {0x00, 0xff, 0x01},
 			}
-			coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: kind, Name: "example"}
+			coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: kind, Name: "example"}
 			projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, support, 10, 1024, 4096)
 			if err != nil {
 				t.Fatal(err)
@@ -105,7 +105,7 @@ func TestBuildProducesCanonicalProjectionForEveryMarketplaceKind(t *testing.T) {
 }
 
 func TestVerifyRequiresCanonicalPrimaryMediaAndReferencedBodyPolicy(t *testing.T) {
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "mcpserver", Name: "remote"}
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "mcpserver", Name: "remote"}
 	body := []byte(`{"name":"remote"}`)
 	projection, err := Build(coordinate, "sha256:"+strings.Repeat("a", 64), body, map[string][]byte{"notes.md": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestVerifyRequiresCanonicalPrimaryMediaAndReferencedBodyPolicy(t *testing.T
 		t.Fatal("support body with mismatched media accepted")
 	}
 
-	projection, err = Build(store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("b", 64), []byte("# review\n"), map[string][]byte{"notes.md": []byte("# notes\n")}, 10, 1024, 4096)
+	projection, err = Build(store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}, "sha256:"+strings.Repeat("b", 64), []byte("# review\n"), map[string][]byte{"notes.md": []byte("# notes\n")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}

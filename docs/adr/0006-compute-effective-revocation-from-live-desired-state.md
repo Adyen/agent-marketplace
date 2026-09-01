@@ -4,7 +4,7 @@ status: accepted
 
 # Compute effective revocation from live desired state
 
-Operator revocation configuration is authoritative desired state reconciled transactionally before API readiness, while resource revisions remain immutable. Effective revocation is overlaid during reads and resolution: any active source, coordinate, or coordinate-plus-digest declaration revokes, with specificity selecting the primary reason rather than exempting a revision from a broader declaration.
+Operator revocation configuration is authoritative desired state reconciled transactionally before API readiness, while resource revisions remain immutable. Effective revocation is overlaid during reads and resolution: any active registry, coordinate, or coordinate-plus-digest declaration revokes, with specificity selecting the primary reason rather than exempting a revision from a broader declaration.
 
 ## Consequences
 

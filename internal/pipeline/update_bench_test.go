@@ -12,7 +12,7 @@ func BenchmarkMarketplaceUpdatePlanningSkippedPins(b *testing.B) {
 	pins := make([]config.MarketplaceResourcePin, 64)
 	for i := range pins {
 		pins[i] = config.MarketplaceResourcePin{
-			SourceID: "source-" + strconv.Itoa(i), Kind: "skill", Name: "skill-" + strconv.Itoa(i),
+			RegistryID: "source-" + strconv.Itoa(i), Kind: "skill", Name: "skill-" + strconv.Itoa(i),
 			Revision: "revision", Digest: "sha256:" + benchmarkDigest,
 			Acquisition: config.MarketplaceAcquisitionIndexOnly,
 		}

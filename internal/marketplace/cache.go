@@ -29,14 +29,14 @@ type Cache struct {
 // operator metadata and must never make an old origin reachable.
 type IndexOnlyIdentity struct {
 	Marketplace    string
-	SourceID       string
+	RegistryID     string
 	Commit         string
 	ManifestDigest string
 }
 
 // IndexOnlyKey returns a stable, opaque directory key for an exact occurrence.
 func IndexOnlyKey(identity IndexOnlyIdentity) string {
-	value := identity.Marketplace + "\x00" + identity.SourceID + "\x00" + identity.Commit + "\x00" + identity.ManifestDigest
+	value := identity.Marketplace + "\x00" + identity.RegistryID + "\x00" + identity.Commit + "\x00" + identity.ManifestDigest
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
@@ -44,9 +44,9 @@ func IndexOnlyKey(identity IndexOnlyIdentity) string {
 func indexOnlyIdentity(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) IndexOnlyIdentity {
 	return IndexOnlyIdentity{
 		Marketplace:    entry.InstanceID,
-		SourceID:       pin.SourceID,
-		Commit:         pin.SourceCommit,
-		ManifestDigest: pin.SourceManifestDigest,
+		RegistryID:     pin.RegistryID,
+		Commit:         pin.RegistryCommit,
+		ManifestDigest: pin.RegistryManifestDigest,
 	}
 }
 
@@ -198,7 +198,7 @@ func (c *Cache) referencedArchiveDigests(cfg *config.Config) (map[string]struct{
 				continue
 			}
 
-			rev, ok, err := c.ReadResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+			rev, ok, err := c.ReadResourceRevision(entry.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
 			if err != nil {
 				return nil, fmt.Errorf("read metadata for marketplace %d pin %d: %w", entryIndex, pinIndex, err)
 			}
@@ -342,7 +342,7 @@ func (c *Cache) ArtifactPath(digest string) string {
 }
 
 // IndexOnlyArtifactPath returns the cache path for an artifact reconstructed
-// from one exact source occurrence.
+// from one exact registry occurrence.
 func (c *Cache) IndexOnlyArtifactPath(identity IndexOnlyIdentity, digest string) string {
 	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "artifacts", safeDigest(digest), "artifact.tar.gz")
 }
@@ -478,12 +478,12 @@ func (c *Cache) MarkCollectionVerified(digest string) error {
 }
 
 // MetadataPath returns the path for a cached resource revision JSON document.
-func (c *Cache) MetadataPath(baseURL, sourceID, kind, name, revision string) string {
+func (c *Cache) MetadataPath(baseURL, registryID, kind, name, revision string) string {
 	return filepath.Join(
 		c.root,
 		"metadata",
 		cache.HashURL(baseURL),
-		safePathSegment(sourceID),
+		safePathSegment(registryID),
 		safePathSegment(kind),
 		safePathSegment(name),
 		safeDigest(revision)+".json",
@@ -491,14 +491,14 @@ func (c *Cache) MetadataPath(baseURL, sourceID, kind, name, revision string) str
 }
 
 // IndexOnlyMetadataPath returns the cache path for resource metadata tied to
-// an exact source occurrence, rather than only its content digest.
-func (c *Cache) IndexOnlyMetadataPath(identity IndexOnlyIdentity, sourceID, kind, name, revision string) string {
-	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "metadata", safePathSegment(sourceID), safePathSegment(kind), safePathSegment(name), safeDigest(revision)+".json")
+// an exact registry occurrence, rather than only its content digest.
+func (c *Cache) IndexOnlyMetadataPath(identity IndexOnlyIdentity, registryID, kind, name, revision string) string {
+	return filepath.Join(c.root, "index-only", IndexOnlyKey(identity), "metadata", safePathSegment(registryID), safePathSegment(kind), safePathSegment(name), safeDigest(revision)+".json")
 }
 
-func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
+func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, registryID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
-		p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
+		p := c.IndexOnlyMetadataPath(identity, registryID, kind, name, revision)
 		raw, err := json.Marshal(rev)
 		if err != nil {
 			return "", fmt.Errorf("marshal index-only resource revision: %w", err)
@@ -513,9 +513,9 @@ func (c *Cache) WriteIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourc
 	})
 }
 
-func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, sourceID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
+func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, registryID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
 	var rev store.AssessedResourceRevision
-	p := c.IndexOnlyMetadataPath(identity, sourceID, kind, name, revision)
+	p := c.IndexOnlyMetadataPath(identity, registryID, kind, name, revision)
 	exists, err := validateCacheRegularFile(c.root, p)
 	if err != nil {
 		return rev, false, fmt.Errorf("validate index-only metadata cache %q: %w", p, err)
@@ -534,14 +534,14 @@ func (c *Cache) ReadIndexOnlyResourceRevision(identity IndexOnlyIdentity, source
 }
 
 // WriteResourceRevision caches a resource revision JSON document.
-func (c *Cache) WriteResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
+func (c *Cache) WriteResourceRevision(baseURL, registryID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
-		return c.writeResourceRevision(baseURL, sourceID, kind, name, revision, rev)
+		return c.writeResourceRevision(baseURL, registryID, kind, name, revision, rev)
 	})
 }
 
-func (c *Cache) writeResourceRevision(baseURL, sourceID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
-	p := c.MetadataPath(baseURL, sourceID, kind, name, revision)
+func (c *Cache) writeResourceRevision(baseURL, registryID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
+	p := c.MetadataPath(baseURL, registryID, kind, name, revision)
 	raw, err := json.Marshal(rev)
 	if err != nil {
 		return "", fmt.Errorf("marshal resource revision: %w", err)
@@ -556,9 +556,9 @@ func (c *Cache) writeResourceRevision(baseURL, sourceID, kind, name, revision st
 }
 
 // ReadResourceRevision reads a cached resource revision JSON document.
-func (c *Cache) ReadResourceRevision(baseURL, sourceID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
+func (c *Cache) ReadResourceRevision(baseURL, registryID, kind, name, revision string) (store.AssessedResourceRevision, bool, error) {
 	var rev store.AssessedResourceRevision
-	p := c.MetadataPath(baseURL, sourceID, kind, name, revision)
+	p := c.MetadataPath(baseURL, registryID, kind, name, revision)
 	exists, err := validateCacheRegularFile(c.root, p)
 	if err != nil {
 		return rev, false, fmt.Errorf("validate metadata cache %q: %w", p, err)

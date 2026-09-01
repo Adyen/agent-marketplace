@@ -349,7 +349,7 @@ func digest(data []byte) string { return Digest(data) }
 
 func Verify(manifest Manifest, payload []byte, expected string) error {
 	if manifest.SchemaVersion != SchemaVersion || PrimaryPath(manifest.Coordinate.Kind) == "" ||
-		manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Source == "" || manifest.Coordinate.Name == "" ||
+		manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Registry == "" || manifest.Coordinate.Name == "" ||
 		!validDigest(manifest.RevisionDigest) || manifest.PrimaryPath != PrimaryPath(manifest.Coordinate.Kind) || len(manifest.Files) == 0 {
 		return fmt.Errorf("invalid inspection manifest")
 	}

@@ -26,11 +26,11 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-// MaxSourceHistoryEntries is the maximum number of occurrences returned by the
-// source history endpoint. Entries are ordered newest first by the metadata
+// MaxRegistryHistoryEntries is the maximum number of occurrences returned by the
+// registry history endpoint. Entries are ordered newest first by the metadata
 // store, so truncation is deterministic.
-const MaxSourceHistoryEntries = store.MaxSourceHistoryEntries
-const maxSourceSummaries = 1000
+const MaxRegistryHistoryEntries = store.MaxRegistryHistoryEntries
+const maxRegistrySummaries = 1000
 
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
@@ -71,8 +71,8 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.HandleFunc("/api/v1/capabilities", s.methodGet(s.handleCapabilities))
 	publicMux.HandleFunc("/api/v1/instance", s.methodGet(s.handleInstance))
 	publicMux.HandleFunc("/api/v1/search", s.methodGet(s.handleSearch))
-	publicMux.HandleFunc("/api/v1/sources", s.methodGet(s.handleSourceList))
-	publicMux.HandleFunc("/api/v1/sources/", s.methodGet(s.handleSources))
+	publicMux.HandleFunc("/api/v1/registries", s.methodGet(s.handleRegistryList))
+	publicMux.HandleFunc("/api/v1/registries/", s.methodGet(s.handleRegistries))
 	publicMux.HandleFunc("/api/v1/resources/", s.methodGet(s.handleResources))
 	publicMux.HandleFunc("/api/v1/manifests/", s.methodGet(s.handleManifests))
 	publicMux.HandleFunc("/api/v1/assessments/", s.methodGet(s.handleAssessmentDigest))
@@ -213,7 +213,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source := q.Get("source")
+	registry := q.Get("registry")
 	searchQ := q.Get("q")
 	if len(searchQ) > 256 {
 		writeError(w, http.StatusBadRequest, "query too long")
@@ -233,7 +233,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	revs, err := s.meta.SearchResourceRevisions(r.Context(), store.ResourceSearchFilter{
 		Marketplace: s.mpID,
-		Source:      source,
+		Registry:    registry,
 		Kind:        kind,
 		Query:       searchQ,
 	})
@@ -243,9 +243,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sources, err := s.sourceIndex(r.Context())
+	registries, err := s.registryIndex(r.Context())
 	if err != nil {
-		slog.Error("source index failed", "err", err)
+		slog.Error("registry index failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
@@ -270,8 +270,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if si != sj {
 			return si > sj
 		}
-		if revs[i].Coordinate.Source != revs[j].Coordinate.Source {
-			return revs[i].Coordinate.Source < revs[j].Coordinate.Source
+		if revs[i].Coordinate.Registry != revs[j].Coordinate.Registry {
+			return revs[i].Coordinate.Registry < revs[j].Coordinate.Registry
 		}
 		if revs[i].Coordinate.Kind != revs[j].Coordinate.Kind {
 			return revs[i].Coordinate.Kind < revs[j].Coordinate.Kind
@@ -282,7 +282,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]ResourceListItem, 0, len(revs))
 	for _, rev := range revs {
-		items = append(items, s.resourceToListItem(rev, sources, relevanceScore(rev.Coordinate.Name, searchQ)))
+		items = append(items, s.resourceToListItem(rev, registries, relevanceScore(rev.Coordinate.Name, searchQ)))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -293,110 +293,110 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleSourceList(w http.ResponseWriter, r *http.Request) {
-	sources, err := s.meta.ListSources(r.Context())
+func (s *Server) handleRegistryList(w http.ResponseWriter, r *http.Request) {
+	registries, err := s.meta.ListRegistries(r.Context())
 	if err != nil {
-		slog.Error("failed to list sources", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list sources")
+		slog.Error("failed to list registries", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to list registries")
 		return
 	}
-	sort.Slice(sources, func(i, j int) bool { return sources[i].Slug < sources[j].Slug })
-	if len(sources) > maxSourceSummaries {
-		sources = sources[:maxSourceSummaries]
+	sort.Slice(registries, func(i, j int) bool { return registries[i].Slug < registries[j].Slug })
+	if len(registries) > maxRegistrySummaries {
+		registries = registries[:maxRegistrySummaries]
 	}
-	type sourceSummary struct {
-		ID   store.SourceID `json:"id"`
-		Slug string         `json:"slug"`
+	type registrySummary struct {
+		ID   store.RegistryID `json:"id"`
+		Slug string           `json:"slug"`
 	}
-	items := make([]sourceSummary, 0, len(sources))
-	for _, source := range sources {
-		items = append(items, sourceSummary{ID: source.ID, Slug: source.Slug})
+	items := make([]registrySummary, 0, len(registries))
+	for _, registry := range registries {
+		items = append(items, registrySummary{ID: registry.ID, Slug: registry.Slug})
 	}
 	writeJSON(w, http.StatusOK, items)
 }
 
-func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/sources/")
+func (s *Server) handleRegistries(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/registries/")
 	path = strings.Trim(path, "/")
 	if path == "" {
-		writeError(w, http.StatusNotFound, "source not found")
+		writeError(w, http.StatusNotFound, "registry not found")
 		return
 	}
 
 	parts := strings.Split(path, "/")
 	switch len(parts) {
 	case 1:
-		s.handleSourceDetail(w, r, parts[0])
+		s.handleRegistryDetail(w, r, parts[0])
 	case 2:
 		if parts[1] != "history" {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		s.handleSourceHistory(w, r, parts[0])
+		s.handleRegistryHistory(w, r, parts[0])
 	case 3:
 		if parts[1] != "occurrences" {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		s.handleSourceOccurrence(w, r, parts[0], parts[2])
+		s.handleRegistryOccurrence(w, r, parts[0], parts[2])
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
 }
 
-func (s *Server) handleSourceDetail(w http.ResponseWriter, r *http.Request, slugOrID string) {
-	src, err := s.resolveSource(r.Context(), slugOrID)
+func (s *Server) handleRegistryDetail(w http.ResponseWriter, r *http.Request, slugOrID string) {
+	src, err := s.resolveRegistry(r.Context(), slugOrID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		slog.Error("failed to load source", "source", slugOrID, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		slog.Error("failed to load registry", "registry", slugOrID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 	// Convert through the public DTO: the store model contains credentials and
 	// refresh diagnostics that must never cross the API boundary.
-	public := sourceDTO(src)
-	if err := validatePublicSource(public); err != nil {
-		slog.Error("source contains invalid public metadata", "source", slugOrID, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+	public := registryDTO(src)
+	if err := validatePublicRegistry(public); err != nil {
+		slog.Error("registry contains invalid public metadata", "registry", slugOrID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 	writeJSON(w, http.StatusOK, public)
 }
 
-func (s *Server) handleSourceOccurrence(w http.ResponseWriter, r *http.Request, slugOrID, commit string) {
+func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request, slugOrID, commit string) {
 	if !IsCanonicalGitCommit(commit) {
-		writeError(w, http.StatusBadRequest, "invalid source occurrence commit")
+		writeError(w, http.StatusBadRequest, "invalid registry occurrence commit")
 		return
 	}
-	src, err := s.resolveSource(r.Context(), slugOrID)
+	src, err := s.resolveRegistry(r.Context(), slugOrID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
-	occurrence, err := s.meta.GetSourceOccurrence(r.Context(), src.ID, commit)
+	occurrence, err := s.meta.GetRegistryOccurrence(r.Context(), src.ID, commit)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source occurrence not found")
+			writeError(w, http.StatusNotFound, "registry occurrence not found")
 			return
 		}
-		slog.Error("source occurrence failed", "source", src.ID, "commit", commit, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+		slog.Error("registry occurrence failed", "registry", src.ID, "commit", commit, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
-	if err := validatePublicSourceOccurrence(occurrence); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+	if err := validatePublicRegistryOccurrence(occurrence); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
-	if occurrence.SourceID != src.ID || occurrence.Commit != commit {
-		slog.Error("source occurrence did not match requested identity", "source", src.ID, "commit", commit, "occurrence_source", occurrence.SourceID, "occurrence_commit", occurrence.Commit)
-		writeError(w, http.StatusInternalServerError, "failed to load source occurrence")
+	if occurrence.RegistryID != src.ID || occurrence.Commit != commit {
+		slog.Error("registry occurrence did not match requested identity", "registry", src.ID, "commit", commit, "occurrence_registry", occurrence.RegistryID, "occurrence_commit", occurrence.Commit)
+		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
 	origin := ""
@@ -404,39 +404,39 @@ func (s *Server) handleSourceOccurrence(w http.ResponseWriter, r *http.Request, 
 		origin = publicAcquisitionOrigin(src.Origins[len(src.Origins)-1])
 	}
 	if strings.TrimSpace(origin) == "" {
-		writeError(w, http.StatusInternalServerError, "source has no acquisition origin")
+		writeError(w, http.StatusInternalServerError, "registry has no acquisition origin")
 		return
 	}
-	writeJSON(w, http.StatusOK, ExactSourceOccurrence{
-		SourceID: occurrence.SourceID, Ref: occurrence.Ref, Roots: occurrence.Roots, Commit: occurrence.Commit,
-		SourceRevisionManifestDigest: occurrence.SourceRevisionManifestDigest,
-		Acquisition:                  occurrence.Acquisition, AcquisitionOrigin: origin,
+	writeJSON(w, http.StatusOK, ExactRegistryOccurrence{
+		RegistryID: occurrence.RegistryID, Ref: occurrence.Ref, Roots: occurrence.Roots, Commit: occurrence.Commit,
+		RegistryRevisionManifestDigest: occurrence.RegistryRevisionManifestDigest,
+		Acquisition:                    occurrence.Acquisition, AcquisitionOrigin: origin,
 		OccurredAt: occurrence.OccurredAt,
 	})
 }
 
-func (s *Server) handleSourceHistory(w http.ResponseWriter, r *http.Request, slugOrID string) {
-	src, err := s.resolveSource(r.Context(), slugOrID)
+func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, slugOrID string) {
+	src, err := s.resolveRegistry(r.Context(), slugOrID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 
-	history, err := s.meta.SourceHistory(r.Context(), src.ID)
+	history, err := s.meta.RegistryHistory(r.Context(), src.ID)
 	if err != nil {
-		slog.Error("source history failed", "source", src.ID, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to load source history")
+		slog.Error("registry history failed", "registry", src.ID, "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to load registry history")
 		return
 	}
-	history = boundSourceHistory(history)
+	history = boundRegistryHistory(history)
 	for _, occurrence := range history {
-		if err := validatePublicSourceOccurrence(occurrence); err != nil {
-			slog.Error("source history contains invalid occurrence", "source", src.ID, "err", err)
-			writeError(w, http.StatusInternalServerError, "failed to load source history")
+		if err := validatePublicRegistryOccurrence(occurrence); err != nil {
+			slog.Error("registry history contains invalid occurrence", "registry", src.ID, "err", err)
+			writeError(w, http.StatusInternalServerError, "failed to load registry history")
 			return
 		}
 	}
@@ -490,22 +490,22 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name string) {
+func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
 	if !IsMarketplaceKind(kind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
-	src, err := s.resolveSource(r.Context(), sourceSlug)
+	src, err := s.resolveRegistry(r.Context(), registrySlug)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 
-	coord := store.ResourceCoordinate{Marketplace: s.mpID, Source: src.ID, Kind: kind, Name: name}
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	rev, err := s.meta.GetLatestResourceRevision(r.Context(), coord)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -524,22 +524,22 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, so
 	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
 }
 
-func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name string) {
+func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
 	if !IsMarketplaceKind(kind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
-	src, err := s.resolveSource(r.Context(), sourceSlug)
+	src, err := s.resolveRegistry(r.Context(), registrySlug)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 
-	coord := store.ResourceCoordinate{Marketplace: s.mpID, Source: src.ID, Kind: kind, Name: name}
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	revs, err := s.meta.ListResourceRevisions(r.Context(), coord)
 	if err != nil {
 		slog.Error("list revisions failed", "coord", coord, "err", err)
@@ -557,7 +557,7 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, revs)
 }
 
-func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest string) {
+func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
 	if !isCanonicalSHA256Digest(digest) {
 		writeError(w, http.StatusBadRequest, "invalid revision digest")
 		return
@@ -566,17 +566,17 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
-	src, err := s.resolveSource(r.Context(), sourceSlug)
+	src, err := s.resolveRegistry(r.Context(), registrySlug)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "source not found")
+			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load source")
+		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
 
-	coord := store.ResourceCoordinate{Marketplace: s.mpID, Source: src.ID, Kind: kind, Name: name}
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	rev, err := s.meta.GetResourceRevision(r.Context(), coord, store.RevisionDigest(digest))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -595,8 +595,8 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, s.applyEffectiveRevocation(rev))
 }
 
-func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest string) {
-	_, payload, err := s.getResourceInspection(r.Context(), sourceSlug, kind, name, digest)
+func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
+	_, payload, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -604,8 +604,8 @@ func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request
 	writeImmutable(w, "application/json", payload)
 }
 
-func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.Request, sourceSlug, kind, name, digest, fileDigest string) {
-	manifest, _, err := s.getResourceInspection(r.Context(), sourceSlug, kind, name, digest)
+func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest, fileDigest string) {
+	manifest, _, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -643,18 +643,18 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 	writeImmutable(w, file.MediaType, data)
 }
 
-func (s *Server) getResourceInspection(ctx context.Context, sourceSlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
+func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
 	if !isCanonicalSHA256Digest(digest) {
 		return inspection.Manifest{}, nil, errInvalidInspectionRevision
 	}
 	if !IsMarketplaceKind(kind) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
-	src, err := s.resolveSource(ctx, sourceSlug)
+	src, err := s.resolveRegistry(ctx, registrySlug)
 	if err != nil {
 		return inspection.Manifest{}, nil, err
 	}
-	coord := store.ResourceCoordinate{Marketplace: s.mpID, Source: src.ID, Kind: kind, Name: name}
+	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	rev, err := s.meta.GetResourceRevision(ctx, coord, store.RevisionDigest(digest))
 	if err != nil {
 		return inspection.Manifest{}, nil, err
@@ -852,7 +852,7 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Source revision manifests and collection manifests share this immutable
+	// Registry revision manifests and collection manifests share this immutable
 	// route. The blob store is also used for archives, so the route must prove
 	// the payload's manifest type, canonical representation, and identity before
 	// returning it. An arbitrary JSON or archive blob must never become a public
@@ -958,7 +958,7 @@ func manifestPayloadLimit(cfg config.Config) int64 {
 }
 
 // validateManifestPayload accepts the two manifest formats published by the
-// Marketplace. Source revision manifests are content-addressed by the
+// Marketplace. Registry revision manifests are content-addressed by the
 // canonical payload with revision_digest omitted; the encoded compatibility
 // form with revision_digest is also accepted. Collection manifests carry their
 // content_digest in the payload. Both forms must be canonical and match the
@@ -973,36 +973,36 @@ func validateManifestPayload(data []byte, digest string, limit int64) error {
 		return errManifestUnsupported
 	}
 
-	_, sourceShape := shape["generator"]
-	if !sourceShape {
-		_, sourceShape = shape["resources"]
+	_, registryShape := shape["generator"]
+	if !registryShape {
+		_, registryShape = shape["resources"]
 	}
-	if !sourceShape {
-		_, sourceShape = shape["revision_digest"]
+	if !registryShape {
+		_, registryShape = shape["revision_digest"]
 	}
-	if sourceShape {
-		manifest, payload, err := marketplaceartifact.DecodeSourceRevisionManifest(bytes.NewReader(data))
+	if registryShape {
+		manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(data))
 		if err != nil {
-			return fmt.Errorf("decode source revision manifest: %w", err)
+			return fmt.Errorf("decode registry revision manifest: %w", err)
 		}
 		if manifest.RevisionDigest != "" {
 			if manifest.RevisionDigest != digest {
-				return fmt.Errorf("source revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
+				return fmt.Errorf("registry revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
 			}
-			if err := marketplaceartifact.VerifySourceRevisionManifest(manifest, payload); err != nil {
-				return fmt.Errorf("verify source revision manifest: %w", err)
+			if err := marketplaceartifact.VerifyRegistryRevisionManifest(manifest, payload); err != nil {
+				return fmt.Errorf("verify registry revision manifest: %w", err)
 			}
 			return nil
 		}
-		canonical, computed, err := marketplaceartifact.CanonicalSourceRevisionPayload(manifest)
+		canonical, computed, err := marketplaceartifact.CanonicalRegistryRevisionPayload(manifest)
 		if err != nil {
-			return fmt.Errorf("validate source revision manifest: %w", err)
+			return fmt.Errorf("validate registry revision manifest: %w", err)
 		}
 		if !bytes.Equal(canonical, payload) {
-			return errors.New("source revision manifest is not canonical JSON")
+			return errors.New("registry revision manifest is not canonical JSON")
 		}
 		if computed != digest {
-			return fmt.Errorf("source revision manifest digest mismatch: got %s, want %s", computed, digest)
+			return fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", computed, digest)
 		}
 		return nil
 	}
@@ -1070,15 +1070,15 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "agent_marketplace_active_requests %d\n", s.activeRequests.Load())
 }
 
-func (s *Server) resolveSource(ctx context.Context, slugOrID string) (store.Source, error) {
-	src, err := s.meta.GetSourceBySlug(ctx, slugOrID)
+func (s *Server) resolveRegistry(ctx context.Context, slugOrID string) (store.Registry, error) {
+	src, err := s.meta.GetRegistryBySlug(ctx, slugOrID)
 	if err == nil {
 		return src, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
-		return store.Source{}, err
+		return store.Registry{}, err
 	}
-	return s.meta.GetSource(ctx, store.SourceID(slugOrID))
+	return s.meta.GetRegistry(ctx, store.RegistryID(slugOrID))
 }
 
 func (s *Server) revocationsReady(ctx context.Context) error {
@@ -1090,7 +1090,7 @@ func (s *Server) revocationsReady(ctx context.Context) error {
 	}
 	desired := s.revocations.Declarations()
 	actual := make(map[string]struct{}, len(desired))
-	for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+	for _, kind := range []store.RevocationKind{store.RevocationRegistry, store.RevocationCoordinate, store.RevocationRevision} {
 		rows, err := s.meta.ListRevocations(ctx, kind)
 		if err != nil {
 			return fmt.Errorf("list active %s revocations: %w", kind, err)
@@ -1160,9 +1160,9 @@ func (s *Server) resourceOwnerRestriction(revisions []store.AssessedResourceRevi
 	return restriction
 }
 
-// manifestRestriction resolves all current assessments that own a source or
-// collection manifest. Source manifest entries provide the content digests
-// needed to find historical owners without relying on the current source head.
+// manifestRestriction resolves all current assessments that own a registry or
+// collection manifest. Registry manifest entries provide the content digests
+// needed to find historical owners without relying on the current registry head.
 func (s *Server) manifestRestriction(ctx context.Context, digest store.RevisionDigest, payload []byte) (Availability, error) {
 	if s.revocations == nil {
 		return AvailabilityBlocked, s.revocationErr
@@ -1177,15 +1177,15 @@ func (s *Server) manifestRestriction(ctx context.Context, digest store.RevisionD
 			owners = append(owners, revision)
 		}
 	}
-	var sourceManifest struct {
+	var registryManifest struct {
 		Resources []struct {
 			ContentDigest store.RevisionDigest `json:"content_digest"`
 		} `json:"resources"`
 	}
-	if err := json.Unmarshal(payload, &sourceManifest); err != nil {
+	if err := json.Unmarshal(payload, &registryManifest); err != nil {
 		return AvailabilityBlocked, err
 	}
-	for _, resource := range sourceManifest.Resources {
+	for _, resource := range registryManifest.Resources {
 		revisions, err := s.meta.ListResourceRevisionsByContentDigest(ctx, s.mpID, resource.ContentDigest)
 		if err != nil {
 			return AvailabilityBlocked, err
@@ -1205,16 +1205,16 @@ func (s *Server) manifestRestriction(ctx context.Context, digest store.RevisionD
 	return AvailabilityAvailable, nil
 }
 
-// sourceIndex loads every source once so a listing can resolve slugs and
+// registryIndex loads every registry once so a listing can resolve slugs and
 // acquisition modes for its whole page without a per-resource lookup.
-func (s *Server) sourceIndex(ctx context.Context) (map[store.SourceID]store.Source, error) {
-	sources, err := s.meta.ListSources(ctx)
+func (s *Server) registryIndex(ctx context.Context) (map[store.RegistryID]store.Registry, error) {
+	registries, err := s.meta.ListRegistries(ctx)
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[store.SourceID]store.Source, len(sources))
-	for _, src := range sources {
-		m[src.ID] = src
+	m := make(map[store.RegistryID]store.Registry, len(registries))
+	for _, registry := range registries {
+		m[registry.ID] = registry
 	}
 	return m, nil
 }
@@ -1226,16 +1226,16 @@ func (s *Server) sourceIndex(ctx context.Context) (map[store.SourceID]store.Sour
 // it is never installable. The explicit current assessment decision is the
 // authority; findings are explanatory and must not be reinterpreted as policy.
 // The archive check is qualified by acquisition mode because an index-only
-// source legitimately has no archive, and a collection is addressed by its
+// registry legitimately has no archive, and a collection is addressed by its
 // manifest digest rather than an archive.
-func resourceAvailability(rev store.AssessedResourceRevision, src store.Source) Availability {
+func resourceAvailability(rev store.AssessedResourceRevision, registry store.Registry) Availability {
 	if rev.Revocation != nil {
 		return AvailabilityRevoked
 	}
 	if rev.Assessment.Decision == store.AssessmentDecisionReject {
 		return AvailabilityBlocked
 	}
-	if src.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
+	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
 			"coordinate", rev.Coordinate,
 			"content_digest", rev.ContentDigest,
@@ -1245,11 +1245,11 @@ func resourceAvailability(rev store.AssessedResourceRevision, src store.Source) 
 	return AvailabilityAvailable
 }
 
-func (s *Server) resourceToListItem(rev store.AssessedResourceRevision, sources map[store.SourceID]store.Source, score float64) ResourceListItem {
-	src := sources[rev.Coordinate.Source]
+func (s *Server) resourceToListItem(rev store.AssessedResourceRevision, registries map[store.RegistryID]store.Registry, score float64) ResourceListItem {
+	registry := registries[rev.Coordinate.Registry]
 	item := ResourceListItem{
-		SourceID:      string(rev.Coordinate.Source),
-		SourceSlug:    src.Slug,
+		RegistryID:    string(rev.Coordinate.Registry),
+		RegistrySlug:  registry.Slug,
 		Kind:          rev.Coordinate.Kind,
 		Name:          rev.Coordinate.Name,
 		Revision:      string(rev.ContentDigest),
@@ -1258,7 +1258,7 @@ func (s *Server) resourceToListItem(rev store.AssessedResourceRevision, sources 
 		// writes, but this response must stay safe for rows written by any
 		// other producer against the same database.
 		Description:  store.BoundDescription(rev.Description),
-		Availability: resourceAvailability(rev, src),
+		Availability: resourceAvailability(rev, registry),
 		Score:        score,
 	}
 	if rev.License != "" {
@@ -1288,13 +1288,13 @@ func setImmutableCache(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 }
 
-func boundSourceHistory(history []store.SourceOccurrence) []store.SourceOccurrence {
+func boundRegistryHistory(history []store.RegistryOccurrence) []store.RegistryOccurrence {
 	if history == nil {
-		return make([]store.SourceOccurrence, 0)
+		return make([]store.RegistryOccurrence, 0)
 	}
-	if len(history) > MaxSourceHistoryEntries {
-		slog.Debug("source history response truncated", "entries", len(history), "max_entries", MaxSourceHistoryEntries)
-		return history[:MaxSourceHistoryEntries]
+	if len(history) > MaxRegistryHistoryEntries {
+		slog.Debug("registry history response truncated", "entries", len(history), "max_entries", MaxRegistryHistoryEntries)
+		return history[:MaxRegistryHistoryEntries]
 	}
 	return history
 }
@@ -1313,19 +1313,19 @@ func validatePublicMarketplace(mp store.Marketplace) error {
 	return nil
 }
 
-func validatePublicSource(src SourceDTO) error {
+func validatePublicRegistry(src RegistryDTO) error {
 	if strings.TrimSpace(string(src.ID)) == "" || strings.TrimSpace(src.Slug) == "" || strings.TrimSpace(src.Ref) == "" {
-		return errors.New("source identity is incomplete")
+		return errors.New("registry identity is incomplete")
 	}
 	if len(src.Origins) == 0 || len(src.Roots) == 0 {
-		return errors.New("source domain fields are incomplete")
+		return errors.New("registry domain fields are incomplete")
 	}
 	if err := src.Acquisition.Validate(); err != nil {
 		return err
 	}
 	for i, root := range src.Roots {
 		if strings.TrimSpace(root.Path) == "" {
-			return fmt.Errorf("source root %d has no path", i)
+			return fmt.Errorf("registry root %d has no path", i)
 		}
 	}
 	return nil
@@ -1354,39 +1354,39 @@ func publicAcquisitionOrigin(raw string) string {
 	return ""
 }
 
-func validatePublicSourceOccurrence(occ store.SourceOccurrence) error {
-	if strings.TrimSpace(string(occ.SourceID)) == "" || strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.Commit) == "" {
-		return errors.New("source occurrence identity is incomplete")
+func validatePublicRegistryOccurrence(occ store.RegistryOccurrence) error {
+	if strings.TrimSpace(string(occ.RegistryID)) == "" || strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.Commit) == "" {
+		return errors.New("registry occurrence identity is incomplete")
 	}
 	if !IsCanonicalGitCommit(occ.Commit) {
-		return errors.New("source occurrence commit is not canonical")
+		return errors.New("registry occurrence commit is not canonical")
 	}
 	if len(occ.Roots) == 0 {
-		return errors.New("source occurrence roots are missing")
+		return errors.New("registry occurrence roots are missing")
 	}
 	for i, root := range occ.Roots {
 		if strings.TrimSpace(root.Path) == "" {
-			return fmt.Errorf("source occurrence root %d has no path", i)
+			return fmt.Errorf("registry occurrence root %d has no path", i)
 		}
 	}
-	if !isCanonicalSHA256Digest(string(occ.SourceRevisionManifestDigest)) {
-		return errors.New("source occurrence manifest digest is not canonical")
+	if !isCanonicalSHA256Digest(string(occ.RegistryRevisionManifestDigest)) {
+		return errors.New("registry occurrence manifest digest is not canonical")
 	}
 	if err := occ.Acquisition.Validate(); err != nil {
 		return err
 	}
 	if occ.MirroredArtifactDigest != "" && !isCanonicalSHA256Digest(string(occ.MirroredArtifactDigest)) {
-		return errors.New("source occurrence artifact digest is not canonical")
+		return errors.New("registry occurrence artifact digest is not canonical")
 	}
 	if occ.OccurredAt.IsZero() {
-		return errors.New("source occurrence timestamp is missing")
+		return errors.New("registry occurrence timestamp is missing")
 	}
 	return nil
 }
 
 func validatePublicResourceRevision(rev store.AssessedResourceRevision) error {
 	coord := rev.Coordinate
-	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Source)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
+	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return errors.New("resource coordinate is incomplete")
 	}
 	if !IsMarketplaceKind(coord.Kind) {

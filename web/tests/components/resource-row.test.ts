@@ -21,8 +21,8 @@ describe('ResourceRow', () => {
       props: {
         canonicalUrl: 'https://market.example',
         item: {
-          source_id: hostile,
-          source_slug: hostile,
+          registry_id: hostile,
+          registry_slug: hostile,
           kind: 'skill',
           name: hostile,
           revision: 'sha256:' + 'a'.repeat(64),
@@ -33,7 +33,7 @@ describe('ResourceRow', () => {
       global: { stubs },
     })
 
-    // The coordinate renders as source/name, so the heading holds both.
+    // The coordinate renders as registry/name, so the heading holds both.
     expect(wrapper.get('h2').text()).toContain(hostile)
     expect(wrapper.get('h2').html()).toContain('&lt;img')
     expect(wrapper.find('img').exists()).toBe(false)
@@ -48,7 +48,7 @@ describe('ResourceRow', () => {
     const wrapper = mount(ResourceRow, {
       props: {
         canonicalUrl: 'https://market.example',
-        item: { source_id: 'source-id', kind: 'skill', name: 'review', revision: contentDigest, content_digest: contentDigest },
+        item: { registry_id: 'registry-id', kind: 'skill', name: 'review', revision: contentDigest, content_digest: contentDigest },
       },
       global: { stubs },
     })
@@ -63,7 +63,7 @@ describe('ResourceRow', () => {
     const wrapper = mount(ResourceRow, {
       props: {
         canonicalUrl: 'https://market.example',
-        item: { source_id: 'source-id', kind: 'skill', name: 'review', revision: 'sha256:' + 'd'.repeat(64), content_digest: 'sha256:' + 'd'.repeat(64) },
+        item: { registry_id: 'registry-id', kind: 'skill', name: 'review', revision: 'sha256:' + 'd'.repeat(64), content_digest: 'sha256:' + 'd'.repeat(64) },
       },
       global: { stubs },
     })
@@ -76,7 +76,7 @@ describe('ResourceRow', () => {
   const digest = 'sha256:' + 'c'.repeat(64)
   const listed = (availability?: string) => ({
     canonicalUrl: 'https://market.example',
-    item: { source_id: 'source-id', kind: 'skill' as const, name: 'review', revision: digest, content_digest: digest, ...(availability ? { availability } : {}) },
+    item: { registry_id: 'registry-id', kind: 'skill' as const, name: 'review', revision: digest, content_digest: digest, ...(availability ? { availability } : {}) },
   })
 
   it('offers the install command when the instance reports the resource as available', () => {

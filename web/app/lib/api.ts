@@ -5,7 +5,7 @@ import type {
   ResourceKind,
   SearchParams,
 } from '~/types/marketplace'
-import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeSource, normalizeSourceHistory, normalizeSourceSummaries, normalizeWellKnown } from '~/lib/validation'
+import { normalizeInspectionManifest, normalizeMarketplace, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '~/lib/validation'
 
 const API_VERSION_PATH = '/api/v1'
 const WELL_KNOWN_PATH = '/.well-known/agent-marketplace.json'
@@ -49,7 +49,7 @@ export function serializeSearchQuery(params: SearchParams): Record<string, strin
   const query: Record<string, string | number> = {}
   if (params.q.trim()) query.q = params.q.trim()
   if (params.kind) query.kind = params.kind
-  if (params.source.trim()) query.source = params.source.trim()
+  if (params.registry.trim()) query.registry = params.registry.trim()
   if (params.offset > 0) query.offset = params.offset
   if (params.limit > 0) query.limit = params.limit
   return query
@@ -73,25 +73,25 @@ export function createMarketplaceApi(fetcher: ApiFetcher, apiBase?: string) {
   return {
     getWellKnown: () => fetcher<unknown>(wellKnownPath(apiBase)).then(normalizeWellKnown),
     getInstance: () => fetcher<unknown>(apiPath(apiBase, '/instance')).then(normalizeMarketplace),
-    listSources: () => fetcher<unknown>(apiPath(apiBase, '/sources')).then(normalizeSourceSummaries),
-    getSource: (source: string) => fetcher<unknown>(sourcePath(apiBase, source)).then(normalizeSource),
-    getSourceHistory: (source: string) => fetcher<unknown>(sourceHistoryPath(apiBase, source)).then(normalizeSourceHistory),
+    listRegistries: () => fetcher<unknown>(apiPath(apiBase, '/registries')).then(normalizeRegistrySummaries),
+    getRegistry: (registry: string) => fetcher<unknown>(registryPath(apiBase, registry)).then(normalizeRegistry),
+    getRegistryHistory: (registry: string) => fetcher<unknown>(registryHistoryPath(apiBase, registry)).then(normalizeRegistryHistory),
     search: (params: SearchParams) =>
       fetcher<unknown>(apiPath(apiBase, '/search'), {
         query: serializeSearchQuery(params),
       }).then(normalizeSearchResult),
-    getResource: (source: string, kind: ResourceKind, name: string) =>
-      fetcher<unknown>(resourcePath(apiBase, source, kind, name)).then(payload => normalizeResourceRevision(payload, { source, kind, name })),
-    listResourceRevisions: (source: string, kind: ResourceKind, name: string) =>
-      fetcher<unknown>(resourceRevisionsPath(apiBase, source, kind, name)).then(payload => normalizeResourceRevisions(payload, { kind, name })),
-    getResourceRevision: (source: string, kind: ResourceKind, name: string, revision: string) =>
-      fetcher<unknown>(resourceRevisionPath(apiBase, source, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { source, kind, name, contentDigest: revision })),
-    getResourceInspection: (source: string, kind: ResourceKind, name: string, revision: string) =>
-      fetcher<unknown>(resourceInspectionPath(apiBase, source, kind, name, revision)).then(payload => normalizeInspectionManifest(payload, { source, kind, name, contentDigest: revision })),
-    getResourceInspectionContent: (source: string, kind: ResourceKind, name: string, revision: string, mediaType: InspectionFile['media_type'] = 'text/plain') =>
-      fetcher<string | Blob>(resourceInspectionContentPath(apiBase, source, kind, name, revision), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
-    getResourceInspectionFile: (source: string, kind: ResourceKind, name: string, revision: string, digest: string, mediaType?: InspectionFile['media_type']) =>
-      fetcher<string | Blob>(resourceInspectionFilePath(apiBase, source, kind, name, revision, digest), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
+    getResource: (registry: string, kind: ResourceKind, name: string) =>
+      fetcher<unknown>(resourcePath(apiBase, registry, kind, name)).then(payload => normalizeResourceRevision(payload, { registry, kind, name })),
+    listResourceRevisions: (registry: string, kind: ResourceKind, name: string) =>
+      fetcher<unknown>(resourceRevisionsPath(apiBase, registry, kind, name)).then(payload => normalizeResourceRevisions(payload, { kind, name })),
+    getResourceRevision: (registry: string, kind: ResourceKind, name: string, revision: string) =>
+      fetcher<unknown>(resourceRevisionPath(apiBase, registry, kind, name, revision)).then(payload => normalizeResourceRevision(payload, { registry, kind, name, contentDigest: revision })),
+    getResourceInspection: (registry: string, kind: ResourceKind, name: string, revision: string) =>
+      fetcher<unknown>(resourceInspectionPath(apiBase, registry, kind, name, revision)).then(payload => normalizeInspectionManifest(payload, { registry, kind, name, contentDigest: revision })),
+    getResourceInspectionContent: (registry: string, kind: ResourceKind, name: string, revision: string, mediaType: InspectionFile['media_type'] = 'text/plain') =>
+      fetcher<string | Blob>(resourceInspectionContentPath(apiBase, registry, kind, name, revision), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
+    getResourceInspectionFile: (registry: string, kind: ResourceKind, name: string, revision: string, digest: string, mediaType?: InspectionFile['media_type']) =>
+      fetcher<string | Blob>(resourceInspectionFilePath(apiBase, registry, kind, name, revision, digest), { responseType: isRasterMediaType(mediaType) ? 'blob' : 'text' }),
   }
 }
 
@@ -103,36 +103,36 @@ export function isResourceKind(value: string): value is ResourceKind {
   return RESOURCE_KINDS.includes(value as ResourceKind)
 }
 
-export function sourcePath(apiBase: string | undefined, source: string): string {
-  return apiPath(apiBase, `/sources/${encodeURIComponent(source)}`)
+export function registryPath(apiBase: string | undefined, registry: string): string {
+  return apiPath(apiBase, `/registries/${encodeURIComponent(registry)}`)
 }
 
-export function sourceHistoryPath(apiBase: string | undefined, source: string): string {
-  return apiPath(apiBase, `/sources/${encodeURIComponent(source)}/history`)
+export function registryHistoryPath(apiBase: string | undefined, registry: string): string {
+  return apiPath(apiBase, `/registries/${encodeURIComponent(registry)}/history`)
 }
 
-export function resourcePath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string): string {
-  return apiPath(apiBase, `/resources/${encodeURIComponent(source)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`)
+export function resourcePath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string): string {
+  return apiPath(apiBase, `/resources/${encodeURIComponent(registry)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`)
 }
 
-export function resourceRevisionPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
-  return apiPath(apiBase, `/resources/${encodeURIComponent(source)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions/${encodeURIComponent(revision)}`)
+export function resourceRevisionPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return apiPath(apiBase, `/resources/${encodeURIComponent(registry)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions/${encodeURIComponent(revision)}`)
 }
 
-export function resourceRevisionsPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string): string {
-  return apiPath(apiBase, `/resources/${encodeURIComponent(source)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions`)
+export function resourceRevisionsPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string): string {
+  return apiPath(apiBase, `/resources/${encodeURIComponent(registry)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/revisions`)
 }
 
-export function resourceInspectionPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
-  return `${resourceRevisionPath(apiBase, source, kind, name, revision)}/inspection`
+export function resourceInspectionPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return `${resourceRevisionPath(apiBase, registry, kind, name, revision)}/inspection`
 }
 
-export function resourceInspectionContentPath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string): string {
-  return `${resourceInspectionPath(apiBase, source, kind, name, revision)}/content`
+export function resourceInspectionContentPath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return `${resourceInspectionPath(apiBase, registry, kind, name, revision)}/content`
 }
 
-export function resourceInspectionFilePath(apiBase: string | undefined, source: string, kind: ResourceKind, name: string, revision: string, digest: string): string {
-  return `${resourceInspectionContentPath(apiBase, source, kind, name, revision)}/${encodeURIComponent(digest)}`
+export function resourceInspectionFilePath(apiBase: string | undefined, registry: string, kind: ResourceKind, name: string, revision: string, digest: string): string {
+  return `${resourceInspectionContentPath(apiBase, registry, kind, name, revision)}/${encodeURIComponent(digest)}`
 }
 
 function hasUnsafeURLCharacters(value: string): boolean {

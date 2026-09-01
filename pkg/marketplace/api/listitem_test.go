@@ -20,12 +20,12 @@ func digestOf(c string) string { return "sha256:" + strings.Repeat(c, 64) }
 
 // searchListItems drives the real search endpoint and returns the decoded list
 // items, so assertions cover the wire format rather than the DTO helper alone.
-func searchListItems(t *testing.T, src store.Source, revs ...store.ResourceRevision) []ResourceListItem {
+func searchListItems(t *testing.T, src store.Registry, revs ...store.ResourceRevision) []ResourceListItem {
 	t.Helper()
 	return searchListItemsWithDecision(t, src, store.AssessmentDecisionAllow, revs...)
 }
 
-func searchListItemsWithDecision(t *testing.T, src store.Source, decision store.AssessmentDecision, revs ...store.ResourceRevision) []ResourceListItem {
+func searchListItemsWithDecision(t *testing.T, src store.Registry, decision store.AssessmentDecision, revs ...store.ResourceRevision) []ResourceListItem {
 	t.Helper()
 	ctx := context.Background()
 
@@ -38,7 +38,7 @@ func searchListItemsWithDecision(t *testing.T, src store.Source, decision store.
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		t.Fatal(err)
 	}
 	for _, rev := range revs {
@@ -61,13 +61,13 @@ func searchListItemsWithDecision(t *testing.T, src store.Source, decision store.
 	return result.Items
 }
 
-func mirrorSource() store.Source {
-	return store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}
+func mirrorRegistry() store.Registry {
+	return store.Registry{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}
 }
 
 func skillRevision(name, description string) store.ResourceRevision {
 	return store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: KindSkill, Name: name},
 		ContentDigest: store.RevisionDigest(digestOf("a")),
 		ArchiveDigest: store.ArchiveDigest(digestOf("b")),
 		Description:   description,
@@ -78,7 +78,7 @@ func skillRevision(name, description string) store.ResourceRevision {
 // "No description provided for this resource." because the list endpoint never
 // served one.
 func TestSearchServesResourceDescription(t *testing.T) {
-	items := searchListItems(t, mirrorSource(), skillRevision("retention", listItemDescription))
+	items := searchListItems(t, mirrorRegistry(), skillRevision("retention", listItemDescription))
 
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
@@ -100,7 +100,7 @@ func TestSearchOmitsEmptyDescription(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, mirrorSource()); err != nil {
+	if err := meta.PutRegistry(ctx, mirrorRegistry()); err != nil {
 		t.Fatal(err)
 	}
 	publishAssessedTestRevision(ctx, t, meta, skillRevision("nodesc", ""), store.AssessmentDecisionAllow, store.RevisionDigest(digestOf("d")), strings.Repeat("e", 40))
@@ -116,7 +116,7 @@ func TestSearchOmitsEmptyDescription(t *testing.T) {
 
 func TestSearchBoundsHostileDescriptionOnEgress(t *testing.T) {
 	hostile := "escape\x1b[31m and newline\n" + strings.Repeat("x", store.MaxDescriptionBytes*2)
-	items := searchListItems(t, mirrorSource(), skillRevision("hostile", hostile))
+	items := searchListItems(t, mirrorRegistry(), skillRevision("hostile", hostile))
 
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
@@ -131,11 +131,11 @@ func TestSearchBoundsHostileDescriptionOnEgress(t *testing.T) {
 }
 
 func TestResourceAvailability(t *testing.T) {
-	mirror := store.Source{ID: "src", Acquisition: store.AcquisitionMirror}
-	indexOnly := store.Source{ID: "src", Acquisition: store.AcquisitionIndexOnly}
+	mirror := store.Registry{ID: "src", Acquisition: store.AcquisitionMirror}
+	indexOnly := store.Registry{ID: "src", Acquisition: store.AcquisitionIndexOnly}
 	revision := func(kind string, archive store.ArchiveDigest, decision store.AssessmentDecision) store.AssessedResourceRevision {
 		intrinsic := store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: kind, Name: "res"},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: kind, Name: "res"},
 			ContentDigest: store.RevisionDigest(digestOf("a")), ArchiveDigest: archive,
 		}
 		return testAssessedRevision(t, intrinsic, decision)
@@ -146,7 +146,7 @@ func TestResourceAvailability(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		rev  store.AssessedResourceRevision
-		src  store.Source
+		src  store.Registry
 		want Availability
 	}{
 		{"mirrored allow is installable", revision(KindSkill, store.ArchiveDigest(digestOf("b")), store.AssessmentDecisionAllow), mirror, AvailabilityAvailable},
@@ -169,7 +169,7 @@ func TestResourceAvailability(t *testing.T) {
 // so on every card rather than presenting them as installable.
 func TestSearchReportsAvailabilityForPolicyRejectedResources(t *testing.T) {
 	rejected := skillRevision("rejected", listItemDescription)
-	items := searchListItemsWithDecision(t, mirrorSource(), store.AssessmentDecisionReject, rejected)
+	items := searchListItemsWithDecision(t, mirrorRegistry(), store.AssessmentDecisionReject, rejected)
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
@@ -183,7 +183,7 @@ func TestSearchReportsAvailabilityForPolicyRejectedResources(t *testing.T) {
 }
 
 func TestSearchReportsAvailabilityForInstallableResources(t *testing.T) {
-	items := searchListItems(t, mirrorSource(), skillRevision("ok", listItemDescription))
+	items := searchListItems(t, mirrorRegistry(), skillRevision("ok", listItemDescription))
 	if len(items) != 1 {
 		t.Fatalf("got %d items, want 1", len(items))
 	}
@@ -204,7 +204,7 @@ func TestSearchSerializesAvailabilityField(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, mirrorSource()); err != nil {
+	if err := meta.PutRegistry(ctx, mirrorRegistry()); err != nil {
 		t.Fatal(err)
 	}
 	publishAssessedTestRevision(ctx, t, meta, skillRevision("ok", listItemDescription), store.AssessmentDecisionAllow, store.RevisionDigest(digestOf("d")), strings.Repeat("e", 40))
@@ -231,7 +231,7 @@ func TestResourceDetailServesDescription(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, mirrorSource()); err != nil {
+	if err := meta.PutRegistry(ctx, mirrorRegistry()); err != nil {
 		t.Fatal(err)
 	}
 	publishAssessedTestRevision(ctx, t, meta, skillRevision("retention", listItemDescription), store.AssessmentDecisionAllow, store.RevisionDigest(digestOf("d")), strings.Repeat("e", 40))

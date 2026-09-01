@@ -24,12 +24,12 @@ type BlobUpload struct {
 	Data   []byte
 }
 
-// SourceRevisionPublication groups the metadata and blobs for a source revision.
+// RegistryRevisionPublication groups the metadata and blobs for a registry revision.
 // All blobs are uploaded before any metadata is written, so a failed publish
 // can only leave orphaned blobs that are safe to garbage-collect.
-type SourceRevisionPublication struct {
-	// Occurrence is the source commit occurrence to publish.
-	Occurrence SourceOccurrence
+type RegistryRevisionPublication struct {
+	// Occurrence is the registry commit occurrence to publish.
+	Occurrence RegistryOccurrence
 
 	ExpectedHeadCommit string
 
@@ -44,12 +44,12 @@ type SourceRevisionPublication struct {
 	// collection revision.
 	Collection *CollectionRevision
 
-	// Collections contains all collection revisions discovered in the source
-	// commit. They are committed with the source occurrence as one publication.
+	// Collections contains all collection revisions discovered in the registry
+	// commit. They are committed with the registry occurrence as one publication.
 	Collections []CollectionRevision
 
-	// ManifestPayload is the canonical source revision manifest JSON. When set,
-	// it is uploaded to the blob store using Occurrence.SourceRevisionManifestDigest
+	// ManifestPayload is the canonical registry revision manifest JSON. When set,
+	// it is uploaded to the blob store using Occurrence.RegistryRevisionManifestDigest
 	// as the key before metadata is committed.
 	ManifestPayload []byte
 
@@ -60,11 +60,11 @@ type SourceRevisionPublication struct {
 	InspectionBlobs []BlobUpload
 }
 
-// PublishSourceRevision uploads all required blobs, then writes the metadata in
+// PublishRegistryRevision uploads all required blobs, then writes the metadata in
 // a single transaction. It returns an error if any blob upload fails, without
 // writing metadata.
-func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, req SourceRevisionPublication) error {
-	if err := validateSourceRevisionPublication(req); err != nil {
+func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, req RegistryRevisionPublication) error {
+	if err := validateRegistryRevisionPublication(req); err != nil {
 		return err
 	}
 	uploads, err := prepareUploads(req)
@@ -90,7 +90,7 @@ func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobSt
 				return err
 			}
 		}
-		if err := tx.PutSourceOccurrence(txCtx, req.Occurrence); err != nil {
+		if err := tx.PutRegistryOccurrence(txCtx, req.Occurrence); err != nil {
 			return err
 		}
 		for _, occurrence := range req.ResourceOccurrences {
@@ -116,7 +116,7 @@ func PublishSourceRevision(ctx context.Context, meta MetadataStore, blobs BlobSt
 				return err
 			}
 		}
-		return tx.SetSourceHead(txCtx, req.Occurrence.SourceID, req.Occurrence.Commit, req.ExpectedHeadCommit)
+		return tx.SetRegistryHead(txCtx, req.Occurrence.RegistryID, req.Occurrence.Commit, req.ExpectedHeadCommit)
 	})
 }
 
@@ -141,7 +141,7 @@ func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs Blob
 	})
 }
 
-func validateSourceRevisionPublication(req SourceRevisionPublication) error {
+func validateRegistryRevisionPublication(req RegistryRevisionPublication) error {
 	for _, rev := range req.Resources {
 		if rev.Coordinate.Kind == "collection" && rev.ArchiveDigest != "" {
 			return fmt.Errorf("collection resource revision %s must not have an archive digest", rev.Coordinate)
@@ -153,7 +153,7 @@ func validateSourceRevisionPublication(req SourceRevisionPublication) error {
 // validateInspectionPublication prevents a metadata transaction from exposing
 // an assessment whose immutable inspection projection was not uploaded as part
 // of the same publication.
-func validateInspectionPublication(req SourceRevisionPublication, uploads []BlobUpload) error {
+func validateInspectionPublication(req RegistryRevisionPublication, uploads []BlobUpload) error {
 	if len(req.InspectionBlobs) == 0 && len(req.Assessments) == 0 {
 		return nil
 	}
@@ -228,7 +228,7 @@ func validateInspectionManifestBytes(data []byte, rev ResourceRevision, blobs ma
 	if manifest.SchemaVersion != "v1" || manifest.Coordinate != rev.Coordinate || manifest.RevisionDigest != string(rev.ContentDigest) || manifest.PrimaryPath != inspectionPrimaryPathForKind(rev.Coordinate.Kind) || len(manifest.Files) == 0 {
 		return errors.New("identity or schema is incomplete")
 	}
-	if manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Source == "" || manifest.Coordinate.Name == "" || !validInspectionDigest(manifest.RevisionDigest) {
+	if manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Registry == "" || manifest.Coordinate.Name == "" || !validInspectionDigest(manifest.RevisionDigest) {
 		return errors.New("identity or revision digest is invalid")
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
@@ -480,7 +480,7 @@ func canonicalInspectionSupportPath(value string) bool {
 	return true
 }
 
-func prepareUploads(req SourceRevisionPublication) ([]BlobUpload, error) {
+func prepareUploads(req RegistryRevisionPublication) ([]BlobUpload, error) {
 	seen := make(map[ArchiveDigest]int)
 	var uploads []BlobUpload
 
@@ -520,11 +520,11 @@ func prepareUploads(req SourceRevisionPublication) ([]BlobUpload, error) {
 	}
 
 	if len(req.ManifestPayload) > 0 {
-		if req.Occurrence.SourceRevisionManifestDigest == "" {
-			return nil, errors.New("manifest payload provided but SourceRevisionManifestDigest is empty")
+		if req.Occurrence.RegistryRevisionManifestDigest == "" {
+			return nil, errors.New("manifest payload provided but RegistryRevisionManifestDigest is empty")
 		}
 		got := contentDigest(req.ManifestPayload)
-		want := string(req.Occurrence.SourceRevisionManifestDigest)
+		want := string(req.Occurrence.RegistryRevisionManifestDigest)
 		if got != want {
 			return nil, fmt.Errorf("manifest payload digest mismatch: got %s, want %s", got, want)
 		}
@@ -545,7 +545,7 @@ func prepareUploads(req SourceRevisionPublication) ([]BlobUpload, error) {
 // validateCollectionPublication validates the complete flat collection upload
 // graph before any metadata transaction begins. A collection's manifest and
 // each exact leaf archive must be present in the same publication request.
-func validateCollectionPublication(req SourceRevisionPublication, uploads []BlobUpload) error {
+func validateCollectionPublication(req RegistryRevisionPublication, uploads []BlobUpload) error {
 	byDigest := make(map[ArchiveDigest][]byte, len(uploads))
 	for _, upload := range uploads {
 		byDigest[upload.Digest] = upload.Data
@@ -582,7 +582,7 @@ func validateCollectionPublication(req SourceRevisionPublication, uploads []Blob
 			if !ok {
 				return fmt.Errorf("collection resource revision %s has no collection metadata", rev.Coordinate)
 			}
-			if cr.ID != string(rev.ContentDigest) || cr.ManifestDigest != rev.ContentDigest || cr.SourceID != rev.Coordinate.Source {
+			if cr.ID != string(rev.ContentDigest) || cr.ManifestDigest != rev.ContentDigest || cr.RegistryID != rev.Coordinate.Registry {
 				return fmt.Errorf("%w: collection %s metadata does not agree with resource revision", ErrConflict, rev.Coordinate)
 			}
 			if err := validateCollectionManifestGraph(rev, cr, byDigest, req.Resources, collections); err != nil {
@@ -670,7 +670,7 @@ func validateCollectionManifestGraph(rev ResourceRevision, cr CollectionRevision
 			return fmt.Errorf("%w: collection %s metadata member count disagrees with manifest", ErrConflict, collectionRev.Coordinate)
 		}
 		for _, member := range manifest.Members {
-			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Source: SourceID(member.SourceID), Kind: member.Kind, Name: member.Name}
+			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Registry: RegistryID(member.RegistryID), Kind: member.Kind, Name: member.Name}
 			if _, ok := metadataMembers[coordinate]; !ok {
 				return fmt.Errorf("%w: collection %s metadata is missing member %s", ErrConflict, collectionRev.Coordinate, coordinate)
 			}
@@ -683,7 +683,7 @@ func validateCollectionManifestGraph(rev ResourceRevision, cr CollectionRevision
 				if !ok {
 					return fmt.Errorf("collection %s nested member %s metadata is missing", collectionRev.Coordinate, coordinate)
 				}
-				if nested.SourceID != coordinate.Source || nested.ID != member.Revision || nested.ManifestDigest != RevisionDigest(member.Revision) {
+				if nested.RegistryID != coordinate.Registry || nested.ID != member.Revision || nested.ManifestDigest != RevisionDigest(member.Revision) {
 					return fmt.Errorf("%w: collection %s nested member %s metadata identity disagrees with manifest", ErrConflict, collectionRev.Coordinate, coordinate)
 				}
 				if err := walk(memberRevision, nested); err != nil {
@@ -704,7 +704,7 @@ func validateCollectionManifestGraph(rev ResourceRevision, cr CollectionRevision
 			}
 		}
 		for _, member := range leaves {
-			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Source: SourceID(member.SourceID), Kind: member.Kind, Name: member.Name}
+			coordinate := ResourceCoordinate{Marketplace: collectionRev.Coordinate.Marketplace, Registry: RegistryID(member.RegistryID), Kind: member.Kind, Name: member.Name}
 			memberRevision, found := resourceRevisionFor(resources, coordinate, RevisionDigest(member.Revision))
 			if !found {
 				return fmt.Errorf("collection %s leaf %s revision is missing from publication", collectionRev.Coordinate, coordinate)
@@ -733,7 +733,7 @@ func resourceRevisionFor(resources []ResourceRevision, coordinate ResourceCoordi
 	return ResourceRevision{}, false
 }
 
-func collectionManifestDigests(req SourceRevisionPublication) map[ArchiveDigest]struct{} {
+func collectionManifestDigests(req RegistryRevisionPublication) map[ArchiveDigest]struct{} {
 	out := make(map[ArchiveDigest]struct{}, len(req.Collections)+1)
 	if req.Collection != nil && req.Collection.ManifestDigest != "" {
 		out[ArchiveDigest(req.Collection.ManifestDigest)] = struct{}{}

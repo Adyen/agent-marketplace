@@ -14,16 +14,16 @@ type JsonResponse<Operation extends keyof operations> = operations[Operation]['r
 export type Capabilities = Schemas['Capabilities']
 export type WellKnown = JsonResponse<'getWellKnown'>
 export type Marketplace = JsonResponse<'getInstance'>
-export type SourceRoot = Schemas['SourceRoot']
-export type SourcePublisher = Schemas['Publisher']
+export type RegistryRoot = Schemas['RegistryRoot']
+export type RegistryPublisher = Schemas['Publisher']
 
-// Public source metadata only. The API deliberately omits credentials, policy
+// Public registry metadata only. The API deliberately omits credentials, policy
 // internals, and refresh diagnostics; origins are already sanitized server-side.
-export type Source = JsonResponse<'getSource'>
-export type SourceSummary = Schemas['SourceSummary']
+export type Registry = JsonResponse<'getRegistry'>
+export type RegistrySummary = Schemas['RegistrySummary']
 
-export type SourceOccurrence = Schemas['SourceOccurrence']
-export type ExactSourceOccurrence = Schemas['ExactSourceOccurrence']
+export type RegistryOccurrence = Schemas['RegistryOccurrence']
+export type ExactRegistryOccurrence = Schemas['ExactRegistryOccurrence']
 
 export type ResourceListItem = Schemas['ResourceListItem']
 export type InspectionManifest = Schemas['InspectionManifest']
@@ -44,7 +44,7 @@ export type ResourceRevision = Omit<GeneratedResourceRevision, 'assessment'> & {
 export interface SearchParams {
   q: string
   kind: ResourceKind | ''
-  source: string
+  registry: string
   offset: number
   limit: number
 }

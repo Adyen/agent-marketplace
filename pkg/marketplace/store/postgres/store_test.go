@@ -141,17 +141,17 @@ func TestMarketplaceCRUD(t *testing.T) {
 	}
 }
 
-func TestSourceCRUD(t *testing.T) {
+func TestRegistryCRUD(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 
-	src := store.Source{
-		ID:      store.SourceID("src-1"),
+	reg := store.Registry{
+		ID:      store.RegistryID("reg-1"),
 		Slug:    "example-resources",
 		Aliases: []string{"legacy-resources"},
 		Origins: []string{"https://github.com/example/resources.git"},
 		Ref:     "main",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 		Acquisition: store.AcquisitionMirror,
@@ -159,51 +159,51 @@ func TestSourceCRUD(t *testing.T) {
 		License:     "MIT",
 		Listed:      true,
 	}
-	if err := s.PutSource(ctx, src); err != nil {
-		t.Fatalf("PutSource: %v", err)
+	if err := s.PutRegistry(ctx, reg); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
 	}
 
-	got, err := s.GetSource(ctx, src.ID)
+	got, err := s.GetRegistry(ctx, reg.ID)
 	if err != nil {
-		t.Fatalf("GetSource: %v", err)
+		t.Fatalf("GetRegistry: %v", err)
 	}
-	if got.Slug != src.Slug || got.Ref != src.Ref {
-		t.Fatalf("GetSource returned %+v, want %+v", got, src)
+	if got.Slug != reg.Slug || got.Ref != reg.Ref {
+		t.Fatalf("GetRegistry returned %+v, want %+v", got, reg)
 	}
 
-	bySlug, err := s.GetSourceBySlug(ctx, "example-resources")
+	bySlug, err := s.GetRegistryBySlug(ctx, "example-resources")
 	if err != nil {
-		t.Fatalf("GetSourceBySlug current slug: %v", err)
+		t.Fatalf("GetRegistryBySlug current slug: %v", err)
 	}
-	if bySlug.ID != src.ID {
-		t.Fatalf("GetSourceBySlug returned %q, want %q", bySlug.ID, src.ID)
+	if bySlug.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug returned %q, want %q", bySlug.ID, reg.ID)
 	}
 
-	byAlias, err := s.GetSourceBySlug(ctx, "legacy-resources")
+	byAlias, err := s.GetRegistryBySlug(ctx, "legacy-resources")
 	if err != nil {
-		t.Fatalf("GetSourceBySlug alias: %v", err)
+		t.Fatalf("GetRegistryBySlug alias: %v", err)
 	}
-	if byAlias.ID != src.ID {
-		t.Fatalf("GetSourceBySlug by alias returned %q, want %q", byAlias.ID, src.ID)
+	if byAlias.ID != reg.ID {
+		t.Fatalf("GetRegistryBySlug by alias returned %q, want %q", byAlias.ID, reg.ID)
 	}
 
-	src.Listed = false
-	if err := s.PutSource(ctx, src); err != nil {
-		t.Fatalf("PutSource unlisted: %v", err)
+	reg.Listed = false
+	if err := s.PutRegistry(ctx, reg); err != nil {
+		t.Fatalf("PutRegistry unlisted: %v", err)
 	}
-	listed, err := s.ListSources(ctx)
+	listed, err := s.ListRegistries(ctx)
 	if err != nil {
-		t.Fatalf("ListSources: %v", err)
+		t.Fatalf("ListRegistries: %v", err)
 	}
 	if len(listed) != 0 {
-		t.Fatalf("ListSources returned %d sources, want 0", len(listed))
+		t.Fatalf("ListRegistries returned %d registries, want 0", len(listed))
 	}
 }
 
 func TestResourceRevisionWithTwoAssessmentsAndCurrentPointer(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-	coord := store.ResourceCoordinate{Marketplace: "mp-test", Source: "src-1", Kind: "skill", Name: "grill-me"}
+	coord := store.ResourceCoordinate{Marketplace: "mp-test", Registry: "reg-1", Kind: "skill", Name: "grill-me"}
 	rev := store.ResourceRevision{
 		Coordinate: coord, ContentDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		ArchiveDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222", License: "MIT",
@@ -249,8 +249,8 @@ func TestResourceRevisionWithTwoAssessmentsAndCurrentPointer(t *testing.T) {
 	if err := s.SetCurrentResourceAssessment(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
-		SourceID: coord.Source, Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: manifest,
+	if err := s.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: coord.Registry, Ref: "main", Commit: "abc123", RegistryRevisionManifestDigest: manifest,
 		Acquisition: store.AcquisitionMirror,
 	}); err != nil {
 		t.Fatal(err)
@@ -281,38 +281,38 @@ func TestResourceRevisionWithTwoAssessmentsAndCurrentPointer(t *testing.T) {
 	}
 }
 
-func TestSourceOccurrenceCRUD(t *testing.T) {
+func TestRegistryOccurrenceCRUD(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 
-	occ := store.SourceOccurrence{
-		SourceID:                     store.SourceID("src-1"),
-		Ref:                          "main",
-		Roots:                        []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
-		Commit:                       "abc123",
-		SourceRevisionManifestDigest: store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333"),
-		Acquisition:                  store.AcquisitionMirror,
-		MirroredArtifactDigest:       store.ArchiveDigest("sha256:4444444444444444444444444444444444444444444444444444444444444444"),
-		OccurredAt:                   time.Now().UTC().Add(-time.Hour),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     store.RegistryID("reg-1"),
+		Ref:                            "main",
+		Roots:                          []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}},
+		Commit:                         "abc123",
+		RegistryRevisionManifestDigest: store.RevisionDigest("sha256:3333333333333333333333333333333333333333333333333333333333333333"),
+		Acquisition:                    store.AcquisitionMirror,
+		MirroredArtifactDigest:         store.ArchiveDigest("sha256:4444444444444444444444444444444444444444444444444444444444444444"),
+		OccurredAt:                     time.Now().UTC().Add(-time.Hour),
 	}
-	if err := s.PutSourceOccurrence(ctx, occ); err != nil {
-		t.Fatalf("PutSourceOccurrence: %v", err)
+	if err := s.PutRegistryOccurrence(ctx, occ); err != nil {
+		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 
-	got, err := s.GetSourceOccurrence(ctx, occ.SourceID, occ.Commit)
+	got, err := s.GetRegistryOccurrence(ctx, occ.RegistryID, occ.Commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 	if got.Commit != occ.Commit || got.MirroredArtifactDigest != occ.MirroredArtifactDigest || len(got.Roots) != 1 || got.Roots[0] != occ.Roots[0] {
-		t.Fatalf("GetSourceOccurrence returned %+v, want %+v", got, occ)
+		t.Fatalf("GetRegistryOccurrence returned %+v, want %+v", got, occ)
 	}
 
-	latest, err := s.LatestSourceOccurrence(ctx, occ.SourceID)
+	latest, err := s.LatestRegistryOccurrence(ctx, occ.RegistryID)
 	if err != nil {
-		t.Fatalf("LatestSourceOccurrence: %v", err)
+		t.Fatalf("LatestRegistryOccurrence: %v", err)
 	}
 	if latest.Commit != occ.Commit {
-		t.Fatalf("LatestSourceOccurrence returned %q, want %q", latest.Commit, occ.Commit)
+		t.Fatalf("LatestRegistryOccurrence returned %q, want %q", latest.Commit, occ.Commit)
 	}
 }
 
@@ -322,10 +322,10 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 
 	cr := store.CollectionRevision{
 		ID:             "coll-1",
-		SourceID:       store.SourceID("src-1"),
+		RegistryID:     store.RegistryID("reg-1"),
 		ManifestDigest: store.RevisionDigest("sha256:5555555555555555555555555555555555555555555555555555555555555555"),
 		Members: []store.ResourceCoordinate{
-			{Marketplace: store.MarketplaceID("mp"), Source: store.SourceID("src-1"), Kind: "skill", Name: "member"},
+			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "skill", Name: "member"},
 		},
 	}
 	if err := s.PutCollectionRevision(ctx, cr); err != nil {
@@ -339,7 +339,7 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 		t.Fatalf("collection members lost: %+v", got.Members)
 	}
 
-	all, err := s.ListCollectionRevisions(ctx, cr.SourceID)
+	all, err := s.ListCollectionRevisions(ctx, cr.RegistryID)
 	if err != nil {
 		t.Fatalf("ListCollectionRevisions: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 
 	r := store.Revocation{
 		Kind:      store.RevocationCoordinate,
-		TargetID:  "mp/src-1/skill/member",
+		TargetID:  "mp/reg-1/skill/member",
 		Reason:    "license violation",
 		AppliedAt: time.Now().UTC(),
 	}
@@ -378,8 +378,8 @@ func TestJobCRUD(t *testing.T) {
 
 	job := store.Job{
 		ID:          store.JobID("job-1"),
-		Kind:        "index-source",
-		Payload:     []byte(`{"source":"src-1"}`),
+		Kind:        "index-registry",
+		Payload:     []byte(`{"registry":"reg-1"}`),
 		MaxAttempts: 3,
 	}
 	if err := s.EnqueueJob(ctx, job); err != nil {
@@ -394,7 +394,7 @@ func TestJobCRUD(t *testing.T) {
 		t.Fatalf("GetJob status = %q, want pending", got.Status)
 	}
 
-	leased, err := s.LeaseJob(ctx, "index-source", "worker-1", time.Minute)
+	leased, err := s.LeaseJob(ctx, "index-registry", "worker-1", time.Minute)
 	if err != nil {
 		t.Fatalf("LeaseJob: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestJobCRUD(t *testing.T) {
 	}
 
 	// Cannot lease a completed job.
-	_, err = s.LeaseJob(ctx, "index-source", "worker-2", time.Minute)
+	_, err = s.LeaseJob(ctx, "index-registry", "worker-2", time.Minute)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("LeaseJob completed error = %v, want ErrNotFound", err)
 	}
@@ -433,9 +433,9 @@ func TestJobIdempotency(t *testing.T) {
 
 	job := store.Job{
 		ID:             store.JobID("job-1"),
-		Kind:           "index-source",
+		Kind:           "index-registry",
 		Payload:        []byte("x"),
-		IdempotencyKey: "source-src-1-main",
+		IdempotencyKey: "registry-reg-1-main",
 	}
 	if err := s.EnqueueJob(ctx, job); err != nil {
 		t.Fatalf("EnqueueJob first: %v", err)

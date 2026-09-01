@@ -51,9 +51,9 @@ type Client struct {
 	httpClient *http.Client
 	userAgent  string
 
-	identityMu sync.RWMutex
-	instanceID store.MarketplaceID
-	sourceIDs  map[string]store.SourceID
+	identityMu  sync.RWMutex
+	instanceID  store.MarketplaceID
+	registryIDs map[string]store.RegistryID
 }
 
 // Option configures a Client.
@@ -99,10 +99,10 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 	}
 
 	c := &Client{
-		baseURL:    u,
-		httpClient: &http.Client{Timeout: defaultTimeout},
-		userAgent:  "agent-marketplace",
-		sourceIDs:  make(map[string]store.SourceID),
+		baseURL:     u,
+		httpClient:  &http.Client{Timeout: defaultTimeout},
+		userAgent:   "agent-marketplace",
+		registryIDs: make(map[string]store.RegistryID),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -250,26 +250,26 @@ func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, st
 }
 
 // GetResourceRevision fetches a specific revision of a resource.
-func (c *Client) GetResourceRevision(ctx context.Context, source, kind, name, revision string) (store.AssessedResourceRevision, error) {
-	return c.getResourceRevision(ctx, source, source, kind, name, revision)
+func (c *Client) GetResourceRevision(ctx context.Context, registry, kind, name, revision string) (store.AssessedResourceRevision, error) {
+	return c.getResourceRevision(ctx, registry, registry, kind, name, revision)
 }
 
-// GetResourceRevisionForSource keeps a slug in the route while validating the
-// immutable Source ID returned by the Marketplace.
-func (c *Client) GetResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name, revision string) (store.AssessedResourceRevision, error) {
-	return c.getResourceRevision(ctx, routeSource, sourceID, kind, name, revision)
+// GetResourceRevisionForRegistry keeps a slug in the route while validating the
+// immutable Registry ID returned by the Marketplace.
+func (c *Client) GetResourceRevisionForRegistry(ctx context.Context, routeRegistry, registryID, kind, name, revision string) (store.AssessedResourceRevision, error) {
+	return c.getResourceRevision(ctx, routeRegistry, registryID, kind, name, revision)
 }
 
-func (c *Client) getResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name, revision string) (store.AssessedResourceRevision, error) {
+func (c *Client) getResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name, revision string) (store.AssessedResourceRevision, error) {
 	var rev store.AssessedResourceRevision
 	if err := validateSHA256Digest(revision); err != nil {
 		return rev, fmt.Errorf("revision digest %q: %w", revision, err)
 	}
-	segments := []string{"api", "v1", "resources", routeSource, kind, name, "revisions", revision}
+	segments := []string{"api", "v1", "resources", routeRegistry, kind, name, "revisions", revision}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
-	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedSource, kind, name), store.RevisionDigest(revision)); err != nil {
+	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), store.RevisionDigest(revision)); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
 	}
 	return rev, nil
@@ -282,35 +282,35 @@ type InspectionContent struct {
 	Data        []byte
 }
 
-func (c *Client) GetResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, error) {
-	manifest, _, err := c.getResourceInspection(ctx, source, kind, name, revision)
+func (c *Client) GetResourceInspection(ctx context.Context, registry, kind, name, revision string) (inspection.Manifest, error) {
+	manifest, _, err := c.getResourceInspection(ctx, registry, kind, name, revision)
 	return manifest, err
 }
 
-func (c *Client) GetResourceInspectionManifest(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, error) {
-	return c.GetResourceInspection(ctx, source, kind, name, revision)
+func (c *Client) GetResourceInspectionManifest(ctx context.Context, registry, kind, name, revision string) (inspection.Manifest, error) {
+	return c.GetResourceInspection(ctx, registry, kind, name, revision)
 }
 
-func (c *Client) GetResourceInspectionPrimary(ctx context.Context, source, kind, name, revision string) (InspectionContent, error) {
-	return c.getResourceInspectionContent(ctx, source, kind, name, revision, "")
+func (c *Client) GetResourceInspectionPrimary(ctx context.Context, registry, kind, name, revision string) (InspectionContent, error) {
+	return c.getResourceInspectionContent(ctx, registry, kind, name, revision, "")
 }
 
-func (c *Client) GetResourceInspectionFile(ctx context.Context, source, kind, name, revision, fileDigest string) (InspectionContent, error) {
+func (c *Client) GetResourceInspectionFile(ctx context.Context, registry, kind, name, revision, fileDigest string) (InspectionContent, error) {
 	if err := validateSHA256Digest(fileDigest); err != nil {
 		return InspectionContent{}, fmt.Errorf("inspection file digest %q: %w", fileDigest, err)
 	}
-	return c.getResourceInspectionContent(ctx, source, kind, name, revision, fileDigest)
+	return c.getResourceInspectionContent(ctx, registry, kind, name, revision, fileDigest)
 }
 
-func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, revision string) (inspection.Manifest, store.AssessedResourceRevision, error) {
+func (c *Client) getResourceInspection(ctx context.Context, registry, kind, name, revision string) (inspection.Manifest, store.AssessedResourceRevision, error) {
 	var manifest inspection.Manifest
 	if !mpapi.IsMarketplaceKind(kind) {
 		return manifest, store.AssessedResourceRevision{}, fmt.Errorf("inspection kind %q is invalid", kind)
 	}
-	if strings.TrimSpace(source) == "" || strings.TrimSpace(name) == "" {
+	if strings.TrimSpace(registry) == "" || strings.TrimSpace(name) == "" {
 		return manifest, store.AssessedResourceRevision{}, fmt.Errorf("inspection coordinate is incomplete")
 	}
-	rev, err := c.getResourceRevision(ctx, source, "", kind, name, revision)
+	rev, err := c.getResourceRevision(ctx, registry, "", kind, name, revision)
 	if err != nil {
 		return manifest, rev, err
 	}
@@ -321,7 +321,7 @@ func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, 
 	if err := validateSHA256Digest(manifestDigest); err != nil {
 		return manifest, rev, fmt.Errorf("inspection manifest provenance: %w", err)
 	}
-	raw, err := c.getRawLimited(ctx, c.requestURL([]string{"api", "v1", "resources", source, kind, name, "revisions", revision, "inspection"}, nil), inspection.MaxManifestBytes)
+	raw, err := c.getRawLimited(ctx, c.requestURL([]string{"api", "v1", "resources", registry, kind, name, "revisions", revision, "inspection"}, nil), inspection.MaxManifestBytes)
 	if err != nil {
 		return manifest, rev, err
 	}
@@ -347,8 +347,8 @@ func (c *Client) getResourceInspection(ctx context.Context, source, kind, name, 
 	return manifest, rev, nil
 }
 
-func (c *Client) getResourceInspectionContent(ctx context.Context, source, kind, name, revision, fileDigest string) (InspectionContent, error) {
-	manifest, _, err := c.getResourceInspection(ctx, source, kind, name, revision)
+func (c *Client) getResourceInspectionContent(ctx context.Context, registry, kind, name, revision, fileDigest string) (InspectionContent, error) {
+	manifest, _, err := c.getResourceInspection(ctx, registry, kind, name, revision)
 	if err != nil {
 		return InspectionContent{}, err
 	}
@@ -365,7 +365,7 @@ func (c *Client) getResourceInspectionContent(ctx context.Context, source, kind,
 	if file.Size < 0 || file.Size > maxArtifactBytes {
 		return InspectionContent{}, fmt.Errorf("inspection content size %d exceeds client limit", file.Size)
 	}
-	segments := []string{"api", "v1", "resources", source, kind, name, "revisions", revision, "inspection", "content"}
+	segments := []string{"api", "v1", "resources", registry, kind, name, "revisions", revision, "inspection", "content"}
 	if fileDigest != "" {
 		segments = append(segments, fileDigest)
 	}
@@ -384,87 +384,87 @@ func (c *Client) getResourceInspectionContent(ctx context.Context, source, kind,
 }
 
 // GetLatestResourceRevision fetches the latest revision of a resource.
-func (c *Client) GetLatestResourceRevision(ctx context.Context, source, kind, name string) (store.AssessedResourceRevision, error) {
-	return c.getLatestResourceRevision(ctx, source, source, kind, name)
+func (c *Client) GetLatestResourceRevision(ctx context.Context, registry, kind, name string) (store.AssessedResourceRevision, error) {
+	return c.getLatestResourceRevision(ctx, registry, registry, kind, name)
 }
 
-// GetLatestResourceRevisionForSource keeps a slug in the route while validating
-// the immutable Source ID returned by the Marketplace.
-func (c *Client) GetLatestResourceRevisionForSource(ctx context.Context, routeSource, sourceID, kind, name string) (store.AssessedResourceRevision, error) {
-	return c.getLatestResourceRevision(ctx, routeSource, sourceID, kind, name)
+// GetLatestResourceRevisionForRegistry keeps a slug in the route while validating
+// the immutable Registry ID returned by the Marketplace.
+func (c *Client) GetLatestResourceRevisionForRegistry(ctx context.Context, routeRegistry, registryID, kind, name string) (store.AssessedResourceRevision, error) {
+	return c.getLatestResourceRevision(ctx, routeRegistry, registryID, kind, name)
 }
 
-func (c *Client) getLatestResourceRevision(ctx context.Context, routeSource, expectedSource, kind, name string) (store.AssessedResourceRevision, error) {
+func (c *Client) getLatestResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name string) (store.AssessedResourceRevision, error) {
 	var rev store.AssessedResourceRevision
-	segments := []string{"api", "v1", "resources", routeSource, kind, name}
+	segments := []string{"api", "v1", "resources", routeRegistry, kind, name}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &rev); err != nil {
 		return rev, err
 	}
-	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedSource, kind, name), ""); err != nil {
+	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), ""); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
 	}
 	return rev, nil
 }
 
-// GetSource fetches source metadata addressed by its immutable Source ID. The
+// GetRegistry fetches registry metadata addressed by its immutable Registry ID. The
 // response ID is checked before any metadata is remembered or returned so a
 // route/proxy mix-up cannot retarget a pin.
-func (c *Client) GetSource(ctx context.Context, sourceID string) (store.Source, error) {
-	if strings.TrimSpace(sourceID) == "" {
-		return store.Source{}, fmt.Errorf("source ID is required")
+func (c *Client) GetRegistry(ctx context.Context, registryID string) (store.Registry, error) {
+	if strings.TrimSpace(registryID) == "" {
+		return store.Registry{}, fmt.Errorf("registry ID is required")
 	}
-	return c.getSource(ctx, sourceID, sourceID)
+	return c.getRegistry(ctx, registryID, registryID)
 }
 
-// GetSourceBySlug fetches source metadata through a user-facing slug or alias.
+// GetRegistryBySlug fetches registry metadata through a user-facing slug or alias.
 // A slug is not an immutable identity, so callers must use the returned ID for
 // subsequent exact-coordinate requests.
-func (c *Client) GetSourceBySlug(ctx context.Context, slug string) (store.Source, error) {
-	return c.getSource(ctx, slug, "")
+func (c *Client) GetRegistryBySlug(ctx context.Context, slug string) (store.Registry, error) {
+	return c.getRegistry(ctx, slug, "")
 }
 
-func (c *Client) getSource(ctx context.Context, routeSource, expectedSourceID string) (store.Source, error) {
-	var public mpapi.PublicSource
-	if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "sources", routeSource}, nil), &public); err != nil {
-		return store.Source{}, err
+func (c *Client) getRegistry(ctx context.Context, routeRegistry, expectedRegistryID string) (store.Registry, error) {
+	var public mpapi.PublicRegistry
+	if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "registries", routeRegistry}, nil), &public); err != nil {
+		return store.Registry{}, err
 	}
-	if err := validateAPISource(public); err != nil {
-		return store.Source{}, fmt.Errorf("invalid Marketplace source: %w", err)
+	if err := validateAPIRegistry(public); err != nil {
+		return store.Registry{}, fmt.Errorf("invalid Marketplace registry: %w", err)
 	}
-	if expectedSourceID != "" && public.ID != store.SourceID(expectedSourceID) {
-		return store.Source{}, fmt.Errorf("source ID %q does not match requested %q", public.ID, expectedSourceID)
+	if expectedRegistryID != "" && public.ID != store.RegistryID(expectedRegistryID) {
+		return store.Registry{}, fmt.Errorf("registry ID %q does not match requested %q", public.ID, expectedRegistryID)
 	}
-	c.rememberSource(routeSource, public)
+	c.rememberRegistry(routeRegistry, public)
 
-	src := store.Source{
+	registry := store.Registry{
 		ID: public.ID, Slug: public.Slug, Aliases: public.Aliases,
 		Origins: public.Origins, Ref: public.Ref, Roots: public.Roots,
 		Acquisition: public.Acquisition, License: public.License, Listed: public.Listed,
 	}
 	if public.Publisher != nil {
-		src.Publisher = store.Publisher{Name: public.Publisher.Name, URL: public.Publisher.URL}
+		registry.Publisher = store.Publisher{Name: public.Publisher.Name, URL: public.Publisher.URL}
 	}
-	return src, nil
+	return registry, nil
 }
 
-// GetSourceOccurrence fetches the immutable occurrence for one exact commit and
-// the source's current operator-approved acquisition origin.
-func (c *Client) GetSourceOccurrence(ctx context.Context, source, commit string) (mpapi.ExactSourceOccurrence, error) {
-	var occurrence mpapi.ExactSourceOccurrence
-	if strings.TrimSpace(source) == "" {
-		return occurrence, fmt.Errorf("source occurrence source ID is required")
+// GetRegistryOccurrence fetches the immutable occurrence for one exact commit and
+// the registry's current operator-approved acquisition origin.
+func (c *Client) GetRegistryOccurrence(ctx context.Context, registryID, commit string) (mpapi.ExactRegistryOccurrence, error) {
+	var occurrence mpapi.ExactRegistryOccurrence
+	if strings.TrimSpace(registryID) == "" {
+		return occurrence, fmt.Errorf("registry occurrence registry ID is required")
 	}
 	if !mpapi.IsCanonicalGitCommit(commit) {
-		return occurrence, fmt.Errorf("source occurrence commit %q is not canonical", commit)
+		return occurrence, fmt.Errorf("registry occurrence commit %q is not canonical", commit)
 	}
-	segments := []string{"api", "v1", "sources", source, "occurrences", commit}
+	segments := []string{"api", "v1", "registries", registryID, "occurrences", commit}
 	if err := c.getJSONStrict(ctx, c.requestURL(segments, nil), &occurrence); err != nil {
 		return occurrence, err
 	}
-	// The route accepts either the current source slug or immutable Source ID,
-	// but a response for a different source must never be usable for this pin.
-	if err := validateAPIExactSourceOccurrence(occurrence, store.SourceID(source), commit); err != nil {
-		return occurrence, fmt.Errorf("invalid Marketplace source occurrence: %w", err)
+	// The route accepts either the current registry slug or immutable Registry ID,
+	// but a response for a different registry must never be usable for this pin.
+	if err := validateAPIExactRegistryOccurrence(occurrence, store.RegistryID(registryID), commit); err != nil {
+		return occurrence, fmt.Errorf("invalid Marketplace registry occurrence: %w", err)
 	}
 	return occurrence, nil
 }
@@ -627,7 +627,7 @@ func validateAPIWellKnown(wk mpapi.WellKnown) error {
 		if err := publicurl.Validate(wk.BrowserBase); err != nil {
 			return fmt.Errorf("browser base: %w", err)
 		}
-		if wk.BrowserLatestRoute != wk.BrowserBase+"/s/{source}/{kind}/{name}" || wk.BrowserExactRoute != wk.BrowserBase+"/s/{source}/{kind}/{name}/revisions/{revision}" {
+		if wk.BrowserLatestRoute != wk.BrowserBase+"/r/{registry}/{kind}/{name}" || wk.BrowserExactRoute != wk.BrowserBase+"/r/{registry}/{kind}/{name}/revisions/{revision}" {
 			return fmt.Errorf("well-known browser route templates are invalid")
 		}
 	}
@@ -676,7 +676,7 @@ func validateAPISearchResponse(response SearchResponse) error {
 }
 
 func validateAPIResourceListItem(item mpapi.ResourceListItem) error {
-	if strings.TrimSpace(item.SourceID) == "" || strings.TrimSpace(item.Kind) == "" || strings.TrimSpace(item.Name) == "" {
+	if strings.TrimSpace(item.RegistryID) == "" || strings.TrimSpace(item.Kind) == "" || strings.TrimSpace(item.Name) == "" {
 		return fmt.Errorf("resource list item coordinate is incomplete")
 	}
 	if !mpapi.IsMarketplaceKind(item.Kind) {
@@ -694,26 +694,26 @@ func validateAPIResourceListItem(item mpapi.ResourceListItem) error {
 	return nil
 }
 
-func validateAPIExactSourceOccurrence(occ mpapi.ExactSourceOccurrence, source store.SourceID, commit string) error {
-	if occ.SourceID == "" {
-		return fmt.Errorf("source ID is missing")
+func validateAPIExactRegistryOccurrence(occ mpapi.ExactRegistryOccurrence, registryID store.RegistryID, commit string) error {
+	if occ.RegistryID == "" {
+		return fmt.Errorf("registry ID is missing")
 	}
-	if source != "" && occ.SourceID != source {
-		return fmt.Errorf("source ID %q does not match requested %q", occ.SourceID, source)
+	if registryID != "" && occ.RegistryID != registryID {
+		return fmt.Errorf("registry ID %q does not match requested %q", occ.RegistryID, registryID)
 	}
 	if occ.Commit != commit || !mpapi.IsCanonicalGitCommit(occ.Commit) {
 		return fmt.Errorf("occurrence commit is not the requested full commit")
 	}
 	if strings.TrimSpace(occ.Ref) == "" || strings.TrimSpace(occ.AcquisitionOrigin) == "" || len(occ.Roots) == 0 || occ.OccurredAt.IsZero() {
-		return fmt.Errorf("source occurrence fields are incomplete")
+		return fmt.Errorf("registry occurrence fields are incomplete")
 	}
 	for i, root := range occ.Roots {
 		if strings.TrimSpace(root.Path) == "" {
-			return fmt.Errorf("source occurrence root %d is incomplete", i)
+			return fmt.Errorf("registry occurrence root %d is incomplete", i)
 		}
 	}
-	if err := validateSHA256Digest(string(occ.SourceRevisionManifestDigest)); err != nil {
-		return fmt.Errorf("source manifest digest: %w", err)
+	if err := validateSHA256Digest(string(occ.RegistryRevisionManifestDigest)); err != nil {
+		return fmt.Errorf("registry manifest digest: %w", err)
 	}
 	if err := occ.Acquisition.Validate(); err != nil {
 		return err
@@ -805,19 +805,19 @@ func isSCPOrigin(origin string) bool {
 	return true
 }
 
-func validateAPISource(src mpapi.PublicSource) error {
-	if strings.TrimSpace(string(src.ID)) == "" || strings.TrimSpace(src.Slug) == "" || strings.TrimSpace(src.Ref) == "" {
-		return fmt.Errorf("source identity is incomplete")
+func validateAPIRegistry(registry mpapi.PublicRegistry) error {
+	if strings.TrimSpace(string(registry.ID)) == "" || strings.TrimSpace(registry.Slug) == "" || strings.TrimSpace(registry.Ref) == "" {
+		return fmt.Errorf("registry identity is incomplete")
 	}
-	if len(src.Origins) == 0 || len(src.Roots) == 0 {
-		return fmt.Errorf("source domain fields are incomplete")
+	if len(registry.Origins) == 0 || len(registry.Roots) == 0 {
+		return fmt.Errorf("registry domain fields are incomplete")
 	}
-	for i, root := range src.Roots {
+	for i, root := range registry.Roots {
 		if strings.TrimSpace(root.Path) == "" {
-			return fmt.Errorf("source root %d has no path", i)
+			return fmt.Errorf("registry root %d has no path", i)
 		}
 	}
-	if err := src.Acquisition.Validate(); err != nil {
+	if err := registry.Acquisition.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -825,7 +825,7 @@ func validateAPISource(src mpapi.PublicSource) error {
 
 func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
 	coord := rev.Coordinate
-	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Source)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
+	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return fmt.Errorf("resource coordinate is incomplete")
 	}
 	if !mpapi.IsMarketplaceKind(coord.Kind) {
@@ -867,8 +867,8 @@ func validateAPIResourceRevisionMatches(rev store.AssessedResourceRevision, expe
 	if expected.Marketplace != "" && rev.Coordinate.Marketplace != expected.Marketplace {
 		return fmt.Errorf("coordinate.marketplace %q does not match requested %q", rev.Coordinate.Marketplace, expected.Marketplace)
 	}
-	if expected.Source != "" && rev.Coordinate.Source != expected.Source {
-		return fmt.Errorf("coordinate.source %q does not match requested %q", rev.Coordinate.Source, expected.Source)
+	if expected.Registry != "" && rev.Coordinate.Registry != expected.Registry {
+		return fmt.Errorf("coordinate.registry %q does not match requested %q", rev.Coordinate.Registry, expected.Registry)
 	}
 	if expected.Kind != "" && rev.Coordinate.Kind != expected.Kind {
 		return fmt.Errorf("coordinate.kind %q does not match requested %q", rev.Coordinate.Kind, expected.Kind)
@@ -882,24 +882,24 @@ func validateAPIResourceRevisionMatches(rev store.AssessedResourceRevision, expe
 	return nil
 }
 
-func (c *Client) expectedResourceCoordinate(source, kind, name string) store.ResourceCoordinate {
+func (c *Client) expectedResourceCoordinate(registry, kind, name string) store.ResourceCoordinate {
 	c.identityMu.RLock()
 	defer c.identityMu.RUnlock()
 	return store.ResourceCoordinate{
 		Marketplace: c.instanceID,
-		Source:      c.sourceIDs[source],
+		Registry:    c.registryIDs[registry],
 		Kind:        kind,
 		Name:        name,
 	}
 }
 
-func (c *Client) rememberSource(requested string, source mpapi.PublicSource) {
+func (c *Client) rememberRegistry(requested string, registry mpapi.PublicRegistry) {
 	c.identityMu.Lock()
 	defer c.identityMu.Unlock()
-	c.sourceIDs[requested] = source.ID
-	c.sourceIDs[source.Slug] = source.ID
-	for _, alias := range source.Aliases {
-		c.sourceIDs[alias] = source.ID
+	c.registryIDs[requested] = registry.ID
+	c.registryIDs[registry.Slug] = registry.ID
+	for _, alias := range registry.Aliases {
+		c.registryIDs[alias] = registry.ID
 	}
 }
 

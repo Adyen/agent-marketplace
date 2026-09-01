@@ -20,7 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
+func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	sourceRepo := t.TempDir()
 	writeMarketplaceAllKindsSource(t, sourceRepo)
 	gitRun(t, sourceRepo, "init", "-b", "main")
@@ -39,10 +39,10 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer acquired.Release()
-	source := store.Source{ID: "source-id", Slug: "source", Ref: "main", Origins: []string{originOne}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.SourceRoot{{Path: ".", SourceHarness: "claude"}}}
-	built, err := ingest.BuildSourceRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "marketplace-id", source, acquired.Dir, commit)
+	registry := store.Registry{ID: "source-id", Slug: "source", Ref: "main", Origins: []string{originOne}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.RegistryRoot{{Path: ".", SourceHarness: "claude"}}}
+	built, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "marketplace-id", registry, acquired.Dir, commit)
 	if err != nil {
-		t.Fatalf("build source revision: %v", err)
+		t.Fatalf("build registry revision: %v", err)
 	}
 
 	var revisions []store.AssessedResourceRevision
@@ -67,7 +67,7 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		revisions = append(revisions, store.AssessedResourceRevision{ResourceRevision: revision, Assessment: assessment, Occurrence: occurrence})
 	}
 	if len(revisions) != 5 {
-		t.Fatalf("source resources = %d, want all five materialized kinds", len(revisions))
+		t.Fatalf("registry resources = %d, want all five materialized kinds", len(revisions))
 	}
 	currentOrigin := originOne
 	requests := 0
@@ -78,9 +78,9 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("marketplace-id", "https://example.invalid"))
 		case strings.Contains(r.URL.Path, "/occurrences/"):
-			_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{SourceID: "source-id", Ref: "main", Roots: source.Roots, Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: currentOrigin, OccurredAt: time.Now().UTC()})
-		case strings.Contains(r.URL.Path, "/sources/"):
-			_ = json.NewEncoder(w).Encode(mpapi.PublicSource{ID: "source-id", Slug: "source", Origins: []string{currentOrigin}, Ref: "main", Roots: source.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+			_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{RegistryID: "source-id", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: currentOrigin, OccurredAt: time.Now().UTC()})
+		case strings.Contains(r.URL.Path, "/registries/"):
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "source-id", Slug: "source", Origins: []string{currentOrigin}, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 		case strings.Contains(r.URL.Path, "/resources/"):
 			for _, revision := range revisions {
 				if strings.Contains(r.URL.Path, "/"+revision.Coordinate.Kind+"/"+revision.Coordinate.Name) {
@@ -98,7 +98,7 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 	env := newEnv(t)
 	var resourceYAML strings.Builder
 	for _, revision := range revisions {
-		fmt.Fprintf(&resourceYAML, "      - source_id: source-id\n        kind: %s\n        name: %s\n        revision: %s\n        digest: %s\n        acquisition: index-only\n        source_commit: %s\n        source_manifest_digest: %s\n", revision.Coordinate.Kind, revision.Coordinate.Name, revision.ContentDigest, revision.ContentDigest, commit, built.ManifestDigest)
+		fmt.Fprintf(&resourceYAML, "      - registry_id: source-id\n        kind: %s\n        name: %s\n        revision: %s\n        digest: %s\n        acquisition: index-only\n        registry_commit: %s\n        registry_manifest_digest: %s\n", revision.Coordinate.Kind, revision.Coordinate.Name, revision.ContentDigest, revision.ContentDigest, commit, built.ManifestDigest)
 	}
 	env.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
 	env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: marketplace-id\n    resources:\n%s", server.URL, resourceYAML.String()))
@@ -117,7 +117,7 @@ func TestMarketplaceIndexOnlySourceMoveOfflineAndAllKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result := env.RunAM("sync"); result.ExitCode != 0 {
-		t.Fatalf("source-move online sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
+		t.Fatalf("registry-move online sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	if err := os.RemoveAll(movedRepo); err != nil {
 		t.Fatal(err)

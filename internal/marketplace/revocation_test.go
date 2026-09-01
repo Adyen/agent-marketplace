@@ -14,16 +14,16 @@ func TestParseRevocationOverride(t *testing.T) {
 	}
 	policy := &RevocationOverridePolicy{overrides: []RevocationOverride{override}}
 	if !policy.AllowRevoked(resolver.MarketplaceRevocationIdentity{
-		Marketplace: "mp", Source: "src", Kind: "skill", Name: "review", ContentDigest: digest,
+		Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review", ContentDigest: digest,
 	}) {
 		t.Fatal("exact revoked identity was not allowed")
 	}
 	for name, identity := range map[string]resolver.MarketplaceRevocationIdentity{
-		"wrong marketplace": {Marketplace: "other", Source: "src", Kind: "skill", Name: "review", ContentDigest: digest},
-		"wrong source":      {Marketplace: "mp", Source: "other", Kind: "skill", Name: "review", ContentDigest: digest},
-		"wrong kind":        {Marketplace: "mp", Source: "src", Kind: "command", Name: "review", ContentDigest: digest},
-		"wrong name":        {Marketplace: "mp", Source: "src", Kind: "skill", Name: "other", ContentDigest: digest},
-		"wrong digest":      {Marketplace: "mp", Source: "src", Kind: "skill", Name: "review", ContentDigest: "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"},
+		"wrong marketplace": {Marketplace: "other", Registry: "src", Kind: "skill", Name: "review", ContentDigest: digest},
+		"wrong registry":    {Marketplace: "mp", Registry: "other", Kind: "skill", Name: "review", ContentDigest: digest},
+		"wrong kind":        {Marketplace: "mp", Registry: "src", Kind: "command", Name: "review", ContentDigest: digest},
+		"wrong name":        {Marketplace: "mp", Registry: "src", Kind: "skill", Name: "other", ContentDigest: digest},
+		"wrong digest":      {Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review", ContentDigest: "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"},
 	} {
 		if policy.AllowRevoked(identity) {
 			t.Errorf("%s unexpectedly allowed", name)
@@ -50,14 +50,14 @@ func TestRevocationOverridePolicyIsNotPersistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy == nil || !policy.AllowRevoked(resolver.MarketplaceRevocationIdentity{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review", ContentDigest: digest}) {
+	if policy == nil || !policy.AllowRevoked(resolver.MarketplaceRevocationIdentity{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review", ContentDigest: digest}) {
 		t.Fatal("policy did not allow configured identity")
 	}
 	fresh, err := NewRevocationOverridePolicy(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh != nil && fresh.AllowRevoked(resolver.MarketplaceRevocationIdentity{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review", ContentDigest: digest}) {
+	if fresh != nil && fresh.AllowRevoked(resolver.MarketplaceRevocationIdentity{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review", ContentDigest: digest}) {
 		t.Fatal("new invocation inherited revoked override")
 	}
 }

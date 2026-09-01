@@ -7,7 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func BenchmarkBuildSourceRevision(b *testing.B) {
+func BenchmarkBuildRegistryRevision(b *testing.B) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(b)
 	commit, err := repoCommit(repoDir)
@@ -15,14 +15,14 @@ func BenchmarkBuildSourceRevision(b *testing.B) {
 		b.Fatalf("repo commit: %v", err)
 	}
 	cfg := testConfig(b, repoDir)
-	source := store.Source{
-		ID:          store.SourceID("src-bench"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-bench"),
 		Slug:        "bench-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
@@ -30,9 +30,9 @@ func BenchmarkBuildSourceRevision(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-bench"), source, repoDir, commit)
+		_, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-bench"), source, repoDir, commit)
 		if err != nil {
-			b.Fatalf("BuildSourceRevision: %v", err)
+			b.Fatalf("BuildRegistryRevision: %v", err)
 		}
 	}
 }

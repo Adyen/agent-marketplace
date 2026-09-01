@@ -112,6 +112,17 @@ func TestCanonicalArtifactDeterministic(t *testing.T) {
 	}
 }
 
+func TestCanonicalManifestRegistryIdentityJSON(t *testing.T) {
+	manifest := CanonicalManifest{RegistryID: "registry-id", RegistrySlug: "registry-slug"}
+	payload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal canonical manifest: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"registry_id":"registry-id"`)) || !bytes.Contains(payload, []byte(`"registry_slug":"registry-slug"`)) {
+		t.Fatalf("registry identity fields missing from canonical manifest: %s", payload)
+	}
+}
+
 func TestCanonicalArtifactEncodeRejectsBadPaths(t *testing.T) {
 	a := CanonicalArtifact{
 		Manifest: CanonicalManifest{

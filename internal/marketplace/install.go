@@ -33,25 +33,25 @@ type PreparedInstall struct {
 
 // InstallPreview is the stable, typed preview surface for a prepared install.
 type InstallPreview struct {
-	MarketplaceAlias     string
-	MarketplaceURL       string
-	InstanceID           string
-	SourceID             string
-	SourceSlug           string
-	Kind                 string
-	Name                 string
-	InstalledName        string
-	Revision             string
-	ContentDigest        string
-	ArchiveDigest        string
-	Acquisition          string
-	SourceCommit         string
-	SourceManifestDigest string
-	License              string
-	Findings             []hccartifact.CanonicalFinding
-	Capabilities         []string
-	Provenance           hccartifact.CanonicalProvenance
-	CollectionMembers    []InstallPreview
+	MarketplaceAlias       string
+	MarketplaceURL         string
+	InstanceID             string
+	RegistryID             string
+	RegistrySlug           string
+	Kind                   string
+	Name                   string
+	InstalledName          string
+	Revision               string
+	ContentDigest          string
+	ArchiveDigest          string
+	Acquisition            string
+	RegistryCommit         string
+	RegistryManifestDigest string
+	License                string
+	Findings               []hccartifact.CanonicalFinding
+	Capabilities           []string
+	Provenance             hccartifact.CanonicalProvenance
+	CollectionMembers      []InstallPreview
 }
 
 // Preview returns metadata decoded from the verified artifact, not from an
@@ -64,10 +64,10 @@ func (p *PreparedInstall) Preview() InstallPreview {
 	}
 	preview := InstallPreview{
 		MarketplaceAlias: p.Entry.Alias, MarketplaceURL: p.Entry.URL, InstanceID: p.Entry.InstanceID,
-		SourceID: p.Pin.SourceID, SourceSlug: p.Pin.SourceSlug, Kind: p.Pin.Kind, Name: p.Pin.Name,
+		RegistryID: p.Pin.RegistryID, RegistrySlug: p.Pin.RegistrySlug, Kind: p.Pin.Kind, Name: p.Pin.Name,
 		InstalledName: installedName, Revision: p.Pin.Revision, ContentDigest: p.Pin.Digest,
 		ArchiveDigest: p.ArchiveDigest, Acquisition: p.Pin.Acquisition,
-		SourceCommit: p.Pin.SourceCommit, SourceManifestDigest: p.Pin.SourceManifestDigest,
+		RegistryCommit: p.Pin.RegistryCommit, RegistryManifestDigest: p.Pin.RegistryManifestDigest,
 		License: p.Artifact.Manifest.License, Findings: canonicalFindingsFromRevision(p.Revision),
 		Capabilities: p.Artifact.Manifest.Capabilities, Provenance: p.Artifact.Manifest.Provenance,
 	}
@@ -103,75 +103,75 @@ func canonicalFindingsFromRevision(revision store.AssessedResourceRevision) []hc
 	return findings
 }
 
-// LatestRevision verifies the endpoint and source identity, then fetches the
+// LatestRevision verifies the endpoint and registry identity, then fetches the
 // latest metadata for an existing pin. Index-only pins also validate the exact
-// source occurrence, but this method does not fetch an artifact.
-func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.Source, store.AssessedResourceRevision, error) {
+// registry occurrence, but this method does not fetch an artifact.
+func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.Registry, store.AssessedResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, err
+		return store.Registry{}, store.AssessedResourceRevision{}, err
 	}
 	canonical, err := canonicalMarketplaceEntry(entry)
 	if err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, err
+		return store.Registry{}, store.AssessedResourceRevision{}, err
 	}
 	client, err := r.clientForEntry(canonical)
 	if err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, err
+		return store.Registry{}, store.AssessedResourceRevision{}, err
 	}
 	wellKnown, err := client.WellKnown(ctx)
 	if err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("well-known document: %w", err)
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("well-known document: %w", err)
 	}
 	if wellKnown.InstanceID != canonical.InstanceID {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, canonical.InstanceID)
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, canonical.InstanceID)
 	}
-	source, err := client.GetSourceBySlug(ctx, marketplaceAPISource(pin))
+	registry, err := client.GetRegistryBySlug(ctx, marketplaceAPIRegistry(pin))
 	if err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("resolve source %q: %w", pin.SourceID, err)
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("resolve registry %q: %w", pin.RegistryID, err)
 	}
-	if source.ID != store.SourceID(pin.SourceID) {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("source identity mismatch: got %q, want %q", source.ID, pin.SourceID)
+	if registry.ID != store.RegistryID(pin.RegistryID) {
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("registry identity mismatch: got %q, want %q", registry.ID, pin.RegistryID)
 	}
-	if source.Acquisition != store.AcquisitionMirror && source.Acquisition != store.AcquisitionIndexOnly {
-		return source, store.AssessedResourceRevision{}, fmt.Errorf("source uses unsupported acquisition %q", source.Acquisition)
+	if registry.Acquisition != store.AcquisitionMirror && registry.Acquisition != store.AcquisitionIndexOnly {
+		return registry, store.AssessedResourceRevision{}, fmt.Errorf("registry uses unsupported acquisition %q", registry.Acquisition)
 	}
-	resourceSource := source.Slug
-	if source.Acquisition == store.AcquisitionIndexOnly {
-		resourceSource = string(source.ID)
+	resourceRegistry := registry.Slug
+	if registry.Acquisition == store.AcquisitionIndexOnly {
+		resourceRegistry = string(registry.ID)
 	}
-	if resourceSource == "" {
-		resourceSource = string(source.ID)
+	if resourceRegistry == "" {
+		resourceRegistry = string(registry.ID)
 	}
-	latest, err := client.GetLatestResourceRevision(ctx, resourceSource, pin.Kind, pin.Name)
+	latest, err := client.GetLatestResourceRevision(ctx, resourceRegistry, pin.Kind, pin.Name)
 	if err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("resolve latest resource revision: %w", err)
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("resolve latest resource revision: %w", err)
 	}
 	if err := validateLatestResourceRevision(canonical, pin, latest); err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, err
+		return store.Registry{}, store.AssessedResourceRevision{}, err
 	}
 	if err := enforceMarketplaceUse(latest, nil); err != nil {
-		return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("latest revision: %w", err)
+		return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("latest revision: %w", err)
 	}
-	if source.Acquisition == store.AcquisitionIndexOnly {
-		if latest.Occurrence.Coordinate.Source != source.ID || !mpapi.IsCanonicalGitCommit(latest.Occurrence.Commit) || latest.Occurrence.ManifestDigest == "" {
-			return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("latest index-only revision has no exact source occurrence")
+	if registry.Acquisition == store.AcquisitionIndexOnly {
+		if latest.Occurrence.Coordinate.Registry != registry.ID || !mpapi.IsCanonicalGitCommit(latest.Occurrence.Commit) || latest.Occurrence.ManifestDigest == "" {
+			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("latest index-only revision has no exact registry occurrence")
 		}
-		occurrence, err := client.GetSourceOccurrence(ctx, string(source.ID), latest.Occurrence.Commit)
+		occurrence, err := client.GetRegistryOccurrence(ctx, string(registry.ID), latest.Occurrence.Commit)
 		if err != nil {
-			return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("exact source commit unavailable: %w", err)
+			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("exact registry commit unavailable: %w", err)
 		}
-		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.SourceRevisionManifestDigest != latest.Occurrence.ManifestDigest {
-			return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("source manifest digest mismatch for latest index-only revision")
+		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.RegistryRevisionManifestDigest != latest.Occurrence.ManifestDigest {
+			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("registry manifest digest mismatch for latest index-only revision")
 		}
 		origin := strings.TrimSpace(occurrence.AcquisitionOrigin)
 		if err := validateAcquisitionOrigin(origin); err != nil {
-			return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: invalid acquisition origin: %w", err)
+			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: invalid acquisition origin: %w", err)
 		}
 		if err := config.ValidateRegistryURLs([]config.RegistryEntry{{URL: origin, Ref: occurrence.Ref}}, r.AllowedRegistries); err != nil {
-			return store.Source{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
+			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
 		}
 	}
-	return source, latest, nil
+	return registry, latest, nil
 }
 
 func validateLocatorRevision(locator MarketplaceLocator, revision store.AssessedResourceRevision) error {
@@ -223,12 +223,12 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if locator.Kind == "" {
 		return nil, fmt.Errorf("marketplace resource kind is required")
 	}
-	source, err := client.GetSourceBySlug(ctx, locator.Source)
+	registry, err := client.GetRegistryBySlug(ctx, locator.Registry)
 	if err != nil {
-		return nil, fmt.Errorf("resolve source %q: %w", locator.Source, err)
+		return nil, fmt.Errorf("resolve registry %q: %w", locator.Registry, err)
 	}
-	if source.Acquisition != store.AcquisitionMirror && source.Acquisition != store.AcquisitionIndexOnly {
-		return nil, fmt.Errorf("source %q uses unsupported acquisition %q", locator.Source, source.Acquisition)
+	if registry.Acquisition != store.AcquisitionMirror && registry.Acquisition != store.AcquisitionIndexOnly {
+		return nil, fmt.Errorf("registry %q uses unsupported acquisition %q", locator.Registry, registry.Acquisition)
 	}
 
 	var revision store.AssessedResourceRevision
@@ -236,16 +236,16 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if exactRevision == "" {
 		exactRevision = locator.Digest
 	}
-	// Index-only occurrence lookup is keyed by immutable Source ID, while
+	// Index-only occurrence lookup is keyed by immutable Registry ID, while
 	// preserving the existing slug route for mirror revision lookups.
-	resourceSource := locator.Source
-	if source.Acquisition == store.AcquisitionIndexOnly || resourceSource == "" {
-		resourceSource = string(source.ID)
+	resourceRegistry := locator.Registry
+	if registry.Acquisition == store.AcquisitionIndexOnly || resourceRegistry == "" {
+		resourceRegistry = string(registry.ID)
 	}
 	if exactRevision != "" {
-		revision, err = client.GetResourceRevisionForSource(ctx, resourceSource, string(source.ID), locator.Kind, locator.Name, exactRevision)
+		revision, err = client.GetResourceRevisionForRegistry(ctx, resourceRegistry, string(registry.ID), locator.Kind, locator.Name, exactRevision)
 	} else {
-		revision, err = client.GetLatestResourceRevisionForSource(ctx, resourceSource, string(source.ID), locator.Kind, locator.Name)
+		revision, err = client.GetLatestResourceRevisionForRegistry(ctx, resourceRegistry, string(registry.ID), locator.Kind, locator.Name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve resource revision: %w", err)
@@ -263,41 +263,41 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		pinRevision = string(revision.ContentDigest)
 	}
 	pin := config.MarketplaceResourcePin{
-		SourceID: string(source.ID), SourceSlug: source.Slug, Kind: locator.Kind,
+		RegistryID: string(registry.ID), RegistrySlug: registry.Slug, Kind: locator.Kind,
 		Name: locator.Name, Revision: pinRevision, Digest: string(revision.ContentDigest),
 		Acquisition: config.MarketplaceAcquisitionMirror,
 	}
-	if source.Acquisition == store.AcquisitionIndexOnly {
+	if registry.Acquisition == store.AcquisitionIndexOnly {
 		if revision.Occurrence.Commit == "" {
-			return nil, fmt.Errorf("index-only resource revision has no exact source occurrence")
+			return nil, fmt.Errorf("index-only resource revision has no exact registry occurrence")
 		}
-		occurrence, err := client.GetSourceOccurrence(ctx, string(source.ID), revision.Occurrence.Commit)
+		occurrence, err := client.GetRegistryOccurrence(ctx, string(registry.ID), revision.Occurrence.Commit)
 		if err != nil {
-			return nil, fmt.Errorf("resolve exact source occurrence: %w", err)
+			return nil, fmt.Errorf("resolve exact registry occurrence: %w", err)
 		}
 		if occurrence.Acquisition != store.AcquisitionIndexOnly {
 			return nil, fmt.Errorf("resource revision occurrence is not index-only")
 		}
-		if revision.Occurrence.Coordinate.Source != source.ID || revision.Occurrence.Coordinate.Source != occurrence.SourceID {
-			return nil, fmt.Errorf("resource revision provenance source ID does not match exact source occurrence")
+		if revision.Occurrence.Coordinate.Registry != registry.ID || revision.Occurrence.Coordinate.Registry != occurrence.RegistryID {
+			return nil, fmt.Errorf("resource revision provenance registry ID does not match exact registry occurrence")
 		}
-		if occurrence.SourceRevisionManifestDigest != revision.Occurrence.ManifestDigest {
-			return nil, fmt.Errorf("resource revision and source occurrence manifest digests differ")
+		if occurrence.RegistryRevisionManifestDigest != revision.Occurrence.ManifestDigest {
+			return nil, fmt.Errorf("resource revision and registry occurrence manifest digests differ")
 		}
 		pin.Acquisition = config.MarketplaceAcquisitionIndexOnly
-		pin.SourceCommit = occurrence.Commit
-		pin.SourceManifestDigest = string(occurrence.SourceRevisionManifestDigest)
+		pin.RegistryCommit = occurrence.Commit
+		pin.RegistryManifestDigest = string(occurrence.RegistryRevisionManifestDigest)
 	}
 
 	cache := r.cache()
 	if locator.Kind == "collection" {
-		if source.Acquisition != store.AcquisitionMirror {
+		if registry.Acquisition != store.AcquisitionMirror {
 			return nil, fmt.Errorf("collection %q requires mirror acquisition", locator.Name)
 		}
 		if err := enforceMarketplaceUse(revision, nil); err != nil {
 			return nil, fmt.Errorf("collection revision: %w", err)
 		}
-		if _, err := cache.WriteResourceRevision(canonical.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, revision); err != nil {
+		if _, err := cache.WriteResourceRevision(canonical.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, revision); err != nil {
 			return nil, fmt.Errorf("cache collection revision: %w", err)
 		}
 		manifest, manifestPayload, err := client.GetCollectionManifest(ctx, string(revision.ContentDigest))
@@ -324,7 +324,7 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 		members := make([]*PreparedInstall, 0, len(leaves))
 		seen := make(map[string]string, len(leaves))
 		for _, member := range leaves {
-			key := member.SourceID + "/" + member.Kind + "/" + member.Name
+			key := member.RegistryID + "/" + member.Kind + "/" + member.Name
 			if previous, ok := seen[key]; ok {
 				if previous != member.Revision {
 					return nil, fmt.Errorf("collection contains conflicting revisions for %s", key)
@@ -332,13 +332,13 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 				continue
 			}
 			seen[key] = member.Revision
-			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, source, revision, member, targets)
+			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, registry, revision, member, targets)
 			if err != nil {
 				return nil, err
 			}
 			members = append(members, memberPlan)
 		}
-		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
+		slog.Info("marketplace collection install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "registry_id", registry.ID, "name", locator.Name, "manifest_digest", revision.ContentDigest, "members", len(members))
 		return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, CollectionManifest: manifest, CollectionMembers: members}, nil
 	}
 	resolved, artifact, err := r.resolvePinWithArtifact(ctx, client, cache, canonical, pin, targets, resolver.MarketplaceResolveModeRefresh)
@@ -352,7 +352,7 @@ func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceE
 	if archiveDigest == "" {
 		archiveDigest = artifact.Manifest.ArchiveDigest
 	}
-	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "source_id", source.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest, "acquisition", pin.Acquisition, "source_commit", pin.SourceCommit)
+	slog.Info("marketplace install plan prepared", "url", canonical.URL, "instance_id", canonical.InstanceID, "registry_id", registry.ID, "kind", locator.Kind, "name", locator.Name, "digest", pin.Digest, "acquisition", pin.Acquisition, "registry_commit", pin.RegistryCommit)
 	return &PreparedInstall{Entry: canonical, Pin: pin, Revision: revision, Resolved: resolved, Artifact: artifact, ArchiveDigest: archiveDigest}, nil
 }
 
@@ -361,20 +361,20 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		if member.Kind != "collection" {
 			continue
 		}
-		if member.SourceID == "" || member.Revision == "" {
+		if member.RegistryID == "" || member.Revision == "" {
 			return fmt.Errorf("collection %q has an unresolved nested member %q", manifest.Name, member.Name)
 		}
 		if visiting[member.Revision] {
 			return fmt.Errorf("collection cycle detected at %q", member.Name)
 		}
-		nestedSource, err := client.GetSource(ctx, member.SourceID)
+		nestedRegistry, err := client.GetRegistry(ctx, member.RegistryID)
 		if err != nil {
-			return fmt.Errorf("resolve nested collection source %q: %w", member.SourceID, err)
+			return fmt.Errorf("resolve nested collection registry %q: %w", member.RegistryID, err)
 		}
-		if nestedSource.Acquisition != store.AcquisitionMirror {
-			return fmt.Errorf("nested collection %q uses unsupported acquisition %q", member.Name, nestedSource.Acquisition)
+		if nestedRegistry.Acquisition != store.AcquisitionMirror {
+			return fmt.Errorf("nested collection %q uses unsupported acquisition %q", member.Name, nestedRegistry.Acquisition)
 		}
-		nestedRevision, err := client.GetResourceRevisionForSource(ctx, string(nestedSource.ID), string(nestedSource.ID), "collection", member.Name, member.Revision)
+		nestedRevision, err := client.GetResourceRevisionForRegistry(ctx, string(nestedRegistry.ID), string(nestedRegistry.ID), "collection", member.Name, member.Revision)
 		if err != nil {
 			return fmt.Errorf("resolve nested collection %q revision: %w", member.Name, err)
 		}
@@ -419,24 +419,24 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 	return nil
 }
 
-func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionSource store.Source, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target) (*PreparedInstall, error) {
-	memberSource, err := client.GetSource(ctx, member.SourceID)
+func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionRegistry store.Registry, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target) (*PreparedInstall, error) {
+	memberRegistry, err := client.GetRegistry(ctx, member.RegistryID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve collection member source %q: %w", member.SourceID, err)
+		return nil, fmt.Errorf("resolve collection member registry %q: %w", member.RegistryID, err)
 	}
 	acquisition := config.MarketplaceAcquisitionMirror
-	if memberSource.Acquisition == store.AcquisitionIndexOnly {
+	if memberRegistry.Acquisition == store.AcquisitionIndexOnly {
 		acquisition = config.MarketplaceAcquisitionIndexOnly
-	} else if memberSource.Acquisition != store.AcquisitionMirror {
-		return nil, fmt.Errorf("collection member %s/%q uses unsupported acquisition %q", member.Kind, member.Name, memberSource.Acquisition)
+	} else if memberRegistry.Acquisition != store.AcquisitionMirror {
+		return nil, fmt.Errorf("collection member %s/%q uses unsupported acquisition %q", member.Kind, member.Name, memberRegistry.Acquisition)
 	}
 	leafPin := config.MarketplaceResourcePin{
-		SourceID: string(memberSource.ID), SourceSlug: memberSource.Slug,
+		RegistryID: string(memberRegistry.ID), RegistrySlug: memberRegistry.Slug,
 		Kind: member.Kind, Name: member.Name, Revision: member.Revision,
 		Digest: member.Revision, Acquisition: acquisition,
-		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: string(collectionSource.ID), Name: collectionRevision.Coordinate.Name, Revision: string(collectionRevision.ContentDigest)}}),
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: string(collectionRegistry.ID), Name: collectionRevision.Coordinate.Name, Revision: string(collectionRevision.ContentDigest)}}),
 	}
-	leafRevision, err := client.GetResourceRevisionForSource(ctx, string(memberSource.ID), string(memberSource.ID), member.Kind, member.Name, member.Revision)
+	leafRevision, err := client.GetResourceRevisionForRegistry(ctx, string(memberRegistry.ID), string(memberRegistry.ID), member.Kind, member.Name, member.Revision)
 	if err != nil {
 		return nil, fmt.Errorf("resolve collection member %s/%q: %w", member.Kind, member.Name, err)
 	}
@@ -447,18 +447,18 @@ func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, ca
 		return nil, fmt.Errorf("collection member %s/%q: %w", member.Kind, member.Name, err)
 	}
 	if acquisition == config.MarketplaceAcquisitionIndexOnly {
-		if leafRevision.Occurrence.Commit == "" || leafRevision.Occurrence.Coordinate.Source != memberSource.ID {
-			return nil, fmt.Errorf("collection member %s/%q has no exact index-only source occurrence", member.Kind, member.Name)
+		if leafRevision.Occurrence.Commit == "" || leafRevision.Occurrence.Coordinate.Registry != memberRegistry.ID {
+			return nil, fmt.Errorf("collection member %s/%q has no exact index-only registry occurrence", member.Kind, member.Name)
 		}
-		occurrence, err := client.GetSourceOccurrence(ctx, string(memberSource.ID), leafRevision.Occurrence.Commit)
+		occurrence, err := client.GetRegistryOccurrence(ctx, string(memberRegistry.ID), leafRevision.Occurrence.Commit)
 		if err != nil {
 			return nil, fmt.Errorf("resolve collection member %s/%q occurrence: %w", member.Kind, member.Name, err)
 		}
-		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.SourceRevisionManifestDigest != leafRevision.Occurrence.ManifestDigest {
-			return nil, fmt.Errorf("collection member %s/%q source occurrence does not match revision", member.Kind, member.Name)
+		if occurrence.Acquisition != store.AcquisitionIndexOnly || occurrence.RegistryRevisionManifestDigest != leafRevision.Occurrence.ManifestDigest {
+			return nil, fmt.Errorf("collection member %s/%q registry occurrence does not match revision", member.Kind, member.Name)
 		}
-		leafPin.SourceCommit = occurrence.Commit
-		leafPin.SourceManifestDigest = string(occurrence.SourceRevisionManifestDigest)
+		leafPin.RegistryCommit = occurrence.Commit
+		leafPin.RegistryManifestDigest = string(occurrence.RegistryRevisionManifestDigest)
 	}
 	resolved, decoded, err := r.resolvePinWithArtifact(ctx, client, cache, entry, leafPin, targets, resolver.MarketplaceResolveModeRefresh)
 	if err != nil {

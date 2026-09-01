@@ -16,9 +16,9 @@ import (
 func BenchmarkValidateResourceRevision(b *testing.B) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	entry := config.MarketplaceEntry{InstanceID: "mp"}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest}
 	rev := assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
 	})
@@ -38,7 +38,7 @@ func BenchmarkResolveCachedNoFetch(b *testing.B) {
 		b.Fatal(err)
 	}
 	contentDigest := artifact.Manifest.ContentDigest
-	artifact.Manifest.SourceID = "src"
+	artifact.Manifest.RegistryID = "src"
 	artifact.Manifest.Revision = contentDigest
 	raw, archiveDigest, err := hccartifact.Encode(artifact)
 	if err != nil {
@@ -51,9 +51,9 @@ func BenchmarkResolveCachedNoFetch(b *testing.B) {
 		b.Fatal(err)
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest}
-	if _, err := cache.WriteResourceRevision(entry.URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest}
+	if _, err := cache.WriteResourceRevision(entry.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})); err != nil {

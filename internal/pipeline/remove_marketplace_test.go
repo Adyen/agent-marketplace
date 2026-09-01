@@ -16,8 +16,8 @@ func TestRemoveMarketplaceCollectionRollbackRestoresExactSelectors(t *testing.T)
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	digest := "sha256:" + strings.Repeat("a", 64)
-	collection := config.MarketplaceResourcePin{SourceID: "collections", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror}
-	leaf := config.MarketplaceResourcePin{SourceID: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror, SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: collection.SourceID, Name: collection.Name, Revision: collection.Revision}})}
+	collection := config.MarketplaceResourcePin{RegistryID: "collections", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror}
+	leaf := config.MarketplaceResourcePin{RegistryID: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror, SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: collection.RegistryID, Name: collection.Name, Revision: collection.Revision}})}
 	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, "https://market.example", "mp", "public", []config.MarketplaceResourcePin{collection, leaf}); err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestRemoveMarketplaceCollectionRollbackRestoresExactSelectors(t *testing.T)
 func TestMarketplaceRemoveKindDisambiguatesCollectionAndResource(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{Resources: []config.MarketplaceResourcePin{
-		{SourceID: "src", Kind: "collection", Name: "shared", Revision: digest, Digest: digest},
-		{SourceID: "src", Kind: "skill", Name: "shared", Revision: digest, Digest: digest, Direct: true},
+		{RegistryID: "src", Kind: "collection", Name: "shared", Revision: digest, Digest: digest},
+		{RegistryID: "src", Kind: "skill", Name: "shared", Revision: digest, Digest: digest, Direct: true},
 	}}}}
 	collection, _, ok := marketplaceCollectionByName(cfg, "shared", ir.KindSkill, false)
 	if !ok || collection.Kind != "collection" {
@@ -63,10 +63,10 @@ func TestMarketplaceRemoveKindDisambiguatesCollectionAndResource(t *testing.T) {
 
 func TestMarketplaceRemoveRejectsCollectionOnlyLeafAndHonorsKind(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	collection := config.MarketplaceResourcePin{SourceID: "src", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest}
+	collection := config.MarketplaceResourcePin{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest}
 	leaf := config.MarketplaceResourcePin{
-		SourceID: "src", Kind: "skill", Name: "shared", Revision: digest, Digest: digest,
-		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: collection.SourceID, Name: collection.Name, Revision: collection.Revision}}),
+		RegistryID: "src", Kind: "skill", Name: "shared", Revision: digest, Digest: digest,
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: collection.RegistryID, Name: collection.Name, Revision: collection.Revision}}),
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{Resources: []config.MarketplaceResourcePin{collection, leaf}}}}
 	if got, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindSkill, true); !ok || got.Kind != "skill" {

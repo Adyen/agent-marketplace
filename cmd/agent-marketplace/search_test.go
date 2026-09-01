@@ -39,7 +39,7 @@ func searchCommandServerWithInstance(t *testing.T, instanceID string, fail bool)
 		}
 		resp := marketplaceSearchResponse{
 			Items: []mpapi.ResourceListItem{
-				{SourceID: "src", SourceSlug: "src", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0, Description: "Review skill"},
+				{RegistryID: "src", RegistrySlug: "src", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0, Description: "Review skill"},
 			},
 			Total: 1, Offset: 0, Limit: 100,
 		}
@@ -104,8 +104,8 @@ func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
 			receivedKind = r.URL.Query().Get("kind")
 			_ = json.NewEncoder(w).Encode(marketplaceSearchResponse{
 				Items: []mpapi.ResourceListItem{
-					{SourceID: "src", SourceSlug: "src", Kind: mpapi.KindMcpServer, Name: "genai-architect", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1},
-					{SourceID: "src", SourceSlug: "src", Kind: mpapi.KindSkill, Name: "architecture", Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Score: 0.5},
+					{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindMcpServer, Name: "genai-architect", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1},
+					{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindSkill, Name: "architecture", Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Score: 0.5},
 				},
 				Total: 2, Limit: 100,
 			})
@@ -190,7 +190,7 @@ func TestSearchTableQuotesAdversarialRemoteFields(t *testing.T) {
 	const hostile = "remote\x00\x1b[31m\nname\t\r\u202e"
 	results := []marketplace.SearchResult{{
 		Marketplace:      hostile,
-		ResourceListItem: mpapi.ResourceListItem{SourceSlug: hostile, Kind: hostile, Name: hostile, Description: hostile, Score: 1},
+		ResourceListItem: mpapi.ResourceListItem{RegistrySlug: hostile, Kind: hostile, Name: hostile, Description: hostile, Score: 1},
 	}}
 	var table bytes.Buffer
 	if err := writeSearchTable(&table, results); err != nil {

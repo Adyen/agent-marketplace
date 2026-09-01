@@ -21,7 +21,7 @@
   `ValidateArchive` succeeds.
 - Collection manifests are wrapped as canonical artifacts; the artifact
   content digest is over the collection manifest JSON payload.
-- `SourceRevisionManifest` follows the same digest-exclusion pattern as
+- `RegistryRevisionManifest` follows the same digest-exclusion pattern as
   `CollectionManifest`: the `revision_digest` is computed over canonical JSON
   with the field cleared.
 

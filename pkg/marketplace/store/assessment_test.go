@@ -136,7 +136,7 @@ func validResourceAssessment() store.ResourceAssessment {
 	return store.ResourceAssessment{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: "marketplace",
-			Source:      "source",
+			Registry:    "registry",
 			Kind:        "skill",
 			Name:        "review",
 		},

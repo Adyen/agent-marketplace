@@ -167,7 +167,7 @@ func writeSearchTable(out io.Writer, results []marketplace.SearchResult) error {
 		}
 		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n",
 			marketplace.QuoteTerminal(r.Marketplace),
-			marketplace.QuoteTerminal(r.SourceSlug),
+			marketplace.QuoteTerminal(r.RegistrySlug),
 			marketplace.QuoteTerminal(r.Kind),
 			marketplace.QuoteTerminal(r.Name),
 			marketplace.QuoteTerminal(description),

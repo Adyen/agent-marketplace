@@ -33,8 +33,8 @@ func TestLoadConfigValid(t *testing.T) {
 	if cfg.Policy.Limits.RepositoryBytes != 100*1024*1024 {
 		t.Fatalf("repository_bytes = %d, want 104857600", cfg.Policy.Limits.RepositoryBytes)
 	}
-	if cfg.Sources[0].Acquisition != "mirror" {
-		t.Fatalf("source acquisition = %q, want mirror", cfg.Sources[0].Acquisition)
+	if cfg.Registries[0].Acquisition != "mirror" {
+		t.Fatalf("source acquisition = %q, want mirror", cfg.Registries[0].Acquisition)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestStorageMetadataDriverDSNValidationFromEnvAndFile(t *testing.T) {
 	}
 }
 
-func TestStorageMetadataDSNSourceValidationDoesNotLeakSecret(t *testing.T) {
+func TestStorageMetadataDSNRegistryValidationDoesNotLeakSecret(t *testing.T) {
 	const secret = "postgres://user:secret@example.invalid/db"
 	t.Setenv("MARKETPLACE_TEST_DSN", "")
 	_, err := (StorageMetadata{
@@ -268,7 +268,7 @@ func TestLoadConfigRejectsUnsafePublisherURL(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsSourceOriginUserinfo(t *testing.T) {
+func TestLoadConfigRejectsRegistryOriginUserinfo(t *testing.T) {
 	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://user:source-secret@example.com/resources.git", 1))
 	_, err := LoadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "userinfo") {
@@ -279,7 +279,7 @@ func TestLoadConfigRejectsSourceOriginUserinfo(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsSourceOriginQueryCredentials(t *testing.T) {
+func TestLoadConfigRejectsRegistryOriginQueryCredentials(t *testing.T) {
 	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://example.com/resources.git?access_token=source-secret", 1))
 	_, err := LoadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "query parameters") {
@@ -298,7 +298,7 @@ func TestLoadConfigRejectsNegativeRefreshConcurrency(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsMalformedSourceOriginQuery(t *testing.T) {
+func TestLoadConfigRejectsMalformedRegistryOriginQuery(t *testing.T) {
 	path := writeConfig(t, strings.Replace(validConfigYAML(), "https://github.com/example/resources.git", "https://example.com/resources.git?access_token=%zz", 1))
 	_, err := LoadConfig(path)
 	if err == nil || !strings.Contains(err.Error(), "valid URL query") {
@@ -307,7 +307,7 @@ func TestLoadConfigRejectsMalformedSourceOriginQuery(t *testing.T) {
 }
 
 func TestLoadConfigInlineSSHCredential(t *testing.T) {
-	src := sourceYAML(`    credentials:
+	src := registryYAML(`    credentials:
       ssh_key:
         value: secret-key
 `)
@@ -322,7 +322,7 @@ func TestLoadConfigInlineSSHCredential(t *testing.T) {
 }
 
 func TestLoadConfigInlineTokenCredential(t *testing.T) {
-	src := sourceYAML(`    credentials:
+	src := registryYAML(`    credentials:
       token:
         value: secret-token
 `)
@@ -333,21 +333,21 @@ func TestLoadConfigInlineTokenCredential(t *testing.T) {
 	}
 }
 
-func TestLoadConfigSourceCAFile(t *testing.T) {
+func TestLoadConfigRegistryCAFile(t *testing.T) {
 	caFile := filepath.Join(t.TempDir(), "source-ca.pem")
 	if err := os.WriteFile(caFile, testCAPEM(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(writeConfig(t, configYAML(sourceYAML("    ca_file: "+strconv.Quote(caFile)+"\n"))))
+	cfg, err := LoadConfig(writeConfig(t, configYAML(registryYAML("    ca_file: "+strconv.Quote(caFile)+"\n"))))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Sources[0].CAFile != caFile {
-		t.Fatalf("source ca_file = %q, want %q", cfg.Sources[0].CAFile, caFile)
+	if cfg.Registries[0].CAFile != caFile {
+		t.Fatalf("source ca_file = %q, want %q", cfg.Registries[0].CAFile, caFile)
 	}
 }
 
-func TestLoadConfigRejectsInvalidSourceCAFile(t *testing.T) {
+func TestLoadConfigRejectsInvalidRegistryCAFile(t *testing.T) {
 	invalidPEM := filepath.Join(t.TempDir(), "invalid.pem")
 	if err := os.WriteFile(invalidPEM, []byte("not a certificate"), 0o644); err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestLoadConfigRejectsInvalidSourceCAFile(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := LoadConfig(writeConfig(t, configYAML(sourceYAML("    ca_file: "+strconv.Quote(tc.path)+"\n"))))
+			_, err := LoadConfig(writeConfig(t, configYAML(registryYAML("    ca_file: "+strconv.Quote(tc.path)+"\n"))))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("LoadConfig error = %v, want containing %q", err, tc.wantErr)
 			}
@@ -391,24 +391,24 @@ func TestLoadConfigLimitBounds(t *testing.T) {
 	}
 }
 
-func TestLoadConfigDuplicateSourceID(t *testing.T) {
-	sources := `  - id: src-test
-    slug: example-source
+func TestLoadConfigDuplicateRegistryID(t *testing.T) {
+	registries := `  - id: registry-test
+    slug: example-registry
     origin: https://github.com/example/resources.git
     ref: main
     roots:
       - path: .agents
-  - id: src-test
+  - id: registry-test
     slug: example2
     origin: https://github.com/example/other.git
     ref: main
     roots:
       - path: .agents
 `
-	path := writeConfig(t, configYAML(sources))
+	path := writeConfig(t, configYAML(registries))
 	_, err := LoadConfig(path)
 	if err == nil {
-		t.Fatalf("expected error for duplicate source id")
+		t.Fatalf("expected error for duplicate registry id")
 	}
 }
 
@@ -526,7 +526,7 @@ func writeConfig(t *testing.T, yaml string) string {
 }
 
 func validConfigYAML() string {
-	return configYAML(sourceYAML(""))
+	return configYAML(registryYAML(""))
 }
 
 func minimalConfigYAML() string {
@@ -539,7 +539,7 @@ func minimalConfigYAML() string {
 `), "  hidden_content: reject\n", "", 1)
 }
 
-func configYAML(sourcesBlock string) string {
+func configYAML(registriesBlock string) string {
 	return `apiVersion: agent-marketplace.io/marketplace/v1
 instance:
   id: test-mp
@@ -570,15 +570,15 @@ policy:
     artifact_bytes: 16777216
     clone_duration: 300s
     ingestion_duration: 120s
-sources:
-` + sourcesBlock + `revocations:
-  source_ids: []
+registries:
+` + registriesBlock + `revocations:
+  registry_ids: []
   coordinates: []
   revisions: []
 `
 }
 
-func sourceYAML(extra string) string {
+func registryYAML(extra string) string {
 	return `  - id: src-test
     slug: example-source
     aliases: []

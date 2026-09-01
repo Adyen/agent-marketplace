@@ -51,16 +51,16 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put marketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:             store.SourceID("src-test"),
+	src := store.Registry{
+		ID:             store.RegistryID("src-test"),
 		Slug:           "test-source",
 		Ref:            "main",
 		Origins:        []string{"https://user:origin-secret@example.com/repo.git?token=query-secret"},
 		Acquisition:    store.AcquisitionMirror,
 		License:        "MIT",
 		CredentialsRef: "env:MARKETPLACE_GIT_TOKEN",
-		RefreshStatus:  store.SourceRefreshStatusFailed,
-		Roots: []store.SourceRoot{
+		RefreshStatus:  store.RegistryRefreshStatusFailed,
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 		Listed:       true,
@@ -68,7 +68,7 @@ func TestServerRoutes(t *testing.T) {
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		t.Fatalf("put source: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestServerRoutes(t *testing.T) {
 	rev := store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID(cfg.Instance.ID),
-			Source:      src.ID,
+			Registry:    src.ID,
 			Kind:        KindSkill,
 			Name:        "review",
 		},
@@ -91,8 +91,8 @@ func TestServerRoutes(t *testing.T) {
 		ArchiveDigest: store.ArchiveDigest(artifactDigest),
 		License:       "MIT",
 	}
-	manifestData, manifestDigest, err := marketplaceartifact.CanonicalSourceRevisionPayload(marketplaceartifact.SourceRevisionManifest{
-		SchemaVersion: marketplaceartifact.SourceRevisionSchemaV1,
+	manifestData, manifestDigest, err := marketplaceartifact.CanonicalRegistryRevisionPayload(marketplaceartifact.RegistryRevisionManifest{
+		SchemaVersion: marketplaceartifact.RegistryRevisionSchemaV1,
 		Generator:     "test source revision",
 		Resources: []marketplaceartifact.RevisionResource{{
 			Kind:          KindSkill,
@@ -118,17 +118,17 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("put manifest blob: %v", err)
 	}
 
-	occ := store.SourceOccurrence{
-		SourceID:                     src.ID,
-		Ref:                          src.Ref,
-		Roots:                        src.Roots,
-		Commit:                       commit,
-		SourceRevisionManifestDigest: manifest,
-		Acquisition:                  src.Acquisition,
-		OccurredAt:                   time.Now().UTC(),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     src.ID,
+		Ref:                            src.Ref,
+		Roots:                          src.Roots,
+		Commit:                         commit,
+		RegistryRevisionManifestDigest: manifest,
+		Acquisition:                    src.Acquisition,
+		OccurredAt:                     time.Now().UTC(),
 	}
-	if err := meta.PutSourceOccurrence(ctx, occ); err != nil {
-		t.Fatalf("put source occurrence: %v", err)
+	if err := meta.PutRegistryOccurrence(ctx, occ); err != nil {
+		t.Fatalf("put registry occurrence: %v", err)
 	}
 	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: manifest}); err != nil {
 		t.Fatalf("put resource occurrence: %v", err)
@@ -159,30 +159,30 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	emptySource := src
-	emptySource.ID = "src-empty"
-	emptySource.Slug = "empty-source"
-	if err := meta.PutSource(ctx, emptySource); err != nil {
+	emptyRegistry := src
+	emptyRegistry.ID = "src-empty"
+	emptyRegistry.Slug = "empty-source"
+	if err := meta.PutRegistry(ctx, emptyRegistry); err != nil {
 		t.Fatalf("put empty source: %v", err)
 	}
 
-	boundedSource := src
-	boundedSource.ID = "src-bounded"
-	boundedSource.Slug = "bounded-source"
-	if err := meta.PutSource(ctx, boundedSource); err != nil {
+	boundedRegistry := src
+	boundedRegistry.ID = "src-bounded"
+	boundedRegistry.Slug = "bounded-source"
+	if err := meta.PutRegistry(ctx, boundedRegistry); err != nil {
 		t.Fatalf("put bounded source: %v", err)
 	}
-	for i := 0; i < MaxSourceHistoryEntries+1; i++ {
-		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{
-			SourceID:                     boundedSource.ID,
-			Ref:                          boundedSource.Ref,
-			Roots:                        boundedSource.Roots,
-			Commit:                       fmt.Sprintf("%040x", i+1),
-			SourceRevisionManifestDigest: manifest,
-			Acquisition:                  boundedSource.Acquisition,
-			OccurredAt:                   time.Unix(int64(i+1), 0).UTC(),
+	for i := 0; i < MaxRegistryHistoryEntries+1; i++ {
+		if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+			RegistryID:                     boundedRegistry.ID,
+			Ref:                            boundedRegistry.Ref,
+			Roots:                          boundedRegistry.Roots,
+			Commit:                         fmt.Sprintf("%040x", i+1),
+			RegistryRevisionManifestDigest: manifest,
+			Acquisition:                    boundedRegistry.Acquisition,
+			OccurredAt:                     time.Unix(int64(i+1), 0).UTC(),
 		}); err != nil {
-			t.Fatalf("put bounded source occurrence %d: %v", i, err)
+			t.Fatalf("put bounded registry occurrence %d: %v", i, err)
 		}
 	}
 
@@ -232,22 +232,22 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("search missing review: %s", body)
 	}
 
-	resp = mustGet(t, public.URL+"/api/v1/sources")
+	resp = mustGet(t, public.URL+"/api/v1/registries")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("sources status %d: %s", resp.StatusCode, body)
+		t.Fatalf("registries status %d: %s", resp.StatusCode, body)
 	}
 	if !strings.Contains(body, `{"id":"src-test","slug":"test-source"}`) {
-		t.Fatalf("sources missing source summary: %s", body)
+		t.Fatalf("registries missing registry summary: %s", body)
 	}
 	for _, secret := range []string{"public-api-secret", "origin-secret", "query-secret", "credentials_ref", "refresh_error", "refresh_status", "refreshed_at"} {
 		if strings.Contains(body, secret) {
-			t.Fatalf("sources response leaked private source field %q: %s", secret, body)
+			t.Fatalf("registries response leaked private registry field %q: %s", secret, body)
 		}
 	}
 
-	// /api/v1/sources/{source}
-	resp = mustGet(t, public.URL+"/api/v1/sources/test-source")
+	// /api/v1/registries/{registry}
+	resp = mustGet(t, public.URL+"/api/v1/registries/test-source")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("source status %d: %s", resp.StatusCode, body)
@@ -264,8 +264,8 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("source response did not preserve a sanitized origin: %s", body)
 	}
 
-	// /api/v1/sources/{source}/history
-	resp = mustGet(t, public.URL+"/api/v1/sources/test-source/history")
+	// /api/v1/registries/{registry}/history
+	resp = mustGet(t, public.URL+"/api/v1/registries/test-source/history")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("history status %d: %s", resp.StatusCode, body)
@@ -274,11 +274,11 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("history missing commit: %s", body)
 	}
 
-	// Exact source occurrence includes the current approved acquisition origin.
-	resp = mustGet(t, public.URL+"/api/v1/sources/test-source/occurrences/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	// Exact registry occurrence includes the current approved acquisition origin.
+	resp = mustGet(t, public.URL+"/api/v1/registries/test-source/occurrences/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK ||
-		!strings.Contains(body, `"source_id":"src-test"`) ||
+		!strings.Contains(body, `"registry_id":"src-test"`) ||
 		!strings.Contains(body, `"ref":"main"`) ||
 		!strings.Contains(body, `"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`) ||
 		!strings.Contains(body, `"acquisition_origin":"https://example.com/repo.git?token=%5Bredacted%5D"`) {
@@ -286,7 +286,7 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	// Empty source history is a JSON array, not null.
-	resp = mustGet(t, public.URL+"/api/v1/sources/empty-source/history")
+	resp = mustGet(t, public.URL+"/api/v1/registries/empty-source/history")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("empty history status %d: %s", resp.StatusCode, body)
@@ -296,23 +296,23 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	// History is bounded before it is serialized.
-	resp = mustGet(t, public.URL+"/api/v1/sources/bounded-source/history")
+	resp = mustGet(t, public.URL+"/api/v1/registries/bounded-source/history")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("bounded history status %d: %s", resp.StatusCode, body)
 	}
-	var boundedHistory []store.SourceOccurrence
+	var boundedHistory []store.RegistryOccurrence
 	if err := json.Unmarshal([]byte(body), &boundedHistory); err != nil {
 		t.Fatalf("decode bounded history: %v", err)
 	}
-	if len(boundedHistory) != MaxSourceHistoryEntries {
-		t.Fatalf("bounded history entries = %d, want %d", len(boundedHistory), MaxSourceHistoryEntries)
+	if len(boundedHistory) != MaxRegistryHistoryEntries {
+		t.Fatalf("bounded history entries = %d, want %d", len(boundedHistory), MaxRegistryHistoryEntries)
 	}
-	if boundedHistory[0].Commit != fmt.Sprintf("%040x", MaxSourceHistoryEntries+1) || boundedHistory[len(boundedHistory)-1].Commit != fmt.Sprintf("%040x", 2) {
+	if boundedHistory[0].Commit != fmt.Sprintf("%040x", MaxRegistryHistoryEntries+1) || boundedHistory[len(boundedHistory)-1].Commit != fmt.Sprintf("%040x", 2) {
 		t.Fatalf("bounded history ordering/truncation = first %q last %q", boundedHistory[0].Commit, boundedHistory[len(boundedHistory)-1].Commit)
 	}
 
-	// /api/v1/resources/{source}/{kind}/{name}
+	// /api/v1/resources/{registry}/{kind}/{name}
 	resp = mustGet(t, public.URL+"/api/v1/resources/test-source/skill/review")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {
@@ -396,8 +396,8 @@ func TestServerRoutes(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"/s/test-source/skill/review",
-		"/s/test-source/skill/review/revisions/" + strings.ReplaceAll(string(rev.ContentDigest), ":", "%3A"),
+		"/r/test-source/skill/review",
+		"/r/test-source/skill/review/revisions/" + strings.ReplaceAll(string(rev.ContentDigest), ":", "%3A"),
 	} {
 		resp = mustGet(t, public.URL+path)
 		body = mustRead(t, resp)
@@ -526,18 +526,18 @@ func TestServerSanitizesLegacyCanonicalURLInPublicResponses(t *testing.T) {
 }
 
 func TestPublicDTOValidationRequiresDomainInvariantFields(t *testing.T) {
-	validSource := SourceDTO{
+	validRegistry := RegistryDTO{
 		ID: "source", Slug: "source", Origins: []string{"https://example.com/repo.git"},
-		Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly,
+		Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly,
 	}
-	if err := validatePublicSource(validSource); err != nil {
+	if err := validatePublicRegistry(validRegistry); err != nil {
 		t.Fatalf("canonical source DTO rejected: %v", err)
 	}
-	for _, invalid := range []SourceDTO{
-		{ID: validSource.ID, Slug: validSource.Slug, Origins: validSource.Origins, Ref: validSource.Ref, Acquisition: validSource.Acquisition},
-		{ID: validSource.ID, Slug: validSource.Slug, Origins: validSource.Origins, Roots: validSource.Roots, Ref: validSource.Ref, Acquisition: "index"},
+	for _, invalid := range []RegistryDTO{
+		{ID: validRegistry.ID, Slug: validRegistry.Slug, Origins: validRegistry.Origins, Ref: validRegistry.Ref, Acquisition: validRegistry.Acquisition},
+		{ID: validRegistry.ID, Slug: validRegistry.Slug, Origins: validRegistry.Origins, Roots: validRegistry.Roots, Ref: validRegistry.Ref, Acquisition: "index"},
 	} {
-		if err := validatePublicSource(invalid); err == nil {
+		if err := validatePublicRegistry(invalid); err == nil {
 			t.Fatalf("invalid source DTO accepted: %#v", invalid)
 		}
 	}
@@ -552,29 +552,29 @@ func TestPublicDTOValidationRequiresDomainInvariantFields(t *testing.T) {
 
 func TestPublicBoundaryValidationRejectsDevelopmentFormats(t *testing.T) {
 	validDigest := "sha256:" + strings.Repeat("a", 64)
-	occurrence := store.SourceOccurrence{
-		SourceID:                     "source",
-		Ref:                          "main",
-		Roots:                        []store.SourceRoot{{Path: ".agents"}},
-		Commit:                       strings.Repeat("a", 40),
-		SourceRevisionManifestDigest: store.RevisionDigest(validDigest),
-		Acquisition:                  store.AcquisitionIndexOnly,
-		OccurredAt:                   time.Now().UTC(),
+	occurrence := store.RegistryOccurrence{
+		RegistryID:                     "source",
+		Ref:                            "main",
+		Roots:                          []store.RegistryRoot{{Path: ".agents"}},
+		Commit:                         strings.Repeat("a", 40),
+		RegistryRevisionManifestDigest: store.RevisionDigest(validDigest),
+		Acquisition:                    store.AcquisitionIndexOnly,
+		OccurredAt:                     time.Now().UTC(),
 	}
-	if err := validatePublicSourceOccurrence(occurrence); err != nil {
-		t.Fatalf("canonical source occurrence rejected: %v", err)
+	if err := validatePublicRegistryOccurrence(occurrence); err != nil {
+		t.Fatalf("canonical registry occurrence rejected: %v", err)
 	}
-	for _, invalid := range []store.SourceOccurrence{
-		{SourceID: "source", Ref: "main", Commit: strings.Repeat("a", 40), SourceRevisionManifestDigest: "sha256:opaque", Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
-		{SourceID: "source", Ref: "main", Commit: strings.Repeat("a", 40), SourceRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: "index", OccurredAt: time.Now().UTC()},
-		{SourceID: "source", Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
+	for _, invalid := range []store.RegistryOccurrence{
+		{RegistryID: "source", Ref: "main", Commit: strings.Repeat("a", 40), RegistryRevisionManifestDigest: "sha256:opaque", Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
+		{RegistryID: "source", Ref: "main", Commit: strings.Repeat("a", 40), RegistryRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: "index", OccurredAt: time.Now().UTC()},
+		{RegistryID: "source", Ref: "main", Commit: "abc123", RegistryRevisionManifestDigest: store.RevisionDigest(validDigest), Acquisition: store.AcquisitionIndexOnly, OccurredAt: time.Now().UTC()},
 	} {
-		if err := validatePublicSourceOccurrence(invalid); err == nil {
-			t.Fatalf("non-canonical source occurrence accepted: %#v", invalid)
+		if err := validatePublicRegistryOccurrence(invalid); err == nil {
+			t.Fatalf("non-canonical registry occurrence accepted: %#v", invalid)
 		}
 	}
 
-	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Source: "source", Kind: KindSkill, Name: "review"}
+	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Registry: "source", Kind: KindSkill, Name: "review"}
 	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 		Coordinate: coordinate, ContentDigest: store.RevisionDigest(validDigest), AnalyzerVersion: "test/v1",
 		PolicyDigest: store.PolicyDigest(validDigest), Decision: store.AssessmentDecisionAllow,
@@ -611,12 +611,12 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 	defer func() { _ = meta.Close() }()
 
 	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if err := meta.PutSource(ctx, store.Source{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}); err != nil {
+	if err := meta.PutRegistry(ctx, store.Registry{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}); err != nil {
 		t.Fatalf("put source: %v", err)
 	}
 	cfg := config.Config{Instance: config.Instance{ID: "marketplace"}}
 	intrinsic := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: KindSkill, Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Registry: "source-id", Kind: KindSkill, Name: "review"},
 		ContentDigest: digest,
 	}
 	otherCoordinate := intrinsic
@@ -703,11 +703,11 @@ func TestServerAppliesLiveExactRevocationToDiscoveryAndArtifacts(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace", CanonicalURL: cfg.Instance.CanonicalURL}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "source", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
+	if err := meta.PutRegistry(ctx, store.Registry{ID: "src", Slug: "source", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}); err != nil {
 		t.Fatal(err)
 	}
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: KindSkill, Name: "review"},
 		ContentDigest: store.RevisionDigest(digest), ArchiveDigest: archive,
 	}
 	inspectionBody := []byte("# Review\n")

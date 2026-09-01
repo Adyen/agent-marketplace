@@ -134,7 +134,7 @@ func TestApplyPolicyToResultLicenseConditions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lp := licensePolicy{allowlist: tc.allowlist, undeclared: tc.undeclared}
-			got := applyPolicyToResult(builtResult(tc.license), store.SourceID("src-test"), policyLimits(), lp, store.AcquisitionMirror)
+			got := applyPolicyToResult(builtResult(tc.license), store.RegistryID("src-test"), policyLimits(), lp, store.AcquisitionMirror)
 
 			if got.Rejected != tc.wantReject {
 				t.Fatalf("Rejected = %v, want %v (findings %#v)", got.Rejected, tc.wantReject, got.Findings)
@@ -195,7 +195,7 @@ func TestApplyPolicyToResultUndeclaredLicenseDefaultsToReject(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-	got := applyPolicyToResult(builtResult(""), store.SourceID("src-test"), policyLimits(), lp, store.AcquisitionMirror)
+	got := applyPolicyToResult(builtResult(""), store.RegistryID("src-test"), policyLimits(), lp, store.AcquisitionMirror)
 	if !got.Rejected {
 		t.Fatalf("undeclared license was not rejected by default: %#v", got)
 	}
@@ -272,22 +272,22 @@ func TestEffectiveLicensePolicyOverrides(t *testing.T) {
 	}
 }
 
-func unlicensedSource(repoDir string) store.Source {
-	return store.Source{
-		ID:          store.SourceID("src-test"),
+func unlicensedRegistry(repoDir string) store.Registry {
+	return store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
-		// No source-level license either: nothing in the chain declares one.
-		Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
+		// No registry-level license either: nothing in the chain declares one.
+		Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}},
 	}
 }
 
 // End-to-end counterpart of the default guard: a real catalog resource that
 // declares no license is still blocked, and the reason it reports is the
 // undeclared one rather than the misleading disallowed one.
-func TestBuildSourceRevisionUndeclaredLicenseRejectedByDefault(t *testing.T) {
+func TestBuildRegistryRevisionUndeclaredLicenseRejectedByDefault(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepoWithSkillLicense(t, "")
 	commit := mustRepoCommit(t, repoDir)
@@ -297,9 +297,9 @@ func TestBuildSourceRevisionUndeclaredLicenseRejectedByDefault(t *testing.T) {
 		t.Fatalf("test precondition: license_undeclared must be absent, got %q", cfg.Policy.LicenseUndeclared)
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedRegistry(repoDir), repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
@@ -331,7 +331,7 @@ func TestBuildSourceRevisionUndeclaredLicenseRejectedByDefault(t *testing.T) {
 
 // With warn, the same resource stays installable and the unknown license is
 // recorded rather than enforced.
-func TestBuildSourceRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) {
+func TestBuildRegistryRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepoWithSkillLicense(t, "")
 	commit := mustRepoCommit(t, repoDir)
@@ -339,9 +339,9 @@ func TestBuildSourceRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) 
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseUndeclared = config.LicenseUndeclaredWarn
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedRegistry(repoDir), repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
@@ -366,7 +366,7 @@ func TestBuildSourceRevisionUndeclaredLicenseWarnStaysInstallable(t *testing.T) 
 }
 
 // With allow, nothing is recorded at all: the operator has already decided.
-func TestBuildSourceRevisionUndeclaredLicenseAllowRecordsNothing(t *testing.T) {
+func TestBuildRegistryRevisionUndeclaredLicenseAllowRecordsNothing(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepoWithSkillLicense(t, "")
 	commit := mustRepoCommit(t, repoDir)
@@ -374,9 +374,9 @@ func TestBuildSourceRevisionUndeclaredLicenseAllowRecordsNothing(t *testing.T) {
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseUndeclared = config.LicenseUndeclaredAllow
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedRegistry(repoDir), repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
@@ -392,7 +392,7 @@ func TestBuildSourceRevisionUndeclaredLicenseAllowRecordsNothing(t *testing.T) {
 
 // Without an allowlist there is no license policy to enforce, so an undeclared
 // license is neither rejected nor reported.
-func TestBuildSourceRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
+func TestBuildRegistryRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepoWithSkillLicense(t, "")
 	commit := mustRepoCommit(t, repoDir)
@@ -400,9 +400,9 @@ func TestBuildSourceRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseAllowlist = nil
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), unlicensedRegistry(repoDir), repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")
@@ -416,7 +416,7 @@ func TestBuildSourceRevisionNoAllowlistDoesNotEnforceLicense(t *testing.T) {
 	}
 }
 
-func TestBuildSourceRevisionResolvesLicenseFileDeclaration(t *testing.T) {
+func TestBuildRegistryRevisionResolvesLicenseFileDeclaration(t *testing.T) {
 	repoDir := createIngestRepoWithSkillLicense(t, "Complete terms in LICENSE.txt")
 	licensePath := filepath.Join(repoDir, ".agents", "skills", "review", "LICENSE.txt")
 	licenseText, err := os.ReadFile(filepath.Join("..", "..", "..", "LICENSE"))
@@ -427,9 +427,9 @@ func TestBuildSourceRevisionResolvesLicenseFileDeclaration(t *testing.T) {
 		t.Fatalf("write license: %v", err)
 	}
 
-	rev, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), store.MarketplaceID("mp-test"), unlicensedSource(repoDir), repoDir, mustRepoCommit(t, repoDir))
+	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), store.MarketplaceID("mp-test"), unlicensedRegistry(repoDir), repoDir, mustRepoCommit(t, repoDir))
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")

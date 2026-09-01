@@ -46,8 +46,8 @@ type CanonicalManifest struct {
 	ArtifactVersion  string              `json:"artifact_version"`
 	Kind             string              `json:"kind"`
 	Name             string              `json:"name"`
-	SourceID         string              `json:"source_id,omitempty"`
-	SourceSlug       string              `json:"source_slug,omitempty"`
+	RegistryID       string              `json:"registry_id,omitempty"`
+	RegistrySlug     string              `json:"registry_slug,omitempty"`
 	Revision         string              `json:"revision"`
 	ContentDigest    string              `json:"content_digest"`
 	ArchiveDigest    string              `json:"archive_digest"`

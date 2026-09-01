@@ -1,8 +1,8 @@
 # Tasks: agent-marketplace-pf99.3
 
 ## Domain and interfaces
-- [x] `pkg/marketplace/store/domain.go` — Marketplace, Source, ResourceRevision,
-  SourceOccurrence, CollectionRevision, Revocation, Job, ID types.
+- [x] `pkg/marketplace/store/domain.go` — Marketplace, Registry, ResourceRevision,
+  RegistryOccurrence, CollectionRevision, Revocation, Job, ID types.
 - [x] `pkg/marketplace/store/metadata.go` — `MetadataStore` interface with methods
   for CRUD and query of all domain entities.
 - [x] `pkg/marketplace/store/blob.go` — `BlobStore` interface for content-addressed
@@ -30,7 +30,7 @@
   `MetadataStore`.
 
 ## Atomic publication and consistency
-- [x] `pkg/marketplace/store/atomic.go` — `PublishSourceRevision` helper that uploads
+- [x] `pkg/marketplace/store/atomic.go` — `PublishRegistryRevision` helper that uploads
   blobs before committing metadata.
 - [x] Startup consistency checks and missing-blob readiness failures.
 

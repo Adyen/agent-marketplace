@@ -30,7 +30,7 @@ func (s *assessmentRouteStore) ListResourceRevisionsByArchiveDigest(context.Cont
 func testAssessment(t *testing.T, decision store.AssessmentDecision) store.ResourceAssessment {
 	t.Helper()
 	return testRevisionAssessment(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: KindSkill, Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}, decision)
 }
@@ -54,15 +54,15 @@ func testRevisionAssessment(t *testing.T, revision store.ResourceRevision, decis
 
 func publishAssessedTestRevision(ctx context.Context, t *testing.T, meta store.MetadataStore, revision store.ResourceRevision, decision store.AssessmentDecision, manifest store.RevisionDigest, commit string) store.ResourceAssessment {
 	t.Helper()
-	source, err := meta.GetSource(ctx, revision.Coordinate.Source)
+	source, err := meta.GetRegistry(ctx, revision.Coordinate.Registry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutResourceRevision(ctx, revision); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{
-		SourceID: source.ID, Ref: source.Ref, Commit: commit, SourceRevisionManifestDigest: manifest,
+	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: source.ID, Ref: source.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest,
 		Acquisition: source.Acquisition, OccurredAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)

@@ -9,26 +9,26 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func TestSourceDTORemovesPrivateFieldsAndSanitizesOrigins(t *testing.T) {
-	src := store.Source{
+func TestRegistryDTORemovesPrivateFieldsAndSanitizesOrigins(t *testing.T) {
+	src := store.Registry{
 		ID:             "src-test",
 		Slug:           "example",
 		Aliases:        []string{"old-example"},
 		Origins:        []string{"https://user:origin-secret@example.com/repo.git?token=query-secret&ref=main"},
 		Ref:            "main",
-		Roots:          []store.SourceRoot{{Path: ".agents"}},
+		Roots:          []store.RegistryRoot{{Path: ".agents"}},
 		Acquisition:    store.AcquisitionMirror,
 		CredentialsRef: "env:MARKETPLACE_GIT_TOKEN",
 		PolicyOverrides: map[string]any{
 			"internal": true,
 		},
-		RefreshStatus: store.SourceRefreshStatusFailed,
+		RefreshStatus: store.RegistryRefreshStatusFailed,
 		RefreshError:  "clone failed with token=refresh-secret",
 		RefreshedAt:   time.Unix(1, 0).UTC(),
 		Listed:        true,
 	}
 
-	public := sourceDTO(src)
+	public := registryDTO(src)
 	data, err := json.Marshal(public)
 	if err != nil {
 		t.Fatalf("marshal source DTO: %v", err)
@@ -47,8 +47,8 @@ func TestSourceDTORemovesPrivateFieldsAndSanitizesOrigins(t *testing.T) {
 	}
 }
 
-func TestSourceDTOSanitizesOrOmitsUnsafePublisherURL(t *testing.T) {
-	public := sourceDTO(store.Source{Publisher: store.Publisher{
+func TestRegistryDTOSanitizesOrOmitsUnsafePublisherURL(t *testing.T) {
+	public := registryDTO(store.Registry{Publisher: store.Publisher{
 		Name: "Example Publisher",
 		URL:  "https://publisher.example/contact?oauth_token=publisher-secret#private",
 	}})
@@ -67,14 +67,14 @@ func TestSourceDTOSanitizesOrOmitsUnsafePublisherURL(t *testing.T) {
 		t.Fatalf("source DTO should omit unsafe publisher url: %s", body)
 	}
 
-	safe := sourceDTO(store.Source{Publisher: store.Publisher{URL: "https://publisher.example/contact"}})
+	safe := registryDTO(store.Registry{Publisher: store.Publisher{URL: "https://publisher.example/contact"}})
 	if safe.Publisher == nil || safe.Publisher.URL != "https://publisher.example/contact" {
 		t.Fatalf("source DTO omitted safe publisher URL: %#v", safe.Publisher)
 	}
 }
 
-func TestSourceDTOEmitsEmptyRootsArray(t *testing.T) {
-	public := sourceDTO(store.Source{Origins: []string{}})
+func TestRegistryDTOEmitsEmptyRootsArray(t *testing.T) {
+	public := registryDTO(store.Registry{Origins: []string{}})
 	if public.Roots == nil {
 		t.Fatal("source DTO roots must be non-nil when empty")
 	}
@@ -87,15 +87,15 @@ func TestSourceDTOEmitsEmptyRootsArray(t *testing.T) {
 	}
 }
 
-func TestSourceDTORedactsMalformedAndLegacyOrigins(t *testing.T) {
-	src := store.Source{Origins: []string{
+func TestRegistryDTORedactsMalformedAndLegacyOrigins(t *testing.T) {
+	src := store.Registry{Origins: []string{
 		"https://user:secret@example.com/repo.git",
 		"https://example.com/repo.git?access_token=%zz",
 		"https://user:secret@%zz",
 		"git@github.com:private/repo.git",
 	}}
 
-	body, err := json.Marshal(sourceDTO(src))
+	body, err := json.Marshal(registryDTO(src))
 	if err != nil {
 		t.Fatalf("marshal source DTO: %v", err)
 	}

@@ -1,4 +1,4 @@
-// Package acquire fetches approved Git sources into isolated, bounded
+// Package acquire fetches approved Git registries into isolated, bounded
 // temporary workspaces for the Marketplace indexing worker.
 package acquire
 

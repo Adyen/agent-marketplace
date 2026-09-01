@@ -342,7 +342,7 @@ func validateMarketplacePinNode(rawPin *yaml.Node, path string) error {
 		return err
 	}
 	if err := validateMarketplaceScalarFields(pin, path, map[string]struct{}{
-		"source_id": {}, "source_slug": {}, "kind": {}, "name": {}, "revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {},
+		"registry_id": {}, "registry_slug": {}, "kind": {}, "name": {}, "revision": {}, "digest": {}, "acquisition": {}, "registry_commit": {}, "registry_manifest_digest": {}, "installed_name": {},
 	}); err != nil {
 		return err
 	}
@@ -362,17 +362,17 @@ func validateMarketplaceSelectedByNode(rawNode *yaml.Node, path string) error {
 	if node == nil || node.Kind != yaml.SequenceNode || node.Tag == "!!null" {
 		return fmt.Errorf("%s must be a non-null sequence", path)
 	}
-	selectionFields := map[string]struct{}{"source_id": {}, "name": {}, "revision": {}}
+	selectionFields := map[string]struct{}{"registry_id": {}, "name": {}, "revision": {}}
 	for i, rawSelection := range node.Content {
 		selectionPath := fmt.Sprintf("%s[%d]", path, i)
 		selection := resolveAlias(rawSelection)
 		if selection == nil || selection.Kind != yaml.MappingNode {
-			return fmt.Errorf("%s must be an exact mapping with source_id, name, and revision", selectionPath)
+			return fmt.Errorf("%s must be an exact mapping with registry_id, name, and revision", selectionPath)
 		}
 		if err := validateMarketplaceMapping(selection, selectionPath, selectionFields); err != nil {
 			return err
 		}
-		for _, field := range []string{"source_id", "name", "revision"} {
+		for _, field := range []string{"registry_id", "name", "revision"} {
 			if findMappingValue(selection, field) == nil {
 				return fmt.Errorf("%s.%s is required", selectionPath, field)
 			}

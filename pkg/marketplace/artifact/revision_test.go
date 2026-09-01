@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-func TestSourceRevisionManifestRoundTrip(t *testing.T) {
-	m := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
-		SourceURL:     "https://example.com/repo.git",
+func TestRegistryRevisionManifestRoundTrip(t *testing.T) {
+	m := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
+		RegistryURL:   "https://example.com/repo.git",
 		Ref:           "main",
 		Path:          "skills",
 		Generator:     "test",
@@ -21,31 +21,31 @@ func TestSourceRevisionManifestRoundTrip(t *testing.T) {
 		},
 	}
 
-	payload, digest, err := EncodeSourceRevisionManifest(m)
+	payload, digest, err := EncodeRegistryRevisionManifest(m)
 	if err != nil {
-		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
+		t.Fatalf("EncodeRegistryRevisionManifest: %v", err)
 	}
 
-	got, payload2, err := DecodeSourceRevisionManifest(bytes.NewReader(payload))
+	got, payload2, err := DecodeRegistryRevisionManifest(bytes.NewReader(payload))
 	if err != nil {
-		t.Fatalf("DecodeSourceRevisionManifest: %v", err)
+		t.Fatalf("DecodeRegistryRevisionManifest: %v", err)
 	}
 
 	if got.RevisionDigest != digest {
 		t.Fatalf("digest mismatch: %s vs %s", got.RevisionDigest, digest)
 	}
-	if got.SourceURL != "" || got.Ref != "" || got.Path != "" {
-		t.Fatalf("wire manifest exposed mutable source metadata: %#v", got)
+	if got.RegistryURL != "" || got.Ref != "" || got.Path != "" {
+		t.Fatalf("wire manifest exposed mutable registry metadata: %#v", got)
 	}
 
-	if err := VerifySourceRevisionManifest(got, payload2); err != nil {
-		t.Fatalf("VerifySourceRevisionManifest: %v", err)
+	if err := VerifyRegistryRevisionManifest(got, payload2); err != nil {
+		t.Fatalf("VerifyRegistryRevisionManifest: %v", err)
 	}
 }
 
-func TestSourceRevisionManifestDeterministic(t *testing.T) {
-	m := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
+func TestRegistryRevisionManifestDeterministic(t *testing.T) {
+	m := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
 		Generator:     "test",
 		Resources: []RevisionResource{
 			{Kind: "skill", Name: "b"},
@@ -53,11 +53,11 @@ func TestSourceRevisionManifestDeterministic(t *testing.T) {
 		},
 	}
 
-	payload1, digest1, err := EncodeSourceRevisionManifest(m)
+	payload1, digest1, err := EncodeRegistryRevisionManifest(m)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	payload2, digest2, err := EncodeSourceRevisionManifest(m)
+	payload2, digest2, err := EncodeRegistryRevisionManifest(m)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -70,73 +70,73 @@ func TestSourceRevisionManifestDeterministic(t *testing.T) {
 	}
 }
 
-func TestSourceRevisionManifestDigestIgnoresMutableSourceMetadata(t *testing.T) {
-	base := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
+func TestRegistryRevisionManifestDigestIgnoresMutableRegistryMetadata(t *testing.T) {
+	base := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
 		Generator:     "test",
 		Resources:     []RevisionResource{{Kind: "skill", Name: "review", ContentDigest: "sha256:" + strings.Repeat("a", 64)}},
 	}
-	withSourceMetadata := base
-	withSourceMetadata.SourceURL = "https://user:secret@example.com/repo.git"
-	withSourceMetadata.Ref = "refs/heads/main"
-	withSourceMetadata.Path = "skills"
+	withRegistryMetadata := base
+	withRegistryMetadata.RegistryURL = "https://user:secret@example.com/repo.git"
+	withRegistryMetadata.Ref = "refs/heads/main"
+	withRegistryMetadata.Path = "skills"
 
-	basePayload, baseDigest, err := EncodeSourceRevisionManifest(base)
+	basePayload, baseDigest, err := EncodeRegistryRevisionManifest(base)
 	if err != nil {
 		t.Fatalf("encode base: %v", err)
 	}
-	metadataPayload, metadataDigest, err := EncodeSourceRevisionManifest(withSourceMetadata)
+	metadataPayload, metadataDigest, err := EncodeRegistryRevisionManifest(withRegistryMetadata)
 	if err != nil {
 		t.Fatalf("encode metadata: %v", err)
 	}
 	if baseDigest != metadataDigest || !bytes.Equal(basePayload, metadataPayload) {
-		t.Fatalf("mutable source metadata changed canonical manifest: %s/%s\n%s\n%s", baseDigest, metadataDigest, basePayload, metadataPayload)
+		t.Fatalf("mutable registry metadata changed canonical manifest: %s/%s\n%s\n%s", baseDigest, metadataDigest, basePayload, metadataPayload)
 	}
-	for _, field := range []string{"source_url", "ref", "path", "secret"} {
+	for _, field := range []string{"registry_url", "ref", "path", "secret"} {
 		if bytes.Contains(metadataPayload, []byte(field)) {
 			t.Fatalf("canonical manifest exposed %q: %s", field, metadataPayload)
 		}
 	}
 }
 
-func TestSourceRevisionManifestValidation(t *testing.T) {
-	m := SourceRevisionManifest{SchemaVersion: "v2"}
-	if _, _, err := EncodeSourceRevisionManifest(m); err == nil {
+func TestRegistryRevisionManifestValidation(t *testing.T) {
+	m := RegistryRevisionManifest{SchemaVersion: "v2"}
+	if _, _, err := EncodeRegistryRevisionManifest(m); err == nil {
 		t.Fatal("expected validation error for unsupported schema")
 	}
 
-	m = SourceRevisionManifest{SchemaVersion: SourceRevisionSchemaV1, Generator: "test", Resources: []RevisionResource{{Kind: "skill"}}}
-	if _, _, err := EncodeSourceRevisionManifest(m); err == nil {
+	m = RegistryRevisionManifest{SchemaVersion: RegistryRevisionSchemaV1, Generator: "test", Resources: []RevisionResource{{Kind: "skill"}}}
+	if _, _, err := EncodeRegistryRevisionManifest(m); err == nil {
 		t.Fatal("expected validation error for missing name")
 	}
 }
 
-func TestSourceRevisionManifestRejectDuplicateResources(t *testing.T) {
-	m := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
+func TestRegistryRevisionManifestRejectDuplicateResources(t *testing.T) {
+	m := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
 		Generator:     "test",
 		Resources: []RevisionResource{
 			{Kind: "skill", Name: "review"},
 			{Kind: "skill", Name: "review"},
 		},
 	}
-	if _, _, err := EncodeSourceRevisionManifest(m); err == nil {
+	if _, _, err := EncodeRegistryRevisionManifest(m); err == nil {
 		t.Fatal("expected duplicate resource error")
 	}
 }
 
-func TestVerifySourceRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
-	m := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
+func TestVerifyRegistryRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
+	m := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
 		Generator:     "test",
 		Resources: []RevisionResource{
 			{Kind: "skill", Name: "a", ContentDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		},
 	}
 
-	canonical, digest, err := EncodeSourceRevisionManifest(m)
+	canonical, digest, err := EncodeRegistryRevisionManifest(m)
 	if err != nil {
-		t.Fatalf("EncodeSourceRevisionManifest: %v", err)
+		t.Fatalf("EncodeRegistryRevisionManifest: %v", err)
 	}
 
 	// Pretty-printed JSON has the correct digest but is not canonical.
@@ -145,11 +145,11 @@ func TestVerifySourceRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
 		t.Fatalf("json.Indent: %v", err)
 	}
 
-	var dec SourceRevisionManifest
+	var dec RegistryRevisionManifest
 	if err := json.Unmarshal(indented.Bytes(), &dec); err != nil {
 		t.Fatalf("unmarshal indented payload: %v", err)
 	}
-	if err := VerifySourceRevisionManifest(dec, indented.Bytes()); err == nil || !strings.Contains(err.Error(), "not canonical") {
+	if err := VerifyRegistryRevisionManifest(dec, indented.Bytes()); err == nil || !strings.Contains(err.Error(), "not canonical") {
 		t.Fatalf("expected non-canonical whitespace rejection, got %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestVerifySourceRevisionManifestRejectsNonCanonicalPayload(t *testing.T) {
 	if err := json.Unmarshal(reordered, &dec); err != nil {
 		t.Fatalf("unmarshal reordered payload: %v", err)
 	}
-	if err := VerifySourceRevisionManifest(dec, reordered); err == nil || !strings.Contains(err.Error(), "not canonical") {
+	if err := VerifyRegistryRevisionManifest(dec, reordered); err == nil || !strings.Contains(err.Error(), "not canonical") {
 		t.Fatalf("expected non-canonical reordered keys rejection, got %v", err)
 	}
 }

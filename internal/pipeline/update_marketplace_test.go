@@ -31,7 +31,7 @@ func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 	}
 	old := fixture.pin
 	old.InstalledName = "chosen-review"
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - source_id: src\n        source_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n        installed_name: chosen-review\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        registry_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n        installed_name: chosen-review\n"
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := cfg.Marketplaces[0].Resources[0]
-	if got.Digest != fixture.latestDigest || got.SourceSlug != "renamed-source" || got.InstalledName != "chosen-review" {
+	if got.Digest != fixture.latestDigest || got.RegistrySlug != "renamed-source" || got.InstalledName != "chosen-review" {
 		t.Fatalf("updated config pin = %#v", got)
 	}
 }
@@ -67,7 +67,7 @@ func TestPlanMarketplaceUpdatePreparesNewMirrorAndPreservesInstalledName(t *test
 		t.Fatalf("plans = %#v, want one update", plans)
 	}
 	got := plans[0].NewPin
-	if got.Digest != fixture.latestDigest || got.Revision != fixture.latestDigest || got.SourceID != old.SourceID || got.SourceSlug != "renamed-source" {
+	if got.Digest != fixture.latestDigest || got.Revision != fixture.latestDigest || got.RegistryID != old.RegistryID || got.RegistrySlug != "renamed-source" {
 		t.Fatalf("new pin = %#v, want latest identity and metadata", got)
 	}
 	if got.InstalledName != "chosen-review" || plans[0].ArchiveDigest != fixture.archiveDigest {
@@ -100,10 +100,10 @@ func TestMarketplaceOccurrenceComparisonPreservesUpdatePlanningContract(t *testi
 	commit := strings.Repeat("a", 40)
 	manifestDigest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
-		Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifestDigest,
 	}
 	intrinsic := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("e", 64)),
 	}
 	occurrence := func(commit, manifestDigest string) store.AssessedResourceRevision {
@@ -156,10 +156,10 @@ func TestPlanMarketplaceUpdatePreparesSameContentForChangedIndexOccurrence(t *te
 	pin := fixture.pin
 	pin.Digest = fixture.latestDigest
 	pin.Acquisition = config.MarketplaceAcquisitionIndexOnly
-	pin.SourceCommit = strings.Repeat("a", 40)
-	pin.SourceManifestDigest = "sha256:" + strings.Repeat("b", 64)
+	pin.RegistryCommit = strings.Repeat("a", 40)
+	pin.RegistryManifestDigest = "sha256:" + strings.Repeat("b", 64)
 	fixture.latest.Occurrence.Commit = strings.Repeat("c", 40)
-	fixture.latest.Occurrence.ManifestDigest = store.RevisionDigest(pin.SourceManifestDigest)
+	fixture.latest.Occurrence.ManifestDigest = store.RevisionDigest(pin.RegistryManifestDigest)
 	entry := config.MarketplaceEntry{URL: fixture.server.URL, InstanceID: "mp", Source: config.RepoCommitted, Resources: []config.MarketplaceResourcePin{pin}}
 	ec := &config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, TargetHarnesses: []string{"factory"}}
 
@@ -219,7 +219,7 @@ func TestMarketplaceUpdateRejectsPolicyRejectionWithoutConsent(t *testing.T) {
 func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	old := fixture.pin
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - source_id: src\n        source_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        registry_slug: old-source\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + old.Digest + "\n        acquisition: mirror\n"
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, commit, err := config.UpdateMarketplacePinInConfigWithSnapshotAndCommit(fixture.configPath, fixture.server.URL, "mp", old, config.MarketplaceResourcePin{SourceID: old.SourceID, SourceSlug: "renamed-source", Kind: old.Kind, Name: old.Name, Revision: fixture.latestDigest, Digest: fixture.latestDigest, Acquisition: config.MarketplaceAcquisitionMirror})
+	snapshot, commit, err := config.UpdateMarketplacePinInConfigWithSnapshotAndCommit(fixture.configPath, fixture.server.URL, "mp", old, config.MarketplaceResourcePin{RegistryID: old.RegistryID, RegistrySlug: "renamed-source", Kind: old.Kind, Name: old.Name, Revision: fixture.latestDigest, Digest: fixture.latestDigest, Acquisition: config.MarketplaceAcquisitionMirror})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 
 func TestPlanMarketplaceUpdateRejectsRevokedLatestWithoutMutation(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
-	fixture.latest.Revocation = &store.Revocation{Kind: store.RevocationSource, TargetID: fixture.pin.SourceID, Reason: "withdrawn"}
+	fixture.latest.Revocation = &store.Revocation{Kind: store.RevocationRegistry, TargetID: fixture.pin.RegistryID, Reason: "withdrawn"}
 	before := []byte("apiVersion: agent-marketplace/v2\nmarketplaces: []\n")
 	if err := os.WriteFile(fixture.configPath, before, 0o644); err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestUpdateSkipsSyncForOnlyUnsupportedMarketplacePins(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - source_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n        source_commit: " + strings.Repeat("c", 40) + "\n        source_manifest_digest: sha256:" + strings.Repeat("d", 64) + "\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: collection\n        name: bundle\n        revision: v1\n        digest: sha256:" + strings.Repeat("a", 64) + "\n        acquisition: mirror\n      - registry_id: index-src\n        kind: skill\n        name: indexed\n        revision: v1\n        digest: sha256:" + strings.Repeat("b", 64) + "\n        acquisition: index-only\n        registry_commit: " + strings.Repeat("c", 40) + "\n        registry_manifest_digest: sha256:" + strings.Repeat("d", 64) + "\n"
 	if err := os.WriteFile(configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestUpdateSkipsUnchangedMarketplacePinWithoutTargetSet(t *testing.T) {
 	fixture.latestDigest = fixture.pin.Digest
 	fixture.latest.ContentDigest = store.RevisionDigest(fixture.latestDigest)
 	fixture.latest = testAssessedResourceRevision(t, fixture.latest.ResourceRevision, store.AssessmentDecisionAllow, nil)
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestUpdateRequiresTargetBeforePreparingChangedMarketplacePin(t *testing.T) 
 	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	t.Setenv("HOME", t.TempDir())
 	fixture := newMarketplaceUpdateFixture(t, false)
-	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - source_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
+	configData := "apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: " + fixture.server.URL + "\n    instance_id: mp\n    resources:\n      - registry_id: src\n        kind: skill\n        name: review\n        revision: old-revision\n        digest: " + fixture.pin.Digest + "\n        acquisition: mirror\n"
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -373,8 +373,8 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical.Manifest.SourceID = "src"
-	canonical.Manifest.SourceSlug = "renamed-source"
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.RegistrySlug = "renamed-source"
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
 		t.Fatal(err)
@@ -382,16 +382,16 @@ func newMarketplaceUpdateFixture(t *testing.T, failArtifact bool) *marketplaceUp
 	latestDigest := canonical.Manifest.ContentDigest
 	fixture := &marketplaceUpdateFixture{
 		repoRoot:     filepath.Join(t.TempDir(), "repo"),
-		pin:          config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "old-source", Kind: "skill", Name: "review", Revision: "old-revision", Digest: digestOld, Acquisition: config.MarketplaceAcquisitionMirror},
+		pin:          config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "old-source", Kind: "skill", Name: "review", Revision: "old-revision", Digest: digestOld, Acquisition: config.MarketplaceAcquisitionMirror},
 		latestDigest: latestDigest, archiveDigest: archiveDigest, artifact: raw,
 	}
-	fixture.latest = testAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}, store.AssessmentDecisionAllow, nil)
+	fixture.latest = testAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(latestDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}, store.AssessmentDecisionAllow, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 	})
-	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{ID: "src", Slug: "renamed-source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "renamed-source", Origins: []string{"https://git.example/repo.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 	})
 	mux.HandleFunc("/api/v1/resources/renamed-source/skill/review", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })
 	mux.HandleFunc("/api/v1/resources/src/skill/review/revisions/", func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(fixture.latest) })

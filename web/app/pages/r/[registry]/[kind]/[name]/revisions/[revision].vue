@@ -10,7 +10,7 @@ const route = useRoute()
 const api = useMarketplaceApi()
 const runtimeConfig = useRuntimeConfig()
 
-const source = routeParam(route.params.source, 'source')
+const registry = routeParam(route.params.registry, 'registry')
 const kindValue = routeParam(route.params.kind, 'resource kind')
 const name = routeParam(route.params.name, 'resource name')
 const revision = routeParam(route.params.revision, 'revision')
@@ -19,33 +19,33 @@ if (!isSha256Digest(revision)) throw createError({ statusCode: 404, statusMessag
 const kind = kindValue
 
 const { data: metadata } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
-const { data: sourceRecord } = await useAsyncData(`marketplace-source:${source}`, () => api.getSource(source))
+const { data: registryRecord } = await useAsyncData(`marketplace-registry:${registry}`, () => api.getRegistry(registry))
 const { data: resource, pending, error, refresh } = await useAsyncData(
-  revisionAsyncDataKey(source, kind, name, revision),
-  () => api.getResourceRevision(source, kind, name, revision),
+  revisionAsyncDataKey(registry, kind, name, revision),
+  () => api.getResourceRevision(registry, kind, name, revision),
 )
 const { data: revisions, error: revisionsError } = await useAsyncData(
-  `${revisionAsyncDataKey(source, kind, name, revision)}:history`,
-  () => api.listResourceRevisions(source, kind, name),
+  `${revisionAsyncDataKey(registry, kind, name, revision)}:history`,
+  () => api.listResourceRevisions(registry, kind, name),
 )
 const { data: inspection } = await useAsyncData(
-  resourceInspectionAsyncDataKey(source, kind, name, revision),
-  () => api.getResourceInspection(source, kind, name, revision),
+  resourceInspectionAsyncDataKey(registry, kind, name, revision),
+  () => api.getResourceInspection(registry, kind, name, revision),
   { immediate: true },
 )
 const { data: primaryContent } = await useAsyncData<string | undefined>(
-  resourceInspectionContentAsyncDataKey(source, kind, name, revision),
+  resourceInspectionContentAsyncDataKey(registry, kind, name, revision),
   () => {
     const primary = inspection.value?.files.find(file => file.path === inspection.value?.primary_path)
     if (!primary || primary.inspection_class === 'image' || primary.inspection_class === 'metadata') return Promise.resolve(undefined)
-    return api.getResourceInspectionContent(source, kind, name, revision, primary.media_type) as Promise<string>
+    return api.getResourceInspectionContent(registry, kind, name, revision, primary.media_type) as Promise<string>
   },
   { immediate: true },
 )
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 
 function loadInspectionFile(file: InspectionFile): Promise<string | Blob> {
-  return api.getResourceInspectionFile(source, kind, name, revision, file.content_digest, file.media_type)
+  return api.getResourceInspectionFile(registry, kind, name, revision, file.content_digest, file.media_type)
 }
 
 function retry() {
@@ -73,7 +73,7 @@ useHead(() => ({
         <p class="mt-3 text-sm leading-6 text-muted">This exact revision could not be loaded. It may be revoked, retained only by policy, or unavailable from the Marketplace.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>
       </section>
-      <ResourceDetailView v-else-if="resource" :resource="resource" :source="source" :acquisition="sourceRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
+      <ResourceDetailView v-else-if="resource" :resource="resource" :registry="registry" :acquisition="registryRecord?.acquisition" :kind="kind" :name="name" :canonical-url="canonicalUrl" :api-base="runtimeConfig.public.apiBase" :inspection="inspection" :primary-content="primaryContent" :load-inspection-file="loadInspectionFile" :revisions="revisions || []" :revisions-error="Boolean(revisionsError)" />
     </main>
   </div>
 </template>

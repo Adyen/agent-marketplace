@@ -1155,12 +1155,12 @@ func TestResolveMarketplaceCollisionsPreserveInstanceAndSourceIdentity(t *testin
 			first: ResolvedArtifact{
 				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
 				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
-				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-one", MarketplaceSourceID: "source",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-one", MarketplaceRegistryID: "source",
 			},
 			second: ResolvedArtifact{
 				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
 				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
-				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-two", MarketplaceSourceID: "source",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-two", MarketplaceRegistryID: "source",
 			},
 			wantFirst: "instance-one", wantSecond: "instance-two",
 		},
@@ -1169,12 +1169,12 @@ func TestResolveMarketplaceCollisionsPreserveInstanceAndSourceIdentity(t *testin
 			first: ResolvedArtifact{
 				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
 				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
-				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceSourceID: "source-one",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceRegistryID: "source-one",
 			},
 			second: ResolvedArtifact{
 				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
 				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
-				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceSourceID: "source-two",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceRegistryID: "source-two",
 			},
 			wantFirst: "source-one", wantSecond: "source-two",
 		},
@@ -1228,7 +1228,7 @@ func TestResolveLocalExcludeRespectsMarketplaceRequiredOwnership(t *testing.T) {
 			mp := staticMarketplaceResolver{artifacts: []ResolvedArtifact{{
 				Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "review"},
 				Source: tt.source, Required: tt.required, IsMarketplace: true,
-				MarketplaceURL: "https://market.example", MarketplaceSourceID: "src",
+				MarketplaceURL: "https://market.example", MarketplaceRegistryID: "src",
 			}}}
 			resolved, errs := Resolve(cfg, nil, &config.LocalConfig{Skills: kse(nil, []string{"review"})}, WithMarketplaceResolver(mp))
 			if (len(resolved) > 0) != tt.wantResolved {
@@ -4337,11 +4337,11 @@ func TestResolvePassesCallerContextToMarketplaceResolver(t *testing.T) {
 			URL:        "https://marketplace.example",
 			InstanceID: "mp",
 			Resources: []config.MarketplaceResourcePin{{
-				SourceID: "src",
-				Kind:     "skill",
-				Name:     "review",
-				Revision: digest,
-				Digest:   digest,
+				RegistryID: "src",
+				Kind:       "skill",
+				Name:       "review",
+				Revision:   digest,
+				Digest:     digest,
 			}},
 		}},
 	}

@@ -18,7 +18,7 @@ func seedRevision(t *testing.T, s *sqlite.Store, name, description string) store
 	t.Helper()
 	ctx := context.Background()
 	rev := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "skill", Name: name},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
 		Description:   description,
@@ -28,11 +28,11 @@ func seedRevision(t *testing.T, s *sqlite.Store, name, description string) store
 		t.Fatalf("PutResourceRevision: %v", err)
 	}
 	manifest := store.RevisionDigest("sha256:" + strings.Repeat("c", 64))
-	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
-		SourceID: rev.Coordinate.Source, Ref: "main", Commit: "commit", SourceRevisionManifestDigest: manifest,
+	if err := s.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: rev.Coordinate.Registry, Ref: "main", Commit: "commit", RegistryRevisionManifestDigest: manifest,
 		Acquisition: store.AcquisitionMirror,
 	}); err != nil {
-		t.Fatalf("PutSourceOccurrence: %v", err)
+		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 	if err := s.PutResourceOccurrence(ctx, store.ResourceOccurrence{
 		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: "commit", ManifestDigest: manifest,
@@ -64,8 +64,8 @@ func openSeededStore(t *testing.T) *sqlite.Store {
 	if err := s.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatalf("PutMarketplace: %v", err)
 	}
-	if err := s.PutSource(ctx, store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
-		t.Fatalf("PutSource: %v", err)
+	if err := s.PutRegistry(ctx, store.Registry{ID: "reg", Slug: "reg", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
 	}
 	return s
 }

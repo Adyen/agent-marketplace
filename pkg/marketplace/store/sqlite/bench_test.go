@@ -22,8 +22,8 @@ func BenchmarkSearchResourceRevisions(b *testing.B) {
 		b.Fatalf("put marketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("bench-source"),
+	registry := store.Registry{
+		ID:          store.RegistryID("bench-registry"),
 		Slug:        "bench",
 		Ref:         "main",
 		Origins:     []string{"https://bench.git"},
@@ -32,17 +32,17 @@ func BenchmarkSearchResourceRevisions(b *testing.B) {
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	if err := s.PutSource(ctx, src); err != nil {
-		b.Fatalf("put source: %v", err)
+	if err := s.PutRegistry(ctx, registry); err != nil {
+		b.Fatalf("put registry: %v", err)
 	}
 
 	const commit = "bench-commit"
 	manifest := store.RevisionDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
-		SourceID: src.ID, Ref: src.Ref, Commit: commit, SourceRevisionManifestDigest: manifest,
-		Acquisition: src.Acquisition, OccurredAt: time.Now().UTC(),
+	if err := s.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: registry.ID, Ref: registry.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest,
+		Acquisition: registry.Acquisition, OccurredAt: time.Now().UTC(),
 	}); err != nil {
-		b.Fatalf("put source occurrence: %v", err)
+		b.Fatalf("put registry occurrence: %v", err)
 	}
 
 	const num = 100
@@ -50,7 +50,7 @@ func BenchmarkSearchResourceRevisions(b *testing.B) {
 		rev := store.ResourceRevision{
 			Coordinate: store.ResourceCoordinate{
 				Marketplace: mpID,
-				Source:      src.ID,
+				Registry:    registry.ID,
 				Kind:        "skill",
 				Name:        fmt.Sprintf("skill-%04d", i),
 			},

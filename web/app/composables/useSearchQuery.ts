@@ -15,7 +15,7 @@ export function parseSearchQuery(query: LocationQuery): SearchParams {
   return {
     q,
     kind: isResourceKind(kindValue) ? kindValue : '',
-    source: queryValue(query.source),
+    registry: queryValue(query.registry),
     offset: Number.isFinite(offsetValue) && offsetValue > 0 ? offsetValue : 0,
     limit: Number.isFinite(limitValue)
       ? Math.min(Math.max(limitValue, 1), MAX_LIMIT)
@@ -27,7 +27,7 @@ export function toLocationQuery(params: SearchParams): LocationQueryRaw {
   const query: LocationQueryRaw = {}
   if (params.q) query.q = params.q
   if (params.kind) query.kind = params.kind
-  if (params.source) query.source = params.source
+  if (params.registry) query.registry = params.registry
   if (params.offset > 0) query.offset = String(params.offset)
   query.limit = String(params.limit)
   return query

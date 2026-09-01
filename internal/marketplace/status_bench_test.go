@@ -23,7 +23,7 @@ func BenchmarkMarketplaceStatusInspection(b *testing.B) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "resource-" + strconv.Itoa(pinCount)},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "resource-" + strconv.Itoa(pinCount)},
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		}))
@@ -34,9 +34,9 @@ func BenchmarkMarketplaceStatusInspection(b *testing.B) {
 	pins := make([]config.MarketplaceResourcePin, pinCount)
 	for i := range pins {
 		name := "resource-" + strconv.Itoa(i)
-		pins[i] = config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: name, Revision: "v1", Digest: contentDigest}
+		pins[i] = config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: name, Revision: "v1", Digest: contentDigest}
 		if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", name, contentDigest, assessedRevision(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: name},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: name},
 			ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		})); err != nil {
 			b.Fatal(err)

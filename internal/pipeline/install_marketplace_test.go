@@ -20,15 +20,15 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactSource(t *testing.T) {
+func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactRegistry(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifestDigest := "sha256:" + strings.Repeat("b", 64)
 	plan := &marketplace.PreparedInstall{
 		Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
 		Pin: config.MarketplaceResourcePin{
-			SourceID: "source-id", SourceSlug: "source", Kind: "skill", Name: "review",
+			RegistryID: "source-id", RegistrySlug: "source", Kind: "skill", Name: "review",
 			Revision: "sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("d", 64),
-			Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+			Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifestDigest,
 		},
 		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{
 			License: "MIT", Provenance: hccartifact.CanonicalProvenance{Generator: "test"},
@@ -39,12 +39,12 @@ func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactSource(t *testing
 		t.Fatalf("marketplaceInstallPreview: %v", err)
 	}
 	typed := plan.Preview()
-	if typed.Acquisition != config.MarketplaceAcquisitionIndexOnly || typed.SourceCommit != commit || typed.SourceManifestDigest != manifestDigest {
+	if typed.Acquisition != config.MarketplaceAcquisitionIndexOnly || typed.RegistryCommit != commit || typed.RegistryManifestDigest != manifestDigest {
 		t.Fatalf("typed preview lost exact index-only acquisition: %#v", typed)
 	}
 	for _, want := range []string{
-		`acquisition: "index-only"`, `source_commit: "` + commit + `"`,
-		`source_manifest_digest: "` + manifestDigest + `"`,
+		`acquisition: "index-only"`, `registry_commit: "` + commit + `"`,
+		`registry_manifest_digest: "` + manifestDigest + `"`,
 	} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("preview missing %q:\n%s", want, preview)
@@ -57,24 +57,24 @@ func TestMarketplaceInstallPreviewUsesPinnedAcquisitionAndExactSource(t *testing
 
 func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t *testing.T) {
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "collection-source", Kind: "collection", Name: "secure"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "collection-source", Kind: "collection", Name: "secure"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}
 	root := &marketplace.PreparedInstall{
 		Entry:              config.MarketplaceEntry{Alias: "public", URL: "https://market.example", InstanceID: "mp"},
-		Pin:                config.MarketplaceResourcePin{SourceID: "collection-source", SourceSlug: "collections", Kind: "collection", Name: "secure", Revision: "root-revision", Digest: "root-digest", Acquisition: config.MarketplaceAcquisitionMirror},
+		Pin:                config.MarketplaceResourcePin{RegistryID: "collection-source", RegistrySlug: "collections", Kind: "collection", Name: "secure", Revision: "root-revision", Digest: "root-digest", Acquisition: config.MarketplaceAcquisitionMirror},
 		Revision:           testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "collection-policy", Severity: "warning", Policy: "warn", Message: "review collection"}}),
 		CollectionManifest: hccartifact.CollectionManifest{Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example", Ref: "main", Path: "collections/secure", Generator: "test"}},
 		CollectionMembers: []*marketplace.PreparedInstall{
 			{
 				Pin: config.MarketplaceResourcePin{Kind: "collection", Name: "base", Revision: "base-revision", Digest: "base-digest", Acquisition: config.MarketplaceAcquisitionMirror},
 				CollectionMembers: []*marketplace.PreparedInstall{{
-					Pin:      config.MarketplaceResourcePin{SourceID: "z-source", SourceSlug: "z", Kind: "skill", Name: "zeta", Revision: "z-revision", Digest: "z-digest", Acquisition: config.MarketplaceAcquisitionMirror},
+					Pin:      config.MarketplaceResourcePin{RegistryID: "z-source", RegistrySlug: "z", Kind: "skill", Name: "zeta", Revision: "z-revision", Digest: "z-digest", Acquisition: config.MarketplaceAcquisitionMirror},
 					Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"read", "write"}}},
 				}},
 			},
 			{
-				Pin:      config.MarketplaceResourcePin{SourceID: "a-source", SourceSlug: "a", Kind: "command", Name: "alpha", Revision: "a-revision", Digest: "a-digest", Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: strings.Repeat("c", 40), SourceManifestDigest: "sha256:" + strings.Repeat("d", 64)},
+				Pin:      config.MarketplaceResourcePin{RegistryID: "a-source", RegistrySlug: "a", Kind: "command", Name: "alpha", Revision: "a-revision", Digest: "a-digest", Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: strings.Repeat("c", 40), RegistryManifestDigest: "sha256:" + strings.Repeat("d", 64)},
 				Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"execute"}}},
 			},
 		},
@@ -86,7 +86,7 @@ func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t 
 	for _, want := range []string{
 		`kind: "collection"`, `name: "secure"`, `collection-policy`,
 		`"kind":"command"`, `"name":"alpha"`, `"revision":"a-revision"`, `"acquisition":"index-only"`,
-		`"source_commit":"` + strings.Repeat("c", 40) + `"`, `"source_manifest_digest":"sha256:` + strings.Repeat("d", 64) + `"`,
+		`"registry_commit":"` + strings.Repeat("c", 40) + `"`, `"registry_manifest_digest":"sha256:` + strings.Repeat("d", 64) + `"`,
 		`"kind":"skill"`, `"name":"zeta"`, `"acquisition":"mirror"`, `"capabilities":["execute"]`,
 	} {
 		if !strings.Contains(preview, want) {
@@ -104,7 +104,7 @@ func TestMarketplaceCollectionInstallPreviewIncludesRootAndSortedLeafMetadata(t 
 
 func TestMarketplaceCollectionConsentEvaluatesRevisionBeforeLeaves(t *testing.T) {
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "collection-source", Kind: "collection", Name: "secure"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "collection-source", Kind: "collection", Name: "secure"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}
 	root := &marketplace.PreparedInstall{
@@ -124,7 +124,7 @@ func TestMarketplaceLocatorWithSelectorSupportsAllNonCollectionKinds(t *testing.
 			if err != nil {
 				t.Fatalf("marketplaceLocator: %v", err)
 			}
-			if loc.Alias != "public" || loc.Source != "source" || loc.Kind != kind || loc.Name != "name" {
+			if loc.Alias != "public" || loc.Registry != "source" || loc.Kind != kind || loc.Name != "name" {
 				t.Fatalf("locator = %#v", loc)
 			}
 		})
@@ -133,7 +133,7 @@ func TestMarketplaceLocatorWithSelectorSupportsAllNonCollectionKinds(t *testing.
 
 func TestMarketplaceLocatorSupportsBrowserAndAdHocEndpoint(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	loc, err := marketplaceLocator("https://market.example/s/source/skill/review/revisions/"+digest, "")
+	loc, err := marketplaceLocator("https://market.example/r/registry/skill/review/revisions/"+digest, "")
 	if err != nil {
 		t.Fatalf("browser locator: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestMarketplaceLocatorSupportsBrowserAndAdHocEndpoint(t *testing.T) {
 
 func TestMarketplaceConsentRejectsPolicyFindingAndRequiresRiskAcceptance(t *testing.T) {
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}
 	plan := &marketplace.PreparedInstall{
@@ -191,14 +191,14 @@ func TestMarketplaceKindComparisonNormalizesMCPProtocolKind(t *testing.T) {
 
 func TestMarketplaceCollisionWorksWithoutConfiguredRegistries(t *testing.T) {
 	plan := &marketplace.PreparedInstall{
-		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review"},
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
 	}
 	if err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: &config.Config{}}, plan); err != nil {
 		t.Fatalf("no-registry collision check: %v", err)
 	}
-	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://other.example", InstanceID: "other", Resources: []config.MarketplaceResourcePin{{SourceID: "other", Kind: "skill", Name: "review"}}}}}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://other.example", InstanceID: "other", Resources: []config.MarketplaceResourcePin{{RegistryID: "other", Kind: "skill", Name: "review"}}}}}
 	if err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: cfg}, plan); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("collision error = %v", err)
 	}
@@ -206,13 +206,13 @@ func TestMarketplaceCollisionWorksWithoutConfiguredRegistries(t *testing.T) {
 
 func TestMarketplaceCollisionsCannotBeBypassedWithInstalledName(t *testing.T) {
 	plan := &marketplace.PreparedInstall{
-		Pin:      config.MarketplaceResourcePin{SourceID: "new-source", Kind: "skill", Name: "review", InstalledName: "review-copy"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "new-source", Kind: "skill", Name: "review", InstalledName: "review-copy"},
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "new-marketplace"},
 	}
 	marketplaceConfig := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: "HTTPS://OTHER.example/", InstanceID: "other-marketplace",
-		Resources: []config.MarketplaceResourcePin{{SourceID: "other-source", Kind: "skill", Name: "other", InstalledName: "review-copy"}},
+		Resources: []config.MarketplaceResourcePin{{RegistryID: "other-source", Kind: "skill", Name: "other", InstalledName: "review-copy"}},
 	}}}
 	if err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: marketplaceConfig}, plan); err == nil {
 		t.Fatal("Marketplace collision was bypassed with installed_name")
@@ -235,13 +235,13 @@ func TestMarketplaceCollisionsCannotBeBypassedWithInstalledName(t *testing.T) {
 
 func TestMarketplaceCollisionCanonicalizesExistingURLAndAllowsSamePin(t *testing.T) {
 	plan := &marketplace.PreparedInstall{
-		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", InstalledName: "review-copy"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", InstalledName: "review-copy"},
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: "HTTPS://MARKET.example/", InstanceID: "mp",
-		Resources: []config.MarketplaceResourcePin{{SourceID: "src", Kind: "skill", Name: "review", InstalledName: "review-copy"}},
+		Resources: []config.MarketplaceResourcePin{{RegistryID: "src", Kind: "skill", Name: "review", InstalledName: "review-copy"}},
 	}}}
 	if err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: cfg}, plan); err != nil {
 		t.Fatalf("same canonical Marketplace pin collided: %v", err)
@@ -252,7 +252,7 @@ func TestMarketplaceCollectionLeavesRejectMaterializedNameCollision(t *testing.T
 	leaf := func(source, name string) *marketplace.PreparedInstall {
 		return &marketplace.PreparedInstall{
 			Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
-			Pin:      config.MarketplaceResourcePin{SourceID: source, Kind: "skill", Name: name, InstalledName: "same"},
+			Pin:      config.MarketplaceResourcePin{RegistryID: source, Kind: "skill", Name: name, InstalledName: "same"},
 			Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: name}},
 		}
 	}
@@ -268,7 +268,7 @@ func TestMarketplaceCollectionLeavesRejectMaterializedNameCollision(t *testing.T
 func TestMarketplaceCollectionLeavesAllowSameExactMarketplaceIdentity(t *testing.T) {
 	leaf := &marketplace.PreparedInstall{
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
-		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", InstalledName: "same"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", InstalledName: "same"},
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 	}
 	plan := &marketplace.PreparedInstall{
@@ -295,11 +295,11 @@ func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) 
 func TestMarketplaceInstallPreviewFormatsFindingsForHumans(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 	}
 	plan := &marketplace.PreparedInstall{
-		Pin:      config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "slug", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "slug", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
 		Revision: testAssessedResourceRevision(t, revision, store.AssessmentDecisionWarn, []store.Finding{{Code: "secret", Severity: "high", Message: "line 1\nsecret=do-not-log\x1b[31m\u202e", Location: &store.FindingLocation{Path: "skills/review/SKILL.md\tunsafe", Line: 12}, Policy: "warn"}}, "scanner\r"),
 		Artifact: hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{Capabilities: []string{"exec\x1b\n"}, Provenance: hccartifact.CanonicalProvenance{RegistryURL: "https://market.example\nunsafe", Ref: "main\u202e", Path: "skills/review", Generator: "scanner\x1b"}}},
@@ -477,7 +477,7 @@ func marketplaceInstallWarmRegistryFixture(tb testing.TB, fetchDelay time.Durati
 	cfg := &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}, Registries: []config.RegistryEntry{{URL: registryURL, Ref: "main"}}}
 	plan := &marketplace.PreparedInstall{
 		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},
-		Pin:      config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review"},
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 	}
 	return opts, &config.EffectiveConfig{Merged: cfg}, plan, &fetches
@@ -487,7 +487,7 @@ func testMarketplacePreparedInstall() *marketplace.PreparedInstall {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	return &marketplace.PreparedInstall{
 		Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Alias: "public"},
-		Pin:   config.MarketplaceResourcePin{SourceID: "src", SourceSlug: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
+		Pin:   config.MarketplaceResourcePin{RegistryID: "src", RegistrySlug: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest},
 	}
 }
 

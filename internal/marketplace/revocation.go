@@ -42,7 +42,7 @@ func ParseRevocationOverride(raw string) (RevocationOverride, error) {
 		value string
 	}{
 		{label: "marketplace instance", value: string(parsed.Marketplace)},
-		{label: "source", value: string(parsed.Source)},
+		{label: "registry", value: string(parsed.Registry)},
 		{label: "resource name", value: parsed.Name},
 	} {
 		if err := validateRouteToken(field.label, field.value); err != nil {
@@ -82,7 +82,7 @@ func (p *RevocationOverridePolicy) AllowRevoked(identity resolver.MarketplaceRev
 	}
 	for _, override := range p.overrides {
 		if string(override.Coordinate.Marketplace) == identity.Marketplace &&
-			string(override.Coordinate.Source) == identity.Source &&
+			string(override.Coordinate.Registry) == identity.Registry &&
 			override.Coordinate.Kind == identity.Kind &&
 			override.Coordinate.Name == identity.Name &&
 			string(override.ContentDigest) == identity.ContentDigest {

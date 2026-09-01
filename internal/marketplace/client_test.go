@@ -72,8 +72,8 @@ func writeTestWellKnown(w http.ResponseWriter, instanceID string) {
 	_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com", "https://example.com"))
 }
 
-func writeTestSource(w http.ResponseWriter, src store.Source) {
-	_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{
+func writeTestRegistry(w http.ResponseWriter, src store.Registry) {
+	_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{
 		ID: src.ID, Slug: src.Slug, Aliases: src.Aliases, Origins: src.Origins,
 		Ref: src.Ref, Roots: src.Roots, Acquisition: src.Acquisition,
 		License: src.License, Listed: src.Listed,
@@ -106,8 +106,8 @@ func TestClientWellKnown(t *testing.T) {
 		CanonicalURL:       "https://example.com",
 		APIBase:            "/api/v1",
 		BrowserBase:        "https://example.com",
-		BrowserLatestRoute: "https://example.com/s/{source}/{kind}/{name}",
-		BrowserExactRoute:  "https://example.com/s/{source}/{kind}/{name}/revisions/{revision}",
+		BrowserLatestRoute: "https://example.com/r/{registry}/{kind}/{name}",
+		BrowserExactRoute:  "https://example.com/r/{registry}/{kind}/{name}/revisions/{revision}",
 		Capabilities:       mpapi.DefaultCapabilities(),
 	}
 
@@ -187,7 +187,7 @@ func TestClientRejectsNullAndIncompleteEnvelopes(t *testing.T) {
 	}
 }
 
-func TestClientRejectsPrivateAndLegacySourceFields(t *testing.T) {
+func TestClientRejectsPrivateAndLegacyRegistryFields(t *testing.T) {
 	for _, field := range []string{"revision_commit", "credentials_ref", "refresh_error", "policy_overrides"} {
 		t.Run(field, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,8 +203,8 @@ func TestClientRejectsPrivateAndLegacySourceFields(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient: %v", err)
 			}
-			if _, err := c.GetSource(context.Background(), "source"); err == nil {
-				t.Fatalf("GetSource accepted private field %q", field)
+			if _, err := c.GetRegistry(context.Background(), "source"); err == nil {
+				t.Fatalf("GetRegistry accepted private field %q", field)
 			}
 		})
 	}
@@ -213,7 +213,7 @@ func TestClientRejectsPrivateAndLegacySourceFields(t *testing.T) {
 func TestClientInspectionMethodsVerifyProvenanceAndContent(t *testing.T) {
 	ctx := context.Background()
 	revision := "sha256:" + strings.Repeat("a", 64)
-	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"}
 	body := []byte("# review\\n")
 	projection, err := inspection.Build(coord, revision, body, map[string][]byte{"notes.txt": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
@@ -258,7 +258,7 @@ func TestClientInspectionMethodsVerifyProvenanceAndContent(t *testing.T) {
 
 func TestClientInspectionRejectsProvenanceMismatch(t *testing.T) {
 	revision := "sha256:" + strings.Repeat("a", 64)
-	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"}
 	projection, err := inspection.Build(coord, revision, []byte("# review\\n"), nil, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func TestClientInspectionRejectsProvenanceMismatch(t *testing.T) {
 func TestClientSearch(t *testing.T) {
 	resp := SearchResponse{
 		Items: []mpapi.ResourceListItem{
-			{SourceID: "src-test", SourceSlug: "test-source", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0},
+			{RegistryID: "src-test", RegistrySlug: "test-source", Kind: "skill", Name: "review", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1.0},
 		},
 		Total:  1,
 		Offset: 0,
@@ -427,7 +427,7 @@ func TestClientEscapesDynamicPathSegments(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
 			Coordinate: store.ResourceCoordinate{
-				Marketplace: "mp", Source: "src/with space", Kind: "skill", Name: "name/part",
+				Marketplace: "mp", Registry: "src/with space", Kind: "skill", Name: "name/part",
 			},
 			ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 		}))
@@ -447,7 +447,7 @@ func TestClientBindsResourceResponsesToRequestedCoordinate(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "other"},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source", Kind: "skill", Name: "other"},
 			ContentDigest: store.RevisionDigest(digest),
 		}))
 	}))
@@ -465,15 +465,15 @@ func TestClientBindsResourceResponsesToRequestedCoordinate(t *testing.T) {
 	}
 }
 
-func TestClientBindsResourceSourceAfterSourceResolution(t *testing.T) {
+func TestClientBindsResourceRegistryAfterRegistryResolution(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/sources/source-slug":
-			writeTestSource(w, store.Source{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/registries/source-slug":
+			writeTestRegistry(w, store.Registry{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		default:
 			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "other-source", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "other-source", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(digest),
 			}))
 		}
@@ -484,19 +484,19 @@ func TestClientBindsResourceSourceAfterSourceResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetSourceBySlug(context.Background(), "source-slug"); err != nil {
-		t.Fatalf("GetSourceBySlug: %v", err)
+	if _, err := c.GetRegistryBySlug(context.Background(), "source-slug"); err != nil {
+		t.Fatalf("GetRegistryBySlug: %v", err)
 	}
-	if _, err := c.GetLatestResourceRevision(context.Background(), "source-slug", "skill", "review"); err == nil || !strings.Contains(err.Error(), "coordinate.source") {
-		t.Fatalf("GetLatestResourceRevision error = %v, want source mismatch", err)
+	if _, err := c.GetLatestResourceRevision(context.Background(), "source-slug", "skill", "review"); err == nil || !strings.Contains(err.Error(), "coordinate.registry") {
+		t.Fatalf("GetLatestResourceRevision error = %v, want registry mismatch", err)
 	}
 }
 
-func TestClientBindsSourceResponseToRequestedSourceID(t *testing.T) {
+func TestClientBindsRegistryResponseToRequestedRegistryID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(mpapi.PublicSource{
+		_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{
 			ID: "other-source", Slug: "requested-source", Origins: []string{"https://example.com/repo"},
-			Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror,
+			Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror,
 		})
 	}))
 	defer server.Close()
@@ -505,21 +505,21 @@ func TestClientBindsSourceResponseToRequestedSourceID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetSource(context.Background(), "requested-source"); err == nil || !strings.Contains(err.Error(), "source ID") {
-		t.Fatalf("GetSource error = %v, want requested source ID mismatch", err)
+	if _, err := c.GetRegistry(context.Background(), "requested-source"); err == nil || !strings.Contains(err.Error(), "registry ID") {
+		t.Fatalf("GetRegistry error = %v, want requested registry ID mismatch", err)
 	}
 }
 
-func TestClientBindsSourceOccurrenceToRequestedSourceAndCommit(t *testing.T) {
+func TestClientBindsRegistryOccurrenceToRequestedRegistryAndCommit(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifest := "sha256:" + strings.Repeat("b", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-			SourceID: "other-source", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: commit,
-			SourceRevisionManifestDigest: store.RevisionDigest(manifest),
-			Acquisition:                  store.AcquisitionIndexOnly,
-			AcquisitionOrigin:            "https://example.com/repo.git",
-			OccurredAt:                   time.Now().UTC(),
+		_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{
+			RegistryID: "other-source", Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Commit: commit,
+			RegistryRevisionManifestDigest: store.RevisionDigest(manifest),
+			Acquisition:                    store.AcquisitionIndexOnly,
+			AcquisitionOrigin:              "https://example.com/repo.git",
+			OccurredAt:                     time.Now().UTC(),
 		})
 	}))
 	defer server.Close()
@@ -528,20 +528,20 @@ func TestClientBindsSourceOccurrenceToRequestedSourceAndCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetSourceOccurrence(context.Background(), "requested-source", commit); err == nil || !strings.Contains(err.Error(), "source ID") {
-		t.Fatalf("GetSourceOccurrence error = %v, want requested source mismatch", err)
+	if _, err := c.GetRegistryOccurrence(context.Background(), "requested-source", commit); err == nil || !strings.Contains(err.Error(), "registry ID") {
+		t.Fatalf("GetRegistryOccurrence error = %v, want requested source mismatch", err)
 	}
 }
 
-func TestClientBindsSourceOccurrenceCommitToRequestedCommit(t *testing.T) {
+func TestClientBindsRegistryOccurrenceCommitToRequestedCommit(t *testing.T) {
 	requestedCommit := strings.Repeat("a", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-			SourceID: "source", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: strings.Repeat("b", 40),
-			SourceRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)),
-			Acquisition:                  store.AcquisitionIndexOnly,
-			AcquisitionOrigin:            "https://example.com/repo.git",
-			OccurredAt:                   time.Now().UTC(),
+		_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{
+			RegistryID: "source", Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Commit: strings.Repeat("b", 40),
+			RegistryRevisionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)),
+			Acquisition:                    store.AcquisitionIndexOnly,
+			AcquisitionOrigin:              "https://example.com/repo.git",
+			OccurredAt:                     time.Now().UTC(),
 		})
 	}))
 	defer server.Close()
@@ -550,8 +550,8 @@ func TestClientBindsSourceOccurrenceCommitToRequestedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if _, err := c.GetSourceOccurrence(context.Background(), "source", requestedCommit); err == nil || !strings.Contains(err.Error(), "commit") {
-		t.Fatalf("GetSourceOccurrence error = %v, want requested commit mismatch", err)
+	if _, err := c.GetRegistryOccurrence(context.Background(), "source", requestedCommit); err == nil || !strings.Contains(err.Error(), "commit") {
+		t.Fatalf("GetRegistryOccurrence error = %v, want requested commit mismatch", err)
 	}
 }
 
@@ -588,7 +588,7 @@ func TestValidateAcquisitionOrigin(t *testing.T) {
 func TestClientRejectsNonCanonicalResourceMetadata(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	revision := assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(digest),
 	})
 	revision.Occurrence.Commit = "abc123"
@@ -596,14 +596,14 @@ func TestClientRejectsNonCanonicalResourceMetadata(t *testing.T) {
 		t.Fatal("resource revision accepted a development occurrence commit")
 	}
 	collectionRevision := assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "collection", Name: "bundle"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source", Kind: "collection", Name: "bundle"},
 		ContentDigest: store.RevisionDigest(digest),
 		ArchiveDigest: store.ArchiveDigest(digest),
 	})
 	if err := validateAPIResourceRevision(collectionRevision); err == nil || !strings.Contains(err.Error(), "virtual collection") {
 		t.Fatalf("collection archive revision validation = %v", err)
 	}
-	item := mpapi.ResourceListItem{SourceID: "source", Kind: "skill", Name: "review", Revision: "refs/heads/main", ContentDigest: digest}
+	item := mpapi.ResourceListItem{RegistryID: "source", Kind: "skill", Name: "review", Revision: "refs/heads/main", ContentDigest: digest}
 	if err := validateAPIResourceListItem(item); err == nil {
 		t.Fatal("resource list item accepted a symbolic revision")
 	}
