@@ -1,0 +1,99 @@
+# Coding Standards
+
+Read this document for every code change. It defines the review criteria and implementation requirements for platform support, design, tests, observability, logging, and performance. Tool-enforced formatting and lint rules are intentionally not repeated here; project architecture and session workflow remain in [AGENTS.md](./AGENTS.md).
+
+## Platform scope
+
+- Support Unix-like systems only: macOS and Linux. Windows build or runtime compatibility is not a requirement.
+- Do not add Windows-specific branches, build tags, path handling, abstractions, or tests unless the project's supported-platform decision changes.
+- Remain portable across macOS and Linux. Use `filepath` for host filesystem paths and `path` for slash-separated artifact or `fs.FS` paths.
+
+## Design
+
+- Keep each policy in one authoritative place. Centralize target definitions, mappings, defaults, path rules, and diagnostic semantics instead of repeating switches or constants across packages.
+- Extract genuinely shared behavior into focused helpers. Do not duplicate logic, and do not add extension points or abstractions for hypothetical future uses.
+- Use names that expose domain intent. Prefer domain types over groups of loosely related primitives when the grouping carries invariants.
+- Keep modules cohesive and boundaries explicit. Pure resolution and compilation logic must stay separate from filesystem, process, and network mutation.
+- Preserve deterministic and idempotent behavior. Identical inputs must produce identical ordered output and bytes; sort map-derived output explicitly, and avoid rewriting files whose desired bytes are unchanged.
+- Treat paths, roots, and symlinks as untrusted input. Validate containment and reject traversal or symlink escapes before filesystem mutation.
+- Fail closed at destructive boundaries. Malformed, ambiguous, or unowned input must not trigger overwrite or prune behavior. Contain a failure to the narrowest safe unit so valid independent work can still proceed when the contract permits it.
+- Never hide unsupported or lossy behavior. Return a stable coded diagnostic and omit the unsafe or unrepresentable output rather than silently dropping data or fabricating support.
+
+## Tests
+
+- Test observable contracts, not the implementation's restatement of itself. Expected values must be independently authored; do not derive them with the production helper, table, mapping, or algorithm under test.
+- Do not write tautological or vacuous tests. Every test must be capable of failing for the regression it claims to cover. Negative, no-op, filtering, and redaction tests need a positive or non-vacuity control proving that the exercised path had something to reject, preserve, redact, or change.
+- Start bug fixes with a regression test that fails against the buggy behavior, then make it pass with the fix.
+- Assert the complete externally relevant outcome, including negative side effects. Filesystem failure tests must verify that user bytes remain unchanged and that no temporary or staging residue survives.
+- Assert machine-readable contracts with stable diagnostic codes, typed errors, or `errors.Is`/`errors.As`; do not couple tests to incidental error prose.
+- Use table-driven subtests for behavior matrices and byte-exact golden tests for generated layouts. Share fixtures and assertion helpers rather than repeating setup.
+- Isolate tests from the developer's machine. Use temporary directories and scoped environment variables; default unit tests must not read or mutate the real home directory or depend on optional third-party executables or external network services.
+- Follow the E2E test selection rules below: prefer declarative cases for standard setup/run/assert workflows and standalone tests only when the framework cannot express the setup.
+
+### E2E test suite
+
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Tests do **not** run in CI (CI runners cannot clone git registries); they are local-only, optionally run inside a Docker container for host isolation.
+
+There are **two types** of E2E tests:
+
+1. **Declarative (table-driven)** — defined as `TestCase` structs in `e2e/table_test.go`. These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
+2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as running commands from a non-default working directory or skipping git repo initialization.
+
+#### Running
+
+```bash
+make e2e                  # runs inside Docker (isolated from host env)
+E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
+E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
+```
+
+#### Architecture
+
+- **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. The binary runs as a subprocess with `HOME` overridden so it never touches the host filesystem.
+- **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
+- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.
+
+#### When to add a test
+
+Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
+- Adding a new CLI command or flag that should be validated end-to-end
+- Fixing a bug that involves config merging, materialization, precedence, or collision handling
+- Changing resource selection/exclusion semantics (`required`, `default`, `tags`, `exclude`)
+
+Add a standalone test function in a separate file when:
+- The test needs non-standard setup (e.g. no git repo, custom working directory)
+- The test uses `RunAMFrom` or other framework features not exposed through the `Steps` model
+
+Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
+
+## Errors and observability
+
+- Wrap errors with the failed operation and relevant context while preserving the cause with `%w`. Branch on error identity, not message text.
+- When a span owns downstream work, pass the context returned by `StartSpan` to that work so its spans inherit the parent. Discard the returned context only for leaf spans.
+- Treat stable diagnostic codes and severities as public behavior. Add or update tests whenever either changes.
+
+### Logging
+
+The CLI configures a process-wide `slog` logger before any subcommand runs (see `cmd/agent-marketplace/main.go`). Instrument new features and changes with structured logs via the standard `slog` default logger (`slog.Info`, `slog.Debug`, `slog.Error`, ...). At minimum, log meaningful operation boundaries, decisions, and error paths with relevant fields such as counts and durations. Never log credentials, tokens, headers, or sensitive payloads.
+
+- **Defaults live in code.** The `Default*` constants in `internal/config/config.go` are the single source of truth for the logging runtime (`internal/logging`). Keep them there.
+- **Do not seed a `logging:` block into the generated config skeleton.** The skeleton carries only required global fields (`apiVersion`, `harnesses`); logging is opt-in override only. Users override via `~/.agents/config.yaml` (`logging:`) or `AGENT_MARKETPLACE_*` env vars. Precedence is **env var > config file > code default**.
+- Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
+
+## Performance and benchmarking
+
+This project treats performance as **data-driven, not narrative-driven**. Optimizations and refactors that touch hot paths must be accompanied by benchmarks; "it feels faster" is not acceptable evidence.
+
+During every implementation cycle:
+
+1. **Spot a hot path → write a benchmark.** Any code that runs on a user-visible latency path (each keystroke, every `sync`, every `status`, every `Resolve`, every `DiscoverSkills` invocation) earns a `func Benchmark…(b *testing.B)` in the same package the first time it is modified. No silent hot paths.
+2. **Measure before you change.** Capture a baseline with `go test -run '^$' -bench '^BenchmarkFoo$' -benchtime 2s -count 5 -benchmem | tee before.txt` *before* the optimization lands. Without a baseline the change is unverifiable.
+3. **Measure after.** Re-run the same command into `after.txt` and diff with `benchstat before.txt after.txt`. Post the delta (ns/op, B/op, allocs/op) in the PR description or commit message; no delta ⇒ not merged.
+4. **Regression guard.** The benchmark stays in the tree. Anyone who later regresses the hot path will see it in CI or when running `make bench` locally.
+5. **Micro-benchmarks live next to the code.** Name the file `*_bench_test.go` so it is discoverable and can be excluded from `go test` wall-clock budgets when needed.
+
+Keep setup out of benchmark timing, exercise realistic workloads, and report allocations. Do not trade correctness, determinism, or safety for an unmeasured optimization.
+
+End-to-end lifecycle benchmarks must state whether disk I/O and network requests are included. Keep those operations in the timed path using isolated filesystems and local endpoints; if a mock or no-op deliberately narrows the measurement, name and document it as a narrower benchmark rather than presenting it as end-to-end.
+
+Review the `efficient-go` skill (`~/.factory/skills/efficient-go/SKILL.md`) for the Three Rs method (Reduce / Reuse / Recycle allocations), pre-allocation patterns, and `sync.Pool` guidance when proposing a performance change.
