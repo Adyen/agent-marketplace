@@ -101,12 +101,12 @@ func prepareDevinHookIdentityTwins(t *testing.T, repoRoot string) (hooksPath str
 // element that was described: the hand-written one, which has no evidence, was
 // never nominated, was never previewed, and was never described to the user, must
 // survive. With the old lossy hook/v1 identity two different values could share
-// an identity digest, and removeDevinEntry's then-identity-only match deleted the
+// an identity digest, and removeOwnedJSONEntry's then-identity-only match deleted the
 // first such element (the hand-written one) instead of the confirmed one.
 //
 // The total hook/v2 identity removes the root cause by making identity a
 // function of the whole canonical value, but the value-digest check in
-// removeDevinEntry is still required to remove exactly one of two byte-identical
+// removeOwnedJSONEntry is still required to remove exactly one of two byte-identical
 // hooks and to fail closed if the described element is no longer present.
 func TestAdversarialOrphanRemovalMustNotDeleteTheIdentityTwinTheUserDidNotConfirm(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
@@ -126,7 +126,7 @@ func TestAdversarialOrphanRemovalMustNotDeleteTheIdentityTwinTheUserDidNotConfir
 		t.Fatalf("a confirmed orphan removal DELETED THE WRONG HOOK ELEMENT.\n"+
 			"The user was shown one candidate — the evidence-backed managed element, evidence %q — "+
 			"and answered y to it. The element that disappeared is the hand-written element, which was "+
-			"never nominated, never previewed, and never described. removeDevinEntry must therefore "+
+			"never nominated, never previewed, and never described. removeOwnedJSONEntry must therefore "+
 			"still delete the byte-identical element that matches both the identity and the value digest, "+
 			"not the hand-written one.\n"+
 			"--- aggregate after the removal ---\n%s", confirmed.Evidence(), after)
@@ -140,7 +140,7 @@ func TestAdversarialOrphanRemovalMustNotDeleteTheIdentityTwinTheUserDidNotConfir
 // guard on the fix for the test above.
 //
 // Two BYTE-IDENTICAL hook elements share both digests, so the user genuinely
-// confirmed "one of these two". removeDevinEntry's existing rule — "exactly one
+// confirmed "one of these two". removeOwnedJSONEntry's rule — "exactly one
 // element is removed per confirmation, even if the file happens to contain two
 // byte-identical hooks" — must survive any tightening of the match, so it is
 // pinned here rather than left to the fix's author to remember.

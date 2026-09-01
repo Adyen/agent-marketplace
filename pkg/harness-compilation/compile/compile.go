@@ -4,14 +4,17 @@ package compile
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
 	"runtime/debug"
 	"slices"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 // Target represents a compilation target harness.
@@ -25,6 +28,7 @@ const (
 	TargetWindsurf = mapping.TargetWindsurf
 	TargetGemini   = mapping.TargetGemini
 	TargetDevin    = mapping.TargetDevin
+	TargetCodex    = mapping.TargetCodex
 )
 
 // Compiler is the interface that each target compiler must implement.
@@ -133,7 +137,54 @@ func Register(c Compiler) {
 // Lookup returns the Compiler registered for the given target, if any.
 func Lookup(t Target) (Compiler, bool) {
 	c, ok := registry[t]
-	return c, ok
+	if !ok {
+		return nil, false
+	}
+	return guardedCompiler{Compiler: c}, true
+}
+
+type guardedCompiler struct{ Compiler }
+
+func (c guardedCompiler) Translate(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	return c.translate(resource, c.Compiler.Translate)
+}
+
+func (c guardedCompiler) TranslateWithOptions(resource ir.Resource, opts Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	if configurable, ok := c.Compiler.(OptionAwareCompiler); ok {
+		return c.translate(resource, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+			return configurable.TranslateWithOptions(resource, opts)
+		})
+	}
+	return c.Translate(resource)
+}
+
+func (c guardedCompiler) translate(resource ir.Resource, translate func(ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error)) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	return GuardNativeCodexTranslation(resource, c.Target(), translate)
+}
+
+// GuardNativeCodexTranslation prevents public target compilers from bypassing
+// the cross-target loss policy enforced by Compile and Lookup.
+func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate func(ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error)) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	if _, _, err := ir.ValidateResource(resource); err != nil {
+		return nil, nil, err
+	}
+	nativeDiagnostics := codexNativeLossDiagnostics(resource, target)
+	if diag.HasErrors(nativeDiagnostics) {
+		slog.Warn("compile suppressed native Codex resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
+		return nil, nativeDiagnostics, nil
+	}
+	artifacts, diagnostics, err := translate(resource)
+	var missing []diag.Diagnostic
+	for _, diagnostic := range nativeDiagnostics {
+		if !slices.Contains(diagnostics, diagnostic) {
+			missing = append(missing, diagnostic)
+		}
+	}
+	if len(missing) > 0 {
+		slog.Warn("compile omitted native Codex field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
+		diagnostics = append(missing, diagnostics...)
+	}
+	return artifacts, diagnostics, err
 }
 
 // RegisteredTargets returns the targets that currently have a registered
@@ -260,21 +311,129 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 			opt(cfg)
 		}
 	}
-
 	var (
 		arts  []artifact.Artifact
 		diags []diag.Diagnostic
 		err   error
 	)
-	arts, diags, err = translateSafely(c, r, *cfg)
+	arts, diags, err = GuardNativeCodexTranslation(r, t, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+		return translateSafely(c, resource, *cfg)
+	})
 	if err != nil {
 		slog.Error("compile failed", "target", t, "kind", kind, "resource", name, "error", err)
 		return nil, err
 	}
-
 	slog.Debug("compile end", "target", t, "kind", kind, "resource", name, "artifacts", len(arts), "diagnostics", len(diags))
 	return &Result{
 		Artifacts:   arts,
 		Diagnostics: diags,
 	}, nil
+}
+
+// codexNativeLossDiagnostics prevents target-specific Codex sidecars from
+// disappearing or being reinterpreted when a native resource leaves Codex.
+func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diagnostic {
+	if target == TargetCodex {
+		return nil
+	}
+	diagnostic := func(code string, severity diag.Severity, message string, source ir.SourceRef) []diag.Diagnostic {
+		return []diag.Diagnostic{{Code: code, Severity: severity, Target: string(target), Resource: resource.Name(), Message: message, Source: diag.SourceRef(source)}}
+	}
+	switch typed := resource.(type) {
+	case *ir.Subagent:
+		if typed.Ext.Codex == nil {
+			return nil
+		}
+		if typed.Ext.Codex.SandboxMode != "" {
+			return diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve the native Codex sandbox restriction; subagent suppressed", typed.Source)
+		}
+		var diagnostics []diag.Diagnostic
+		if typed.Ext.Codex.Model != "" {
+			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexModelDropped, diag.SeverityWarning, "Target omitted a Codex-only model while preserving the subagent", typed.Source)...)
+		}
+		if typed.Ext.Codex.ReasoningEffort != "" {
+			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning, "Target omitted a Codex-only reasoning effort while preserving the subagent", typed.Source)...)
+		}
+		return diagnostics
+	case *ir.Hook:
+		if typed.Ext.Codex != nil && (typed.Ext.Codex.CommandWindows != nil || typed.Ext.Codex.AdditionalContextLimit != nil || typed.Ext.Codex.HookAsync != nil && *typed.Ext.Codex.HookAsync) {
+			return diagnostic(diag.CodeHookCodexNativeFieldsUnsupported, diag.SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", typed.Source)
+		}
+		nativeCodex := typed.Ext.Codex != nil && typed.Ext.Codex.NativeHook
+		if nativeCodex {
+			if _, ok := mapping.NativeCodexHookEvent(typed.Event, typed.Matcher, target); !ok {
+				return diagnostic(diag.CodeHookEventUnmappable, diag.SeverityError, "Target cannot preserve this hook event; hook suppressed", typed.Source)
+			}
+			if strings.Contains(typed.Command, "${") {
+				return diagnostic(diag.CodeHookNativeLiteralUnsupported, diag.SeverityError, "Target would reinterpret a native Codex hook literal; hook suppressed", typed.Source)
+			}
+		}
+		if typed.Ext.Codex != nil && (typed.Ext.Codex.HookAsync != nil || typed.Ext.Codex.HookStatusMessage != nil) {
+			return diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, "Target omitted native Codex hook scheduling or display fields while preserving the hook", typed.Source)
+		}
+	case *ir.McpServer:
+		ext := typed.Ext.Codex
+		if ext == nil {
+			return nil
+		}
+		placement := ""
+		if ext.MCP != nil {
+			placement = ext.MCP.ExperimentalEnvironment
+		}
+		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP) || !codexMCPMatchesCanonical(typed, ext.MCP) {
+			return diagnostic(diag.CodeMcpSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve native Codex MCP authority or literal semantics; server suppressed", typed.Source)
+		}
+		if placement == "local" {
+			return diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, "Target omitted explicit native Codex local MCP placement while preserving the server", typed.Source)
+		}
+	}
+	return nil
+}
+
+func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP) bool {
+	if native == nil {
+		return false
+	}
+	if strings.Contains(native.Command, "${") || strings.Contains(native.CWD, "${") || strings.Contains(native.URL, "${") {
+		return true
+	}
+	for _, value := range native.Args {
+		if strings.Contains(value, "${") {
+			return true
+		}
+	}
+	for _, values := range []map[string]string{native.Env, native.HTTPHeaders} {
+		for _, value := range values {
+			if strings.Contains(value, "${") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func codexMCPMatchesCanonical(server *ir.McpServer, native *extpkg.CodexMCP) bool {
+	if native == nil {
+		return true
+	}
+	cwd := ""
+	if value, ok := server.Extra["cwd"]; ok {
+		var valid bool
+		cwd, valid = value.(string)
+		if !valid {
+			return false
+		}
+	}
+	env := maps.Clone(native.Env)
+	if env == nil && len(native.EnvVars) > 0 {
+		env = make(map[string]string, len(native.EnvVars))
+	}
+	for _, name := range native.EnvVars {
+		value := "${" + name + "}"
+		if existing, ok := env[name]; ok && existing != value {
+			return false
+		}
+		env[name] = value
+	}
+	return native.Command == server.Command && slices.Equal(native.Args, server.Args) && native.CWD == cwd && maps.Equal(env, server.Env) && native.URL == server.URL && maps.Equal(native.HTTPHeaders, server.Headers)
 }

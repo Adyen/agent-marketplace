@@ -443,6 +443,171 @@ func TestApplyRefusesAFileOutsideTheCanonicalRoot(t *testing.T) {
 	}
 }
 
+type stagedCollisionCrasher struct {
+	store  *Store
+	target string
+	staged string
+}
+
+func (c *stagedCollisionCrasher) Crash(point CrashPoint) error {
+	if point != CrashAfterJournalPrepared {
+		return nil
+	}
+	journal, err := c.store.ReadJournal()
+	if err != nil {
+		return err
+	}
+	if journal == nil {
+		return errors.New("ownership test: prepared journal is missing")
+	}
+	c.staged = journal.StagedPath
+	return os.Symlink(c.target, c.staged)
+}
+
+func TestApplyPreservesPreexistingStagedSymlinkThroughRecovery(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	sentinel := filepath.Join(filepath.Dir(f.targetRoot), "sentinel")
+	const original = "outside data\n"
+	if err := os.WriteFile(sentinel, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe := sentinel + ".symlink-probe"
+	if err := os.Symlink(sentinel, probe); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Remove(probe); err != nil {
+		t.Fatal(err)
+	}
+
+	crasher := &stagedCollisionCrasher{target: sentinel}
+	st := f.store(WithCrasher(crasher))
+	crasher.store = st
+	_, err := st.Apply(Mutation{
+		Rel:                   f.rel,
+		AbsFile:               f.absFile,
+		NextBytes:             []byte(nextContent),
+		Reason:                ReasonSync,
+		ExpectPriorDigest:     Digest([]byte(priorContent)),
+		ExpectPriorGeneration: 0,
+	})
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("Apply error = %v, want staged-path collision", err)
+	}
+
+	assertCollisionUntouched := func() {
+		t.Helper()
+		gotTarget, readErr := os.Readlink(crasher.staged)
+		if readErr != nil {
+			t.Errorf("read staged symlink: %v", readErr)
+			return
+		}
+		if gotTarget != sentinel {
+			t.Errorf("staged symlink target = %q, want %q", gotTarget, sentinel)
+		}
+		got, readErr := os.ReadFile(sentinel)
+		if readErr != nil {
+			t.Errorf("read outside sentinel: %v", readErr)
+			return
+		}
+		if string(got) != original {
+			t.Errorf("outside file changed through staged symlink: %q", got)
+		}
+	}
+	assertCollisionUntouched()
+	if got, ok := f.readAggregate(); !ok || got != priorContent {
+		t.Errorf("aggregate after refused Apply = %q, exists %v", got, ok)
+	}
+	journal, err := st.ReadJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal != nil {
+		t.Errorf("refused Apply left a prepared journal: %#v", journal)
+	}
+	backups, err := st.SafetyBackups(f.rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("refused Apply left %d safety backups", len(backups))
+	}
+
+	outcomes, err := st.Recover()
+	if err != nil {
+		t.Fatalf("Recover after refused Apply: %v", err)
+	}
+	if len(outcomes) != 0 {
+		t.Errorf("Recover returned %v, want no pending generation", outcomes)
+	}
+	assertCollisionUntouched()
+}
+
+func TestApplyPreservesPreexistingStagedSymlinkWhenJournalCleanupFails(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	sentinel := filepath.Join(filepath.Dir(f.targetRoot), "sentinel")
+	const original = "outside data\n"
+	if err := os.WriteFile(sentinel, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe := sentinel + ".symlink-probe"
+	if err := os.Symlink(sentinel, probe); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Remove(probe); err != nil {
+		t.Fatal(err)
+	}
+
+	crasher := &stagedCollisionCrasher{target: sentinel}
+	st := f.store(WithCrasher(crasher))
+	crasher.store = st
+	clearAttempts := 0
+	st.removeJournalFile = func(string) error {
+		clearAttempts++
+		return errors.New("injected journal cleanup failure")
+	}
+	_, err := st.Apply(Mutation{
+		Rel:                   f.rel,
+		AbsFile:               f.absFile,
+		NextBytes:             []byte(nextContent),
+		Reason:                ReasonSync,
+		ExpectPriorDigest:     Digest([]byte(priorContent)),
+		ExpectPriorGeneration: 0,
+	})
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("Apply error = %v, want staged-path collision", err)
+	}
+	if clearAttempts != 1 {
+		t.Fatalf("journal cleanup attempts = %d, want 1", clearAttempts)
+	}
+	if gotTarget, readErr := os.Readlink(crasher.staged); readErr != nil || gotTarget != sentinel {
+		t.Fatalf("staged collision after Apply = %q, %v; want symlink to %q", gotTarget, readErr, sentinel)
+	}
+
+	journal, err := st.ReadJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal == nil || journal.StagedPath != "" {
+		t.Errorf("durable refused-Apply journal = %#v, want empty staged path", journal)
+	}
+	st.removeJournalFile = nil
+	outcomes, err := st.Recover()
+	if err != nil {
+		t.Fatalf("Recover after failed journal cleanup: %v", err)
+	}
+	if len(outcomes) != 1 || outcomes[0].Action != ActionRolledBack {
+		t.Errorf("Recover outcomes = %#v, want one rollback", outcomes)
+	}
+	if gotTarget, readErr := os.Readlink(crasher.staged); readErr != nil || gotTarget != sentinel {
+		t.Errorf("staged collision after Recover = %q, %v; want symlink to %q", gotTarget, readErr, sentinel)
+	}
+	if got, readErr := os.ReadFile(sentinel); readErr != nil || string(got) != original {
+		t.Errorf("outside sentinel after Recover = %q, %v; want %q", got, readErr, original)
+	}
+}
+
 func TestApplyRefusesInvalidMutations(t *testing.T) {
 	f := newFixture(t)
 	st := f.store()

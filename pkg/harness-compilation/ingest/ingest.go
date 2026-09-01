@@ -25,6 +25,7 @@ const (
 	HarnessWindsurf = targetmeta.TargetWindsurf
 	HarnessGemini   = targetmeta.TargetGemini
 	HarnessDevin    = targetmeta.TargetDevin
+	HarnessCodex    = targetmeta.TargetCodex
 )
 
 // Bundle holds the result of ingesting a harness-specific source layout:
@@ -95,12 +96,13 @@ func RegisteredSources() []Harness {
 //  2. .factory-plugin/plugin.json → Factory
 //  3. .cursor-plugin/plugin.json → Cursor
 //  4. gemini-extension.json → Gemini
-//  5. .claude/ with skills/agents/commands/hooks/.mcp.json → Claude
-//  6. .factory/ → Factory
-//  7. .cursor/ → Cursor
-//  8. .gemini/ → Gemini
-//  9. .windsurf/ → Windsurf
-//  10. Bare skills directory (subdirs with SKILL.md, or SKILL.md at root) → Claude
+//  5. .codex/ → Codex
+//  6. .claude/ with skills/agents/commands/hooks/.mcp.json → Claude
+//  7. .factory/ → Factory
+//  8. .cursor/ → Cursor
+//  9. .gemini/ → Gemini
+//  10. .windsurf/ → Windsurf
+//  11. Bare skills directory (subdirs with SKILL.md, or SKILL.md at root) → Claude
 func Autodetect(src fs.FS) (Harness, bool) {
 	return autodetectInternal(src, false)
 }
@@ -146,8 +148,7 @@ func devinWinsOverCompatibilityLayouts(src fs.FS) bool {
 
 func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
 	if devinWinsOverCompatibilityLayouts(src) {
-		slog.Debug("autodetected harness", "harness", HarnessDevin)
-		return HarnessDevin, true
+		return logAutodetectedHarness(HarnessDevin)
 	}
 
 	// Prefer explicit manifest markers before asking ingesters, so root-level
@@ -163,7 +164,7 @@ func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
 	}
 	for _, candidate := range explicit {
 		if _, err := fs.ReadFile(src, candidate.path); err == nil {
-			return candidate.harness, true
+			return logAutodetectedHarness(candidate.harness)
 		}
 	}
 
@@ -180,16 +181,21 @@ func autodetectInternal(src fs.FS, strict bool) (Harness, bool) {
 		if strict {
 			if strictIng, ok := ing.(StrictDetector); ok {
 				if strictIng.DetectStrict(src) {
-					return h, true
+					return logAutodetectedHarness(h)
 				}
 				continue
 			}
 		}
 		if ing.Detect(src) {
-			return h, true
+			return logAutodetectedHarness(h)
 		}
 	}
 	return "", false
+}
+
+func logAutodetectedHarness(harness Harness) (Harness, bool) {
+	slog.Debug("autodetected harness", "harness", harness)
+	return harness, true
 }
 
 // StrictDetector is an optional interface that ingesters can implement to
@@ -209,6 +215,7 @@ type StrictDetector interface {
 // markers by devinWinsOverCompatibilityLayouts, which is strictly earlier than
 // anything this list can express.
 var autodetectOrder = []Harness{
+	HarnessCodex,
 	HarnessClaude,
 	HarnessFactory,
 	HarnessCursor,

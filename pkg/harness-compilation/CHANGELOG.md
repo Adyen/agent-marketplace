@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Codex is a first-class native target
+
+Codex is the seventh bidirectional compiler/ingester/conversion target. It
+covers all five target-materialized kinds without plugin packaging:
+
+- skills and converted commands use `.agents/skills/<name>/SKILL.md`, with the
+  command provenance marker `x-agent-marketplace-kind: command`;
+- subagents use `.codex/agents/<name>.toml`;
+- command hooks merge into `.codex/hooks.json`; and
+- stdio or remote MCP servers merge into `[mcp_servers.<name>]` tables in
+  `.codex/config.toml`.
+
+The application resolves those artifact prefixes into repo `.agents`/`.codex`
+roots and machine `~/.agents` plus `$CODEX_HOME` (or `~/.codex`). It reconciles
+the two shared files through durable ownership and mandatory backups, preserves
+unmanaged entries, and reports repo trust review without editing Codex trust
+state. Missing/corrupt ownership and malformed or unpatchable aggregate forms
+fail closed.
+
+Conversion to Codex refuses any destination that already contains
+`.codex/hooks.json` or `.codex/config.toml`; use a new or empty destination so
+one-shot conversion never overwrites shared configuration. Sync, check,
+ingestion, and conversion do not install, require, or probe a Codex executable.
+
+The mapping is evidence-bound to the official Codex skills, subagents, hooks,
+and MCP documentation as of 2026-08-19. Benign metadata loss warns; any loss of
+tool/sandbox restrictions, executable behavior, authentication, transport, or
+interpolation semantics suppresses only the affected resource or aggregate
+entry with a stable diagnostic. `.agents/skills` alone is not autodetected as
+Codex. Rules and `AGENTS.md` generation remain out of scope, and deprecated
+`.codex/prompts/*.md` files are ingest-only migration input, never compiler
+output.
+
 ### `diag` names the severity threshold so consumers cannot get the ordinal direction wrong
 
 `SeverityError` is the ZERO value of `Severity` (error 0, warning 1, info 2), so
@@ -25,6 +58,21 @@ consumer UIs key off `diag/codes.md`, so renumbering them to make magnitude
 comparisons read naturally would silently change behaviour for every consumer.
 No catalog entry changes; `codes.md` only gains a section stating the direction
 and naming the predicates.
+
+### An unrepresentable Factory `tools` restriction now omits the key instead of costing the droid
+
+**This reverses a documented, tested contract on purpose.**
+`subagent.factory.tool-unknown` was an error that suppressed the droid artifact;
+it is now a **warning** that omits the `tools` key from a droid that is still
+emitted. `disallowedTools` and `isolation` remain fail-closed errors because
+Factory has no field for those controls.
+
+A subagent `tools` list containing an unknown Factory tool produces one warning
+per unmapped tool and omits the entire `tools` frontmatter key. `sync` exits 0
+and installs the droid. Explicitly empty lists still render `tools: []`, fully
+mappable lists still render their mapped values, and tool overrides still work.
+Omitting the key intentionally inherits Factory's default tool set; emitting an
+unknown identifier would cause Factory to reject the droid.
 
 ### An unrepresentable Devin `allowed-tools` restriction now omits the key instead of costing the resource
 
@@ -96,17 +144,14 @@ only stops auto-activation and leaves the skill usable, whereas
 `openspec-apply-change` needs `exec` to run `openspec`. That trades a loud absence
 for a silent, inert install.
 
-**Devin now DIVERGES from Factory, and the divergence is accepted rather than
-accidental.** `subagent.factory.tool-unknown` still fails closed, as do
-`subagent.gemini.tool-unknown` and `subagent.cursor.tool-unknown`. Factory's
-fail-closed contract is pinned by bead `agent-marketplace-r2zr`'s acceptance
-criteria and must not be relaxed to match Devin. The split is justified by
-evidence, not taste: Devin is the one target whose tool vocabulary has been probed
-at runtime, so it is the one target where "the restriction cannot be represented,
-and what *is* written is honest about what will happen" is an observation rather
-than an assumption. `ingest.devin.tool-unreversible` also stays an error, because
-ingestion writes the harness-neutral IR that all six compilers read, so a
-rewritten restriction there propagates to targets that do enforce it.
+**Devin and Factory no longer diverge on tool-unknown, and the remaining split is
+accepted rather than accidental.** `subagent.gemini.tool-unknown` and
+`subagent.cursor.tool-unknown` still fail closed; `subagent.factory.tool-unknown`
+was relaxed because Factory's droid frontmatter rejects unknown tool identifiers
+and omitting the `tools` key uses Factory's documented default tool set.
+`ingest.devin.tool-unreversible` also stays an error, because ingestion writes the
+harness-neutral IR that every registered compiler reads, so a rewritten restriction there
+propagates to targets that do enforce it.
 
 **Decision records updated rather than quietly corrected.** The invariant "a
 privilege-broadening loss must be an error" is now false for these two codes and
@@ -273,7 +318,7 @@ whatever trivia the index it lands on used to hold. Deleting a superseded
 generated hook used to delete the comment the user had written above the hook
 BELOW it.
 
-All six golden trees are byte-for-byte identical. Benchmarks (`benchstat`,
+All then-existing golden trees are byte-for-byte identical. Benchmarks (`benchstat`,
 5×300ms): the steady-state paths are flat; the worst case in the suite — 100
 stale named array entries, none reusable, all replaced — is +5.6% time and
 +2.6% allocs for the trivia-preserving element match, on a container that is

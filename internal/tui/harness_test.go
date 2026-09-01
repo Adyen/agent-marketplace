@@ -48,17 +48,28 @@ func TestRenderHarnessModalShowsProvenanceAndActions(t *testing.T) {
 	}
 }
 
-// TestHarnessModalOffersDevinLastAsAnOptInChoice pins work package D11's TUI
-// half: "TUI harness selection is the only harness-list mutation UX in this
-// increment" (plan, "Rollout UX"). Devin must be offered, must be offered LAST
-// so the pre-existing order is undisturbed, and must not be pre-selected —
-// selecting it is the user's opt-in.
-func TestHarnessModalOffersDevinLastAsAnOptInChoice(t *testing.T) {
+func TestRenderHarnessModalUsesRegistryLabelsInSummaries(t *testing.T) {
+	m := NewModel("/repo", "/home")
+	m.globalHarnesses = []string{"cursor"}
+	m.projectHarnesses = []string{"codex"}
+	m.openHarnessModal()
+
+	out := renderHarnessModal(m)
+	for _, want := range []string{"Effective: Codex", "Global:    Cursor", "Project:   Codex"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("modal missing registry label %q in summary:\n%s", want, out)
+		}
+	}
+}
+
+// TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice pins the stable UI order
+// and keeps both later-added targets opt-in.
+func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	ids := make([]string, 0, len(knownHarnessOptions))
 	for _, opt := range knownHarnessOptions {
 		ids = append(ids, opt.ID)
 	}
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin"}
+	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("harness modal options = %#v, want %#v", ids, want)
 	}
@@ -71,6 +82,9 @@ func TestHarnessModalOffersDevinLastAsAnOptInChoice(t *testing.T) {
 	if m.harnessModal.selected["devin"] {
 		t.Fatal("Devin must not be pre-selected: it is opt-in")
 	}
+	if m.harnessModal.selected["codex"] {
+		t.Fatal("Codex must not be pre-selected: it is opt-in")
+	}
 
 	out := renderHarnessModal(m)
 	if !strings.Contains(out, "Devin CLI") || !strings.Contains(out, "devin") {
@@ -78,6 +92,9 @@ func TestHarnessModalOffersDevinLastAsAnOptInChoice(t *testing.T) {
 	}
 	if !strings.Contains(out, "[ ] Devin CLI") {
 		t.Fatalf("Devin should render as an unchecked option:\n%s", out)
+	}
+	if !strings.Contains(out, "[ ] Codex") || !strings.Contains(out, "codex") {
+		t.Fatalf("Codex should render as an unchecked option after Devin:\n%s", out)
 	}
 }
 
@@ -98,8 +115,8 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	m := NewModel("/repo", tmpHome)
 	m.globalHarnesses = []string{"factory"}
 	m.openHarnessModal()
-	// Walk to the last option (Devin) and toggle it on.
-	for i := 0; i < len(knownHarnessOptions)-1; i++ {
+	// Walk to Devin and toggle it on without assuming it remains last.
+	for knownHarnessOptions[m.harnessModal.cursor].ID != "devin" {
 		mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 		m = mi.(Model)
 	}

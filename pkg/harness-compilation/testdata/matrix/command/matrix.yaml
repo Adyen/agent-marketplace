@@ -197,3 +197,71 @@ cells:
         - ingest.windsurf.workflow-assumed-command
       allowedLosses:
         - description
+    - from: claude
+      to: codex
+      class: cross
+    - from: cursor
+      to: codex
+      class: cross
+      allowedLosses:
+        - description
+    - from: devin
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: factory
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: gemini
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: windsurf
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: codex
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: codex
+      to: codex
+      class: identity
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized

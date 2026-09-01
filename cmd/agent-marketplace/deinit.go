@@ -156,7 +156,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	// exactly which user-owned files would be removed while organization-owned
 	// files are preserved.
 	if dryRun && report != nil && (report.TotalWritten() > 0 || totalRemoved > 0) {
-		if err := printOutputDirDetail(out, report); err != nil {
+		if err := printOutputDirDetail(out, report, false); err != nil {
 			return err
 		}
 	}

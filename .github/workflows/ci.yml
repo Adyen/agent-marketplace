@@ -6,9 +6,7 @@ on:
       - main
     tags:
       - '*'
-  pull_request:
-    branches:
-      - main
+  pull_request: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +39,21 @@ jobs:
       - name: Build binary
         run: make build
 
+  container:
+    name: Build telemetry receiver container
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build container
+        run: docker build --file Dockerfile.telemetry-receiver --tag agent-marketplace-telemetry-receiver:ci .
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -61,6 +74,33 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  tui-qa-driver:
+    name: TUI QA Driver
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: tools/tui-qa/.node-version
+          cache: npm
+          cache-dependency-path: tools/tui-qa/package-lock.json
+
+      - name: Install exact TUI QA dependencies
+        run: npm ci
+        working-directory: tools/tui-qa
+
+      - name: Run TUI QA driver self-tests
+        run: npm run check
+        working-directory: tools/tui-qa
 
   lint:
     name: Lint

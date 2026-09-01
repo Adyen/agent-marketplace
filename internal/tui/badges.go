@@ -73,7 +73,7 @@ func harnessBadge(r row) string {
 	if r.IsMalformed || len(r.Harnesses) == 0 || r.HarnessSource != "registry override" {
 		return ""
 	}
-	return "{" + strings.Join(r.Harnesses, ",") + "}"
+	return "{" + harnessListLabel(r.Harnesses, ",") + "}"
 }
 
 func harnessBadgeStyle() lipgloss.Style {

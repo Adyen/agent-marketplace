@@ -4,7 +4,8 @@
       {
         "command": "/plugins/demo/scripts/check.sh",
         "event": "PreToolUse",
-        "matcher": "Read"
+        "matcher": "Read",
+        "type": "command"
       }
     ]
   }

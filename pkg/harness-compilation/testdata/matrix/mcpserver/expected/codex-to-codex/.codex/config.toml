@@ -1,0 +1,6 @@
+[mcp_servers.demo-server]
+command = 'npx'
+args = ['-y', 'demo-mcp-server']
+
+[mcp_servers.demo-server.env]
+DEMO_API_KEY = '${CLAUDE_PLUGIN_ROOT}/.env'

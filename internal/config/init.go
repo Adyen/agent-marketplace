@@ -6,10 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,72 +20,12 @@ var ErrAlreadyInitialized = errors.New("user personal config already initialized
 // SupportedHarnessTargets returns the canonical list of known harness target
 // IDs in a stable order.
 func SupportedHarnessTargets() []string {
-	return []string{
-		string(hcc.TargetFactory),
-		string(hcc.TargetClaude),
-		string(hcc.TargetCursor),
-		string(hcc.TargetWindsurf),
-		string(hcc.TargetGemini),
-	}
+	return targetmeta.CompilerNames()
 }
 
 // IsSupportedHarness reports whether id is a known harness target.
 func IsSupportedHarness(id string) bool {
-	switch hcc.Target(id) {
-	case hcc.TargetFactory, hcc.TargetClaude, hcc.TargetCursor, hcc.TargetWindsurf, hcc.TargetGemini:
-		return true
-	}
-	return false
-}
-
-// DetectInstalledHarnesses scans the user's home directory for harness
-// installation roots and returns the IDs of those that appear to exist,
-// sorted. It is a best-effort hint; an empty result means no harness
-// installation roots were detected.
-func DetectInstalledHarnesses() ([]string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve home directory: %w", err)
-	}
-	return DetectInstalledHarnessesInHome(homeDir)
-}
-
-// DetectInstalledHarnessesInHome is the testable version of
-// DetectInstalledHarnesses: it looks for machine-scoped harness install
-// roots under the supplied home directory.
-func DetectInstalledHarnessesInHome(homeDir string) ([]string, error) {
-	roots := makeInstallRootsForHome(homeDir)
-	var detected []string
-	for id, root := range roots {
-		if root == "" {
-			continue
-		}
-		info, err := os.Stat(root)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("stat harness root %q: %w", root, err)
-		}
-		if info.IsDir() {
-			detected = append(detected, string(id))
-		}
-	}
-	sort.Strings(detected)
-	return detected, nil
-}
-
-func makeInstallRootsForHome(homeDir string) map[hcc.Target]string {
-	if homeDir == "" {
-		return nil
-	}
-	return map[hcc.Target]string{
-		hcc.TargetClaude:   filepath.Join(homeDir, ".claude"),
-		hcc.TargetFactory:  filepath.Join(homeDir, ".factory"),
-		hcc.TargetCursor:   filepath.Join(homeDir, ".cursor"),
-		hcc.TargetWindsurf: filepath.Join(homeDir, ".codeium", "windsurf"),
-		hcc.TargetGemini:   filepath.Join(homeDir, ".gemini"),
-	}
+	return targetmeta.IsCompilerTarget(id)
 }
 
 // UserPersonalConfigPath returns the path to the user-personal config file.

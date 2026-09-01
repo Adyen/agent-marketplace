@@ -12,6 +12,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 )
 
 func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
@@ -422,19 +423,23 @@ func setCacheModTime(t *testing.T, path string, modTime time.Time) {
 	}
 }
 
-// TestBuildHarnessTargetRowsPresentsDevinCapabilitiesAndRoots pins the status
-// half of the plan's "Help text, status, list badges, conversion allowlists,
-// and target displays include Devin": a user who opts Devin in must be able to
-// see, from status alone, that it is bidirectional and where its two canonical
-// roots are (`.devin` in the repo, `~/.config/devin` for user scope).
-func TestBuildHarnessTargetRowsPresentsDevinCapabilitiesAndRoots(t *testing.T) {
+func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	repoRoot := "/repo"
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	repoRoot := t.TempDir()
+	canonicalRepo, _ := ownership.CanonicalRoot(repoRoot)
+	canonicalHome, _ := ownership.CanonicalRoot(home)
+	canonicalCodexHome, _ := ownership.CanonicalRoot(codexHome)
 
-	rows := buildHarnessTargetRows(repoRoot, []string{"factory", "devin", "devin", " ", "not-a-harness"})
+	rows, err := buildHarnessTargetRows(repoRoot, []string{"factory", "devin", "codex", "devin", " ", "not-a-harness"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	want := []harnessTargetRow{
+		{Target: "Codex", Capabilities: "compile,ingest,convert,tui", RepoRoot: "repo-agents=" + filepath.Join(canonicalRepo, ".agents") + ", repo-codex=" + filepath.Join(canonicalRepo, ".codex"), MachineRoot: "machine-agents=" + filepath.Join(canonicalHome, ".agents") + ", machine-codex=" + canonicalCodexHome},
 		{Target: "devin", Capabilities: "compile,ingest,convert,tui", RepoRoot: filepath.Join(repoRoot, ".devin"), MachineRoot: filepath.Join(home, ".config", "devin")},
 		{Target: "factory", Capabilities: "compile,ingest,convert,tui", RepoRoot: filepath.Join(repoRoot, ".factory"), MachineRoot: filepath.Join(home, ".factory")},
 		{Target: "not-a-harness", Capabilities: "unknown", RepoRoot: "-", MachineRoot: "-"},
@@ -447,9 +452,25 @@ func TestBuildHarnessTargetRowsPresentsDevinCapabilitiesAndRoots(t *testing.T) {
 	if err := writeStatusTable(&out, "HARNESS TARGETS", []string{"TARGET", "CAPABILITIES", "REPO ROOT", "MACHINE ROOT"}, harnessTargetRowsToCells(rows)); err != nil {
 		t.Fatalf("write table: %v", err)
 	}
-	for _, needle := range []string{"HARNESS TARGETS", "devin", "compile,ingest,convert,tui", filepath.Join(repoRoot, ".devin"), filepath.Join(home, ".config", "devin")} {
+	for _, needle := range []string{"HARNESS TARGETS", "devin", "Codex", "compile,ingest,convert,tui", filepath.Join(repoRoot, ".devin"), filepath.Join(home, ".config", "devin"), "repo-agents=", "repo-codex=", "machine-agents=", "machine-codex="} {
 		if !strings.Contains(out.String(), needle) {
 			t.Fatalf("status HARNESS TARGETS section missing %q:\n%s", needle, out.String())
+		}
+	}
+}
+
+func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "relative/codex")
+	if _, err := buildHarnessTargetRows(t.TempDir(), []string{"codex"}); err == nil || !strings.Contains(err.Error(), "CODEX_HOME must be absolute") {
+		t.Fatalf("buildHarnessTargetRows error = %v", err)
+	}
+}
+
+func TestTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
+	for input, want := range map[string]string{"codex": "Codex", "factory": "factory", "unknown": "unknown"} {
+		if got := targetDisplayName(input); got != want {
+			t.Errorf("targetDisplayName(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

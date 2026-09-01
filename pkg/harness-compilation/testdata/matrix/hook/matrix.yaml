@@ -222,3 +222,108 @@ cells:
       allowedLosses:
         - command
         - name
+    - from: claude
+      to: codex
+      class: cross
+      allowedLosses:
+        - command
+        - name
+    - from: cursor
+      to: codex
+      class: cross
+      diagnostics:
+        - compile.codex.field-dropped
+      allowedLosses:
+        - command
+        - name
+    - from: devin
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - name
+    - from: factory
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - name
+    - from: gemini
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - matcher
+        - name
+    - from: windsurf
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - name
+    - from: codex
+      to: claude
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - name
+    - from: codex
+      to: cursor
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - name
+    - from: codex
+      to: devin
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - name
+    - from: codex
+      to: factory
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - name
+    - from: codex
+      to: gemini
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - matcher
+        - name
+    - from: codex
+      to: windsurf
+      class: cross
+      diagnostics:
+        - hook.native-literal-unsupported
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - command
+        - name
+    - from: codex
+      to: codex
+      class: identity
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - name

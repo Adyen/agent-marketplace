@@ -1,19 +1,39 @@
 package ingest_test
 
 import (
+	"bytes"
 	"io/fs"
+	"log/slog"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/codex"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/cursor"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/devin"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/factory"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 )
+
+func TestAutodetectLogsCodexSuccessOnce(t *testing.T) {
+	previous := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	harness, ok := ingest.Autodetect(fstest.MapFS{".codex/hooks.json": {Data: []byte(`{"hooks":{}}`)}})
+	if !ok || harness != ingest.HarnessCodex {
+		t.Fatalf("Autodetect = %q, %v; want Codex", harness, ok)
+	}
+	output := logs.String()
+	if strings.Count(output, "autodetected harness") != 1 || !strings.Contains(output, `"harness":"codex"`) {
+		t.Fatalf("logs = %s, want one Codex success decision", output)
+	}
+}
 
 func TestFor_ClaudeRegistered(t *testing.T) {
 	_, ok := ingest.For(ingest.HarnessClaude)
