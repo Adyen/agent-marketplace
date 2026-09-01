@@ -21,7 +21,7 @@
     "@types/node": "24.10.1",
     "@xterm/headless": "6.0.0",
     "ajv": "8.20.0",
-    "node-pty": "1.2.0-beta.11",
+    "node-pty": "1.2.0-beta.15",
     "typescript": "5.9.3"
   },
   "allowScripts": {
