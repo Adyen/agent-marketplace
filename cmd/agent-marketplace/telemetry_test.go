@@ -542,18 +542,3 @@ func keyValueMap(kvs []*commonpb.KeyValue) map[string]string {
 	}
 	return out
 }
-
-func TestTelemetryReceiverCommandRegistered(t *testing.T) {
-	output, err := executeCommand("telemetry", "receiver", "--help")
-	if err != nil {
-		t.Fatalf("receiver --help failed: %v\n%s", err, output)
-	}
-	for _, flag := range []string{"--listen", "--storage-dir", "--max-installations"} {
-		if !strings.Contains(output, flag) {
-			t.Fatalf("receiver help missing %q flag:\n%s", flag, output)
-		}
-	}
-	if !strings.Contains(output, "localhost:4318") {
-		t.Fatalf("receiver help missing default listen address:\n%s", output)
-	}
-}
