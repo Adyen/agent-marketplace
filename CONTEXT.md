@@ -36,6 +36,22 @@ _Avoid_: Generated file, managed file
 Evidence identifying owned entries in shared harness configuration files.
 _Avoid_: Cache, ownership marker
 
+**Configuration layer**:
+One authority's scope-owned declarations and policy, composed with other layers to produce effective configuration.
+_Avoid_: Effective configuration, lockfile
+
+**Requirement**:
+A human-authored declaration of acquisition intent owned by one configuration layer.
+_Avoid_: Locked resolution, pin
+
+**Locked resolution**:
+The immutable source occurrence or resource revision selected for a requirement.
+_Avoid_: Requirement, cache entry
+
+**Lockfile**:
+A generated, scope-owned record mapping one configuration layer's remote requirements to locked resolutions.
+_Avoid_: Configuration, effective snapshot, cache
+
 **Community telemetry consent**:
 An affirmative, user-controlled choice made during interactive initialization before an unmanaged installation sends community telemetry.
 _Avoid_: Opt-out telemetry, implied consent
