@@ -76,6 +76,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 - No resource dependency mechanism (tags and collections are partial workarounds)
 
+Run the QA-only PTY driver, process-supervision, restoration-boundary, and sanitization self-tests with `make tui-qa-check`.
+
 ## File Layout
 
 ```

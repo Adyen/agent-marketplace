@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-marketplace://tui-qa/schemas/exploratory-supplement.v1.json",
+  "title": "agent-marketplace TUI QA exploratory supplement, schema version 1",
+  "description": "Advisory additive output. It cannot alter deterministic results.v1.json status or required flow outcomes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "resultsSha256",
+    "generatedAt",
+    "agent",
+    "supplementalOnly",
+    "requestedAdditionalFlowIds",
+    "observations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[A-Za-z0-9._-]+$" },
+    "resultsSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "generatedAt": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "model"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "supplementalOnly": { "const": true },
+    "requestedAdditionalFlowIds": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+      "uniqueItems": true
+    },
+    "observations": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "category", "title", "detail", "evidencePaths"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+          "severity": { "enum": ["high", "medium", "low", "note"] },
+          "category": { "enum": ["product", "environment", "harness", "coverage", "usability"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 10000 },
+          "flowId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+          "proposedFlowId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+          "evidencePaths": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+$" },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  }
+}
