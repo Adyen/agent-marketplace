@@ -285,6 +285,15 @@ const prepareFixture = async (
   }
 };
 
+const removeSandbox = (sandbox: Sandbox, runError: unknown): void => {
+  try {
+    fs.rmSync(sandbox.root, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (runError) throw new AggregateError([runError, cleanupError], "flow execution and sandbox cleanup both failed");
+    throw cleanupError;
+  }
+};
+
 const runPtyAttempt = async (
   config: WorkbenchConfig,
   budget: ArtifactBudget,
@@ -298,6 +307,7 @@ const runPtyAttempt = async (
   const startedAt = new Date().toISOString();
   const started = Date.now();
   let before: ManagedSummary | undefined;
+  let runError: unknown;
   try {
     const testEnvironment = environmentForTest(sandbox);
     seedInvariantFixture(sandbox, testEnvironment);
@@ -402,8 +412,11 @@ const runPtyAttempt = async (
       evidence,
       ...(outcome.reason ? { reason: outcome.reason } : {})
     };
+  } catch (error) {
+    runError = error;
+    throw error;
   } finally {
-    fs.rmSync(sandbox.root, { recursive: true, force: true });
+    removeSandbox(sandbox, runError);
   }
 };
 
@@ -418,6 +431,7 @@ const runCommandAttempt = async (
   const sandbox = provision(config.runId, flow.id, attemptNumber);
   const startedAt = new Date().toISOString();
   const started = Date.now();
+  let runError: unknown;
   try {
     const env = environmentForTest(sandbox);
     seedInvariantFixture(sandbox, env);
@@ -485,8 +499,11 @@ const runCommandAttempt = async (
       evidence,
       ...(outcome.reason ? { reason: outcome.reason } : {})
     };
+  } catch (error) {
+    runError = error;
+    throw error;
   } finally {
-    fs.rmSync(sandbox.root, { recursive: true, force: true });
+    removeSandbox(sandbox, runError);
   }
 };
 

@@ -22,7 +22,12 @@ if (!flow || flow.driver !== "pty") throw new Error(`unknown PTY invariant flow 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const toolRoot = fs.existsSync(path.join(moduleRoot, "dist", "pty-wrapper.js")) ? moduleRoot : path.resolve(moduleRoot, "..", "..");
 const wrapper = path.join(toolRoot, "dist", "pty-wrapper.js");
-const testEnv = JSON.parse(fs.readFileSync(envFile, "utf8")) as Record<string, string>;
+const parsedEnvironment: unknown = JSON.parse(fs.readFileSync(envFile, "utf8"));
+if (typeof parsedEnvironment !== "object" || parsedEnvironment === null || Array.isArray(parsedEnvironment) ||
+    !Object.values(parsedEnvironment).every((value) => typeof value === "string")) {
+  throw new Error("invariant environment must be an object of strings");
+}
+const testEnv = parsedEnvironment as Record<string, string>;
 const lifecycleDir = path.join(artifactDir, "lifecycle");
 const activePidFile = path.join(artifactDir, "active.pid");
 
@@ -59,6 +64,16 @@ const waitForStableFrame = async (terminal: { getViewableBuffer(): string[][] },
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("invariant frame did not become stable within the semantic wait");
+};
+
+const signalWrapper = (terminal: unknown): void => {
+  const pid = (terminal as { _pty?: { pid?: number } })._pty?.pid;
+  if (!pid || !Number.isSafeInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
 };
 
 const assertFrame = (terminal: { getViewableBuffer(): string[][] }, visible: string): string => {
@@ -117,10 +132,19 @@ test(`${flow.id}: ${flow.description}`, async ({ terminal }) => {
   const visible = assertFrame(terminal, await waitForStableFrame(terminal));
   if (flow.action === "quit-ctrl-c") terminal.write(String.fromCharCode(3));
   else if (flow.action === "quit-sigterm") {
-    await waitForFile(activePidFile);
-    const targetPid = Number(fs.readFileSync(activePidFile, "utf8").trim());
-    assert.equal(Number.isSafeInteger(targetPid) && targetPid > 1, true);
-    process.kill(targetPid, "SIGTERM");
+    try {
+      await waitForFile(activePidFile);
+      const targetPid = Number(fs.readFileSync(activePidFile, "utf8").trim());
+      assert.equal(Number.isSafeInteger(targetPid) && targetPid > 1, true);
+      process.kill(targetPid, "SIGTERM");
+    } catch (error) {
+      try {
+        signalWrapper(terminal);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "target lookup and wrapper fallback both failed");
+      }
+      throw error;
+    }
   } else terminal.write("q");
 
   const exit = await waitForExit(terminal);

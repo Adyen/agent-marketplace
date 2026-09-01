@@ -40,7 +40,7 @@ case "$image_arch" in
 esac
 
 (cd "$root_dir/tools/tui-qa" && npm run build)
-GOOS=linux GOARCH="$goarch" \
+GOOS=linux GOARCH="$goarch" CGO_ENABLED=0 \
 AM_TUI_QA_REPO_ROOT="$root_dir" \
 AM_TUI_QA_BUILD_OUT="$out_dir/bin/agent-marketplace" \
 AM_TUI_QA_BUILD_MANIFEST="$out_dir/bin/build-identity.json" \
