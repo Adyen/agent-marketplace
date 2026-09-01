@@ -21,7 +21,7 @@ A bounded public `sync` prepares a local bare Git registry before each measured 
 
 Each flow attempt receives a validated fresh root containing isolated HOME, XDG roots, temporary directories, Go/npm caches, workspace, registries, logs, backups, ownership state, generated output, process evidence, and artifacts. The tested-process environment is constructed from an allowlist rather than inherited, and controlled Git/editor shims disable hooks, credentials, signing, SSH prompts, and real editor invocation.
 
-Native runs print a warning because they provide functional isolation for known application-managed paths, not a hostile-code security boundary. `run-container.sh` builds and disposes the pinned Linux workbench with a read-only root and checkout, read-only release binary and build manifest, writable sandbox and artifact mounts only, no runtime network, dropped capabilities, no-new-privileges, a PID limit, and symlink-escape denial. The containment self-test runs before product flows.
+Native runs print a warning because they provide functional isolation for known application-managed paths, not a hostile-code security boundary. `run-container.sh` builds and disposes the pinned Linux workbench (internal Oracle base locally, pinned public Node base on hosted CI) with a read-only root and checkout, read-only release binary and build manifest, writable sandbox and artifact mounts only, no runtime network, dropped capabilities, no-new-privileges, a PID limit, and symlink-escape denial. The containment self-test runs before product flows.
 
 ## Results and artifact contracts
 

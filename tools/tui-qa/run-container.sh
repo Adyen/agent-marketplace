@@ -19,10 +19,18 @@ if ! mkdir "$out_dir"; then
 fi
 mkdir "$out_dir/bin" "$out_dir/artifacts"
 
-if [ -f /usr/local/adyen/etc/openssl/cert.pem ]; then
-  docker build --secret "id=organization-ca,src=/usr/local/adyen/etc/openssl/cert.pem" -t "$image" -f "$root_dir/tools/tui-qa/Dockerfile" "$root_dir"
+build_image() {
+  if [ -f /usr/local/adyen/etc/openssl/cert.pem ]; then
+    docker build "$@" --secret "id=organization-ca,src=/usr/local/adyen/etc/openssl/cert.pem" -t "$image" -f "$root_dir/tools/tui-qa/Dockerfile" "$root_dir"
+  else
+    docker build "$@" -t "$image" -f "$root_dir/tools/tui-qa/Dockerfile" "$root_dir"
+  fi
+}
+
+if [ -n "${TUI_QA_BASE_IMAGE:-}" ]; then
+  build_image --build-arg "BASE_IMAGE=$TUI_QA_BASE_IMAGE" --build-arg "BASE_FLAVOR=${TUI_QA_BASE_FLAVOR:-oracle}"
 else
-  docker build -t "$image" -f "$root_dir/tools/tui-qa/Dockerfile" "$root_dir"
+  build_image
 fi
 
 image_arch=$(docker image inspect --format '{{.Architecture}}' "$image")
