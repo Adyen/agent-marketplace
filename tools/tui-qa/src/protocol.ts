@@ -1,0 +1,3 @@
+export const TARGET_EXIT_BOUNDARY_VERSION = 1;
+export const TERMINAL_RESET_SEQUENCE =
+  "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?2004l\u001b[?25h\u001b[?1049l";
