@@ -72,6 +72,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -86,6 +92,26 @@ jobs:
       - name: Run TUI QA driver self-tests
         run: npm run check
         working-directory: tools/tui-qa
+
+      - name: Run contained non-blocking TUI baseline
+        run: AM_TUI_QA_RUN_ID="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" AM_TUI_QA_RUN_CLASS=pr tools/tui-qa/run-container.sh || test -f ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json"
+
+      - name: Validate contained baseline artifacts
+        run: jq -e '.schemaVersion == 1 and .runClass == "pr"' ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json" >/dev/null
+
+      - name: Upload sanitized TUI QA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tui-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/results.json
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/report.md
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/build-identity.json
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/containment-selftest.txt
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/flows
+          if-no-files-found: warn
+          retention-days: 7
 
   lint:
     name: Lint

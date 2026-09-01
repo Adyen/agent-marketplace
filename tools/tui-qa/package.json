@@ -11,6 +11,7 @@
     "build": "node scripts/clean.mjs dist && tsc -p tsconfig.json",
     "check": "npm run unit && npm run build && npm run typecheck:tests && npm run driver",
     "driver": "npm run build && node scripts/clean.mjs .tui-test && tui-test tests/pty-driver.spec.ts",
+    "qa": "npm run build && node dist/run-workbench.js",
     "unit": "node scripts/clean.mjs dist-tests && tsc -p tsconfig.unit.json && node --test dist-tests/tests/unit/*.test.js",
     "typecheck:tests": "tsc -p tsconfig.tests.json"
   },

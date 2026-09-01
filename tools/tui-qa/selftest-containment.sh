@@ -38,7 +38,7 @@ else
   fail=1
 fi
 
-escape_link="/tmp/containment-escape-$probe_id"
+escape_link="${TMPDIR:-/tmp}/containment-escape-$probe_id"
 ln -s /src "$escape_link"
 check_write_denied "$escape_link/containment-probe"
 
