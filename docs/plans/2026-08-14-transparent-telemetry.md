@@ -48,7 +48,7 @@ Signal mapping:
 | Level | OpenTelemetry signals |
 |---|---|
 | Basic | Metrics |
-| Detailed | Basic metrics plus traces |
+| Detailed | Basic metrics, primary-route configuration inventory gauges and omission counter, and traces |
 | Diagnostic | Basic metrics, detailed traces, and diagnostic logs/events |
 
 All users may select basic or detailed telemetry. An organization may enforce a
@@ -149,8 +149,12 @@ a new one. IDs do not rotate automatically.
 
 The installation ID is the one intentional high-cardinality resource attribute
 on basic metrics. It must not also be attached as an instrument-level metric
-label. Exact resource IDs, URLs, paths, and trace IDs never appear as metric
-dimensions.
+label. The basic schema remains low-cardinality: exact resource identifiers,
+registry identities or locations, URLs, paths, and trace IDs never appear as
+basic metric dimensions. The sole exact-dimension exception is the detailed
+configuration inventory described below: sanitized registry identity/location
+and exact enabled resource names may appear only on detailed primary-route
+inventory gauges, never on basic metrics or the community-report route.
 
 ## Schema contract
 
@@ -180,6 +184,53 @@ The initial instruments should be a command invocation counter and duration
 histogram under an `agent_marketplace` namespace. Instrument attributes must be
 bounded enums. The operations backend must explicitly budget and validate the
 installation-ID resource cardinality.
+
+### Detailed configuration inventory metrics
+
+The [configuration inventory design](./2026-09-01-inventory-metrics-design.md)
+adds snapshot, registry, and resource gauges plus the
+`agent_marketplace.config.inventory_omissions` counter. The registry and
+resource gauges contain sanitized registry identity and location and exact
+effectively enabled resource names only when the effective level is `detailed`,
+and only on the primary route. Route-specific metric providers must keep all
+four instruments out of basic and community export, including when detailed
+primary telemetry and community reporting are active at the same time. This is
+schema major `1`, minor `1`.
+
+A stable SHA-256 `config.fingerprint` groups one complete effective
+configuration. Its telemetry-safe input is canonicalized and sorted, so the
+same represented configuration has the same fingerprint independent of
+iteration order and a reverted configuration reuses its earlier fingerprint.
+The fingerprint is not a freshness signal. The snapshot gauge carries a
+Unix-microsecond observation ordering key that is made strictly increasing
+within one CLI runtime. Dashboards select
+each installation's greatest snapshot value at the evaluation time inside an
+operator-chosen lookback, match its fingerprint, and exclude installations that
+have not reported within the window.
+
+Inventory reports only after successful catalog loading and effective resource
+resolution. Recording queues it for prompt background export rather than doing
+network I/O on the resolving caller. Delta temporality plus a forced flush per
+queued observation preserves repeated observations during long-lived sessions.
+Hard resolution errors and oversized inventory omit the complete snapshot
+rather than emitting partial state; soft warnings do not prevent emission.
+Fingerprinting and recording remain best effort and cannot change normal output,
+filesystem behavior, or exit status.
+
+A snapshot is limited to 1,000 registries, 10,000 resources, and 512 UTF-8 bytes
+per string attribute. The omission counter uses only `inventory_too_large`,
+`invalid_inventory`, and `queue_full`. Any exceeded bound omits the whole
+snapshot with `inventory_too_large`; the other reasons cover invalid
+construction and a full background-export queue.
+
+This exception is intentionally high-cardinality. Active series scale with
+reporting installations and their represented registries and enabled resources;
+historical series also scale with fingerprint churn and retained resource
+attributes. It requires an operations-approved series budget based on measured
+workloads. Installation-level queries are sensitive because the resettable
+pseudonymous `installation.id` links reports over time and exposes one
+installation's exact enabled names, registry identities, scopes, harnesses, and
+configuration changes; access must follow the detailed telemetry policy.
 
 ### Detailed traces
 

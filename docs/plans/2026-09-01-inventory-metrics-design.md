@@ -27,15 +27,25 @@ The dashboard measures reporting installations, not people. `installation.id` re
 
 ## Decision
 
-Represent each successfully resolved effective configuration with three synchronous OpenTelemetry integer gauges:
+Represent each successfully resolved effective configuration with three OpenTelemetry integer gauges, plus one bounded omission counter:
 
 | OTLP instrument | Prometheus-compatible name | Meaning |
 |---|---|---|
-| `agent_marketplace.config.snapshot` | `agent_marketplace_config_snapshot` | One complete observed configuration generation |
-| `agent_marketplace.config.registry` | `agent_marketplace_config_registry` | One registry in that generation |
-| `agent_marketplace.config.resource` | `agent_marketplace_config_resource` | One effectively enabled resource in that generation |
+| `agent_marketplace.config.snapshot` | `agent_marketplace_config_snapshot` | One complete observed configuration generation; value is its observation ordering key |
+| `agent_marketplace.config.registry` | `agent_marketplace_config_registry` | One registry in that generation; value `1` |
+| `agent_marketplace.config.resource` | `agent_marketplace_config_resource` | One effectively enabled resource in that generation; value `1` |
+| `agent_marketplace.config.inventory_omissions` | `agent_marketplace_config_inventory_omissions` | Count of whole inventory snapshots omitted, labeled by bounded reason |
 
-Every point has value `1`. Exact registry and resource dimensions are detailed telemetry. They are exported only to the primary route when the effective level is `detailed`.
+The snapshot gauge value is a Unix-microsecond observation ordering key. If two
+observations in one CLI runtime share or regress against its previous wall-clock
+value, the runtime advances the later value logically. This provides a value
+that queries can compare directly while making cross-process ties negligible
+without telemetry-owned durable state; registry and resource gauge values remain
+`1`.
+
+Exact registry and resource dimensions are detailed telemetry. All four
+inventory instruments are exported only to the primary route when the effective
+level is `detailed`.
 
 The existing detailed trace spans remain useful for diagnostics and are not the source queried by the adoption dashboard.
 
@@ -92,7 +102,13 @@ A random snapshot ID is deliberately excluded. Random generations would create a
 | `config.scope` | Effective source layer |
 | `resource.required` | Boolean string |
 
-Counts are strings because the existing telemetry wrapper accepts string attributes. They remain bounded summary dimensions on the snapshot instrument.
+### Inventory omission
+
+| Attribute | Value |
+|---|---|
+| `reason` | `inventory_too_large`, `invalid_inventory`, or `queue_full` |
+
+Counts are strings because the existing telemetry wrapper accepts string attributes. They remain bounded summary dimensions on the snapshot instrument. Omission reasons are a bounded enum and carry no registry, resource, fingerprint, or installation-level instrument attribute.
 
 ## Registry identity and redaction
 
@@ -126,16 +142,24 @@ This boundary covers the TUI and configured-registry CLI flows that use the shar
 
 Telemetry remains best effort. Fingerprinting or recording failure must not alter command output, filesystem behavior, or exit status.
 
+Recording enqueues each complete generation on a bounded queue for prompt
+background export, so network I/O never runs on the resolving caller's
+goroutine. The inventory provider uses delta temporality and forces a flush
+after every queued observation. This is required for long-lived TUI and other
+sessions: multiple observations of the same gauge series must be exported
+promptly rather than collapsed or delayed until the normal periodic reader
+interval. When the queue is full, the generation is omitted and
+`agent_marketplace.config.inventory_omissions{reason="queue_full"}` is
+incremented.
+
 ## Route isolation
 
-The current telemetry runtime attaches primary and community exporters as readers of one metric provider. Every instrument created by that provider is therefore visible to both routes. Adding inventory gauges to that provider would violate the community basic-only guarantee.
+The telemetry runtime uses route-specific providers so detailed inventory cannot leak through a shared reader to the community route:
 
-Refactor metric ownership into route-specific providers:
-
-- the primary provider owns command instruments and, at detailed level, inventory instruments;
+- the primary provider owns command instruments and, at detailed level, all four inventory instruments;
 - the community provider owns only the basic command counter and duration histogram;
 - command recording writes to both providers when both routes are active;
-- inventory recording writes only to the detailed primary provider; and
+- inventory gauge and omission recording writes only to the detailed primary provider; and
 - when community reporting is folded into the primary route, only the primary provider is needed.
 
 Each provider must own its exporter and reader. Exporter cache reuse must not attach one SDK exporter instance to multiple readers. Shutdown flushes every provider within the existing bounded timeout. Queue envelopes continue to preserve route and signal.
@@ -146,14 +170,23 @@ The community receiver continues accepting only the basic command instruments. T
 
 ## Point-in-time query model
 
-Prometheus-compatible storage retains old registry and resource series after configuration changes. Dashboard queries must first select the latest observed fingerprint for every installation at the evaluation time, then retain only items with that fingerprint.
+Prometheus-compatible storage retains old registry and resource series after configuration changes. Dashboard queries must first select the fingerprint attached to the greatest snapshot gauge value for every installation at the evaluation time, then retain only items with that fingerprint.
+
+This requires the collector/backend to promote OTLP resource attributes to
+stable Prometheus labels. At minimum, `installation.id` must become
+`installation_id`; schema, CLI, OS, and architecture resource attributes may be
+promoted when dashboards use them. Point attributes such as
+`config.fingerprint` must likewise have stable names such as
+`config_fingerprint`. Stock OpenTelemetry components do not universally perform
+resource-attribute promotion, so the production collector configuration and
+stored labels must be verified.
 
 Define the latest generation over an operator-selected freshness window:
 
 ```promql
 topk by (installation_id) (
   1,
-  timestamp(last_over_time(agent_marketplace_config_snapshot[$inventory_lookback]))
+  last_over_time(agent_marketplace_config_snapshot[$inventory_lookback])
 )
 ```
 
@@ -164,7 +197,7 @@ last_over_time(agent_marketplace_config_resource[$inventory_lookback])
 and on (installation_id, config_fingerprint)
 topk by (installation_id) (
   1,
-  timestamp(last_over_time(agent_marketplace_config_snapshot[$inventory_lookback]))
+  last_over_time(agent_marketplace_config_snapshot[$inventory_lookback])
 )
 ```
 
@@ -211,10 +244,10 @@ Inventory metrics intentionally revise the earlier rule that exact resource and 
 Approximate active series are:
 
 ```text
-installations × (1 + average registries + average enabled resources)
+installations × (1 + average registries + average enabled resources + observed omission reasons)
 ```
 
-Historical series also multiply by distinct configuration fingerprints and CLI resource-attribute versions retained by the backend. Before enabling production ingestion, measure:
+Observed omission reasons are bounded to at most three. Historical series also multiply by distinct configuration fingerprints and CLI resource-attribute versions retained by the backend. Before enabling production ingestion, measure:
 
 - reporting installations;
 - average, p95, and maximum registries and resources per snapshot;
@@ -222,13 +255,29 @@ Historical series also multiply by distinct configuration fingerprints and CLI r
 - total active series and daily series creation; and
 - dashboard query latency for top-k, complete-table, and installation filters.
 
-Client-side safeguards bound attribute length and maximum represented entries. Exceeding a bound records a bounded diagnostic count and omits the inventory snapshot rather than emitting an incomplete generation. Exact limits are implementation constants covered by tests and documented in the public telemetry disclosure.
+Client-side safeguards allow at most 1,000 registries, 10,000 resources, and
+512 UTF-8 bytes per string attribute. Exceeding any bound increments
+`agent_marketplace.config.inventory_omissions{reason="inventory_too_large"}` and
+omits the whole snapshot rather than emitting an incomplete generation. Invalid
+construction uses `invalid_inventory`, and a full prompt-export queue uses
+`queue_full`.
+
+Measured benchmarks establish implementation cost for specific fixtures, not
+production limits or latency guarantees. `BenchmarkRecordInventory`, with 10
+registries, 100 resources, detailed telemetry, and a local OTLP HTTP endpoint,
+measured approximately 0.60–0.61 ms/op, 1.186 MB/op, and 5,264–5,267 allocs/op.
+`BenchmarkResolveInventoryWithLocalDiskAndHTTPExport`, resolving 50 selected
+skills from one local registry and waiting for each snapshot to reach a local
+OTLP HTTP endpoint, measured a median 3.155 ms/op, 1,714,779 B/op, and 12,592
+allocs/op. Synchronizing each export prevents queue saturation from measuring
+the omission path. Local registry disk I/O and local HTTP export are included;
+remote registry access and materialization are excluded.
 
 ## Schema and documentation
 
-This is an additive detailed schema change. The telemetry schema major remains `1`; increment the schema minor. Update:
+This is an additive detailed schema change. The telemetry schema is major `1`, minor `1`. Update:
 
-- telemetry preview output with representative snapshot, registry, and resource gauges;
+- telemetry preview output with representative snapshot, registry, and resource gauges plus the omission counter;
 - telemetry disclosure and retention documentation;
 - the transparent telemetry design's detailed-metric exception;
 - benchmarks and documented overhead; and

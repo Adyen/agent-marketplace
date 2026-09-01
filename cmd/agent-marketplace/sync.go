@@ -57,13 +57,23 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	}
 
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup}
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, SkipInventory: pruneStale}
 	localDir := config.FindLocalConfigDir()
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir
 		resolveOpts.LocalConfigDir = localDir
 	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
+	// A prune-capable pass suppresses Resolve's preliminary generation. If this
+	// pass does not mutate config, its already-computed resolution is final and
+	// must be recorded exactly once. A successful mutation disables this defer;
+	// the recursive non-pruning sync records the post-mutation generation.
+	recordComputedInventory := pruneStale
+	defer func() {
+		if recordComputedInventory {
+			pipeline.RecordResolvedInventory(ctx, syncResult.ResolveResult)
+		}
+	}()
 	errs := syncResult.Errors
 	malformedCount := syncResult.CatalogLoad.MalformedCount
 	mergedCfg := syncResult.MergedCfg
@@ -210,6 +220,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			return errors.Join(allErrs...)
 		}
 		if pruned > 0 {
+			recordComputedInventory = false
 			slog.Info("sync stale selections pruned; starting re-sync",
 				"repo_root", repoRoot,
 				"count", pruned,

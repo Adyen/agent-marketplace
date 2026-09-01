@@ -10,11 +10,11 @@ can be locked by organization policy for managed installations.
 |---|---|---|
 | `off` | None | No telemetry is collected or sent. |
 | `basic` | Metrics | Command counts and durations with bounded, non-identifying attributes. |
-| `detailed` | Metrics + traces | Basic metrics plus lifecycle spans for commands, TUI, and pipeline stages. |
+| `detailed` | Metrics + traces | Basic metrics, primary-route configuration inventory gauges and omission counter, and lifecycle spans for commands, TUI, and pipeline stages. |
 | `diagnostic` | Metrics + traces + events | A per-invocation `--diagnostic` capture that buffers data locally for review before export. |
 
 `diagnostic` is not a persistent level. It is an overlay on `detailed` and is
-ever enabled by an explicit `--diagnostic` flag.
+only ever enabled by an explicit `--diagnostic` flag.
 
 ## What is collected
 
@@ -37,6 +37,78 @@ Metric point attributes:
 - `harnesses` — comma-separated configured harness targets
 - `managed` — whether the installation is organization-managed
 - `outcome.code` — `success` or `error`
+
+### Detailed inventory metrics
+
+A successfully resolved effective configuration produces three integer gauges
+plus one omission counter:
+
+- `agent_marketplace.config.snapshot` — one complete observed configuration;
+  its value is a Unix-microsecond observation ordering key, made strictly
+  increasing within one CLI runtime;
+- `agent_marketplace.config.registry` — one configured registry in that
+  configuration, with value `1`;
+- `agent_marketplace.config.resource` — one effectively enabled resource in
+  that configuration, with value `1`; and
+- `agent_marketplace.config.inventory_omissions` — count of whole snapshots not
+  emitted, with bounded `reason` values `inventory_too_large`,
+  `invalid_inventory`, and `queue_full`.
+
+The registry and resource gauges contain sanitized registry identity and
+location and exact enabled resource names. All four inventory instruments are
+collected **only at the `detailed` level and only on the primary telemetry
+route**. They are never part of `basic` telemetry and never flow to the
+community-report route, including when detailed primary telemetry and community
+reporting are both enabled. This additive contract is telemetry schema major
+`1`, minor `1`.
+
+All points for a configuration share `config.fingerprint`, the lowercase
+hexadecimal SHA-256 digest of a canonical telemetry-safe representation.
+Harnesses, registries, and resources are sorted by all represented fields before
+hashing, so input iteration order does not affect the fingerprint. Returning to
+a previously reported telemetry-visible configuration reuses its fingerprint;
+it does not identify an installation and is meaningful only together with the
+resettable `installation.id` and observation time.
+
+Registry attributes contain a canonical `registry.id`, sanitized
+`registry.location`, remote-only `registry.path`, configured `registry.ref`,
+configuration scope, and bounded boolean fields. Equivalent URL and SCP-style
+Git transports aggregate under one identity. URL user information, query
+strings, and fragments are removed, and every local path or `file://` registry
+is represented as `local` without a path-derived identifier. Resource points
+add the exact `resource.kind` and `resource.name` for effectively enabled
+resources. They do not contain resource contents, descriptions, tags, prompts,
+or registry credentials.
+
+Inventory is observed only after catalog loading and effective resource
+resolution succeed. Hard resolution errors produce no inventory snapshot; soft
+warnings do not prevent one. A mutating flow reports the post-mutation
+resolution, and ad-hoc `--from` browsing outside effective configuration is not
+inventory. Recording enqueues the complete generation for prompt background
+export, so network I/O does not block the resolving caller. Inventory uses delta
+temporality and forces an export after each queued observation; this preserves
+successive observations of an unchanged gauge series during a long-lived TUI or
+other session instead of waiting for the normal periodic reader interval.
+
+A report is an observation, not a lease: if the CLI does not run, no new
+snapshot asserts that the configuration remains current. Backends and
+dashboards therefore select the greatest snapshot gauge value per installation
+at the evaluation time within an operator-chosen freshness window, then retain
+registry and resource points with that snapshot's fingerprint. Installations
+with no observation in that window are excluded.
+
+Inventory dimensions are intentionally higher-cardinality than the basic
+contract. Active series grow approximately with reporting installations times
+one snapshot plus represented registries, enabled resources, and up to three
+observed omission reasons; retained series also grow with distinct fingerprints
+and resource-attribute versions. The client accepts at most 1,000 registries
+and 10,000 resources, and every string attribute is limited to 512 UTF-8 bytes.
+Exceeding any bound increments the omission counter with `inventory_too_large`
+and omits the whole snapshot rather than sending a misleading partial
+configuration. Invalid inventory uses
+`invalid_inventory`; a full prompt-export queue uses `queue_full`.
+Fingerprinting or recording failure remains best effort and does not affect
+command output, filesystem behavior, or exit status.
 
 ### Detailed traces
 
@@ -185,13 +257,17 @@ agent-marketplace telemetry purge
 - Standard `OTEL_*` environment variables are ignored for policy resolution to
   prevent silent bypass of organization settings.
 - The optional project report contains only the basic schema.
-- Detailed and diagnostic data never flow to the project report.
+- Detailed data, including inventory, and diagnostic data never flow to the
+  project report.
+- Treat installation-level detailed inventory access as sensitive:
+  `installation.id` is pseudonymous and resettable, but it links reports over
+  time and a drill-down reveals exact enabled resource names, remote registry
+  identities, scopes, harnesses, and configuration changes.
 
 ## Performance
 
-Overhead was measured on an Apple M5 Pro with `go test -bench`. All paths are
-single-digit microseconds or less for the hot path, and allocation counts are
-small enough that telemetry does not dominate command runtime.
+Existing telemetry overhead was measured on an Apple M5 Pro with
+`go test -bench`. The first table predates configuration inventory metrics:
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
@@ -212,3 +288,19 @@ small enough that telemetry does not dominate command runtime.
 Numbers are from one-second benchmark runs and are intended as a rough
 indication of overhead. The fast path (`CounterAdd`, `HistogramRecord`,
 `StartSpan`) is measured in hundreds of nanoseconds.
+
+Inventory-specific measurements are also workload-specific and should not be
+read as production latency guarantees:
+
+- `BenchmarkRecordInventory` measured approximately 0.60–0.61 ms/op,
+  1.186 MB/op, and 5,264–5,267 allocs/op. Its fixture has 10 registries and 100
+  resources, detailed telemetry, and a local OTLP HTTP endpoint. It measures
+  accepted observation enqueueing while prompt background recording and export
+  proceed; it is not a maximum-size inventory or remote-network benchmark.
+- `BenchmarkResolveInventoryWithLocalDiskAndHTTPExport` measured a median
+  3.155 ms/op, 1,714,779 B/op, and 12,592 allocs/op. The fixture resolves 50
+  selected skills from one local registry and waits for each inventory snapshot
+  to reach a local OTLP HTTP endpoint, preventing queue saturation from turning
+  the benchmark into an omission-path measurement. Local registry disk I/O and
+  local HTTP export are included; remote registry access and materialization are
+  excluded.

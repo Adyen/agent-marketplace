@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"encoding/json"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,6 +63,7 @@ type configResourceGroupKey struct {
 	ref      string
 	scope    string
 	required bool
+	remote   bool
 }
 
 func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) {
@@ -101,16 +101,19 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 		return !registries[i].Default && registries[j].Default
 	})
 	for _, registry := range registries {
-		location := registryTelemetryLocation(registry)
+		_, location, local, valid := telemetry.SanitizeRegistryTelemetry(registry.URL)
+		if !valid {
+			location = "unknown"
+		}
 		attrs := map[string]string{
 			"registry.location": location,
-			"registry.ref":      registry.Ref,
 			"config.scope":      strings.ToLower(registry.Source.String()),
 			"registry.required": strconv.FormatBool(registry.Required),
 			"registry.default":  strconv.FormatBool(registry.Default),
 		}
-		if location != "local" {
+		if valid && !local {
 			attrs["registry.path"] = registry.Path
+			attrs["registry.ref"] = registry.Ref
 		}
 		_, registrySpan := tel.StartSpan(spanCtx, "agent_marketplace.tui.config_registry", attrs)
 		registrySpan.End()
@@ -118,17 +121,20 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 
 	groups := make(map[configResourceGroupKey][]string)
 	for _, resource := range snapshot.resolved {
-		registry := config.RegistryEntry{URL: resource.RegistryURL, Ref: resource.Ref}
-		location := registryTelemetryLocation(registry)
+		_, location, local, valid := telemetry.SanitizeRegistryTelemetry(resource.RegistryURL)
+		if !valid {
+			location = "unknown"
+		}
 		key := configResourceGroupKey{
 			kind:     resource.Kind,
 			location: location,
-			ref:      resource.Ref,
 			scope:    strings.ToLower(resource.Source.String()),
 			required: resource.Required,
 		}
-		if location != "local" {
+		if valid && !local {
 			key.path = resource.RegistryPath
+			key.ref = resource.Ref
+			key.remote = true
 		}
 		groups[key] = append(groups[key], resource.Name)
 	}
@@ -168,14 +174,16 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 				"resource.names":    string(encoded),
 				"resource.count":    strconv.Itoa(len(names)),
 				"registry.location": key.location,
-				"registry.ref":      key.ref,
 				"config.scope":      key.scope,
 				"resource.required": strconv.FormatBool(key.required),
 				"chunk.index":       strconv.Itoa(chunk + 1),
 				"chunk.count":       strconv.Itoa(chunks),
 			}
-			if key.path != "" {
-				attrs["registry.path"] = key.path
+			if key.remote {
+				attrs["registry.ref"] = key.ref
+				if key.path != "" {
+					attrs["registry.path"] = key.path
+				}
 			}
 			_, resourceSpan := tel.StartSpan(spanCtx, "agent_marketplace.tui.config_resources", attrs)
 			resourceSpan.End()
@@ -184,27 +192,11 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 }
 
 func registryTelemetryLocation(registry config.RegistryEntry) string {
-	raw := strings.TrimSpace(registry.URL)
-	if registry.IsLocal() || raw == "~" || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, "file://") {
-		return "local"
-	}
-	if raw == "" {
+	_, location, _, ok := telemetry.SanitizeRegistryTelemetry(registry.URL)
+	if !ok {
 		return "unknown"
 	}
-	if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" && parsed.Host != "" {
-		parsed.User = nil
-		parsed.RawQuery = ""
-		parsed.ForceQuery = false
-		parsed.Fragment = ""
-		return parsed.String()
-	}
-	if at := strings.LastIndex(raw, "@"); at >= 0 {
-		raw = raw[at+1:]
-	}
-	if end := strings.IndexAny(raw, "?#"); end >= 0 {
-		raw = raw[:end]
-	}
-	return raw
+	return location
 }
 
 func recordToggleActionSpan(ctx context.Context, act toggleAction, kind ir.ResourceKind) {

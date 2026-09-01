@@ -270,6 +270,80 @@ func TestRecordConfigSnapshotSpansEmitsExactNamesAndSanitizedRegistries(t *testi
 	}
 }
 
+func TestRecordConfigSnapshotSpansFailsClosedForLocalAndInvalidLocations(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+
+	localURL := "FILE:///Users/private/local-repo.git"
+	invalidURL := "credential@second-secret@git.example:team/repo.git"
+	remoteURL := "git@Git.Example:Team/Repo.git"
+	recordConfigSnapshotSpans(ctx, snapshotLoadedMsg{
+		mergedCfg: &amconfig.Config{},
+		configuredRegistries: []amconfig.RegistryEntry{
+			{URL: localURL, Path: "local-private-path", Ref: "local-private-ref"},
+			{URL: invalidURL, Path: "invalid-private-path", Ref: "invalid-private-ref"},
+			{URL: remoteURL, Path: "catalog", Ref: "main"},
+		},
+		resolved: []resolver.ResolvedArtifact{
+			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "local-control"}, RegistryURL: localURL, RegistryPath: "local-resource-path", Ref: "local-resource-ref"},
+			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "invalid-control"}, RegistryURL: invalidURL, RegistryPath: "invalid-resource-path", Ref: "invalid-resource-ref"},
+			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "remote-control"}, RegistryURL: remoteURL, RegistryPath: "catalog", Ref: "main"},
+		},
+	})
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	registrySpans := e.spansNamed("agent_marketplace.tui.config_registry")
+	resourceSpans := e.spansNamed("agent_marketplace.tui.config_resources")
+	if len(registrySpans) != 3 || len(resourceSpans) != 3 {
+		t.Fatalf("registry/resource spans = %d/%d, want 3/3", len(registrySpans), len(resourceSpans))
+	}
+	locations := make(map[string]bool)
+	hasAttr := func(span *tracev1pb.Span, key string) bool {
+		for _, attr := range span.Attributes {
+			if attr.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	for _, span := range registrySpans {
+		location := attrValue(span.Attributes, "registry.location")
+		locations[location] = true
+		if (location == "local" || location == "unknown") && (hasAttr(span, "registry.path") || hasAttr(span, "registry.ref")) {
+			t.Errorf("%s registry span emitted local/invalid path or ref: %v", location, span.Attributes)
+		}
+	}
+	for _, span := range resourceSpans {
+		location := attrValue(span.Attributes, "registry.location")
+		if (location == "local" || location == "unknown") && (hasAttr(span, "registry.path") || hasAttr(span, "registry.ref")) {
+			t.Errorf("%s resource span emitted local/invalid path or ref: %v", location, span.Attributes)
+		}
+	}
+	for _, want := range []string{"local", "unknown", "git.example:Team/Repo.git"} {
+		if !locations[want] {
+			t.Errorf("missing registry location %q", want)
+		}
+	}
+	payload, err := json.Marshal([]any{registrySpans, resourceSpans})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(payload)
+	for _, forbidden := range []string{"/Users/private", "credential", "second-secret", "local-private", "local-resource", "invalid-private", "invalid-resource"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Errorf("config trace payload contains forbidden value %q", forbidden)
+		}
+	}
+	for _, control := range []string{"git.example:Team/Repo.git", "catalog", "main", "remote-control"} {
+		if !strings.Contains(encoded, control) {
+			t.Errorf("config trace payload omitted valid control %q", control)
+		}
+	}
+}
+
 func TestRecordConfigSnapshotSpansChunksLargeResourceSets(t *testing.T) {
 	e := newTestSpanExporter(t)
 	ctx, tel := setupTuiTelemetry(t, e)

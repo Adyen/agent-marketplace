@@ -122,7 +122,7 @@ func TestTelemetryOffDoesNotCreateProviders(t *testing.T) {
 		t.Fatalf("shutdown off: %v", err)
 	}
 
-	if tel.mp != nil || tel.tp != nil {
+	if tel.mp != nil || tel.communityMP != nil || tel.inventoryMP != nil || tel.tp != nil {
 		t.Fatalf("providers should not be created when level is off")
 	}
 }

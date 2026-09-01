@@ -14,15 +14,17 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
+	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracev1pb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
 )
 
 type pipelineSpanExporter struct {
-	mu     sync.Mutex
-	spans  []*tracev1pb.Span
-	server *httptest.Server
+	mu          sync.Mutex
+	spans       []*tracev1pb.Span
+	metricNames []string
+	server      *httptest.Server
 }
 
 func newPipelineSpanExporter(t *testing.T) *pipelineSpanExporter {
@@ -30,6 +32,25 @@ func newPipelineSpanExporter(t *testing.T) *pipelineSpanExporter {
 	e := &pipelineSpanExporter{}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/metrics" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read metrics: %v", err)
+			} else {
+				var req metricspb.ExportMetricsServiceRequest
+				if err := proto.Unmarshal(body, &req); err != nil {
+					t.Errorf("unmarshal metrics: %v", err)
+				} else {
+					e.mu.Lock()
+					for _, resource := range req.ResourceMetrics {
+						for _, scope := range resource.ScopeMetrics {
+							for _, metric := range scope.Metrics {
+								e.metricNames = append(e.metricNames, metric.Name)
+							}
+						}
+					}
+					e.mu.Unlock()
+				}
+			}
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -60,6 +81,17 @@ func newPipelineSpanExporter(t *testing.T) *pipelineSpanExporter {
 	}))
 	t.Cleanup(e.server.Close)
 	return e
+}
+
+func (e *pipelineSpanExporter) hasMetric(name string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, metricName := range e.metricNames {
+		if metricName == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *pipelineSpanExporter) hasSpan(name string) bool {
