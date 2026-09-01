@@ -28,7 +28,7 @@ func TestManifestRevocationUsesLiveDeclarationWithoutRevisionMetadata(t *testing
 	payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: "sha256:" + strings.Repeat("b", 64)}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "src", Revision: "sha256:" + strings.Repeat("b", 64)}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
@@ -58,13 +58,13 @@ func TestManifestRevocationUsesLiveDeclarationWithoutRevisionMetadata(t *testing
 	}
 }
 
-func TestSearchAppliesSourceAndCoordinateRevocations(t *testing.T) {
+func TestSearchAppliesRegistryAndCoordinateRevocations(t *testing.T) {
 	ctx := context.Background()
 	for _, test := range []struct {
 		name string
 		cfg  config.Revocations
 	}{
-		{name: "source", cfg: config.Revocations{SourceIDs: []string{"src"}}},
+		{name: "source", cfg: config.Revocations{RegistryIDs: []string{"src"}}},
 		{name: "coordinate", cfg: config.Revocations{Coordinates: []string{"mp/src/skill/review"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -76,11 +76,11 @@ func TestSearchAppliesSourceAndCoordinateRevocations(t *testing.T) {
 			if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
+			if err := meta.PutRegistry(ctx, store.Registry{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
 				t.Fatal(err)
 			}
 			revision := store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 			}
 			publishAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("c", 64)), strings.Repeat("e", 40))
@@ -115,11 +115,11 @@ func TestSearchSelectsLatestEffectiveNonRevokedRevision(t *testing.T) {
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutSource(ctx, store.Source{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
+	if err := meta.PutRegistry(ctx, store.Registry{ID: "src", Slug: "src", Listed: true, Acquisition: store.AcquisitionMirror}); err != nil {
 		t.Fatal(err)
 	}
 	older := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: KindSkill, Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: KindSkill, Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}
 	newer := older

@@ -48,12 +48,12 @@ type ResolvedArtifact struct {
 	MarketplaceURL        string
 	MarketplaceInstanceID string
 	MarketplaceAlias      string
-	MarketplaceSourceID   string
+	MarketplaceRegistryID string
 	InstalledName         string // overrides Name for materialization while preserving canonical digest
 	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
 	Revoked               bool   // true when the resolved revision is revoked
 	UpdateAvailable       bool   // true when a newer revision exists (status/update)
-	Stale                 bool   // true when the source refresh is stale/unavailable
+	Stale                 bool   // true when the registry refresh is stale/unavailable
 }
 
 type UnmetRequirementWarning struct {
@@ -117,7 +117,7 @@ const (
 // override cannot authorize a different revision of the same resource.
 type MarketplaceRevocationIdentity struct {
 	Marketplace   string
-	Source        string
+	Registry      string
 	Kind          string
 	Name          string
 	ContentDigest string
@@ -878,8 +878,8 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	for i, a := range artifacts {
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
-		if a.MarketplaceSourceID != "" {
-			source = fmt.Sprintf("marketplace:%s:%s", a.MarketplaceURL, a.MarketplaceSourceID)
+		if a.MarketplaceRegistryID != "" {
+			source = fmt.Sprintf("marketplace:%s:%s", a.MarketplaceURL, a.MarketplaceRegistryID)
 		}
 		occ := skillOccurrence{
 			resolved: a,
@@ -2495,9 +2495,9 @@ func hasExplicitSelection(entry config.RegistryEntry) bool {
 }
 
 // deduplicateOccurrences merges occurrences that come from the same logical
-// registry source. Two entries are considered the same source when:
+// registry. Two entries are considered the same registry when:
 //   - They share the same CatalogKey (identical cache/local path) and, for
-//     Marketplace occurrences, the same instance and source IDs, OR
+//     Marketplace occurrences, the same instance and registry IDs, OR
 //   - They are both git registries whose normalized URLs match and refs match
 //     (handles the .git suffix difference, e.g. repo vs repo.git).
 //
@@ -2514,13 +2514,13 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		ref                   string
 		path                  string // registry sub-path, keeps different-path entries separate
 		marketplaceInstanceID string
-		marketplaceSourceID   string
+		marketplaceRegistryID string
 	}
 
 	byKey := make(map[logicalKey][]skillOccurrence, len(occurrences))
 	for _, occ := range occurrences {
 		// Use CatalogKey as primary identity, but also group by normalized
-		// URL+ref+path (plus Marketplace instance/source identity) for
+		// URL+ref+path (plus Marketplace instance/registry identity) for
 		// equivalent remote entries that differ only by cache-key spelling.
 		lk := logicalKey{catalogKey: occ.resolved.CatalogKey}
 		if !occ.resolved.IsLocal() {
@@ -2533,7 +2533,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 				// fallback deduplication key. An endpoint may serve multiple
 				// Marketplace instances or sources.
 				lk.marketplaceInstanceID = occ.resolved.MarketplaceInstanceID
-				lk.marketplaceSourceID = occ.resolved.MarketplaceSourceID
+				lk.marketplaceRegistryID = occ.resolved.MarketplaceRegistryID
 			}
 		} else {
 			// For local registries, use the URL (file path) as the registry
@@ -2553,7 +2553,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		ref                   string
 		path                  string
 		marketplaceInstanceID string
-		marketplaceSourceID   string
+		marketplaceRegistryID string
 	}
 	normGroups := make(map[normKey][]logicalKey)
 	for lk := range byKey {
@@ -2565,7 +2565,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			ref:                   lk.ref,
 			path:                  lk.path,
 			marketplaceInstanceID: lk.marketplaceInstanceID,
-			marketplaceSourceID:   lk.marketplaceSourceID,
+			marketplaceRegistryID: lk.marketplaceRegistryID,
 		}
 		normGroups[nk] = append(normGroups[nk], lk)
 	}
@@ -2613,7 +2613,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		normalizedURL         string
 		ref                   string
 		marketplaceInstanceID string
-		marketplaceSourceID   string
+		marketplaceRegistryID string
 	}
 	// Collect all logical keys per URL+ref, then find overlapping groups.
 	urlRefGroups := make(map[urlRefKey][]logicalKey)
@@ -2625,7 +2625,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			normalizedURL:         lk.normalizedURL,
 			ref:                   lk.ref,
 			marketplaceInstanceID: lk.marketplaceInstanceID,
-			marketplaceSourceID:   lk.marketplaceSourceID,
+			marketplaceRegistryID: lk.marketplaceRegistryID,
 		}
 		urlRefGroups[urk] = append(urlRefGroups[urk], lk)
 	}
@@ -2866,7 +2866,7 @@ func logicalRegistryKey(occ skillOccurrence) string {
 		return occ.resolved.CatalogKey
 	}
 	if occ.resolved.IsMarketplace {
-		return occ.resolved.MarketplaceURL + "\x00" + occ.resolved.MarketplaceInstanceID + "\x00" + occ.resolved.MarketplaceSourceID + "\x00" + occ.resolved.Ref
+		return occ.resolved.MarketplaceURL + "\x00" + occ.resolved.MarketplaceInstanceID + "\x00" + occ.resolved.MarketplaceRegistryID + "\x00" + occ.resolved.Ref
 	}
 	return config.NormalizeGitURL(occ.url) + "\x00" + occ.resolved.Ref
 }
@@ -2895,16 +2895,16 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 	return winner
 }
 
-// collisionRegistryLabel returns the source label used for a cross-registry
+// collisionRegistryLabel returns the registry label used for a cross-registry
 // collision. Git keeps its historical URL-only spelling; Marketplace needs its
-// endpoint, instance, and source IDs because one endpoint can serve multiple
-// logical sources.
+// endpoint, instance, and registry IDs because one endpoint can serve multiple
+// logical registries.
 func collisionRegistryLabel(occ skillOccurrence) string {
 	if occ.resolved.IsMarketplace {
-		return fmt.Sprintf("%s [instance_id=%s, source_id=%s]",
+		return fmt.Sprintf("%s [instance_id=%s, registry_id=%s]",
 			occ.resolved.MarketplaceURL,
 			occ.resolved.MarketplaceInstanceID,
-			occ.resolved.MarketplaceSourceID,
+			occ.resolved.MarketplaceRegistryID,
 		)
 	}
 	return config.NormalizeGitURL(occ.url)

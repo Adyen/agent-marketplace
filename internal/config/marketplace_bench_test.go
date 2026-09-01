@@ -7,11 +7,11 @@ func BenchmarkValidateMarketplaceEntries(b *testing.B) {
 		URL:        "https://market.example",
 		InstanceID: "01JEXAMPLE",
 		Resources: []MarketplaceResourcePin{{
-			SourceID: "01JSOURCE",
-			Kind:     "skill",
-			Name:     "review",
-			Revision: "v1.0.0",
-			Digest:   "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			RegistryID: "01JSOURCE",
+			Kind:       "skill",
+			Name:       "review",
+			Revision:   "v1.0.0",
+			Digest:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 		}},
 	}}
 

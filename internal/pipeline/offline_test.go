@@ -32,7 +32,7 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 	contentDigest := canonical.Manifest.ContentDigest
-	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.RegistryID = "src"
 	canonical.Manifest.Revision = contentDigest
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
@@ -46,10 +46,10 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
-		SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
 	}}}
 	revision := testAssessedResourceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	}, store.AssessmentDecisionAllow, nil)
 	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "review", contentDigest, revision); err != nil {
@@ -106,7 +106,7 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	leafDigest := artifact.Manifest.ContentDigest
-	artifact.Manifest.SourceID = "src"
+	artifact.Manifest.RegistryID = "src"
 	artifact.Manifest.Revision = leafDigest
 	artifactRaw, archiveDigest, err := hccartifact.Encode(artifact)
 	if err != nil {
@@ -115,18 +115,18 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 	manifestRaw, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "src", Revision: leafDigest}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rootRevision := testAssessedResourceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
 		ContentDigest: store.RevisionDigest(rootDigest),
 	}, store.AssessmentDecisionAllow, nil)
 	leafRevision := testAssessedResourceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(leafDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	}, store.AssessmentDecisionAllow, nil)
@@ -134,8 +134,8 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://market.example"))
-		case "/api/v1/sources/src":
-			_ = json.NewEncoder(w).Encode(mpapi.SourceDTO{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/registries/src":
+			_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case "/api/v1/resources/src/collection/bundle":
 			_ = json.NewEncoder(w).Encode(rootRevision)
 		case "/api/v1/manifests/" + rootDigest:
@@ -150,7 +150,7 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 	}))
 
 	entry := config.MarketplaceEntry{URL: server.URL + "/", InstanceID: "mp"}
-	plan, err := (&marketplace.Resolver{HTTPClient: server.Client()}).PrepareLocator(context.Background(), entry, marketplace.MarketplaceLocator{Source: "src", Kind: "collection", Name: "bundle"}, nil)
+	plan, err := (&marketplace.Resolver{HTTPClient: server.Client()}).PrepareLocator(context.Background(), entry, marketplace.MarketplaceLocator{Registry: "src", Kind: "collection", Name: "bundle"}, nil)
 	if err != nil {
 		server.Close()
 		t.Fatalf("PrepareLocator: %v", err)
@@ -356,7 +356,7 @@ func TestOfflineSyncMarketplaceCacheFailurePreservesOutput(t *testing.T) {
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
-		SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest,
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest,
 	}}}
 	result := Sync(context.Background(), ResolveOptions{
 		RepoRoot: repoRoot,
@@ -392,7 +392,7 @@ func TestOfflineSyncPreservesExactMarketplaceSelectorsOnFailure(t *testing.T) {
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	digest := "sha256:" + strings.Repeat("a", 64)
-	original := []byte("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n      - source_id: source\n        kind: skill\n        name: review\n        revision: " + digest + "\n        digest: " + digest + "\n        direct: true\n        selected_by:\n          - source_id: collections\n            name: bundle\n            revision: " + digest + "\n")
+	original := []byte("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - registry_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n      - registry_id: source\n        kind: skill\n        name: review\n        revision: " + digest + "\n        digest: " + digest + "\n        direct: true\n        selected_by:\n          - registry_id: collections\n            name: bundle\n            revision: " + digest + "\n")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestOfflineOverridesExplicitMarketplaceRefresh(t *testing.T) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{{
 					URL: server.URL, InstanceID: "mp",
 					Resources: []config.MarketplaceResourcePin{{
-						SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64),
+						RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64),
 					}},
 				}}}, nil
 			},

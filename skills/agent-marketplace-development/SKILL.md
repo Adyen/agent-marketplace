@@ -224,7 +224,7 @@ The resolver enforces this; never add a bypass.
 
 If two registries expose the same resource kind and name, `Resolve`
 returns an error. Resolve via per-registry kind-specific lists,
-`exclude`, or removing a source. The same name may exist in different
+`exclude`, or removing a registry. The same name may exist in different
 kinds; CLI install/remove paths must ask for `--kind` when that makes a
 name ambiguous. `cmd/install.go` mirrors collision behavior for
 `install --all`.

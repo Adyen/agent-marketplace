@@ -33,8 +33,8 @@ func BenchmarkServerSearch(b *testing.B) {
 		b.Fatalf("put marketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("bench-source"),
+	src := store.Registry{
+		ID:          store.RegistryID("bench-source"),
 		Slug:        "bench",
 		Ref:         "main",
 		Origins:     []string{"https://bench.git"},
@@ -43,7 +43,7 @@ func BenchmarkServerSearch(b *testing.B) {
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		b.Fatalf("put source: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func BenchmarkServerSearch(b *testing.B) {
 		rev := store.ResourceRevision{
 			Coordinate: store.ResourceCoordinate{
 				Marketplace: store.MarketplaceID(cfg.Instance.ID),
-				Source:      src.ID,
+				Registry:    src.ID,
 				Kind:        KindSkill,
 				Name:        fmt.Sprintf("skill-%04d", i),
 			},

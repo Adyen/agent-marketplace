@@ -127,19 +127,19 @@ func replaceMarketplaceCollectionDocument(configPath string, doc *yaml.Node, mod
 		}
 		collectionRootCount++
 		if collectionRootCount > 1 {
-			return fmt.Errorf("config %q contains duplicate Marketplace collection roots for %s/%s/%s", configPath, oldCollection.SourceID, oldCollection.Kind, oldCollection.Name)
+			return fmt.Errorf("config %q contains duplicate Marketplace collection roots for %s/%s/%s", configPath, oldCollection.RegistryID, oldCollection.Kind, oldCollection.Name)
 		}
 		oldNode = node
 		oldPin = pin
 	}
 	if oldNode == nil {
-		return fmt.Errorf("collection pin %s/%s/%s not found in config %q", oldCollection.SourceID, oldCollection.Kind, oldCollection.Name, configPath)
+		return fmt.Errorf("collection pin %s/%s/%s not found in config %q", oldCollection.RegistryID, oldCollection.Kind, oldCollection.Name, configPath)
 	}
 	if !sameMarketplacePinCASValue(oldPin, oldCollection) {
-		return fmt.Errorf("marketplace collection compare-and-swap conflict for %s/%s/%s", oldCollection.SourceID, oldCollection.Kind, oldCollection.Name)
+		return fmt.Errorf("marketplace collection compare-and-swap conflict for %s/%s/%s", oldCollection.RegistryID, oldCollection.Kind, oldCollection.Name)
 	}
 	if len(replacement) > 0 && !sameMarketplacePinIdentity(replacement[0], oldCollection) {
-		return fmt.Errorf("replacement collection root identity does not match %s/%s/%s", oldCollection.SourceID, oldCollection.Kind, oldCollection.Name)
+		return fmt.Errorf("replacement collection root identity does not match %s/%s/%s", oldCollection.RegistryID, oldCollection.Kind, oldCollection.Name)
 	}
 
 	oldSelector := marketplaceCollectionSelection(oldCollection)
@@ -148,7 +148,7 @@ func replaceMarketplaceCollectionDocument(configPath string, doc *yaml.Node, mod
 	for _, pin := range replacement {
 		key := marketplacePinKey(pin)
 		if _, exists := newByKey[key]; exists {
-			return fmt.Errorf("duplicate replacement Marketplace pin %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+			return fmt.Errorf("duplicate replacement Marketplace pin %s/%s/%s", pin.RegistryID, pin.Kind, pin.Name)
 		}
 		newByKey[key] = pin
 	}
@@ -170,7 +170,7 @@ func replaceMarketplaceCollectionDocument(configPath string, doc *yaml.Node, mod
 		}
 		independentlySelected := pin.Direct || len(remaining) > 0
 		if inReplacement && independentlySelected && !sameMarketplacePinContent(pin, newPin) {
-			return fmt.Errorf("collection replacement conflicts with another selection for %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+			return fmt.Errorf("collection replacement conflicts with another selection for %s/%s/%s", pin.RegistryID, pin.Kind, pin.Name)
 		}
 		if wasSelectedByOld {
 			if !inReplacement && len(remaining) == 0 && !pin.Direct {
@@ -259,14 +259,14 @@ func removeMarketplaceDirectPinDocument(configPath string, doc *yaml.Node, mode 
 	}
 	node := findMarketplacePinNode(resources, marketplacePinKey(wanted))
 	if node == nil {
-		return fmt.Errorf("marketplace pin %s/%s/%s not found in config %q", wanted.SourceID, wanted.Kind, wanted.Name, configPath)
+		return fmt.Errorf("marketplace pin %s/%s/%s not found in config %q", wanted.RegistryID, wanted.Kind, wanted.Name, configPath)
 	}
 	got, err := decodeMarketplacePin(node)
 	if err != nil {
 		return err
 	}
 	if !sameMarketplacePinCASValue(got, wanted) {
-		return fmt.Errorf("marketplace pin compare-and-swap conflict for %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+		return fmt.Errorf("marketplace pin compare-and-swap conflict for %s/%s/%s", wanted.RegistryID, wanted.Kind, wanted.Name)
 	}
 	if len(got.SelectedBy.List()) == 0 {
 		removeNodeFromSequence(resources, node)
@@ -299,11 +299,11 @@ func removeNodeFromSequence(sequence *yaml.Node, wanted *yaml.Node) {
 }
 
 func marketplacePinKey(pin MarketplaceResourcePin) string {
-	return pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
+	return pin.RegistryID + "\x00" + pin.Kind + "\x00" + pin.Name
 }
 
 func marketplaceCollectionSelection(pin MarketplaceResourcePin) MarketplaceSelection {
-	return MarketplaceSelection{SourceID: pin.SourceID, Name: pin.Name, Revision: pin.Revision}
+	return MarketplaceSelection{RegistryID: pin.RegistryID, Name: pin.Name, Revision: pin.Revision}
 }
 
 func removeMarketplaceSelection(values []MarketplaceSelection, wanted MarketplaceSelection) []MarketplaceSelection {

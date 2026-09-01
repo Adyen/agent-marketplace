@@ -12,7 +12,7 @@ import (
 func TestBuildResourceArtifact(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
-	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "id", Slug: "slug"}
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "id", Slug: "slug"}
 
 	s := ir.NewSkill("review", "Review", "Review the code carefully.", []string{"user"}, nil, ir.SourceRef{})
 	s.AllowedTools = []string{"read_file"}
@@ -76,7 +76,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 
 	warnOpts := analyze.DefaultOptions()
 	warnOpts.Version = "analyzer-v1"
-	warnOpts.Source = analyze.Source{RegistryURL: "https://example.com/one.git", Ref: "main", Path: "skills/review", ID: "one", Slug: "one", License: "MIT"}
+	warnOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/one.git", Ref: "main", Path: "skills/review", ID: "one", Slug: "one", License: "MIT"}
 	warn, err := BuildResourceArtifact(context.Background(), s, nil, warnOpts)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	rejectOpts := analyze.DefaultOptions()
 	rejectOpts.Version = "analyzer-v2"
 	rejectOpts.Policy = analyze.Policy{Name: "strict", Outcomes: map[string]string{analyze.FindingToolGrant: analyze.OutcomeReject}}
-	rejectOpts.Source = analyze.Source{RegistryURL: "https://example.com/two.git", Ref: "release", Path: "other/review", ID: "two", Slug: "two", License: "Apache-2.0"}
+	rejectOpts.Registry = analyze.Registry{RegistryURL: "https://example.com/two.git", Ref: "release", Path: "other/review", ID: "two", Slug: "two", License: "Apache-2.0"}
 	rejected, err := BuildResourceArtifact(context.Background(), s, nil, rejectOpts)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 	if manifest.AnalyzerVersion != "" || len(manifest.Findings) != 0 {
 		t.Fatalf("canonical manifest contains analyzer output: %#v", manifest)
 	}
-	if manifest.SourceID != "" || manifest.SourceSlug != "" || manifest.Revision != "" || manifest.Provenance.RegistryURL != "" || manifest.Provenance.Ref != "" || manifest.Provenance.Path != "" {
+	if manifest.RegistryID != "" || manifest.RegistrySlug != "" || manifest.Revision != "" || manifest.Provenance.RegistryURL != "" || manifest.Provenance.Ref != "" || manifest.Provenance.Path != "" {
 		t.Fatalf("canonical manifest contains occurrence provenance: %#v", manifest)
 	}
 }
@@ -112,7 +112,7 @@ func TestBuildResourceArtifactArchiveIsAnalyzerIndependent(t *testing.T) {
 func TestBuildCollectionManifest(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
-	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "source-id"}
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "registry-id"}
 
 	s := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
 	skillResult, err := BuildResourceArtifact(ctx, s, nil, opts)
@@ -157,7 +157,7 @@ func TestBuildCollectionManifestNil(t *testing.T) {
 func TestBuildCollectionManifestIgnoresMemberAssessment(t *testing.T) {
 	ctx := context.Background()
 	opts := analyze.DefaultOptions()
-	opts.Source = analyze.Source{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "source-id"}
+	opts.Registry = analyze.Registry{RegistryURL: "https://example.com/repo.git", Ref: "main", ID: "registry-id"}
 
 	acceptedSkill := ir.NewSkill("review", "Review", "Body", nil, nil, ir.SourceRef{})
 	accepted, err := BuildResourceArtifact(ctx, acceptedSkill, nil, opts)

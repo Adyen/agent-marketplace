@@ -15,12 +15,12 @@ func BenchmarkMarketplaceGarbageCollectReachability(b *testing.B) {
 	c := NewCache(root)
 	contentDigest := "sha256:" + strings.Repeat("1", 64)
 	archiveDigest := "sha256:" + strings.Repeat("2", 64)
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: "https://marketplace.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin},
 	}}}
-	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})); err != nil {

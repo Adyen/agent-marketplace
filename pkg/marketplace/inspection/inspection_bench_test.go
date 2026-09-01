@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkBuild(b *testing.B) {
-	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Source: "source", Kind: "skill", Name: "review"}
+	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := "sha256:" + strings.Repeat("a", 64)
 	body := []byte("# Review\nInspect this resource.\n")
 	support := map[string][]byte{"notes.txt": []byte("support notes")}

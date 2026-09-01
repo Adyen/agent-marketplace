@@ -12,12 +12,12 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-type slowUnrelatedSourceStore struct {
+type slowUnrelatedRegistryStore struct {
 	store.MetadataStore
 	delay time.Duration
 }
 
-func (s slowUnrelatedSourceStore) LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
+func (s slowUnrelatedRegistryStore) LeaseJob(ctx context.Context, kind, workerID string, leaseDuration time.Duration) (store.Job, error) {
 	time.Sleep(s.delay)
 	return s.MetadataStore.LeaseJob(ctx, kind, workerID, leaseDuration)
 }
@@ -29,18 +29,18 @@ func BenchmarkReindexWithUnrelatedBacklog(b *testing.B) {
 	cfg := createTestConfig(b, repoDir)
 	meta, blobs := openTestStores(b)
 	defer func() { _ = meta.Close() }()
-	deps := Deps{Config: cfg, MetadataStore: slowUnrelatedSourceStore{MetadataStore: meta, delay: 100 * time.Millisecond}, BlobStore: blobs}
+	deps := Deps{Config: cfg, MetadataStore: slowUnrelatedRegistryStore{MetadataStore: meta, delay: 100 * time.Millisecond}, BlobStore: blobs}
 
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		for j := range 10 {
 			id := store.JobID(fmt.Sprintf("unrelated-%d-%d", i, j))
-			if err := job.Enqueue(ctx, meta, job.Job{ID: id, Kind: "refresh", Payload: []byte(`{"source_id":"missing-source"}`), MaxAttempts: 1}); err != nil {
+			if err := job.Enqueue(ctx, meta, job.Job{ID: id, Kind: "refresh", Payload: []byte(`{"registry_id":"missing-registry"}`), MaxAttempts: 1}); err != nil {
 				b.Fatalf("enqueue unrelated job: %v", err)
 			}
 		}
 		b.StartTimer()
-		if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+		if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 			b.Fatalf("Reindex: %v", err)
 		}
 	}
@@ -60,7 +60,7 @@ func BenchmarkRefresh(b *testing.B) {
 		b.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	src := store.Source{ID: store.SourceID(cfg.Sources[0].ID)}
+	src := store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}
 
 	b.ReportAllocs()
 	b.ResetTimer()

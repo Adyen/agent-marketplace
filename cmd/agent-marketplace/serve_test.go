@@ -97,9 +97,9 @@ storage:
   blobs:
     driver: filesystem
     path: /tmp/blobs-test
-sources:
+registries:
   - id: src-test
-    slug: example-source
+    slug: example-registry
     origin: https://github.com/example/resources.git
     ref: main
     roots:

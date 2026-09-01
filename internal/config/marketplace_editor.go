@@ -18,9 +18,9 @@ import (
 // edits only the selected configPath using the YAML AST editor, and does not
 // marshal a Config. Existing aliases and installed_name values are retained.
 //
-// A pin identity is (source_id, kind, name). An existing identity with a
+// A pin identity is (registry_id, kind, name). An existing identity with a
 // different revision, digest, or acquisition is a conflict and is rejected
-// rather than silently changing the installed resource. SourceSlug is
+// rather than silently changing the installed resource. RegistrySlug is
 // informational and does not participate in pin content identity.
 func EnsureMarketplacePinInConfig(configPath, marketplaceURL, instanceID, alias string, pin MarketplaceResourcePin) error {
 	_, err := EnsureMarketplacePinInConfigWithCommit(configPath, marketplaceURL, instanceID, alias, pin)
@@ -160,15 +160,15 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 			continue
 		}
 		if pinNode != nil {
-			return fmt.Errorf("config %q contains duplicate Marketplace resource pin identity %s/%s/%s", configPath, expected.SourceID, expected.Kind, expected.Name)
+			return fmt.Errorf("config %q contains duplicate Marketplace resource pin identity %s/%s/%s", configPath, expected.RegistryID, expected.Kind, expected.Name)
 		}
 		pinNode = node
 		if !sameMarketplacePinCASValue(got, expected) {
-			return fmt.Errorf("marketplace pin compare-and-swap conflict for %s/%s/%s", expected.SourceID, expected.Kind, expected.Name)
+			return fmt.Errorf("marketplace pin compare-and-swap conflict for %s/%s/%s", expected.RegistryID, expected.Kind, expected.Name)
 		}
 	}
 	if pinNode == nil {
-		return fmt.Errorf("marketplace pin %s/%s/%s not found in config %q", expected.SourceID, expected.Kind, expected.Name, configPath)
+		return fmt.Errorf("marketplace pin %s/%s/%s not found in config %q", expected.RegistryID, expected.Kind, expected.Name, configPath)
 	}
 	if sameMarketplacePinCASValue(expected, replacement) {
 		return nil
@@ -177,35 +177,35 @@ func updateMarketplacePinInConfig(configPath, marketplaceURL, instanceID string,
 	if err := writeConfigDocument(configPath, mode, doc); err != nil {
 		return err
 	}
-	slog.Debug("marketplace pin updated", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID, "source_id", replacement.SourceID, "kind", replacement.Kind, "name", replacement.Name, "revision", replacement.Revision)
+	slog.Debug("marketplace pin updated", "config_path", configPath, "url", canonicalURL, "instance_id", instanceID, "registry_id", replacement.RegistryID, "kind", replacement.Kind, "name", replacement.Name, "revision", replacement.Revision)
 	return nil
 }
 
 func sameMarketplacePinCASValue(a, b MarketplaceResourcePin) bool {
-	return a.SourceID == b.SourceID && a.SourceSlug == b.SourceSlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest && a.InstalledName == b.InstalledName && a.Direct == b.Direct && a.SelectedBy == b.SelectedBy
+	return a.RegistryID == b.RegistryID && a.RegistrySlug == b.RegistrySlug && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && a.Acquisition == b.Acquisition && a.RegistryCommit == b.RegistryCommit && a.RegistryManifestDigest == b.RegistryManifestDigest && a.InstalledName == b.InstalledName && a.Direct == b.Direct && a.SelectedBy == b.SelectedBy
 }
 
 func replaceMarketplacePinNode(node *yaml.Node, pin MarketplaceResourcePin) {
-	setMappingValue(node, "source_id", scalarNode(pin.SourceID))
-	if pin.SourceSlug == "" {
-		removeMappingKeyByName(node, "source_slug")
+	setMappingValue(node, "registry_id", scalarNode(pin.RegistryID))
+	if pin.RegistrySlug == "" {
+		removeMappingKeyByName(node, "registry_slug")
 	} else {
-		setMappingValue(node, "source_slug", scalarNode(pin.SourceSlug))
+		setMappingValue(node, "registry_slug", scalarNode(pin.RegistrySlug))
 	}
 	setMappingValue(node, "kind", scalarNode(pin.Kind))
 	setMappingValue(node, "name", scalarNode(pin.Name))
 	setMappingValue(node, "revision", scalarNode(pin.Revision))
 	setMappingValue(node, "digest", scalarNode(pin.Digest))
 	setMappingValue(node, "acquisition", scalarNode(pin.Acquisition))
-	if pin.SourceCommit == "" {
-		removeMappingKeyByName(node, "source_commit")
+	if pin.RegistryCommit == "" {
+		removeMappingKeyByName(node, "registry_commit")
 	} else {
-		setMappingValue(node, "source_commit", scalarNode(pin.SourceCommit))
+		setMappingValue(node, "registry_commit", scalarNode(pin.RegistryCommit))
 	}
-	if pin.SourceManifestDigest == "" {
-		removeMappingKeyByName(node, "source_manifest_digest")
+	if pin.RegistryManifestDigest == "" {
+		removeMappingKeyByName(node, "registry_manifest_digest")
 	} else {
-		setMappingValue(node, "source_manifest_digest", scalarNode(pin.SourceManifestDigest))
+		setMappingValue(node, "registry_manifest_digest", scalarNode(pin.RegistryManifestDigest))
 	}
 	if pin.InstalledName == "" {
 		removeMappingKeyByName(node, "installed_name")
@@ -465,7 +465,7 @@ func ValidateMarketplaceInstalledName(name string) error {
 // ValidateMarketplaceResourcePin validates the fields needed for an exact
 // mirror pin before any config file is changed.
 func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
-	if err := validateMarketplaceSegment("source_id", pin.SourceID); err != nil {
+	if err := validateMarketplaceSegment("registry_id", pin.RegistryID); err != nil {
 		return err
 	}
 	if !api.IsMarketplaceKind(pin.Kind) {
@@ -480,15 +480,15 @@ func ValidateMarketplaceResourcePin(pin MarketplaceResourcePin) error {
 	if !api.IsCanonicalSHA256Digest(pin.Digest) {
 		return fmt.Errorf("digest must be sha256:<64-hex>")
 	}
-	if pin.SourceSlug != "" {
-		if err := validateMarketplaceSegment("source_slug", pin.SourceSlug); err != nil {
+	if pin.RegistrySlug != "" {
+		if err := validateMarketplaceSegment("registry_slug", pin.RegistrySlug); err != nil {
 			return err
 		}
 	}
 	if pin.Acquisition != "" && pin.Acquisition != MarketplaceAcquisitionMirror && pin.Acquisition != MarketplaceAcquisitionIndexOnly {
 		return fmt.Errorf("acquisition must be %q or %q", MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly)
 	}
-	if err := validateMarketplaceOccurrenceFields(pin.Acquisition, pin.SourceCommit, pin.SourceManifestDigest); err != nil {
+	if err := validateMarketplaceOccurrenceFields(pin.Acquisition, pin.RegistryCommit, pin.RegistryManifestDigest); err != nil {
 		return err
 	}
 	if err := validateMarketplaceSelections(pin.SelectedBy); err != nil {
@@ -508,8 +508,8 @@ var marketplaceEntryFields = map[string]struct{}{
 }
 
 var marketplacePinFields = map[string]struct{}{
-	"source_id": {}, "source_slug": {}, "kind": {}, "name": {},
-	"revision": {}, "digest": {}, "acquisition": {}, "source_commit": {}, "source_manifest_digest": {}, "installed_name": {}, "direct": {}, "selected_by": {},
+	"registry_id": {}, "registry_slug": {}, "kind": {}, "name": {},
+	"revision": {}, "digest": {}, "acquisition": {}, "registry_commit": {}, "registry_manifest_digest": {}, "installed_name": {}, "direct": {}, "selected_by": {},
 }
 
 // validateMarketplaceMapping validates only the Marketplace-specific AST. The
@@ -666,11 +666,11 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 			continue
 		}
 		if found != nil {
-			return false, fmt.Errorf("conflicting duplicate Marketplace resource pin identity %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+			return false, fmt.Errorf("conflicting duplicate Marketplace resource pin identity %s/%s/%s", wanted.RegistryID, wanted.Kind, wanted.Name)
 		}
 		found = node
 		if !sameMarketplacePinContent(got, wanted) {
-			return false, fmt.Errorf("conflicting Marketplace resource pin for %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+			return false, fmt.Errorf("conflicting Marketplace resource pin for %s/%s/%s", wanted.RegistryID, wanted.Kind, wanted.Name)
 		}
 	}
 	if found == nil {
@@ -687,7 +687,7 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 			return true, nil
 		}
 		if existing.Value != wanted.InstalledName {
-			return false, fmt.Errorf("conflicting installed_name for Marketplace resource pin %s/%s/%s: existing %q, requested %q", wanted.SourceID, wanted.Kind, wanted.Name, existing.Value, wanted.InstalledName)
+			return false, fmt.Errorf("conflicting installed_name for Marketplace resource pin %s/%s/%s: existing %q, requested %q", wanted.RegistryID, wanted.Kind, wanted.Name, existing.Value, wanted.InstalledName)
 		}
 	}
 	if len(wanted.SelectedBy.List()) > 0 {
@@ -732,22 +732,22 @@ func addMarketplacePinNode(resources *yaml.Node, wanted MarketplaceResourcePin) 
 
 func validateIncomingMarketplacePins(pins []MarketplaceResourcePin) error {
 	type pinIdentity struct {
-		sourceID string
-		kind     string
-		name     string
+		registryID string
+		kind       string
+		name       string
 	}
 	seen := make(map[pinIdentity]MarketplaceResourcePin, len(pins))
 	for _, pin := range pins {
-		identity := pinIdentity{sourceID: pin.SourceID, kind: pin.Kind, name: pin.Name}
+		identity := pinIdentity{registryID: pin.RegistryID, kind: pin.Kind, name: pin.Name}
 		previous, ok := seen[identity]
 		if !ok {
 			seen[identity] = pin
 			continue
 		}
 		if !sameMarketplaceIncomingPin(previous, pin) {
-			return fmt.Errorf("conflicting duplicate Marketplace resource pin identity %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+			return fmt.Errorf("conflicting duplicate Marketplace resource pin identity %s/%s/%s", pin.RegistryID, pin.Kind, pin.Name)
 		}
-		return fmt.Errorf("duplicate Marketplace resource pin identity %s/%s/%s", pin.SourceID, pin.Kind, pin.Name)
+		return fmt.Errorf("duplicate Marketplace resource pin identity %s/%s/%s", pin.RegistryID, pin.Kind, pin.Name)
 	}
 	return nil
 }
@@ -762,9 +762,9 @@ func sameMarketplaceIncomingPin(a, b MarketplaceResourcePin) bool {
 		}
 		return pin.Acquisition
 	}
-	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name &&
+	return a.RegistryID == b.RegistryID && a.Kind == b.Kind && a.Name == b.Name &&
 		a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b) &&
-		a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest &&
+		a.RegistryCommit == b.RegistryCommit && a.RegistryManifestDigest == b.RegistryManifestDigest &&
 		a.InstalledName == b.InstalledName
 }
 
@@ -778,20 +778,20 @@ func validateMarketplacePinBatchAgainstExisting(resources *yaml.Node, pins []Mar
 		if err != nil {
 			return err
 		}
-		key := pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
+		key := pin.RegistryID + "\x00" + pin.Kind + "\x00" + pin.Name
 		if _, duplicate := existing[key]; duplicate {
 			for _, wanted := range pins {
 				if sameMarketplacePinIdentity(pin, wanted) {
-					return fmt.Errorf("config contains duplicate Marketplace resource pin identity %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+					return fmt.Errorf("config contains duplicate Marketplace resource pin identity %s/%s/%s", wanted.RegistryID, wanted.Kind, wanted.Name)
 				}
 			}
 		}
 		existing[key] = pin
 	}
 	for _, wanted := range pins {
-		key := wanted.SourceID + "\x00" + wanted.Kind + "\x00" + wanted.Name
+		key := wanted.RegistryID + "\x00" + wanted.Kind + "\x00" + wanted.Name
 		if got, ok := existing[key]; ok && !sameMarketplacePinContent(got, wanted) {
-			return fmt.Errorf("conflicting Marketplace resource pin for %s/%s/%s", wanted.SourceID, wanted.Kind, wanted.Name)
+			return fmt.Errorf("conflicting Marketplace resource pin for %s/%s/%s", wanted.RegistryID, wanted.Kind, wanted.Name)
 		}
 	}
 	return nil
@@ -818,7 +818,7 @@ func decodeMarketplacePin(node *yaml.Node) (MarketplaceResourcePin, error) {
 }
 
 func sameMarketplacePinIdentity(a, b MarketplaceResourcePin) bool {
-	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name
+	return a.RegistryID == b.RegistryID && a.Kind == b.Kind && a.Name == b.Name
 }
 
 func sameMarketplacePinContent(a, b MarketplaceResourcePin) bool {
@@ -830,7 +830,7 @@ func sameMarketplacePinContent(a, b MarketplaceResourcePin) bool {
 		}
 		return pin.Acquisition
 	}
-	return a.SourceID == b.SourceID && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b) && a.SourceCommit == b.SourceCommit && a.SourceManifestDigest == b.SourceManifestDigest
+	return a.RegistryID == b.RegistryID && a.Kind == b.Kind && a.Name == b.Name && a.Revision == b.Revision && a.Digest == b.Digest && acquisition(a) == acquisition(b) && a.RegistryCommit == b.RegistryCommit && a.RegistryManifestDigest == b.RegistryManifestDigest
 }
 
 func marketplaceEntryNode(endpointURL, instanceID, alias string) *yaml.Node {
@@ -857,15 +857,15 @@ func marketplacePinNode(pin MarketplaceResourcePin) *yaml.Node {
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, scalarNode(value),
 		)
 	}
-	add("source_id", pin.SourceID, false)
-	add("source_slug", pin.SourceSlug, true)
+	add("registry_id", pin.RegistryID, false)
+	add("registry_slug", pin.RegistrySlug, true)
 	add("kind", pin.Kind, false)
 	add("name", pin.Name, false)
 	add("revision", pin.Revision, false)
 	add("digest", pin.Digest, false)
 	add("acquisition", pin.Acquisition, true)
-	add("source_commit", pin.SourceCommit, true)
-	add("source_manifest_digest", pin.SourceManifestDigest, true)
+	add("registry_commit", pin.RegistryCommit, true)
+	add("registry_manifest_digest", pin.RegistryManifestDigest, true)
 	add("installed_name", pin.InstalledName, true)
 	if pin.Direct {
 		entry.Content = append(entry.Content,
@@ -884,7 +884,7 @@ func marketplaceSelectionsNode(selections []MarketplaceSelection) *yaml.Node {
 	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	for _, selection := range selections {
 		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
-			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "source_id"}, scalarNode(selection.SourceID),
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "registry_id"}, scalarNode(selection.RegistryID),
 			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"}, scalarNode(selection.Name),
 			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "revision"}, scalarNode(selection.Revision),
 		}})

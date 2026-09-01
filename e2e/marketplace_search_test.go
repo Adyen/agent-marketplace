@@ -33,12 +33,12 @@ func newMarketplaceSearchFixture(t *testing.T, instanceID string, status int) *m
 				return
 			}
 			items := []mpapi.ResourceListItem{
-				{SourceID: "src", SourceSlug: "source", Kind: "skill", Name: "skill-one", Revision: marketplaceTestDigest('a'), ContentDigest: marketplaceTestDigest('a')},
-				{SourceID: "src", SourceSlug: "source", Kind: "command", Name: "command-one", Revision: marketplaceTestDigest('b'), ContentDigest: marketplaceTestDigest('b')},
-				{SourceID: "src", SourceSlug: "source", Kind: "subagent", Name: "agent-one", Revision: marketplaceTestDigest('c'), ContentDigest: marketplaceTestDigest('c')},
-				{SourceID: "src", SourceSlug: "source", Kind: "hook", Name: "hook-one", Revision: marketplaceTestDigest('d'), ContentDigest: marketplaceTestDigest('d')},
-				{SourceID: "src", SourceSlug: "source", Kind: "mcpserver", Name: "server-one", Revision: marketplaceTestDigest('e'), ContentDigest: marketplaceTestDigest('e')},
-				{SourceID: "src", SourceSlug: "source", Kind: "collection", Name: "bundle-one", Revision: marketplaceTestDigest('f'), ContentDigest: marketplaceTestDigest('f')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "skill", Name: "skill-one", Revision: marketplaceTestDigest('a'), ContentDigest: marketplaceTestDigest('a')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "command", Name: "command-one", Revision: marketplaceTestDigest('b'), ContentDigest: marketplaceTestDigest('b')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "subagent", Name: "agent-one", Revision: marketplaceTestDigest('c'), ContentDigest: marketplaceTestDigest('c')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "hook", Name: "hook-one", Revision: marketplaceTestDigest('d'), ContentDigest: marketplaceTestDigest('d')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "mcpserver", Name: "server-one", Revision: marketplaceTestDigest('e'), ContentDigest: marketplaceTestDigest('e')},
+				{RegistryID: "src", RegistrySlug: "source", Kind: "collection", Name: "bundle-one", Revision: marketplaceTestDigest('f'), ContentDigest: marketplaceTestDigest('f')},
 			}
 			if kind := r.URL.Query().Get("kind"); kind != "" {
 				filtered := items[:0]

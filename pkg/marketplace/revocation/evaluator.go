@@ -16,7 +16,7 @@ import (
 // read time; it never mutates a stored revision.
 type Evaluator struct {
 	marketplace  store.MarketplaceID
-	source       map[string]store.Revocation
+	registry     map[string]store.Revocation
 	coordinate   map[string]store.Revocation
 	exact        map[string]store.Revocation
 	targets      []store.RevisionRevocationTarget
@@ -24,12 +24,12 @@ type Evaluator struct {
 }
 
 // New builds an evaluator from the live operator configuration. Declarations
-// may target a whole source, a resource coordinate, or one exact revision.
-// Specificity is ordered exact > coordinate > source.
+// may target a whole registry, a resource coordinate, or one exact revision.
+// Specificity is ordered exact > coordinate > registry.
 func New(cfg config.Config) (*Evaluator, error) {
 	e := &Evaluator{
 		marketplace: store.MarketplaceID(strings.TrimSpace(cfg.Instance.ID)),
-		source:      make(map[string]store.Revocation, len(cfg.Revocations.SourceIDs)),
+		registry:    make(map[string]store.Revocation, len(cfg.Revocations.RegistryIDs)),
 		coordinate:  make(map[string]store.Revocation, len(cfg.Revocations.Coordinates)),
 		exact:       make(map[string]store.Revocation, len(cfg.Revocations.Revisions)),
 	}
@@ -42,13 +42,13 @@ func New(cfg config.Config) (*Evaluator, error) {
 		seenDeclarations[declarationKey(r)] = struct{}{}
 		e.declarations = append(e.declarations, r)
 	}
-	for _, raw := range cfg.Revocations.SourceIDs {
+	for _, raw := range cfg.Revocations.RegistryIDs {
 		target := strings.TrimSpace(raw)
-		if err := validateToken("source", target); err != nil {
-			return nil, fmt.Errorf("source revocation %q: %w", raw, err)
+		if err := validateToken("registry", target); err != nil {
+			return nil, fmt.Errorf("registry revocation %q: %w", raw, err)
 		}
-		r := store.Revocation{Kind: store.RevocationSource, TargetID: target, Reason: "operator configured"}
-		e.source[target] = r
+		r := store.Revocation{Kind: store.RevocationRegistry, TargetID: target, Reason: "operator configured"}
+		e.registry[target] = r
 		add(r.Kind, r.TargetID)
 	}
 	for _, raw := range cfg.Revocations.Coordinates {
@@ -96,7 +96,7 @@ func parseCoordinateTarget(raw, instanceID string) (store.ResourceCoordinate, er
 		return store.ResourceCoordinate{}, err
 	}
 	for label, value := range map[string]string{
-		"marketplace": string(coordinate.Marketplace), "source": string(coordinate.Source),
+		"marketplace": string(coordinate.Marketplace), "registry": string(coordinate.Registry),
 		"kind": coordinate.Kind, "name": coordinate.Name,
 	} {
 		if err := validateToken(label, value); err != nil {
@@ -148,7 +148,7 @@ func (e *Evaluator) Effective(rev store.AssessedResourceRevision) *store.Revocat
 		return &result
 	}
 	if e.marketplace == "" || rev.Coordinate.Marketplace == e.marketplace {
-		if active, ok := e.source[string(rev.Coordinate.Source)]; ok {
+		if active, ok := e.registry[string(rev.Coordinate.Registry)]; ok {
 			result := active
 			return &result
 		}

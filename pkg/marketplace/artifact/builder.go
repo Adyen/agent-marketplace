@@ -17,7 +17,7 @@ type BuildResult struct {
 	RawArchive []byte
 	// ManifestPayload and ManifestDigest are populated for virtual collection
 	// builds. The standalone manifest is the collection revision identity; the
-	// tar archive remains available for the legacy source-revision artifact.
+	// tar archive remains available for the registry-revision artifact.
 	ManifestPayload []byte
 	ManifestDigest  string
 	ContentDigest   string
@@ -60,7 +60,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 	}
 
 	// Only properties derived from the resource belong in the canonical archive.
-	// Analyzer output, policy decisions, and source occurrence metadata are stored
+	// Analyzer output, policy decisions, and registry occurrence metadata are stored
 	// separately by Marketplace so re-analysis cannot change resource identity.
 	base.Manifest.Capabilities = caps
 
@@ -89,7 +89,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 		Artifact:       artifact,
 		Name:           artifact.Manifest.Name,
 		Kind:           artifact.Manifest.Kind,
-		License:        opts.Source.License,
+		License:        opts.Registry.License,
 		Description:    description,
 		RawArchive:     raw,
 		ContentDigest:  base.Manifest.ContentDigest,
@@ -104,7 +104,7 @@ func BuildResourceArtifact(ctx context.Context, r ir.Resource, files analyze.Fil
 
 // BuildCollectionManifest builds a standalone collection manifest and keeps an
 // in-memory canonical envelope for metadata consumers. It never produces a tar
-// archive. If memberResults is provided, a source revision manifest is also
+// archive. If memberResults is provided, a registry revision manifest is also
 // produced and its digest is returned in BuildResult.RevisionDigest.
 func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResults []BuildResult, opts analyze.Options) (BuildResult, error) {
 	if c == nil {
@@ -176,9 +176,9 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 
 	revisionDigest := ""
 	if len(memberResults) > 0 {
-		revManifest := SourceRevisionManifest{
-			SchemaVersion: SourceRevisionSchemaV1,
-			Generator:     SourceRevisionGeneratorV1,
+		revManifest := RegistryRevisionManifest{
+			SchemaVersion: RegistryRevisionSchemaV1,
+			Generator:     RegistryRevisionGeneratorV1,
 		}
 		for _, mr := range memberResults {
 			kind := mr.Kind
@@ -196,7 +196,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 				ArchiveDigest: mr.ArchiveDigest,
 			})
 		}
-		_, digest, err := EncodeSourceRevisionManifest(revManifest)
+		_, digest, err := EncodeRegistryRevisionManifest(revManifest)
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("encode revision manifest: %w", err)
 		}
@@ -211,7 +211,7 @@ func BuildCollectionManifest(ctx context.Context, c *ir.Collection, memberResult
 		Artifact:        artifact,
 		Name:            c.Name(),
 		Kind:            "collection",
-		License:         opts.Source.License,
+		License:         opts.Registry.License,
 		Description:     description,
 		ManifestPayload: payload,
 		ManifestDigest:  manifestDigest,
@@ -228,9 +228,9 @@ func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, _ a
 	if r == nil {
 		return "", nil
 	}
-	rev := SourceRevisionManifest{
-		SchemaVersion: SourceRevisionSchemaV1,
-		Generator:     SourceRevisionGeneratorV1,
+	rev := RegistryRevisionManifest{
+		SchemaVersion: RegistryRevisionSchemaV1,
+		Generator:     RegistryRevisionGeneratorV1,
 		Resources: []RevisionResource{{
 			Kind:          r.Kind().String(),
 			Name:          r.Name(),
@@ -238,7 +238,7 @@ func buildRevisionDigest(r ir.Resource, contentDigest, archiveDigest string, _ a
 			ArchiveDigest: archiveDigest,
 		}},
 	}
-	_, digest, err := EncodeSourceRevisionManifest(rev)
+	_, digest, err := EncodeRegistryRevisionManifest(rev)
 	if err != nil {
 		return "", err
 	}
@@ -267,7 +267,7 @@ func resolveCollectionManifestMembers(manifest hccartifact.CollectionManifest, m
 		m := manifest.Members[i]
 		key := m.Kind + "/" + m.Name
 		if mr, ok := byKey[key]; ok {
-			m.SourceID = opts.Source.ID
+			m.RegistryID = opts.Registry.ID
 			m.Revision = mr.ContentDigest
 		}
 		resolved = append(resolved, m)
@@ -289,7 +289,7 @@ func resolveCollectionManifestMembers(manifest hccartifact.CollectionManifest, m
 			}
 		}
 		if !found {
-			resolved = append(resolved, hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, SourceID: opts.Source.ID, Revision: mr.ContentDigest})
+			resolved = append(resolved, hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, RegistryID: opts.Registry.ID, Revision: mr.ContentDigest})
 		}
 	}
 	manifest.Members = resolved
@@ -304,8 +304,8 @@ func resolveCollectionManifestMembers(manifest hccartifact.CollectionManifest, m
 		if kind == "collection" {
 			continue
 		}
-		key := kind + "/" + mr.Name + "/" + opts.Source.ID
-		leaf := hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, SourceID: opts.Source.ID, Revision: mr.ContentDigest, InclusionPaths: [][]string{{manifest.Name}}}
+		key := kind + "/" + mr.Name + "/" + opts.Registry.ID
+		leaf := hccartifact.CollectionMemberEntry{Kind: kind, Name: mr.Name, RegistryID: opts.Registry.ID, Revision: mr.ContentDigest, InclusionPaths: [][]string{{manifest.Name}}}
 		if index, ok := seen[key]; ok {
 			if leaves[index].Revision == leaf.Revision {
 				leaves[index].InclusionPaths = append(leaves[index].InclusionPaths, leaf.InclusionPaths...)

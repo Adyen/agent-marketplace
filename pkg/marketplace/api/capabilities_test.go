@@ -40,8 +40,8 @@ func TestDefaultWellKnownAdvertisesBrowserTemplatesOnlyWhenConfigured(t *testing
 
 	withBrowser := DefaultWellKnown("mp", "https://api.example", "https://market.example/")
 	if withBrowser.BrowserBase != "https://market.example" ||
-		withBrowser.BrowserLatestRoute != "https://market.example/s/{source}/{kind}/{name}" ||
-		withBrowser.BrowserExactRoute != "https://market.example/s/{source}/{kind}/{name}/revisions/{revision}" {
+		withBrowser.BrowserLatestRoute != "https://market.example/r/{registry}/{kind}/{name}" ||
+		withBrowser.BrowserExactRoute != "https://market.example/r/{registry}/{kind}/{name}/revisions/{revision}" {
 		t.Fatalf("well-known with browser base = %+v", withBrowser)
 	}
 }

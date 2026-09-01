@@ -53,7 +53,7 @@ func searchServer(tb testing.TB, name string, fail bool, items ...mpapi.Resource
 
 func canonicalSearchItem(source, kind, name string, score float64) mpapi.ResourceListItem {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	return mpapi.ResourceListItem{SourceID: source, SourceSlug: source, Kind: kind, Name: name, Revision: digest, ContentDigest: digest, Score: score}
+	return mpapi.ResourceListItem{RegistryID: source, RegistrySlug: source, Kind: kind, Name: name, Revision: digest, ContentDigest: digest, Score: score}
 }
 
 func TestFederatedSearchAllConfigured(t *testing.T) {

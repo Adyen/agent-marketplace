@@ -23,9 +23,9 @@ type MarketplaceEntry struct {
 // MarketplaceSelection records an exact collection revision that keeps a leaf
 // selected. Its absence on a leaf represents a direct user selection.
 type MarketplaceSelection struct {
-	SourceID string `yaml:"source_id"`
-	Name     string `yaml:"name"`
-	Revision string `yaml:"revision"`
+	RegistryID string `yaml:"registry_id"`
+	Name       string `yaml:"name"`
+	Revision   string `yaml:"revision"`
 }
 
 // MarketplaceSelections is a comparable, YAML-sequence-backed value. Keeping
@@ -36,7 +36,7 @@ type MarketplaceSelections string
 func MarketplaceSelectionsFrom(values []MarketplaceSelection) MarketplaceSelections {
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
-		parts = append(parts, value.SourceID+"\x00"+value.Name+"\x00"+value.Revision)
+		parts = append(parts, value.RegistryID+"\x00"+value.Name+"\x00"+value.Revision)
 	}
 	return MarketplaceSelections(strings.Join(parts, "\n"))
 }
@@ -49,7 +49,7 @@ func (s MarketplaceSelections) List() []MarketplaceSelection {
 	for _, part := range strings.Split(string(s), "\n") {
 		fields := strings.Split(part, "\x00")
 		if len(fields) == 3 {
-			values = append(values, MarketplaceSelection{SourceID: fields[0], Name: fields[1], Revision: fields[2]})
+			values = append(values, MarketplaceSelection{RegistryID: fields[0], Name: fields[1], Revision: fields[2]})
 		}
 	}
 	return values
@@ -64,7 +64,7 @@ func validateMarketplaceSelections(selections MarketplaceSelections) error {
 		if len(fields) != 3 {
 			return fmt.Errorf("selected_by[%d] is malformed", index)
 		}
-		if err := validateMarketplaceSelection(MarketplaceSelection{SourceID: fields[0], Name: fields[1], Revision: fields[2]}); err != nil {
+		if err := validateMarketplaceSelection(MarketplaceSelection{RegistryID: fields[0], Name: fields[1], Revision: fields[2]}); err != nil {
 			return fmt.Errorf("selected_by[%d]: %w", index, err)
 		}
 	}
@@ -86,18 +86,18 @@ func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type MarketplaceResourcePin struct {
-	SourceID             string                `yaml:"source_id"`
-	SourceSlug           string                `yaml:"source_slug,omitempty"`
-	Kind                 string                `yaml:"kind"`
-	Name                 string                `yaml:"name"`
-	Revision             string                `yaml:"revision"`
-	Digest               string                `yaml:"digest"`                // "sha256:<64 lowercase hex>"
-	Acquisition          string                `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
-	SourceCommit         string                `yaml:"source_commit,omitempty"`
-	SourceManifestDigest string                `yaml:"source_manifest_digest,omitempty"`
-	InstalledName        string                `yaml:"installed_name,omitempty"`
-	Direct               bool                  `yaml:"direct,omitempty"`
-	SelectedBy           MarketplaceSelections `yaml:"selected_by,omitempty"`
+	RegistryID             string                `yaml:"registry_id"`
+	RegistrySlug           string                `yaml:"registry_slug,omitempty"`
+	Kind                   string                `yaml:"kind"`
+	Name                   string                `yaml:"name"`
+	Revision               string                `yaml:"revision"`
+	Digest                 string                `yaml:"digest"`                // "sha256:<64 lowercase hex>"
+	Acquisition            string                `yaml:"acquisition,omitempty"` // "mirror" or "index-only"
+	RegistryCommit         string                `yaml:"registry_commit,omitempty"`
+	RegistryManifestDigest string                `yaml:"registry_manifest_digest,omitempty"`
+	InstalledName          string                `yaml:"installed_name,omitempty"`
+	Direct                 bool                  `yaml:"direct,omitempty"`
+	SelectedBy             MarketplaceSelections `yaml:"selected_by,omitempty"`
 }
 
 const (
@@ -163,11 +163,11 @@ func validateMarketplaceEntry(i int, e MarketplaceEntry) []error {
 
 func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []error {
 	var errs []error
-	if err := validateMarketplaceSegment("source_id", p.SourceID); err != nil {
+	if err := validateMarketplaceSegment("registry_id", p.RegistryID); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
-	if p.SourceSlug != "" {
-		if err := validateMarketplaceSegment("source_slug", p.SourceSlug); err != nil {
+	if p.RegistrySlug != "" {
+		if err := validateMarketplaceSegment("registry_slug", p.RegistrySlug); err != nil {
 			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 		}
 	}
@@ -186,7 +186,7 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 	if p.Acquisition != "" && p.Acquisition != MarketplaceAcquisitionMirror && p.Acquisition != MarketplaceAcquisitionIndexOnly {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].acquisition must be %q or %q", entryIdx, pinIdx, MarketplaceAcquisitionMirror, MarketplaceAcquisitionIndexOnly))
 	}
-	if err := validateMarketplaceOccurrenceFields(p.Acquisition, p.SourceCommit, p.SourceManifestDigest); err != nil {
+	if err := validateMarketplaceOccurrenceFields(p.Acquisition, p.RegistryCommit, p.RegistryManifestDigest); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 	}
 	if err := ValidateMarketplaceInstalledName(p.InstalledName); err != nil {
@@ -201,7 +201,7 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 }
 
 func validateMarketplaceSelection(selection MarketplaceSelection) error {
-	if err := validateMarketplaceSegment("selected_by source_id", selection.SourceID); err != nil {
+	if err := validateMarketplaceSegment("selected_by registry_id", selection.RegistryID); err != nil {
 		return err
 	}
 	if err := validateMarketplaceSegment("selected_by name", selection.Name); err != nil {
@@ -216,21 +216,21 @@ func validateMarketplaceSelection(selection MarketplaceSelection) error {
 	return nil
 }
 
-func validateMarketplaceOccurrenceFields(acquisition, sourceCommit, sourceManifestDigest string) error {
+func validateMarketplaceOccurrenceFields(acquisition, registryCommit, registryManifestDigest string) error {
 	if acquisition == MarketplaceAcquisitionIndexOnly {
-		if !api.IsCanonicalGitCommit(sourceCommit) {
-			return fmt.Errorf("source_commit must be a full lowercase Git commit")
+		if !api.IsCanonicalGitCommit(registryCommit) {
+			return fmt.Errorf("registry_commit must be a full lowercase Git commit")
 		}
-		if !api.IsCanonicalSHA256Digest(sourceManifestDigest) {
-			return fmt.Errorf("source_manifest_digest must be sha256:<64-hex>")
+		if !api.IsCanonicalSHA256Digest(registryManifestDigest) {
+			return fmt.Errorf("registry_manifest_digest must be sha256:<64-hex>")
 		}
 		return nil
 	}
-	if sourceCommit != "" || sourceManifestDigest != "" {
+	if registryCommit != "" || registryManifestDigest != "" {
 		// These fields are the immutable occurrence pin for index-only
 		// acquisition. Do not accept them on a mirror pin, where they would be
 		// silently ignored and could mislead an editor or later sync.
-		return fmt.Errorf("source_commit and source_manifest_digest require acquisition %q", MarketplaceAcquisitionIndexOnly)
+		return fmt.Errorf("registry_commit and registry_manifest_digest require acquisition %q", MarketplaceAcquisitionIndexOnly)
 	}
 	return nil
 }

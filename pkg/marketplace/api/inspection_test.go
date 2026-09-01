@@ -62,8 +62,8 @@ func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
 	}
 	defer func() { _ = meta.Close() }()
 	blobs := fsblob.New(t.TempDir())
-	src := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
-	if err := meta.PutSource(ctx, src); err != nil {
+	src := store.Registry{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
@@ -72,7 +72,7 @@ func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
 	const revisionPrefix = "sha256:"
 	for i, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
 		revision := revisionPrefix + strings.Repeat(string('a'+byte(i)), 64)
-		coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: src.ID, Kind: kind, Name: "example"}
+		coord := store.ResourceCoordinate{Marketplace: "marketplace", Registry: src.ID, Kind: kind, Name: "example"}
 		body := []byte("# safe " + kind)
 		if kind == "mcpserver" || kind == "collection" {
 			body = []byte(`{"name":"safe"}`)
@@ -95,7 +95,7 @@ func TestInspectionRoutesSupportEveryMarketplaceKind(t *testing.T) {
 		if err := meta.PutResourceRevision(ctx, resource); err != nil {
 			t.Fatal(err)
 		}
-		if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: src.ID, Ref: src.Ref, Commit: commit, SourceRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
+		if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{RegistryID: src.ID, Ref: src.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
 			t.Fatal(err)
 		}
 		if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: resource.ContentDigest, Commit: commit, ManifestDigest: manifest}); err != nil {
@@ -158,8 +158,8 @@ func TestPublicMCPArtifactIsDownloadable(t *testing.T) {
 	}
 	defer func() { _ = meta.Close() }()
 	blobs := fsblob.New(t.TempDir())
-	source := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}
-	if err := meta.PutSource(ctx, source); err != nil {
+	source := store.Registry{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}
+	if err := meta.PutRegistry(ctx, source); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.com"}); err != nil {
@@ -174,7 +174,7 @@ func TestPublicMCPArtifactIsDownloadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "remote"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Registry: source.ID, Kind: "mcpserver", Name: "remote"},
 		ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(archive),
 	}
 	publishAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("d", 64)), strings.Repeat("e", 40))
@@ -209,11 +209,11 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 	defer func() { _ = meta.Close() }()
 	blobs := fsblob.New(t.TempDir())
 	const revision = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	src := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
-	if err := meta.PutSource(ctx, src); err != nil {
+	src := store.Registry{ID: "source-id", Slug: "source", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		t.Fatal(err)
 	}
-	coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: src.ID, Kind: KindSkill, Name: "review"}
+	coord := store.ResourceCoordinate{Marketplace: "marketplace", Registry: src.ID, Kind: KindSkill, Name: "review"}
 	body := []byte("# Hostile review\n\n<div>raw HTML</div>\n<script>alert(1)</script>\n![remote image](https://evil.invalid/pixel.png)\n[link](https://example.com/docs)\n")
 	support := map[string][]byte{
 		"notes.md":    []byte("<script>support must stay hidden</script>"),
@@ -258,7 +258,7 @@ func TestExactSkillInspectionIsImmutableAndReadableWhenRevoked(t *testing.T) {
 	}
 	commit := strings.Repeat("e", 40)
 	manifest := store.RevisionDigest("sha256:" + strings.Repeat("d", 64))
-	if err := meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: src.ID, Ref: src.Ref, Commit: commit, SourceRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
+	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{RegistryID: src.ID, Ref: src.Ref, Commit: commit, RegistryRevisionManifestDigest: manifest, Acquisition: src.Acquisition, OccurredAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: revision, Commit: commit, ManifestDigest: manifest}); err != nil {

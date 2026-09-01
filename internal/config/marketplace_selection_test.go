@@ -8,7 +8,7 @@ import (
 )
 
 func selectionTestPin(source, kind, name, digest string) MarketplaceResourcePin {
-	return MarketplaceResourcePin{SourceID: source, Kind: kind, Name: name, Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror}
+	return MarketplaceResourcePin{RegistryID: source, Kind: kind, Name: name, Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror}
 }
 
 func TestMarketplaceSelectionMutationPreservesDirectAndOtherCollections(t *testing.T) {
@@ -157,7 +157,7 @@ func TestMarketplaceCollectionRemovalDoesNotSkipAdjacentLeaves(t *testing.T) {
 func TestMarketplaceCollectionMutationRejectsDuplicateRoots(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	collection := selectionTestPin("collections", "collection", "bundle", digest)
-	data := []byte("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - source_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n        acquisition: mirror\n      - source_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n        acquisition: mirror\n")
+	data := []byte("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: https://market.example\n    instance_id: mp\n    resources:\n      - registry_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n        acquisition: mirror\n      - registry_id: collections\n        kind: collection\n        name: bundle\n        revision: " + digest + "\n        digest: " + digest + "\n        acquisition: mirror\n")
 	for name, mutate := range map[string]func(string, MarketplaceResourcePin) error{
 		"remove": func(path string, pin MarketplaceResourcePin) error {
 			_, _, err := RemoveMarketplaceCollectionWithSnapshotAndCommit(path, "https://market.example", "mp", pin)

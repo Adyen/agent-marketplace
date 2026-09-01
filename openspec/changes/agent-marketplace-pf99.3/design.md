@@ -2,16 +2,16 @@
 
 ## Dependencies
 
-- `agent-marketplace-pf99.2` provides canonical artifacts, analyzers, source revision
+- `agent-marketplace-pf99.2` provides canonical artifacts, analyzers, registry revision
   manifests, and resource coordinates.
 
 ## Decisions
 
 - Domain types live in `pkg/marketplace/store` and are plain Go structs/IDs.
-- `MetadataStore` is the persistence contract for Marketplace, sources, resource
-  revisions, source occurrences, collections, revocations, and jobs.
+- `MetadataStore` is the persistence contract for Marketplace, registries, resource
+  revisions, registry occurrences, collections, revocations, and jobs.
 - `BlobStore` is the content-addressed storage contract for raw artifact archives,
-  collection manifests, and source revision manifests.
+  collection manifests, and registry revision manifests.
 - Adapters are isolated in subpackages:
   - `pkg/marketplace/store/sqlite`
   - `pkg/marketplace/store/postgres`

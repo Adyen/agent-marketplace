@@ -19,7 +19,7 @@ func TestClientGetCollectionManifestVerifiesCanonicalDigestAndLeaves(t *testing.
 	payload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: digest}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "src", Revision: digest}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
@@ -53,11 +53,11 @@ func TestPrepareLocatorRejectsRevokedCollectionBeforeFetchingManifest(t *testing
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
-		case "/api/v1/sources/src":
-			writeTestSource(w, store.Source{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/registries/src":
+			writeTestRegistry(w, store.Registry{ID: "src", Slug: "src", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case "/api/v1/resources/src/collection/bundle":
 			revision := assessedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(contentDigest),
 			})
 			revision.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: contentDigest, Reason: "test", AppliedAt: time.Now().UTC()}
@@ -72,7 +72,7 @@ func TestPrepareLocatorRejectsRevokedCollectionBeforeFetchingManifest(t *testing
 	defer server.Close()
 
 	resolver := &Resolver{HTTPClient: server.Client()}
-	_, err := resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Source: "src", Kind: "collection", Name: "bundle"}, nil)
+	_, err := resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Registry: "src", Kind: "collection", Name: "bundle"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("PrepareLocator error = %v, want revoked collection error", err)
 	}
@@ -86,7 +86,7 @@ func TestClientGetCollectionManifestRejectsTamperedManifest(t *testing.T) {
 	payload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: digest}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "src", Revision: digest}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {

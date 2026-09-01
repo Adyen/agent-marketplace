@@ -75,8 +75,8 @@ func TestEnsureRevocationsWithdrawsStaleDeclarations(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = meta.Close() })
 	digest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
-	coord := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}
-	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationSource, TargetID: "src", Reason: "old"}); err != nil {
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}
+	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationRegistry, TargetID: "src", Reason: "old"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutRevocation(ctx, store.Revocation{Kind: store.RevocationRevision, TargetID: coord.String() + "@" + digest.String(), Reason: "old"}); err != nil {
@@ -85,7 +85,7 @@ func TestEnsureRevocationsWithdrawsStaleDeclarations(t *testing.T) {
 	if err := EnsureRevocations(ctx, Deps{Config: config.Config{Instance: config.Instance{ID: "mp"}}, MetadataStore: meta}); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+	for _, kind := range []store.RevocationKind{store.RevocationRegistry, store.RevocationCoordinate, store.RevocationRevision} {
 		rows, err := meta.ListRevocations(ctx, kind)
 		if err != nil {
 			t.Fatal(err)

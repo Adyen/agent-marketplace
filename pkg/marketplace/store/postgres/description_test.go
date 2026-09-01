@@ -24,14 +24,14 @@ func seedDescriptionFixture(t *testing.T, s *postgres.Store, name, description s
 	if err := s.PutMarketplace(ctx, store.Marketplace{ID: "mp", Name: "Marketplace"}); err != nil {
 		t.Fatalf("PutMarketplace: %v", err)
 	}
-	if err := s.PutSource(ctx, store.Source{
-		ID: "src", Slug: "src", Ref: "main", Listed: true, Acquisition: store.AcquisitionMirror,
+	if err := s.PutRegistry(ctx, store.Registry{
+		ID: "reg", Slug: "reg", Ref: "main", Listed: true, Acquisition: store.AcquisitionMirror,
 	}); err != nil {
-		t.Fatalf("PutSource: %v", err)
+		t.Fatalf("PutRegistry: %v", err)
 	}
 
 	rev := store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "skill", Name: name},
 		ContentDigest: store.RevisionDigest(digestOf("a")),
 		ArchiveDigest: store.ArchiveDigest(digestOf("b")),
 		Description:   description,
@@ -60,11 +60,11 @@ func seedDescriptionFixture(t *testing.T, s *postgres.Store, name, description s
 	if err := s.SetCurrentResourceAssessment(ctx, assessment); err != nil {
 		t.Fatalf("SetCurrentResourceAssessment: %v", err)
 	}
-	if err := s.PutSourceOccurrence(ctx, store.SourceOccurrence{
-		SourceID: rev.Coordinate.Source, Ref: "main", Commit: "commit-1",
-		SourceRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror,
+	if err := s.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: rev.Coordinate.Registry, Ref: "main", Commit: "commit-1",
+		RegistryRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror,
 	}); err != nil {
-		t.Fatalf("PutSourceOccurrence: %v", err)
+		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 	return rev
 }

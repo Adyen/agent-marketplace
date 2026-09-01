@@ -31,8 +31,8 @@ policy:
     artifact_bytes: 16777216
     clone_duration: 300s
     ingestion_duration: 120s
-sources: []
+registries: []
 revocations:
-  source_ids: []
+  registry_ids: []
   coordinates: []
   revisions: []

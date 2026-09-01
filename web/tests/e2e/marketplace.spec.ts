@@ -11,8 +11,8 @@ const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || 
 function searchResult() {
   return {
     items: [{
-      source_id: 'team-tools',
-      source_slug: 'team-tools',
+      registry_id: 'team-tools',
+      registry_slug: 'team-tools',
       kind: 'skill',
       name: 'secure-review',
       revision: digest,
@@ -35,7 +35,7 @@ test.describe('Marketplace browser discovery', () => {
     await page.goto('/')
     const homepageStyle = await getBrandStyle('header a[href="/"] span')
 
-    await page.goto('/s/team-tools/skill/secure-review')
+    await page.goto('/r/team-tools/skill/secure-review')
     const detailStyle = await getBrandStyle('header a[href="/"]')
 
     expect(detailStyle).toEqual(homepageStyle)
@@ -79,10 +79,10 @@ test.describe('Marketplace browser discovery', () => {
 
     await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)
-    await page.getByRole('combobox', { name: 'Source', exact: true }).click()
+    await page.getByRole('combobox', { name: 'Registry', exact: true }).click()
     await page.getByRole('option', { name: 'team-tools', exact: true }).click()
 
-    await expect(page).toHaveURL(/source=team-tools/)
+    await expect(page).toHaveURL(/registry=team-tools/)
     await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
   })
@@ -114,14 +114,14 @@ test.describe('Marketplace browser discovery', () => {
   })
 
   test('keeps browser routes Nuxt-owned while the API remains API-only', async ({ page, request }) => {
-    const apiLatest = await request.get(`${mockURL}/s/team-tools/skill/secure-review`)
+    const apiLatest = await request.get(`${mockURL}/r/team-tools/skill/secure-review`)
     expect(apiLatest.status()).toBe(404)
     expect(apiLatest.headers()['content-type']).toContain('application/json')
 
-    const latest = await page.goto('/s/team-tools/skill/secure-review')
+    const latest = await page.goto('/r/team-tools/skill/secure-review')
     expect(latest?.status()).toBe(200)
     expect(latest?.headers()['content-type']).toContain('text/html')
-    const exact = await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+    const exact = await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     expect(exact?.status()).toBe(200)
     expect(exact?.headers()['content-type']).toContain('text/html')
   })
@@ -135,7 +135,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toBeVisible()
-    await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
+    await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
     await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
     await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
@@ -149,13 +149,13 @@ test.describe('Marketplace browser discovery', () => {
     page.on('request', request => {
       if (request.url().includes('evil.invalid')) remoteRequests.push(request.url())
     })
-    await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+    await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
-    await expect(page).toHaveURL(new RegExp(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
+    await expect(page).toHaveURL(new RegExp(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}$`))
     await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `${appURL}/s/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
+    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `${appURL}/r/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
     await expect(page.getByRole('heading', { name: 'Inspection preview', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Safe review', exact: true })).toBeVisible()
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('href', 'https://example.com/docs')
@@ -178,7 +178,7 @@ test.describe('Marketplace browser discovery', () => {
     page.on('request', request => {
       if (request.url().includes('/inspection/content/')) contentRequests.push(request.url())
     })
-    await page.goto(`/s/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
+    await page.goto(`/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
 
     const selector = page.getByLabel('Inspection file')
     await expect(selector).toHaveValue(`sha256:${'e'.repeat(64)}`)
@@ -198,7 +198,7 @@ test.describe('Marketplace browser discovery', () => {
 
   test('keeps revoked revision metadata visible but disables install command actions', async ({ page }) => {
     const revokedDigest = `sha256:${'b'.repeat(64)}`
-    await page.goto(`/s/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
+    await page.goto(`/r/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
 
     await expect(page.getByRole('heading', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toContainText('This revision is revoked')
@@ -207,12 +207,12 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
   })
 
-  test('shows the source history empty state', async ({ page }) => {
-    await page.goto('/sources/team-tools/history')
+  test('shows the registry history empty state', async ({ page }) => {
+    await page.goto('/registries/team-tools/history')
 
     await expect(page.getByRole('heading', { name: 'team-tools', exact: true })).toBeVisible()
-    await expect(page.getByText('No source occurrences have been recorded.', { exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Source overview', exact: true })).toHaveAttribute('href', '/sources/team-tools')
+    await expect(page.getByText('No registry occurrences have been recorded.', { exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Registry overview', exact: true })).toHaveAttribute('href', '/registries/team-tools')
   })
 
   test('supports skip-link and form keyboard navigation', async ({ page }) => {

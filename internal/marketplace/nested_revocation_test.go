@@ -21,10 +21,10 @@ func TestPrepareLocatorRejectsRevokedNestedCollectionBeforeManifestFetch(t *test
 		SchemaVersion: hccartifact.CollectionSchemaV1,
 		Name:          "bundle",
 		Members: []hccartifact.CollectionMemberEntry{{
-			Kind:     "collection",
-			Name:     "inner",
-			SourceID: "nested",
-			Revision: nestedDigest,
+			Kind:       "collection",
+			Name:       "inner",
+			RegistryID: "nested",
+			Revision:   nestedDigest,
 		}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
@@ -36,18 +36,18 @@ func TestPrepareLocatorRejectsRevokedNestedCollectionBeforeManifestFetch(t *test
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
-		case "/api/v1/sources/src":
-			writeTestSource(w, store.Source{ID: "src", Slug: "src", Origins: []string{"https://example.com/root"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
-		case "/api/v1/sources/nested":
-			writeTestSource(w, store.Source{ID: "nested", Slug: "nested", Origins: []string{"https://example.com/nested"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/registries/src":
+			writeTestRegistry(w, store.Registry{ID: "src", Slug: "src", Origins: []string{"https://example.com/root"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case "/api/v1/registries/nested":
+			writeTestRegistry(w, store.Registry{ID: "nested", Slug: "nested", Origins: []string{"https://example.com/nested"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case "/api/v1/resources/src/collection/bundle":
 			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(rootDigest),
 			}))
 		case "/api/v1/resources/nested/collection/inner/revisions/" + nestedDigest:
 			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "nested", Kind: "collection", Name: "inner"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "nested", Kind: "collection", Name: "inner"},
 				ContentDigest: store.RevisionDigest(nestedDigest),
 			}, "mp/nested/collection/inner@"+nestedDigest))
 		default:
@@ -65,7 +65,7 @@ func TestPrepareLocatorRejectsRevokedNestedCollectionBeforeManifestFetch(t *test
 	defer server.Close()
 
 	resolver := &Resolver{HTTPClient: server.Client()}
-	_, err = resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Source: "src", Kind: "collection", Name: "bundle"}, nil)
+	_, err = resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Registry: "src", Kind: "collection", Name: "bundle"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "nested collection") || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("PrepareLocator error = %v, want revoked nested collection error", err)
 	}
@@ -80,7 +80,7 @@ func TestResolveChecksExpandedCollectionRootBeforeSkipping(t *testing.T) {
 	rootPayload, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "src", Revision: leafDigest}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
@@ -93,12 +93,12 @@ func TestResolveChecksExpandedCollectionRootBeforeSkipping(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/src/collection/bundle/revisions/" + rootDigest:
 			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
 				ContentDigest: store.RevisionDigest(rootDigest),
 			}, rootTarget))
 		case "/api/v1/resources/src/skill/review/revisions/" + leafDigest:
 			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(leafDigest),
 				ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			}))
@@ -111,9 +111,9 @@ func TestResolveChecksExpandedCollectionRootBeforeSkipping(t *testing.T) {
 	defer server.Close()
 
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{
-		{SourceID: "src", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest},
-		{SourceID: "src", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest,
-			SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: "src", Name: "bundle", Revision: rootDigest}})},
+		{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest},
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest,
+			SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "src", Name: "bundle", Revision: rootDigest}})},
 	}}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
 
@@ -138,7 +138,7 @@ func TestResolveBlocksExpandedLeavesWhenNestedCollectionIsRevoked(t *testing.T) 
 	nestedPayload, nestedDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "inner",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "leaf-source", Revision: leafDigest}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "leaf-source", Revision: leafDigest}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
@@ -147,8 +147,8 @@ func TestResolveBlocksExpandedLeavesWhenNestedCollectionIsRevoked(t *testing.T) 
 	rootPayload, rootDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "collection", Name: "inner", SourceID: "nested-source", Revision: nestedDigest}},
-		Leaves:           []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "leaf-source", Revision: leafDigest, InclusionPaths: [][]string{{"bundle", "inner"}}}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "collection", Name: "inner", RegistryID: "nested-source", Revision: nestedDigest}},
+		Leaves:           []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "leaf-source", Revision: leafDigest, InclusionPaths: [][]string{{"bundle", "inner"}}}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
@@ -161,15 +161,15 @@ func TestResolveBlocksExpandedLeavesWhenNestedCollectionIsRevoked(t *testing.T) 
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/root-source/collection/bundle/revisions/" + rootDigest:
-			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "root-source", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(rootDigest)}))
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "root-source", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(rootDigest)}))
 		case "/api/v1/resources/nested-source/collection/inner/revisions/" + nestedDigest:
 			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "nested-source", Kind: "collection", Name: "inner"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "nested-source", Kind: "collection", Name: "inner"},
 				ContentDigest: store.RevisionDigest(nestedDigest),
 			}, "mp/nested-source/collection/inner@"+nestedDigest))
 		case "/api/v1/resources/leaf-source/skill/review/revisions/" + leafDigest:
 			leafRevisionRequests++
-			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "leaf-source", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(leafDigest), ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64))}))
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "leaf-source", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(leafDigest), ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("c", 64))}))
 		case "/api/v1/manifests/" + rootDigest:
 			_, _ = w.Write(rootPayload)
 		case "/api/v1/manifests/" + nestedDigest:
@@ -182,8 +182,8 @@ func TestResolveBlocksExpandedLeavesWhenNestedCollectionIsRevoked(t *testing.T) 
 	defer server.Close()
 
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{
-		{SourceID: "root-source", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest},
-		{SourceID: "leaf-source", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest, SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: "root-source", Name: "bundle", Revision: rootDigest}})},
+		{RegistryID: "root-source", Kind: "collection", Name: "bundle", Revision: rootDigest, Digest: rootDigest},
+		{RegistryID: "leaf-source", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest, SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "root-source", Name: "bundle", Revision: rootDigest}})},
 	}}
 	resolved, errs := (&Resolver{HTTPClient: server.Client(), Cache: NewCache(t.TempDir())}).Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, []hcc.Target{hcc.TargetFactory}, marketresolver.MarketplaceResolveModeInspect)
 	if len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "nested collection") || !strings.Contains(errs[0].Error(), "revoked") {

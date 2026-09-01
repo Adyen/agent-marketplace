@@ -65,7 +65,7 @@ policy:
     artifact_bytes: 16777216
     clone_duration: 300s
     ingestion_duration: 120s
-sources:
+registries:
   - id: behavior-source-id
     slug: behavior-source
     origin: %s
@@ -76,7 +76,7 @@ sources:
       - path: .
         source_harness: claude
 revocations:
-  source_ids: []
+  registry_ids: []
   coordinates: []
   revisions: []
 `, dbPath, blobsPath, origin))
@@ -329,7 +329,7 @@ func TestMarketplaceRevocationPreservesInstalledOutputAndSupportsExactOverride(t
 		t.Fatalf("install before revocation failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	cfg := fixture.cfg
-	cfg.Revocations.SourceIDs = []string{"behavior-source-id"}
+	cfg.Revocations.RegistryIDs = []string{"behavior-source-id"}
 	if err := worker.EnsureRevocations(context.Background(), worker.Deps{Config: cfg, MetadataStore: fixture.meta, BlobStore: fixture.blobs}); err != nil {
 		t.Fatalf("reconcile revocation: %v", err)
 	}

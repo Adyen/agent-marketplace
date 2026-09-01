@@ -22,14 +22,14 @@
   rejections, context cancellation.
 - [x] `pkg/marketplace/acquire/acquire_bench_test.go` — `BenchmarkClone`.
 
-## Source ingestion
-- [x] `pkg/marketplace/artifact/revision.go` — `CanonicalSourceRevisionPayload`.
-- [x] `pkg/marketplace/ingest/ingest.go` — `BuildSourceRevision` with catalog load,
+## Registry ingestion
+- [x] `pkg/marketplace/artifact/revision.go` — `CanonicalRegistryRevisionPayload`.
+- [x] `pkg/marketplace/ingest/ingest.go` — `BuildRegistryRevision` with catalog load,
   collection discovery, per-resource artifact build, policy/allowlist application, and
   manifest construction.
 - [x] `pkg/marketplace/ingest/ingest_test.go` — end-to-end, `index-only`, and license
   rejection cases.
-- [x] `pkg/marketplace/ingest/ingest_bench_test.go` — `BenchmarkBuildSourceRevision`.
+- [x] `pkg/marketplace/ingest/ingest_bench_test.go` — `BenchmarkBuildRegistryRevision`.
 
 ## Worker/scheduler
 - [x] `pkg/marketplace/worker/worker.go` — `Refresh`, `EnsureMarketplace`,

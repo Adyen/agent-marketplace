@@ -123,14 +123,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/manifests/{source-revision}": {
+    "/api/v1/manifests/{registry-revision}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Download a content-addressed source or collection manifest */
+        /** Download a content-addressed registry or collection manifest */
         get: operations["getManifest"];
         put?: never;
         post?: never;
@@ -140,7 +140,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}": {
+    "/api/v1/registries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registry identifiers for discovery filters */
+        get: operations["listRegistries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries/{registry}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a registry by slug or ID */
+        get: operations["getRegistry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries/{registry}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get registry revision history */
+        get: operations["getRegistryHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries/{registry}/occurrences/{commit}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one exact registry occurrence */
+        get: operations["getRegistryOccurrence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{registry}/{kind}/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -157,7 +225,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}/revisions": {
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions": {
         parameters: {
             query?: never;
             header?: never;
@@ -174,7 +242,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}": {
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}": {
         parameters: {
             query?: never;
             header?: never;
@@ -191,7 +259,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection": {
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection": {
         parameters: {
             query?: never;
             header?: never;
@@ -208,7 +276,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content": {
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content": {
         parameters: {
             query?: never;
             header?: never;
@@ -225,7 +293,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}": {
+    "/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}": {
         parameters: {
             query?: never;
             header?: never;
@@ -259,74 +327,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sources": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List source identifiers for discovery filters */
-        get: operations["listSources"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sources/{source}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get a source by slug or ID */
-        get: operations["getSource"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sources/{source}/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get source revision history */
-        get: operations["getSourceHistory"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sources/{source}/occurrences/{commit}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one exact source occurrence */
-        get: operations["getSourceOccurrence"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -344,7 +344,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/s/{source}/{kind}/{name}": {
+    "/r/{registry}/{kind}/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -364,7 +364,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/s/{source}/{kind}/{name}/revisions/{revision}": {
+    "/r/{registry}/{kind}/{name}/revisions/{revision}": {
         parameters: {
             query?: never;
             header?: never;
@@ -402,8 +402,8 @@ export interface components {
             features: string[];
             resource_kinds: ("skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection")[];
         };
-        /** @description Exact source occurrence plus the current operator-approved acquisition origin. */
-        ExactSourceOccurrence: {
+        /** @description Exact registry occurrence plus the current operator-approved acquisition origin. */
+        ExactRegistryOccurrence: {
             /** @enum {string} */
             acquisition: "index-only" | "mirror";
             acquisition_origin: string;
@@ -411,9 +411,9 @@ export interface components {
             /** Format: date-time */
             occurred_at: string;
             ref: string;
-            roots: components["schemas"]["SourceRoot"][];
-            source_id: string;
-            source_revision_manifest_digest: string;
+            registry_id: string;
+            registry_revision_manifest_digest: string;
+            roots: components["schemas"]["RegistryRoot"][];
         };
         FindingLocation: {
             column?: number;
@@ -462,6 +462,43 @@ export interface components {
              */
             url?: string;
         };
+        /** @description Public registry metadata. Origins are sanitized to remove URL userinfo, fragments, and credential/signature-like query values; credentials, policy internals, and refresh diagnostics are never returned. */
+        Registry: {
+            /** @enum {string} */
+            acquisition: "index-only" | "mirror";
+            aliases?: string[];
+            id: string;
+            license?: string;
+            listed: boolean;
+            /** @description Current and historical origins with URL userinfo removed and credential/signature-like query values redacted. */
+            origins: string[];
+            publisher?: components["schemas"]["Publisher"];
+            ref: string;
+            roots: components["schemas"]["RegistryRoot"][];
+            slug: string;
+        };
+        /** @description Immutable registry observation with an exact registry commit and canonical SHA-256 digests. */
+        RegistryOccurrence: {
+            /** @enum {string} */
+            acquisition: "index-only" | "mirror";
+            /** @description Exact full-length lowercase Git commit identifier. */
+            commit: string;
+            mirrored_artifact_digest?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            ref: string;
+            registry_id: string;
+            registry_revision_manifest_digest: string;
+            roots: components["schemas"]["RegistryRoot"][];
+        };
+        RegistryRoot: {
+            path: string;
+            source_harness?: string;
+        };
+        RegistrySummary: {
+            id: string;
+            slug: string;
+        };
         ResourceAssessment: {
             analyzer_version: string;
             /** Format: date-time */
@@ -479,11 +516,11 @@ export interface components {
             kind: string;
             marketplace: string;
             name: string;
-            source: string;
+            registry: string;
         };
         ResourceListItem: {
             /**
-             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `blocked` means the revision is listed for transparency but is not installable, because its current assessment explicitly rejected it or because a mirrored source published no artifact for it. `revoked` means an operator revoked the revision. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
+             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `blocked` means the revision is listed for transparency but is not installable, because its current assessment explicitly rejected it or because a mirrored registry published no artifact for it. `revoked` means an operator revoked the revision. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
              * @enum {string}
              */
             availability?: "available" | "blocked" | "revoked";
@@ -496,11 +533,11 @@ export interface components {
                 [key: string]: string;
             };
             name: string;
+            registry_id: string;
+            registry_slug?: string;
             revision: string;
             /** @description Server-assigned relevance score for the query. */
             score?: number;
-            source_id: string;
-            source_slug?: string;
         };
         ResourceOccurrence: {
             commit: string;
@@ -523,7 +560,7 @@ export interface components {
             /** Format: date-time */
             applied_at: string;
             /** @enum {string} */
-            kind: "source" | "coordinate" | "revision";
+            kind: "registry" | "coordinate" | "revision";
             reason: string;
             target_id: string;
         };
@@ -532,43 +569,6 @@ export interface components {
             limit: number;
             offset: number;
             total: number;
-        };
-        /** @description Public source metadata. Origins are sanitized to remove URL userinfo, fragments, and credential/signature-like query values; credentials, policy internals, and refresh diagnostics are never returned. */
-        Source: {
-            /** @enum {string} */
-            acquisition: "index-only" | "mirror";
-            aliases?: string[];
-            id: string;
-            license?: string;
-            listed: boolean;
-            /** @description Current and historical origins with URL userinfo removed and credential/signature-like query values redacted. */
-            origins: string[];
-            publisher?: components["schemas"]["Publisher"];
-            ref: string;
-            roots: components["schemas"]["SourceRoot"][];
-            slug: string;
-        };
-        /** @description Immutable source observation with an exact source commit and canonical SHA-256 digests. */
-        SourceOccurrence: {
-            /** @enum {string} */
-            acquisition: "index-only" | "mirror";
-            /** @description Exact full-length lowercase Git commit identifier. */
-            commit: string;
-            mirrored_artifact_digest?: string;
-            /** Format: date-time */
-            occurred_at: string;
-            ref: string;
-            roots: components["schemas"]["SourceRoot"][];
-            source_id: string;
-            source_revision_manifest_digest: string;
-        };
-        SourceRoot: {
-            path: string;
-            source_harness?: string;
-        };
-        SourceSummary: {
-            id: string;
-            slug: string;
         };
         WellKnown: components["schemas"]["Capabilities"] & {
             api_base: string;
@@ -774,14 +774,14 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Canonical source manifest digest. */
-                "source-revision": string;
+                /** @description Canonical registry manifest digest. */
+                "registry-revision": string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Source revision manifest JSON */
+            /** @description Registry revision manifest JSON */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -792,16 +792,105 @@ export interface operations {
             };
         };
     };
+    listRegistries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registry identifiers sorted by slug */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistrySummary"][];
+                };
+            };
+        };
+    };
+    getRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                registry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registry details */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Registry"];
+                };
+            };
+        };
+    };
+    getRegistryHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                registry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Registry occurrence history, newest first. The server returns at most 1000 entries and returns [] when no history exists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryOccurrence"][];
+                };
+            };
+        };
+    };
+    getRegistryOccurrence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commit: string;
+                registry: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact registry occurrence and current approved acquisition origin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExactRegistryOccurrence"];
+                };
+            };
+        };
+    };
     getResource: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                /** @description Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators. */
+                /** @description Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators. */
                 name: string;
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
-                source: string;
+                /** @description Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                registry: string;
             };
             cookie?: never;
         };
@@ -824,10 +913,10 @@ export interface operations {
             header?: never;
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                /** @description Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators. */
+                /** @description Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators. */
                 name: string;
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
-                source: string;
+                /** @description Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                registry: string;
             };
             cookie?: never;
         };
@@ -850,11 +939,11 @@ export interface operations {
             header?: never;
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                /** @description Route-safe source-local name; slashes are not accepted because the Go router treats them as path separators. */
+                /** @description Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators. */
                 name: string;
+                /** @description Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
+                registry: string;
                 revision: string;
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
-                source: string;
             };
             cookie?: never;
         };
@@ -878,8 +967,8 @@ export interface operations {
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
+                registry: string;
                 revision: string;
-                source: string;
             };
             cookie?: never;
         };
@@ -903,8 +992,8 @@ export interface operations {
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
+                registry: string;
                 revision: string;
-                source: string;
             };
             cookie?: never;
         };
@@ -936,8 +1025,8 @@ export interface operations {
                 digest: string;
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
+                registry: string;
                 revision: string;
-                source: string;
             };
             cookie?: never;
         };
@@ -968,7 +1057,7 @@ export interface operations {
                 limit?: number;
                 offset?: number;
                 q?: string;
-                source?: string;
+                registry?: string;
             };
             header?: never;
             path?: never;
@@ -983,95 +1072,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchResult"];
-                };
-            };
-        };
-    };
-    listSources: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Source identifiers sorted by slug */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SourceSummary"][];
-                };
-            };
-        };
-    };
-    getSource: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
-                source: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Source details */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Source"];
-                };
-            };
-        };
-    };
-    getSourceHistory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Route-safe source slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes. */
-                source: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Source occurrence history, newest first. The server returns at most 1000 entries and returns [] when no history exists. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SourceOccurrence"][];
-                };
-            };
-        };
-    };
-    getSourceOccurrence: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                commit: string;
-                source: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Exact source occurrence and current approved acquisition origin */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExactSourceOccurrence"];
                 };
             };
         };
@@ -1100,10 +1100,10 @@ export interface operations {
             header?: never;
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
-                /** @description Route-safe source-local name. */
+                /** @description Route-safe registry-local name. */
                 name: string;
-                /** @description Route-safe source slug or ID. */
-                source: string;
+                /** @description Route-safe registry slug or ID. */
+                registry: string;
             };
             cookie?: never;
         };
@@ -1134,8 +1134,8 @@ export interface operations {
             path: {
                 kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
                 name: string;
+                registry: string;
                 revision: string;
-                source: string;
             };
             cookie?: never;
         };

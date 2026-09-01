@@ -10,66 +10,66 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-// -- Source occurrences --
+// -- Registry occurrences --
 
-func (s *Store) GetSourceOccurrence(ctx context.Context, source store.SourceID, commit string) (store.SourceOccurrence, error) {
+func (s *Store) GetRegistryOccurrence(ctx context.Context, registry store.RegistryID, commit string) (store.RegistryOccurrence, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT source_id, ref, roots, revision_commit, manifest_digest, acquisition,
+		`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, occurred_at
-		 FROM source_occurrences WHERE source_id=? AND revision_commit=?`,
-		source, commit,
+		 FROM registry_occurrences WHERE registry_id=? AND revision_commit=?`,
+		registry, commit,
 	)
-	return s.scanSourceOccurrenceRow(row)
+	return s.scanRegistryOccurrenceRow(row)
 }
 
-func (s *Store) scanSourceOccurrence(rows *sql.Rows) (store.SourceOccurrence, error) {
-	var occ store.SourceOccurrence
+func (s *Store) scanRegistryOccurrence(rows *sql.Rows) (store.RegistryOccurrence, error) {
+	var occ store.RegistryOccurrence
 	var mirrored sql.NullString
 	var rootsJSON string
 	var occurred int64
 	err := rows.Scan(
-		&occ.SourceID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.SourceRevisionManifestDigest,
+		&occ.RegistryID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.RegistryRevisionManifestDigest,
 		&occ.Acquisition, &mirrored, &occurred,
 	)
 	if err != nil {
-		return store.SourceOccurrence{}, err
+		return store.RegistryOccurrence{}, err
 	}
 	if err := unmarshalJSON([]byte(rootsJSON), &occ.Roots); err != nil {
-		return store.SourceOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
+		return store.RegistryOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
 	}
 	occ.MirroredArtifactDigest = store.ArchiveDigest(mirrored.String)
 	occ.OccurredAt = microToTime(occurred)
 	return occ, nil
 }
 
-func (s *Store) scanSourceOccurrenceRow(row *sql.Row) (store.SourceOccurrence, error) {
-	var occ store.SourceOccurrence
+func (s *Store) scanRegistryOccurrenceRow(row *sql.Row) (store.RegistryOccurrence, error) {
+	var occ store.RegistryOccurrence
 	var mirrored sql.NullString
 	var rootsJSON string
 	var occurred int64
 	err := row.Scan(
-		&occ.SourceID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.SourceRevisionManifestDigest,
+		&occ.RegistryID, &occ.Ref, &rootsJSON, &occ.Commit, &occ.RegistryRevisionManifestDigest,
 		&occ.Acquisition, &mirrored, &occurred,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return store.SourceOccurrence{}, store.ErrNotFound
+		return store.RegistryOccurrence{}, store.ErrNotFound
 	}
 	if err != nil {
-		return store.SourceOccurrence{}, err
+		return store.RegistryOccurrence{}, err
 	}
 	if err := unmarshalJSON([]byte(rootsJSON), &occ.Roots); err != nil {
-		return store.SourceOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
+		return store.RegistryOccurrence{}, fmt.Errorf("unmarshal occurrence roots: %w", err)
 	}
 	occ.MirroredArtifactDigest = store.ArchiveDigest(mirrored.String)
 	occ.OccurredAt = microToTime(occurred)
 	return occ, nil
 }
 
-func (s *Store) PutSourceOccurrence(ctx context.Context, occ store.SourceOccurrence) error {
-	return s.withTx(ctx, func(tx *Store) error { return tx.putSourceOccurrence(ctx, occ) })
+func (s *Store) PutRegistryOccurrence(ctx context.Context, occ store.RegistryOccurrence) error {
+	return s.withTx(ctx, func(tx *Store) error { return tx.putRegistryOccurrence(ctx, occ) })
 }
 
-func (s *Store) putSourceOccurrence(ctx context.Context, occ store.SourceOccurrence) error {
+func (s *Store) putRegistryOccurrence(ctx context.Context, occ store.RegistryOccurrence) error {
 	if err := occ.Acquisition.Validate(); err != nil {
 		return err
 	}
@@ -79,43 +79,43 @@ func (s *Store) putSourceOccurrence(ctx context.Context, occ store.SourceOccurre
 	mirrored := string(occ.MirroredArtifactDigest)
 	roots := occ.Roots
 	if roots == nil {
-		roots = []store.SourceRoot{}
+		roots = []store.RegistryRoot{}
 	}
 	rootsJSON, err := marshalJSON(roots)
 	if err != nil {
 		return err
 	}
 	err = execWithBusyRetry(ctx, s.q,
-		`INSERT OR IGNORE INTO source_occurrences
-		 (source_id, ref, roots, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
+		`INSERT OR IGNORE INTO registry_occurrences
+		 (registry_id, ref, roots, revision_commit, manifest_digest, acquisition, mirrored_artifact_digest, occurred_at)
 		 VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
-		occ.SourceID, occ.Ref, rootsJSON, occ.Commit, occ.SourceRevisionManifestDigest,
+		occ.RegistryID, occ.Ref, rootsJSON, occ.Commit, occ.RegistryRevisionManifestDigest,
 		occ.Acquisition, mirrored, timeToMicro(occ.OccurredAt),
 	)
 	if err != nil {
 		return err
 	}
 
-	existing, err := s.GetSourceOccurrence(ctx, occ.SourceID, occ.Commit)
+	existing, err := s.GetRegistryOccurrence(ctx, occ.RegistryID, occ.Commit)
 	if err != nil {
 		return err
 	}
 	if !occ.Equal(existing) {
-		return fmt.Errorf("%w: source occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		return fmt.Errorf("%w: registry occurrence %q already has different immutable fields", store.ErrConflict, occ.Commit)
 	}
-	_, err = s.q.ExecContext(ctx, `INSERT OR IGNORE INTO source_heads (source_id, revision_commit) VALUES (?, ?)`, occ.SourceID, occ.Commit)
+	_, err = s.q.ExecContext(ctx, `INSERT OR IGNORE INTO registry_heads (registry_id, revision_commit) VALUES (?, ?)`, occ.RegistryID, occ.Commit)
 	return err
 }
 
-func (s *Store) SetSourceHead(ctx context.Context, source store.SourceID, commit, expectedCommit string) error {
+func (s *Store) SetRegistryHead(ctx context.Context, registry store.RegistryID, commit, expectedCommit string) error {
 	return s.withTx(ctx, func(tx *Store) error {
 		var current string
-		err := tx.q.QueryRowContext(ctx, `SELECT revision_commit FROM source_heads WHERE source_id=?`, source).Scan(&current)
+		err := tx.q.QueryRowContext(ctx, `SELECT revision_commit FROM registry_heads WHERE registry_id=?`, registry).Scan(&current)
 		if errors.Is(err, sql.ErrNoRows) {
 			if expectedCommit != "" {
-				return fmt.Errorf("%w: source %q head changed", store.ErrConflict, source)
+				return fmt.Errorf("%w: registry %q head changed", store.ErrConflict, registry)
 			}
-			_, err = tx.q.ExecContext(ctx, `INSERT INTO source_heads (source_id, revision_commit) VALUES (?, ?)`, source, commit)
+			_, err = tx.q.ExecContext(ctx, `INSERT INTO registry_heads (registry_id, revision_commit) VALUES (?, ?)`, registry, commit)
 			return err
 		}
 		if err != nil {
@@ -125,9 +125,9 @@ func (s *Store) SetSourceHead(ctx context.Context, source store.SourceID, commit
 			return nil
 		}
 		if current != expectedCommit {
-			return fmt.Errorf("%w: source %q head changed from %q to %q", store.ErrConflict, source, expectedCommit, current)
+			return fmt.Errorf("%w: registry %q head changed from %q to %q", store.ErrConflict, registry, expectedCommit, current)
 		}
-		result, err := tx.q.ExecContext(ctx, `UPDATE source_heads SET revision_commit=? WHERE source_id=? AND revision_commit=?`, commit, source, expectedCommit)
+		result, err := tx.q.ExecContext(ctx, `UPDATE registry_heads SET revision_commit=? WHERE registry_id=? AND revision_commit=?`, commit, registry, expectedCommit)
 		if err != nil {
 			return err
 		}
@@ -136,29 +136,29 @@ func (s *Store) SetSourceHead(ctx context.Context, source store.SourceID, commit
 			return err
 		}
 		if updated != 1 {
-			return fmt.Errorf("%w: source %q head changed", store.ErrConflict, source)
+			return fmt.Errorf("%w: registry %q head changed", store.ErrConflict, registry)
 		}
 		return nil
 	})
 }
 
-func (s *Store) LatestSourceOccurrence(ctx context.Context, source store.SourceID) (store.SourceOccurrence, error) {
+func (s *Store) LatestRegistryOccurrence(ctx context.Context, registry store.RegistryID) (store.RegistryOccurrence, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT so.source_id, so.ref, so.roots, so.revision_commit, so.manifest_digest, so.acquisition,
+		`SELECT so.registry_id, so.ref, so.roots, so.revision_commit, so.manifest_digest, so.acquisition,
 		        so.mirrored_artifact_digest, so.occurred_at
-		 FROM source_heads sh
-		 JOIN source_occurrences so ON so.source_id=sh.source_id AND so.revision_commit=sh.revision_commit
-		 WHERE sh.source_id=?`,
-		source,
+		 FROM registry_heads sh
+		 JOIN registry_occurrences so ON so.registry_id=sh.registry_id AND so.revision_commit=sh.revision_commit
+		 WHERE sh.registry_id=?`,
+		registry,
 	)
-	return s.scanSourceOccurrenceRow(row)
+	return s.scanRegistryOccurrenceRow(row)
 }
 
 // -- Collection revisions --
 
 func (s *Store) GetCollectionRevision(ctx context.Context, id string) (store.CollectionRevision, error) {
 	row := s.q.QueryRowContext(ctx,
-		`SELECT id, source_id, manifest_digest, members, created_at
+		`SELECT id, registry_id, manifest_digest, members, created_at
 		 FROM collection_revisions WHERE id=?`,
 		id,
 	)
@@ -169,7 +169,7 @@ func (s *Store) scanCollectionRevision(row *sql.Row) (store.CollectionRevision, 
 	var cr store.CollectionRevision
 	var membersJSON string
 	var created int64
-	err := row.Scan(&cr.ID, &cr.SourceID, &cr.ManifestDigest, &membersJSON, &created)
+	err := row.Scan(&cr.ID, &cr.RegistryID, &cr.ManifestDigest, &membersJSON, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.CollectionRevision{}, store.ErrNotFound
 	}
@@ -193,9 +193,9 @@ func (s *Store) PutCollectionRevision(ctx context.Context, cr store.CollectionRe
 	}
 	_, err = s.q.ExecContext(ctx,
 		`INSERT OR IGNORE INTO collection_revisions
-		 (id, source_id, manifest_digest, members, created_at)
+		 (id, registry_id, manifest_digest, members, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		cr.ID, cr.SourceID, cr.ManifestDigest, membersJSON, timeToMicro(cr.CreatedAt),
+		cr.ID, cr.RegistryID, cr.ManifestDigest, membersJSON, timeToMicro(cr.CreatedAt),
 	)
 	if err != nil {
 		return err
@@ -210,11 +210,11 @@ func (s *Store) PutCollectionRevision(ctx context.Context, cr store.CollectionRe
 	return nil
 }
 
-func (s *Store) ListCollectionRevisions(ctx context.Context, source store.SourceID) ([]store.CollectionRevision, error) {
+func (s *Store) ListCollectionRevisions(ctx context.Context, registry store.RegistryID) ([]store.CollectionRevision, error) {
 	rows, err := s.q.QueryContext(ctx,
-		`SELECT id, source_id, manifest_digest, members, created_at
-		 FROM collection_revisions WHERE source_id=? ORDER BY created_at DESC`,
-		source,
+		`SELECT id, registry_id, manifest_digest, members, created_at
+		 FROM collection_revisions WHERE registry_id=? ORDER BY created_at DESC`,
+		registry,
 	)
 	if err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func (s *Store) scanCollectionRevisionFromRows(rows *sql.Rows) (store.Collection
 	var cr store.CollectionRevision
 	var membersJSON string
 	var created int64
-	err := rows.Scan(&cr.ID, &cr.SourceID, &cr.ManifestDigest, &membersJSON, &created)
+	err := rows.Scan(&cr.ID, &cr.RegistryID, &cr.ManifestDigest, &membersJSON, &created)
 	if err != nil {
 		return store.CollectionRevision{}, err
 	}
@@ -621,11 +621,11 @@ func (s *Store) ReadyCheck(ctx context.Context, blobs store.BlobStore) error {
 		 WHERE archive_digest IS NOT NULL AND archive_digest != ''
 		UNION
 		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection
-		 FROM source_occurrences
+		 FROM registry_occurrences
 		 WHERE manifest_digest IS NOT NULL AND manifest_digest != ''
 		UNION
 		 SELECT DISTINCT mirrored_artifact_digest AS digest, 0 AS inspection
-		 FROM source_occurrences
+		 FROM registry_occurrences
 		 WHERE mirrored_artifact_digest IS NOT NULL AND mirrored_artifact_digest != ''
 		UNION
 		 SELECT DISTINCT manifest_digest AS digest, 0 AS inspection

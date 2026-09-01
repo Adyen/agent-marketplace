@@ -24,7 +24,7 @@ import (
 func TestInspectPreservesPinStates(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	archiveDigest := "sha256:" + strings.Repeat("b", 64)
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "revoked"}
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "revoked"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			writeTestWellKnown(w, "mp")
@@ -49,9 +49,9 @@ func TestInspectPreservesPinStates(t *testing.T) {
 
 	cache := NewCache(t.TempDir())
 	pins := []config.MarketplaceResourcePin{
-		{SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "missing", Revision: "v1", Digest: contentDigest},
-		{SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "revoked", Revision: "v1", Digest: contentDigest},
-		{SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "unavailable", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "missing", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "revoked", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "unavailable", Revision: "v1", Digest: contentDigest},
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: server.URL, InstanceID: "mp", Alias: "hostile\talias", Source: config.Organization, Resources: pins,
@@ -77,8 +77,8 @@ func TestInspectPreservesPinStates(t *testing.T) {
 	if !states["revoked"].Required || states["revoked"].Source != config.Organization {
 		t.Fatalf("organization pin provenance = required %t, source %s; want required true, ORG", states["revoked"].Required, states["revoked"].Source)
 	}
-	if states["revoked"].SourceSlug != "source-slug" || states["revoked"].ContentDigest != contentDigest {
-		t.Fatalf("revoked identity = slug %q digest %q", states["revoked"].SourceSlug, states["revoked"].ContentDigest)
+	if states["revoked"].RegistrySlug != "source-slug" || states["revoked"].ContentDigest != contentDigest {
+		t.Fatalf("revoked identity = slug %q digest %q", states["revoked"].RegistrySlug, states["revoked"].ContentDigest)
 	}
 	resolved, errs := inspection.Resolve(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
 	if len(resolved) != 0 || len(errs) != len(pins) {
@@ -100,7 +100,7 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "cached"},
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		}))
@@ -109,10 +109,10 @@ func TestInspectCachedModeReportsVerifiedArtifact(t *testing.T) {
 
 	cache := NewCache(t.TempDir())
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
-		SourceID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest,
+		RegistryID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest,
 	}}}
 	if _, err := cache.WriteResourceRevision(entry.URL, "src", "skill", "cached", contentDigest, assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "cached"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
@@ -149,11 +149,11 @@ func TestInspectCachedNoFetchUsesOnlyCachedState(t *testing.T) {
 
 	cache := NewCache(t.TempDir())
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{
-		{SourceID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest},
-		{SourceID: "src", Kind: "skill", Name: "missing", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64)},
+		{RegistryID: "src", Kind: "skill", Name: "cached", Revision: "v1", Digest: contentDigest},
+		{RegistryID: "src", Kind: "skill", Name: "missing", Revision: "v1", Digest: "sha256:" + strings.Repeat("a", 64)},
 	}}
 	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "cached", contentDigest, assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "cached"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "cached"},
 		ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})); err != nil {
 		t.Fatalf("write metadata: %v", err)
@@ -206,9 +206,9 @@ func TestInspectionResolveFiltersMetadataAndPromotesRequiredHealth(t *testing.T)
 			materializable,
 		},
 		Pins: []PinStatus{
-			{SourceID: "src", Kind: "skill", Name: "missing", Required: true, State: PinStateMissing},
-			{SourceID: "src", Kind: "skill", Name: "cache", Required: true, Cache: CacheStateError, State: PinStateCurrent, Detail: "decode metadata: malformed"},
-			{SourceID: "src", Kind: "skill", Name: "optional", State: PinStateUnavailable},
+			{RegistryID: "src", Kind: "skill", Name: "missing", Required: true, State: PinStateMissing},
+			{RegistryID: "src", Kind: "skill", Name: "cache", Required: true, Cache: CacheStateError, State: PinStateCurrent, Detail: "decode metadata: malformed"},
+			{RegistryID: "src", Kind: "skill", Name: "optional", State: PinStateUnavailable},
 		},
 	}
 
@@ -236,7 +236,7 @@ func TestInspectMalformedMetadataRemainsCacheError(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "broken"},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "broken"},
 			ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 		}))
 	}))
@@ -251,7 +251,7 @@ func TestInspectMalformedMetadataRemainsCacheError(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
-		SourceID: "src", Kind: "skill", Name: "broken", Revision: "v1", Digest: contentDigest,
+		RegistryID: "src", Kind: "skill", Name: "broken", Revision: "v1", Digest: contentDigest,
 	}}}
 	inspection := (&Resolver{Cache: cache}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
 	if len(inspection.Pins) != 1 {
@@ -273,19 +273,19 @@ func TestInspectQueriesLatestAndPreservesExactStateOnLatestFailure(t *testing.T)
 		case "/.well-known/agent-marketplace.json":
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + oldDigest:
-			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(oldDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(oldDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
 		case "/api/v1/resources/source-slug/skill/review":
 			if latestFails {
 				http.Error(w, "latest unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(newDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
+			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(newDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest)}))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
-	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{SourceID: "source-id", SourceSlug: "source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: oldDigest}}}
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{RegistryID: "source-id", RegistrySlug: "source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: oldDigest}}}
 
 	inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
 	pin := inspection.Pins[0]
@@ -316,12 +316,12 @@ func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			pin := config.MarketplaceResourcePin{
-				SourceID: "src", SourceSlug: "source-slug", Kind: "skill", Name: "review",
+				RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "review",
 				Revision: commit, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly,
-				SourceCommit: commit, SourceManifestDigest: manifestDigest,
+				RegistryCommit: commit, RegistryManifestDigest: manifestDigest,
 			}
 			pinned := assessedRevisionOccurrence(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(contentDigest),
 			}, commit, manifestDigest)
 			latest := pinned
@@ -334,8 +334,8 @@ func TestInspectReportsIndexOnlyOccurrenceUpdateWithUnchangedContent(t *testing.
 				case strings.HasSuffix(r.URL.Path, "/revisions/"+contentDigest):
 					_ = json.NewEncoder(w).Encode(pinned)
 				case strings.HasSuffix(r.URL.Path, "/occurrences/"+commit):
-					_ = json.NewEncoder(w).Encode(mpapi.ExactSourceOccurrence{
-						SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifestDigest),
+					_ = json.NewEncoder(w).Encode(mpapi.ExactRegistryOccurrence{
+						RegistryID: "src", Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Commit: commit, RegistryRevisionManifestDigest: store.RevisionDigest(manifestDigest),
 						Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://git.example/repo.git", OccurredAt: time.Now().UTC(),
 					})
 				case r.URL.Path == "/api/v1/resources/source-slug/skill/review":
@@ -369,12 +369,12 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 		case "/api/v1/resources/source-slug/skill/review/revisions/" + pinnedDigest:
 			_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(pinnedDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			}))
 		case "/api/v1/resources/source-slug/skill/review":
 			_ = json.NewEncoder(w).Encode(revokedRevision(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(latestDigest),
 			}, latestDigest))
 		default:
@@ -384,7 +384,7 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 	defer server.Close()
 
 	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
-		SourceID: "source-id", SourceSlug: "source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: pinnedDigest,
+		RegistryID: "source-id", RegistrySlug: "source-slug", Kind: "skill", Name: "review", Revision: "refs/heads/main", Digest: pinnedDigest,
 	}}}
 	inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
 	if len(inspection.Pins) != 1 {
@@ -402,7 +402,7 @@ func TestInspectDoesNotReportRevokedLatestAsUpdate(t *testing.T) {
 func TestApplyCachedStateTreatsBroadCachedRevocationAsRevoked(t *testing.T) {
 	status := PinStatus{Cache: CacheStateArtifactVerified, MetadataCached: true, ArtifactVerified: true}
 	cached := revokedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "source-id", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "source-id", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
 	}, "source-id")
 	applyCachedState(&status, cached, true, nil)
@@ -413,7 +413,7 @@ func TestApplyCachedStateTreatsBroadCachedRevocationAsRevoked(t *testing.T) {
 
 func TestPinStatusErrorQuotesDynamicFields(t *testing.T) {
 	statusErr := (&PinStatusError{Pin: PinStatus{
-		SourceID: "source\x00\x1b[31m\n\u202e", Kind: "skill\t", Name: "name\r", State: PinState("state\x07"), Detail: "detail\u2028",
+		RegistryID: "source\x00\x1b[31m\n\u202e", Kind: "skill\t", Name: "name\r", State: PinState("state\x07"), Detail: "detail\u2028",
 	}}).Error()
 	if strings.ContainsAny(statusErr, "\x00\x07\x1b\n\r\t") {
 		t.Fatalf("status error contains raw terminal controls: %q", statusErr)
@@ -432,10 +432,10 @@ func TestInspectRendersCollectionAsVirtualPin(t *testing.T) {
 			writeTestWellKnown(w, "mp")
 			return
 		}
-		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)}))
+		_ = json.NewEncoder(w).Encode(assessedRevision(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)}))
 	}))
 	defer server.Close()
-	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{SourceID: "src", Kind: "collection", Name: "bundle", Revision: "v1", Digest: digest}}}
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: "v1", Digest: digest}}}
 	inspection := (&Resolver{Cache: NewCache(t.TempDir())}).Inspect(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeInspect)
 	if len(inspection.Pins) != 1 || inspection.Pins[0].Kind != "collection" || inspection.Pins[0].State != PinStateCurrent {
 		t.Fatalf("collection pins = %#v, want one current virtual collection row", inspection.Pins)
@@ -466,7 +466,7 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	contentDigest := canonical.Manifest.ContentDigest
-	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.RegistryID = "src"
 	canonical.Manifest.Revision = contentDigest
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
@@ -475,10 +475,10 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifestDigest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
-		SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
-		Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifestDigest,
+		RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest,
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifestDigest,
 	}
-	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifestDigest}
+	identity := IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: commit, ManifestDigest: manifestDigest}
 
 	for _, tc := range []struct {
 		name      string
@@ -513,8 +513,8 @@ func TestInspectCachedIndexOnlyRequiresOccurrenceScopedStaging(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := NewCache(t.TempDir())
-			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			}, commit, manifestDigest)); err != nil {
 				t.Fatal(err)

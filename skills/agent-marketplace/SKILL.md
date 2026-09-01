@@ -314,7 +314,7 @@ repo intentionally tracks generated harness files.
 ## Gotchas
 
 - **No selection means no output** — a registry with no kind-specific selections, `tags`, `collections`, `required`, or `default` only contributes to `list`.
-- **Name collisions fail sync** — same-kind resources from multiple registries fail; resolve by narrowing per-registry selections, adding `exclude`, or removing one source.
+- **Name collisions fail sync** — same-kind resources from multiple registries fail; resolve by narrowing per-registry selections, adding `exclude`, or removing one registry.
 - **Ambiguous cross-kind names need `--kind`** — if a skill and command share a name, rerun `install` or `remove` with `--kind`.
 - **Prerequisites are advisory** — unmet prerequisites never change selection, and explicit excludes remain in force. Resources from a `required: true` registry cannot be excluded, so they satisfy matching prerequisites.
 - **Collection-level `requires` is ignored** — collections expand into members before prerequisite validation.

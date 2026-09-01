@@ -57,18 +57,18 @@ type WellKnown struct {
 	Capabilities       `json:",inline"`
 }
 
-// ExactSourceOccurrence is the immutable source occurrence selected for an
+// ExactRegistryOccurrence is the immutable registry occurrence selected for an
 // index-only install. AcquisitionOrigin is the current operator-approved Git
 // origin; clients must apply their local allowed_registries policy before use.
-type ExactSourceOccurrence struct {
-	SourceID                     store.SourceID        `json:"source_id"`
-	Ref                          string                `json:"ref"`
-	Roots                        []store.SourceRoot    `json:"roots"`
-	Commit                       string                `json:"commit"`
-	SourceRevisionManifestDigest store.RevisionDigest  `json:"source_revision_manifest_digest"`
-	Acquisition                  store.AcquisitionMode `json:"acquisition"`
-	AcquisitionOrigin            string                `json:"acquisition_origin"`
-	OccurredAt                   time.Time             `json:"occurred_at"`
+type ExactRegistryOccurrence struct {
+	RegistryID                     store.RegistryID      `json:"registry_id"`
+	Ref                            string                `json:"ref"`
+	Roots                          []store.RegistryRoot  `json:"roots"`
+	Commit                         string                `json:"commit"`
+	RegistryRevisionManifestDigest store.RevisionDigest  `json:"registry_revision_manifest_digest"`
+	Acquisition                    store.AcquisitionMode `json:"acquisition"`
+	AcquisitionOrigin              string                `json:"acquisition_origin"`
+	OccurredAt                     time.Time             `json:"occurred_at"`
 }
 
 // Instance describes a Marketplace endpoint as configured by a consumer.
@@ -103,8 +103,8 @@ const (
 
 // ResourceListItem is a single resource returned by the listing endpoints.
 type ResourceListItem struct {
-	SourceID      string `json:"source_id"`
-	SourceSlug    string `json:"source_slug,omitempty"`
+	RegistryID    string `json:"registry_id"`
+	RegistrySlug  string `json:"registry_slug,omitempty"`
 	Kind          string `json:"kind"`
 	Name          string `json:"name"`
 	Revision      string `json:"revision"`

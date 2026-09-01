@@ -18,10 +18,10 @@ Add a production-capable `agent-marketplace serve` command and a separately depl
 
 A Marketplace:
 
-- indexes approved Git source repositories for discovery;
+- indexes approved Git registries for discovery;
 - optionally mirrors immutable resource artifacts for distribution;
 - exposes a versioned HTTP API used by the CLI and web frontend;
-- preserves source provenance and immutable revisions;
+- preserves registry provenance and immutable revisions;
 - is deployable as one small process or split API and worker roles;
 - treats indexed content as hostile and never claims that a resource is safe.
 
@@ -45,8 +45,8 @@ Collections remain virtual resources and never materialize directly into a harne
 ## Non-goals
 
 - Open-ended repository crawling
-- Source submissions, approval queues, or admin UI
-- Built-in authentication, authorization, tenant isolation, or per-source ACLs
+- Registry submissions, approval queues, or admin UI
+- Built-in authentication, authorization, tenant isolation, or per-registry ACLs
 - Artifact or manifest signatures
 - Dependency resolution
 - Popularity, usage, semantic, or recommendation ranking
@@ -55,24 +55,24 @@ Collections remain virtual resources and never materialize directly into a harne
 - Live or agent-executed resource previews
 - Cross-backend storage migration tooling
 - Built-in Vault, AWS, GCP, or other secret-manager clients
-- Multiple tracked refs or release channels per source
+- Multiple tracked refs or release channels per registry
 
-Private deployments must use network controls or an authenticating reverse proxy. Public exposure of private-source content without such protection is unsupported.
+Private deployments must use network controls or an authenticating reverse proxy. Public exposure of private-registry content without such protection is unsupported.
 
 ## Domain model
 
 ### Marketplace
 
-One deployment is one policy domain. It has a stable instance ID, canonical endpoint, presentation metadata, approved sources, policy, metadata store, and blob store. The public Marketplace is one deployment; a company runs its own separate deployment.
+One deployment is one policy domain. It has a stable instance ID, canonical endpoint, presentation metadata, approved registries, policy, metadata store, and blob store. The public Marketplace is one deployment; a company runs its own separate deployment.
 
-### Approved source
+### Registry
 
-An approved source represents one Git repository lineage and contains:
+A registry represents one Git repository lineage and contains:
 
-- immutable Source ID;
-- mutable canonical source slug;
+- immutable Registry ID;
+- mutable canonical registry slug;
 - permanent, non-reassignable prior slug aliases;
-- current source origin plus origin history;
+- current registry origin plus origin history;
 - one configured Git ref;
 - one or more roots, each with a path and optional source layout;
 - index-only or mirror acquisition mode;
@@ -80,26 +80,26 @@ An approved source represents one Git repository lineage and contains:
 - optional server-side credential references;
 - optional policy and resource-limit overrides.
 
-Operator configuration under the same Source ID is the authority that a moved origin is the same source. Forge-specific immutable repository IDs may be retained as evidence but are not required by the protocol.
+Operator configuration under the same Registry ID is the authority that a moved origin is the same registry. Forge-specific immutable repository IDs may be retained as evidence but are not required by the protocol.
 
-Duplicate kind and name pairs across distinct paths in a source do not produce ambiguous coordinates: configured root order deterministically retains the first occurrence, and refresh emits an actionable warning naming both paths so the publisher can assign distinct source-local names. Repeating the same path remains an operator configuration error.
+Duplicate kind and name pairs across distinct paths in a registry do not produce ambiguous coordinates: configured root order deterministically retains the first occurrence, and refresh emits an actionable warning naming both paths so the publisher can assign distinct registry-local names. Repeating the same path remains an operator configuration error.
 
-Collection publication expands nested includes, rejects cycles, and resolves every member to an exact resource in the same Marketplace. A member whose existing `registry`, `ref`, or `path` cannot be mapped to an approved source fails that collection's source refresh; publication never leaves a permanently unresolvable collection.
+Collection publication expands nested includes, rejects cycles, and resolves every member to an exact resource in the same Marketplace. A member whose existing `registry`, `ref`, or `path` cannot be mapped to a Marketplace registry fails that collection's registry refresh; publication never leaves a permanently unresolvable collection.
 
 ### Resource coordinate and revision
 
 A resource coordinate combines:
 
 1. Marketplace instance ID;
-2. Source ID;
+2. Registry ID;
 3. resource kind;
-4. source-local resource name.
+4. registry-local resource name.
 
-Human-facing locators use a Marketplace alias or URL and source slug:
+Human-facing locators use a Marketplace alias or URL and registry slug:
 
 ```text
 public:mattpocock-skills/skill/grill-me
-https://marketplace.example/s/mattpocock-skills/skill/grill-me
+https://marketplace.example/r/mattpocock-skills/skill/grill-me
 ```
 
 A resource revision is immutable canonical content and intrinsic metadata. It contains:
@@ -108,11 +108,11 @@ A resource revision is immutable canonical content and intrinsic metadata. It co
 - analyzer-independent artifact digest;
 - author license and description metadata.
 
-A resource occurrence connects one resource revision to an exact source occurrence. A source occurrence records the exact commit, source roots, analyzer-independent source revision manifest, acquisition mode, and optional mirrored artifact digest. A separately content-addressed resource assessment records analyzer version, policy identity, findings, inspection projection, and an explicit allow, warn, or reject decision. Reassessment advances a current pointer without changing resource or source-occurrence identity. Active revocation remains separate control-plane state. Artifact blobs deduplicate by digest.
+A resource occurrence connects one resource revision to an exact registry occurrence. A registry occurrence records the exact commit, registry roots, analyzer-independent registry revision manifest, acquisition mode, and optional mirrored artifact digest. A separately content-addressed resource assessment records analyzer version, policy identity, findings, inspection projection, and an explicit allow, warn, or reject decision. Reassessment advances a current pointer without changing resource or registry-occurrence identity. Active revocation remains separate control-plane state. Artifact blobs deduplicate by digest.
 
 ### Installed name
 
-The resource's short source-local name is its default installed name. If any selected Marketplace, Git registry, or local resource already uses that kind and installed name, installation fails and requires `--as <name>`. The CLI never silently prefixes or renames a resource.
+The resource's short registry-local name is its default installed name. If any selected Marketplace, Git registry, or local resource already uses that kind and installed name, installation fails and requires `--as <name>`. The CLI never silently prefixes or renames a resource.
 
 ### Collection
 
@@ -123,7 +123,7 @@ Declared requirement metadata is preserved for display and validation, but v1 do
 ## System architecture
 
 ```text
-                         approved Git sources
+                        approved Git registries
                                   |
                                   v
                     +----------------------------+
@@ -161,9 +161,9 @@ Declared requirement metadata is preserved for display and validation, but v1 do
 
 `agent-marketplace serve --config <path>` runs `--role all` by default. Production deployments may run `--role api` and `--role worker` separately.
 
-The API role never clones or ingests a source. The all-in-one topology hosts both roles in one process but preserves the same internal boundary.
+The API role never clones or ingests a registry. The all-in-one topology hosts both roles in one process but preserves the same internal boundary.
 
-`agent-marketplace serve reindex --config <path> [source]` performs a one-shot durable enqueue and waits for the requested indexing work. SQLite uses WAL, a bounded busy timeout, and transaction retry so this transient command can safely coordinate with the one running all-in-one process without becoming a second long-lived writer. V1 exposes no unauthenticated admin mutation endpoint.
+`agent-marketplace serve reindex --config <path> [registry]` performs a one-shot durable enqueue and waits for the requested indexing work. SQLite uses WAL, a bounded busy timeout, and transaction retry so this transient command can safely coordinate with the one running all-in-one process without becoming a second long-lived writer. V1 exposes no unauthenticated admin mutation endpoint.
 
 ### Network defaults
 
@@ -216,8 +216,8 @@ policy:
     clone_duration: <bounded>
     ingestion_duration: <bounded>
 
-sources:
-  - id: 01JSOURCEEXAMPLE
+registries:
+  - id: 01JREGISTRYEXAMPLE
     slug: example-resources
     aliases: []
     origin: https://github.com/example/resources.git
@@ -231,15 +231,15 @@ sources:
         source_harness: factory
     credentials:
       ssh_key:
-        file: /run/secrets/example-source-key
+        file: /run/secrets/example-registry-key
 
 revocations:
-  source_ids: []
+  registry_ids: []
   coordinates: []
   revisions: []
 ```
 
-Secret values are forbidden in server configuration. Credentials may only refer to environment variables or mounted files. Source credentials remain server-side and never enter metadata, artifacts, diagnostics, or logs.
+Secret values are forbidden in server configuration. Credentials may only refer to environment variables or mounted files. Registry credentials remain server-side and never enter metadata, artifacts, diagnostics, or logs.
 
 ## Storage and job model
 
@@ -263,11 +263,11 @@ The metadata database and blob store are one backup and restore unit. Startup co
 
 ## Indexing and publication
 
-Workers reconcile configured sources at startup and on a configured interval.
+Workers reconcile configured registries at startup and on a configured interval.
 
-For each source refresh:
+For each registry refresh:
 
-1. Acquire a source-scoped job lease.
+1. Acquire a registry-scoped job lease.
 2. Resolve the configured ref to an exact commit.
 3. Clone or fetch in an isolated ephemeral workspace.
 4. Disable Git hooks, submodules, LFS, credential prompts, and unsafe protocol behavior.
@@ -276,14 +276,14 @@ For each source refresh:
 7. Reject root escape, symlinks, device files, duplicate coordinates, and malformed resources.
 8. Convert each resource into canonical semantic payload.
 9. Run deterministic security analyzers and license policy.
-10. Create per-resource artifacts when the source is mirrored.
-11. Create the source revision manifest.
+10. Create per-resource artifacts when the registry is mirrored.
+11. Create the registry revision manifest.
 12. Upload and verify immutable blobs.
-13. Atomically publish the complete source revision.
+13. Atomically publish the complete registry revision.
 
-No source becomes partially visible. A failed refresh retains the last known-good revision and marks the source stale or failed. Limit failures never truncate a resource.
+No registry becomes partially visible. A failed refresh retains the last known-good revision and marks the registry stale or failed. Limit failures never truncate a resource.
 
-Removing a source from configuration unlists it but permanently reserves its Source ID and slugs. Unlisted sources and resources disappear from search and browse results, while immutable detail and resolution routes remain available for existing pins until explicit retention garbage collection.
+Removing a registry from configuration unlists it but permanently reserves its Registry ID and slugs. Unlisted registries and resources disappear from search and browse results, while immutable detail and resolution routes remain available for existing pins until explicit retention garbage collection.
 
 Revoked items remain visible as provenance records but cannot be resolved for ordinary installation, update, or online synchronization. Revocation is a control-plane guarantee: it cannot recall bytes already stored by clients or intermediary caches. Online operations refresh revocation state before use. Offline sync enforces the last cached revocation state and emits a warning that newer revocations cannot be observed.
 
@@ -298,7 +298,7 @@ assets/<contained support files>
 licenses/<applicable license and notice files>
 ```
 
-The versioned manifest records only intrinsic resource data: kind, name, canonical content digest, supported schema version, and capability metadata. Source occurrence metadata, analyzer findings, policy decisions, and revocation stay outside the archive in their respective immutable records or live control-plane state, avoiding both self-reference and duplicate artifacts across commits and reassessments.
+The versioned manifest records only intrinsic resource data: kind, name, canonical content digest, supported schema version, and capability metadata. Registry occurrence metadata, analyzer findings, policy decisions, and revocation stay outside the archive in their respective immutable records or live control-plane state, avoiding both self-reference and duplicate artifacts across commits and reassessments.
 
 The payload preserves resource semantics and supporting files, not source-layout accidents. Original source paths are provenance metadata only. Clients decode the canonical form and compile it into selected harness targets.
 
@@ -324,12 +324,12 @@ GET /.well-known/agent-marketplace.json
 GET /api/v1/capabilities
 GET /api/v1/instance
 GET /api/v1/search
-GET /api/v1/sources/{source}
-GET /api/v1/sources/{source}/history
-GET /api/v1/resources/{source}/{kind}/{name}
-GET /api/v1/resources/{source}/{kind}/{name}/revisions
-GET /api/v1/resources/{source}/{kind}/{name}/revisions/{revision}
-GET /api/v1/manifests/{source-revision}
+GET /api/v1/registries/{registry}
+GET /api/v1/registries/{registry}/history
+GET /api/v1/resources/{registry}/{kind}/{name}
+GET /api/v1/resources/{registry}/{kind}/{name}/revisions
+GET /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}
+GET /api/v1/manifests/{registry-revision}
 GET /api/v1/artifacts/sha256/{digest}
 GET /healthz
 
@@ -346,12 +346,12 @@ Capabilities declare:
 - index-only and mirror support;
 - optional server features.
 
-Artifact routes use immutable cache headers and download content types. Search returns the latest non-revoked revision per coordinate from currently listed sources; detail routes expose immutable history, stale state, revocation, provenance, and findings. Revocation blocks resolution but cannot invalidate previously cached immutable artifact bytes.
+Artifact routes use immutable cache headers and download content types. Search returns the latest non-revoked revision per coordinate from currently listed registries; detail routes expose immutable history, stale state, revocation, provenance, and findings. Revocation blocks resolution but cannot invalidate previously cached immutable artifact bytes.
 
 The stable browser resource route is:
 
 ```text
-/s/{source}/{kind}/{name}
+/r/{registry}/{kind}/{name}
 ```
 
 The well-known document maps that URL back to the API base and instance ID for CLI installation.
@@ -366,8 +366,8 @@ marketplaces:
     instance_id: 01JMARKETPLACEEXAMPLE
     alias: public
     resources:
-      - source_id: 01JSOURCEEXAMPLE
-        source_slug: example-resources
+      - registry_id: 01JREGISTRYEXAMPLE
+        slug: example-resources
         kind: skill
         name: review
         revision: <immutable revision>
@@ -395,14 +395,14 @@ Search queries are not retained in application logs or metric labels by default.
 
 ```text
 agent-marketplace install public:example-resources/skill/review
-agent-marketplace install https://marketplace.example/s/example-resources/skill/review
+agent-marketplace install https://marketplace.example/r/example-resources/skill/review
 agent-marketplace install public:other/skill/review --as other-review
 ```
 
 Before mutation, install shows:
 
-- Marketplace and source publisher/operator distinction;
-- current source origin and origin history;
+- Marketplace and registry publisher/operator distinction;
+- current registry origin and origin history;
 - exact revision and digest;
 - index-only or mirror acquisition;
 - resource kind and declared tools/capabilities;
@@ -425,9 +425,9 @@ Every effective-config load validates Marketplace endpoints against `allowed_mar
 - A revoked pin is a hard error when current or cached revocation state marks it revoked.
 - `sync --allow-revoked <coordinate@digest>` is exact, one-time, and non-persistent; status remains unhealthy.
 
-Index-only pins retain the last known origin as provenance. On cache miss after a source move, the client asks the original Marketplace to resolve the permitted current origin of the exact revision, then applies `allowed_registries`. It never falls back to another Marketplace.
+Index-only pins retain the last known origin as provenance. On cache miss after a registry move, the client asks the original Marketplace to resolve the permitted current origin of the exact revision, then applies `allowed_registries`. It never falls back to another Marketplace.
 
-Organization config may require exact resource or collection pins. Whole Marketplaces and sources cannot be required or default-selected.
+Organization config may require exact resource or collection pins. Whole Marketplaces and registries cannot be required or default-selected.
 
 ## Security model
 
@@ -435,7 +435,7 @@ The complete STRIDE analysis is in `.factory/threat-model.md`.
 
 ### Trust semantics
 
-Source approval means the operator permits indexing and distribution. It is not a safety certification or endorsement. The UI and manifests distinguish source publisher from Marketplace operator.
+Registry approval means the operator permits indexing and distribution. It is not a safety certification or endorsement. The UI and manifests distinguish registry publisher from Marketplace operator.
 
 The Marketplace never executes, imports into an agent, or dynamically evaluates a resource. Preview is sanitized or escaped static content only.
 
@@ -481,7 +481,7 @@ V1 pages include:
 
 - search and filters;
 - resource detail and revision history;
-- source pages and origin history;
+- registry pages and origin history;
 - provenance, digest, license, stale, and revocation state;
 - capability and security-finding summaries;
 - sanitized Markdown preview;
@@ -499,7 +499,7 @@ V1 includes:
 - process-wide structured logs;
 - liveness and readiness;
 - Prometheus metrics;
-- source and revision identifiers where cardinality is bounded;
+- registry and revision identifiers where cardinality is bounded;
 - refresh duration, outcome, queue age, API duration, response class, and storage health.
 
 Logs and labels exclude repository credentials, secret values, artifact content, raw search queries, and client identity. Usage telemetry is a separate future decision.
@@ -517,7 +517,7 @@ Logs and labels exclude repository credentials, secret values, artifact content,
 
 1. Extend harness-compilation with stable canonical resource serialization for every selectable kind.
 2. Define deterministic tar.gz creation and safe extraction.
-3. Implement source revision manifests and SHA-256 verification.
+3. Implement registry revision manifests and SHA-256 verification.
 4. Implement structural analyzers and finding contracts.
 5. Add round-trip, cross-platform determinism, malicious archive, hidden-content, and all-kind matrix tests.
 
@@ -534,7 +534,7 @@ Logs and labels exclude repository credentials, secret values, artifact content,
 2. Implement bounded isolated Git acquisition.
 3. Reuse harness-compilation ingestion for multiple configured roots.
 4. Canonicalize, analyze, license-check, and atomically publish revisions.
-5. Add scheduler, backoff, one-shot reindex, stale-state, and source move/history handling.
+5. Add scheduler, backoff, one-shot reindex, stale-state, and registry move/history handling.
 
 ### Phase 4: API and serve command
 
@@ -556,7 +556,7 @@ Logs and labels exclude repository credentials, secret values, artifact content,
 
 1. Scaffold Nuxt 4 and Nuxt UI core under `web/`.
 2. Generate the TypeScript client from OpenAPI in CI.
-3. Implement search, source, resource, revision, findings, raw inspection, and install-copy flows.
+3. Implement search, registry, resource, revision, findings, raw inspection, and install-copy flows.
 4. Add safe Markdown rendering, CSP, constrained theming, accessibility, responsive, and performance tests.
 5. Add selected Inspira effects only after core budgets pass.
 
@@ -566,7 +566,7 @@ Logs and labels exclude repository credentials, secret values, artifact content,
 2. Add Docker Compose examples for SQLite/filesystem and PostgreSQL/S3-compatible topologies.
 3. Publish operator, backup/restore, reverse-proxy, security, and incident guidance.
 4. Run all-kind conformance, storage matrix, E2E, security, performance, and frontend gates.
-5. Deploy the public Marketplace with curated source and license policy.
+5. Deploy the public Marketplace with curated registry and license policy.
 6. Set the launch-configured public URL and only then add it to `init` with explicit opt-out.
 
 ## Validation strategy
@@ -592,7 +592,7 @@ Logs and labels exclude repository credentials, secret values, artifact content,
 
 ### Integration and E2E
 
-- Source refresh success, failure, stale retention, move, unlist, retention, and revocation
+- Registry refresh success, failure, stale retention, move, unlist, retention, and revocation
 - Index-only and mirror install
 - Allowed Marketplace and Git-origin policy
 - Multi-Marketplace partial search failures
@@ -621,14 +621,14 @@ Marketplace work touches catalog discovery, sync, status, artifact loading, sear
 
 | Risk | Mitigation |
 |---|---|
-| Malicious or compromised source | Isolated bounded ingestion, structural analyzers, visible findings, policy gates, static preview, revocation |
+| Malicious or compromised registry | Isolated bounded ingestion, structural analyzers, visible findings, policy gates, static preview, revocation |
 | Prompt injection hidden from humans | Reject controls, flag hidden carriers, public reject policy, escaped raw inspection, no safety claims |
 | Artifact tampering | Immutable revisions, SHA-256 verification, atomic publication, HTTPS; signatures reserved for later |
 | Browser XSS or tracking | Strict Markdown, URL allowlist, no remote images, escaped raw text, CSP |
-| Private content disclosure | Server-side source credentials, no secret persistence, external network/auth protection requirement |
-| DDoS or resource exhaustion | Bounded requests and workers, hard source limits, backoff, no ingestion on request path, operator edge defense |
+| Private content disclosure | Server-side registry credentials, no secret persistence, external network/auth protection requirement |
+| DDoS or resource exhaustion | Bounded requests and workers, hard registry limits, backoff, no ingestion on request path, operator edge defense |
 | License violation | License detection/assertion, allowlist policy, notices in artifacts, index-only or reject fallback |
-| Repository moves and takeovers | Immutable Source ID, origin history, permanent slug aliases, operator continuity assertion |
+| Repository moves and takeovers | Immutable Registry ID, origin history, permanent slug aliases, operator continuity assertion |
 | Storage split-brain or missing blobs | Topology constraints, leases, upload-before-publish, consistency checks, DB/blob joint backups |
 | Public config shipped before service is ready | Public endpoint omitted from init until GA deployment passes gates |
 
@@ -638,7 +638,7 @@ These values are intentionally chosen during public deployment preparation:
 
 - canonical public site/API URL;
 - public Marketplace instance ID and presentation;
-- initial curated sources and publisher metadata;
+- initial curated registries and publisher metadata;
 - concrete public license allowlist;
 - concrete size, duration, and concurrency limits based on benchmarks;
 - frontend performance budgets;

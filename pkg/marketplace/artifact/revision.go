@@ -12,18 +12,18 @@ import (
 )
 
 const (
-	// SourceRevisionSchemaV1 is the current source revision manifest schema.
-	SourceRevisionSchemaV1    = "v1"
-	SourceRevisionGeneratorV1 = "agent-marketplace source-revision/v1"
+	// RegistryRevisionSchemaV1 is the current registry revision manifest schema.
+	RegistryRevisionSchemaV1    = "v1"
+	RegistryRevisionGeneratorV1 = "agent-marketplace registry-revision/v1"
 )
 
-// SourceRevisionManifest lists all resources produced from a single source
+// RegistryRevisionManifest lists all resources produced from a single registry
 // revision. Its revision_digest is computed over the canonical JSON with the
 // revision_digest field excluded, mirroring the collection manifest digest
 // pattern.
-type SourceRevisionManifest struct {
+type RegistryRevisionManifest struct {
 	SchemaVersion  string             `json:"schema_version"`
-	SourceURL      string             `json:"-"`
+	RegistryURL    string             `json:"-"`
 	Ref            string             `json:"-"`
 	Path           string             `json:"-"`
 	Generator      string             `json:"generator"`
@@ -31,7 +31,7 @@ type SourceRevisionManifest struct {
 	RevisionDigest string             `json:"revision_digest,omitempty"`
 }
 
-// RevisionResource identifies a single resource inside a source revision.
+// RevisionResource identifies a single resource inside a registry revision.
 type RevisionResource struct {
 	Kind          string            `json:"kind"`
 	Name          string            `json:"name"`
@@ -61,7 +61,7 @@ func isCanonicalDigest(value string) bool {
 
 // canonicalPayloadAndDigest returns the deterministic JSON for m with the
 // self-referential revision_digest field excluded, together with its digest.
-func canonicalPayloadAndDigest(m SourceRevisionManifest) ([]byte, string, error) {
+func canonicalPayloadAndDigest(m RegistryRevisionManifest) ([]byte, string, error) {
 	if err := m.Validate(); err != nil {
 		return nil, "", err
 	}
@@ -75,9 +75,9 @@ func canonicalPayloadAndDigest(m SourceRevisionManifest) ([]byte, string, error)
 	return payload, digest, nil
 }
 
-// EncodeSourceRevisionManifest serializes m to canonical JSON and returns the
+// EncodeRegistryRevisionManifest serializes m to canonical JSON and returns the
 // bytes together with the revision digest.
-func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, error) {
+func EncodeRegistryRevisionManifest(m RegistryRevisionManifest) ([]byte, string, error) {
 	_, digest, err := canonicalPayloadAndDigest(m)
 	if err != nil {
 		return nil, "", err
@@ -90,15 +90,15 @@ func EncodeSourceRevisionManifest(m SourceRevisionManifest) ([]byte, string, err
 	return out, digest, nil
 }
 
-// CanonicalSourceRevisionPayload returns the deterministic JSON payload for m
+// CanonicalRegistryRevisionPayload returns the deterministic JSON payload for m
 // with the self-referential revision_digest field excluded, together with its
 // SHA-256 content digest. This is the form stored as a content-addressed blob.
-func CanonicalSourceRevisionPayload(m SourceRevisionManifest) ([]byte, string, error) {
+func CanonicalRegistryRevisionPayload(m RegistryRevisionManifest) ([]byte, string, error) {
 	return canonicalPayloadAndDigest(m)
 }
 
 // canonicalRevisionPayload returns deterministic JSON for m.
-func canonicalRevisionPayload(m SourceRevisionManifest) ([]byte, error) {
+func canonicalRevisionPayload(m RegistryRevisionManifest) ([]byte, error) {
 	cm := m
 	if len(cm.Resources) > 0 {
 		cm.Resources = append([]RevisionResource(nil), cm.Resources...)
@@ -120,23 +120,23 @@ func canonicalRevisionPayload(m SourceRevisionManifest) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// DecodeSourceRevisionManifest reads a JSON revision manifest from r.
-func DecodeSourceRevisionManifest(r io.Reader) (SourceRevisionManifest, []byte, error) {
+// DecodeRegistryRevisionManifest reads a JSON revision manifest from r.
+func DecodeRegistryRevisionManifest(r io.Reader) (RegistryRevisionManifest, []byte, error) {
 	payload, err := io.ReadAll(r)
 	if err != nil {
-		return SourceRevisionManifest{}, nil, fmt.Errorf("read revision manifest: %w", err)
+		return RegistryRevisionManifest{}, nil, fmt.Errorf("read revision manifest: %w", err)
 	}
-	var m SourceRevisionManifest
+	var m RegistryRevisionManifest
 	if err := json.Unmarshal(payload, &m); err != nil {
-		return SourceRevisionManifest{}, nil, fmt.Errorf("unmarshal revision manifest: %w", err)
+		return RegistryRevisionManifest{}, nil, fmt.Errorf("unmarshal revision manifest: %w", err)
 	}
 	return m, payload, nil
 }
 
-// VerifySourceRevisionManifest checks that m.RevisionDigest matches the
+// VerifyRegistryRevisionManifest checks that m.RevisionDigest matches the
 // canonical JSON payload with the digest field excluded. If payload is non-nil,
 // it also checks that the payload round-trips to the same digest.
-func VerifySourceRevisionManifest(m SourceRevisionManifest, payload []byte) error {
+func VerifyRegistryRevisionManifest(m RegistryRevisionManifest, payload []byte) error {
 	if m.RevisionDigest == "" {
 		return errors.New("revision manifest revision_digest is empty")
 	}
@@ -153,7 +153,7 @@ func VerifySourceRevisionManifest(m SourceRevisionManifest, payload []byte) erro
 	}
 
 	if len(payload) > 0 {
-		var decoded SourceRevisionManifest
+		var decoded RegistryRevisionManifest
 		if err := json.Unmarshal(payload, &decoded); err != nil {
 			return fmt.Errorf("unmarshal provided payload: %w", err)
 		}
@@ -170,8 +170,8 @@ func VerifySourceRevisionManifest(m SourceRevisionManifest, payload []byte) erro
 }
 
 // Validate checks required fields and resource entries.
-func (m SourceRevisionManifest) Validate() error {
-	if m.SchemaVersion != SourceRevisionSchemaV1 {
+func (m RegistryRevisionManifest) Validate() error {
+	if m.SchemaVersion != RegistryRevisionSchemaV1 {
 		return fmt.Errorf("unsupported revision schema version %q", m.SchemaVersion)
 	}
 	if m.Generator == "" {

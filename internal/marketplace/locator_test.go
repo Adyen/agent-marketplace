@@ -14,33 +14,33 @@ func TestParseMarketplaceLocator(t *testing.T) {
 	}{
 		{
 			name:  "alias",
-			input: "public:source-one/skill/review",
-			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "skill", Name: "review"},
+			input: "public:registry-one/skill/review",
+			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Registry: "registry-one", Kind: "skill", Name: "review"},
 		},
 		{
 			name:  "alias revision digest",
-			input: "public:source-one/command/check@sha256:1111111111111111111111111111111111111111111111111111111111111111",
-			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "command", Name: "check", Revision: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+			input: "public:registry-one/command/check@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Registry: "registry-one", Kind: "command", Name: "check", Revision: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
 		},
 		{
 			name:  "alias digest",
-			input: "public:source-one/skill/review@sha256:0000000000000000000000000000000000000000000000000000000000000000",
-			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Source: "source-one", Kind: "skill", Name: "review", Revision: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+			input: "public:registry-one/skill/review@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			want:  MarketplaceLocator{Marketplace: "public", Alias: "public", Registry: "registry-one", Kind: "skill", Name: "review", Revision: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		},
 		{
 			name:  "browser",
-			input: "HTTPS://MARKET.example/s/source-one/skill/review",
-			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Source: "source-one", Kind: "skill", Name: "review"},
+			input: "HTTPS://MARKET.example/r/registry-one/skill/review",
+			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Registry: "registry-one", Kind: "skill", Name: "review"},
 		},
 		{
 			name:  "browser endpoint authority",
-			input: "https://MARKET.example:443/s/source-one/skill/review",
-			want:  MarketplaceLocator{Marketplace: "https://market.example:443", URL: "https://market.example:443", Source: "source-one", Kind: "skill", Name: "review"},
+			input: "https://MARKET.example:443/r/registry-one/skill/review",
+			want:  MarketplaceLocator{Marketplace: "https://market.example:443", URL: "https://market.example:443", Registry: "registry-one", Kind: "skill", Name: "review"},
 		},
 		{
 			name:  "browser revision digest",
-			input: "https://market.example/s/source-one/skill/review/revisions/sha256:2222222222222222222222222222222222222222222222222222222222222222",
-			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Source: "source-one", Kind: "skill", Name: "review", Revision: "sha256:2222222222222222222222222222222222222222222222222222222222222222", Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+			input: "https://market.example/r/registry-one/skill/review/revisions/sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			want:  MarketplaceLocator{Marketplace: "https://market.example", URL: "https://market.example", Registry: "registry-one", Kind: "skill", Name: "review", Revision: "sha256:2222222222222222222222222222222222222222222222222222222222222222", Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 		},
 	}
 	for _, tt := range tests {
@@ -63,7 +63,7 @@ func TestParseMarketplaceLocator(t *testing.T) {
 }
 
 func TestParseMarketplaceLocatorRejectsNamedRevisionsWithExplicitError(t *testing.T) {
-	for _, input := range []string{"public:source/skill/name@v2", "https://market.example/s/source/skill/name/revisions/main"} {
+	for _, input := range []string{"public:registry/skill/name@v2", "https://market.example/r/registry/skill/name/revisions/main"} {
 		if _, err := ParseMarketplaceLocator(input); err == nil || !strings.Contains(err.Error(), "exact content digest (sha256:<64 lowercase hex>)") {
 			t.Fatalf("ParseMarketplaceLocator(%q) error = %v", input, err)
 		}
@@ -72,22 +72,22 @@ func TestParseMarketplaceLocatorRejectsNamedRevisionsWithExplicitError(t *testin
 
 func TestParseMarketplaceLocatorRejectsUnsafeAndMalformedInput(t *testing.T) {
 	inputs := []string{
-		"public:source/unknown/name",
-		"public:source/skill/name/extra",
-		"public:source/skill/../name",
-		"public:source/skill/name@",
-		"public:source/skill/name@one@two",
-		"public:source/skill/name@v2",
-		"public:source/skill/name@SHA256:0000000000000000000000000000000000000000000000000000000000000000",
-		"https://market.example/s/source/skill/name/revisions/main",
-		"public:source\\evil/skill/name",
-		"https://market.example/s/source/skill/name/extra",
-		"https://market.example/s/source/skill/name?x=1",
-		"https://market.example/s/source%2Funsafe/skill/name",
-		"https://market.example/s/source/skill/../name",
-		"https://market.example/s/source/skill/name/revisions/../evil",
-		"https:///s/source/skill/name",
-		"https://:443/s/source/skill/name",
+		"public:registry/unknown/name",
+		"public:registry/skill/name/extra",
+		"public:registry/skill/../name",
+		"public:registry/skill/name@",
+		"public:registry/skill/name@one@two",
+		"public:registry/skill/name@v2",
+		"public:registry/skill/name@SHA256:0000000000000000000000000000000000000000000000000000000000000000",
+		"https://market.example/r/registry/skill/name/revisions/main",
+		"public:registry\\evil/skill/name",
+		"https://market.example/r/registry/skill/name/extra",
+		"https://market.example/r/registry/skill/name?x=1",
+		"https://market.example/r/registry%2Funsafe/skill/name",
+		"https://market.example/r/registry/skill/../name",
+		"https://market.example/r/registry/skill/name/revisions/../evil",
+		"https:///r/registry/skill/name",
+		"https://:443/r/registry/skill/name",
 	}
 	for _, input := range inputs {
 		t.Run(strings.ReplaceAll(input, "/", "_"), func(t *testing.T) {

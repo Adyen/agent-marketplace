@@ -17,23 +17,23 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
-func TestAcquireCredentialsPreserveSourceCAFile(t *testing.T) {
+func TestAcquireCredentialsPreserveRegistryCAFile(t *testing.T) {
 	t.Setenv("MARKETPLACE_TEST_TOKEN", "token-value")
 	tests := []struct {
 		name string
 		cred config.Credentials
 	}{
 		{name: "no authentication"},
-		{name: "ssh", cred: config.Credentials{SSHKey: &config.SSHKeyCredential{File: "/source/key"}}},
+		{name: "ssh", cred: config.Credentials{SSHKey: &config.SSHKeyCredential{File: "/registry/key"}}},
 		{name: "token", cred: config.Credentials{Token: &config.TokenCredential{Env: "MARKETPLACE_TEST_TOKEN"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := toAcquireCredentials(tc.cred, "/source/ca.pem")
+			got, err := toAcquireCredentials(tc.cred, "/registry/ca.pem")
 			if err != nil {
 				t.Fatalf("toAcquireCredentials: %v", err)
 			}
-			if got.CAFile != "/source/ca.pem" {
+			if got.CAFile != "/registry/ca.pem" {
 				t.Fatalf("CAFile = %q", got.CAFile)
 			}
 		})
@@ -60,7 +60,7 @@ func TestRefreshEndToEnd(t *testing.T) {
 		t.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	src := store.Source{ID: store.SourceID(cfg.Sources[0].ID)}
+	src := store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}
 	if err := Refresh(ctx, deps, src); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -70,9 +70,9 @@ func TestRefreshEndToEnd(t *testing.T) {
 		t.Fatalf("get commit: %v", err)
 	}
 
-	occ, err := meta.GetSourceOccurrence(ctx, src.ID, commit)
+	occ, err := meta.GetRegistryOccurrence(ctx, src.ID, commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 	if occ.Commit != commit {
 		t.Fatalf("occurrence commit = %q, want %q", occ.Commit, commit)
@@ -88,7 +88,7 @@ func TestRefreshEndToEnd(t *testing.T) {
 	} {
 		coord := store.ResourceCoordinate{
 			Marketplace: deps.Marketplace.ID,
-			Source:      src.ID,
+			Registry:    src.ID,
 			Kind:        resource.kind,
 			Name:        resource.name,
 		}
@@ -132,7 +132,7 @@ func TestRefreshAcquiresOnlyConfiguredRoots(t *testing.T) {
 		t.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	if err := Refresh(ctx, deps, store.Source{ID: store.SourceID(cfg.Sources[0].ID)}); err != nil {
+	if err := Refresh(ctx, deps, store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
 }
@@ -154,7 +154,7 @@ func TestRefreshLicenseAllowlistRejects(t *testing.T) {
 		t.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	src := store.Source{ID: store.SourceID(cfg.Sources[0].ID)}
+	src := store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}
 	if err := Refresh(ctx, deps, src); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -164,14 +164,14 @@ func TestRefreshLicenseAllowlistRejects(t *testing.T) {
 		t.Fatalf("get commit: %v", err)
 	}
 
-	_, err = meta.GetSourceOccurrence(ctx, src.ID, commit)
+	_, err = meta.GetRegistryOccurrence(ctx, src.ID, commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 
 	coord := store.ResourceCoordinate{
 		Marketplace: deps.Marketplace.ID,
-		Source:      src.ID,
+		Registry:    src.ID,
 		Kind:        "skill",
 		Name:        "review",
 	}
@@ -193,7 +193,7 @@ func TestRefreshIndexOnly(t *testing.T) {
 	defer cleanup()
 
 	cfg := createTestConfig(t, repoDir)
-	cfg.Sources[0].Acquisition = "index-only"
+	cfg.Registries[0].Acquisition = "index-only"
 
 	meta, blobs := openTestStores(t)
 	defer func() { _ = meta.Close() }()
@@ -203,7 +203,7 @@ func TestRefreshIndexOnly(t *testing.T) {
 		t.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	src := store.Source{ID: store.SourceID(cfg.Sources[0].ID)}
+	src := store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}
 	if err := Refresh(ctx, deps, src); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -213,9 +213,9 @@ func TestRefreshIndexOnly(t *testing.T) {
 		t.Fatalf("get commit: %v", err)
 	}
 
-	occ, err := meta.GetSourceOccurrence(ctx, src.ID, commit)
+	occ, err := meta.GetRegistryOccurrence(ctx, src.ID, commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 	if occ.Acquisition != store.AcquisitionIndexOnly {
 		t.Fatalf("acquisition = %q, want index-only", occ.Acquisition)
@@ -223,7 +223,7 @@ func TestRefreshIndexOnly(t *testing.T) {
 
 	coord := store.ResourceCoordinate{
 		Marketplace: deps.Marketplace.ID,
-		Source:      src.ID,
+		Registry:    src.ID,
 		Kind:        "skill",
 		Name:        "review",
 	}
@@ -248,7 +248,7 @@ func TestRefreshDoesNotCorruptPrevious(t *testing.T) {
 		t.Fatalf("EnsureMarketplace: %v", err)
 	}
 
-	src := store.Source{ID: store.SourceID(cfg.Sources[0].ID)}
+	src := store.Registry{ID: store.RegistryID(cfg.Registries[0].ID)}
 	if err := Refresh(ctx, deps, src); err != nil {
 		t.Fatalf("first Refresh: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestRefreshDoesNotCorruptPrevious(t *testing.T) {
 		t.Fatalf("get commit: %v", err)
 	}
 
-	_, err = meta.GetSourceOccurrence(ctx, src.ID, commit1)
+	_, err = meta.GetRegistryOccurrence(ctx, src.ID, commit1)
 	if err != nil {
 		t.Fatalf("first occurrence: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestRefreshDoesNotCorruptPrevious(t *testing.T) {
 	}
 
 	// First occurrence must still be present and valid.
-	occ, err := meta.GetSourceOccurrence(ctx, src.ID, commit1)
+	occ, err := meta.GetRegistryOccurrence(ctx, src.ID, commit1)
 	if err != nil {
 		t.Fatalf("first occurrence after failed refresh: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestRefreshDoesNotCorruptPrevious(t *testing.T) {
 
 	coord := store.ResourceCoordinate{
 		Marketplace: deps.Marketplace.ID,
-		Source:      src.ID,
+		Registry:    src.ID,
 		Kind:        "skill",
 		Name:        "review",
 	}
@@ -308,7 +308,7 @@ func TestReindex(t *testing.T) {
 
 	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
 
-	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("Reindex: %v", err)
 	}
 
@@ -317,9 +317,9 @@ func TestReindex(t *testing.T) {
 		t.Fatalf("get commit: %v", err)
 	}
 
-	_, err = meta.GetSourceOccurrence(ctx, store.SourceID(cfg.Sources[0].ID), commit)
+	_, err = meta.GetRegistryOccurrence(ctx, store.RegistryID(cfg.Registries[0].ID), commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestReindexReturnsWhenAnotherWorkerCompletesItsJob(t *testing.T) {
 	meta, blobs := openTestStores(t)
 	defer func() { _ = meta.Close() }()
 	deps := Deps{Config: cfg, MetadataStore: &externallyCompletingStore{MetadataStore: meta}, BlobStore: blobs}
-	if err := Reindex(context.Background(), deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(context.Background(), deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("Reindex: %v", err)
 	}
 }
@@ -361,7 +361,7 @@ func TestReindexDoesNotProcessUnrelatedRefreshJobs(t *testing.T) {
 	unrelated := job.Job{
 		ID:          "unrelated",
 		Kind:        "refresh",
-		Payload:     []byte(`{"source_id":"missing-source"}`),
+		Payload:     []byte(`{"registry_id":"missing-registry"}`),
 		MaxAttempts: 1,
 		CreatedAt:   time.Now().Add(-time.Hour),
 	}
@@ -370,7 +370,7 @@ func TestReindexDoesNotProcessUnrelatedRefreshJobs(t *testing.T) {
 	}
 
 	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
-	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("Reindex: %v", err)
 	}
 	got, err := meta.GetJob(ctx, unrelated.ID)
@@ -390,33 +390,33 @@ func TestReindexSameCommitAdvancesAssessment(t *testing.T) {
 	meta, blobs := openTestStores(t)
 	defer func() { _ = meta.Close() }()
 	deps := Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}
-	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("first Reindex: %v", err)
 	}
 	commit, err := testCommit(repoDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstOccurrence, err := meta.GetSourceOccurrence(ctx, store.SourceID(cfg.Sources[0].ID), commit)
+	firstOccurrence, err := meta.GetRegistryOccurrence(ctx, store.RegistryID(cfg.Registries[0].ID), commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
 	deps.Config = cfg
-	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("second Reindex: %v", err)
 	}
-	if err := Reindex(ctx, deps, cfg, cfg.Sources[0].Slug); err != nil {
+	if err := Reindex(ctx, deps, cfg, cfg.Registries[0].Slug); err != nil {
 		t.Fatalf("unchanged Reindex: %v", err)
 	}
-	secondOccurrence, err := meta.GetSourceOccurrence(ctx, store.SourceID(cfg.Sources[0].ID), commit)
+	secondOccurrence, err := meta.GetRegistryOccurrence(ctx, store.RegistryID(cfg.Registries[0].ID), commit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstOccurrence.SourceRevisionManifestDigest != secondOccurrence.SourceRevisionManifestDigest {
-		t.Fatalf("source occurrence changed across assessment: %s != %s", firstOccurrence.SourceRevisionManifestDigest, secondOccurrence.SourceRevisionManifestDigest)
+	if firstOccurrence.RegistryRevisionManifestDigest != secondOccurrence.RegistryRevisionManifestDigest {
+		t.Fatalf("registry occurrence changed across assessment: %s != %s", firstOccurrence.RegistryRevisionManifestDigest, secondOccurrence.RegistryRevisionManifestDigest)
 	}
-	coord := store.ResourceCoordinate{Marketplace: "test-mp", Source: store.SourceID(cfg.Sources[0].ID), Kind: "skill", Name: "review"}
+	coord := store.ResourceCoordinate{Marketplace: "test-mp", Registry: store.RegistryID(cfg.Registries[0].ID), Kind: "skill", Name: "review"}
 	revision, err := meta.GetLatestResourceRevision(ctx, coord)
 	if err != nil {
 		t.Fatal(err)
@@ -498,16 +498,16 @@ func createTestConfig(tb testing.TB, repoDir string) config.Config {
 				IngestionDuration: config.Duration(2 * time.Minute),
 			},
 		},
-		Sources: []config.Source{
+		Registries: []config.Registry{
 			{
 				ID:          "src-test",
-				Slug:        "example-source",
+				Slug:        "example-registry",
 				Origin:      "file://" + repoDir,
 				Ref:         "main",
 				Acquisition: "mirror",
 				Publisher:   config.Publisher{Name: "Test Publisher"},
 				License:     "MIT",
-				Roots: []config.SourceRoot{
+				Roots: []config.RegistryRoot{
 					{Path: ".agents", SourceHarness: "factory"},
 				},
 			},

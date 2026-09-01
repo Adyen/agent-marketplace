@@ -18,30 +18,30 @@ export function routeParam(value: string | string[] | undefined, label: string):
   return candidate
 }
 
-export function sourceAsyncDataKey(source: string): string {
-  return JSON.stringify(['marketplace-source', source])
+export function registryAsyncDataKey(registry: string): string {
+  return JSON.stringify(['marketplace-registry', registry])
 }
 
-export function sourceHistoryAsyncDataKey(source: string): string {
-  return JSON.stringify(['marketplace-source-history', source])
+export function registryHistoryAsyncDataKey(registry: string): string {
+  return JSON.stringify(['marketplace-registry-history', registry])
 }
 
-export function resourceAsyncDataKey(source: string, kind: ResourceKind, name: string): string {
-  return JSON.stringify(['marketplace-resource', source, kind, name])
+export function resourceAsyncDataKey(registry: string, kind: ResourceKind, name: string): string {
+  return JSON.stringify(['marketplace-resource', registry, kind, name])
 }
 
-export function revisionAsyncDataKey(source: string, kind: ResourceKind, name: string, revision: string): string {
-  return JSON.stringify(['marketplace-resource-revision', source, kind, name, revision])
+export function revisionAsyncDataKey(registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return JSON.stringify(['marketplace-resource-revision', registry, kind, name, revision])
 }
 
-export function resourceInspectionAsyncDataKey(source: string, kind: ResourceKind, name: string, revision: string): string {
-  return JSON.stringify(['marketplace-resource-inspection', source, kind, name, revision])
+export function resourceInspectionAsyncDataKey(registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return JSON.stringify(['marketplace-resource-inspection', registry, kind, name, revision])
 }
 
-export function resourceInspectionContentAsyncDataKey(source: string, kind: ResourceKind, name: string, revision: string): string {
-  return JSON.stringify(['marketplace-resource-inspection-content', source, kind, name, revision])
+export function resourceInspectionContentAsyncDataKey(registry: string, kind: ResourceKind, name: string, revision: string): string {
+  return JSON.stringify(['marketplace-resource-inspection-content', registry, kind, name, revision])
 }
 
-export function isSafeResourceRoute(source: string, kind: string, name: string, revision?: string): boolean {
-  return isSafeRouteToken(source) && isResourceKind(kind) && isSafeRouteToken(name) && (revision === undefined || isSafeRouteToken(revision))
+export function isSafeResourceRoute(registry: string, kind: string, name: string, revision?: string): boolean {
+  return isSafeRouteToken(registry) && isResourceKind(kind) && isSafeRouteToken(name) && (revision === undefined || isSafeRouteToken(revision))
 }

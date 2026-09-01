@@ -399,7 +399,7 @@ func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *
 	configPath := config.ProjectConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	pin := config.MarketplaceResourcePin{
-		SourceID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
@@ -436,9 +436,9 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	repoRoot := t.TempDir()
 	digest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
-		SourceID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
-		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{SourceID: "collections", Name: "bundle", Revision: "v1"}}),
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
 	r := row{
@@ -462,7 +462,7 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 		t.Fatalf("local Marketplace config = %#v", loaded)
 	}
 	got := loaded.Marketplaces[0].Resources[0]
-	if got.SourceID != pin.SourceID || got.Name != pin.Name || got.InstalledName != pin.InstalledName || got.Revision != pin.Revision || got.Digest != pin.Digest || !got.Direct {
+	if got.RegistryID != pin.RegistryID || got.Name != pin.Name || got.InstalledName != pin.InstalledName || got.Revision != pin.Revision || got.Digest != pin.Digest || !got.Direct {
 		t.Fatalf("copied Marketplace pin = %#v, want %#v", got, pin)
 	}
 	if len(got.SelectedBy.List()) != 0 {
@@ -478,7 +478,7 @@ func TestRunScopedToggleRejectsMarketplaceAliasConflictWithoutMutation(t *testin
 	localPath := config.LocalConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("f", 64)
 	existingPin := config.MarketplaceResourcePin{
-		SourceID: "existing-source", Kind: "skill", Name: "existing", Revision: "v1", Digest: digest,
+		RegistryID: "existing-source", Kind: "skill", Name: "existing", Revision: "v1", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
 	}
 	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(localPath, "https://other-market.example", "other-id", "public", []config.MarketplaceResourcePin{existingPin}); err != nil {
@@ -489,7 +489,7 @@ func TestRunScopedToggleRejectsMarketplaceAliasConflictWithoutMutation(t *testin
 		t.Fatal(err)
 	}
 	pin := config.MarketplaceResourcePin{
-		SourceID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}

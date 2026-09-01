@@ -24,7 +24,7 @@ type MarketplaceLocator struct {
 	Marketplace string
 	Alias       string
 	URL         string
-	Source      string
+	Registry    string
 	Kind        string
 	Name        string
 	Revision    string
@@ -38,10 +38,10 @@ type Locator = MarketplaceLocator
 
 // ParseMarketplaceLocator parses either
 //
-//	alias:source/kind/name[@sha256:<64 lowercase hex>]
-//	https://host/s/source/kind/name[/revisions/sha256:<64 lowercase hex>]
+//	alias:registry/kind/name[@sha256:<64 lowercase hex>]
+//	https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 //
-// Alias resolution is deliberately not performed here. The returned source,
+// Alias resolution is deliberately not performed here. The returned registry,
 // kind, and name are the route tokens, not decoded or otherwise rewritten
 // identifiers.
 func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
@@ -90,7 +90,7 @@ func ValidateInstalledName(name string) error {
 func parseAliasLocator(input string) (MarketplaceLocator, error) {
 	colon := strings.IndexByte(input, ':')
 	if colon <= 0 {
-		return MarketplaceLocator{}, fmt.Errorf("invalid marketplace locator %q: expected alias:source/kind/name", input)
+		return MarketplaceLocator{}, fmt.Errorf("invalid marketplace locator %q: expected alias:registry/kind/name", input)
 	}
 	alias := input[:colon]
 	coordinate := input[colon+1:]
@@ -102,12 +102,12 @@ func parseAliasLocator(input string) (MarketplaceLocator, error) {
 	}
 	parts := strings.Split(coordinate, "/")
 	if len(parts) != 3 {
-		return MarketplaceLocator{}, fmt.Errorf("invalid marketplace locator %q: expected alias:source/kind/name", input)
+		return MarketplaceLocator{}, fmt.Errorf("invalid marketplace locator %q: expected alias:registry/kind/name", input)
 	}
 	if strings.ContainsAny(parts[0], "@:") {
-		return MarketplaceLocator{}, fmt.Errorf("source contains an ambiguous locator separator")
+		return MarketplaceLocator{}, fmt.Errorf("registry contains an ambiguous locator separator")
 	}
-	if err := validateRouteToken("source", parts[0]); err != nil {
+	if err := validateRouteToken("registry", parts[0]); err != nil {
 		return MarketplaceLocator{}, err
 	}
 	if err := validateKind(parts[1]); err != nil {
@@ -120,7 +120,7 @@ func parseAliasLocator(input string) (MarketplaceLocator, error) {
 	return MarketplaceLocator{
 		Marketplace: alias,
 		Alias:       alias,
-		Source:      parts[0],
+		Registry:    parts[0],
 		Kind:        parts[1],
 		Name:        name,
 		Revision:    revision,
@@ -149,9 +149,9 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 	path := strings.TrimPrefix(u.Path, "/")
 	parts := strings.Split(path, "/")
 	if len(parts) != 4 && len(parts) != 6 {
-		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: expected /s/source/kind/name with optional /revisions/revision", input)
+		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: expected /r/registry/kind/name with optional /revisions/revision", input)
 	}
-	if parts[0] != "s" || (len(parts) == 6 && parts[4] != "revisions") {
+	if parts[0] != "r" || (len(parts) == 6 && parts[4] != "revisions") {
 		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: invalid browser route", input)
 	}
 	for i, token := range parts {
@@ -187,7 +187,7 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 	return MarketplaceLocator{
 		Marketplace: endpoint,
 		URL:         endpoint,
-		Source:      parts[1],
+		Registry:    parts[1],
 		Kind:        parts[2],
 		Name:        parts[3],
 		Revision:    revision,

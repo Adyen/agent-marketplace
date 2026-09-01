@@ -385,8 +385,8 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 		UpdatedRegistries: 2, Bumps: []pipeline.RefBump{{URL: "https://git.example/repo.git", OldRef: "v1", NewRef: "v2"}},
 		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 1,
 		MarketplacePins: []pipeline.MarketplacePinUpdate{
-			{Entry: config.MarketplaceEntry{URL: "https://market.example\nunsafe"}, OldPin: config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Digest: oldDigest}, NewPin: config.MarketplaceResourcePin{Digest: newDigest}, Updated: true},
-			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{SourceID: "org", Kind: "skill", Name: "required"}, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+			{Entry: config.MarketplaceEntry{URL: "https://market.example\nunsafe"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Digest: oldDigest}, NewPin: config.MarketplaceResourcePin{Digest: newDigest}, Updated: true},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
 		},
 	}
 	var out bytes.Buffer

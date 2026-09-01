@@ -19,7 +19,7 @@ const stubs = {
 
 const digest = 'sha256:' + 'c'.repeat(64)
 
-const coordinate = { marketplace: 'marketplace', source: 'team/tools', kind: 'skill' as const, name: 'review' }
+const coordinate = { marketplace: 'marketplace', registry: 'team/tools', kind: 'skill' as const, name: 'review' }
 const assessmentBase = {
   coordinate,
   content_digest: digest,
@@ -44,12 +44,12 @@ const resource = {
 describe('ResourceDetailView', () => {
   it('shows read-only provenance, findings, and digest-pinned actions as text', () => {
     const wrapper = mount(ResourceDetailView, {
-      props: { resource, source: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
+      props: { resource, registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example' },
       global: { stubs },
     })
 
     // The heading is the resource coordinate, which is both the URL and the
-    // CLI argument, so the source is part of the identifier.
+    // CLI argument, so the registry is part of the identifier.
     expect(wrapper.get('h1').text()).toBe('team-tools/review')
     expect(wrapper.text()).toContain('analyzer-v2')
     expect(wrapper.text()).toContain('Apache-2.0')
@@ -70,7 +70,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         revisions: [
           { ...resource, content_digest: previousDigest, revocation: { ...revocation, reason: 'policy' } },
         ],
@@ -79,7 +79,7 @@ describe('ResourceDetailView', () => {
     })
 
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain(previousDigest)
-    expect(wrapper.get(`a[href="https://market.example/s/source/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
+    expect(wrapper.get(`a[href="https://market.example/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Revoked')
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Current')
   })
@@ -88,9 +88,9 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: '<script>finding</script>', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         inspection: {
-          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
         },
         primaryContent: '# Hello\n\n[docs](https://example.com/docs)\n\n![remote image](https://evil.invalid/pixel.png)\n\n<div>raw HTML</div>\n<script>alert(1)</script>',
@@ -122,9 +122,9 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         inspection: {
-          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [
             { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: 10, inspection_class: 'text' },
             { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: 20, inspection_class: 'text' },
@@ -171,9 +171,9 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, coordinate: { ...resource.coordinate, kind: 'command', name: 'build' } },
-        source: 'source', kind: 'command', name: 'build', canonicalUrl: 'https://market.example', apiBase: '/',
+        registry: 'registry', kind: 'command', name: 'build', canonicalUrl: 'https://market.example', apiBase: '/',
         inspection: {
-          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'command', name: 'build' }, revision_digest: digest, primary_path: 'COMMAND.md',
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'command', name: 'build' }, revision_digest: digest, primary_path: 'COMMAND.md',
           files: [
             { path: 'COMMAND.md', content_digest: digest, media_type: 'text/plain', size: 4, inspection_class: 'text' },
             { path: 'support/diagram.svg', content_digest: 'sha256:' + 'd'.repeat(64), media_type: 'application/octet-stream', size: 12, inspection_class: 'metadata' },
@@ -200,7 +200,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, revocation },
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
       },
       global: { stubs },
     })
@@ -217,7 +217,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject', message: 'executes a shell' }] } },
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
       },
       global: { stubs },
     })
@@ -237,7 +237,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, archive_digest: undefined },
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
       },
       global: { stubs },
     })
@@ -255,7 +255,7 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource,
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         revisions: [
           { ...resource, content_digest: rejectedDigest, archive_digest: undefined, assessment: { ...assessmentBase, decision: 'reject', findings: [{ code: 'shell-exec', severity: 'reject', policy: 'reject' }] } },
           { ...resource, content_digest: strippedDigest, archive_digest: undefined, assessment: { ...assessmentBase, findings: [] } },
@@ -277,9 +277,9 @@ describe('ResourceDetailView', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
         resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
-        source: 'source', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
+        registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example',
         inspection: {
-          schema_version: 'v1', coordinate: { marketplace: 'marketplace', source: 'source', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
+          schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
         },
         primaryContent: '# Hello',

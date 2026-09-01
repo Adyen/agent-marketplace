@@ -108,7 +108,7 @@ needed. `kind` defaults to `skill`.
 
 - If the same resource name (within the same kind) is selected from multiple different registries, resolution errors.
 - The CLI does not auto-pick a winner across different registries.
-- Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one source.
+- Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one registry.
 - The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples

@@ -189,112 +189,112 @@ func (s *Store) PutMarketplace(ctx context.Context, m store.Marketplace) error {
 	return err
 }
 
-// -- Sources --
+// -- Registries --
 
 type sourceScanner interface {
 	Scan(dest ...any) error
 }
 
-func (s *Store) GetSource(ctx context.Context, id store.SourceID) (store.Source, error) {
+func (s *Store) GetRegistry(ctx context.Context, id store.RegistryID) (store.Registry, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
 		        license, credentials_ref, policy_overrides, listed,
 		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
-		 FROM sources WHERE id=$1`,
+		 FROM registries WHERE id=$1`,
 		id,
 	)
-	return s.scanSource(row)
+	return s.scanRegistry(row)
 }
 
-func (s *Store) scanSource(sc sourceScanner) (store.Source, error) {
-	var src store.Source
+func (s *Store) scanRegistry(sc sourceScanner) (store.Registry, error) {
+	var registry store.Registry
 	var aliasesJSON, originsJSON, rootsJSON, publisherJSON, policyJSON string
 	var refreshStatus string
 	var refreshError sql.NullString
 	var listed bool
 	var created, updated, refreshedAt int64
 	err := sc.Scan(
-		&src.ID, &src.Slug, &aliasesJSON, &originsJSON, &src.Ref, &rootsJSON,
-		&src.Acquisition, &publisherJSON, &src.License, &src.CredentialsRef,
+		&registry.ID, &registry.Slug, &aliasesJSON, &originsJSON, &registry.Ref, &rootsJSON,
+		&registry.Acquisition, &publisherJSON, &registry.License, &registry.CredentialsRef,
 		&policyJSON, &listed,
 		&refreshStatus, &refreshError, &refreshedAt,
 		&created, &updated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return store.Source{}, store.ErrNotFound
+		return store.Registry{}, store.ErrNotFound
 	}
 	if err != nil {
-		return store.Source{}, err
+		return store.Registry{}, err
 	}
-	src.Listed = listed
-	src.RefreshStatus = store.SourceRefreshStatus(refreshStatus)
+	registry.Listed = listed
+	registry.RefreshStatus = store.RegistryRefreshStatus(refreshStatus)
 	if refreshError.Valid {
-		src.RefreshError = refreshError.String
+		registry.RefreshError = refreshError.String
 	}
-	src.RefreshedAt = microToTime(refreshedAt)
-	src.CreatedAt = microToTime(created)
-	src.UpdatedAt = microToTime(updated)
+	registry.RefreshedAt = microToTime(refreshedAt)
+	registry.CreatedAt = microToTime(created)
+	registry.UpdatedAt = microToTime(updated)
 
 	for _, p := range []struct {
 		data string
 		v    any
 	}{
-		{aliasesJSON, &src.Aliases},
-		{originsJSON, &src.Origins},
-		{rootsJSON, &src.Roots},
-		{publisherJSON, &src.Publisher},
-		{policyJSON, &src.PolicyOverrides},
+		{aliasesJSON, &registry.Aliases},
+		{originsJSON, &registry.Origins},
+		{rootsJSON, &registry.Roots},
+		{publisherJSON, &registry.Publisher},
+		{policyJSON, &registry.PolicyOverrides},
 	} {
 		if p.data == "" {
 			p.data = "{}"
 		}
 		if err := unmarshalJSON([]byte(p.data), p.v); err != nil {
-			return store.Source{}, fmt.Errorf("unmarshal source field: %w", err)
+			return store.Registry{}, fmt.Errorf("unmarshal registry field: %w", err)
 		}
 	}
 
-	if src.PolicyOverrides == nil {
-		src.PolicyOverrides = map[string]any{}
+	if registry.PolicyOverrides == nil {
+		registry.PolicyOverrides = map[string]any{}
 	}
-	return src, nil
+	return registry, nil
 }
 
-func (s *Store) PutSource(ctx context.Context, src store.Source) error {
-	if err := src.Acquisition.Validate(); err != nil {
+func (s *Store) PutRegistry(ctx context.Context, registry store.Registry) error {
+	if err := registry.Acquisition.Validate(); err != nil {
 		return err
 	}
-	if src.RefreshStatus == "" {
-		src.RefreshStatus = store.SourceRefreshStatusUnknown
+	if registry.RefreshStatus == "" {
+		registry.RefreshStatus = store.RegistryRefreshStatusUnknown
 	}
 	now := time.Now().UTC()
-	if src.CreatedAt.IsZero() {
-		src.CreatedAt = now
+	if registry.CreatedAt.IsZero() {
+		registry.CreatedAt = now
 	}
-	src.UpdatedAt = now
+	registry.UpdatedAt = now
 
-	aliasesJSON, err := marshalJSON(src.Aliases)
+	aliasesJSON, err := marshalJSON(registry.Aliases)
 	if err != nil {
 		return err
 	}
-	originsJSON, err := marshalJSON(src.Origins)
+	originsJSON, err := marshalJSON(registry.Origins)
 	if err != nil {
 		return err
 	}
-	rootsJSON, err := marshalJSON(src.Roots)
+	rootsJSON, err := marshalJSON(registry.Roots)
 	if err != nil {
 		return err
 	}
-	publisherJSON, err := marshalJSON(src.Publisher)
+	publisherJSON, err := marshalJSON(registry.Publisher)
 	if err != nil {
 		return err
 	}
-	policyJSON, err := marshalJSON(src.PolicyOverrides)
+	policyJSON, err := marshalJSON(registry.PolicyOverrides)
 	if err != nil {
 		return err
 	}
 
 	_, err = s.q.ExecContext(ctx,
-		`INSERT INTO sources
+		`INSERT INTO registries
 		 (id, slug, aliases, origins, ref, roots, acquisition, publisher,
 		  license, credentials_ref, policy_overrides, listed,
 		  refresh_status, refresh_error, refreshed_at, created_at, updated_at)
@@ -316,57 +316,57 @@ func (s *Store) PutSource(ctx context.Context, src store.Source) error {
 		   refreshed_at = EXCLUDED.refreshed_at,
 		   created_at = EXCLUDED.created_at,
 		   updated_at = EXCLUDED.updated_at`,
-		src.ID, src.Slug, aliasesJSON, originsJSON, src.Ref, rootsJSON,
-		src.Acquisition, publisherJSON, src.License, src.CredentialsRef,
-		policyJSON, src.Listed,
-		string(src.RefreshStatus), src.RefreshError, timeToMicro(src.RefreshedAt),
-		timeToMicro(src.CreatedAt), timeToMicro(src.UpdatedAt),
+		registry.ID, registry.Slug, aliasesJSON, originsJSON, registry.Ref, rootsJSON,
+		registry.Acquisition, publisherJSON, registry.License, registry.CredentialsRef,
+		policyJSON, registry.Listed,
+		string(registry.RefreshStatus), registry.RefreshError, timeToMicro(registry.RefreshedAt),
+		timeToMicro(registry.CreatedAt), timeToMicro(registry.UpdatedAt),
 	)
 	return err
 }
 
-func (s *Store) ListSources(ctx context.Context) ([]store.Source, error) {
+func (s *Store) ListRegistries(ctx context.Context) ([]store.Registry, error) {
 	rows, err := s.q.QueryContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
 		        license, credentials_ref, policy_overrides, listed,
 		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
-		 FROM sources WHERE listed=true ORDER BY slug`)
+		 FROM registries WHERE listed=true ORDER BY slug`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []store.Source
+	var out []store.Registry
 	for rows.Next() {
-		src, err := s.scanSource(rows)
+		registry, err := s.scanRegistry(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, src)
+		out = append(out, registry)
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) GetSourceBySlug(ctx context.Context, slug string) (store.Source, error) {
+func (s *Store) GetRegistryBySlug(ctx context.Context, slug string) (store.Registry, error) {
 	row := s.q.QueryRowContext(ctx,
 		`SELECT id, slug, aliases, origins, ref, roots, acquisition, publisher,
 		        license, credentials_ref, policy_overrides, listed,
 		        refresh_status, refresh_error, refreshed_at, created_at, updated_at
-		 FROM sources
+		 FROM registries
 		 WHERE slug=$1 OR EXISTS (
 		   SELECT 1 FROM jsonb_array_elements_text(aliases::jsonb) AS value WHERE value=$2
 		 )`,
 		slug, slug,
 	)
-	return s.scanSource(row)
+	return s.scanRegistry(row)
 }
 
-func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.SourceOccurrence, error) {
+func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]store.RegistryOccurrence, error) {
 	rows, err := s.q.QueryContext(ctx,
-		fmt.Sprintf(`SELECT source_id, ref, roots, revision_commit, manifest_digest, acquisition,
+		fmt.Sprintf(`SELECT registry_id, ref, roots, revision_commit, manifest_digest, acquisition,
 		        mirrored_artifact_digest, occurred_at
-		 FROM source_occurrences WHERE source_id=$1 ORDER BY occurred_at DESC, revision_commit DESC
-		 LIMIT %d`, store.MaxSourceHistoryEntries),
+		 FROM registry_occurrences WHERE registry_id=$1 ORDER BY occurred_at DESC, revision_commit DESC
+		 LIMIT %d`, store.MaxRegistryHistoryEntries),
 		id,
 	)
 	if err != nil {
@@ -374,9 +374,9 @@ func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.S
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]store.SourceOccurrence, 0)
+	out := make([]store.RegistryOccurrence, 0)
 	for rows.Next() {
-		occ, err := s.scanSourceOccurrence(rows)
+		occ, err := s.scanRegistryOccurrence(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -387,29 +387,29 @@ func (s *Store) SourceHistory(ctx context.Context, id store.SourceID) ([]store.S
 
 // -- Resource revisions --
 
-const assessedResourceColumns = `rr.marketplace_id, rr.source_id, rr.kind, rr.name,
+const assessedResourceColumns = `rr.marketplace_id, rr.registry_id, rr.kind, rr.name,
 	rr.content_digest, rr.archive_digest, rr.license, rr.description,
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
 	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
 	ro.revision_commit, ro.manifest_digest,
 	rv.kind, rv.target_id, rv.reason, rv.applied_at,
 	rc.kind, rc.target_id, rc.reason, rc.applied_at,
-	rs.kind, rs.target_id, rs.reason, rs.applied_at`
+	rg.kind, rg.target_id, rg.reason, rg.applied_at`
 
 const assessedResourceJoins = `
 	JOIN current_resource_assessments cra
-	  ON cra.marketplace_id=rr.marketplace_id AND cra.source_id=rr.source_id
+	  ON cra.marketplace_id=rr.marketplace_id AND cra.registry_id=rr.registry_id
 	 AND cra.kind=rr.kind AND cra.name=rr.name AND cra.content_digest=rr.content_digest
 	JOIN resource_assessments ra
-	  ON ra.marketplace_id=cra.marketplace_id AND ra.source_id=cra.source_id
+	  ON ra.marketplace_id=cra.marketplace_id AND ra.registry_id=cra.registry_id
 	 AND ra.kind=cra.kind AND ra.name=cra.name AND ra.content_digest=cra.content_digest
 	 AND ra.assessment_digest=cra.assessment_digest
 	JOIN LATERAL (
 	  SELECT candidate.revision_commit, candidate.manifest_digest, so.occurred_at
 	  FROM resource_occurrences candidate
-	  LEFT JOIN source_occurrences so
-	    ON so.source_id=candidate.source_id AND so.revision_commit=candidate.revision_commit
-	  WHERE candidate.marketplace_id=rr.marketplace_id AND candidate.source_id=rr.source_id
+	  LEFT JOIN registry_occurrences so
+	    ON so.registry_id=candidate.registry_id AND so.revision_commit=candidate.revision_commit
+	  WHERE candidate.marketplace_id=rr.marketplace_id AND candidate.registry_id=rr.registry_id
 	    AND candidate.kind=rr.kind AND candidate.name=rr.name
 	    AND candidate.content_digest=rr.content_digest
 	  ORDER BY so.occurred_at DESC NULLS LAST, candidate.revision_commit DESC
@@ -417,40 +417,40 @@ const assessedResourceJoins = `
 	) ro ON true
 	LEFT JOIN revocations rv
 	  ON rv.kind='revision'
-	 AND rv.target_id=(rr.marketplace_id || '/' || rr.source_id || '/' || rr.kind || '/' || rr.name || '@' || rr.content_digest)
+	 AND rv.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name || '@' || rr.content_digest)
 	LEFT JOIN revocations rc
 	  ON rc.kind='coordinate'
-	 AND rc.target_id=(rr.marketplace_id || '/' || rr.source_id || '/' || rr.kind || '/' || rr.name)
-	LEFT JOIN revocations rs
-	  ON rs.kind='source' AND rs.target_id=rr.source_id`
+	 AND rc.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name)
+	LEFT JOIN revocations rg
+	  ON rg.kind='registry' AND rg.target_id=rr.registry_id`
 
 const currentAssessedResourceJoins = `
-	JOIN source_heads sh ON sh.source_id=rr.source_id
+	JOIN registry_heads sh ON sh.registry_id=rr.registry_id
 	JOIN resource_occurrences ro
-	  ON ro.marketplace_id=rr.marketplace_id AND ro.source_id=rr.source_id
+	  ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
 	 AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
 	 AND ro.revision_commit=sh.revision_commit
 	JOIN current_resource_assessments cra
-	  ON cra.marketplace_id=rr.marketplace_id AND cra.source_id=rr.source_id
+	  ON cra.marketplace_id=rr.marketplace_id AND cra.registry_id=rr.registry_id
 	 AND cra.kind=rr.kind AND cra.name=rr.name AND cra.content_digest=rr.content_digest
 	JOIN resource_assessments ra
-	  ON ra.marketplace_id=cra.marketplace_id AND ra.source_id=cra.source_id
+	  ON ra.marketplace_id=cra.marketplace_id AND ra.registry_id=cra.registry_id
 	 AND ra.kind=cra.kind AND ra.name=cra.name AND ra.content_digest=cra.content_digest
 	 AND ra.assessment_digest=cra.assessment_digest
 	LEFT JOIN revocations rv
 	  ON rv.kind='revision'
-	 AND rv.target_id=(rr.marketplace_id || '/' || rr.source_id || '/' || rr.kind || '/' || rr.name || '@' || rr.content_digest)
+	 AND rv.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name || '@' || rr.content_digest)
 	LEFT JOIN revocations rc
 	  ON rc.kind='coordinate'
-	 AND rc.target_id=(rr.marketplace_id || '/' || rr.source_id || '/' || rr.kind || '/' || rr.name)
-	LEFT JOIN revocations rs
-	  ON rs.kind='source' AND rs.target_id=rr.source_id`
+	 AND rc.target_id=(rr.marketplace_id || '/' || rr.registry_id || '/' || rr.kind || '/' || rr.name)
+	LEFT JOIN revocations rg
+	  ON rg.kind='registry' AND rg.target_id=rr.registry_id`
 
 func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) (store.AssessedResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`
-		WHERE rr.marketplace_id=$1 AND rr.source_id=$2 AND rr.kind=$3 AND rr.name=$4 AND rr.content_digest=$5`,
-		coord.Marketplace, coord.Source, coord.Kind, coord.Name, digest)
+		WHERE rr.marketplace_id=$1 AND rr.registry_id=$2 AND rr.kind=$3 AND rr.name=$4 AND rr.content_digest=$5`,
+		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest)
 	return s.scanAssessedResourceRevision(row)
 }
 
@@ -463,17 +463,17 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	var appliedAt sql.NullInt64
 	var coordinateKind, coordinateTarget, coordinateReason sql.NullString
 	var coordinateAt sql.NullInt64
-	var sourceKind, sourceTarget, sourceReason sql.NullString
-	var sourceAt sql.NullInt64
+	var registryKind, registryTarget, registryReason sql.NullString
+	var registryAt sql.NullInt64
 	err := sc.Scan(
-		&out.Coordinate.Marketplace, &out.Coordinate.Source, &out.Coordinate.Kind, &out.Coordinate.Name,
+		&out.Coordinate.Marketplace, &out.Coordinate.Registry, &out.Coordinate.Kind, &out.Coordinate.Name,
 		&out.ContentDigest, &archive, &license, &out.Description,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
 		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest,
 		&revocationKind, &targetID, &reason, &appliedAt,
 		&coordinateKind, &coordinateTarget, &coordinateReason, &coordinateAt,
-		&sourceKind, &sourceTarget, &sourceReason, &sourceAt,
+		&registryKind, &registryTarget, &registryReason, &registryAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.AssessedResourceRevision{}, store.ErrNotFound
@@ -497,7 +497,7 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	}{
 		{revocationKind, targetID, reason, appliedAt},
 		{coordinateKind, coordinateTarget, coordinateReason, coordinateAt},
-		{sourceKind, sourceTarget, sourceReason, sourceAt},
+		{registryKind, registryTarget, registryReason, registryAt},
 	} {
 		if candidate.kind.Valid {
 			out.Revocation = &store.Revocation{Kind: store.RevocationKind(candidate.kind.String), TargetID: candidate.target.String, Reason: candidate.reason.String, AppliedAt: microToTime(candidate.at.Int64)}
@@ -510,11 +510,11 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 func (s *Store) getIntrinsicResourceRevision(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) (store.ResourceRevision, error) {
 	var rev store.ResourceRevision
 	var archive, license sql.NullString
-	err := s.q.QueryRowContext(ctx, `SELECT marketplace_id, source_id, kind, name, content_digest,
+	err := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		archive_digest, license, description FROM resource_revisions
-		WHERE marketplace_id=$1 AND source_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5`,
-		coord.Marketplace, coord.Source, coord.Kind, coord.Name, digest).Scan(
-		&rev.Coordinate.Marketplace, &rev.Coordinate.Source, &rev.Coordinate.Kind, &rev.Coordinate.Name,
+		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5`,
+		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest).Scan(
+		&rev.Coordinate.Marketplace, &rev.Coordinate.Registry, &rev.Coordinate.Kind, &rev.Coordinate.Name,
 		&rev.ContentDigest, &archive, &license, &rev.Description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceRevision{}, store.ErrNotFound
@@ -530,10 +530,10 @@ func (s *Store) getIntrinsicResourceRevision(ctx context.Context, coord store.Re
 func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevision) error {
 	rev.Description = store.BoundDescription(rev.Description)
 	_, err := s.q.ExecContext(ctx, `INSERT INTO resource_revisions
-		(marketplace_id, source_id, kind, name, content_digest, archive_digest, license, description)
+		(marketplace_id, registry_id, kind, name, content_digest, archive_digest, license, description)
 		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
-		ON CONFLICT (marketplace_id, source_id, kind, name, content_digest) DO NOTHING`,
-		rev.Coordinate.Marketplace, rev.Coordinate.Source, rev.Coordinate.Kind, rev.Coordinate.Name,
+		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest) DO NOTHING`,
+		rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind, rev.Coordinate.Name,
 		rev.ContentDigest, string(rev.ArchiveDigest), rev.License, rev.Description)
 	if err != nil {
 		return err
@@ -550,22 +550,22 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 
 func (s *Store) PutResourceOccurrence(ctx context.Context, occurrence store.ResourceOccurrence) error {
 	_, err := s.q.ExecContext(ctx, `INSERT INTO resource_occurrences
-		(marketplace_id, source_id, kind, name, content_digest, revision_commit, manifest_digest)
+		(marketplace_id, registry_id, kind, name, content_digest, revision_commit, manifest_digest)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (marketplace_id, source_id, kind, name, content_digest, revision_commit) DO NOTHING`,
-		occurrence.Coordinate.Marketplace, occurrence.Coordinate.Source, occurrence.Coordinate.Kind,
+		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest, revision_commit) DO NOTHING`,
+		occurrence.Coordinate.Marketplace, occurrence.Coordinate.Registry, occurrence.Coordinate.Kind,
 		occurrence.Coordinate.Name, occurrence.ContentDigest, occurrence.Commit, occurrence.ManifestDigest)
 	if err != nil {
 		return err
 	}
 	var existing store.ResourceOccurrence
-	err = s.q.QueryRowContext(ctx, `SELECT marketplace_id, source_id, kind, name, content_digest,
+	err = s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		revision_commit, manifest_digest FROM resource_occurrences
-		WHERE marketplace_id=$1 AND source_id=$2 AND kind=$3 AND name=$4
+		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4
 		  AND content_digest=$5 AND revision_commit=$6`,
-		occurrence.Coordinate.Marketplace, occurrence.Coordinate.Source, occurrence.Coordinate.Kind,
+		occurrence.Coordinate.Marketplace, occurrence.Coordinate.Registry, occurrence.Coordinate.Kind,
 		occurrence.Coordinate.Name, occurrence.ContentDigest, occurrence.Commit).Scan(
-		&existing.Coordinate.Marketplace, &existing.Coordinate.Source, &existing.Coordinate.Kind,
+		&existing.Coordinate.Marketplace, &existing.Coordinate.Registry, &existing.Coordinate.Kind,
 		&existing.Coordinate.Name, &existing.ContentDigest, &existing.Commit, &existing.ManifestDigest)
 	if err != nil {
 		return err
@@ -586,11 +586,11 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 		return err
 	}
 	_, err = s.q.ExecContext(ctx, `INSERT INTO resource_assessments
-		(marketplace_id, source_id, kind, name, content_digest, assessment_digest,
+		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest,
 		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT (marketplace_id, source_id, kind, name, content_digest, assessment_digest) DO NOTHING`,
-		finalized.Coordinate.Marketplace, finalized.Coordinate.Source, finalized.Coordinate.Kind,
+		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest, assessment_digest) DO NOTHING`,
+		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind,
 		finalized.Coordinate.Name, finalized.ContentDigest, finalized.AssessmentDigest,
 		finalized.AnalyzerVersion, finalized.PolicyDigest, finalized.Decision, findings,
 		finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt))
@@ -598,13 +598,13 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
-	row := s.q.QueryRowContext(ctx, `SELECT marketplace_id, source_id, kind, name, content_digest,
+	row := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings,
 		inspection_manifest_digest, assessed_at FROM resource_assessments WHERE assessment_digest=$1`, digest)
 	var assessment store.ResourceAssessment
 	var findings string
 	var assessedAt int64
-	err := row.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Source,
+	err := row.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 		&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 		&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
 		&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt)
@@ -626,14 +626,14 @@ func (s *Store) SetCurrentResourceAssessment(ctx context.Context, assessment sto
 		return err
 	}
 	res, err := s.q.ExecContext(ctx, `INSERT INTO current_resource_assessments
-		(marketplace_id, source_id, kind, name, content_digest, assessment_digest)
-		SELECT marketplace_id, source_id, kind, name, content_digest, assessment_digest
+		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest)
+		SELECT marketplace_id, registry_id, kind, name, content_digest, assessment_digest
 		FROM resource_assessments
-		WHERE marketplace_id=$1 AND source_id=$2 AND kind=$3 AND name=$4
+		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4
 		  AND content_digest=$5 AND assessment_digest=$6
-		ON CONFLICT (marketplace_id, source_id, kind, name, content_digest) DO UPDATE
+		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest) DO UPDATE
 		SET assessment_digest=EXCLUDED.assessment_digest`,
-		assessment.Coordinate.Marketplace, assessment.Coordinate.Source, assessment.Coordinate.Kind,
+		assessment.Coordinate.Marketplace, assessment.Coordinate.Registry, assessment.Coordinate.Kind,
 		assessment.Coordinate.Name, assessment.ContentDigest, assessment.AssessmentDigest)
 	if err != nil {
 		return err
@@ -649,12 +649,12 @@ func (s *Store) SetCurrentResourceAssessment(ctx context.Context, assessment sto
 }
 
 func (s *Store) ListResourceAssessments(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) ([]store.ResourceAssessment, error) {
-	rows, err := s.q.QueryContext(ctx, `SELECT marketplace_id, source_id, kind, name, content_digest,
+	rows, err := s.q.QueryContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings,
 		inspection_manifest_digest, assessed_at FROM resource_assessments
-		WHERE marketplace_id=$1 AND source_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5
+		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5
 		ORDER BY assessed_at DESC, assessment_digest DESC`,
-		coord.Marketplace, coord.Source, coord.Kind, coord.Name, digest)
+		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +664,7 @@ func (s *Store) ListResourceAssessments(ctx context.Context, coord store.Resourc
 		var assessment store.ResourceAssessment
 		var findings string
 		var assessedAt int64
-		if err := rows.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Source,
+		if err := rows.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 			&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 			&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
 			&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt); err != nil {
@@ -682,39 +682,39 @@ func (s *Store) ListResourceAssessments(ctx context.Context, coord store.Resourc
 func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceCoordinate) ([]store.AssessedResourceRevision, error) {
 	return s.queryAssessedResourceRevisions(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`
-		WHERE rr.marketplace_id=$1 AND rr.source_id=$2 AND rr.kind=$3 AND rr.name=$4
+		WHERE rr.marketplace_id=$1 AND rr.registry_id=$2 AND rr.kind=$3 AND rr.name=$4
 		ORDER BY ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`,
-		coord.Marketplace, coord.Source, coord.Kind, coord.Name)
+		coord.Marketplace, coord.Registry, coord.Kind, coord.Name)
 }
 
 func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.ArchiveDigest) ([]store.AssessedResourceRevision, error) {
 	return s.queryAssessedResourceRevisions(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`
 		WHERE rr.marketplace_id=$1 AND rr.archive_digest=$2
-		ORDER BY rr.source_id, rr.kind, rr.name, ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`, marketplace, digest)
+		ORDER BY rr.registry_id, rr.kind, rr.name, ro.occurred_at DESC NULLS LAST, rr.content_digest DESC`, marketplace, digest)
 }
 
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.AssessedResourceRevision, error) {
 	return s.queryAssessedResourceRevisions(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+assessedResourceJoins+`
 		WHERE rr.marketplace_id=$1 AND rr.content_digest=$2
-		ORDER BY rr.source_id, rr.kind, rr.name`, marketplace, digest)
+		ORDER BY rr.registry_id, rr.kind, rr.name`, marketplace, digest)
 }
 
 func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.ResourceCoordinate) (store.AssessedResourceRevision, error) {
 	row := s.q.QueryRowContext(ctx, `SELECT `+assessedResourceColumns+`
 		FROM resource_revisions rr`+currentAssessedResourceJoins+`
-		WHERE rr.marketplace_id=$1 AND rr.source_id=$2 AND rr.kind=$3 AND rr.name=$4
-		ORDER BY rr.content_digest DESC LIMIT 1`, coord.Marketplace, coord.Source, coord.Kind, coord.Name)
+		WHERE rr.marketplace_id=$1 AND rr.registry_id=$2 AND rr.kind=$3 AND rr.name=$4
+		ORDER BY rr.content_digest DESC LIMIT 1`, coord.Marketplace, coord.Registry, coord.Kind, coord.Name)
 	return s.scanAssessedResourceRevision(row)
 }
 
 func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.AssessedResourceRevision, error) {
 	args := []any{string(filter.Marketplace)}
-	where := "rr.marketplace_id=$1 AND s.listed"
-	if filter.Source != "" {
-		where += fmt.Sprintf(" AND (rr.source_id=$%d OR s.slug=$%d)", len(args)+1, len(args)+2)
-		args = append(args, filter.Source, filter.Source)
+	where := "rr.marketplace_id=$1 AND r.listed"
+	if filter.Registry != "" {
+		where += fmt.Sprintf(" AND (rr.registry_id=$%d OR r.slug=$%d)", len(args)+1, len(args)+2)
+		args = append(args, filter.Registry, filter.Registry)
 	}
 	if filter.Kind != "" {
 		where += fmt.Sprintf(" AND rr.kind=$%d", len(args)+1)
@@ -725,8 +725,8 @@ func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.Resour
 		args = append(args, "%"+filter.Query+"%")
 	}
 	query := fmt.Sprintf(`SELECT %s FROM resource_revisions rr%s
-		JOIN sources s ON s.id=rr.source_id WHERE %s
-		ORDER BY rr.source_id, rr.kind, rr.name, rr.content_digest DESC`, assessedResourceColumns, currentAssessedResourceJoins, where)
+		JOIN registries r ON r.id=rr.registry_id WHERE %s
+		ORDER BY rr.registry_id, rr.kind, rr.name, rr.content_digest DESC`, assessedResourceColumns, currentAssessedResourceJoins, where)
 	return s.queryAssessedResourceRevisions(ctx, query, args...)
 }
 

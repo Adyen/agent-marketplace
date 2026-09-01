@@ -8,7 +8,7 @@ import (
 
 func marketplaceStatusHeaders() []string {
 	return []string{
-		"ALIAS", "URL", "INSTANCE_ID", "SOURCE_ID", "SOURCE_SLUG", "KIND", "NAME", "INSTALLED_NAME",
+		"ALIAS", "URL", "INSTANCE_ID", "REGISTRY_ID", "REGISTRY_SLUG", "KIND", "NAME", "INSTALLED_NAME",
 		"REVISION", "CONTENT_DIGEST", "ACQUISITION", "LAYER", "REQUIRED", "STATE",
 		"CACHE", "ARCHIVE_DIGEST", "UPDATE_AVAILABLE", "DETAIL",
 	}
@@ -21,8 +21,8 @@ func marketplaceStatusRowsToCells(rows []marketplace.PinStatus) [][]string {
 			quoteMarketplaceStatus(row.Alias),
 			quoteMarketplaceStatus(row.URL),
 			quoteMarketplaceStatus(row.InstanceID),
-			quoteMarketplaceStatus(row.SourceID),
-			quoteMarketplaceStatus(row.SourceSlug),
+			quoteMarketplaceStatus(row.RegistryID),
+			quoteMarketplaceStatus(row.RegistrySlug),
 			quoteMarketplaceStatus(row.Kind),
 			quoteMarketplaceStatus(row.Name),
 			quoteMarketplaceStatus(row.InstalledName),

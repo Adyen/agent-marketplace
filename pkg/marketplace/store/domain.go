@@ -12,9 +12,9 @@ type (
 	// MarketplaceID identifies a Marketplace deployment instance.
 	MarketplaceID string
 
-	// SourceID identifies an approved source lineage. It is immutable and never
-	// reassigned, even when the source slug or origin changes.
-	SourceID string
+	// RegistryID identifies an approved registry lineage. It is immutable and never
+	// reassigned, even when the registry slug or origin changes.
+	RegistryID string
 
 	// RevisionDigest is the content-addressed digest of a canonical resource
 	// payload.
@@ -36,7 +36,7 @@ type (
 )
 
 func (m MarketplaceID) String() string    { return string(m) }
-func (s SourceID) String() string         { return string(s) }
+func (s RegistryID) String() string       { return string(s) }
 func (r RevisionDigest) String() string   { return string(r) }
 func (a ArchiveDigest) String() string    { return string(a) }
 func (a AssessmentDigest) String() string { return string(a) }
@@ -48,24 +48,24 @@ type ResourceCoordinate struct {
 	// Marketplace is the Marketplace instance the resource belongs to.
 	Marketplace MarketplaceID `json:"marketplace"`
 
-	// Source is the approved source lineage that published the resource.
-	Source SourceID `json:"source"`
+	// Registry is the approved registry lineage that published the resource.
+	Registry RegistryID `json:"registry"`
 
 	// Kind is the resource kind (skill, command, subagent, hook, mcp, collection).
 	Kind string `json:"kind"`
 
-	// Name is the source-local resource name.
+	// Name is the registry-local resource name.
 	Name string `json:"name"`
 }
 
 // String returns the canonical string form of a ResourceCoordinate.
 func (c ResourceCoordinate) String() string {
-	return fmt.Sprintf("%s/%s/%s/%s", c.Marketplace, c.Source, c.Kind, c.Name)
+	return fmt.Sprintf("%s/%s/%s/%s", c.Marketplace, c.Registry, c.Kind, c.Name)
 }
 
 // IsZero reports whether the coordinate has no components.
 func (c ResourceCoordinate) IsZero() bool {
-	return c.Marketplace == "" && c.Source == "" && c.Kind == "" && c.Name == ""
+	return c.Marketplace == "" && c.Registry == "" && c.Kind == "" && c.Name == ""
 }
 
 // ParseResourceCoordinate parses the canonical string form produced by
@@ -77,7 +77,7 @@ func ParseResourceCoordinate(s string) (ResourceCoordinate, error) {
 	}
 	return ResourceCoordinate{
 		Marketplace: MarketplaceID(parts[0]),
-		Source:      SourceID(parts[1]),
+		Registry:    RegistryID(parts[1]),
 		Kind:        parts[2],
 		Name:        parts[3],
 	}, nil
@@ -90,13 +90,13 @@ type RevisionRevocationTarget struct {
 	ContentDigest RevisionDigest
 }
 
-// ParseRevisionRevocationTarget parses marketplace/source/kind/name@sha256:<64
+// ParseRevisionRevocationTarget parses marketplace/registry/kind/name@sha256:<64
 // lowercase hexadecimal characters>. A digest without its coordinate is not an
 // exact identity and is intentionally rejected.
 func ParseRevisionRevocationTarget(raw string) (RevisionRevocationTarget, error) {
 	input := strings.TrimSpace(raw)
 	if strings.Count(input, "@") != 1 {
-		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: expected marketplace/source/kind/name@sha256:<64 lowercase hex>", raw)
+		return RevisionRevocationTarget{}, fmt.Errorf("invalid revision revocation %q: expected marketplace/registry/kind/name@sha256:<64 lowercase hex>", raw)
 	}
 	at := strings.LastIndexByte(input, '@')
 	coordinate, err := ParseResourceCoordinate(input[:at])
@@ -104,7 +104,7 @@ func ParseRevisionRevocationTarget(raw string) (RevisionRevocationTarget, error)
 		return RevisionRevocationTarget{}, err
 	}
 	for label, value := range map[string]string{
-		"marketplace": string(coordinate.Marketplace), "source": string(coordinate.Source),
+		"marketplace": string(coordinate.Marketplace), "registry": string(coordinate.Registry),
 		"kind": coordinate.Kind, "name": coordinate.Name,
 	} {
 		if value == "" || strings.ContainsAny(value, "/@") {
@@ -145,7 +145,7 @@ func IsMarketplaceResourceKind(kind string) bool {
 	}
 }
 
-// AcquisitionMode describes how a source's artifacts are handled.
+// AcquisitionMode describes how a registry's artifacts are handled.
 type AcquisitionMode string
 
 const (
@@ -166,8 +166,8 @@ func (m AcquisitionMode) Validate() error {
 	}
 }
 
-// SourceRoot describes one root within a source repository.
-type SourceRoot struct {
+// RegistryRoot describes one root within a registry repository.
+type RegistryRoot struct {
 	// Path is the repository-relative path for this root.
 	Path string `json:"path"`
 
@@ -175,7 +175,7 @@ type SourceRoot struct {
 	SourceHarness string `json:"source_harness,omitempty"`
 }
 
-// Publisher records publisher metadata for a source.
+// Publisher records publisher metadata for a registry.
 type Publisher struct {
 	// Name is the human-readable publisher name.
 	Name string `json:"name"`
@@ -199,62 +199,62 @@ type Marketplace struct {
 	InstanceMetadata map[string]any `json:"instance_metadata,omitempty"`
 }
 
-// SourceRefreshStatus describes the health of the most recent source refresh.
-type SourceRefreshStatus string
+// RegistryRefreshStatus describes the health of the most recent registry refresh.
+type RegistryRefreshStatus string
 
 const (
-	// SourceRefreshStatusUnknown means the source has not been refreshed yet.
-	SourceRefreshStatusUnknown SourceRefreshStatus = "unknown"
+	// RegistryRefreshStatusUnknown means the registry has not been refreshed yet.
+	RegistryRefreshStatusUnknown RegistryRefreshStatus = "unknown"
 
-	// SourceRefreshStatusOK means the last refresh succeeded.
-	SourceRefreshStatusOK SourceRefreshStatus = "ok"
+	// RegistryRefreshStatusOK means the last refresh succeeded.
+	RegistryRefreshStatusOK RegistryRefreshStatus = "ok"
 
-	// SourceRefreshStatusFailed means the last refresh failed.
-	SourceRefreshStatusFailed SourceRefreshStatus = "failed"
+	// RegistryRefreshStatusFailed means the last refresh failed.
+	RegistryRefreshStatusFailed RegistryRefreshStatus = "failed"
 )
 
-// Source is an approved source lineage in a Marketplace.
-type Source struct {
-	// ID is the immutable source identifier.
-	ID SourceID `json:"id"`
+// Registry is an approved registry lineage in a Marketplace.
+type Registry struct {
+	// ID is the immutable registry identifier.
+	ID RegistryID `json:"id"`
 
-	// Slug is the current canonical source slug.
+	// Slug is the current canonical registry slug.
 	Slug string `json:"slug"`
 
-	// Aliases are permanent prior slugs for this source.
+	// Aliases are permanent prior slugs for this registry.
 	Aliases []string `json:"aliases,omitempty"`
 
-	// Origins are the current and historical Git origins for this source.
+	// Origins are the current and historical Git origins for this registry.
 	Origins []string `json:"origins,omitempty"`
 
 	// Ref is the configured Git ref to follow.
 	Ref string `json:"ref"`
 
-	// Roots are the source roots to ingest.
-	Roots []SourceRoot `json:"roots,omitempty"`
+	// Roots are the registry roots to ingest.
+	Roots []RegistryRoot `json:"roots,omitempty"`
 
-	// Acquisition is the default artifact acquisition mode for this source.
+	// Acquisition is the default artifact acquisition mode for this registry.
 	Acquisition AcquisitionMode `json:"acquisition"`
 
-	// Publisher is publisher metadata for this source.
+	// Publisher is publisher metadata for this registry.
 	Publisher Publisher `json:"publisher,omitempty"`
 
-	// License is the default SPDX license identifier for this source.
+	// License is the default SPDX license identifier for this registry.
 	License string `json:"license,omitempty"`
 
 	// CredentialsRef is an opaque reference to server-side credentials.
 	CredentialsRef string `json:"credentials_ref,omitempty"`
 
-	// PolicyOverrides are optional policy and limit overrides for this source.
+	// PolicyOverrides are optional policy and limit overrides for this registry.
 	PolicyOverrides map[string]any `json:"policy_overrides,omitempty"`
 
-	// Listed controls whether the source is visible in discovery. Unlisted
-	// sources keep their immutable identifiers and history but do not appear in
+	// Listed controls whether the registry is visible in discovery. Unlisted
+	// registries keep their immutable identifiers and history but do not appear in
 	// browse or search results.
 	Listed bool `json:"listed"`
 
 	// RefreshStatus is the outcome of the most recent refresh attempt.
-	RefreshStatus SourceRefreshStatus `json:"refresh_status,omitempty"`
+	RefreshStatus RegistryRefreshStatus `json:"refresh_status,omitempty"`
 
 	// RefreshError carries the error message from the last failed refresh.
 	RefreshError string `json:"refresh_error,omitempty"`
@@ -262,10 +262,10 @@ type Source struct {
 	// RefreshedAt is the time the last refresh completed, successful or not.
 	RefreshedAt time.Time `json:"refreshed_at,omitempty"`
 
-	// CreatedAt is the time the source was first recorded.
+	// CreatedAt is the time the registry was first recorded.
 	CreatedAt time.Time `json:"created_at"`
 
-	// UpdatedAt is the time the source was last modified.
+	// UpdatedAt is the time the registry was last modified.
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -331,15 +331,15 @@ type ResourceAssessment struct {
 	AssessedAt time.Time `json:"assessed_at"`
 }
 
-// Provenance records source identity metadata for a resource revision.
+// Provenance records registry identity metadata for a resource revision.
 type Provenance struct {
-	// SourceID identifies the source lineage.
-	SourceID SourceID `json:"source_id,omitempty"`
+	// RegistryID identifies the registry lineage.
+	RegistryID RegistryID `json:"registry_id,omitempty"`
 
-	// Commit is the source commit this payload was built from.
+	// Commit is the registry commit this payload was built from.
 	Commit string `json:"commit,omitempty"`
 
-	// ManifestDigest is the digest of the source revision manifest.
+	// ManifestDigest is the digest of the registry revision manifest.
 	ManifestDigest RevisionDigest `json:"manifest_digest,omitempty"`
 
 	InspectionManifestDigest RevisionDigest `json:"inspection_manifest_digest,omitempty"`
@@ -364,8 +364,8 @@ type Revocation struct {
 type RevocationKind string
 
 const (
-	// RevocationSource revokes an entire source lineage.
-	RevocationSource RevocationKind = "source"
+	// RevocationRegistry revokes an entire registry lineage.
+	RevocationRegistry RevocationKind = "registry"
 
 	// RevocationCoordinate revokes every revision of a resource coordinate.
 	RevocationCoordinate RevocationKind = "coordinate"
@@ -394,7 +394,7 @@ type ResourceRevision struct {
 	Description string `json:"description,omitempty"`
 }
 
-// ResourceOccurrence records one resource revision's membership in a source occurrence.
+// ResourceOccurrence records one resource revision's membership in a registry occurrence.
 type ResourceOccurrence struct {
 	Coordinate     ResourceCoordinate `json:"coordinate"`
 	ContentDigest  RevisionDigest     `json:"content_digest"`
@@ -410,21 +410,21 @@ type AssessedResourceRevision struct {
 	Revocation *Revocation        `json:"revocation,omitempty"`
 }
 
-// SourceOccurrence connects a source revision manifest to an exact source commit.
-type SourceOccurrence struct {
-	// SourceID identifies the source lineage.
-	SourceID SourceID `json:"source_id"`
+// RegistryOccurrence connects a registry revision manifest to an exact registry commit.
+type RegistryOccurrence struct {
+	// RegistryID identifies the registry lineage.
+	RegistryID RegistryID `json:"registry_id"`
 
 	// Ref is the resolved Git ref.
 	Ref string `json:"ref"`
 
-	Roots []SourceRoot `json:"roots"`
+	Roots []RegistryRoot `json:"roots"`
 
-	// Commit is the exact source commit.
+	// Commit is the exact registry commit.
 	Commit string `json:"commit"`
 
-	// SourceRevisionManifestDigest is the digest of the source revision manifest.
-	SourceRevisionManifestDigest RevisionDigest `json:"source_revision_manifest_digest"`
+	// RegistryRevisionManifestDigest is the digest of the registry revision manifest.
+	RegistryRevisionManifestDigest RevisionDigest `json:"registry_revision_manifest_digest"`
 
 	// Acquisition is the acquisition mode used for this occurrence.
 	Acquisition AcquisitionMode `json:"acquisition"`
@@ -436,15 +436,15 @@ type SourceOccurrence struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
-// Equal reports whether two source occurrences have the same immutable fields.
+// Equal reports whether two registry occurrences have the same immutable fields.
 // OccurredAt is assigned by the store on first publication and is intentionally
 // excluded so retrying a publication with a fresh timestamp is idempotent.
-func (o SourceOccurrence) Equal(other SourceOccurrence) bool {
-	return o.SourceID == other.SourceID &&
+func (o RegistryOccurrence) Equal(other RegistryOccurrence) bool {
+	return o.RegistryID == other.RegistryID &&
 		o.Ref == other.Ref &&
 		slices.Equal(o.Roots, other.Roots) &&
 		o.Commit == other.Commit &&
-		o.SourceRevisionManifestDigest == other.SourceRevisionManifestDigest &&
+		o.RegistryRevisionManifestDigest == other.RegistryRevisionManifestDigest &&
 		o.Acquisition == other.Acquisition &&
 		o.MirroredArtifactDigest == other.MirroredArtifactDigest
 }
@@ -454,8 +454,8 @@ type CollectionRevision struct {
 	// ID is the collection revision identifier.
 	ID string `json:"id"`
 
-	// SourceID identifies the source that published the collection.
-	SourceID SourceID `json:"source_id"`
+	// RegistryID identifies the registry that published the collection.
+	RegistryID RegistryID `json:"registry_id"`
 
 	// ManifestDigest is the digest of the collection manifest.
 	ManifestDigest RevisionDigest `json:"manifest_digest"`
@@ -471,7 +471,7 @@ type CollectionRevision struct {
 // metadata. CreatedAt is assigned by the store on first publication and is
 // intentionally excluded so retries are idempotent.
 func (c CollectionRevision) Equal(other CollectionRevision) bool {
-	if c.ID != other.ID || c.SourceID != other.SourceID || c.ManifestDigest != other.ManifestDigest || len(c.Members) != len(other.Members) {
+	if c.ID != other.ID || c.RegistryID != other.RegistryID || c.ManifestDigest != other.ManifestDigest || len(c.Members) != len(other.Members) {
 		return false
 	}
 	for i := range c.Members {

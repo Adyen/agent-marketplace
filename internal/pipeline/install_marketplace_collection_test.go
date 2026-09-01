@@ -21,8 +21,8 @@ func TestEnsureMarketplacePinsAndSyncRollsBackWholeCollectionBatch(t *testing.T)
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	pins := []config.MarketplaceResourcePin{
-		{SourceID: "src", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror},
-		{SourceID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror},
 	}
 	wantErr := errors.New("leaf materialization failed")
 	_, err := ensureMarketplacePinsAndSync(path, config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp", Alias: "public"}, pins, func() ([]error, error) {

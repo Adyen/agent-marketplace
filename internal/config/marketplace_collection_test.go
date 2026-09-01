@@ -12,8 +12,8 @@ func TestEnsureMarketplacePinsPersistsCollectionAndLeafSelectorsAtomically(t *te
 	collectionDigest := "sha256:" + strings.Repeat("a", 64)
 	leafDigest := "sha256:" + strings.Repeat("b", 64)
 	pins := []MarketplaceResourcePin{
-		{SourceID: "src", Kind: "collection", Name: "bundle", Revision: collectionDigest, Digest: collectionDigest, Acquisition: MarketplaceAcquisitionMirror},
-		{SourceID: "src", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest, Acquisition: MarketplaceAcquisitionMirror, SelectedBy: MarketplaceSelectionsFrom([]MarketplaceSelection{{SourceID: "src", Name: "bundle", Revision: collectionDigest}})},
+		{RegistryID: "src", Kind: "collection", Name: "bundle", Revision: collectionDigest, Digest: collectionDigest, Acquisition: MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: leafDigest, Digest: leafDigest, Acquisition: MarketplaceAcquisitionMirror, SelectedBy: MarketplaceSelectionsFrom([]MarketplaceSelection{{RegistryID: "src", Name: "bundle", Revision: collectionDigest}})},
 	}
 	if _, _, err := EnsureMarketplacePinsInConfigWithSnapshotAndCommit(path, "https://market.example/", "mp", "public", pins); err != nil {
 		t.Fatal(err)
@@ -42,8 +42,8 @@ func TestEnsureMarketplacePinsRejectsConflictingIncomingDuplicateBeforeWrite(t *
 	digestA := "sha256:" + strings.Repeat("a", 64)
 	digestB := "sha256:" + strings.Repeat("b", 64)
 	pins := []MarketplaceResourcePin{
-		{SourceID: "src", Kind: "skill", Name: "review", Revision: digestA, Digest: digestA, Acquisition: MarketplaceAcquisitionMirror},
-		{SourceID: "src", Kind: "skill", Name: "review", Revision: digestB, Digest: digestB, Acquisition: MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: digestA, Digest: digestA, Acquisition: MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "review", Revision: digestB, Digest: digestB, Acquisition: MarketplaceAcquisitionMirror},
 	}
 	if _, _, err := EnsureMarketplacePinsInConfigWithSnapshotAndCommit(path, "https://market.example", "mp", "public", pins); err == nil || !strings.Contains(err.Error(), "conflicting duplicate") {
 		t.Fatalf("expected incoming duplicate conflict, got %v", err)
@@ -67,7 +67,7 @@ func TestEnsureMarketplacePinsDoesNotWriteAfterLaterPinConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
-	existing := MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "one", Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror}
+	existing := MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "one", Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror}
 	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "mp", "public", existing); err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +76,8 @@ func TestEnsureMarketplacePinsDoesNotWriteAfterLaterPinConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	pins := []MarketplaceResourcePin{
-		{SourceID: "src", Kind: "skill", Name: "new", Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror},
-		{SourceID: "src", Kind: "skill", Name: "one", Revision: "sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("d", 64), Acquisition: MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "new", Revision: digest, Digest: digest, Acquisition: MarketplaceAcquisitionMirror},
+		{RegistryID: "src", Kind: "skill", Name: "one", Revision: "sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("d", 64), Acquisition: MarketplaceAcquisitionMirror},
 	}
 	if _, _, err := EnsureMarketplacePinsInConfigWithSnapshotAndCommit(path, "https://market.example", "mp", "public", pins); err == nil {
 		t.Fatal("expected conflicting pin error")

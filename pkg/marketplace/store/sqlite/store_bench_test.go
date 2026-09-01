@@ -20,7 +20,7 @@ func BenchmarkLeaseJob(b *testing.B) {
 
 	if err := s.EnqueueJob(ctx, store.Job{
 		ID:          store.JobID("job-bench"),
-		Kind:        "index-source",
+		Kind:        "index-registry",
 		Payload:     []byte(`{}`),
 		MaxAttempts: 100,
 	}); err != nil {
@@ -29,7 +29,7 @@ func BenchmarkLeaseJob(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := s.LeaseJob(ctx, "index-source", "worker", time.Hour); err != nil {
+		if _, err := s.LeaseJob(ctx, "index-registry", "worker", time.Hour); err != nil {
 			b.Fatalf("LeaseJob: %v", err)
 		}
 		if err := s.ReleaseJob(ctx, store.JobID("job-bench"), "worker"); err != nil {

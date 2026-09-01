@@ -11,8 +11,8 @@ type ResourceSearchFilter struct {
 	// Marketplace restricts results to one Marketplace instance.
 	Marketplace MarketplaceID
 
-	// Source optionally matches a source ID or source slug.
-	Source string
+	// Registry optionally matches a registry ID or registry slug.
+	Registry string
 
 	// Kind optionally restricts results to one resource kind.
 	Kind string
@@ -22,9 +22,9 @@ type ResourceSearchFilter struct {
 	Query string
 }
 
-// MaxSourceHistoryEntries is the maximum number of source occurrences returned
+// MaxRegistryHistoryEntries is the maximum number of registry occurrences returned
 // by history queries. API handlers apply the same bound before serialization.
-const MaxSourceHistoryEntries = 1000
+const MaxRegistryHistoryEntries = 1000
 
 // MetadataStore is the capability-oriented interface for Marketplace metadata.
 // Backend names and details never appear in this interface.
@@ -43,14 +43,14 @@ type MetadataStore interface {
 	GetMarketplace(ctx context.Context, id MarketplaceID) (Marketplace, error)
 	PutMarketplace(ctx context.Context, m Marketplace) error
 
-	// Approved sources.
-	GetSource(ctx context.Context, id SourceID) (Source, error)
-	PutSource(ctx context.Context, src Source) error
-	ListSources(ctx context.Context) ([]Source, error)
-	GetSourceBySlug(ctx context.Context, slug string) (Source, error)
-	// SourceHistory returns occurrences newest first, with a deterministic
+	// Approved registries.
+	GetRegistry(ctx context.Context, id RegistryID) (Registry, error)
+	PutRegistry(ctx context.Context, src Registry) error
+	ListRegistries(ctx context.Context) ([]Registry, error)
+	GetRegistryBySlug(ctx context.Context, slug string) (Registry, error)
+	// RegistryHistory returns occurrences newest first, with a deterministic
 	// bounded result and a non-nil empty slice when no occurrences exist.
-	SourceHistory(ctx context.Context, id SourceID) ([]SourceOccurrence, error)
+	RegistryHistory(ctx context.Context, id RegistryID) ([]RegistryOccurrence, error)
 
 	// Resource revisions.
 	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (AssessedResourceRevision, error)
@@ -73,22 +73,22 @@ type MetadataStore interface {
 	// including a revoked revision if no non-revoked revision exists.
 	GetLatestResourceRevision(ctx context.Context, coord ResourceCoordinate) (AssessedResourceRevision, error)
 
-	// SearchResourceRevisions returns revisions for listed-source coordinates,
+	// SearchResourceRevisions returns revisions for listed-registry coordinates,
 	// ordered with the latest revision first within each coordinate, optionally
-	// filtered by source, kind, and name. Callers apply live revocation policy
+	// filtered by registry, kind, and name. Callers apply live revocation policy
 	// and select the latest effective revision.
 	SearchResourceRevisions(ctx context.Context, filter ResourceSearchFilter) ([]AssessedResourceRevision, error)
 
-	// Source occurrences.
-	GetSourceOccurrence(ctx context.Context, source SourceID, commit string) (SourceOccurrence, error)
-	PutSourceOccurrence(ctx context.Context, occ SourceOccurrence) error
-	SetSourceHead(ctx context.Context, source SourceID, commit, expectedCommit string) error
-	LatestSourceOccurrence(ctx context.Context, source SourceID) (SourceOccurrence, error)
+	// Registry occurrences.
+	GetRegistryOccurrence(ctx context.Context, registry RegistryID, commit string) (RegistryOccurrence, error)
+	PutRegistryOccurrence(ctx context.Context, occ RegistryOccurrence) error
+	SetRegistryHead(ctx context.Context, registry RegistryID, commit, expectedCommit string) error
+	LatestRegistryOccurrence(ctx context.Context, registry RegistryID) (RegistryOccurrence, error)
 
 	// Collection revisions.
 	GetCollectionRevision(ctx context.Context, id string) (CollectionRevision, error)
 	PutCollectionRevision(ctx context.Context, cr CollectionRevision) error
-	ListCollectionRevisions(ctx context.Context, source SourceID) ([]CollectionRevision, error)
+	ListCollectionRevisions(ctx context.Context, registry RegistryID) ([]CollectionRevision, error)
 
 	// Revocations.
 	GetRevocation(ctx context.Context, kind RevocationKind, targetID string) (Revocation, error)

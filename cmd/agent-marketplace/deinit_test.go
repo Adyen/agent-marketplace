@@ -725,7 +725,7 @@ marketplaces:
   - url: `+server.URL+`
     instance_id: deinit-marketplace
     resources:
-      - source_id: org-source
+      - registry_id: org-source
         kind: skill
         name: org-review
         revision: v1
@@ -741,7 +741,7 @@ marketplaces:
   - url: `+server.URL+`
     instance_id: deinit-marketplace
     resources:
-      - source_id: user-source
+      - registry_id: user-source
         kind: skill
         name: user-review
         revision: v1
@@ -763,7 +763,7 @@ marketplaces:
 	if err := os.RemoveAll(filepath.Dir(mpCache.ArtifactPath(string(userRevision.ArchiveDigest)))); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(mpCache.MetadataPath(server.URL, userPin.SourceID, userPin.Kind, userPin.Name, userPin.Digest)); err != nil {
+	if err := os.Remove(mpCache.MetadataPath(server.URL, userPin.RegistryID, userPin.Kind, userPin.Name, userPin.Digest)); err != nil {
 		t.Fatal(err)
 	}
 	failEndpoint.Store(true)
@@ -883,7 +883,7 @@ marketplaces:
   - url: `+server.URL+`
     instance_id: deinit-marketplace
     resources:
-      - source_id: org-source
+      - registry_id: org-source
         kind: skill
         name: org-review
         revision: v1
@@ -910,7 +910,7 @@ func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.Marke
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)
 	}
-	canonical.Manifest.SourceID = sourceID
+	canonical.Manifest.RegistryID = sourceID
 	canonical.Manifest.Revision = "v1"
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
@@ -918,11 +918,11 @@ func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.Marke
 	}
 	contentDigest := canonical.Manifest.ContentDigest
 	pin := config.MarketplaceResourcePin{
-		SourceID: sourceID, Kind: "skill", Name: name,
+		RegistryID: sourceID, Kind: "skill", Name: name,
 		Revision: "refs/heads/main", Digest: contentDigest,
 	}
 	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "deinit-marketplace", Source: store.SourceID(sourceID), Kind: "skill", Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "deinit-marketplace", Registry: store.RegistryID(sourceID), Kind: "skill", Name: name},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(archiveDigest),
 	})
