@@ -26,7 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
-func TestBuildSourceRevision(t *testing.T) {
+func TestBuildRegistryRevision(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -35,21 +35,21 @@ func TestBuildSourceRevision(t *testing.T) {
 	}
 
 	cfg := testConfig(t, repoDir)
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	if rev.ManifestDigest == "" {
@@ -79,20 +79,20 @@ func TestBuildSourceRevision(t *testing.T) {
 		t.Fatalf("skill license = %q, want MIT", skill.License)
 	}
 
-	if rev.Occurrence.SourceRevisionManifestDigest != rev.ManifestDigest {
+	if rev.Occurrence.RegistryRevisionManifestDigest != rev.ManifestDigest {
 		t.Fatalf("occurrence manifest digest mismatch")
 	}
 	if rev.Occurrence.Ref != source.Ref {
 		t.Fatalf("occurrence ref = %q, want %q", rev.Occurrence.Ref, source.Ref)
 	}
-	for _, field := range []string{"source_url", "ref", "path", repoDir} {
+	for _, field := range []string{"registry_url", "ref", "path", repoDir} {
 		if strings.Contains(string(rev.ManifestPayload), field) {
-			t.Fatalf("source revision manifest exposed %q: %s", field, rev.ManifestPayload)
+			t.Fatalf("registry revision manifest exposed %q: %s", field, rev.ManifestPayload)
 		}
 	}
 }
 
-func TestBuildSourceRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T) {
+func TestBuildRegistryRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -109,20 +109,20 @@ func TestBuildSourceRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T)
 	}
 
 	cfg := testConfig(t, repoDir)
-	source := store.Source{
+	source := store.Registry{
 		ID:          "src-test",
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
-	baseline, err := BuildSourceRevision(ctx, cfg, "mp-test", source, repoDir, commit)
+	baseline, err := BuildRegistryRevision(ctx, cfg, "mp-test", source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("baseline BuildSourceRevision: %v", err)
+		t.Fatalf("baseline BuildRegistryRevision: %v", err)
 	}
 	var wantDigest store.RevisionDigest
 	for _, resource := range baseline.Resources {
@@ -139,10 +139,10 @@ func TestBuildSourceRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T)
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-	source.Roots = append(source.Roots, store.SourceRoot{Path: ".agents-duplicate", SourceHarness: "factory"})
-	rev, err := BuildSourceRevision(ctx, cfg, "mp-test", source, repoDir, commit)
+	source.Roots = append(source.Roots, store.RegistryRoot{Path: ".agents-duplicate", SourceHarness: "factory"})
+	rev, err := BuildRegistryRevision(ctx, cfg, "mp-test", source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 	var gotDigests []store.RevisionDigest
 	for _, resource := range rev.Resources {
@@ -160,27 +160,27 @@ func TestBuildSourceRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T)
 	}
 }
 
-func TestBuildSourceRevisionRejectsDuplicateAtSamePath(t *testing.T) {
+func TestBuildRegistryRevisionRejectsDuplicateAtSamePath(t *testing.T) {
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
 	if err != nil {
 		t.Fatalf("repo commit: %v", err)
 	}
-	source := store.Source{
+	source := store.Registry{
 		ID:          "src-test",
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
-	_, err = BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	_, err = BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
 	if err == nil || !strings.Contains(err.Error(), `duplicate resource "skill/review" at ".agents/skills/review/SKILL.md"`) {
-		t.Fatalf("BuildSourceRevision error = %v", err)
+		t.Fatalf("BuildRegistryRevision error = %v", err)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 
 	primary, support := inspectionInput(mcp, marketplaceartifact.BuildResult{Artifact: artifact}, nil)
 	projection, err := inspection.Build(
-		store.ResourceCoordinate{Marketplace: "marketplace", Source: "source-id", Kind: "mcpserver", Name: "hostile"},
+		store.ResourceCoordinate{Marketplace: "marketplace", Registry: "source-id", Kind: "mcpserver", Name: "hostile"},
 		"sha256:"+strings.Repeat("a", 64), primary, support, 10, 4096, 8192,
 	)
 	if err != nil {
@@ -266,8 +266,8 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	}
 	defer func() { _ = meta.Close() }()
 	blobs := fsblob.New(t.TempDir())
-	source := store.Source{ID: "source-id", Slug: "source", Origins: []string{"https://example.invalid/repo"}, Ref: "main", Roots: []store.SourceRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
-	if err := meta.PutSource(ctx, source); err != nil {
+	source := store.Registry{ID: "source-id", Slug: "source", Origins: []string{"https://example.invalid/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionIndexOnly}
+	if err := meta.PutRegistry(ctx, source); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.PutMarketplace(ctx, store.Marketplace{ID: "marketplace", Name: "Test", CanonicalURL: "https://example.invalid"}); err != nil {
@@ -282,7 +282,7 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := "sha256:" + strings.Repeat("a", 64)
-	coord := store.ResourceCoordinate{Marketplace: "marketplace", Source: source.ID, Kind: "mcpserver", Name: "hostile"}
+	coord := store.ResourceCoordinate{Marketplace: "marketplace", Registry: source.ID, Kind: "mcpserver", Name: "hostile"}
 	resource := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(revision)}
 	commit := strings.Repeat("c", 40)
 	manifestDigest := store.RevisionDigest("sha256:" + strings.Repeat("d", 64))
@@ -293,7 +293,7 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	for _, put := range []func() error{
 		func() error { return meta.PutResourceRevision(ctx, resource) },
 		func() error {
-			return meta.PutSourceOccurrence(ctx, store.SourceOccurrence{SourceID: source.ID, Ref: source.Ref, Commit: commit, SourceRevisionManifestDigest: manifestDigest, Acquisition: source.Acquisition, OccurredAt: time.Now().UTC()})
+			return meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{RegistryID: source.ID, Ref: source.Ref, Commit: commit, RegistryRevisionManifestDigest: manifestDigest, Acquisition: source.Acquisition, OccurredAt: time.Now().UTC()})
 		},
 		func() error {
 			return meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coord, ContentDigest: resource.ContentDigest, Commit: commit, ManifestDigest: manifestDigest})
@@ -338,7 +338,7 @@ func TestMCPInspectionRedactsSecretsEverywhere(t *testing.T) {
 	assertNoMCPSecrets("log values", logs.Bytes())
 }
 
-func TestBuildSourceRevisionIndexOnly(t *testing.T) {
+func TestBuildRegistryRevisionIndexOnly(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -348,21 +348,21 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionIndexOnly,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	var skill *store.ResourceRevision
@@ -387,7 +387,7 @@ func TestBuildSourceRevisionIndexOnly(t *testing.T) {
 	}
 }
 
-func TestBuildSourceRevisionCollection(t *testing.T) {
+func TestBuildRegistryRevisionCollection(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -396,21 +396,21 @@ func TestBuildSourceRevisionCollection(t *testing.T) {
 	}
 
 	cfg := testConfig(t, repoDir)
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	var collection *store.ResourceRevision
@@ -448,22 +448,22 @@ func TestBuildSourceRevisionCollection(t *testing.T) {
 	if len(rev.Collections) != 1 || rev.Collections[0].ManifestDigest != collection.ContentDigest || len(rev.Collections[0].Members) != 1 {
 		t.Fatalf("collection metadata = %#v", rev.Collections)
 	}
-	manifest, payload, err := marketplaceartifact.DecodeSourceRevisionManifest(bytes.NewReader(rev.ManifestPayload))
+	manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(rev.ManifestPayload))
 	if err != nil {
-		t.Fatalf("decode source revision manifest: %v", err)
+		t.Fatalf("decode registry revision manifest: %v", err)
 	}
 	manifest.RevisionDigest = string(rev.ManifestDigest)
-	if err := marketplaceartifact.VerifySourceRevisionManifest(manifest, payload); err != nil {
-		t.Fatalf("verify source revision manifest: %v", err)
+	if err := marketplaceartifact.VerifyRegistryRevisionManifest(manifest, payload); err != nil {
+		t.Fatalf("verify registry revision manifest: %v", err)
 	}
 	for _, resource := range manifest.Resources {
 		if resource.Kind == "collection" && resource.ArchiveDigest != "" {
-			t.Fatalf("source revision manifest exposed collection archive digest: %#v", resource)
+			t.Fatalf("registry revision manifest exposed collection archive digest: %#v", resource)
 		}
 	}
 }
 
-func TestBuildSourceRevisionNestedCollectionDeduplicatesLeavesAndRetainsPaths(t *testing.T) {
+func TestBuildRegistryRevisionNestedCollectionDeduplicatesLeavesAndRetainsPaths(t *testing.T) {
 	repoDir := createIngestRepo(t)
 	baseDir := filepath.Join(repoDir, ".agents", "collections", "base")
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
@@ -497,8 +497,8 @@ resources:
 		t.Fatalf("git commit: %v: %s", err, out)
 	}
 
-	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	rev, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
+	source := store.Registry{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ resources:
 	}
 }
 
-func TestBuildSourceRevisionRejectsNestedCollectionCycle(t *testing.T) {
+func TestBuildRegistryRevisionRejectsNestedCollectionCycle(t *testing.T) {
 	repoDir := createIngestRepo(t)
 	baseDir := filepath.Join(repoDir, ".agents", "collections", "base")
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
@@ -555,8 +555,8 @@ func TestBuildSourceRevisionRejectsNestedCollectionCycle(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v: %s", err, out)
 	}
-	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := BuildSourceRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
+	source := store.Registry{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	_, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
 	if err == nil || !strings.Contains(err.Error(), "cyclic collection reference") {
 		t.Fatalf("cycle error = %v", err)
 	}
@@ -571,7 +571,7 @@ func mustRepoCommit(t *testing.T, repoDir string) string {
 	return commit
 }
 
-func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
+func TestBuildRegistryRevisionLicenseRejection(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -582,21 +582,21 @@ func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
 
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots: []store.SourceRoot{
+		Roots: []store.RegistryRoot{
 			{Path: ".agents", SourceHarness: "factory"},
 		},
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	var skill *store.ResourceRevision
@@ -618,20 +618,20 @@ func TestBuildSourceRevisionLicenseRejection(t *testing.T) {
 	}
 }
 
-func TestSourceRevisionIdentityIgnoresPolicyAssessment(t *testing.T) {
+func TestRegistryRevisionIdentityIgnoresPolicyAssessment(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit := mustRepoCommit(t, repoDir)
-	source := store.Source{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	allowed, err := BuildSourceRevision(ctx, testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	source := store.Registry{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	allowed, err := BuildRegistryRevision(ctx, testConfig(t, repoDir), "mp-test", source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("allowed BuildSourceRevision: %v", err)
+		t.Fatalf("allowed BuildRegistryRevision: %v", err)
 	}
 	blockedConfig := testConfig(t, repoDir)
 	blockedConfig.Policy.LicenseAllowlist = []string{"Apache-2.0"}
-	blocked, err := BuildSourceRevision(ctx, blockedConfig, "mp-test", source, repoDir, commit)
+	blocked, err := BuildRegistryRevision(ctx, blockedConfig, "mp-test", source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("blocked BuildSourceRevision: %v", err)
+		t.Fatalf("blocked BuildRegistryRevision: %v", err)
 	}
 	if allowed.ManifestDigest != blocked.ManifestDigest {
 		t.Fatalf("source manifest digest changed with policy: %s != %s", allowed.ManifestDigest, blocked.ManifestDigest)
@@ -669,7 +669,7 @@ func resourceRevisionFor(tb testing.TB, revisions []store.ResourceRevision, kind
 
 // The description authored in the registry must survive ingestion all the way
 // onto the persisted revision, for every kind that declares one.
-func TestBuildSourceRevisionCarriesDescriptions(t *testing.T) {
+func TestBuildRegistryRevisionCarriesDescriptions(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -677,19 +677,19 @@ func TestBuildSourceRevisionCarriesDescriptions(t *testing.T) {
 		t.Fatalf("repo commit: %v", err)
 	}
 
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots:       []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
+		Roots:       []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}},
 	}
 
-	rev, err := BuildSourceRevision(ctx, testConfig(t, repoDir), store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, testConfig(t, repoDir), store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	if got := resourceRevisionFor(t, rev.Resources, "skill").Description; got != "Review code" {
@@ -702,7 +702,7 @@ func TestBuildSourceRevisionCarriesDescriptions(t *testing.T) {
 
 // A policy-rejected resource stays listed for transparency, so it must keep
 // its intrinsic metadata while its assessment blocks installation.
-func TestBuildSourceRevisionKeepsDescriptionWhenRejected(t *testing.T) {
+func TestBuildRegistryRevisionKeepsDescriptionWhenRejected(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
 	commit, err := repoCommit(repoDir)
@@ -713,19 +713,19 @@ func TestBuildSourceRevisionKeepsDescriptionWhenRejected(t *testing.T) {
 	cfg := testConfig(t, repoDir)
 	cfg.Policy.LicenseAllowlist = []string{"Apache-2.0"}
 
-	source := store.Source{
-		ID:          store.SourceID("src-test"),
+	source := store.Registry{
+		ID:          store.RegistryID("src-test"),
 		Slug:        "example-source",
 		Ref:         "main",
 		Origins:     []string{"file://" + repoDir},
 		Acquisition: store.AcquisitionMirror,
 		License:     "MIT",
-		Roots:       []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}},
+		Roots:       []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}},
 	}
 
-	rev, err := BuildSourceRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
+	rev, err := BuildRegistryRevision(ctx, cfg, store.MarketplaceID("mp-test"), source, repoDir, commit)
 	if err != nil {
-		t.Fatalf("BuildSourceRevision: %v", err)
+		t.Fatalf("BuildRegistryRevision: %v", err)
 	}
 
 	skill := resourceRevisionFor(t, rev.Resources, "skill")

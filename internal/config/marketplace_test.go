@@ -22,11 +22,11 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 				URL:        "https://market.example",
 				InstanceID: "01JEXAMPLE",
 				Resources: []MarketplaceResourcePin{{
-					SourceID: "01JSOURCE",
-					Kind:     "skill",
-					Name:     "review",
-					Revision: "v1.0.0",
-					Digest:   "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+					RegistryID: "01JSOURCE",
+					Kind:       "skill",
+					Name:       "review",
+					Revision:   "v1.0.0",
+					Digest:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
 				}},
 			}},
 		},
@@ -59,7 +59,7 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 			entries: []MarketplaceEntry{{
 				URL:        "https://market.example",
 				InstanceID: "x",
-				Resources:  []MarketplaceResourcePin{{SourceID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "bad"}},
+				Resources:  []MarketplaceResourcePin{{RegistryID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "bad"}},
 			}},
 			wantErr: "digest",
 		},
@@ -68,7 +68,7 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 			entries: []MarketplaceEntry{{
 				URL:        "https://market.example",
 				InstanceID: "x",
-				Resources:  []MarketplaceResourcePin{{SourceID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Acquisition: "clone"}},
+				Resources:  []MarketplaceResourcePin{{RegistryID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Acquisition: "clone"}},
 			}},
 			wantErr: "acquisition",
 		},
@@ -77,7 +77,7 @@ func TestValidateMarketplaceEntries(t *testing.T) {
 			entries: []MarketplaceEntry{{
 				URL:        "https://market.example",
 				InstanceID: "x",
-				Resources:  []MarketplaceResourcePin{{SourceID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Acquisition: "index"}},
+				Resources:  []MarketplaceResourcePin{{RegistryID: "s", Kind: "skill", Name: "n", Revision: "r", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Acquisition: "index"}},
 			}},
 			wantErr: "acquisition",
 		},
@@ -133,7 +133,7 @@ func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *tes
 		{URL: "http://market.example", InstanceID: " instance"},
 		{URL: "http://market.example", InstanceID: "instance/id"},
 		{URL: "http://market.example", InstanceID: "instance", Alias: "alias\n"},
-		{URL: "http://market.example", InstanceID: "instance", Resources: []MarketplaceResourcePin{{SourceID: "source", SourceSlug: "source/slug", Kind: "skill", Name: "name", Revision: "v1", Digest: testMarketplaceDigest}}},
+		{URL: "http://market.example", InstanceID: "instance", Resources: []MarketplaceResourcePin{{RegistryID: "source", RegistrySlug: "source/slug", Kind: "skill", Name: "name", Revision: "v1", Digest: testMarketplaceDigest}}},
 	} {
 		if errs := ValidateMarketplaceEntries([]MarketplaceEntry{entry}); len(errs) == 0 {
 			t.Fatalf("ValidateMarketplaceEntries accepted unsafe entry %#v", entry)
@@ -179,7 +179,7 @@ func TestMarketplaceConfigRoundTrip(t *testing.T) {
 			URL:        "https://market.example",
 			InstanceID: "01JEXAMPLE",
 			Resources: []MarketplaceResourcePin{{
-				SourceID:    "01JSOURCE",
+				RegistryID:  "01JSOURCE",
 				Kind:        "skill",
 				Name:        "review",
 				Revision:    "v1.0.0",

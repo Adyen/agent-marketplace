@@ -39,8 +39,8 @@ func DefaultWellKnown(instanceID, canonicalURL string, browserBase ...string) We
 		wellKnown.BrowserBase = strings.TrimRight(publicurl.Sanitize(browserBase[0]), "/")
 	}
 	if wellKnown.BrowserBase != "" {
-		wellKnown.BrowserLatestRoute = wellKnown.BrowserBase + "/s/{source}/{kind}/{name}"
-		wellKnown.BrowserExactRoute = wellKnown.BrowserBase + "/s/{source}/{kind}/{name}/revisions/{revision}"
+		wellKnown.BrowserLatestRoute = wellKnown.BrowserBase + "/r/{registry}/{kind}/{name}"
+		wellKnown.BrowserExactRoute = wellKnown.BrowserBase + "/r/{registry}/{kind}/{name}/revisions/{revision}"
 	}
 	return wellKnown
 }

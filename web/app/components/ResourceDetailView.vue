@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, sourceLabel } from '~/lib/presentation'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLocator, registryLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import type { InspectionFile, InspectionManifest, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
   resource: ResourceRevision
-  source: string
+  registry: string
   acquisition?: string
   kind: ResourceKind
   name: string
@@ -24,7 +24,7 @@ const props = defineProps<Props>()
 const { copied, copyError, copy } = useCopyText()
 
 const listItem = computed<ResourceListItem>(() => ({
-  source_id: props.source,
+  registry_id: props.registry,
   kind: props.kind,
   name: props.name,
   revision: props.resource.content_digest,
@@ -86,7 +86,7 @@ const {
 
 function revisionURL(revision: ResourceRevision): string {
   return resourceLocator({
-    source_id: props.source,
+    registry_id: props.registry,
     kind: props.kind,
     name: props.name,
     revision: revision.content_digest,
@@ -118,7 +118,7 @@ function formatValue(value: unknown): string {
         <div class="min-w-0">
           <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{{ kindLabel(kind) }}</p>
           <h1 class="mt-1 break-words font-mono text-2xl tracking-tight">
-            <span class="text-muted">{{ sourceLabel(listItem) }}/</span><span class="font-medium text-highlighted">{{ name }}</span>
+            <span class="text-muted">{{ registryLabel(listItem) }}/</span><span class="font-medium text-highlighted">{{ name }}</span>
           </h1>
           <p v-if="resource.description" class="mt-2 text-sm leading-6 text-muted">{{ resource.description }}</p>
         </div>
@@ -142,7 +142,7 @@ function formatValue(value: unknown): string {
         <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.archive_digest || 'not stored' }}</dd>
       </div>
       <div>
-        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Source commit</dt>
+        <dt class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Registry commit</dt>
         <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ resource.occurrence.commit }}</dd>
       </div>
       <div>
@@ -246,14 +246,14 @@ function formatValue(value: unknown): string {
     </section>
 
     <section class="border-b border-default py-6" aria-labelledby="provenance-heading">
-      <h2 id="provenance-heading" class="text-lg font-semibold text-highlighted">Source occurrence</h2>
+      <h2 id="provenance-heading" class="text-lg font-semibold text-highlighted">Registry occurrence</h2>
       <dl v-if="occurrenceEntries.length" class="mt-4 divide-y divide-default rounded-xl border border-default">
         <div v-for="([key, value], index) in occurrenceEntries" :key="`${key}-${index}`" class="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(8rem,0.35fr)_1fr] sm:gap-4">
           <dt class="break-words text-sm font-medium text-muted">{{ key }}</dt>
           <dd class="break-words text-sm text-highlighted">{{ formatValue(value) }}</dd>
         </div>
       </dl>
-      <p v-else class="mt-3 text-sm text-muted">No source occurrence metadata was provided.</p>
+      <p v-else class="mt-3 text-sm text-muted">No registry occurrence metadata was provided.</p>
     </section>
 
     <section class="border-b border-default py-6" aria-labelledby="findings-heading">

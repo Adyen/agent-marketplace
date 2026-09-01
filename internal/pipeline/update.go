@@ -140,7 +140,9 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			err = config.UpdateMarketplacePinInConfig(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.NewPin)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.SourceID, plan.OldPin.Kind, plan.OldPin.Name, err)
+			updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
+			slog.Error("update aborted on Marketplace config conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
+			return nil, updateErr
 		}
 		plan.Updated = true
 	}
@@ -234,7 +236,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			expanded := false
 			for _, leaf := range entry.Resources {
 				for _, selector := range leaf.SelectedBy.List() {
-					if selector.SourceID == pin.SourceID && selector.Name == pin.Name && selector.Revision == pin.Revision {
+					if selector.RegistryID == pin.RegistryID && selector.Name == pin.Name && selector.Revision == pin.Revision {
 						expanded = true
 						collectionLeaves[marketplaceUpdateKey(entry, leaf)] = struct{}{}
 					}
@@ -247,7 +249,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			}
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 			if err != nil {
-				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err)
+				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
 			}
 			if string(latest.ContentDigest) == pin.Digest {
 				item.Reason = "content digest unchanged"
@@ -257,10 +259,10 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if len(targets) == 0 {
 				return nil, &TargetHarnessSetMissingError{}
 			}
-			locator := marketplace.MarketplaceLocator{Source: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
+			locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
 			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
 			if err != nil {
-				return nil, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, err)
+				return nil, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
 			}
 			for _, leaf := range prepared.CollectionMembers {
 				if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
@@ -293,7 +295,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			}
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 			if err != nil {
-				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, pin.Name, err)
+				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
 			}
 			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true}
 			if source.Acquisition != "" && string(source.Acquisition) != config.MarketplaceAcquisitionMirror && string(source.Acquisition) != config.MarketplaceAcquisitionIndexOnly {
@@ -309,13 +311,13 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if len(targets) == 0 {
 				return nil, &TargetHarnessSetMissingError{}
 			}
-			locator := marketplace.MarketplaceLocator{Source: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
+			locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
 			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
 			if err != nil {
-				return nil, fmt.Errorf("prepare Marketplace pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, err)
+				return nil, fmt.Errorf("prepare Marketplace pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
 			}
 			if err := validateMarketplaceUpdateArtifact(prepared); err != nil {
-				return nil, fmt.Errorf("validate Marketplace pin %s/%s/%s: %w", entry.URL, pin.SourceID, pin.Kind, err)
+				return nil, fmt.Errorf("validate Marketplace pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
 			}
 			prepared.Pin.InstalledName = pin.InstalledName
 			prepared.Pin.Direct = pin.Direct
@@ -330,7 +332,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 }
 
 func marketplaceUpdateKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
-	return entry.URL + "\x00" + entry.InstanceID + "\x00" + pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
+	return entry.URL + "\x00" + entry.InstanceID + "\x00" + pin.RegistryID + "\x00" + pin.Kind + "\x00" + pin.Name
 }
 
 func validatePreparedMarketplaceUpdate(plan *marketplace.PreparedInstall) error {

@@ -36,8 +36,8 @@ func benchSearchServer(b *testing.B, num int) *Server {
 		b.Fatalf("put marketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("bench-source"),
+	src := store.Registry{
+		ID:          store.RegistryID("bench-source"),
 		Slug:        "bench",
 		Ref:         "main",
 		Origins:     []string{"https://bench.git"},
@@ -46,7 +46,7 @@ func benchSearchServer(b *testing.B, num int) *Server {
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
+	if err := meta.PutRegistry(ctx, src); err != nil {
 		b.Fatalf("put source: %v", err)
 	}
 
@@ -65,11 +65,11 @@ const benchDescription = "Analyze user retention and engagement patterns by coho
 	"Upload your data or describe what you need, and get retention curves, " +
 	"feature adoption trends, and actionable insights."
 
-func benchRevision(source store.SourceID, marketplace store.MarketplaceID, i int) store.ResourceRevision {
+func benchRevision(source store.RegistryID, marketplace store.MarketplaceID, i int) store.ResourceRevision {
 	return store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: marketplace,
-			Source:      source,
+			Registry:    source,
 			Kind:        KindSkill,
 			Name:        fmt.Sprintf("skill-%04d", i),
 		},

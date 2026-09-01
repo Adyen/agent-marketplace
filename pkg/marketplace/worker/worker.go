@@ -30,41 +30,41 @@ type Deps struct {
 	BlobStore     store.BlobStore
 }
 
-// Refresh performs a single refresh of the configured source.
-// It upserts the source record, clones the repository, builds a source revision,
-// and publishes it atomically. The source status is updated to reflect the
+// Refresh performs a single refresh of the configured registry.
+// It upserts the registry record, clones the repository, builds a registry revision,
+// and publishes it atomically. The registry status is updated to reflect the
 // outcome of the refresh.
-func Refresh(ctx context.Context, deps Deps, source store.Source) error {
-	cfgSource, ok := sourceByID(deps.Config, string(source.ID))
+func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
+	cfgRegistry, ok := registryByID(deps.Config, string(registry.ID))
 	if !ok {
-		return fmt.Errorf("source %q is not present in the operator config", source.ID)
+		return fmt.Errorf("registry %q is not present in the operator config", registry.ID)
 	}
 
-	existing, err := deps.MetadataStore.GetSource(ctx, source.ID)
+	existing, err := deps.MetadataStore.GetRegistry(ctx, registry.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("load source %q: %w", source.ID, err)
+		return fmt.Errorf("load registry %q: %w", registry.ID, err)
 	}
 
-	merged := mergeStoreSource(existing, cfgSource, deps.Config.AcquisitionDefault)
-	if err := deps.MetadataStore.PutSource(ctx, merged); err != nil {
-		return fmt.Errorf("upsert source %q: %w", source.ID, err)
+	merged := mergeStoreRegistry(existing, cfgRegistry, deps.Config.AcquisitionDefault)
+	if err := deps.MetadataStore.PutRegistry(ctx, merged); err != nil {
+		return fmt.Errorf("upsert registry %q: %w", registry.ID, err)
 	}
 
 	if len(merged.Origins) == 0 {
-		return fmt.Errorf("source %q has no origin", source.ID)
+		return fmt.Errorf("registry %q has no origin", registry.ID)
 	}
 	expectedHead := ""
-	head, err := deps.MetadataStore.LatestSourceOccurrence(ctx, source.ID)
+	head, err := deps.MetadataStore.LatestRegistryOccurrence(ctx, registry.ID)
 	if err == nil {
 		expectedHead = head.Commit
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("load source %q head: %w", source.ID, err)
+		return fmt.Errorf("load registry %q head: %w", registry.ID, err)
 	}
 	origin := merged.Origins[len(merged.Origins)-1]
 
-	creds, err := toAcquireCredentials(cfgSource.Credentials, cfgSource.CAFile)
+	creds, err := toAcquireCredentials(cfgRegistry.Credentials, cfgRegistry.CAFile)
 	if err != nil {
-		return fmt.Errorf("resolve credentials for source %q: %w", source.ID, err)
+		return fmt.Errorf("resolve credentials for registry %q: %w", registry.ID, err)
 	}
 
 	limits := acquire.Limits{
@@ -83,12 +83,12 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 	}
 	defer func() { _ = res.Release() }()
 
-	rev, err := ingest.BuildSourceRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
+	rev, err := ingest.BuildRegistryRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
 	if err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 
-	pub := store.SourceRevisionPublication{
+	pub := store.RegistryRevisionPublication{
 		Occurrence:          rev.Occurrence,
 		ExpectedHeadCommit:  expectedHead,
 		Resources:           rev.Resources,
@@ -99,11 +99,11 @@ func Refresh(ctx context.Context, deps Deps, source store.Source) error {
 		ExtraBlobs:          rev.ExtraBlobs,
 		InspectionBlobs:     rev.InspectionBlobs,
 	}
-	if err := store.PublishSourceRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
+	if err := store.PublishRegistryRevision(ctx, deps.MetadataStore, deps.BlobStore, pub); err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
 
-	slog.Info("refreshed source", "source", source.ID, "commit", res.Commit, "resources", len(rev.Resources))
+	slog.Info("refreshed registry", "registry", registry.ID, "commit", res.Commit, "resources", len(rev.Resources))
 	return recordRefreshSuccess(ctx, deps.MetadataStore, merged)
 }
 
@@ -154,7 +154,7 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 	now := time.Now().UTC()
 	slog.Info("reconciling Marketplace revocations", "desired", len(desired))
 	return deps.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
-		for _, kind := range []store.RevocationKind{store.RevocationSource, store.RevocationCoordinate, store.RevocationRevision} {
+		for _, kind := range []store.RevocationKind{store.RevocationRegistry, store.RevocationCoordinate, store.RevocationRevision} {
 			active, listErr := tx.ListRevocations(txCtx, kind)
 			if listErr != nil {
 				return fmt.Errorf("list active %s revocations: %w", kind, listErr)
@@ -181,7 +181,7 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 func revocationStoreKey(r store.Revocation) string { return string(r.Kind) + "\x00" + r.TargetID }
 
 // Run starts the background indexing worker. It enqueues an initial refresh for
-// every configured source and then runs a scheduler loop that leases refresh
+// every configured registry and then runs a scheduler loop that leases refresh
 // jobs until ctx is cancelled.
 func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 	if err := EnsureMarketplace(ctx, &deps); err != nil {
@@ -192,7 +192,7 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 		return err
 	}
 
-	for _, src := range cfg.Sources {
+	for _, src := range cfg.Registries {
 		if err := enqueueRefresh(ctx, deps.MetadataStore, src, cfg.Refresh.Interval.Duration()); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("enqueue initial refresh for %q: %w", src.ID, err)
 		}
@@ -212,9 +212,9 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 	defer ticker.Stop()
 
 	for {
-		for _, src := range cfg.Sources {
+		for _, src := range cfg.Registries {
 			if err := enqueueRefresh(ctx, deps.MetadataStore, src, cfg.Refresh.Interval.Duration()); err != nil && !errors.Is(err, store.ErrConflict) {
-				slog.Error("enqueue refresh failed", "source", src.ID, "err", err)
+				slog.Error("enqueue refresh failed", "registry", src.ID, "err", err)
 			}
 		}
 
@@ -273,13 +273,13 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		return fmt.Errorf("decode job payload: %w", err)
 	}
 
-	source, err := loadSourceForJob(ctx, deps, payload.SourceID)
+	registry, err := loadRegistryForJob(ctx, deps, payload.RegistryID)
 	if err != nil {
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return err
 	}
 
-	if err := Refresh(ctx, deps, source); err != nil {
+	if err := Refresh(ctx, deps, registry); err != nil {
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return err
 	}
@@ -290,45 +290,45 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 	return nil
 }
 
-func loadSourceForJob(ctx context.Context, deps Deps, id string) (store.Source, error) {
-	cfgSource, ok := sourceByID(deps.Config, id)
+func loadRegistryForJob(ctx context.Context, deps Deps, id string) (store.Registry, error) {
+	cfgRegistry, ok := registryByID(deps.Config, id)
 	if !ok {
-		return store.Source{}, fmt.Errorf("source %q not in config", id)
+		return store.Registry{}, fmt.Errorf("registry %q not in config", id)
 	}
 
-	existing, err := deps.MetadataStore.GetSource(ctx, store.SourceID(id))
+	existing, err := deps.MetadataStore.GetRegistry(ctx, store.RegistryID(id))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return store.Source{}, fmt.Errorf("get source %q: %w", id, err)
+		return store.Registry{}, fmt.Errorf("get registry %q: %w", id, err)
 	}
-	return mergeStoreSource(existing, cfgSource, deps.Config.AcquisitionDefault), nil
+	return mergeStoreRegistry(existing, cfgRegistry, deps.Config.AcquisitionDefault), nil
 }
 
-// Reindex performs a one-shot durable enqueue of the requested source and
-// processes refresh jobs until the requested source's refresh is complete.
-func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID string) error {
+// Reindex performs a one-shot durable enqueue of the requested registry and
+// processes refresh jobs until the requested registry's refresh is complete.
+func Reindex(ctx context.Context, deps Deps, cfg config.Config, registrySlugOrID string) error {
 	if deps.Marketplace.ID == "" {
 		if err := EnsureMarketplace(ctx, &deps); err != nil {
 			return err
 		}
 	}
 
-	cfgSource, ok := sourceBySlugOrID(cfg, sourceSlugOrID)
+	cfgRegistry, ok := registryBySlugOrID(cfg, registrySlugOrID)
 	if !ok {
-		return fmt.Errorf("source %q not found in config", sourceSlugOrID)
+		return fmt.Errorf("registry %q not found in config", registrySlugOrID)
 	}
 
-	existing, err := deps.MetadataStore.GetSource(ctx, store.SourceID(cfgSource.ID))
+	existing, err := deps.MetadataStore.GetRegistry(ctx, store.RegistryID(cfgRegistry.ID))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("get source %q: %w", cfgSource.ID, err)
+		return fmt.Errorf("get registry %q: %w", cfgRegistry.ID, err)
 	}
 
-	source := mergeStoreSource(existing, cfgSource, cfg.AcquisitionDefault)
-	if err := deps.MetadataStore.PutSource(ctx, source); err != nil {
-		return fmt.Errorf("upsert source %q: %w", source.ID, err)
+	registry := mergeStoreRegistry(existing, cfgRegistry, cfg.AcquisitionDefault)
+	if err := deps.MetadataStore.PutRegistry(ctx, registry); err != nil {
+		return fmt.Errorf("upsert registry %q: %w", registry.ID, err)
 	}
 
 	jobID := store.JobID(uuid.NewString())
-	payloadBytes, err := json.Marshal(refreshPayload{SourceID: string(source.ID)})
+	payloadBytes, err := json.Marshal(refreshPayload{RegistryID: string(registry.ID)})
 	if err != nil {
 		return fmt.Errorf("marshal job payload: %w", err)
 	}
@@ -338,7 +338,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 		Kind:           "refresh",
 		Payload:        payloadBytes,
 		MaxAttempts:    1,
-		IdempotencyKey: fmt.Sprintf("manual-%s-%s", source.ID, jobID),
+		IdempotencyKey: fmt.Sprintf("manual-%s-%s", registry.ID, jobID),
 	}
 	if err := job.Enqueue(ctx, deps.MetadataStore, j); err != nil {
 		return fmt.Errorf("enqueue reindex job: %w", err)
@@ -362,9 +362,9 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 		case job.Completed:
 			return nil
 		case job.Failed:
-			source, sourceErr := deps.MetadataStore.GetSource(ctx, store.SourceID(cfgSource.ID))
-			if sourceErr == nil && source.RefreshError != "" {
-				return errors.New(source.RefreshError)
+			registry, registryErr := deps.MetadataStore.GetRegistry(ctx, store.RegistryID(cfgRegistry.ID))
+			if registryErr == nil && registry.RefreshError != "" {
+				return errors.New(registry.RefreshError)
 			}
 			return fmt.Errorf("reindex job %q failed", jobID)
 		}
@@ -391,12 +391,12 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, sourceSlugOrID s
 }
 
 type refreshPayload struct {
-	SourceID string `json:"source_id"`
+	RegistryID string `json:"registry_id"`
 }
 
-func enqueueRefresh(ctx context.Context, s store.MetadataStore, src config.Source, interval time.Duration) error {
+func enqueueRefresh(ctx context.Context, s store.MetadataStore, src config.Registry, interval time.Duration) error {
 	bucket := time.Now().Truncate(interval).Unix()
-	payload, err := json.Marshal(refreshPayload{SourceID: src.ID})
+	payload, err := json.Marshal(refreshPayload{RegistryID: src.ID})
 	if err != nil {
 		return err
 	}
@@ -420,27 +420,27 @@ func cfgRefreshConcurrency(cfg config.Config) int {
 	return 1
 }
 
-func sourceByID(cfg config.Config, id string) (config.Source, bool) {
-	for _, src := range cfg.Sources {
+func registryByID(cfg config.Config, id string) (config.Registry, bool) {
+	for _, src := range cfg.Registries {
 		if src.ID == id {
 			return src, true
 		}
 	}
-	return config.Source{}, false
+	return config.Registry{}, false
 }
 
-func sourceBySlugOrID(cfg config.Config, s string) (config.Source, bool) {
-	for _, src := range cfg.Sources {
+func registryBySlugOrID(cfg config.Config, s string) (config.Registry, bool) {
+	for _, src := range cfg.Registries {
 		if src.ID == s || src.Slug == s {
 			return src, true
 		}
 	}
-	return config.Source{}, false
+	return config.Registry{}, false
 }
 
-func mergeStoreSource(existing store.Source, cfg config.Source, defaultAcquisition string) store.Source {
+func mergeStoreRegistry(existing store.Registry, cfg config.Registry, defaultAcquisition string) store.Registry {
 	s := existing
-	s.ID = store.SourceID(cfg.ID)
+	s.ID = store.RegistryID(cfg.ID)
 	s.Slug = cfg.Slug
 	s.Ref = cfg.Ref
 	s.Roots = toStoreRoots(cfg.Roots)
@@ -476,10 +476,10 @@ func mergeStoreSource(existing store.Source, cfg config.Source, defaultAcquisiti
 	return s
 }
 
-func toStoreRoots(roots []config.SourceRoot) []store.SourceRoot {
-	out := make([]store.SourceRoot, 0, len(roots))
+func toStoreRoots(roots []config.RegistryRoot) []store.RegistryRoot {
+	out := make([]store.RegistryRoot, 0, len(roots))
 	for _, r := range roots {
-		out = append(out, store.SourceRoot{Path: r.Path, SourceHarness: r.SourceHarness})
+		out = append(out, store.RegistryRoot{Path: r.Path, SourceHarness: r.SourceHarness})
 	}
 	return out
 }
@@ -514,23 +514,23 @@ func resolveToken(t config.TokenCredential) (string, error) {
 	return "", nil
 }
 
-func recordRefreshSuccess(ctx context.Context, s store.MetadataStore, src store.Source) error {
-	src.RefreshStatus = store.SourceRefreshStatusOK
+func recordRefreshSuccess(ctx context.Context, s store.MetadataStore, src store.Registry) error {
+	src.RefreshStatus = store.RegistryRefreshStatusOK
 	src.RefreshError = ""
 	src.RefreshedAt = time.Now().UTC()
-	if err := s.PutSource(ctx, src); err != nil {
-		slog.Error("failed to record refresh success", "source", src.ID, "error", err)
+	if err := s.PutRegistry(ctx, src); err != nil {
+		slog.Error("failed to record refresh success", "registry", src.ID, "error", err)
 		return err
 	}
 	return nil
 }
 
-func recordRefreshFailure(ctx context.Context, s store.MetadataStore, src store.Source, err error) error {
-	src.RefreshStatus = store.SourceRefreshStatusFailed
+func recordRefreshFailure(ctx context.Context, s store.MetadataStore, src store.Registry, err error) error {
+	src.RefreshStatus = store.RegistryRefreshStatusFailed
 	src.RefreshError = err.Error()
 	src.RefreshedAt = time.Now().UTC()
-	if putErr := s.PutSource(ctx, src); putErr != nil {
-		slog.Error("failed to record refresh failure", "source", src.ID, "error", putErr)
+	if putErr := s.PutRegistry(ctx, src); putErr != nil {
+		slog.Error("failed to record refresh failure", "registry", src.ID, "error", putErr)
 	}
 	return err
 }

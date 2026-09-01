@@ -69,12 +69,12 @@ func TestCacheArtifactRoundTrip(t *testing.T) {
 
 func TestIndexOnlyCacheSeparatesOccurrences(t *testing.T) {
 	cache := NewCache(t.TempDir())
-	identityA := IndexOnlyIdentity{Marketplace: "marketplace", SourceID: "source", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("1", 64)}
+	identityA := IndexOnlyIdentity{Marketplace: "marketplace", RegistryID: "source", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("1", 64)}
 	identityB := identityA
 	identityB.ManifestDigest = "sha256:" + strings.Repeat("2", 64)
 	contentDigest := "sha256:" + strings.Repeat("3", 64)
 	if IndexOnlyKey(identityA) == IndexOnlyKey(identityB) {
-		t.Fatal("different source occurrence identities share a cache key")
+		t.Fatal("different registry occurrence identities share a cache key")
 	}
 	if _, err := cache.WriteIndexOnlyArtifact(identityA, contentDigest, []byte("A")); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestCacheResourceRevisionRoundTrip(t *testing.T) {
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
-			Source:      store.SourceID("src"),
+			Registry:    store.RegistryID("src"),
 			Kind:        "skill",
 			Name:        "review",
 		},
@@ -220,14 +220,14 @@ func TestCacheDefaultRoot(t *testing.T) {
 	}
 }
 
-func TestCacheSanitizesSourceIDWithSlash(t *testing.T) {
+func TestCacheSanitizesRegistryIDWithSlash(t *testing.T) {
 	tmp := t.TempDir()
 	c := NewCache(tmp)
 
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
-			Source:      store.SourceID("src/with/slash"),
+			Registry:    store.RegistryID("src/with/slash"),
 			Kind:        "skill",
 			Name:        "review",
 		},
@@ -257,9 +257,9 @@ func TestCacheWriteMethodsRejectSymlinkedDirectories(t *testing.T) {
 	collectionDigest := "sha256:" + strings.Repeat("2", 64)
 	metadataRevision := "sha256:" + strings.Repeat("3", 64)
 	baseURL := "https://marketplace.example"
-	sourceID, kind, name := "src", "skill", "review"
+	registryID, kind, name := "src", "skill", "review"
 	revision := assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: store.SourceID(sourceID), Kind: kind, Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: store.RegistryID(registryID), Kind: kind, Name: name},
 		ContentDigest: store.RevisionDigest(metadataRevision),
 	})
 
@@ -347,11 +347,11 @@ func TestCacheWriteMethodsRejectSymlinkedDirectories(t *testing.T) {
 				return os.Symlink(external, filepath.Join(root, "metadata"))
 			},
 			write: func(c *Cache) error {
-				_, err := c.WriteResourceRevision(baseURL, sourceID, kind, name, metadataRevision, revision)
+				_, err := c.WriteResourceRevision(baseURL, registryID, kind, name, metadataRevision, revision)
 				return err
 			},
 			expectedOut: func(external string) string {
-				return filepath.Join(external, cache.HashURL(baseURL), sourceID, kind, name, safeDigest(metadataRevision)+".json")
+				return filepath.Join(external, cache.HashURL(baseURL), registryID, kind, name, safeDigest(metadataRevision)+".json")
 			},
 		},
 		{
@@ -364,24 +364,24 @@ func TestCacheWriteMethodsRejectSymlinkedDirectories(t *testing.T) {
 				return os.Symlink(external, hashDir)
 			},
 			write: func(c *Cache) error {
-				_, err := c.WriteResourceRevision(baseURL, sourceID, kind, name, metadataRevision, revision)
+				_, err := c.WriteResourceRevision(baseURL, registryID, kind, name, metadataRevision, revision)
 				return err
 			},
 			expectedOut: func(external string) string {
-				return filepath.Join(external, sourceID, kind, name, safeDigest(metadataRevision)+".json")
+				return filepath.Join(external, registryID, kind, name, safeDigest(metadataRevision)+".json")
 			},
 		},
 		{
 			name: "metadata digest parent directory",
 			setup: func(root, external string) error {
-				digestDir := filepath.Join(root, "metadata", cache.HashURL(baseURL), sourceID, kind, name)
+				digestDir := filepath.Join(root, "metadata", cache.HashURL(baseURL), registryID, kind, name)
 				if err := os.MkdirAll(filepath.Dir(digestDir), 0o755); err != nil {
 					return err
 				}
 				return os.Symlink(external, digestDir)
 			},
 			write: func(c *Cache) error {
-				_, err := c.WriteResourceRevision(baseURL, sourceID, kind, name, metadataRevision, revision)
+				_, err := c.WriteResourceRevision(baseURL, registryID, kind, name, metadataRevision, revision)
 				return err
 			},
 			expectedOut: func(external string) string {
@@ -576,7 +576,7 @@ func BenchmarkCacheWriteReadResourceRevision(b *testing.B) {
 	rev := assessedRevision(store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: store.MarketplaceID("mp"),
-			Source:      store.SourceID("src"),
+			Registry:    store.RegistryID("src"),
 			Kind:        "skill",
 			Name:        "review",
 		},
@@ -599,14 +599,14 @@ func TestCacheGarbageCollectPreservesReferencedMirrorArchive(t *testing.T) {
 	contentDigest := "sha256:" + strings.Repeat("1", 64)
 	referencedArchive := "sha256:" + strings.Repeat("2", 64)
 	orphanArchive := "sha256:" + strings.Repeat("3", 64)
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://marketplace.example", InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	rev := assessedRevision(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(referencedArchive),
 	})
-	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.SourceID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
+	if _, err := c.WriteResourceRevision(cfg.Marketplaces[0].URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, rev); err != nil {
 		t.Fatalf("WriteResourceRevision: %v", err)
 	}
 	if _, err := c.WriteArtifact(referencedArchive, []byte("referenced")); err != nil {
@@ -653,7 +653,7 @@ func TestCacheGarbageCollectMissingMetadataFailsClosed(t *testing.T) {
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL: "https://marketplace.example", InstanceID: "mp",
-		Resources: []config.MarketplaceResourcePin{{SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("b", 64)}},
+		Resources: []config.MarketplaceResourcePin{{RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: "sha256:" + strings.Repeat("b", 64)}},
 	}}}
 	result, err := c.GarbageCollect(false, cfg)
 	if err == nil {
@@ -674,8 +674,8 @@ func TestCacheGarbageCollectMalformedMetadataFailsClosed(t *testing.T) {
 	if _, err := c.WriteArtifact(archiveDigest, []byte("orphan")); err != nil {
 		t.Fatalf("WriteArtifact: %v", err)
 	}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
-	metadataPath := c.MetadataPath("https://marketplace.example", pin.SourceID, pin.Kind, pin.Name, pin.Digest)
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest}
+	metadataPath := c.MetadataPath("https://marketplace.example", pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
 	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
 		t.Fatalf("mkdir metadata: %v", err)
 	}

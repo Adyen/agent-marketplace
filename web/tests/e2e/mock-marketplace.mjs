@@ -14,8 +14,8 @@ const configContent = '{"html":"<script>escaped</script>"}'
 
 const items = [
   {
-    source_id: 'team-tools',
-    source_slug: 'team-tools',
+    registry_id: 'team-tools',
+    registry_slug: 'team-tools',
     kind: 'skill',
     name: 'secure-review',
     revision: digest,
@@ -24,8 +24,8 @@ const items = [
     metadata: { owner: 'platform' },
   },
   {
-    source_id: 'team-tools',
-    source_slug: 'team-tools',
+    registry_id: 'team-tools',
+    registry_slug: 'team-tools',
     kind: 'command',
     name: 'deploy-preview',
     revision: `sha256:${'b'.repeat(64)}`,
@@ -34,7 +34,7 @@ const items = [
   },
 ]
 
-const source = {
+const registry = {
   id: 'team-tools',
   slug: 'team-tools',
   aliases: [],
@@ -52,17 +52,17 @@ const wellKnown = {
   canonical_url: appOrigin,
   api_base: `http://127.0.0.1:${port}/api/v1`,
   browser_base: appOrigin,
-  browser_latest_route_template: `${appOrigin}/s/{source}/{kind}/{name}`,
-  browser_exact_route_template: `${appOrigin}/s/{source}/{kind}/{name}/revisions/{revision}`,
+  browser_latest_route_template: `${appOrigin}/r/{registry}/{kind}/{name}`,
+  browser_exact_route_template: `${appOrigin}/r/{registry}/{kind}/{name}/revisions/{revision}`,
   api_versions: ['v1'],
   artifact_schema_versions: ['v1'],
   resource_kinds: ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection'],
   acquisition_modes: ['index-only', 'mirror'],
-  features: ['search', 'source-history', 'inspection'],
+  features: ['search', 'registry-history', 'inspection'],
 }
 
 function resource(item, contentDigest = item.content_digest, revocation) {
-  const coordinate = { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }
+  const coordinate = { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }
   const reason = revocation?.reason ?? (revocation === undefined && item.name === 'deploy-preview' ? 'security review' : '')
   return {
     coordinate,
@@ -109,12 +109,12 @@ function decodeSegment(value) {
 function search(url) {
   const q = (url.searchParams.get('q') || '').trim().toLowerCase()
   const kind = url.searchParams.get('kind') || ''
-  const sourceID = (url.searchParams.get('source') || '').trim()
+  const registryID = (url.searchParams.get('registry') || '').trim()
   const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0)
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 12), 1), 100)
   const filtered = items.filter(item => {
     const matchesQuery = !q || `${item.name} ${item.description}`.toLowerCase().includes(q)
-    return matchesQuery && (!kind || item.kind === kind) && (!sourceID || item.source_id === sourceID)
+    return matchesQuery && (!kind || item.kind === kind) && (!registryID || item.registry_id === registryID)
   })
   return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit }
 }
@@ -135,15 +135,15 @@ const server = createServer((request, response) => {
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
   if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin })
-  if (parts.join('/') === 'api/v1/sources') return sendJson(response, 200, [{ id: source.id, slug: source.slug }])
-  if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'sources') {
-    return parts[3] === source.id ? sendJson(response, 200, source) : sendJson(response, 404, { error: 'source not found' })
+  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [{ id: registry.id, slug: registry.slug }])
+  if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
+    return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
   }
-  if (parts.length === 5 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'sources' && parts[4] === 'history') {
-    return parts[3] === source.id ? sendJson(response, 200, []) : sendJson(response, 404, { error: 'source not found' })
+  if (parts.length === 5 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries' && parts[4] === 'history') {
+    return parts[3] === registry.id ? sendJson(response, 200, []) : sendJson(response, 404, { error: 'registry not found' })
   }
   if (parts.length >= 6 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'resources') {
-    const item = items.find(candidate => candidate.source_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
+    const item = items.find(candidate => candidate.registry_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
     if (!item) return sendJson(response, 404, { error: 'resource not found' })
     const previousDigest = `sha256:${'9'.repeat(64)}`
     const requestedRevision = parts[6] === 'revisions' ? (parts[7] || item.content_digest) : item.content_digest
@@ -164,7 +164,7 @@ const server = createServer((request, response) => {
         response.writeHead(200, { 'Access-Control-Allow-Origin': appOrigin, 'Content-Type': 'text/markdown', 'X-Content-Type-Options': 'nosniff' })
         return response.end(primaryContent)
       }
-      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', source: item.source_id, kind: item.kind, name: item.name }, revision_digest: requestedRevision, primary_path: 'SKILL.md', files: [
+      return sendJson(response, 200, { schema_version: 'v1', coordinate: { marketplace: 'e2e-marketplace', registry: item.registry_id, kind: item.kind, name: item.name }, revision_digest: requestedRevision, primary_path: 'SKILL.md', files: [
         { path: 'SKILL.md', content_digest: primaryDigest, media_type: 'text/markdown', size: Buffer.byteLength(primaryContent), inspection_class: 'text' },
         { path: 'support/notes.md', content_digest: notesDigest, media_type: 'text/markdown', size: Buffer.byteLength(notesContent), inspection_class: 'text' },
         { path: 'support/config.json', content_digest: configDigest, media_type: 'application/json', size: Buffer.byteLength(configContent), inspection_class: 'text' },

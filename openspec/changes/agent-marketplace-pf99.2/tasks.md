@@ -21,7 +21,7 @@
 ## Artifact and revision
 - [x] `pkg/marketplace/artifact/builder.go` — `BuildResourceArtifact`,
   `BuildCollectionManifest`, `BuildResult`.
-- [x] `pkg/marketplace/artifact/revision.go` — `SourceRevisionManifest`,
+- [x] `pkg/marketplace/artifact/revision.go` — `RegistryRevisionManifest`,
   deterministic encode/decode/verify.
 - [x] `pkg/marketplace/artifact/capabilities.go` — `ExtractCapabilities`.
 - [x] `pkg/marketplace/artifact/findings.go` — finding conversion.

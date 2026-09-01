@@ -49,8 +49,8 @@ func openAtomicStores(t *testing.T) (*sqlite.Store, *fsblob.Store) {
 	return meta, blobs
 }
 
-func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
+func TestPublishRegistryRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
 	body := []byte("# review\\n")
 	projection, err := inspection.Build(coordinate, string(revision), body, nil, 10, 1024, 4096)
@@ -58,17 +58,17 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
-	base := store.SourceRevisionPublication{
+	base := store.RegistryRevisionPublication{
 		Resources:       []store.ResourceRevision{resource},
 		Assessments:     []store.ResourceAssessment{assessmentFor(t, resource, projection.Manifest.ManifestDigest)},
 		InspectionBlobs: []store.BlobUpload{{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload}, {Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body}},
 	}
 	for _, tc := range []struct {
 		name  string
-		build func() store.SourceRevisionPublication
+		build func() store.RegistryRevisionPublication
 		want  string
 	}{
-		{name: "non canonical JSON", build: func() store.SourceRevisionPublication {
+		{name: "non canonical JSON", build: func() store.RegistryRevisionPublication {
 			bad := base
 			bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
 			bad.InspectionBlobs[0].Data = append([]byte(" "), bad.InspectionBlobs[0].Data...)
@@ -76,7 +76,7 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 			bad.Assessments = []store.ResourceAssessment{assessmentFor(t, resource, string(bad.InspectionBlobs[0].Digest))}
 			return bad
 		}, want: "not canonical JSON"},
-		{name: "wrong body size", build: func() store.SourceRevisionPublication {
+		{name: "wrong body size", build: func() store.RegistryRevisionPublication {
 			var manifest inspection.Manifest
 			if err := json.Unmarshal(projection.Payload, &manifest); err != nil {
 				t.Fatal(err)
@@ -95,28 +95,28 @@ func TestPublishSourceRevisionStrictlyValidatesInspectionBodies(t *testing.T) {
 		}, want: "digest or size"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := store.PublishSourceRevision(context.Background(), nil, nil, tc.build()); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			if err := store.PublishRegistryRevision(context.Background(), nil, nil, tc.build()); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishRegistryRevision error = %v, want %q", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *testing.T) {
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
+func TestPublishRegistryRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *testing.T) {
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
 	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\n"), map[string][]byte{"notes.md": []byte("notes\n")}, 10, 1024, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
-	base := store.SourceRevisionPublication{Resources: []store.ResourceRevision{resource}, Assessments: []store.ResourceAssessment{assessmentFor(t, resource, projection.Manifest.ManifestDigest)}}
+	base := store.RegistryRevisionPublication{Resources: []store.ResourceRevision{resource}, Assessments: []store.ResourceAssessment{assessmentFor(t, resource, projection.Manifest.ManifestDigest)}}
 	for digest, data := range projection.Bodies {
 		base.InspectionBlobs = append(base.InspectionBlobs, store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: data})
 	}
 	base.InspectionBlobs = append(base.InspectionBlobs, store.BlobUpload{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload})
 
-	mutate := func(t *testing.T, change func(*inspection.Manifest)) store.SourceRevisionPublication {
+	mutate := func(t *testing.T, change func(*inspection.Manifest)) store.RegistryRevisionPublication {
 		t.Helper()
 		var manifest inspection.Manifest
 		if err := json.Unmarshal(projection.Payload, &manifest); err != nil {
@@ -136,35 +136,35 @@ func TestPublishSourceRevisionRejectsNonCanonicalInspectionManifestsAndMedia(t *
 
 	cases := []struct {
 		name  string
-		build func(*testing.T) store.SourceRevisionPublication
+		build func(*testing.T) store.RegistryRevisionPublication
 		want  string
 	}{
-		{name: "unknown field", build: func(t *testing.T) store.SourceRevisionPublication {
+		{name: "unknown field", build: func(t *testing.T) store.RegistryRevisionPublication {
 			t.Helper()
 			payload := []byte(strings.TrimSuffix(string(projection.Payload), "}") + `,"unknown":true}`)
 			return publicationWithInspectionPayload(t, base, payload)
 		}, want: "unknown field"},
-		{name: "trailing JSON", build: func(t *testing.T) store.SourceRevisionPublication {
+		{name: "trailing JSON", build: func(t *testing.T) store.RegistryRevisionPublication {
 			payload := append(append([]byte(nil), projection.Payload...), []byte("null")...)
 			return publicationWithInspectionPayload(t, base, payload)
 		}, want: "trailing JSON"},
-		{name: "wrong primary media", build: func(t *testing.T) store.SourceRevisionPublication {
+		{name: "wrong primary media", build: func(t *testing.T) store.RegistryRevisionPublication {
 			return mutate(t, func(manifest *inspection.Manifest) { manifest.Files[0].MediaType = inspection.MediaPlain })
 		}, want: "primary file media policy"},
-		{name: "wrong support media", build: func(t *testing.T) store.SourceRevisionPublication {
+		{name: "wrong support media", build: func(t *testing.T) store.RegistryRevisionPublication {
 			return mutate(t, func(manifest *inspection.Manifest) { manifest.Files[1].MediaType = inspection.MediaPlain })
 		}, want: "media type or inspection class"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := store.PublishSourceRevision(context.Background(), nil, nil, tc.build(t)); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			if err := store.PublishRegistryRevision(context.Background(), nil, nil, tc.build(t)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishRegistryRevision error = %v, want %q", err, tc.want)
 			}
 		})
 	}
 }
 
-func publicationWithInspectionPayload(t *testing.T, base store.SourceRevisionPublication, payload []byte) store.SourceRevisionPublication {
+func publicationWithInspectionPayload(t *testing.T, base store.RegistryRevisionPublication, payload []byte) store.RegistryRevisionPublication {
 	bad := base
 	badDigest := sha256Digest(payload)
 	bad.InspectionBlobs = append([]store.BlobUpload(nil), base.InspectionBlobs...)
@@ -173,8 +173,8 @@ func publicationWithInspectionPayload(t *testing.T, base store.SourceRevisionPub
 	return bad
 }
 
-func TestPublishSourceRevisionRejectsInspectionSupportPrimaryAlias(t *testing.T) {
-	coordinate := store.ResourceCoordinate{Marketplace: "mp", Source: "source", Kind: "skill", Name: "review"}
+func TestPublishRegistryRevisionRejectsInspectionSupportPrimaryAlias(t *testing.T) {
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "registry", Kind: "skill", Name: "review"}
 	revision := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
 	projection, err := inspection.Build(coordinate, string(revision), []byte("# review\\n"), map[string][]byte{"notes.txt": []byte("notes")}, 10, 1024, 4096)
 	if err != nil {
@@ -195,17 +195,17 @@ func TestPublishSourceRevisionRejectsInspectionSupportPrimaryAlias(t *testing.T)
 		uploads = append(uploads, store.BlobUpload{Digest: store.ArchiveDigest(digest), Data: data})
 	}
 	resource := store.ResourceRevision{Coordinate: coordinate, ContentDigest: revision}
-	err = store.PublishSourceRevision(context.Background(), nil, nil, store.SourceRevisionPublication{
+	err = store.PublishRegistryRevision(context.Background(), nil, nil, store.RegistryRevisionPublication{
 		Resources:       []store.ResourceRevision{resource},
 		Assessments:     []store.ResourceAssessment{assessmentFor(t, resource, string(manifestDigest))},
 		InspectionBlobs: uploads,
 	})
 	if err == nil || !strings.Contains(err.Error(), "non-canonical file path") {
-		t.Fatalf("PublishSourceRevision error = %v, want non-canonical support path rejection", err)
+		t.Fatalf("PublishRegistryRevision error = %v, want non-canonical support path rejection", err)
 	}
 }
 
-func TestPublishSourceRevision(t *testing.T) {
+func TestPublishRegistryRevision(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
 
@@ -218,15 +218,15 @@ func TestPublishSourceRevision(t *testing.T) {
 		t.Fatalf("PutMarketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("src-atomic"),
-		Slug:        "atomic-source",
+	src := store.Registry{
+		ID:          store.RegistryID("src-atomic"),
+		Slug:        "atomic-registry",
 		Ref:         "main",
 		Acquisition: store.AcquisitionMirror,
 		Listed:      true,
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
-		t.Fatalf("PutSource: %v", err)
+	if err := meta.PutRegistry(ctx, src); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
 	}
 
 	manifest := []byte(`{"schema_version":"v1","generator":"test"}`)
@@ -236,7 +236,7 @@ func TestPublishSourceRevision(t *testing.T) {
 
 	coord := store.ResourceCoordinate{
 		Marketplace: mp.ID,
-		Source:      src.ID,
+		Registry:    src.ID,
 		Kind:        "skill",
 		Name:        "member",
 	}
@@ -252,17 +252,17 @@ func TestPublishSourceRevision(t *testing.T) {
 	}
 	assessment := assessmentFor(t, rev, projection.Manifest.ManifestDigest)
 
-	occ := store.SourceOccurrence{
-		SourceID:                     src.ID,
-		Ref:                          "main",
-		Commit:                       "abc123",
-		SourceRevisionManifestDigest: manifestDigest,
-		Acquisition:                  store.AcquisitionMirror,
-		MirroredArtifactDigest:       archiveDigest,
-		OccurredAt:                   time.Now().UTC(),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     src.ID,
+		Ref:                            "main",
+		Commit:                         "abc123",
+		RegistryRevisionManifestDigest: manifestDigest,
+		Acquisition:                    store.AcquisitionMirror,
+		MirroredArtifactDigest:         archiveDigest,
+		OccurredAt:                     time.Now().UTC(),
 	}
 
-	req := store.SourceRevisionPublication{
+	req := store.RegistryRevisionPublication{
 		Occurrence:          occ,
 		Resources:           []store.ResourceRevision{rev},
 		ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: occ.Commit, ManifestDigest: manifestDigest}},
@@ -272,8 +272,8 @@ func TestPublishSourceRevision(t *testing.T) {
 		InspectionBlobs:     []store.BlobUpload{{Digest: store.ArchiveDigest(projection.Manifest.ManifestDigest), Data: projection.Payload}, {Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body}},
 	}
 
-	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
-		t.Fatalf("PublishSourceRevision: %v", err)
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("PublishRegistryRevision: %v", err)
 	}
 
 	if err := meta.ReadyCheck(ctx, blobs); err != nil {
@@ -288,12 +288,12 @@ func TestPublishSourceRevision(t *testing.T) {
 		t.Fatalf("archive digest = %q, want %q", got.ArchiveDigest, rev.ArchiveDigest)
 	}
 
-	gotOcc, err := meta.GetSourceOccurrence(ctx, src.ID, occ.Commit)
+	gotOcc, err := meta.GetRegistryOccurrence(ctx, src.ID, occ.Commit)
 	if err != nil {
-		t.Fatalf("GetSourceOccurrence: %v", err)
+		t.Fatalf("GetRegistryOccurrence: %v", err)
 	}
 	if gotOcc.Commit != occ.Commit {
-		t.Fatalf("source occurrence commit = %q, want %q", gotOcc.Commit, occ.Commit)
+		t.Fatalf("registry occurrence commit = %q, want %q", gotOcc.Commit, occ.Commit)
 	}
 
 	blob, err := blobs.Get(ctx, archiveDigest)
@@ -305,26 +305,26 @@ func TestPublishSourceRevision(t *testing.T) {
 	}
 }
 
-func TestPublishSourceRevisionManifestDigestMismatch(t *testing.T) {
+func TestPublishRegistryRevisionManifestDigestMismatch(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
 
 	manifest := []byte(`not the expected payload`)
-	occ := store.SourceOccurrence{
-		SourceID:                     store.SourceID("src-atomic"),
-		Ref:                          "main",
-		Commit:                       "abc123",
-		SourceRevisionManifestDigest: store.RevisionDigest("sha256:expected"),
-		Acquisition:                  store.AcquisitionMirror,
-		OccurredAt:                   time.Now().UTC(),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     store.RegistryID("src-atomic"),
+		Ref:                            "main",
+		Commit:                         "abc123",
+		RegistryRevisionManifestDigest: store.RevisionDigest("sha256:expected"),
+		Acquisition:                    store.AcquisitionMirror,
+		OccurredAt:                     time.Now().UTC(),
 	}
 
-	req := store.SourceRevisionPublication{
+	req := store.RegistryRevisionPublication{
 		Occurrence:      occ,
 		ManifestPayload: manifest,
 	}
 
-	err := store.PublishSourceRevision(ctx, meta, blobs, req)
+	err := store.PublishRegistryRevision(ctx, meta, blobs, req)
 	if err == nil {
 		t.Fatalf("expected manifest digest mismatch error")
 	}
@@ -333,10 +333,10 @@ func TestPublishSourceRevisionManifestDigestMismatch(t *testing.T) {
 	}
 }
 
-func TestPublishSourceRevisionRejectsCollectionArchive(t *testing.T) {
-	err := store.PublishSourceRevision(context.Background(), nil, nil, store.SourceRevisionPublication{
+func TestPublishRegistryRevisionRejectsCollectionArchive(t *testing.T) {
+	err := store.PublishRegistryRevision(context.Background(), nil, nil, store.RegistryRevisionPublication{
 		Resources: []store.ResourceRevision{{
-			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "collection", Name: "bundle"},
+			Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "collection", Name: "bundle"},
 			ContentDigest: "sha256:collection",
 			ArchiveDigest: "sha256:collection-archive",
 		}},
@@ -346,57 +346,57 @@ func TestPublishSourceRevisionRejectsCollectionArchive(t *testing.T) {
 	}
 }
 
-func collectionPublicationFixture(t *testing.T) (store.SourceRevisionPublication, store.ResourceCoordinate) {
+func collectionPublicationFixture(t *testing.T) (store.RegistryRevisionPublication, store.ResourceCoordinate) {
 	t.Helper()
 	leafData := []byte("leaf archive")
 	leafContent := store.RevisionDigest("sha256:" + strings.Repeat("1", 64))
 	leafArchive := store.ArchiveDigest(sha256Digest(leafData))
-	collectionSource := store.SourceID("src-collection")
-	leafSource := store.SourceID("src-leaf")
+	collectionRegistry := store.RegistryID("src-collection")
+	leafRegistry := store.RegistryID("src-leaf")
 	manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
 		SchemaVersion:    hccartifact.CollectionSchemaV1,
 		Name:             "bundle",
-		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "member", SourceID: string(leafSource), Revision: string(leafContent)}},
+		Members:          []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "member", RegistryID: string(leafRegistry), Revision: string(leafContent)}},
 		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	collectionCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Source: collectionSource, Kind: "collection", Name: "bundle"}
-	leafCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Source: leafSource, Kind: "skill", Name: "member"}
-	collection := store.CollectionRevision{ID: manifestDigest, SourceID: collectionSource, ManifestDigest: store.RevisionDigest(manifestDigest), Members: []store.ResourceCoordinate{leafCoord}}
-	sourceManifest := []byte("source revision manifest")
-	req := store.SourceRevisionPublication{
-		Occurrence: store.SourceOccurrence{SourceID: collectionSource, Ref: "main", Commit: "abc123", SourceRevisionManifestDigest: store.RevisionDigest(sha256Digest(sourceManifest)), Acquisition: store.AcquisitionMirror, OccurredAt: time.Now().UTC()},
+	collectionCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Registry: collectionRegistry, Kind: "collection", Name: "bundle"}
+	leafCoord := store.ResourceCoordinate{Marketplace: "mp-collection", Registry: leafRegistry, Kind: "skill", Name: "member"}
+	collection := store.CollectionRevision{ID: manifestDigest, RegistryID: collectionRegistry, ManifestDigest: store.RevisionDigest(manifestDigest), Members: []store.ResourceCoordinate{leafCoord}}
+	registryManifest := []byte("registry revision manifest")
+	req := store.RegistryRevisionPublication{
+		Occurrence: store.RegistryOccurrence{RegistryID: collectionRegistry, Ref: "main", Commit: "abc123", RegistryRevisionManifestDigest: store.RevisionDigest(sha256Digest(registryManifest)), Acquisition: store.AcquisitionMirror, OccurredAt: time.Now().UTC()},
 		Resources: []store.ResourceRevision{
 			{Coordinate: leafCoord, ContentDigest: leafContent, ArchiveDigest: leafArchive},
 			{Coordinate: collectionCoord, ContentDigest: store.RevisionDigest(manifestDigest)},
 		},
 		Collections:     []store.CollectionRevision{collection},
-		ManifestPayload: sourceManifest,
+		ManifestPayload: registryManifest,
 		ExtraBlobs:      []store.BlobUpload{{Digest: store.ArchiveDigest(manifestDigest), Data: manifestPayload}, {Digest: leafArchive, Data: leafData}},
 	}
 	return req, leafCoord
 }
 
-func TestPublishSourceRevisionRequiresCompleteCollectionGraph(t *testing.T) {
+func TestPublishRegistryRevisionRequiresCompleteCollectionGraph(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name   string
-		mutate func(*store.SourceRevisionPublication)
+		mutate func(*store.RegistryRevisionPublication)
 		want   string
 	}{
-		{"missing manifest", func(req *store.SourceRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[1:] }, "manifest is missing"},
-		{"missing leaf archive", func(req *store.SourceRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[:1] }, "archive is missing"},
-		{"tampered collection manifest", func(req *store.SourceRevisionPublication) { req.ExtraBlobs[0].Data = []byte("{}") }, "collection"},
-		{"tampered leaf archive", func(req *store.SourceRevisionPublication) { req.ExtraBlobs[1].Data = []byte("tampered") }, "data digest mismatch"},
+		{"missing manifest", func(req *store.RegistryRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[1:] }, "manifest is missing"},
+		{"missing leaf archive", func(req *store.RegistryRevisionPublication) { req.ExtraBlobs = req.ExtraBlobs[:1] }, "archive is missing"},
+		{"tampered collection manifest", func(req *store.RegistryRevisionPublication) { req.ExtraBlobs[0].Data = []byte("{}") }, "collection"},
+		{"tampered leaf archive", func(req *store.RegistryRevisionPublication) { req.ExtraBlobs[1].Data = []byte("tampered") }, "data digest mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			meta, blobs := openAtomicStores(t)
 			req, leafCoord := collectionPublicationFixture(t)
 			tc.mutate(&req)
-			if err := store.PublishSourceRevision(ctx, meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishRegistryRevision error = %v, want %q", err, tc.want)
 			}
 			if _, err := meta.GetResourceRevision(ctx, leafCoord, req.Resources[0].ContentDigest); !errors.Is(err, store.ErrNotFound) {
 				t.Fatalf("failed publication committed leaf metadata: %v", err)
@@ -405,7 +405,7 @@ func TestPublishSourceRevisionRequiresCompleteCollectionGraph(t *testing.T) {
 	}
 }
 
-func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
+func TestPublishRegistryRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		leaves func([]hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry
@@ -414,14 +414,14 @@ func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
 		{
 			name: "stale leaf",
 			leaves: func(members []hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry {
-				return []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "stale", SourceID: members[0].SourceID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}}}
+				return []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "stale", RegistryID: members[0].RegistryID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}}}
 			},
 			want: "missing",
 		},
 		{
 			name: "extra leaf",
 			leaves: func(members []hccartifact.CollectionMemberEntry) []hccartifact.CollectionMemberEntry {
-				return append(append([]hccartifact.CollectionMemberEntry(nil), members...), hccartifact.CollectionMemberEntry{Kind: "skill", Name: "extra", SourceID: members[0].SourceID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}})
+				return append(append([]hccartifact.CollectionMemberEntry(nil), members...), hccartifact.CollectionMemberEntry{Kind: "skill", Name: "extra", RegistryID: members[0].RegistryID, Revision: members[0].Revision, InclusionPaths: [][]string{{"bundle"}}})
 			},
 			want: "extra",
 		},
@@ -455,8 +455,8 @@ func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
 			req.Collections[0].ManifestDigest = store.RevisionDigest(digest)
 
 			meta, blobs := openAtomicStores(t)
-			if err := store.PublishSourceRevision(context.Background(), meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("PublishSourceRevision error = %v, want %q", err, tc.want)
+			if err := store.PublishRegistryRevision(context.Background(), meta, blobs, req); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PublishRegistryRevision error = %v, want %q", err, tc.want)
 			}
 			if _, err := meta.GetResourceRevision(context.Background(), leafCoord, req.Resources[0].ContentDigest); !errors.Is(err, store.ErrNotFound) {
 				t.Fatalf("invalid flattened leaves committed leaf metadata: %v", err)
@@ -465,7 +465,7 @@ func TestPublishSourceRevisionRejectsStaleOrExtraFlattenedLeaves(t *testing.T) {
 	}
 }
 
-func TestPublishSourceRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *testing.T) {
+func TestPublishRegistryRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
 	req, _ := collectionPublicationFixture(t)
@@ -484,25 +484,25 @@ func TestPublishSourceRevisionAllowsIndexOnlyLeafAlongsideMirrorCollection(t *te
 	req.Resources[1].ContentDigest = store.RevisionDigest(digest)
 	req.Collections[0].ID = digest
 	req.Collections[0].ManifestDigest = store.RevisionDigest(digest)
-	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err != nil {
 		t.Fatalf("mixed mirror/index-only publication failed: %v", err)
 	}
 }
 
-func TestPublishSourceRevisionIsIdempotentForCollection(t *testing.T) {
+func TestPublishRegistryRevisionIsIdempotentForCollection(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
 	req, _ := collectionPublicationFixture(t)
-	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
-		t.Fatalf("first PublishSourceRevision: %v", err)
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("first PublishRegistryRevision: %v", err)
 	}
-	if err := store.PublishSourceRevision(ctx, meta, blobs, req); err != nil {
-		t.Fatalf("retry PublishSourceRevision: %v", err)
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, req); err != nil {
+		t.Fatalf("retry PublishRegistryRevision: %v", err)
 	}
 	changed := req
 	changed.Collections = append([]store.CollectionRevision(nil), req.Collections...)
 	changed.Collections[0].Members = nil
-	if err := store.PublishSourceRevision(ctx, meta, blobs, changed); !errors.Is(err, store.ErrConflict) {
+	if err := store.PublishRegistryRevision(ctx, meta, blobs, changed); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("conflicting collection metadata error = %v, want ErrConflict", err)
 	}
 }
@@ -520,15 +520,15 @@ func TestPublishResourceRevision(t *testing.T) {
 		t.Fatalf("PutMarketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("src-res"),
-		Slug:        "res-source",
+	src := store.Registry{
+		ID:          store.RegistryID("src-res"),
+		Slug:        "res-registry",
 		Ref:         "main",
 		Acquisition: store.AcquisitionMirror,
 		Listed:      true,
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
-		t.Fatalf("PutSource: %v", err)
+	if err := meta.PutRegistry(ctx, src); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
 	}
 
 	archive := []byte("resource archive")
@@ -536,7 +536,7 @@ func TestPublishResourceRevision(t *testing.T) {
 	rev := store.ResourceRevision{
 		Coordinate: store.ResourceCoordinate{
 			Marketplace: mp.ID,
-			Source:      src.ID,
+			Registry:    src.ID,
 			Kind:        "skill",
 			Name:        "res",
 		},

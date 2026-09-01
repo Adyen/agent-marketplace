@@ -49,56 +49,56 @@ A first-class agent capability distributed by Agent Marketplace. Materialized re
 _Avoid_: Skill, when referring to resources of every kind
 
 **Marketplace**:
-A browsable service through which Agent Marketplace users discover and acquire resources indexed from approved source repositories.
+A browsable service through which Agent Marketplace users discover and acquire resources indexed from approved registries.
 _Avoid_: Registry, registry service
 
 **Marketplace endpoint**:
 The canonical HTTP API location of one Marketplace, identified by a stable Marketplace instance ID.
-_Avoid_: Source origin, Marketplace alias
+_Avoid_: Registry origin, Marketplace alias
 
 **Marketplace endpoint registration**:
 A consumer configuration record that makes a Marketplace endpoint available for discovery without selecting any resource.
 _Avoid_: Marketplace installation, resource pin
 
-**Source repository**:
+**Registry repository**:
 A Git repository that remains the publishing source of truth for resources indexed by a Marketplace.
 _Avoid_: Marketplace, artifact store
 
 **Marketplace submission**:
-A request to add a source repository to a Marketplace. A submission is not discoverable until approved through that Marketplace's vetting process.
-_Avoid_: Published source, automatic crawl
+A request to add a registry to a Marketplace. A submission is not discoverable until approved through that Marketplace's vetting process.
+_Avoid_: Published registry, automatic crawl
 
 **Index-only acquisition**:
-An acquisition mode in which a Marketplace resolves a resource to a pinned source occurrence and the consumer acquires and verifies its content from Git.
+An acquisition mode in which a Marketplace resolves a resource to a pinned registry occurrence and the consumer acquires and verifies its content from Git.
 _Avoid_: Artifact mirror
 
 **Mirror acquisition**:
-An acquisition mode in which a Marketplace distributes an immutable resource artifact indexed from a pinned source occurrence.
-_Avoid_: Publishing source, mutable package host
+An acquisition mode in which a Marketplace distributes an immutable resource artifact indexed from a pinned registry occurrence.
+_Avoid_: Publishing registry, mutable package host
 
 **Policy domain**:
-The shared administration, identity, source-approval, and trust boundary served by one Marketplace deployment.
+The shared administration, identity, registry approval, and trust boundary served by one Marketplace deployment.
 _Avoid_: Tenant
 
 **Resource coordinate**:
-The stable Marketplace identity of a resource, composed from its source identity, resource kind, and source-local name.
+The stable Marketplace identity of a resource, composed from its registry identity, resource kind, and registry-local name.
 _Avoid_: Installed name, harness path
 
 **Resource revision**:
-An immutable canonical content state of a resource coordinate, identified by its content digest. Its artifact contains only intrinsic resource data, and the same resource revision may occur in more than one source commit or receive more than one resource assessment.
-_Avoid_: Resource assessment, source occurrence, branch, mutable tag
+An immutable canonical content state of a resource coordinate, identified by its content digest. Its artifact contains only intrinsic resource data, and the same resource revision may occur in more than one registry commit or receive more than one resource assessment.
+_Avoid_: Resource assessment, registry occurrence, branch, mutable tag
 
 **Resource assessment**:
 An immutable, content-addressed analyzer and operator-policy decision about one exact resource revision. Assessments retain findings and an inspection projection reference; one assessment is selected as current without changing the resource revision.
 _Avoid_: Resource revision, revocation, safety certification
 
-**Source occurrence**:
-One exact source repository commit, the source roots used to ingest it, and its analyzer-independent source revision manifest.
+**Registry occurrence**:
+One exact registry repository commit, the registry roots used to ingest it, and its analyzer-independent registry revision manifest.
 _Avoid_: Resource occurrence, resource revision, mutable ref
 
 **Resource occurrence**:
-The membership of one exact resource revision in one source occurrence.
-_Avoid_: Source occurrence, resource revision, current assessment
+The membership of one exact resource revision in one registry occurrence.
+_Avoid_: Registry occurrence, resource revision, current assessment
 
 **Installed name**:
 The local, user-facing name under which a resource is materialized into a harness. It may be shorter than, and must not be confused with, its resource coordinate.
@@ -106,27 +106,27 @@ _Avoid_: Resource coordinate
 
 **Marketplace alias**:
 A local shorthand for a Marketplace endpoint used in discovery and installation commands.
-_Avoid_: Source identity, installed name
+_Avoid_: Registry identity, installed name
 
-**Source ID**:
-The immutable Marketplace identity assigned to an approved source. It survives repository moves and is stored in installation records.
-_Avoid_: Source slug, source origin
+**Registry ID**:
+The immutable Marketplace identity assigned to a registry. It survives repository moves and is stored in installation records.
+_Avoid_: Registry slug, registry origin
 
-**Source slug**:
-The human-readable Marketplace locator for an approved source. Its canonical value may change, but prior values remain permanent, non-reassignable aliases.
-_Avoid_: Source ID, repository URL
+**Registry slug**:
+The human-readable Marketplace locator for a registry. Its canonical value may change, but prior values remain permanent, non-reassignable aliases.
+_Avoid_: Registry ID, repository URL
 
-**Source origin**:
-The current Git location from which a Marketplace indexes an approved source. Its recorded history provides provenance across repository moves.
-_Avoid_: Source ID, Marketplace endpoint
+**Registry origin**:
+The current Git location from which a Marketplace indexes a registry. Its recorded history provides provenance across repository moves.
+_Avoid_: Registry ID, Marketplace endpoint
 
-**Source revision manifest**:
-A record connecting every resource occurrence indexed from one source repository commit to its resource revision, optional mirrored artifact, and shared provenance.
+**Registry revision manifest**:
+A record connecting every resource occurrence indexed from one registry repository commit to its resource revision, optional mirrored artifact, and shared provenance.
 _Avoid_: Resource artifact
 
 **Resource artifact**:
 An immutable, content-addressed canonical representation of one resource revision and its contained supporting files.
-_Avoid_: Source repository, source revision manifest
+_Avoid_: Registry repository, registry revision manifest
 
 **Collection revision**:
 An immutable set of exact resource revisions selected by one collection at publication time. A collection revision is virtual and never materializes directly.
@@ -137,7 +137,7 @@ The content-addressed canonical representation of one collection revision, prese
 _Avoid_: Resource artifact, collection installation
 
 **Effective revocation**:
-The revocation outcome for a resource revision when any active revision-, coordinate-, or source-level operator declaration matches it. Specificity selects the primary reason but cannot exempt it from a broader declaration.
+The revocation outcome for a resource revision when any active revision-, coordinate-, or registry-level operator declaration matches it. Specificity selects the primary reason but cannot exempt it from a broader declaration.
 _Avoid_: Deleted resource, stored revision metadata
 
 **Inspection projection**:
@@ -145,7 +145,7 @@ A bounded, immutable, analyzer-independent representation of a resource revision
 _Avoid_: Resource assessment, resource artifact, live preview, safety certification
 
 **Marketplace installation**:
-A consumer configuration record that pins a resource coordinate to an exact Marketplace instance, resource revision, canonical content digest, acquisition mode, optional mirrored artifact digest, exact source occurrence for index-only acquisition, and optional installed name.
+A consumer configuration record that pins a resource coordinate to an exact Marketplace instance, resource revision, canonical content digest, acquisition mode, optional mirrored artifact digest, exact registry occurrence for index-only acquisition, and optional installed name.
 _Avoid_: Search result, Marketplace alias
 
 **Installation selector**:
@@ -161,11 +161,11 @@ A resource revision that a Marketplace retains for provenance but refuses to res
 _Avoid_: Deleted resource
 
 **Marketplace operator**:
-The party that administers a Marketplace and decides which sources and policies it applies.
-_Avoid_: Source publisher
+The party that administers a Marketplace and decides which registries and policies it applies.
+_Avoid_: Registry publisher
 
-**Source publisher**:
-The party represented as publishing a source repository. Publisher identity is distinct from Marketplace admission and operator endorsement.
+**Registry publisher**:
+The party represented as publishing a registry repository. Publisher identity is distinct from Marketplace admission and operator endorsement.
 _Avoid_: Marketplace operator
 **Community telemetry consent**:
 An affirmative, user-controlled choice made during interactive initialization before an unmanaged installation sends community telemetry.

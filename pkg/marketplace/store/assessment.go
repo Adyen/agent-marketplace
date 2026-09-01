@@ -18,7 +18,7 @@ func (d AssessmentDecision) Validate() error {
 	}
 }
 
-// FinalizeResourceAssessment validates an assessment's source fields and
+// FinalizeResourceAssessment validates an assessment's registry fields and
 // returns a value with its canonical content digest populated. A supplied
 // AssessmentDigest must already match the canonical identity. AssessedAt is
 // recorded but deliberately excluded from that identity.
@@ -100,7 +100,7 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 		value string
 	}{
 		{label: "marketplace", value: string(assessment.Coordinate.Marketplace)},
-		{label: "source", value: string(assessment.Coordinate.Source)},
+		{label: "registry", value: string(assessment.Coordinate.Registry)},
 		{label: "kind", value: assessment.Coordinate.Kind},
 		{label: "name", value: assessment.Coordinate.Name},
 	}

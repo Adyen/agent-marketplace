@@ -4,10 +4,10 @@ import type { ResourceAvailability } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
   it('creates the documented browser locator and CLI command for route-safe values', () => {
-    const item = { source_id: 'source-id', source_slug: 'source-team', kind: 'skill' as const, name: 'code review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
+    const item = { registry_id: 'registry-id', registry_slug: 'registry-team', kind: 'skill' as const, name: 'code review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
     const url = resourceLocator(item, 'https://market.example/')
-    expect(resourceLatestLocator(item, 'https://market.example')).toBe('https://market.example/s/source-team/skill/code%20review')
-    expect(url).toBe('https://market.example/s/source-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
+    expect(resourceLatestLocator(item, 'https://market.example')).toBe('https://market.example/r/registry-team/skill/code%20review')
+    expect(url).toBe('https://market.example/r/registry-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
     expect(installCommand(item, 'https://market.example')).toBe(`agent-marketplace install "${url}"`)
   })
 
@@ -16,19 +16,19 @@ describe('copy-only resource actions', () => {
     expect(marketplaceInstallCommand('https://market.example/path?token=secret')).toBe('')
   })
 
-  it('does not generate a copy link for a source ID with an encoded slash', () => {
-    const item = { source_id: 'source/id', kind: 'skill' as const, name: 'review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
+  it('does not generate a copy link for a registry ID with an encoded slash', () => {
+    const item = { registry_id: 'registry/id', kind: 'skill' as const, name: 'review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
     expect(resourceLocator(item, 'https://market.example')).toBe('')
     expect(installCommand(item, 'https://market.example')).toBe('')
   })
 
   it.each([
-    { source_id: 'source/id', source_slug: 'source-id' },
-    { source_id: 'source-id', source_slug: 'source/team' },
-    { source_id: 'source-id', source_slug: '<script>' },
-    { source_id: 'source-id', source_slug: 'source-id', name: 'name/with/slash' },
+    { registry_id: 'registry/id', registry_slug: 'registry-id' },
+    { registry_id: 'registry-id', registry_slug: 'registry/team' },
+    { registry_id: 'registry-id', registry_slug: '<script>' },
+    { registry_id: 'registry-id', registry_slug: 'registry-id', name: 'name/with/slash' },
   ])('does not generate a locator for unsafe API route values', overrides => {
-    const item = { source_id: 'source-id', source_slug: 'source-id', kind: 'skill' as const, name: 'review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64), ...overrides }
+    const item = { registry_id: 'registry-id', registry_slug: 'registry-id', kind: 'skill' as const, name: 'review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64), ...overrides }
     expect(resourceLocator(item, 'https://market.example')).toBe('')
     expect(installCommand(item, 'https://market.example')).toBe('')
   })
@@ -91,7 +91,7 @@ describe('assessmentFindings', () => {
 
 describe('resourceAvailability', () => {
   const assessment = (decision: 'allow' | 'warn' | 'reject', findings: Array<{ code: string; severity: string; policy?: string }> = []) => ({
-    coordinate: { marketplace: 'market', source: 'source', kind: 'skill', name: 'review' },
+    coordinate: { marketplace: 'market', registry: 'registry', kind: 'skill', name: 'review' },
     content_digest: 'sha256:' + 'a'.repeat(64), assessment_digest: 'sha256:' + 'b'.repeat(64), analyzer_version: 'v2',
     policy_digest: 'sha256:' + 'c'.repeat(64), decision, findings, inspection_manifest_digest: 'sha256:' + 'd'.repeat(64), assessed_at: '2026-01-01T00:00:00Z',
   })

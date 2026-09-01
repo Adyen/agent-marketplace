@@ -84,7 +84,7 @@ resources:
 	if err := meta.Close(); err != nil {
 		t.Fatal(err)
 	}
-	env.WriteFile("/workspace/marketplace.yaml", publicGateConfig(registryURL, "e2e-public-gate/src-public/skill/skill-one@"+skillDigest+"\n    - e2e-public-gate/src-public/collection/public-bundle@"+collectionDigest, dbPath, blobsPath, listenAddr, operationsAddr))
+	env.WriteFile("/workspace/marketplace.yaml", publicGateConfig(registryURL, "e2e-public-gate/registry-public/skill/skill-one@"+skillDigest+"\n    - e2e-public-gate/registry-public/collection/public-bundle@"+collectionDigest, dbPath, blobsPath, listenAddr, operationsAddr))
 	cfg, meta, blobs = openPublicGateStores(t, cfgPath)
 	if err := worker.EnsureRevocations(t.Context(), worker.Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}); err != nil {
 		t.Fatalf("revocation reconciliation failed: %v", err)
@@ -92,11 +92,11 @@ resources:
 	defer meta.Close()
 	revokedServer := httptest.NewServer(mpapi.NewServer(cfg, meta, blobs).PublicHandler())
 	defer revokedServer.Close()
-	body := getPublicGate(t, revokedServer.URL+"/api/v1/resources/public-source/skill/skill-one")
+	body := getPublicGate(t, revokedServer.URL+"/api/v1/resources/public-registry/skill/skill-one")
 	if !strings.Contains(body, `"revocation"`) || !strings.Contains(body, "operator configured") {
 		t.Fatalf("revoked metadata did not remain visible: %s", body)
 	}
-	artifact := getPublicGateResponse(t, revokedServer.URL+"/api/v1/resources/public-source/skill/skill-one")
+	artifact := getPublicGateResponse(t, revokedServer.URL+"/api/v1/resources/public-registry/skill/skill-one")
 	defer artifact.Body.Close()
 	var revision struct {
 		ArchiveDigest string `json:"archive_digest"`
@@ -113,7 +113,7 @@ resources:
 	if response.StatusCode != http.StatusGone {
 		t.Fatalf("revoked artifact status = %d, want %d", response.StatusCode, http.StatusGone)
 	}
-	inspection := getPublicGateResponse(t, revokedServer.URL+"/api/v1/resources/public-source/skill/skill-one/revisions/"+skillDigest+"/inspection")
+	inspection := getPublicGateResponse(t, revokedServer.URL+"/api/v1/resources/public-registry/skill/skill-one/revisions/"+skillDigest+"/inspection")
 	defer inspection.Body.Close()
 	if inspection.StatusCode != http.StatusOK {
 		t.Fatalf("revoked inspection status = %d", inspection.StatusCode)
@@ -158,9 +158,9 @@ policy:
     artifact_bytes: 16777216
     clone_duration: 300s
     ingestion_duration: 120s
-sources:
-  - id: src-public
-    slug: public-source
+registries:
+  - id: registry-public
+    slug: public-registry
     origin: %s
     ref: main
     acquisition: mirror
@@ -174,7 +174,7 @@ sources:
       - path: .
         source_harness: claude
 revocations:
-  source_ids: []
+  registry_ids: []
   coordinates: []
 %s
 `, listen, operationsListen, dbPath, blobsPath, origin, revocations)
@@ -265,7 +265,7 @@ func assertPublicGateProcess(t *testing.T, env *Env, cfgPath, publicAddr, operat
 
 func publicGateResourceDigest(t *testing.T, base, kind, name string) string {
 	t.Helper()
-	response := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name)
+	response := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("resource %s/%s status = %d", kind, name, response.StatusCode)
@@ -284,7 +284,7 @@ func publicGateResourceDigest(t *testing.T, base, kind, name string) string {
 
 func publicGateCollection(t *testing.T, base string) string {
 	t.Helper()
-	response := getPublicGateResponse(t, base+"/api/v1/resources/public-source/collection/public-bundle")
+	response := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/collection/public-bundle")
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("collection status = %d", response.StatusCode)
@@ -332,7 +332,7 @@ func publicGateCollection(t *testing.T, base string) string {
 
 func assertPublicGateArtifactIntegrity(t *testing.T, base, kind, name string) {
 	t.Helper()
-	response := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name)
+	response := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name)
 	var revision struct {
 		ArchiveDigest string `json:"archive_digest"`
 	}
@@ -371,11 +371,11 @@ marketplaces:
     alias: public
 `, endpoint))
 	for _, locator := range []string{
-		"public:public-source/skill/skill-one",
-		"public:public-source/command/command-one",
-		"public:public-source/subagent/agent-one",
-		"public:public-source/hook/PreToolUse-command",
-		"public:public-source/mcpserver/server-one",
+		"public:public-registry/skill/skill-one",
+		"public:public-registry/command/command-one",
+		"public:public-registry/subagent/agent-one",
+		"public:public-registry/hook/PreToolUse-command",
+		"public:public-registry/mcpserver/server-one",
 	} {
 		result := consumer.RunAM("install", locator, "--yes")
 		if result.ExitCode != 0 {
@@ -417,8 +417,8 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 		t.Fatalf("search did not publish all five resource kinds and collection: %s", got)
 	}
 	for _, path := range []string{
-		"/s/public-source/skill/skill-one",
-		"/s/public-source/skill/skill-one/revisions/" + skillDigest,
+		"/r/public-registry/skill/skill-one",
+		"/r/public-registry/skill/skill-one/revisions/" + skillDigest,
 		"/readyz",
 		"/metrics",
 	} {
@@ -438,7 +438,7 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 			"mcpserver":  "server-one",
 			"collection": "public-bundle",
 		}[kind]
-		resource := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name)
+		resource := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name)
 		payload, err := io.ReadAll(resource.Body)
 		resource.Body.Close()
 		if err != nil || resource.StatusCode != http.StatusOK {
@@ -453,18 +453,18 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 		if !strings.HasPrefix(revision.ContentDigest, "sha256:") {
 			t.Fatalf("%s latest did not return an exact digest: %q", kind, revision.ContentDigest)
 		}
-		exact := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name+"/revisions/"+revision.ContentDigest)
+		exact := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name+"/revisions/"+revision.ContentDigest)
 		if exact.StatusCode != http.StatusOK {
 			t.Fatalf("%s exact status = %d", kind, exact.StatusCode)
 		}
 		exact.Body.Close()
-		inspection := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name+"/revisions/"+revision.ContentDigest+"/inspection")
+		inspection := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name+"/revisions/"+revision.ContentDigest+"/inspection")
 		inspectionBody, _ := io.ReadAll(inspection.Body)
 		inspection.Body.Close()
 		if inspection.StatusCode != http.StatusOK || !strings.Contains(string(inspectionBody), `"schema_version":"v1"`) {
 			t.Fatalf("%s inspection status/body = %d/%s", kind, inspection.StatusCode, inspectionBody)
 		}
-		content := getPublicGateResponse(t, base+"/api/v1/resources/public-source/"+kind+"/"+name+"/revisions/"+revision.ContentDigest+"/inspection/content")
+		content := getPublicGateResponse(t, base+"/api/v1/resources/public-registry/"+kind+"/"+name+"/revisions/"+revision.ContentDigest+"/inspection/content")
 		contentBody, _ := io.ReadAll(content.Body)
 		content.Body.Close()
 		if content.StatusCode != http.StatusOK || strings.Contains(string(contentBody), "<script>") || content.Header.Get("X-Content-Type-Options") != "nosniff" {
@@ -475,7 +475,7 @@ func assertPublicGateRoutes(t *testing.T, base string, kinds []string, skillDige
 
 func assertPublicGateNoSecrets(t *testing.T, base string, secrets []string) {
 	t.Helper()
-	for _, path := range []string{"/.well-known/agent-marketplace.json", "/api/v1/instance", "/api/v1/sources/public-source", "/api/v1/search"} {
+	for _, path := range []string{"/.well-known/agent-marketplace.json", "/api/v1/instance", "/api/v1/registries/public-registry", "/api/v1/search"} {
 		body := getPublicGate(t, base+path)
 		for _, secret := range secrets {
 			if strings.Contains(body, secret) {
@@ -585,7 +585,7 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 		for _, fragment := range []string{
 			"location = /.well-known/agent-marketplace.json {\n        proxy_pass http://marketplace_api;",
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
-			"location /s/ {\n        proxy_pass http://marketplace_web;",
+			"location /r/ {\n        proxy_pass http://marketplace_web;",
 			"location / {\n        proxy_pass http://marketplace_web;",
 			"location = /readyz { return 404; }",
 			"location = /metrics { return 404; }",
@@ -594,7 +594,7 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 				t.Errorf("%s missing routing contract fragment %q", relative, fragment)
 			}
 		}
-		if strings.Contains(config, "location /s/ {\n        proxy_pass http://marketplace_api;") {
+		if strings.Contains(config, "location /r/ {\n        proxy_pass http://marketplace_api;") {
 			t.Errorf("%s routes browser pages to the API", relative)
 		}
 	}

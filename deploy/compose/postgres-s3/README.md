@@ -29,7 +29,7 @@ The mounted `config.dsn-file.example.yaml` is authoritative for the S3 bucket, r
 
 The application containers remain non-root and read-only apart from `/tmp`. Compose mounts secrets as files; the PostgreSQL password is consumed through `POSTGRES_PASSWORD_FILE`, and the application reads its DSN through `storage.metadata.dsn_file`. S3 durability, versioning, retention, and encryption remain operator responsibilities.
 
-For a source with `ca_file: /etc/agent-marketplace/ca/internal.pem`, mount the same readable PEM bundle at that absolute path in both `api` and `worker`; both roles validate the complete operator config during startup, although only the worker uses it for Git acquisition. Keep the mount read-only and readable by container UID 1000.
+For a registry with `ca_file: /etc/agent-marketplace/ca/internal.pem`, mount the same readable PEM bundle at that absolute path in both `api` and `worker`; both roles validate the complete operator config during startup, although only the worker uses it for Git acquisition. Keep the mount read-only and readable by container UID 1000.
 
 ## Local development usage
 

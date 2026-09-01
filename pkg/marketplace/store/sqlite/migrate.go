@@ -122,7 +122,7 @@ CREATE TABLE marketplaces (
     instance_metadata TEXT NOT NULL DEFAULT '{}'
 );
 
-CREATE TABLE sources (
+CREATE TABLE registries (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL,
     aliases TEXT NOT NULL DEFAULT '[]',
@@ -141,24 +141,24 @@ CREATE TABLE sources (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX idx_sources_slug ON sources(slug);
+CREATE UNIQUE INDEX idx_registries_slug ON registries(slug);
 
 CREATE TABLE resource_revisions (
     marketplace_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
     content_digest TEXT NOT NULL,
     archive_digest TEXT,
     license TEXT,
     description TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (marketplace_id, source_id, kind, name, content_digest)
+    PRIMARY KEY (marketplace_id, registry_id, kind, name, content_digest)
 );
 CREATE INDEX idx_resource_revisions_archive ON resource_revisions(marketplace_id, archive_digest);
 CREATE INDEX idx_resource_revisions_content ON resource_revisions(marketplace_id, content_digest);
 
-CREATE TABLE source_occurrences (
-    source_id TEXT NOT NULL,
+CREATE TABLE registry_occurrences (
+    registry_id TEXT NOT NULL,
     ref TEXT NOT NULL,
     roots TEXT NOT NULL DEFAULT '[]',
     revision_commit TEXT NOT NULL,
@@ -166,34 +166,34 @@ CREATE TABLE source_occurrences (
     acquisition TEXT NOT NULL,
     mirrored_artifact_digest TEXT,
     occurred_at INTEGER NOT NULL,
-    PRIMARY KEY (source_id, revision_commit)
+    PRIMARY KEY (registry_id, revision_commit)
 );
-CREATE INDEX idx_source_occurrences_source ON source_occurrences(source_id, occurred_at DESC, revision_commit DESC);
+CREATE INDEX idx_registry_occurrences_registry ON registry_occurrences(registry_id, occurred_at DESC, revision_commit DESC);
 
-CREATE TABLE source_heads (
-    source_id TEXT PRIMARY KEY,
+CREATE TABLE registry_heads (
+    registry_id TEXT PRIMARY KEY,
     revision_commit TEXT NOT NULL,
-    FOREIGN KEY (source_id, revision_commit) REFERENCES source_occurrences(source_id, revision_commit)
+    FOREIGN KEY (registry_id, revision_commit) REFERENCES registry_occurrences(registry_id, revision_commit)
 );
 
 CREATE TABLE resource_occurrences (
     marketplace_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
     content_digest TEXT NOT NULL,
     revision_commit TEXT NOT NULL,
     manifest_digest TEXT NOT NULL,
-    PRIMARY KEY (marketplace_id, source_id, kind, name, content_digest, revision_commit),
-    FOREIGN KEY (marketplace_id, source_id, kind, name, content_digest) REFERENCES resource_revisions(marketplace_id, source_id, kind, name, content_digest),
-    FOREIGN KEY (source_id, revision_commit) REFERENCES source_occurrences(source_id, revision_commit)
+    PRIMARY KEY (marketplace_id, registry_id, kind, name, content_digest, revision_commit),
+    FOREIGN KEY (marketplace_id, registry_id, kind, name, content_digest) REFERENCES resource_revisions(marketplace_id, registry_id, kind, name, content_digest),
+    FOREIGN KEY (registry_id, revision_commit) REFERENCES registry_occurrences(registry_id, revision_commit)
 );
-CREATE INDEX idx_resource_occurrences_commit ON resource_occurrences(source_id, revision_commit, marketplace_id, kind, name);
-CREATE INDEX idx_resource_occurrences_revision ON resource_occurrences(marketplace_id, source_id, kind, name, content_digest);
+CREATE INDEX idx_resource_occurrences_commit ON resource_occurrences(registry_id, revision_commit, marketplace_id, kind, name);
+CREATE INDEX idx_resource_occurrences_revision ON resource_occurrences(marketplace_id, registry_id, kind, name, content_digest);
 
 CREATE TABLE resource_assessments (
     marketplace_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
     content_digest TEXT NOT NULL,
@@ -204,31 +204,31 @@ CREATE TABLE resource_assessments (
     findings TEXT NOT NULL DEFAULT '[]',
     inspection_manifest_digest TEXT NOT NULL,
     assessed_at INTEGER NOT NULL,
-    PRIMARY KEY (marketplace_id, source_id, kind, name, content_digest, assessment_digest),
-    FOREIGN KEY (marketplace_id, source_id, kind, name, content_digest) REFERENCES resource_revisions(marketplace_id, source_id, kind, name, content_digest)
+    PRIMARY KEY (marketplace_id, registry_id, kind, name, content_digest, assessment_digest),
+    FOREIGN KEY (marketplace_id, registry_id, kind, name, content_digest) REFERENCES resource_revisions(marketplace_id, registry_id, kind, name, content_digest)
 );
 CREATE UNIQUE INDEX idx_resource_assessments_digest ON resource_assessments(assessment_digest);
-CREATE INDEX idx_resource_assessments_revision ON resource_assessments(marketplace_id, source_id, kind, name, content_digest, assessed_at DESC);
+CREATE INDEX idx_resource_assessments_revision ON resource_assessments(marketplace_id, registry_id, kind, name, content_digest, assessed_at DESC);
 
 CREATE TABLE current_resource_assessments (
     marketplace_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
     content_digest TEXT NOT NULL,
     assessment_digest TEXT NOT NULL,
-    PRIMARY KEY (marketplace_id, source_id, kind, name, content_digest),
-    FOREIGN KEY (marketplace_id, source_id, kind, name, content_digest, assessment_digest) REFERENCES resource_assessments(marketplace_id, source_id, kind, name, content_digest, assessment_digest)
+    PRIMARY KEY (marketplace_id, registry_id, kind, name, content_digest),
+    FOREIGN KEY (marketplace_id, registry_id, kind, name, content_digest, assessment_digest) REFERENCES resource_assessments(marketplace_id, registry_id, kind, name, content_digest, assessment_digest)
 );
 
 CREATE TABLE collection_revisions (
     id TEXT PRIMARY KEY,
-    source_id TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
     manifest_digest TEXT NOT NULL,
     members TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL
 );
-CREATE INDEX idx_collection_revisions_source ON collection_revisions(source_id);
+CREATE INDEX idx_collection_revisions_registry ON collection_revisions(registry_id);
 
 CREATE TABLE revocations (
     kind TEXT NOT NULL,

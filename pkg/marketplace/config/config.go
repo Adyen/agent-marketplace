@@ -2,7 +2,7 @@
 //
 // Operator configuration is separate from the layered consumer configuration in
 // internal/config. It defines the Marketplace instance, storage backends,
-// indexing policy, approved sources, and revocations.
+// indexing policy, approved registries, and revocations.
 package config
 
 import (
@@ -120,7 +120,7 @@ type Config struct {
 	Refresh            Refresh     `yaml:"refresh"`
 	RefreshConcurrency int         `yaml:"refresh_concurrency,omitempty"`
 	Policy             Policy      `yaml:"policy"`
-	Sources            []Source    `yaml:"sources"`
+	Registries         []Registry  `yaml:"registries"`
 	Revocations        Revocations `yaml:"revocations"`
 }
 
@@ -228,7 +228,7 @@ func (p Policy) UndeclaredLicenseOutcome() string {
 
 // ResolveUndeclaredLicenseOutcome maps a configured undeclared-license value to
 // an accepted outcome, failing closed on anything unrecognised. It is exported
-// so a per-source policy override is resolved by exactly the same rule as the
+// so a per-registry policy override is resolved by exactly the same rule as the
 // global policy.
 func ResolveUndeclaredLicenseOutcome(value string) string {
 	if slices.Contains(validLicenseUndeclared, value) {
@@ -247,8 +247,8 @@ type Limits struct {
 	IngestionDuration Duration `yaml:"ingestion_duration"`
 }
 
-// Source is an approved source repository.
-type Source struct {
+// Registry is an approved registry repository.
+type Registry struct {
 	ID              string         `yaml:"id"`
 	Slug            string         `yaml:"slug"`
 	Aliases         []string       `yaml:"aliases"`
@@ -258,24 +258,24 @@ type Source struct {
 	Acquisition     string         `yaml:"acquisition"`
 	Publisher       Publisher      `yaml:"publisher"`
 	License         string         `yaml:"license"`
-	Roots           []SourceRoot   `yaml:"roots"`
+	Roots           []RegistryRoot `yaml:"roots"`
 	Credentials     Credentials    `yaml:"credentials"`
 	PolicyOverrides map[string]any `yaml:"policy_overrides"`
 }
 
-// Publisher records publisher metadata for a source.
+// Publisher records publisher metadata for a registry.
 type Publisher struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
 }
 
-// SourceRoot describes one ingest root within a source repository.
-type SourceRoot struct {
+// RegistryRoot describes one ingest root within a registry repository.
+type RegistryRoot struct {
 	Path          string `yaml:"path"`
 	SourceHarness string `yaml:"source_harness"`
 }
 
-// Credentials carries optional server-side credential references for a source.
+// Credentials carries optional server-side credential references for a registry.
 // Secret values are never allowed; only file or environment references.
 type Credentials struct {
 	SSHKey *SSHKeyCredential `yaml:"ssh_key"`
@@ -296,9 +296,9 @@ type TokenCredential struct {
 }
 
 // Revocations lists operator-configured revocations from broad to narrow:
-// source IDs, complete coordinates, and exact coordinate-plus-digest targets.
+// registry IDs, complete coordinates, and exact coordinate-plus-digest targets.
 type Revocations struct {
-	SourceIDs   []string `yaml:"source_ids"`
+	RegistryIDs []string `yaml:"registry_ids"`
 	Coordinates []string `yaml:"coordinates"`
 	Revisions   []string `yaml:"revisions"`
 }
@@ -362,13 +362,13 @@ func applyDefaults(cfg *Config) {
 	if cfg.Policy.Limits.IngestionDuration == 0 {
 		cfg.Policy.Limits.IngestionDuration = Duration(defaultIngestionDuration)
 	}
-	for i := range cfg.Sources {
-		if cfg.Sources[i].Acquisition == "" {
-			cfg.Sources[i].Acquisition = cfg.AcquisitionDefault
+	for i := range cfg.Registries {
+		if cfg.Registries[i].Acquisition == "" {
+			cfg.Registries[i].Acquisition = cfg.AcquisitionDefault
 		}
-		for j := range cfg.Sources[i].Roots {
-			if cfg.Sources[i].Roots[j].Path == "" {
-				cfg.Sources[i].Roots[j].Path = "."
+		for j := range cfg.Registries[i].Roots {
+			if cfg.Registries[i].Roots[j].Path == "" {
+				cfg.Registries[i].Roots[j].Path = "."
 			}
 		}
 	}
@@ -403,14 +403,14 @@ func (cfg Config) Validate() error {
 	errs = append(errs, cfg.Policy.Validate()...)
 	seenIDs := make(map[string]bool)
 	seenSlugs := make(map[string]bool)
-	for i, src := range cfg.Sources {
-		errs = append(errs, validateSource(i, src, cfg.Policy)...)
+	for i, src := range cfg.Registries {
+		errs = append(errs, validateRegistry(i, src, cfg.Policy)...)
 		if seenIDs[src.ID] {
-			errs = append(errs, fmt.Errorf("sources[%d].id %q is duplicated", i, src.ID))
+			errs = append(errs, fmt.Errorf("registries[%d].id %q is duplicated", i, src.ID))
 		}
 		seenIDs[src.ID] = true
 		if seenSlugs[src.Slug] {
-			errs = append(errs, fmt.Errorf("sources[%d].slug %q is duplicated", i, src.Slug))
+			errs = append(errs, fmt.Errorf("registries[%d].slug %q is duplicated", i, src.Slug))
 		}
 		seenSlugs[src.Slug] = true
 	}
@@ -626,84 +626,84 @@ func (p Policy) Validate() []error {
 	return errs
 }
 
-func validateSourceOrigin(origin string) error {
+func validateRegistryOrigin(origin string) error {
 	return publicurl.Validate(origin)
 }
 
-func validateSource(idx int, src Source, policy Policy) []error {
+func validateRegistry(idx int, src Registry, policy Policy) []error {
 	var errs []error
 	if strings.TrimSpace(src.ID) == "" {
-		errs = append(errs, fmt.Errorf("sources[%d].id is required", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].id is required", idx))
 	}
 	if strings.TrimSpace(src.Slug) == "" {
-		errs = append(errs, fmt.Errorf("sources[%d].slug is required", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].slug is required", idx))
 	} else if !slugRE.MatchString(src.Slug) {
-		errs = append(errs, fmt.Errorf("sources[%d].slug %q contains invalid characters", idx, src.Slug))
+		errs = append(errs, fmt.Errorf("registries[%d].slug %q contains invalid characters", idx, src.Slug))
 	}
 	if strings.TrimSpace(src.Origin) == "" {
-		errs = append(errs, fmt.Errorf("sources[%d].origin is required", idx))
-	} else if err := validateSourceOrigin(src.Origin); err != nil {
-		errs = append(errs, fmt.Errorf("sources[%d].origin: %w", idx, err))
+		errs = append(errs, fmt.Errorf("registries[%d].origin is required", idx))
+	} else if err := validateRegistryOrigin(src.Origin); err != nil {
+		errs = append(errs, fmt.Errorf("registries[%d].origin: %w", idx, err))
 	}
 	if strings.TrimSpace(src.Publisher.URL) != "" {
 		if err := publicurl.ErrorForField("publisher.url", src.Publisher.URL); err != nil {
-			errs = append(errs, fmt.Errorf("sources[%d].publisher.url: %w", idx, err))
+			errs = append(errs, fmt.Errorf("registries[%d].publisher.url: %w", idx, err))
 		}
 	}
 	if strings.TrimSpace(src.Ref) == "" {
-		errs = append(errs, fmt.Errorf("sources[%d].ref is required", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].ref is required", idx))
 	}
-	if err := validateSourceCAFile(idx, src.CAFile); err != nil {
+	if err := validateRegistryCAFile(idx, src.CAFile); err != nil {
 		errs = append(errs, err)
 	}
 	if len(src.Roots) == 0 {
-		errs = append(errs, fmt.Errorf("sources[%d].roots must contain at least one root", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].roots must contain at least one root", idx))
 	}
 	for i, root := range src.Roots {
 		if strings.TrimSpace(root.Path) == "" {
-			errs = append(errs, fmt.Errorf("sources[%d].roots[%d].path is required", idx, i))
+			errs = append(errs, fmt.Errorf("registries[%d].roots[%d].path is required", idx, i))
 		}
 		if strings.Contains(root.Path, "..") || filepath.IsAbs(root.Path) {
-			errs = append(errs, fmt.Errorf("sources[%d].roots[%d].path %q must be relative and not contain '..'", idx, i, root.Path))
+			errs = append(errs, fmt.Errorf("registries[%d].roots[%d].path %q must be relative and not contain '..'", idx, i, root.Path))
 		}
 		if !validSourceHarnesses[root.SourceHarness] {
-			errs = append(errs, fmt.Errorf("sources[%d].roots[%d].source_harness %q is invalid", idx, i, root.SourceHarness))
+			errs = append(errs, fmt.Errorf("registries[%d].roots[%d].source_harness %q is invalid", idx, i, root.SourceHarness))
 		}
 	}
 	if src.Acquisition != "" && !validAcquisition[src.Acquisition] {
-		errs = append(errs, fmt.Errorf("sources[%d].acquisition must be 'mirror' or 'index-only'", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].acquisition must be 'mirror' or 'index-only'", idx))
 	}
 	if src.License != "" && len(policy.LicenseAllowlist) > 0 && !slices.Contains(policy.LicenseAllowlist, src.License) {
-		errs = append(errs, fmt.Errorf("sources[%d].license %q is not in policy.license_allowlist", idx, src.License))
+		errs = append(errs, fmt.Errorf("registries[%d].license %q is not in policy.license_allowlist", idx, src.License))
 	}
 	errs = append(errs, validateCredentials(idx, src.Credentials)...)
 	return errs
 }
 
-func validateSourceCAFile(idx int, path string) error {
+func validateRegistryCAFile(idx int, path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
 	if !filepath.IsAbs(path) {
-		return fmt.Errorf("sources[%d].ca_file %q must be absolute", idx, path)
+		return fmt.Errorf("registries[%d].ca_file %q must be absolute", idx, path)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("sources[%d].ca_file %q: %w", idx, path, err)
+		return fmt.Errorf("registries[%d].ca_file %q: %w", idx, path, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("sources[%d].ca_file %q must not be a symlink", idx, path)
+		return fmt.Errorf("registries[%d].ca_file %q must not be a symlink", idx, path)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("sources[%d].ca_file %q must be a regular file", idx, path)
+		return fmt.Errorf("registries[%d].ca_file %q must be a regular file", idx, path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("sources[%d].ca_file %q is not readable: %w", idx, path, err)
+		return fmt.Errorf("registries[%d].ca_file %q is not readable: %w", idx, path, err)
 	}
 	if !x509.NewCertPool().AppendCertsFromPEM(data) {
-		return fmt.Errorf("sources[%d].ca_file %q does not contain a valid PEM certificate", idx, path)
+		return fmt.Errorf("registries[%d].ca_file %q does not contain a valid PEM certificate", idx, path)
 	}
 	return nil
 }
@@ -713,23 +713,23 @@ func validateCredentials(idx int, cred Credentials) []error {
 	hasSSH := cred.SSHKey != nil
 	hasToken := cred.Token != nil
 	if hasSSH && hasToken {
-		errs = append(errs, fmt.Errorf("sources[%d].credentials must specify ssh_key or token, not both", idx))
+		errs = append(errs, fmt.Errorf("registries[%d].credentials must specify ssh_key or token, not both", idx))
 	}
 	if hasSSH {
 		if strings.TrimSpace(cred.SSHKey.File) == "" {
-			errs = append(errs, fmt.Errorf("sources[%d].credentials.ssh_key.file is required", idx))
+			errs = append(errs, fmt.Errorf("registries[%d].credentials.ssh_key.file is required", idx))
 		}
 		if strings.TrimSpace(cred.SSHKey.Value) != "" {
-			errs = append(errs, fmt.Errorf("sources[%d].credentials.ssh_key contains an inline secret value", idx))
+			errs = append(errs, fmt.Errorf("registries[%d].credentials.ssh_key contains an inline secret value", idx))
 		}
 	}
 	if hasToken {
 		hasRef := strings.TrimSpace(cred.Token.File) != "" || strings.TrimSpace(cred.Token.Env) != ""
 		if !hasRef {
-			errs = append(errs, fmt.Errorf("sources[%d].credentials.token must reference a file or env var", idx))
+			errs = append(errs, fmt.Errorf("registries[%d].credentials.token must reference a file or env var", idx))
 		}
 		if strings.TrimSpace(cred.Token.Value) != "" {
-			errs = append(errs, fmt.Errorf("sources[%d].credentials.token contains an inline secret value", idx))
+			errs = append(errs, fmt.Errorf("registries[%d].credentials.token contains an inline secret value", idx))
 		}
 	}
 	return errs
@@ -751,12 +751,12 @@ func (r Revocations) ValidateForMarketplace(instanceID string) []error {
 
 func (r Revocations) validate(instanceID string) []error {
 	var errs []error
-	for i, id := range r.SourceIDs {
+	for i, id := range r.RegistryIDs {
 		id = strings.TrimSpace(id)
 		if id == "" {
-			errs = append(errs, fmt.Errorf("revocations.source_ids[%d] must not be empty", i))
+			errs = append(errs, fmt.Errorf("revocations.registry_ids[%d] must not be empty", i))
 		} else if strings.ContainsAny(id, "/@") {
-			errs = append(errs, fmt.Errorf("revocations.source_ids[%d] %q must be a source ID, not a coordinate", i, id))
+			errs = append(errs, fmt.Errorf("revocations.registry_ids[%d] %q must be a registry ID, not a coordinate", i, id))
 		}
 	}
 	for i, coord := range r.Coordinates {
@@ -788,10 +788,10 @@ func parseCoordinate(s string) (store.ResourceCoordinate, error) {
 	value := strings.TrimSpace(s)
 	coordinate, err := store.ParseResourceCoordinate(value)
 	if err != nil {
-		return store.ResourceCoordinate{}, fmt.Errorf("coordinate must have 4 components: marketplace/source/kind/name")
+		return store.ResourceCoordinate{}, fmt.Errorf("coordinate must have 4 components: marketplace/registry/kind/name")
 	}
 	for label, part := range map[string]string{
-		"marketplace": coordinate.Marketplace.String(), "source": coordinate.Source.String(),
+		"marketplace": coordinate.Marketplace.String(), "registry": coordinate.Registry.String(),
 		"kind": coordinate.Kind, "name": coordinate.Name,
 	} {
 		if part == "" || strings.ContainsAny(part, "/@") {

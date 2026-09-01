@@ -443,9 +443,9 @@ func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.Marketplace
 	if normalized, err := config.NormalizeMarketplaceURL(url); err == nil {
 		url = normalized
 	}
-	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", url, entry.InstanceID, pin.SourceID, pin.Digest, pin.Revision)
+	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", url, entry.InstanceID, pin.RegistryID, pin.Digest, pin.Revision)
 	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
-		key += fmt.Sprintf(":occurrence:%s:%s", pin.SourceCommit, pin.SourceManifestDigest)
+		key += fmt.Sprintf(":occurrence:%s:%s", pin.RegistryCommit, pin.RegistryManifestDigest)
 	}
 	return key
 }

@@ -404,7 +404,7 @@ marketplaces:
   - url: https://marketplace.example
     instance_id: mp
     resources:
-      - source_id: src
+      - registry_id: src
         kind: skill
         name: review
         revision: v1
@@ -412,7 +412,7 @@ marketplaces:
 `)
 	mpCache := marketplace.DefaultCache()
 	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest(referencedArchive),
 	})
@@ -454,7 +454,7 @@ marketplaces:
   - url: https://marketplace.example
     instance_id: mp
     resources:
-      - source_id: src
+      - registry_id: src
         kind: skill
         name: review
         revision: v1

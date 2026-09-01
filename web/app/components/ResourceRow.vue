@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { installCommand, kindLabel, listAvailabilityCopy, resourceLatestLocator, resourceLocator, shortDigest, sourceLabel } from '~/lib/presentation'
+import { installCommand, kindLabel, listAvailabilityCopy, resourceLatestLocator, resourceLocator, shortDigest, registryLabel } from '~/lib/presentation'
 import { useCopyText } from '~/composables/useCopyText'
 import type { ResourceListItem } from '~/types/marketplace'
 
@@ -49,16 +49,16 @@ const commandLabel = computed(() => {
         <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{{ kindLabel(item.kind) }}</span>
 
         <!-- The coordinate is the address: it is the URL and the CLI argument,
-             so source is part of the identifier rather than a lesser caption. -->
+             so registry is part of the identifier rather than a lesser caption. -->
         <h2 class="min-w-0 font-mono text-sm">
           <NuxtLink
             v-if="latestBrowserUrl"
             :to="latestBrowserUrl"
             class="rounded underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
-            <span class="text-muted">{{ sourceLabel(item) }}/</span><span class="font-medium text-highlighted">{{ item.name }}</span>
+            <span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-medium text-highlighted">{{ item.name }}</span>
           </NuxtLink>
-          <span v-else><span class="text-muted">{{ sourceLabel(item) }}/</span><span class="font-medium text-highlighted">{{ item.name }}</span></span>
+          <span v-else><span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-medium text-highlighted">{{ item.name }}</span></span>
         </h2>
 
         <span v-if="availability" class="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs">

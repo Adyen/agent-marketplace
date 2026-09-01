@@ -1,23 +1,23 @@
 import { RESOURCE_KINDS } from '~/types/marketplace'
-import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Source, SourceOccurrence, SourceSummary, WellKnown } from '~/types/marketplace'
+import type { Capabilities, InspectionFile, InspectionManifest, Marketplace, ResourceKind, ResourceListItem, ResourceRevision, SearchResult, Registry, RegistryOccurrence, RegistrySummary, WellKnown } from '~/types/marketplace'
 
 const MAX_STRING_LENGTH = 4096
 const MAX_ARRAY_LENGTH = 100
-const MAX_SOURCE_SUMMARIES = 1_000
+const MAX_REGISTRY_SUMMARIES = 1_000
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
 
 /**
- * Maximum number of source occurrences accepted from one response. The Go
+ * Maximum number of registry occurrences accepted from one response. The Go
  * endpoint currently returns an array without pagination, so a client-side
  * cap prevents an unbounded history response from consuming the browser.
  * Responses over this limit fail closed and are not partially rendered.
  */
-export const MAX_SOURCE_HISTORY_ENTRIES = 1_000
+export const MAX_REGISTRY_HISTORY_ENTRIES = 1_000
 
 // Revision history is currently returned as one array by the API. Fail closed
-// on unexpectedly large responses so a malicious or misconfigured source
+// on unexpectedly large responses so a malicious or misconfigured registry
 // cannot make the browser render an unbounded history.
 export const MAX_RESOURCE_REVISION_ENTRIES = 100
 
@@ -45,7 +45,7 @@ export function normalizeWellKnown(input: unknown): WellKnown {
   if (browserFields.some(value => value !== undefined) && browserFields.some(value => value === undefined)) {
     throw new ApiValidationError('browser fields must be provided together')
   }
-  if (browserBase !== undefined && (browserLatestRoute !== `${browserBase}/s/{source}/{kind}/{name}` || browserExactRoute !== `${browserBase}/s/{source}/{kind}/{name}/revisions/{revision}`)) {
+  if (browserBase !== undefined && (browserLatestRoute !== `${browserBase}/r/{registry}/{kind}/{name}` || browserExactRoute !== `${browserBase}/r/{registry}/{kind}/{name}/revisions/{revision}`)) {
     throw new ApiValidationError('browser route templates do not match browser_base')
   }
   return {
@@ -67,28 +67,28 @@ export function normalizeMarketplace(input: unknown): Marketplace {
   }
 }
 
-export function normalizeSourceSummaries(input: unknown): SourceSummary[] {
-  return boundedArray(input, 'sources', MAX_SOURCE_SUMMARIES).map((item, index) => {
-    const object = asObject(item, `sources[${index}]`)
+export function normalizeRegistrySummaries(input: unknown): RegistrySummary[] {
+  return boundedArray(input, 'registries', MAX_REGISTRY_SUMMARIES).map((item, index) => {
+    const object = asObject(item, `registries[${index}]`)
     return {
-      id: requiredString(object.id, `sources[${index}].id`),
-      slug: requiredString(object.slug, `sources[${index}].slug`),
+      id: requiredString(object.id, `registries[${index}].id`),
+      slug: requiredString(object.slug, `registries[${index}].slug`),
     }
   })
 }
 
-export function normalizeSource(input: unknown): Source {
-  const object = asObject(input, 'source')
+export function normalizeRegistry(input: unknown): Registry {
+  const object = asObject(input, 'registry')
   const acquisition = requiredAcquisition(object.acquisition, 'acquisition')
   const aliases = object.aliases === undefined ? undefined : stringArray(object.aliases, 'aliases')
-  const publisher = object.publisher === undefined ? undefined : normalizeSourcePublisher(object.publisher)
+  const publisher = object.publisher === undefined ? undefined : normalizeRegistryPublisher(object.publisher)
   return {
     id: requiredString(object.id, 'id'),
     slug: requiredString(object.slug, 'slug'),
     ...(aliases === undefined ? {} : { aliases }),
     origins: requiredStringArray(object.origins, 'origins'),
     ref: requiredString(object.ref, 'ref'),
-    roots: requiredArray(object.roots, 'roots').map((root, index) => normalizeSourceRoot(root, `roots[${index}]`)),
+    roots: requiredArray(object.roots, 'roots').map((root, index) => normalizeRegistryRoot(root, `roots[${index}]`)),
     acquisition,
     ...(publisher === undefined ? {} : { publisher }),
     ...(object.license === undefined ? {} : { license: boundedString(object.license, 'license') }),
@@ -96,23 +96,23 @@ export function normalizeSource(input: unknown): Source {
   }
 }
 
-export function normalizeSourceHistory(input: unknown): SourceOccurrence[] {
-  return boundedArray(input, 'source history', MAX_SOURCE_HISTORY_ENTRIES).map((item, index) => normalizeSourceOccurrence(item, `source history[${index}]`))
+export function normalizeRegistryHistory(input: unknown): RegistryOccurrence[] {
+  return boundedArray(input, 'registry history', MAX_REGISTRY_HISTORY_ENTRIES).map((item, index) => normalizeRegistryOccurrence(item, `registry history[${index}]`))
 }
 
 export function normalizeResourceRevisions(input: unknown, expected: ExpectedResourceCoordinate): ResourceRevision[] {
   return boundedArray(input, 'resource revisions', MAX_RESOURCE_REVISION_ENTRIES).map(item => normalizeResourceRevision(item, { kind: expected.kind, name: expected.name }))
 }
 
-export function normalizeSourceOccurrence(input: unknown, label = 'source occurrence'): SourceOccurrence {
+export function normalizeRegistryOccurrence(input: unknown, label = 'registry occurrence'): RegistryOccurrence {
   const object = asObject(input, label)
   if (object.revision_commit !== undefined) throw new ApiValidationError(`${label}.revision_commit is unsupported`)
   return {
-    source_id: requiredString(object.source_id, `${label}.source_id`),
+    registry_id: requiredString(object.registry_id, `${label}.registry_id`),
     ref: requiredString(object.ref, `${label}.ref`),
-    roots: requiredArray(object.roots, `${label}.roots`).map((root, index) => normalizeSourceRoot(root, `${label}.roots[${index}]`)),
+    roots: requiredArray(object.roots, `${label}.roots`).map((root, index) => normalizeRegistryRoot(root, `${label}.roots[${index}]`)),
     commit: requiredCommit(object.commit, `${label}.commit`),
-    source_revision_manifest_digest: requiredDigest(object.source_revision_manifest_digest, `${label}.source_revision_manifest_digest`),
+    registry_revision_manifest_digest: requiredDigest(object.registry_revision_manifest_digest, `${label}.registry_revision_manifest_digest`),
     acquisition: requiredAcquisition(object.acquisition, `${label}.acquisition`),
     ...(object.mirrored_artifact_digest === undefined ? {} : { mirrored_artifact_digest: requiredDigest(object.mirrored_artifact_digest, `${label}.mirrored_artifact_digest`) }),
     occurred_at: dateTimeString(object.occurred_at, `${label}.occurred_at`),
@@ -140,8 +140,8 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   const metadata = object.metadata === undefined ? undefined : stringRecord(object.metadata, `${label}.metadata`)
   const availability = normalizeListAvailability(object.availability, `${label}.availability`)
   return {
-    source_id: requiredString(object.source_id, `${label}.source_id`),
-    ...(object.source_slug === undefined ? {} : { source_slug: boundedString(object.source_slug, `${label}.source_slug`) }),
+    registry_id: requiredString(object.registry_id, `${label}.registry_id`),
+    ...(object.registry_slug === undefined ? {} : { registry_slug: boundedString(object.registry_slug, `${label}.registry_slug`) }),
     kind,
     name: requiredString(object.name, `${label}.name`),
     revision,
@@ -170,10 +170,10 @@ function normalizeListAvailability(value: unknown, label: string): ResourceListI
 }
 
 export type ExpectedResourceCoordinate = {
-  // source is the route token and may be a slug or an ID. sourceId is used
+  // registry is the route token and may be a slug or an ID. registryId is used
   // when the caller has already resolved that token to the canonical ID.
-  source?: string
-  sourceId?: string
+  registry?: string
+  registryId?: string
   kind: ResourceKind
   name: string
   contentDigest?: string
@@ -239,7 +239,7 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
 
   const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
   const revocationKind = revocationObject === undefined ? undefined : requiredString(revocationObject.kind, 'revocation.kind')
-  if (revocationKind !== undefined && !['source', 'coordinate', 'revision'].includes(revocationKind)) throw new ApiValidationError('revocation.kind is unsupported')
+  if (revocationKind !== undefined && !['registry', 'coordinate', 'revision'].includes(revocationKind)) throw new ApiValidationError('revocation.kind is unsupported')
   return {
     coordinate,
     content_digest: digest,
@@ -259,15 +259,15 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
 
 function normalizeResourceCoordinate(input: unknown, label: string): ResourceRevision['coordinate'] {
   const coordinate = stringRecord(input, label)
-  for (const field of ['marketplace', 'source', 'name']) requiredString(coordinate[field], `${label}.${field}`)
+  for (const field of ['marketplace', 'registry', 'name']) requiredString(coordinate[field], `${label}.${field}`)
   const kind = requiredString(coordinate.kind, `${label}.kind`)
   if (!isResourceKind(kind)) throw new ApiValidationError(`${label}.kind is unsupported`)
-  return { marketplace: coordinate.marketplace!, source: coordinate.source!, kind, name: coordinate.name! }
+  return { marketplace: coordinate.marketplace!, registry: coordinate.registry!, kind, name: coordinate.name! }
 }
 
 function normalizeMatchingCoordinate(input: unknown, expected: ResourceRevision['coordinate'], label: string): ResourceRevision['coordinate'] {
   const coordinate = normalizeResourceCoordinate(input, label)
-  for (const field of ['marketplace', 'source', 'kind', 'name'] as const) {
+  for (const field of ['marketplace', 'registry', 'kind', 'name'] as const) {
     if (coordinate[field] !== expected[field]) throw new ApiValidationError(`${label}.${field} does not match resource coordinate`)
   }
   return coordinate
@@ -359,10 +359,10 @@ function mediaTypeClass(mediaType: string): InspectionFile['inspection_class'] |
   return undefined
 }
 
-function validateRequestedCoordinate(coordinate: { source?: string; kind?: string; name?: string }, expected: ExpectedResourceCoordinate | undefined): void {
+function validateRequestedCoordinate(coordinate: { registry?: string; kind?: string; name?: string }, expected: ExpectedResourceCoordinate | undefined): void {
   if (!expected) return
-  if (expected.sourceId !== undefined && coordinate.source !== expected.sourceId) {
-    throw new ApiValidationError(`coordinate.source does not match requested source ${expected.sourceId}`)
+  if (expected.registryId !== undefined && coordinate.registry !== expected.registryId) {
+    throw new ApiValidationError(`coordinate.registry does not match requested registry ${expected.registryId}`)
   }
   if (coordinate.kind !== undefined && coordinate.kind !== expected.kind) {
     throw new ApiValidationError(`coordinate.kind does not match requested kind ${expected.kind}`)
@@ -372,7 +372,7 @@ function validateRequestedCoordinate(coordinate: { source?: string; kind?: strin
   }
 }
 
-function normalizeSourcePublisher(input: unknown): Source['publisher'] {
+function normalizeRegistryPublisher(input: unknown): Registry['publisher'] {
   const object = asObject(input, 'publisher')
   return {
     name: boundedString(object.name, 'publisher.name'),
@@ -380,7 +380,7 @@ function normalizeSourcePublisher(input: unknown): Source['publisher'] {
   }
 }
 
-function normalizeSourceRoot(input: unknown, label: string): Source['roots'][number] {
+function normalizeRegistryRoot(input: unknown, label: string): Registry['roots'][number] {
   const object = asObject(input, label)
   return {
     path: requiredString(object.path, `${label}.path`),
@@ -400,7 +400,7 @@ function requiredCommit(value: unknown, label: string): string {
   return commit
 }
 
-function requiredAcquisition(value: unknown, label: string): Source['acquisition'] {
+function requiredAcquisition(value: unknown, label: string): Registry['acquisition'] {
   const acquisition = requiredString(value, label)
   if (acquisition !== 'index-only' && acquisition !== 'mirror') throw new ApiValidationError(`${label} is unsupported`)
   return acquisition

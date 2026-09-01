@@ -1,4 +1,4 @@
-// Package ingest builds Marketplace source revisions from cloned source trees.
+// Package ingest builds Marketplace registry revisions from cloned registry trees.
 package ingest
 
 import (
@@ -34,9 +34,9 @@ import (
 	"github.com/google/licensecheck"
 )
 
-// Revision is the result of ingesting a single source commit.
+// Revision is the result of ingesting a single registry commit.
 type Revision struct {
-	Occurrence          store.SourceOccurrence
+	Occurrence          store.RegistryOccurrence
 	Resources           []store.ResourceRevision
 	ResourceOccurrences []store.ResourceOccurrence
 	Assessments         []store.ResourceAssessment
@@ -55,28 +55,28 @@ type Revision struct {
 	ResourceArchiveDigest map[string]string
 }
 
-// BuildSourceRevision discovers resources under dir for the given source and
+// BuildRegistryRevision discovers resources under dir for the given registry and
 // commit, builds artifacts, applies policy, and produces a publishable revision.
-func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, source store.Source, dir, commit string) (Revision, error) {
+func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string) (Revision, error) {
 	var rev Revision
 
 	if mpID == "" {
 		return rev, fmt.Errorf("marketplace id is required")
 	}
-	if source.ID == "" {
-		return rev, fmt.Errorf("source id is required")
+	if registry.ID == "" {
+		return rev, fmt.Errorf("registry id is required")
 	}
 	if dir == "" || commit == "" {
 		return rev, fmt.Errorf("dir and commit are required")
 	}
-	if len(source.Origins) == 0 {
-		return rev, fmt.Errorf("source %q has no origin", source.ID)
+	if len(registry.Origins) == 0 {
+		return rev, fmt.Errorf("registry %q has no origin", registry.ID)
 	}
-	origin := source.Origins[len(source.Origins)-1]
+	origin := registry.Origins[len(registry.Origins)-1]
 
-	policy := effectivePolicy(cfg, source.PolicyOverrides)
-	limits := effectiveLimits(cfg.Policy.Limits, source.PolicyOverrides)
-	license := effectiveLicensePolicy(cfg.Policy, source.PolicyOverrides)
+	policy := effectivePolicy(cfg, registry.PolicyOverrides)
+	limits := effectiveLimits(cfg.Policy.Limits, registry.PolicyOverrides)
+	license := effectiveLicensePolicy(cfg.Policy, registry.PolicyOverrides)
 	policyDigest, err := resourcePolicyDigest(policy, limits, license)
 	if err != nil {
 		return rev, err
@@ -102,11 +102,11 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	var collectionEntries []catalog.Entry
 	seen := make(map[string]string)
 
-	for _, root := range source.Roots {
+	for _, root := range registry.Roots {
 		rootDir := filepath.Join(dir, filepath.Clean(root.Path))
 		rel, err := filepath.Rel(dir, rootDir)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return rev, fmt.Errorf("root %q escapes source directory", root.Path)
+			return rev, fmt.Errorf("root %q escapes registry directory", root.Path)
 		}
 		if _, err := os.Stat(rootDir); err != nil {
 			if os.IsNotExist(err) {
@@ -132,7 +132,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			return rev, fmt.Errorf("catalog error at %q: %s: %s", root.Path, d.Code, d.Message)
 		}
 
-		cols, err := collection.DiscoverCollections(rootDir, string(source.Slug), origin, source.Ref, root.Path)
+		cols, err := collection.DiscoverCollections(rootDir, string(registry.Slug), origin, registry.Ref, root.Path)
 		if err != nil {
 			return rev, fmt.Errorf("discover collections at %q: %w", root.Path, err)
 		}
@@ -150,18 +150,18 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 				continue
 			}
 			key := kind + "/" + entry.Name
-			path := sourceEntryPath(dir, root, entry)
+			path := registryEntryPath(dir, root, entry)
 			if keptPath, duplicate := seen[key]; duplicate {
 				if keptPath == path {
-					return rev, fmt.Errorf("duplicate resource %q at %q in source %q", key, path, source.ID)
+					return rev, fmt.Errorf("duplicate resource %q at %q in registry %q", key, path, registry.ID)
 				}
-				slog.Warn("duplicate resource identity across source paths; keeping first occurrence",
+				slog.Warn("duplicate resource identity across registry paths; keeping first occurrence",
 					"code", "marketplace.ingest.duplicate-resource",
-					"source", source.ID,
+					"registry", registry.ID,
 					"resource", key,
 					"kept_path", keptPath,
 					"ignored_path", path,
-					"action", "assign distinct source-local names",
+					"action", "assign distinct registry-local names",
 				)
 				continue
 			}
@@ -176,13 +176,13 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			if err != nil {
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
-			r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, files, nil)
+			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, nil)
 			if err != nil {
 				return rev, fmt.Errorf("build %s %q: %w", kind, entry.Name, err)
 			}
 			rawArchive, rawArchiveDigest := r.RawArchive, r.ArchiveDigest
-			r = applyPolicyToResult(r, source.ID, limits, license, source.Acquisition)
-			if source.Acquisition == store.AcquisitionIndexOnly && len(rawArchive) > 0 {
+			r = applyPolicyToResult(r, registry.ID, limits, license, registry.Acquisition)
+			if registry.Acquisition == store.AcquisitionIndexOnly && len(rawArchive) > 0 {
 				resourceArchives[key] = rawArchive
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
@@ -190,7 +190,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			primary, projectionSupport := inspectionInput(entry.Resource, r, files)
 			p.inspectionBody, p.inspectionSupport = primary, projectionSupport
 			projection, err := inspection.Build(
-				store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: kind, Name: entry.Name},
+				store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: entry.Name},
 				r.ContentDigest, primary, projectionSupport,
 				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 			)
@@ -241,7 +241,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		visiting[name] = true
 		defer func() { delete(visiting, name) }()
 
-		root := store.SourceRoot{Path: c.SourcePath}
+		root := store.RegistryRoot{Path: c.SourcePath}
 		var directResults []artifact.BuildResult
 		var leaves []collectionLeaf
 		addLeaf := func(result artifact.BuildResult, path []string) error {
@@ -287,7 +287,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			if effectiveRef == "" {
 				effectiveRef = c.SourceRef
 			}
-			if effectiveRegistry != origin || effectiveRef != source.Ref {
+			if effectiveRegistry != origin || effectiveRef != registry.Ref {
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %q references external registry/ref which is not supported", name, m.Name)
 			}
 			if memberKind == hccir.KindCollection {
@@ -300,7 +300,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
-				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in source", name, kind, m.Name)
+				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
 			}
 			directResults = append(directResults, rp.result)
 			if err := addLeaf(rp.result, []string{name}); err != nil {
@@ -315,13 +315,13 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 
 		savedURL, savedRef, savedKey, savedPath := c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = "", "", "", ""
-		r, err := buildResource(ctx, source, root, entry, origin, commit, policy, limits, nil, directResults)
+		r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, nil, directResults)
 		c.SourceRegistryURL, c.SourceRef, c.SourceCatalogKey, c.SourcePath = savedURL, savedRef, savedKey, savedPath
 		if err != nil {
 			return artifact.BuildResult{}, nil, fmt.Errorf("build collection %q: %w", name, err)
 		}
-		r = applyPolicyToResult(r, source.ID, limits, license, source.Acquisition)
-		if source.Acquisition != store.AcquisitionMirror {
+		r = applyPolicyToResult(r, registry.ID, limits, license, registry.Acquisition)
+		if registry.Acquisition != store.AcquisitionMirror {
 			return artifact.BuildResult{}, nil, fmt.Errorf("collection %q requires mirror acquisition", name)
 		}
 		manifest, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(r.ManifestPayload))
@@ -333,7 +333,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		}
 		manifest.Leaves = nil
 		for _, leaf := range leaves {
-			manifestLeaf := hccartifact.CollectionMemberEntry{Kind: leaf.result.Kind, Name: leaf.result.Name, SourceID: string(source.ID), Revision: leaf.result.ContentDigest, InclusionPaths: leaf.paths}
+			manifestLeaf := hccartifact.CollectionMemberEntry{Kind: leaf.result.Kind, Name: leaf.result.Name, RegistryID: string(registry.ID), Revision: leaf.result.ContentDigest, InclusionPaths: leaf.paths}
 			manifest.Leaves = append(manifest.Leaves, manifestLeaf)
 		}
 		manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(manifest)
@@ -345,7 +345,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		r.Artifact.Payload = manifestPayload
 		primary, projectionSupport := inspectionInput(entry.Resource, r, nil)
 		projection, err := inspection.Build(
-			store.ResourceCoordinate{Marketplace: mpID, Source: source.ID, Kind: "collection", Name: entry.Name},
+			store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: "collection", Name: entry.Name},
 			r.ContentDigest, primary, projectionSupport,
 			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 		)
@@ -363,14 +363,14 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	}
 
 	for _, entry := range collectionEntries {
-		if source.Acquisition != store.AcquisitionMirror {
-			slog.Warn("skipping collection for non-mirror source", "source", source.ID, "collection", entry.Name, "acquisition", source.Acquisition)
+		if registry.Acquisition != store.AcquisitionMirror {
+			slog.Warn("skipping collection for non-mirror registry", "registry", registry.ID, "collection", entry.Name, "acquisition", registry.Acquisition)
 			continue
 		}
 		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
 			if strings.Contains(err.Error(), "rejected") {
-				slog.Warn("skipping collection without publishable leaves", "source", source.ID, "collection", entry.Name, "err", err)
+				slog.Warn("skipping collection without publishable leaves", "registry", registry.ID, "collection", entry.Name, "err", err)
 				continue
 			}
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
@@ -380,7 +380,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 	}
 
 	// Validate every published collection against the complete set of manifests
-	// produced for this source. This prevents a malformed or stale flattened
+	// produced for this registry. This prevents a malformed or stale flattened
 	// Leaves list from becoming part of the immutable publication.
 	publishedCollectionManifests := make(map[string]hccartifact.CollectionManifest, len(collectionEntries))
 	for _, p := range processedResults {
@@ -402,9 +402,9 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		}
 	}
 
-	var manifest artifact.SourceRevisionManifest
-	manifest.SchemaVersion = artifact.SourceRevisionSchemaV1
-	manifest.Generator = artifact.SourceRevisionGeneratorV1
+	var manifest artifact.RegistryRevisionManifest
+	manifest.SchemaVersion = artifact.RegistryRevisionSchemaV1
+	manifest.Generator = artifact.RegistryRevisionGeneratorV1
 	manifest.Resources = make([]artifact.RevisionResource, 0, len(processedResults))
 
 	for _, p := range processedResults {
@@ -426,19 +426,19 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		})
 	}
 
-	payload, digest, err := artifact.CanonicalSourceRevisionPayload(manifest)
+	payload, digest, err := artifact.CanonicalRegistryRevisionPayload(manifest)
 	if err != nil {
-		return rev, fmt.Errorf("canonical source revision manifest: %w", err)
+		return rev, fmt.Errorf("canonical registry revision manifest: %w", err)
 	}
 
-	occ := store.SourceOccurrence{
-		SourceID:                     source.ID,
-		Ref:                          source.Ref,
-		Roots:                        append([]store.SourceRoot(nil), source.Roots...),
-		Commit:                       commit,
-		SourceRevisionManifestDigest: store.RevisionDigest(digest),
-		Acquisition:                  source.Acquisition,
-		OccurredAt:                   time.Now().UTC(),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     registry.ID,
+		Ref:                            registry.Ref,
+		Roots:                          append([]store.RegistryRoot(nil), registry.Roots...),
+		Commit:                         commit,
+		RegistryRevisionManifestDigest: store.RevisionDigest(digest),
+		Acquisition:                    registry.Acquisition,
+		OccurredAt:                     time.Now().UTC(),
 	}
 
 	var resources []store.ResourceRevision
@@ -451,7 +451,7 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 		kind := api.FromIR(p.entry.Kind)
 		coord := store.ResourceCoordinate{
 			Marketplace: mpID,
-			Source:      source.ID,
+			Registry:    registry.ID,
 			Kind:        kind,
 			Name:        p.entry.Name,
 		}
@@ -506,12 +506,12 @@ func BuildSourceRevision(ctx context.Context, cfg config.Config, mpID store.Mark
 			collectionManifests = appendUpload(collectionManifests, store.ArchiveDigest(p.result.ManifestDigest), p.result.ManifestPayload)
 			members := make([]store.ResourceCoordinate, 0, len(collection.Members))
 			for _, member := range collection.Members {
-				members = append(members, store.ResourceCoordinate{Marketplace: mpID, Source: store.SourceID(member.SourceID), Kind: member.Kind, Name: member.Name})
+				members = append(members, store.ResourceCoordinate{Marketplace: mpID, Registry: store.RegistryID(member.RegistryID), Kind: member.Kind, Name: member.Name})
 			}
-			collections = append(collections, store.CollectionRevision{ID: p.result.ManifestDigest, SourceID: source.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest), Members: members})
+			collections = append(collections, store.CollectionRevision{ID: p.result.ManifestDigest, RegistryID: registry.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest), Members: members})
 		}
 
-		if kind != "collection" && source.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
+		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
 		}
 	}
@@ -550,7 +550,7 @@ func appendUniquePath(paths [][]string, candidate []string) [][]string {
 	return append(paths, append([]string(nil), candidate...))
 }
 
-func sourceEntryPath(dir string, root store.SourceRoot, entry catalog.Entry) string {
+func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry) string {
 	path := entry.Path
 	if path == "" {
 		return filepath.ToSlash(filepath.Clean(root.Path))
@@ -568,16 +568,16 @@ func sourceEntryPath(dir string, root store.SourceRoot, entry catalog.Entry) str
 // buildResource analyzes one catalog entry and builds its artifact. License
 // policy is deliberately not an input here: analysis is independent of it, and
 // the license decision is taken once, afterwards, in applyPolicyToResult.
-func buildResource(ctx context.Context, source store.Source, root store.SourceRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
+func buildResource(ctx context.Context, registry store.Registry, root store.RegistryRoot, entry catalog.Entry, origin, commit string, policy analyze.Policy, limits config.Limits, files analyze.FileSet, memberResults []artifact.BuildResult) (artifact.BuildResult, error) {
 	opts := analyze.DefaultOptions()
 	opts.Policy = policy
-	opts.Source = analyze.Source{
+	opts.Registry = analyze.Registry{
 		RegistryURL: origin,
-		Ref:         source.Ref,
+		Ref:         registry.Ref,
 		Path:        root.Path,
-		ID:          string(source.ID),
-		Slug:        source.Slug,
-		License:     resolvedResourceLicense(entry.Resource, source.License, files),
+		ID:          string(registry.ID),
+		Slug:        registry.Slug,
+		License:     resolvedResourceLicense(entry.Resource, registry.License, files),
 	}
 	opts.Limits = analyze.Limits{
 		MaxFileBytes:  limits.FileBytes,
@@ -589,7 +589,7 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 	switch r := entry.Resource.(type) {
 	case *hccir.Collection:
 		if r.SourcePath != "" {
-			opts.Source.Path = r.SourcePath
+			opts.Registry.Path = r.SourcePath
 		}
 		return artifact.BuildCollectionManifest(ctx, r, memberResults, opts)
 	case hccir.Resource:
@@ -600,7 +600,7 @@ func buildResource(ctx context.Context, source store.Source, root store.SourceRo
 }
 
 // inspectionInput turns the typed IR into the stable primary document used by
-// the inspection projection. Source paths are intentionally not used here:
+// the inspection projection. Registry paths are intentionally not used here:
 // projections must be identical for mirror and index-only acquisition.
 func inspectionInput(resource hccir.Resource, result artifact.BuildResult, files analyze.FileSet) ([]byte, analyze.FileSet) {
 	support := files
@@ -734,7 +734,7 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, error
 	resRoot := filepath.Dir(resFile)
 	relRoot, err := filepath.Rel(dir, resRoot)
 	if err != nil || relRoot == ".." || strings.HasPrefix(relRoot, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("resource source escapes source directory: %q", entry.Path)
+		return nil, fmt.Errorf("resource registry escapes registry directory: %q", entry.Path)
 	}
 
 	supportFiles, err := supportFilesFor(entry.Resource)
@@ -937,9 +937,9 @@ func effectiveLimits(base config.Limits, overrides map[string]any) config.Limits
 	return out
 }
 
-// effectiveLicensePolicy resolves the global license policy against a source's
+// effectiveLicensePolicy resolves the global license policy against a registry's
 // policy_overrides. An override that is absent, malformed, or unrecognised
-// leaves the global value in place, so a typo cannot quietly relax a source.
+// leaves the global value in place, so a typo cannot quietly relax a registry.
 func effectiveLicensePolicy(base config.Policy, overrides map[string]any) licensePolicy {
 	lp := licensePolicy{
 		allowlist:  base.LicenseAllowlist,
@@ -1016,7 +1016,7 @@ func stripArchive(r *artifact.BuildResult) {
 	r.ArchiveDigest = ""
 }
 
-// licensePolicy is the effective license policy for one source.
+// licensePolicy is the effective license policy for one registry.
 //
 // The two license conditions it decides are distinct. A resource whose declared
 // license is outside the allowlist is disallowed: the operator has seen that
@@ -1045,10 +1045,10 @@ func (lp licensePolicy) allowlistText() string { return strings.Join(lp.allowlis
 // It is a plain function rather than a closure because it runs once per resource
 // per ingest: a closure would allocate on the accepted path too, where nothing
 // is logged above debug.
-func licenseDecisionAttrs(r artifact.BuildResult, sourceID store.SourceID, lp licensePolicy, code, outcome string) []any {
+func licenseDecisionAttrs(r artifact.BuildResult, registryID store.RegistryID, lp licensePolicy, code, outcome string) []any {
 	return []any{
 		"code", code,
-		"source", sourceID,
+		"registry", registryID,
 		"kind", r.Kind,
 		"resource", r.Name,
 		"declared_license", r.License,
@@ -1059,14 +1059,14 @@ func licenseDecisionAttrs(r artifact.BuildResult, sourceID store.SourceID, lp li
 }
 
 // rejectOnLicense marks r rejected, records the reason, and logs the decision.
-func rejectOnLicense(r *artifact.BuildResult, sourceID store.SourceID, lp licensePolicy, code, message string) {
+func rejectOnLicense(r *artifact.BuildResult, registryID store.RegistryID, lp licensePolicy, code, message string) {
 	r.Rejected = true
 	r.Findings = append(r.Findings, analyze.Finding{
 		Code:     code,
 		Severity: analyze.OutcomeReject,
 		Message:  message,
 	})
-	slog.Warn("license policy rejected resource", licenseDecisionAttrs(*r, sourceID, lp, code, analyze.OutcomeReject)...)
+	slog.Warn("license policy rejected resource", licenseDecisionAttrs(*r, registryID, lp, code, analyze.OutcomeReject)...)
 }
 
 func debugEnabled() bool {
@@ -1075,7 +1075,7 @@ func debugEnabled() bool {
 
 // applyLicensePolicy records the license decision for one built result. It
 // returns the result and whether the decision stops further policy evaluation.
-func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp licensePolicy) (artifact.BuildResult, bool) {
+func applyLicensePolicy(r artifact.BuildResult, registryID store.RegistryID, lp licensePolicy) (artifact.BuildResult, bool) {
 	if !lp.enforced() {
 		return r, false
 	}
@@ -1083,7 +1083,7 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 	if strings.TrimSpace(r.License) == "" {
 		switch lp.undeclared {
 		case config.LicenseUndeclaredReject:
-			rejectOnLicense(&r, sourceID, lp, analyze.PolicyLicenseUndeclared, fmt.Sprintf(
+			rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseUndeclared, fmt.Sprintf(
 				"resource declares no license, and policy.license_undeclared is %q: it is not installable while the license allowlist (%s) is configured",
 				config.LicenseUndeclaredReject, lp.allowlistText()))
 			return r, true
@@ -1096,7 +1096,7 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 					config.LicenseUndeclaredWarn, lp.allowlistText()),
 			})
 			slog.Warn("license policy warned on undeclared license",
-				licenseDecisionAttrs(r, sourceID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeWarn)...)
+				licenseDecisionAttrs(r, registryID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeWarn)...)
 		default:
 			// Allow: the operator has already decided that an unknown license
 			// is acceptable here, so no finding is recorded. A finding would
@@ -1105,7 +1105,7 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 			// inspection projection for no decision the operator can act on.
 			if debugEnabled() {
 				slog.Debug("license policy allowed undeclared license",
-					licenseDecisionAttrs(r, sourceID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeAllow)...)
+					licenseDecisionAttrs(r, registryID, lp, analyze.PolicyLicenseUndeclared, analyze.OutcomeAllow)...)
 			}
 		}
 		return r, false
@@ -1115,7 +1115,7 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 	// copy: trimming is only how "declares nothing" is recognised, and must not
 	// widen which declared strings the allowlist accepts.
 	if !slices.Contains(lp.allowlist, r.License) {
-		rejectOnLicense(&r, sourceID, lp, analyze.PolicyLicenseNotAllowed, fmt.Sprintf(
+		rejectOnLicense(&r, registryID, lp, analyze.PolicyLicenseNotAllowed, fmt.Sprintf(
 			"declared license %q is not in the configured license allowlist (%s)",
 			r.License, lp.allowlistText()))
 		return r, true
@@ -1123,15 +1123,15 @@ func applyLicensePolicy(r artifact.BuildResult, sourceID store.SourceID, lp lice
 
 	if debugEnabled() {
 		slog.Debug("license policy allowed declared license",
-			licenseDecisionAttrs(r, sourceID, lp, "", analyze.OutcomeAllow)...)
+			licenseDecisionAttrs(r, registryID, lp, "", analyze.OutcomeAllow)...)
 	}
 	return r, false
 }
 
-func applyPolicyToResult(r artifact.BuildResult, sourceID store.SourceID, limits config.Limits, license licensePolicy, mode store.AcquisitionMode) artifact.BuildResult {
+func applyPolicyToResult(r artifact.BuildResult, registryID store.RegistryID, limits config.Limits, license licensePolicy, mode store.AcquisitionMode) artifact.BuildResult {
 	if !r.Rejected {
 		var stop bool
-		r, stop = applyLicensePolicy(r, sourceID, license)
+		r, stop = applyLicensePolicy(r, registryID, license)
 		if !stop && limits.ArtifactBytes > 0 && len(r.RawArchive) > int(limits.ArtifactBytes) {
 			artifactSize := len(r.RawArchive)
 			r.Rejected = true
@@ -1142,7 +1142,7 @@ func applyPolicyToResult(r artifact.BuildResult, sourceID store.SourceID, limits
 			})
 			slog.Warn("artifact policy decision",
 				"code", analyze.PolicyArtifactTooLarge,
-				"source", sourceID,
+				"registry", registryID,
 				"kind", r.Kind,
 				"resource", r.Name,
 				"artifact_bytes", artifactSize,

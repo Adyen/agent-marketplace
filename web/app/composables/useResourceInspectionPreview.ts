@@ -6,7 +6,7 @@ import type { InspectionFile, InspectionManifest, ResourceKind, ResourceRevision
 
 type ResourceInspectionPreviewOptions = {
   resource: Pick<ResourceRevision, 'content_digest' | 'assessment'>
-  source: string
+  registry: string
   kind: ResourceKind
   name: string
   apiBase?: string
@@ -45,7 +45,7 @@ export function useResourceInspectionPreview(options: ResourceInspectionPreviewO
   const selectedIsMarkdown = computed(() => selectedFile.value?.media_type === 'text/markdown')
   const selectedIsImage = computed(() => selectedIsPrimary.value && selectedFile.value?.inspection_class === 'image')
   const selectedImageURL = computed(() => selectedFile.value && selectedIsImage.value
-    ? resourceInspectionFilePath(options.apiBase, options.source, options.kind, options.name, resourceDigest.value, selectedFile.value.content_digest)
+    ? resourceInspectionFilePath(options.apiBase, options.registry, options.kind, options.name, resourceDigest.value, selectedFile.value.content_digest)
     : '')
   const selectedContent = computed(() => {
     if (!selectedFile.value || selectedFile.value.inspection_class !== 'text') return undefined
@@ -102,7 +102,7 @@ export function useResourceInspectionPreview(options: ResourceInspectionPreviewO
   })
 
   function inspectionFileURL(digest: string): string {
-    return resourceInspectionFilePath(options.apiBase, options.source, options.kind, options.name, resourceDigest.value, digest)
+    return resourceInspectionFilePath(options.apiBase, options.registry, options.kind, options.name, resourceDigest.value, digest)
   }
 
   return {

@@ -17,7 +17,7 @@ Do not restore a SQLite database while the worker is writing it. The migration l
 
 - Use `pg_dump`/`pg_restore` or managed PostgreSQL point-in-time backups for metadata.
 - Use S3 versioning, replication, retention, and object-lock policy according to the required recovery point and recovery time objectives.
-- Preserve all referenced artifact, manifest, and mirrored-source objects. Do not expire objects solely from an application metadata listing without an independently verified retention policy.
+- Preserve all referenced artifact, manifest, and mirrored-registry objects. Do not expire objects solely from an application metadata listing without an independently verified retention policy.
 - Back up the secret references/configuration separately from secret values; restore access through the secret manager.
 
 For restore, restore PostgreSQL and the S3 object set to a consistent recovery point, start the service with the restored DSN/bucket, and allow migrations to complete. Run readiness and sampled digest checks before traffic is enabled. A missing blob is an operational restore failure, not something the API should silently repair.

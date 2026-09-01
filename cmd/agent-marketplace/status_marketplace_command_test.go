@@ -16,7 +16,7 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(contentDigest),
 		ArchiveDigest: store.ArchiveDigest("sha256:" + strings.Repeat("b", 64)),
 	})
@@ -36,8 +36,8 @@ marketplaces:
     instance_id: mp
     alias: team
     resources:
-      - source_id: src
-        source_slug: source-slug
+      - registry_id: src
+        registry_slug: source-slug
         kind: skill
         name: review
         revision: v1
@@ -51,7 +51,7 @@ marketplaces:
 		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
 	}
 	for _, needle := range []string{
-		"MARKETPLACE PINS", "ALIAS", "SOURCE_SLUG", "INSTALLED_NAME", "team", "source-slug", "review-installed", "v1", contentDigest,
+		"MARKETPLACE PINS", "ALIAS", "REGISTRY_SLUG", "INSTALLED_NAME", "team", "source-slug", "review-installed", "v1", contentDigest,
 		"current", "false", "REPO",
 	} {
 		if !strings.Contains(output, needle) {

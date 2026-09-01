@@ -67,7 +67,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				return fmt.Errorf("ensure revocations: %w", err)
 			}
 
-			slog.Info("serve running", "marketplace", cfg.Instance.ID, "role", role, "sources", len(cfg.Sources))
+			slog.Info("serve running", "marketplace", cfg.Instance.ID, "role", role, "registries", len(cfg.Registries))
 
 			var wg sync.WaitGroup
 			errCh := make(chan error, 2)
@@ -120,17 +120,17 @@ func newServeReindexCmd() *cobra.Command {
 	var cfgPath string
 
 	cmd := &cobra.Command{
-		Use:   "reindex [source-slug-or-id]",
-		Short: "Enqueue and process one refresh job for a source",
+		Use:   "reindex [registry-slug-or-id]",
+		Short: "Enqueue and process one refresh job for a registry",
 		Long: `reindex loads the Marketplace operator configuration, opens the stores,
-optionally enqueues and waits for the indexing work for a single source. If no
-source is provided, all configured sources are reindexed.`,
+optionally enqueues and waits for the indexing work for a single registry. If no
+registry is provided, all configured registries are reindexed.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sourceArg := ""
+			registryArg := ""
 			if len(args) == 1 {
-				sourceArg = args[0]
+				registryArg = args[0]
 			}
-			slog.Info("reindex starting", "config", cfgPath, "source", sourceArg)
+			slog.Info("reindex starting", "config", cfgPath, "registry", registryArg)
 			if cfgPath == "" {
 				slog.Error("reindex failed", "reason", "--config is required")
 				return fmt.Errorf("--config is required")
@@ -155,7 +155,7 @@ source is provided, all configured sources are reindexed.`,
 				MetadataStore: meta,
 				BlobStore:     blobs,
 			}
-			// Reindex is a worker-role operation too: do not perform source
+			// Reindex is a worker-role operation too: do not perform registry
 			// acquisition while the live revocation desired set is stale.
 			if err := worker.EnsureRevocations(ctx, deps); err != nil {
 				slog.Error("reindex failed", "reason", "ensure revocations", "error", err)
@@ -167,33 +167,33 @@ source is provided, all configured sources are reindexed.`,
 
 			switch len(args) {
 			case 0:
-				for _, src := range cfg.Sources {
-					slugOrID := src.Slug
+				for _, registry := range cfg.Registries {
+					slugOrID := registry.Slug
 					if slugOrID == "" {
-						slugOrID = src.ID
+						slugOrID = registry.ID
 					}
-					slog.Info("reindexing source", "source", src.ID, "slug_or_id", slugOrID)
+					slog.Info("reindexing registry", "registry", registry.ID, "slug_or_id", slugOrID)
 					if err := worker.Reindex(ctx, deps, cfg, slugOrID); err != nil {
-						slog.Error("reindex failed", "source", src.ID, "error", err)
-						return fmt.Errorf("reindex source %q: %w", src.ID, err)
+						slog.Error("reindex failed", "registry", registry.ID, "error", err)
+						return fmt.Errorf("reindex registry %q: %w", registry.ID, err)
 					}
 				}
 			case 1:
-				slog.Info("reindexing source", "source", args[0])
+				slog.Info("reindexing registry", "registry", args[0])
 				if err := worker.Reindex(ctx, deps, cfg, args[0]); err != nil {
-					slog.Error("reindex failed", "source", args[0], "error", err)
-					return fmt.Errorf("reindex source %q: %w", args[0], err)
+					slog.Error("reindex failed", "registry", args[0], "error", err)
+					return fmt.Errorf("reindex registry %q: %w", args[0], err)
 				}
 			default:
 				slog.Error("reindex failed", "reason", "too many arguments")
-				return errors.New("accepts at most one source slug or id")
+				return errors.New("accepts at most one registry slug or id")
 			}
 
 			if err := meta.ReadyCheck(ctx, blobs); err != nil {
 				slog.Error("reindex failed", "reason", "ready check", "error", err)
 				return err
 			}
-			slog.Info("reindex complete", "sources", len(cfg.Sources))
+			slog.Info("reindex complete", "registries", len(cfg.Registries))
 			return nil
 		},
 	}

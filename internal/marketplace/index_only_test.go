@@ -59,8 +59,8 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	}
 	commit := strings.TrimSpace(string(out))
 	origin := "file://" + repo
-	source := store.Source{ID: "src", Slug: "source", Ref: "main", Origins: []string{origin}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	built, err := ingest.BuildSourceRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", source, repo, commit)
+	registry := store.Registry{ID: "src", Slug: "source", Ref: "main", Origins: []string{origin}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	built, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", registry, repo, commit)
 	if err != nil {
 		t.Fatalf("build reference revision: %v", err)
 	}
@@ -77,18 +77,18 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	revision.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: string(revision.ContentDigest), Reason: "test revocation"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
-	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/occurrences/"):
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: source.Roots, Commit: commit, SourceRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
+			_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: registry.Roots, Commit: commit, RegistryRevisionManifestDigest: built.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: revisionTime()})
 		default:
-			_ = json.NewEncoder(w).Encode(api.PublicSource{ID: "src", Slug: "source", Origins: []string{origin}, Ref: "main", Roots: []store.SourceRoot{{Path: ".wrong", SourceHarness: "factory"}}, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+			_ = json.NewEncoder(w).Encode(api.PublicRegistry{ID: "src", Slug: "source", Origins: []string{origin}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".wrong", SourceHarness: "factory"}}, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 		}
 	})
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: string(revision.ContentDigest), Digest: string(revision.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: string(built.ManifestDigest)}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: string(revision.ContentDigest), Digest: string(revision.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: string(built.ManifestDigest)}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	r := &Resolver{Cache: NewCache(t.TempDir())}
 	if resolved, errs := r.Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh); len(resolved) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "revoked") {
@@ -141,10 +141,10 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 		t.Fatalf("content digest mismatch errors = %v", errs)
 	}
 	badManifestPin := pin
-	badManifestPin.SourceManifestDigest = "sha256:" + strings.Repeat("f", 64)
+	badManifestPin.RegistryManifestDigest = "sha256:" + strings.Repeat("f", 64)
 	badManifestCfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{badManifestPin}}}}
 	if _, errs := r.ResolveWithPolicy(context.Background(), badManifestCfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh, policy); len(errs) == 0 || !strings.Contains(errs[0].Error(), "manifest") {
-		t.Fatalf("source manifest mismatch errors = %v", errs)
+		t.Fatalf("registry manifest mismatch errors = %v", errs)
 	}
 }
 
@@ -180,8 +180,8 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstCommit := strings.TrimSpace(string(commitOutput))
-	source := store.Source{ID: "src", Slug: "source", Ref: "main", Origins: []string{"file://" + repo}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	old, err := ingest.BuildSourceRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", source, repo, firstCommit)
+	registry := store.Registry{ID: "src", Slug: "source", Ref: "main", Origins: []string{"file://" + repo}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	old, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", registry, repo, firstCommit)
 	if err != nil {
 		t.Fatalf("build first revision: %v", err)
 	}
@@ -217,16 +217,16 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(assessedRevisionOccurrence(oldResource.ResourceRevision, secondCommit, string(old.ManifestDigest)))
 	})
-	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/occurrences/") {
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: source.Roots, Commit: secondCommit, SourceRevisionManifestDigest: old.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "file://" + repo, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: registry.Roots, Commit: secondCommit, RegistryRevisionManifestDigest: old.ManifestDigest, Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "file://" + repo, OccurredAt: time.Now().UTC()})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(api.PublicSource{ID: "src", Slug: "source", Origins: []string{"file://" + repo}, Ref: "main", Roots: source.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
+		_ = json.NewEncoder(w).Encode(api.PublicRegistry{ID: "src", Slug: "source", Origins: []string{"file://" + repo}, Ref: "main", Roots: registry.Roots, Acquisition: store.AcquisitionIndexOnly, Listed: true})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: string(oldResource.ContentDigest), Digest: string(oldResource.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: secondCommit, SourceManifestDigest: string(old.ManifestDigest)}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: string(oldResource.ContentDigest), Digest: string(oldResource.ContentDigest), Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: secondCommit, RegistryManifestDigest: string(old.ManifestDigest)}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "after re-ingestion") {
@@ -238,22 +238,22 @@ func TestIndexOnlyResolverRejectsDisallowedOriginBeforeGit(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	manifest := "sha256:" + strings.Repeat("b", 64)
 	content := "sha256:" + strings.Repeat("c", 64)
-	revision := assessedRevisionOccurrence(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(content)}, commit, manifest)
-	var sourceRequests int
+	revision := assessedRevisionOccurrence(store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"}, ContentDigest: store.RevisionDigest(content)}, commit, manifest)
+	var registryRequests int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
-	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
-		sourceRequests++
-		_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://evil.example/repo.git", OccurredAt: time.Now().UTC()})
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
+		registryRequests++
+		_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, RegistryRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: "https://evil.example/repo.git", OccurredAt: time.Now().UTC()})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	allowed := []string{`trusted\\.example/`}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifest}
 	cfg := &config.Config{AllowedRegistries: &allowed, Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	cache := NewCache(t.TempDir())
-	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifest}
+	identity := IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: commit, ManifestDigest: manifest}
 	if err := cache.MarkIndexOnlyArtifactVerified(identity, pin.Digest); err != nil {
 		t.Fatal(err)
 	}
@@ -261,8 +261,8 @@ func TestIndexOnlyResolverRejectsDisallowedOriginBeforeGit(t *testing.T) {
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "allowed_registries") {
 		t.Fatalf("disallowed origin errors = %v", errs)
 	}
-	if sourceRequests != 1 {
-		t.Fatalf("source occurrence requests = %d, want 1 and no Git access", sourceRequests)
+	if registryRequests != 1 {
+		t.Fatalf("registry occurrence requests = %d, want 1 and no Git access", registryRequests)
 	}
 	markerPath := filepath.Join(filepath.Dir(cache.IndexOnlyArtifactPath(identity, pin.Digest)), "verified.marker")
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
@@ -284,32 +284,32 @@ func TestIndexOnlyResolverRejectsBareLocalOriginBeforeGit(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	revision := assessedRevisionOccurrence(store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 		ContentDigest: store.RevisionDigest(content),
 	}, commit, manifest)
-	occurrenceRequests, sourceRequests := 0, 0
+	occurrenceRequests, registryRequests := 0, 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/agent-marketplace.json", func(w http.ResponseWriter, _ *http.Request) { writeTestWellKnown(w, "mp") })
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(revision) })
-	mux.HandleFunc("/api/v1/sources/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/occurrences/") {
 			occurrenceRequests++
-			_ = json.NewEncoder(w).Encode(api.ExactSourceOccurrence{SourceID: "src", Ref: "main", Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, SourceRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
+			_ = json.NewEncoder(w).Encode(api.ExactRegistryOccurrence{RegistryID: "src", Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}, Commit: commit, RegistryRevisionManifestDigest: store.RevisionDigest(manifest), Acquisition: store.AcquisitionIndexOnly, AcquisitionOrigin: origin, OccurredAt: time.Now().UTC()})
 			return
 		}
-		sourceRequests++
+		registryRequests++
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: content, Digest: content, Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifest}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}}}
 	_, errs := (&Resolver{Cache: NewCache(t.TempDir())}).Resolve(context.Background(), cfg, []hcc.Target{hcc.TargetFactory}, resolver.MarketplaceResolveModeRefresh)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "bare relative or absolute paths") {
 		t.Fatalf("unsafe local origin errors = %v", errs)
 	}
-	if occurrenceRequests != 1 || sourceRequests != 0 {
-		t.Fatalf("source requests = occurrence %d, metadata %d; origin should fail before source acquisition", occurrenceRequests, sourceRequests)
+	if occurrenceRequests != 1 || registryRequests != 0 {
+		t.Fatalf("registry requests = occurrence %d, metadata %d; origin should fail before source acquisition", occurrenceRequests, registryRequests)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("Git was invoked for unsafe local origin; marker stat = %v", err)
@@ -317,8 +317,8 @@ func TestIndexOnlyResolverRejectsBareLocalOriginBeforeGit(t *testing.T) {
 }
 
 func TestReconstructedArtifactIdentityIsAnalyzerIndependent(t *testing.T) {
-	pin := config.MarketplaceResourcePin{SourceID: "requested", Kind: "skill", Name: "review", Digest: "sha256:" + strings.Repeat("a", 64)}
-	artifact := hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{SourceID: "other", Kind: "skill", Name: "review", ContentDigest: pin.Digest}}
+	pin := config.MarketplaceResourcePin{RegistryID: "requested", Kind: "skill", Name: "review", Digest: "sha256:" + strings.Repeat("a", 64)}
+	artifact := hccartifact.CanonicalArtifact{Manifest: hccartifact.CanonicalManifest{RegistryID: "other", Kind: "skill", Name: "review", ContentDigest: pin.Digest}}
 	if err := validateReconstructedArtifactIdentity(pin, artifact); err != nil {
 		t.Fatalf("analyzer-independent identity validation failed: %v", err)
 	}
@@ -341,8 +341,8 @@ func TestStageReconstructedResourceRejectsSymlinkedSupportParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	source := store.Source{Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := stageReconstructedResource(NewCache(t.TempDir()), IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, source, "skill", "review", []string{"docs/secret.txt"})
+	registry := store.Registry{Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	_, err := stageReconstructedResource(NewCache(t.TempDir()), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, "skill", "review", []string{"docs/secret.txt"})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("stage symlinked support parent error = %v, want symlink rejection", err)
 	}
@@ -355,7 +355,7 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	contentDigest := canonical.Manifest.ContentDigest
-	canonical.Manifest.SourceID = "src"
+	canonical.Manifest.RegistryID = "src"
 	canonical.Manifest.Revision = contentDigest
 	validRaw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
@@ -363,8 +363,8 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 	}
 	commit := strings.Repeat("a", 40)
 	manifest := "sha256:" + strings.Repeat("b", 64)
-	identity := IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: commit, ManifestDigest: manifest}
-	pin := config.MarketplaceResourcePin{SourceID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly, SourceCommit: commit, SourceManifestDigest: manifest}
+	identity := IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: commit, ManifestDigest: manifest}
+	pin := config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Revision: contentDigest, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit, RegistryManifestDigest: manifest}
 
 	cases := []struct {
 		name       string
@@ -386,8 +386,8 @@ func TestCachedIndexOnlyFailuresInvalidateOccurrenceMarker(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := NewCache(t.TempDir())
-			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.SourceID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
-				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Source: "src", Kind: "skill", Name: "review"},
+			if _, err := cache.WriteIndexOnlyResourceRevision(identity, pin.RegistryID, pin.Kind, pin.Name, pin.Digest, assessedRevisionOccurrence(store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
 				ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			}, commit, manifest)); err != nil {
 				t.Fatal(err)
@@ -497,8 +497,8 @@ func TestStageReconstructedResourceRejectsSymlinkedCacheAncestor(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(cacheRoot, "compiled")); err != nil {
 		t.Fatal(err)
 	}
-	source := store.Source{Roots: []store.SourceRoot{{Path: ".agents", SourceHarness: "factory"}}}
-	_, err := stageReconstructedResource(NewCache(cacheRoot), IndexOnlyIdentity{Marketplace: "mp", SourceID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, source, "skill", "review", nil)
+	registry := store.Registry{Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	_, err := stageReconstructedResource(NewCache(cacheRoot), IndexOnlyIdentity{Marketplace: "mp", RegistryID: "src", Commit: strings.Repeat("a", 40), ManifestDigest: "sha256:" + strings.Repeat("b", 64)}, checkout, registry, "skill", "review", nil)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("stage symlinked cache ancestor error = %v, want symlink rejection", err)
 	}

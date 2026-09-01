@@ -15,13 +15,13 @@ const testMarketplaceDigest = "sha256:000000000000000000000000000000000000000000
 
 func testMarketplacePin() MarketplaceResourcePin {
 	return MarketplaceResourcePin{
-		SourceID:    "source-one",
-		SourceSlug:  "source-slug",
-		Kind:        "skill",
-		Name:        "review",
-		Revision:    "v1",
-		Digest:      testMarketplaceDigest,
-		Acquisition: MarketplaceAcquisitionMirror,
+		RegistryID:   "source-one",
+		RegistrySlug: "source-slug",
+		Kind:         "skill",
+		Name:         "review",
+		Revision:     "v1",
+		Digest:       testMarketplaceDigest,
+		Acquisition:  MarketplaceAcquisitionMirror,
 	}
 }
 
@@ -29,8 +29,8 @@ func TestEnsureMarketplacePinPersistsExactIndexOnlyOccurrence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 	pin := testMarketplacePin()
 	pin.Acquisition = MarketplaceAcquisitionIndexOnly
-	pin.SourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	pin.SourceManifestDigest = testMarketplaceDigest
+	pin.RegistryCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	pin.RegistryManifestDigest = testMarketplaceDigest
 	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestEnsureMarketplacePinPersistsExactIndexOnlyOccurrence(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := cfg.Marketplaces[0].Resources[0]
-	if got.Acquisition != pin.Acquisition || got.SourceCommit != pin.SourceCommit || got.SourceManifestDigest != pin.SourceManifestDigest {
+	if got.Acquisition != pin.Acquisition || got.RegistryCommit != pin.RegistryCommit || got.RegistryManifestDigest != pin.RegistryManifestDigest {
 		t.Fatalf("persisted index-only pin = %#v", got)
 	}
 }
@@ -59,10 +59,10 @@ func TestEnsureMarketplacePinRejectsInvalidIndexOnlyOccurrenceBeforeMutation(t *
 	}
 	pin := testMarketplacePin()
 	pin.Acquisition = MarketplaceAcquisitionIndexOnly
-	pin.SourceCommit = "not-a-commit"
-	pin.SourceManifestDigest = "not-a-digest"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "source_commit") {
-		t.Fatalf("invalid index-only pin error = %v, want source_commit validation", err)
+	pin.RegistryCommit = "not-a-commit"
+	pin.RegistryManifestDigest = "not-a-digest"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "registry_commit") {
+		t.Fatalf("invalid index-only pin error = %v, want registry_commit validation", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -73,14 +73,14 @@ func TestEnsureMarketplacePinRejectsInvalidIndexOnlyOccurrenceBeforeMutation(t *
 	}
 
 	pin = testMarketplacePin()
-	pin.SourceCommit = strings.Repeat("a", 40)
-	pin.SourceManifestDigest = "bad"
-	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "source_manifest_digest") {
-		t.Fatalf("invalid source manifest digest error = %v, want validation", err)
+	pin.RegistryCommit = strings.Repeat("a", 40)
+	pin.RegistryManifestDigest = "bad"
+	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "registry_manifest_digest") {
+		t.Fatalf("invalid registry manifest digest error = %v, want validation", err)
 	}
 
 	pin = testMarketplacePin()
-	pin.SourceCommit = "not-a-commit"
+	pin.RegistryCommit = "not-a-commit"
 	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err == nil || !strings.Contains(err.Error(), "require acquisition") {
 		t.Fatalf("mirror occurrence fields error = %v, want acquisition validation", err)
 	}
@@ -161,15 +161,15 @@ func TestEnsureMarketplacePinPreservesInstalledName(t *testing.T) {
 	}
 }
 
-func TestEnsureMarketplacePinAllowsSourceSlugRename(t *testing.T) {
+func TestEnsureMarketplacePinAllowsRegistrySlugRename(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 	pin := testMarketplacePin()
 	if err := EnsureMarketplacePinInConfig(path, "https://market.example", "instance", "public", pin); err != nil {
 		t.Fatal(err)
 	}
-	pin.SourceSlug = "renamed-source"
+	pin.RegistrySlug = "renamed-source"
 	if err := EnsureMarketplacePinInConfig(path, "HTTPS://MARKET.example/", "instance", "public", pin); err != nil {
-		t.Fatalf("source slug rename rejected: %v", err)
+		t.Fatalf("registry slug rename rejected: %v", err)
 	}
 }
 
@@ -345,8 +345,8 @@ func TestEnsureMarketplacePinFailsClosedAndPreservesBytes(t *testing.T) {
 func TestEnsureMarketplacePinRejectsUnknownAndMalformedMarketplaceFieldsBeforeMutation(t *testing.T) {
 	tests := []string{
 		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    unexpected: true\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - source_id: source\n        kind: skill\n        name: review\n        revision: v1\n        digest: sha256:0000000000000000000000000000000000000000000000000000000000000000\n        unexpected: true\n",
-		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - source_id: [source]\n",
+		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - registry_id: source\n        kind: skill\n        name: review\n        revision: v1\n        digest: sha256:0000000000000000000000000000000000000000000000000000000000000000\n        unexpected: true\n",
+		"marketplaces:\n  - url: https://market.example\n    instance_id: instance\n    resources:\n      - registry_id: [source]\n",
 	}
 	for i, data := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
@@ -466,7 +466,7 @@ func TestUpdateMarketplacePinCompareAndSwap(t *testing.T) {
 	updated := old
 	updated.Revision = "sha256:" + strings.Repeat("b", 64)
 	updated.Digest = updated.Revision
-	updated.SourceSlug = "renamed-source"
+	updated.RegistrySlug = "renamed-source"
 	snapshot, commit, err := UpdateMarketplacePinInConfigWithSnapshotAndCommit(path, "HTTPS://MARKET.example/", "instance", old, updated)
 	if err != nil {
 		t.Fatalf("update pin: %v", err)

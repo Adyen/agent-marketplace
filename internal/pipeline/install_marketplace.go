@@ -429,13 +429,13 @@ func sameMarketplacePinIdentity(url, instanceID string, pin config.MarketplaceRe
 	existingURL := canonicalMarketplaceURL(url)
 	planURL := canonicalMarketplaceURL(plan.Entry.URL)
 	return existingURL != "" && existingURL == planURL && instanceID == plan.Entry.InstanceID &&
-		pin.SourceID == plan.Pin.SourceID && pin.Kind == plan.Pin.Kind && pin.Name == plan.Pin.Name
+		pin.RegistryID == plan.Pin.RegistryID && pin.Kind == plan.Pin.Kind && pin.Name == plan.Pin.Name
 }
 
 func sameMarketplacePlanIdentity(a, b *marketplace.PreparedInstall) bool {
 	return canonicalMarketplaceURL(a.Entry.URL) != "" &&
 		canonicalMarketplaceURL(a.Entry.URL) == canonicalMarketplaceURL(b.Entry.URL) &&
-		a.Entry.InstanceID == b.Entry.InstanceID && a.Pin.SourceID == b.Pin.SourceID &&
+		a.Entry.InstanceID == b.Entry.InstanceID && a.Pin.RegistryID == b.Pin.RegistryID &&
 		a.Pin.Kind == b.Pin.Kind && a.Pin.Name == b.Pin.Name
 }
 
@@ -443,7 +443,7 @@ func sameResolvedMarketplaceIdentity(existing resolver.ResolvedArtifact, plan *m
 	existingURL := canonicalMarketplaceURL(existing.MarketplaceURL)
 	planURL := canonicalMarketplaceURL(plan.Entry.URL)
 	return existing.IsMarketplace && existingURL != "" && existingURL == planURL &&
-		existing.MarketplaceInstanceID == plan.Entry.InstanceID && existing.MarketplaceSourceID == plan.Pin.SourceID &&
+		existing.MarketplaceInstanceID == plan.Entry.InstanceID && existing.MarketplaceRegistryID == plan.Pin.RegistryID &&
 		existing.Kind == plan.Resolved.Kind && existing.Name == plan.Pin.Name
 }
 
@@ -517,20 +517,20 @@ type marketplacePreviewFinding struct {
 }
 
 type marketplacePreviewLeaf struct {
-	SourceID             marketplace.TerminalString   `json:"source_id"`
-	SourceSlug           marketplace.TerminalString   `json:"source_slug"`
-	Kind                 marketplace.TerminalString   `json:"kind"`
-	Name                 marketplace.TerminalString   `json:"name"`
-	InstalledName        marketplace.TerminalString   `json:"installed_name"`
-	Revision             marketplace.TerminalString   `json:"revision"`
-	ContentDigest        marketplace.TerminalString   `json:"content_digest"`
-	ArchiveDigest        marketplace.TerminalString   `json:"archive_digest"`
-	Acquisition          marketplace.TerminalString   `json:"acquisition"`
-	SourceCommit         marketplace.TerminalString   `json:"source_commit,omitempty"`
-	SourceManifestDigest marketplace.TerminalString   `json:"source_manifest_digest,omitempty"`
-	License              marketplace.TerminalString   `json:"license,omitempty"`
-	Findings             []marketplacePreviewFinding  `json:"findings"`
-	Capabilities         []marketplace.TerminalString `json:"capabilities"`
+	RegistryID             marketplace.TerminalString   `json:"registry_id"`
+	RegistrySlug           marketplace.TerminalString   `json:"registry_slug"`
+	Kind                   marketplace.TerminalString   `json:"kind"`
+	Name                   marketplace.TerminalString   `json:"name"`
+	InstalledName          marketplace.TerminalString   `json:"installed_name"`
+	Revision               marketplace.TerminalString   `json:"revision"`
+	ContentDigest          marketplace.TerminalString   `json:"content_digest"`
+	ArchiveDigest          marketplace.TerminalString   `json:"archive_digest"`
+	Acquisition            marketplace.TerminalString   `json:"acquisition"`
+	RegistryCommit         marketplace.TerminalString   `json:"registry_commit,omitempty"`
+	RegistryManifestDigest marketplace.TerminalString   `json:"registry_manifest_digest,omitempty"`
+	License                marketplace.TerminalString   `json:"license,omitempty"`
+	Findings               []marketplacePreviewFinding  `json:"findings"`
+	Capabilities           []marketplace.TerminalString `json:"capabilities"`
 }
 
 func marketplacePreviewFindings(values []hccartifact.CanonicalFinding) []marketplacePreviewFinding {
@@ -558,12 +558,12 @@ func marketplacePreviewLeafFromPreview(preview marketplace.InstallPreview) marke
 	caps := slices.Clone(preview.Capabilities)
 	sort.Strings(caps)
 	return marketplacePreviewLeaf{
-		SourceID: marketplace.TerminalString(preview.SourceID), SourceSlug: marketplace.TerminalString(preview.SourceSlug),
+		RegistryID: marketplace.TerminalString(preview.RegistryID), RegistrySlug: marketplace.TerminalString(preview.RegistrySlug),
 		Kind: marketplace.TerminalString(preview.Kind), Name: marketplace.TerminalString(preview.Name),
 		InstalledName: marketplace.TerminalString(preview.InstalledName), Revision: marketplace.TerminalString(preview.Revision),
 		ContentDigest: marketplace.TerminalString(preview.ContentDigest), ArchiveDigest: marketplace.TerminalString(preview.ArchiveDigest),
-		Acquisition:  marketplace.TerminalString(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)),
-		SourceCommit: marketplace.TerminalString(preview.SourceCommit), SourceManifestDigest: marketplace.TerminalString(preview.SourceManifestDigest),
+		Acquisition:    marketplace.TerminalString(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)),
+		RegistryCommit: marketplace.TerminalString(preview.RegistryCommit), RegistryManifestDigest: marketplace.TerminalString(preview.RegistryManifestDigest),
 		License: marketplace.TerminalString(preview.License), Findings: marketplacePreviewFindings(preview.Findings),
 		Capabilities: marketplace.TerminalStrings(caps),
 	}
@@ -632,7 +632,7 @@ func marketplaceInstallPreview(plan *marketplace.PreparedInstall) (string, error
 		capabilities = marketplace.QuoteTerminal("none")
 	}
 	provenance := fmt.Sprintf("registry_url=%s ref=%s path=%s generator=%s", marketplace.QuoteTerminal(preview.Provenance.RegistryURL), marketplace.QuoteTerminal(preview.Provenance.Ref), marketplace.QuoteTerminal(preview.Provenance.Path), marketplace.QuoteTerminal(preview.Provenance.Generator))
-	result := fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nsource: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nsource_commit: %s\nsource_manifest_digest: %s\nlicense: %s\n%s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.SourceSlug), marketplace.QuoteTerminal(preview.SourceID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.SourceCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.SourceManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findings, capabilities, provenance)
+	result := fmt.Sprintf("Marketplace install preview:\nmarketplace: %s (%s)\ninstance_id: %s\nregistry: %s (%s)\nkind: %s\nname: %s\ninstalled_name: %s\nrevision: %s\ncontent_digest: %s\narchive_digest: %s\nacquisition: %s\nregistry_commit: %s\nregistry_manifest_digest: %s\nlicense: %s\n%s\ncapabilities: %s\nprovenance: %s", marketplace.QuoteTerminal(displayMarketplace(plan)), marketplace.QuoteTerminal(preview.MarketplaceURL), marketplace.QuoteTerminal(preview.InstanceID), marketplace.QuoteTerminal(preview.RegistrySlug), marketplace.QuoteTerminal(preview.RegistryID), marketplace.QuoteTerminal(preview.Kind), marketplace.QuoteTerminal(preview.Name), marketplace.QuoteTerminal(preview.InstalledName), marketplace.QuoteTerminal(preview.Revision), marketplace.QuoteTerminal(preview.ContentDigest), marketplace.QuoteTerminal(preview.ArchiveDigest), marketplace.QuoteTerminal(nonEmpty(preview.Acquisition, config.MarketplaceAcquisitionMirror)), marketplace.QuoteTerminal(nonEmpty(preview.RegistryCommit, "none")), marketplace.QuoteTerminal(nonEmpty(preview.RegistryManifestDigest, "none")), marketplace.QuoteTerminal(nonEmpty(preview.License, "none")), findings, capabilities, provenance)
 	if len(preview.CollectionMembers) == 0 {
 		return result, nil
 	}

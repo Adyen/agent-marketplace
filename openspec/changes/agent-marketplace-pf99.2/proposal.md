@@ -7,7 +7,7 @@ manifests that turn IR resources into deterministic Marketplace artifacts.
 - `pkg/marketplace/analyze` — analyzer engine, policy, scanners, and per-kind
   analyzers for skills, commands, subagents, hooks, MCP servers, and collections.
 - `pkg/marketplace/artifact` — `BuildResourceArtifact`, `BuildCollectionManifest`,
-  `SourceRevisionManifest`, capability extraction, and finding conversion.
+  `RegistryRevisionManifest`, capability extraction, and finding conversion.
 - Extend `pkg/harness-compilation/artifact/canonical.go` with analyzer/version,
   policy outcome, and total-size/total-file archive limits.
 
@@ -20,5 +20,5 @@ artifact is rejected.
 ## Impact
 - New Go packages and public APIs for analysis and artifact building.
 - Deterministic tar.gz artifacts carry analyzer findings and capabilities.
-- Collection manifests are wrapped as canonical artifacts; source revision
-  manifests provide a sorted, digest-covered index of a source revision.
+- Collection manifests are wrapped as canonical artifacts; registry revision
+  manifests provide a sorted, digest-covered index of a registry revision.

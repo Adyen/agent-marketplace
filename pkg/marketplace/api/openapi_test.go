@@ -46,23 +46,23 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/capabilities",
 		"/api/v1/instance",
 		"/api/v1/search",
-		"/api/v1/sources",
-		"/api/v1/sources/{source}",
-		"/api/v1/sources/{source}/history",
-		"/api/v1/sources/{source}/occurrences/{commit}",
-		"/api/v1/resources/{source}/{kind}/{name}",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}",
-		"/api/v1/manifests/{source-revision}",
+		"/api/v1/registries",
+		"/api/v1/registries/{registry}",
+		"/api/v1/registries/{registry}/history",
+		"/api/v1/registries/{registry}/occurrences/{commit}",
+		"/api/v1/resources/{registry}/{kind}/{name}",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}",
+		"/api/v1/manifests/{registry-revision}",
 		"/api/v1/assessments/sha256/{digest}",
 		"/api/v1/inspection/sha256/{digest}",
 		"/api/v1/content/sha256/{digest}",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 		"/api/v1/artifacts/sha256/{digest}",
-		"/s/{source}/{kind}/{name}",
-		"/s/{source}/{kind}/{name}/revisions/{revision}",
+		"/r/{registry}/{kind}/{name}",
+		"/r/{registry}/{kind}/{name}/revisions/{revision}",
 		"/healthz",
 	}
 	for _, p := range requiredPaths {
@@ -79,7 +79,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("openapi schemas missing")
 	}
-	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Source", "SourceOccurrence", "ExactSourceOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile"} {
+	for _, name := range []string{"Capabilities", "WellKnown", "Marketplace", "Registry", "RegistryOccurrence", "ExactRegistryOccurrence", "SearchResult", "ResourceListItem", "ResourceRevision", "ResourceAssessment", "AssessmentFinding", "ResourceOccurrence", "Revocation", "ResourceCoordinate", "InspectionManifest", "InspectionFile"} {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
@@ -91,8 +91,8 @@ func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	paths := doc["paths"].(map[string]any)
 	for _, route := range []string{
 		"/api/v1/content/sha256/{digest}",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content",
-		"/api/v1/resources/{source}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
+		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 	} {
 		operation := paths[route].(map[string]any)["get"].(map[string]any)
 		response := operation["responses"].(map[string]any)["200"].(map[string]any)
@@ -119,8 +119,8 @@ func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)
-	latest := paths["/s/{source}/{kind}/{name}"].(map[string]any)["get"].(map[string]any)
-	exact := paths["/s/{source}/{kind}/{name}/revisions/{revision}"].(map[string]any)["get"].(map[string]any)
+	latest := paths["/r/{registry}/{kind}/{name}"].(map[string]any)["get"].(map[string]any)
+	exact := paths["/r/{registry}/{kind}/{name}/revisions/{revision}"].(map[string]any)["get"].(map[string]any)
 	for name, operation := range map[string]map[string]any{"latest": latest, "exact": exact} {
 		responses := operation["responses"].(map[string]any)
 		response := responses["200"].(map[string]any)
@@ -142,18 +142,18 @@ func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing
 	}
 }
 
-func TestOpenAPISourceSchemaIsPublicMetadataOnly(t *testing.T) {
+func TestOpenAPIRegistrySchemaIsPublicMetadataOnly(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	components := doc["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
-	source := schemas["Source"].(map[string]any)
+	source := schemas["Registry"].(map[string]any)
 	if source["additionalProperties"] != false {
-		t.Fatalf("Source schema must reject undeclared private fields: %#v", source["additionalProperties"])
+		t.Fatalf("Registry schema must reject undeclared private fields: %#v", source["additionalProperties"])
 	}
 	properties := source["properties"].(map[string]any)
 	for _, privateField := range []string{"credentials_ref", "refresh_status", "refresh_error", "refreshed_at", "policy_overrides"} {
 		if _, ok := properties[privateField]; ok {
-			t.Errorf("Source schema exposes private field %q", privateField)
+			t.Errorf("Registry schema exposes private field %q", privateField)
 		}
 	}
 }
@@ -171,9 +171,9 @@ func TestOpenAPIUsesOriginServerAndCanonicalOccurrenceFields(t *testing.T) {
 
 	components := doc["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
-	occurrence := schemas["SourceOccurrence"].(map[string]any)
+	occurrence := schemas["RegistryOccurrence"].(map[string]any)
 	if _, ok := occurrence["anyOf"]; ok {
-		t.Fatal("SourceOccurrence must not expose compatibility alternatives")
+		t.Fatal("RegistryOccurrence must not expose compatibility alternatives")
 	}
 	required := occurrence["required"].([]any)
 	seen := map[string]bool{}
@@ -183,17 +183,17 @@ func TestOpenAPIUsesOriginServerAndCanonicalOccurrenceFields(t *testing.T) {
 		}
 	}
 	if !seen["commit"] || seen["revision_commit"] {
-		t.Fatalf("SourceOccurrence required fields = %#v, want canonical commit only", seen)
+		t.Fatalf("RegistryOccurrence required fields = %#v, want canonical commit only", seen)
 	}
 	properties := occurrence["properties"].(map[string]any)
 	if _, ok := properties["revision_commit"]; ok {
-		t.Fatal("SourceOccurrence must not expose revision_commit")
+		t.Fatal("RegistryOccurrence must not expose revision_commit")
 	}
 	commit := properties["commit"].(map[string]any)
 	if commit["pattern"] != "^[0-9a-f]{40}$" {
 		t.Fatalf("commit pattern = %#v, want full lowercase Git object ID", commit["pattern"])
 	}
-	for _, field := range []string{"source_revision_manifest_digest", "mirrored_artifact_digest"} {
+	for _, field := range []string{"registry_revision_manifest_digest", "mirrored_artifact_digest"} {
 		property := properties[field].(map[string]any)
 		if property["pattern"] != "^sha256:[0-9a-f]{64}$" {
 			t.Fatalf("%s pattern = %#v, want strict lowercase SHA-256", field, property["pattern"])
@@ -322,7 +322,7 @@ func TestOpenAPIResourceRevisionRequiresCompleteCoordinate(t *testing.T) {
 	if len(required) != 4 {
 		t.Fatalf("ResourceRevision.coordinate required fields = %#v, want all four identity fields", required)
 	}
-	for _, field := range []string{"marketplace", "source", "kind", "name"} {
+	for _, field := range []string{"marketplace", "registry", "kind", "name"} {
 		found := false
 		for _, value := range required {
 			if value == field {

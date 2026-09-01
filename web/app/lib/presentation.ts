@@ -28,8 +28,8 @@ export function kindIcon(kind: ResourceKind): string {
   return KIND_ICONS[kind]
 }
 
-export function sourceLabel(item: ResourceListItem): string {
-  return item.source_slug || item.source_id
+export function registryLabel(item: ResourceListItem): string {
+  return item.registry_slug || item.registry_id
 }
 
 export function safeCanonicalUrl(value: string | undefined): string {
@@ -45,9 +45,9 @@ export function safeCanonicalUrl(value: string | undefined): string {
 
 export function resourceLatestLocator(item: ResourceListItem, browserBase: string): string {
   const canonical = safeCanonicalUrl(browserBase)
-  const source = item.source_slug || item.source_id
-  if (!canonical || !isSafeRouteToken(item.source_id) || (item.source_slug !== undefined && !isSafeRouteToken(item.source_slug)) || !isSafeResourceRoute(source, item.kind, item.name)) return ''
-  return `${canonical}/s/${encodeURIComponent(source)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
+  const registry = item.registry_slug || item.registry_id
+  if (!canonical || !isSafeRouteToken(item.registry_id) || (item.registry_slug !== undefined && !isSafeRouteToken(item.registry_slug)) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
+  return `${canonical}/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
 }
 
 export function resourceLocator(item: ResourceListItem, browserBase: string): string {

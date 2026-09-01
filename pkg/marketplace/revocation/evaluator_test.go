@@ -8,9 +8,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func assessedRevision(marketplace, source, kind, name string, digest store.RevisionDigest) store.AssessedResourceRevision {
+func assessedRevision(marketplace, registry, kind, name string, digest store.RevisionDigest) store.AssessedResourceRevision {
 	return store.AssessedResourceRevision{ResourceRevision: store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(marketplace), Source: store.SourceID(source), Kind: kind, Name: name},
+		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(marketplace), Registry: store.RegistryID(registry), Kind: kind, Name: name},
 		ContentDigest: digest,
 	}}
 }
@@ -27,7 +27,7 @@ func TestEvaluatorMatchesExactCoordinateAndDigest(t *testing.T) {
 	}
 	for name, revision := range map[string]store.AssessedResourceRevision{
 		"other marketplace": assessedRevision("other", "src", "skill", "review", digest),
-		"other source":      assessedRevision("mp", "other", "skill", "review", digest),
+		"other registry":    assessedRevision("mp", "other", "skill", "review", digest),
 		"other kind":        assessedRevision("mp", "src", "command", "review", digest),
 		"other name":        assessedRevision("mp", "src", "skill", "other", digest),
 		"other digest":      assessedRevision("mp", "src", "skill", "review", store.RevisionDigest("sha256:"+strings.Repeat("b", 64))),
@@ -82,7 +82,7 @@ func TestEvaluatorSpecificityAndDeclarations(t *testing.T) {
 	digestA := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
 	digestB := store.RevisionDigest("sha256:" + strings.Repeat("b", 64))
 	evaluator, err := New(config.Config{Instance: config.Instance{ID: "mp"}, Revocations: config.Revocations{
-		SourceIDs: []string{"src"}, Coordinates: []string{"mp/src/skill/review"}, Revisions: []string{"mp/src/skill/review@" + digestA.String()},
+		RegistryIDs: []string{"src"}, Coordinates: []string{"mp/src/skill/review"}, Revisions: []string{"mp/src/skill/review@" + digestA.String()},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestEvaluatorSpecificityAndDeclarations(t *testing.T) {
 	}{
 		{"exact", assessedRevision("mp", "src", "skill", "review", digestA), store.RevocationRevision},
 		{"coordinate", assessedRevision("mp", "src", "skill", "review", digestB), store.RevocationCoordinate},
-		{"source", assessedRevision("mp", "src", "command", "other", digestB), store.RevocationSource},
+		{"registry", assessedRevision("mp", "src", "command", "other", digestB), store.RevocationRegistry},
 		{"unrelated", assessedRevision("mp", "other", "skill", "review", digestB), ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {

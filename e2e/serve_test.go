@@ -46,7 +46,7 @@ policy:
     artifact_bytes: 16777216
     clone_duration: 300s
     ingestion_duration: 120s
-sources:
+registries:
   - id: src-serve
     slug: serve-source
     origin: %s

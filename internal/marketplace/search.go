@@ -136,7 +136,7 @@ func FederatedSearch(ctx context.Context, ec config.EffectiveConfig, query strin
 		if c := cmp.Compare(a.Marketplace, b.Marketplace); c != 0 {
 			return c
 		}
-		if c := cmp.Compare(a.SourceSlug, b.SourceSlug); c != 0 {
+		if c := cmp.Compare(a.RegistrySlug, b.RegistrySlug); c != 0 {
 			return c
 		}
 		if c := cmp.Compare(a.Kind, b.Kind); c != 0 {

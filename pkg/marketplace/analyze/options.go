@@ -1,7 +1,7 @@
 package analyze
 
-// Source records where the analyzed content came from.
-type Source struct {
+// Registry records where the analyzed content came from.
+type Registry struct {
 	RegistryURL string
 	Ref         string
 	Path        string
@@ -21,7 +21,7 @@ type Limits struct {
 // Options configures an Analyze run.
 type Options struct {
 	Policy   Policy
-	Source   Source
+	Registry Registry
 	Limits   Limits
 	Analyzer string
 	Version  string

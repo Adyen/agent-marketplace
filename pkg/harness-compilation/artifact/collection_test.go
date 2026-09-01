@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -65,6 +66,16 @@ func TestCollectionManifestDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(payload1, payload2) {
 		t.Fatalf("collection payload not deterministic")
+	}
+}
+
+func TestCollectionMemberRegistryIdentityJSON(t *testing.T) {
+	payload, err := json.Marshal(CollectionMemberEntry{RegistryID: "registry-id"})
+	if err != nil {
+		t.Fatalf("marshal collection member: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"registry_id":"registry-id"`)) {
+		t.Fatalf("registry identity field missing from collection member: %s", payload)
 	}
 }
 
@@ -193,12 +204,12 @@ func TestNestedCollectionManifestPreservesIncludesLeavesAndPaths(t *testing.T) {
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "root",
 		Members: []CollectionMemberEntry{
-			{Kind: "collection", Name: "base", SourceID: "source", Revision: digest},
-			{Kind: "skill", Name: "direct", SourceID: "source", Revision: digest},
+			{Kind: "collection", Name: "base", RegistryID: "registry", Revision: digest},
+			{Kind: "skill", Name: "direct", RegistryID: "registry", Revision: digest},
 		},
 		Includes: []string{"base"},
 		Leaves: []CollectionMemberEntry{{
-			Kind: "skill", Name: "review", SourceID: "source", Revision: digest,
+			Kind: "skill", Name: "review", RegistryID: "registry", Revision: digest,
 			InclusionPaths: [][]string{{"root", "base"}, {"root", "security"}},
 		}},
 		SupportedSchemas: []string{CollectionSchemaV1},
@@ -230,8 +241,8 @@ func TestCollectionManifestRejectsConflictingLeafRevisions(t *testing.T) {
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "root",
 		Leaves: []CollectionMemberEntry{
-			{Kind: "skill", Name: "review", SourceID: "source", Revision: "sha256:" + strings.Repeat("a", 64), InclusionPaths: [][]string{{"root"}}},
-			{Kind: "skill", Name: "review", SourceID: "source", Revision: "sha256:" + strings.Repeat("b", 64), InclusionPaths: [][]string{{"root"}}},
+			{Kind: "skill", Name: "review", RegistryID: "registry", Revision: "sha256:" + strings.Repeat("a", 64), InclusionPaths: [][]string{{"root"}}},
+			{Kind: "skill", Name: "review", RegistryID: "registry", Revision: "sha256:" + strings.Repeat("b", 64), InclusionPaths: [][]string{{"root"}}},
 		},
 	}
 	if err := ValidateCollectionManifest(manifest); err == nil || !strings.Contains(err.Error(), "duplicate collection leaf") {
@@ -247,16 +258,16 @@ func TestValidateAndExpandCollectionManifestGraphAllowsSameNameDistinctRevisions
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "shared",
 		ContentDigest: secondDigest,
-		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
-		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"shared"}}}},
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"shared"}}}},
 	}
 	first := CollectionManifest{
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "shared",
 		ContentDigest: firstDigest,
-		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "shared", SourceID: "src", Revision: secondDigest}},
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "shared", RegistryID: "reg", Revision: secondDigest}},
 		Includes:      []string{"shared"},
-		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"shared", "shared"}}}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"shared", "shared"}}}},
 	}
 	leaves, err := ValidateAndExpandCollectionManifestGraph(first, map[string]CollectionManifest{secondDigest: second})
 	if err != nil {
@@ -274,17 +285,17 @@ func TestValidateAndExpandCollectionManifestGraphRejectsStaleFlattenedLeaves(t *
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "child",
 		ContentDigest: childDigest,
-		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
-		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"child"}}}},
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"child"}}}},
 	}
 	root := CollectionManifest{
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "root",
-		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", SourceID: "src", Revision: childDigest}, {Kind: "skill", Name: "direct", SourceID: "src", Revision: leafDigest}},
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", RegistryID: "reg", Revision: childDigest}, {Kind: "skill", Name: "direct", RegistryID: "reg", Revision: leafDigest}},
 		Includes:      []string{"child"},
 		Leaves: []CollectionMemberEntry{
-			{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child"}}},
-			{Kind: "skill", Name: "extra", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root"}}},
+			{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child"}}},
+			{Kind: "skill", Name: "extra", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"root"}}},
 		},
 	}
 	nested := map[string]CollectionManifest{childDigest: child}
@@ -305,15 +316,15 @@ func TestValidateAndExpandCollectionManifestGraphRejectsInvalidInclusionPath(t *
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "child",
 		ContentDigest: childDigest,
-		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest}},
-		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"child", "not-a-member"}}}},
+		Members:       []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"child", "not-a-member"}}}},
 	}
 	root := CollectionManifest{
 		SchemaVersion: CollectionSchemaV1,
 		Name:          "root",
-		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", SourceID: "src", Revision: childDigest}},
+		Members:       []CollectionMemberEntry{{Kind: "collection", Name: "child", RegistryID: "reg", Revision: childDigest}},
 		Includes:      []string{"child"},
-		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "src", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child", "not-a-member"}}}},
+		Leaves:        []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "reg", Revision: leafDigest, InclusionPaths: [][]string{{"root", "child", "not-a-member"}}}},
 	}
 	if _, err := ValidateAndExpandCollectionManifestGraph(root, map[string]CollectionManifest{childDigest: child}); err == nil || !strings.Contains(err.Error(), "inclusion paths") {
 		t.Fatalf("invalid inclusion path error = %v, want graph-path rejection", err)
@@ -326,14 +337,14 @@ func TestValidateAndExpandCollectionManifestGraphExpandsDirectLeavesWhenFlat(t *
 		SchemaVersion:    CollectionSchemaV1,
 		Name:             "bundle",
 		SupportedSchemas: []string{CollectionSchemaV1},
-		Members:          []CollectionMemberEntry{{Kind: "skill", Name: "review", SourceID: "source", Revision: digest}},
+		Members:          []CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "registry", Revision: digest}},
 	}
 	cases := []struct {
 		name   string
 		mutate func(*CollectionManifest)
 		want   string
 	}{
-		{"missing source", func(m *CollectionManifest) { m.Members[0].SourceID = "" }, "source_id"},
+		{"missing registry", func(m *CollectionManifest) { m.Members[0].RegistryID = "" }, "registry_id"},
 		{"missing revision", func(m *CollectionManifest) { m.Members[0].Revision = "" }, "revision"},
 		{"nested member", func(m *CollectionManifest) { m.Members[0].Kind = "collection" }, "nested"},
 		{"includes", func(m *CollectionManifest) { m.Includes = []string{"base"} }, "includes"},

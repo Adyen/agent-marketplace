@@ -11,15 +11,15 @@
 
 ### Architecture description
 
-Agent Marketplace is a Go CLI that ingests agent resources from Git or local source repositories, converts them into a harness-neutral intermediate representation, resolves configured selections, and materializes them into agent harness layouts. The approved Marketplace extension adds a public HTTP API, an asynchronous ingestion worker, durable metadata and artifact stores, canonical resource artifacts, and a separate Nuxt frontend.
+Agent Marketplace is a Go CLI that ingests agent resources from Git or local registries, converts them into a harness-neutral intermediate representation, resolves configured selections, and materializes them into agent harness layouts. The approved Marketplace extension adds a public HTTP API, an asynchronous ingestion worker, durable metadata and artifact stores, canonical resource artifacts, and a separate Nuxt frontend.
 
 The security-critical components are:
 
 1. **CLI and layered configuration**: accepts registry and Marketplace endpoints, selects exact resources, enforces organization policy, caches content, and writes harness files.
 2. **Git acquisition and harness-compilation ingestion**: reads untrusted repository trees and converts skills, commands, subagents, hooks, MCP servers, and collections into canonical resource semantics.
-3. **Marketplace worker**: resolves configured source refs, clones in bounded workspaces, analyzes content, creates deterministic artifacts, and atomically publishes complete revisions.
+3. **Marketplace worker**: resolves configured registry refs, clones in bounded workspaces, analyzes content, creates deterministic artifacts, and atomically publishes complete revisions.
 4. **Marketplace API**: exposes capabilities, search, provenance, manifests, immutable artifacts, health, readiness, and metrics.
-5. **Metadata and blob storage**: stores source history, immutable revision metadata, security findings, revocations, jobs, and artifact bytes.
+5. **Metadata and blob storage**: stores registry history, immutable revision metadata, security findings, revocations, jobs, and artifact bytes.
 6. **Nuxt frontend**: renders untrusted catalog metadata and Markdown as a read-only discovery interface.
 7. **Harness materialization**: compiles canonical resources into target-specific files, symlinks, and shared configuration aggregates that agent runtimes may execute or interpret.
 
@@ -28,9 +28,9 @@ The security-critical components are:
 | Component | Purpose | Security criticality | Attack surface |
 |---|---|---:|---|
 | CLI config loader | Resolve policy and exact pins | HIGH | YAML files, flags, environment |
-| Git acquisition | Fetch source repositories | CRITICAL | Source URLs, refs, Git protocols, repository contents |
+| Git acquisition | Fetch registry repositories | CRITICAL | Registry URLs, refs, Git protocols, repository contents |
 | Harness ingestion | Parse heterogeneous layouts | CRITICAL | Markdown, YAML, JSON, files, paths, symlinks |
-| Marketplace worker | Analyze and publish artifacts | CRITICAL | Source config, credentials, jobs, archives |
+| Marketplace worker | Analyze and publish artifacts | CRITICAL | Registry config, credentials, jobs, archives |
 | Metadata store | Durable catalog and job state | HIGH | SQL queries, migrations, concurrent workers |
 | Blob store | Immutable artifact storage | HIGH | Object keys, uploads, downloads, consistency |
 | Marketplace API | Public read surface | HIGH | HTTP paths, queries, pagination, artifact downloads |
@@ -39,9 +39,9 @@ The security-critical components are:
 
 ### Data flow
 
-An operator declares an approved Git source in separate Marketplace configuration. A worker resolves the configured ref to a commit, fetches the repository into an isolated workspace, ingests configured roots through harness-compilation, runs structural security and license checks, builds deterministic canonical artifacts, uploads blobs, and commits a complete source revision in one metadata transaction.
+An operator declares an approved Git registry in separate Marketplace configuration. A worker resolves the configured ref to a commit, fetches the repository into an isolated workspace, ingests configured roots through harness-compilation, runs structural security and license checks, builds deterministic canonical artifacts, uploads blobs, and commits a complete registry revision in one metadata transaction.
 
-A client searches one or more explicitly configured Marketplace endpoints. Installation resolves a human locator to a stable instance, source, coordinate, revision, and digest. Mirror mode downloads and verifies an artifact; index-only mode resolves the exact Git origin and still applies client origin policy. The client caches exact content and materializes it into selected harness targets. At no point does the Marketplace execute indexed resource instructions.
+A client searches one or more explicitly configured Marketplace endpoints. Installation resolves a human locator to a stable instance, registry, coordinate, revision, and digest. Mirror mode downloads and verifies an artifact; index-only mode resolves the exact Git origin and still applies client origin policy. The client caches exact content and materializes it into selected harness targets. At no point does the Marketplace execute indexed resource instructions.
 
 ---
 
@@ -52,7 +52,7 @@ A client searches one or more explicitly configured Marketplace endpoints. Insta
 1. **Untrusted external zone**
    - Anonymous API clients
    - Public web browsers
-   - Git servers and source repositories
+   - Git servers and registry repositories
    - Markdown, metadata, assets, archives, and search input
 
 2. **Operator-controlled edge zone**
@@ -83,7 +83,7 @@ A client searches one or more explicitly configured Marketplace endpoints. Insta
 
 Marketplace v1 deliberately implements no built-in identity or per-resource authorization. Public deployments are anonymous. Private deployments must be protected by operator network controls or an authenticating reverse proxy. One deployment represents one policy domain.
 
-This is an accepted v1 boundary, not an assertion that private content is safe on an exposed listener. The server binds to localhost by default. Source credentials are server-side environment or file references and never become client credentials.
+This is an accepted v1 boundary, not an assertion that private content is safe on an exposed listener. The server binds to localhost by default. Registry credentials are server-side environment or file references and never become client credentials.
 
 **Critical security controls:**
 
@@ -126,17 +126,17 @@ This is an accepted v1 boundary, not an assertion that private content is safe o
   - Risk: instance-identity confusion if the client does not compare the configured ID
 
 - `GET /api/v1/search`
-  - Input: query, kind, source, tags, sorting, pagination
+  - Input: query, kind, registry, tags, sorting, pagination
   - Validation: bounded lengths and page sizes, enumerated filters
   - Risk: CPU/database exhaustion, injection, query privacy leakage
 
-- `GET /api/v1/sources/...` and `GET /api/v1/resources/...`
-  - Input: source slug or ID, kind, name, revision
+- `GET /api/v1/registries/...` and `GET /api/v1/resources/...`
+  - Input: registry slug or ID, kind, name, revision
   - Validation: canonical grammar, parameterized lookups
   - Risk: object confusion, unbounded history, hostile content rendering
 
 - `GET /api/v1/manifests/...`
-  - Input: immutable source revision
+  - Input: immutable registry revision
   - Validation: canonical revision identifier
   - Risk: provenance tampering or stale/revoked state omission
 
@@ -183,18 +183,18 @@ V1 does not require user accounts or retain client identity. Network infrastruct
 
 Protection measures:
 
-- Refer to source credentials through environment variables or mounted files
+- Refer to registry credentials through environment variables or mounted files
 - Never serialize credentials into metadata, artifacts, logs, findings, or diagnostics
 - Redact credential-bearing URLs
 - The planned Marketplace worker passes a minimal environment to Git subprocesses and disables dangerous Git protocols
-- Scope source credentials to the worker, not the API or frontend
+- Scope registry credentials to the worker, not the API or frontend
 
 The existing CLI Git path in `internal/cache/registry.go` inherits the process environment and does not yet enforce the planned URL, option-separator, or protocol restrictions. This is a live gap tracked by `agent-marketplace-pf99.9`, not an existing mitigation, and must be fixed independently of `serve`.
 
 ### Business-critical data
 
-- Marketplace instance and Source IDs
-- Approved source configuration and origin history
+- Marketplace instance and Registry IDs
+- Approved registry configuration and origin history
 - Immutable manifests, artifact digests, and artifact bytes
 - Security findings and revocation records
 - Job leases and publication state
@@ -233,14 +233,14 @@ Loss or tampering can break reproducibility, distribute malicious instructions, 
 
 **Severity:** HIGH | **Likelihood:** MEDIUM
 
-#### Threat S2: Repository takeover masquerades as a moved source
+#### Threat S2: Repository takeover masquerades as a moved registry
 
 **Scenario:** An old repository name is reassigned or an attacker submits a look-alike origin.
 
 **Mitigations:**
 
-- Immutable Source IDs
-- Permanent, non-reassignable source-slug aliases
+- Immutable Registry IDs
+- Permanent, non-reassignable registry slug aliases
 - Operator assertion for origin changes
 - Displayed origin history and publisher/operator distinction
 
@@ -248,7 +248,7 @@ Loss or tampering can break reproducibility, distribute malicious instructions, 
 
 ### T: Tampering with data
 
-#### Threat T1: Source content escapes its root or alters publication state
+#### Threat T1: Registry content escapes its root or alters publication state
 
 **Scenario:** A repository contains parent traversal, symlinks, case collisions, malformed archives, submodules, or Git behaviors that cause the worker to read secrets or publish unintended files.
 
@@ -260,7 +260,7 @@ Loss or tampering can break reproducibility, distribute malicious instructions, 
 - No Git hooks, submodules, LFS, or interactive credentials
 - Lexical and resolved path containment
 - Symlink, hard-link, device, socket, pipe, absolute-path, parent-path, and case-collision rejection
-- Atomic all-or-nothing source publication
+- Atomic all-or-nothing registry publication
 
 **Severity:** CRITICAL | **Likelihood:** HIGH
 
@@ -289,11 +289,11 @@ Loss or tampering can break reproducibility, distribute malicious instructions, 
 
 ```go
 // Vulnerable
-query := "SELECT * FROM resources WHERE source_id = '" + sourceID + "'"
+query := "SELECT * FROM resources WHERE registry_id = '" + registryID + "'"
 
 // Safe
 row := db.QueryRowContext(ctx,
-    "SELECT ... FROM resources WHERE source_id = $1", sourceID)
+    "SELECT ... FROM resources WHERE registry_id = $1", registryID)
 ```
 
 Storage object keys are constructed only from validated fixed identifiers and digests, never raw URL or path input.
@@ -324,14 +324,14 @@ Storage object keys are constructed only from validated fixed identifiers and di
 
 ### R: Repudiation
 
-#### Threat R1: Operator cannot explain why a source, move, or revision was published
+#### Threat R1: Operator cannot explain why a registry, move, or revision was published
 
 **Scenario:** A malicious or mistaken configuration change updates an origin or revocation, but no durable evidence links the resulting state.
 
 **Mitigations:**
 
-- Origin history under immutable Source ID
-- Source revision manifests with commit, policy, analyzer version, and findings
+- Origin history under immutable Registry ID
+- Registry revision manifests with commit, policy, analyzer version, and findings
 - Structured worker outcome logs without secret content
 - Durable job and publication state
 
@@ -341,7 +341,7 @@ Storage object keys are constructed only from validated fixed identifiers and di
 
 ### I: Information disclosure
 
-#### Threat I1: Private source credentials or content leak
+#### Threat I1: Private registry credentials or content leak
 
 **Scenario:** Credentials appear in clone errors, metadata, artifacts, logs, frontend responses, or API process environment. A private Marketplace is exposed without external protection.
 
@@ -383,15 +383,15 @@ Storage object keys are constructed only from validated fixed identifiers and di
 
 ### D: Denial of service
 
-#### Threat D1: Malicious source exhausts clone, parse, compression, or storage resources
+#### Threat D1: Malicious registry exhausts clone, parse, compression, or storage resources
 
-**Scenario:** An approved or compromised source contains huge history, too many files, compression bombs, pathological Markdown/YAML, or frequent moving refs.
+**Scenario:** An approved or compromised registry contains huge history, too many files, compression bombs, pathological Markdown/YAML, or frequent moving refs.
 
 **Mitigations:**
 
 - Configurable repository, file-count, file-size, artifact, clone-duration, and ingestion-duration limits
 - Bounded worker concurrency and durable leases
-- Per-source retry backoff and jitter
+- Per-registry retry backoff and jitter
 - Expanded archive size and entry-count limits
 - Last known-good state retained on failure
 
@@ -477,12 +477,12 @@ const rendered = renderMarkdown(resource.body, {
 
 ```go
 // Vulnerable
-exec.Command("sh", "-c", "git clone "+sourceURL)
+exec.Command("sh", "-c", "git clone "+registryURL)
 
 // Safe direction
 exec.CommandContext(ctx, "git",
     "-c", "protocol.ext.allow=never",
-    "clone", "--", sourceURL, destination)
+    "clone", "--", registryURL, destination)
 ```
 
 The planned worker validates URL schemes, rejects option-like URLs and refs, separates every argument, disables dangerous Git protocols, sets `GIT_TERMINAL_PROMPT=0`, and uses an allowlisted environment. The existing CLI does not yet satisfy this contract and remains a tracked gap.
@@ -531,7 +531,7 @@ V1 has no application authentication. Look for code that accidentally treats pro
 
 ### IDOR and object confusion
 
-Every resource lookup is scoped by Marketplace instance, Source ID, kind, name, and revision. Slugs are aliases, not primary keys. Never resolve a digest or revision from another instance or source merely because text matches.
+Every resource lookup is scoped by Marketplace instance, Registry ID, kind, name, and revision. Registry slugs are aliases, not primary keys. Never resolve a digest or revision from another instance or registry merely because text matches.
 
 ### Prompt injection and hidden content
 

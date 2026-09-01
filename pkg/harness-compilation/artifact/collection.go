@@ -41,7 +41,7 @@ type CollectionMemberEntry struct {
 	Kind           string     `json:"kind"`
 	Name           string     `json:"name"`
 	Optional       bool       `json:"optional,omitempty"`
-	SourceID       string     `json:"source_id,omitempty"`
+	RegistryID     string     `json:"registry_id,omitempty"`
 	Revision       string     `json:"revision,omitempty"`
 	InclusionPaths [][]string `json:"inclusion_paths,omitempty"`
 }
@@ -107,8 +107,8 @@ func canonicalCollectionPayload(m CollectionManifest) ([]byte, error) {
 			if out[i].Name != out[j].Name {
 				return out[i].Name < out[j].Name
 			}
-			if out[i].SourceID != out[j].SourceID {
-				return out[i].SourceID < out[j].SourceID
+			if out[i].RegistryID != out[j].RegistryID {
+				return out[i].RegistryID < out[j].RegistryID
 			}
 			return out[i].Revision < out[j].Revision
 		})
@@ -301,7 +301,7 @@ func expandCollectionManifestGraph(manifest CollectionManifest, nested map[strin
 		key := collectionLeafKey(leaf)
 		if index, ok := byKey[key]; ok {
 			if leaves[index].Revision != leaf.Revision || leaves[index].Optional != leaf.Optional {
-				return fmt.Errorf("collection %q contains conflicting leaves for %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+				return fmt.Errorf("collection %q contains conflicting leaves for %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 			}
 			leaves[index].InclusionPaths = appendUniqueCollectionPaths(leaves[index].InclusionPaths, paths...)
 			return nil
@@ -322,8 +322,8 @@ func expandCollectionManifestGraph(manifest CollectionManifest, nested map[strin
 			}
 			continue
 		}
-		if !validCollectionToken(member.Name) || !validCollectionToken(member.SourceID) || !validCollectionDigest(member.Revision) {
-			return nil, fmt.Errorf("collection %q nested member %q must have a valid source_id and revision", manifest.Name, member.Name)
+		if !validCollectionToken(member.Name) || !validCollectionToken(member.RegistryID) || !validCollectionDigest(member.Revision) {
+			return nil, fmt.Errorf("collection %q nested member %q must have a valid registry_id and revision", manifest.Name, member.Name)
 		}
 		child, ok := nested[member.Revision]
 		if !ok {
@@ -387,9 +387,9 @@ func validateFlattenedCollectionLeaves(manifest CollectionManifest, expected []C
 		key := collectionLeafKey(leaf)
 		if previous, ok := actual[key]; ok {
 			if previous.Revision != leaf.Revision {
-				return fmt.Errorf("collection %q flattened leaves contain conflicting revisions of %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+				return fmt.Errorf("collection %q flattened leaves contain conflicting revisions of %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 			}
-			return fmt.Errorf("collection %q flattened leaves contain duplicate %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+			return fmt.Errorf("collection %q flattened leaves contain duplicate %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 		}
 		actual[key] = leaf
 	}
@@ -400,10 +400,10 @@ func validateFlattenedCollectionLeaves(manifest CollectionManifest, expected []C
 	for key, leaf := range expectedByKey {
 		got, ok := actual[key]
 		if !ok {
-			return fmt.Errorf("collection %q flattened leaves are missing %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+			return fmt.Errorf("collection %q flattened leaves are missing %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 		}
 		if got.Revision != leaf.Revision || got.Optional != leaf.Optional {
-			return fmt.Errorf("collection %q flattened leaf %s/%q from source %q has conflicting metadata", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+			return fmt.Errorf("collection %q flattened leaf %s/%q from registry %q has conflicting metadata", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 		}
 		if !sameCollectionPaths(got.InclusionPaths, leaf.InclusionPaths) {
 			return fmt.Errorf("collection %q flattened leaf %s/%q has inclusion paths that do not follow the nested graph", manifest.Name, leaf.Kind, leaf.Name)
@@ -411,13 +411,13 @@ func validateFlattenedCollectionLeaves(manifest CollectionManifest, expected []C
 		delete(actual, key)
 	}
 	for _, leaf := range actual {
-		return fmt.Errorf("collection %q flattened leaves contain extra %s/%q from source %q", manifest.Name, leaf.Kind, leaf.Name, leaf.SourceID)
+		return fmt.Errorf("collection %q flattened leaves contain extra %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 	}
 	return nil
 }
 
 func collectionLeafKey(leaf CollectionMemberEntry) string {
-	return leaf.Kind + "\x00" + leaf.Name + "\x00" + leaf.SourceID
+	return leaf.Kind + "\x00" + leaf.Name + "\x00" + leaf.RegistryID
 }
 
 func appendUniqueCollectionPaths(paths [][]string, add ...[]string) [][]string {
@@ -503,7 +503,7 @@ func (m CollectionManifest) Validate() error {
 		if err := validateCollectionLeaf(leaf, i); err != nil {
 			return err
 		}
-		key := leaf.Kind + "/" + leaf.Name + "/" + leaf.SourceID
+		key := leaf.Kind + "/" + leaf.Name + "/" + leaf.RegistryID
 		if seenLeaves[key] {
 			return fmt.Errorf("duplicate collection leaf %q", key)
 		}
@@ -541,8 +541,8 @@ func validateCollectionLeaf(leaf CollectionMemberEntry, index int) error {
 	if !validCollectionToken(leaf.Name) {
 		return fmt.Errorf("leaves[%d].name must be a route-safe token", index)
 	}
-	if !validCollectionToken(leaf.SourceID) {
-		return fmt.Errorf("leaves[%d].source_id must be a route-safe token", index)
+	if !validCollectionToken(leaf.RegistryID) {
+		return fmt.Errorf("leaves[%d].registry_id must be a route-safe token", index)
 	}
 	if !validCollectionDigest(leaf.Revision) {
 		return fmt.Errorf("leaves[%d].revision must be sha256:<64 lowercase hex>", index)
@@ -575,7 +575,7 @@ func isCollectionKind(kind string) bool {
 }
 
 // CollectionFromIR builds a CollectionManifest skeleton from an IR Collection.
-// The caller is responsible for filling provenance and source identifiers.
+// The caller is responsible for filling provenance and registry identifiers.
 func CollectionFromIR(c *ir.Collection) (CollectionManifest, error) {
 	if c == nil {
 		return CollectionManifest{}, errors.New("nil collection")

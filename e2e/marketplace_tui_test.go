@@ -76,7 +76,7 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	}
 	waitForMarketplaceTUI(t, &output, func(string) bool { return consumer.CheckFileContains("/workspace/.agents/config.local.yaml", digest) })
 	config := consumer.ReadFile("/workspace/.agents/config.local.yaml")
-	for _, value := range []string{digest, "source_id: behavior-source-id", "kind: skill", "name: skill-one", "direct: true"} {
+	for _, value := range []string{digest, "registry_id: behavior-source-id", "kind: skill", "name: skill-one", "direct: true"} {
 		if !strings.Contains(config, value) {
 			t.Fatalf("local Marketplace pin missing %q:\n%s", value, config)
 		}

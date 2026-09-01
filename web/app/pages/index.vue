@@ -11,7 +11,7 @@ const api = useMarketplaceApi()
 const config = useRuntimeConfig()
 
 const { data: metadata, error: metadataError } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
-const { data: sources } = await useAsyncData('marketplace-sources', () => api.listSources())
+const { data: registries } = await useAsyncData('marketplace-registries', () => api.listRegistries())
 const searchParams = computed(() => parseSearchQuery(route.query))
 const draft = reactive<SearchParams>({ ...searchParams.value })
 let syncingDraft = false
@@ -38,7 +38,7 @@ const supportedKinds = computed<ResourceKind[]>(() => {
   if (!knownMetadata) return [...RESOURCE_KINDS]
   return RESOURCE_KINDS.filter(kind => knownMetadata.resource_kinds.includes(kind))
 })
-const sourceOptions = computed(() => (sources.value ?? []).map(source => source.slug))
+const registryOptions = computed(() => (registries.value ?? []).map(registry => registry.slug))
 
 const limitOptions = [
   { label: '25 per page', value: 25 },
@@ -53,7 +53,7 @@ const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 const marketplaceCommand = computed(() => marketplaceInstallCommand(metadata.value?.canonical_url ?? ''))
 const apiEndpoint = computed(() => apiPath(config.public.apiBase, '/search'))
-const hasFilters = computed(() => Boolean(searchParams.value.q || searchParams.value.kind || searchParams.value.source))
+const hasFilters = computed(() => Boolean(searchParams.value.q || searchParams.value.kind || searchParams.value.registry))
 
 /*
  * Withheld entries are the norm on this instance, not the exception, so the
@@ -71,7 +71,7 @@ const resultStatus = computed(() => {
   return `${results.value?.total ?? 0} resources available.`
 })
 
-watch(() => [draft.q, draft.source], scheduleSearch)
+watch(() => [draft.q, draft.registry], scheduleSearch)
 watch(() => [draft.kind, draft.limit], applyDraft)
 onBeforeUnmount(() => clearTimeout(searchTimer))
 
@@ -171,8 +171,8 @@ useHead({
               <SearchKindFilter id="search-kind" v-model="draft.kind" :kinds="supportedKinds" size="md" class="w-full" aria-label="Filter by resource kind" />
             </div>
             <div class="w-full sm:w-44">
-              <label for="search-source" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Source</label>
-              <UInputMenu id="search-source" v-model="draft.source" :items="sourceOptions" mode="autocomplete" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
+              <label for="search-registry" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Registry</label>
+              <UInputMenu id="search-registry" v-model="draft.registry" :items="registryOptions" mode="autocomplete" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
             </div>
             <UButton type="submit" size="md" color="primary" class="justify-center">Search</UButton>
           </form>
@@ -213,7 +213,7 @@ useHead({
 
         <template v-else>
           <div>
-            <ResourceRow v-for="item in results.items" :key="JSON.stringify([item.source_id, item.kind, item.name, item.content_digest])" :item="item" :canonical-url="canonicalUrl" />
+            <ResourceRow v-for="item in results.items" :key="JSON.stringify([item.registry_id, item.kind, item.name, item.content_digest])" :item="item" :canonical-url="canonicalUrl" />
           </div>
 
           <nav class="flex flex-col items-center justify-between gap-3 py-5 sm:flex-row" aria-label="Search results pagination">

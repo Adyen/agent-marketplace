@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import type { SourceOccurrence } from '~/types/marketplace'
+import type { RegistryOccurrence } from '~/types/marketplace'
 
 defineProps<{
-  occurrences: SourceOccurrence[]
+  occurrences: RegistryOccurrence[]
 }>()
 </script>
 
 <template>
   <div v-if="occurrences.length" class="relative">
-    <ol aria-label="Source occurrence timeline" class="space-y-4">
+    <ol aria-label="Registry occurrence timeline" class="space-y-4">
       <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative rounded-2xl border border-default bg-default p-5 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -27,8 +27,8 @@ defineProps<{
             <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ occurrence.ref }}</dd>
           </div>
           <div class="sm:col-span-2">
-            <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Source revision manifest digest</dt>
-            <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ occurrence.source_revision_manifest_digest }}</dd>
+            <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Registry revision manifest digest</dt>
+            <dd class="mt-1 break-all font-mono text-sm text-highlighted">{{ occurrence.registry_revision_manifest_digest }}</dd>
           </div>
           <div v-if="occurrence.mirrored_artifact_digest" class="sm:col-span-2">
             <dt class="text-xs font-semibold uppercase tracking-wide text-muted">Mirrored artifact digest</dt>
@@ -38,5 +38,5 @@ defineProps<{
       </li>
     </ol>
   </div>
-  <p v-else class="rounded-2xl border border-dashed border-default bg-default p-8 text-sm text-muted">No source occurrences have been recorded.</p>
+  <p v-else class="rounded-2xl border border-dashed border-default bg-default p-8 text-sm text-muted">No registry occurrences have been recorded.</p>
 </template>

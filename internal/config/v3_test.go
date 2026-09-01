@@ -30,7 +30,7 @@ marketplaces:
   - url: https://market.example
     instance_id: market
     resources:
-      - source_id: source
+      - registry_id: source
         kind: skill
         name: review
         revision: revision
@@ -247,9 +247,9 @@ func TestV3MarketplaceRejectsMalformedSelectionEdgesAndDirectValues(t *testing.T
 		"null selected_by":        "selected_by: null",
 		"scalar selected_by":      "selected_by: invalid",
 		"scalar selection":        "selected_by:\n          - invalid",
-		"missing selection field": "selected_by:\n          - source_id: source\n            name: review",
-		"extra selection field":   "selected_by:\n          - source_id: source\n            name: review\n            revision: " + digest + "\n            extra: value",
-		"non-string selection":    "selected_by:\n          - source_id: true\n            name: review\n            revision: " + digest,
+		"missing selection field": "selected_by:\n          - registry_id: source\n            name: review",
+		"extra selection field":   "selected_by:\n          - registry_id: source\n            name: review\n            revision: " + digest + "\n            extra: value",
+		"non-string selection":    "selected_by:\n          - registry_id: true\n            name: review\n            revision: " + digest,
 		"string direct":           "direct: \"true\"",
 		"integer direct":          "direct: 1",
 		"null direct":             "direct: null",
@@ -261,7 +261,7 @@ marketplaces:
   - url: https://market.example
     instance_id: market
     resources:
-      - source_id: source
+      - registry_id: source
         kind: skill
         name: review
         revision: revision

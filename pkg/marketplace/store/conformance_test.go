@@ -81,20 +81,20 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("PutMarketplace: %v", err)
 	}
 
-	src := store.Source{
-		ID:          store.SourceID("src-conf"),
-		Slug:        "conformance-source",
+	src := store.Registry{
+		ID:          store.RegistryID("src-conf"),
+		Slug:        "conformance-registry",
 		Ref:         "main",
 		Acquisition: store.AcquisitionMirror,
 		Listed:      true,
 	}
-	if err := meta.PutSource(ctx, src); err != nil {
-		t.Fatalf("PutSource: %v", err)
+	if err := meta.PutRegistry(ctx, src); err != nil {
+		t.Fatalf("PutRegistry: %v", err)
 	}
 
 	coord := store.ResourceCoordinate{
 		Marketplace: mp.ID,
-		Source:      src.ID,
+		Registry:    src.ID,
 		Kind:        "skill",
 		Name:        "member",
 	}
@@ -122,17 +122,17 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("ReadyCheck after blob: %v", err)
 	}
 
-	occ := store.SourceOccurrence{
-		SourceID:                     src.ID,
-		Ref:                          "main",
-		Commit:                       "deadbeef",
-		SourceRevisionManifestDigest: store.RevisionDigest("sha256:manifest"),
-		Acquisition:                  store.AcquisitionMirror,
-		MirroredArtifactDigest:       store.ArchiveDigest("sha256:occ-archive"),
-		OccurredAt:                   time.Now().UTC(),
+	occ := store.RegistryOccurrence{
+		RegistryID:                     src.ID,
+		Ref:                            "main",
+		Commit:                         "deadbeef",
+		RegistryRevisionManifestDigest: store.RevisionDigest("sha256:manifest"),
+		Acquisition:                    store.AcquisitionMirror,
+		MirroredArtifactDigest:         store.ArchiveDigest("sha256:occ-archive"),
+		OccurredAt:                     time.Now().UTC(),
 	}
-	if err := meta.PutSourceOccurrence(ctx, occ); err != nil {
-		t.Fatalf("PutSourceOccurrence: %v", err)
+	if err := meta.PutRegistryOccurrence(ctx, occ); err != nil {
+		t.Fatalf("PutRegistryOccurrence: %v", err)
 	}
 
 	err = meta.ReadyCheck(ctx, blobs)
@@ -140,7 +140,7 @@ func TestConformance(t *testing.T) {
 		t.Fatalf("ReadyCheck before occurrence blob error = %v, want ErrBlobMissing", err)
 	}
 
-	if err := blobs.Put(ctx, store.ArchiveDigest(occ.SourceRevisionManifestDigest), []byte("manifest bytes")); err != nil {
+	if err := blobs.Put(ctx, store.ArchiveDigest(occ.RegistryRevisionManifestDigest), []byte("manifest bytes")); err != nil {
 		t.Fatalf("Put manifest blob: %v", err)
 	}
 
@@ -162,8 +162,8 @@ func TestConformanceLeaseJobByIDLeavesOlderJobPending(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
 	jobs := []store.Job{
-		{ID: "older", Kind: "index-source", Payload: []byte(`{}`), MaxAttempts: 1, CreatedAt: time.Now().Add(-time.Hour)},
-		{ID: "target", Kind: "index-source", Payload: []byte(`{}`), MaxAttempts: 1},
+		{ID: "older", Kind: "index-registry", Payload: []byte(`{}`), MaxAttempts: 1, CreatedAt: time.Now().Add(-time.Hour)},
+		{ID: "target", Kind: "index-registry", Payload: []byte(`{}`), MaxAttempts: 1},
 	}
 	for _, item := range jobs {
 		if err := meta.EnqueueJob(ctx, item); err != nil {
@@ -192,15 +192,15 @@ func TestConformanceJobLeaseExpiry(t *testing.T) {
 
 	job := store.Job{
 		ID:          store.JobID("job-conf"),
-		Kind:        "index-source",
-		Payload:     []byte(`{"source":"src-conf"}`),
+		Kind:        "index-registry",
+		Payload:     []byte(`{"registry":"src-conf"}`),
 		MaxAttempts: 3,
 	}
 	if err := meta.EnqueueJob(ctx, job); err != nil {
 		t.Fatalf("EnqueueJob: %v", err)
 	}
 
-	leased, err := meta.LeaseJob(ctx, "index-source", "worker-a", 2*time.Millisecond)
+	leased, err := meta.LeaseJob(ctx, "index-registry", "worker-a", 2*time.Millisecond)
 	if err != nil {
 		t.Fatalf("LeaseJob: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestConformanceJobLeaseExpiry(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
-	recovered, err := meta.LeaseJob(ctx, "index-source", "worker-b", time.Minute)
+	recovered, err := meta.LeaseJob(ctx, "index-registry", "worker-b", time.Minute)
 	if err != nil {
 		t.Fatalf("LeaseJob recovery: %v", err)
 	}
