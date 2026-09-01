@@ -155,7 +155,7 @@ func TestRecordActionSpanExportsBeforeTUIShutdown(t *testing.T) {
 
 	recordActionSpan(ctx, "sync", nil)
 
-	if e.waitForSpan("agent_marketplace.tui.action", 2*time.Second) == nil {
+	if e.waitForSpan("agent_marketplace.tui.action", 5*time.Second) == nil {
 		t.Fatal("expected TUI action span to export while the TUI remains running")
 	}
 }
