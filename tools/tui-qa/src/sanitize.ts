@@ -102,6 +102,6 @@ export const markdownInline = (value: string): string =>
   redactCredentialShaped(escapeTerminal(value)).replace(/[\\`*_[\]()<>|]/g, (character) => `\\${character}`);
 
 export const markdownCodeFence = (value: string): string => {
-  const escaped = redactCredentialShaped(escapeTerminal(value)).replace(/```/g, "\\`\\`\\`");
+  const escaped = sanitizeMultiline(value).replace(/```/g, "\\`\\`\\`");
   return `\`\`\`text\n${escaped}\n\`\`\``;
 };

@@ -67,6 +67,8 @@ make tui-qa-contained
 
 `make tui-qa-contained` is the canonical baseline because it exercises the fixed organization path and Linux security boundary. `make tui-qa` is useful for trusted native debugging and always states its weaker isolation claim. Set a unique `AM_TUI_QA_RUN_ID` to make artifact locations predictable; completed run IDs are immutable and cannot be reused.
 
+`npm run publish-baseline` requires `AM_TUI_QA_REPO_ROOT` and `AM_TUI_QA_BASELINE_RESULTS`. It accepts only a schema-valid certifying baseline, regenerates Markdown from that JSON, writes both files under `docs/qa/tui/`, and refuses replacement.
+
 `npm run check` executes unit tests, production TypeScript compilation, test typechecking, and the real PTY driver smoke. A green typecheck without the PTY smoke is not considered driver validation.
 
 ## Restoration evidence
