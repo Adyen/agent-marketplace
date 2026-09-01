@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { describe, it, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -128,6 +129,8 @@ describe("controlled broken PTY fixtures", () => {
   it("detects and reaps a controlled editor child across process-group boundaries", async (t) => {
     const sandbox = provision("detector", "leaked-child", 1);
     const env = environmentForTest(sandbox);
+    env.AM_TUI_QA_NODE = process.execPath;
+    env.AM_TUI_QA_LEAK_HELPER = fixture("leaked-child.mjs");
     const pidFile = env.AM_TUI_QA_DESCENDANT_PID_FILE!;
     t.after(async () => {
       if (fs.existsSync(pidFile)) await cleanupRegisteredProcess(pidFile, 100);
@@ -140,7 +143,7 @@ describe("controlled broken PTY fixtures", () => {
     });
     const registered = await cleanupRegisteredProcess(pidFile, 300);
     assert.equal(result.cleanup.complete, true, JSON.stringify(result.cleanup));
+    assert.equal(registered.detected, true, JSON.stringify(registered));
     assert.equal(registered.complete, true, JSON.stringify(registered));
-    assert.equal(result.cleanup.detected.length > 0 || registered.detected, true);
   });
 });
