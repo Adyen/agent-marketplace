@@ -94,14 +94,14 @@ jobs:
         run: npm run check
         working-directory: tools/tui-qa
 
-      - name: Run contained non-blocking TUI baseline
+      - name: Run contained TUI QA validation
         env:
           TUI_QA_BASE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
           TUI_QA_BASE_FLAVOR: debian-node
-        run: AM_TUI_QA_RUN_ID="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" AM_TUI_QA_RUN_CLASS=pr tools/tui-qa/run-container.sh || test -f ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json"
+        run: AM_TUI_QA_RUN_ID="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" AM_TUI_QA_RUN_CLASS=pr tools/tui-qa/run-container.sh
 
-      - name: Validate contained baseline artifacts
-        run: jq -e '.schemaVersion == 1 and .runClass == "pr"' ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json" >/dev/null
+      - name: Validate contained TUI QA result
+        run: jq -e '.schemaVersion == 1 and .runClass == "pr" and .certifying == true and .finalStatus == "PASS" and .exitCode == 0 and ([.flows[] | select(.required) | .status] | all(. == "PASS"))' ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json" >/dev/null
 
       - name: Upload sanitized TUI QA evidence
         if: always()

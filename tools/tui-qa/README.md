@@ -15,7 +15,7 @@ The workbench runs each selected flow in a fresh sandbox and covers:
 - separate harness-owned PTY recovery and descendant cleanup;
 - root-owned organization fallback through `/etc/agent-marketplace/config.yaml` in containment.
 
-A bounded public `sync` prepares a local bare Git registry before each measured flow. Deterministic JSON remains authoritative; the baseline command itself is non-blocking when the result records a product failure.
+A bounded public `sync` prepares a local bare Git registry before each measured flow. Deterministic JSON remains authoritative. Explicit `baseline` runs remain non-blocking for first-report publication, while `pr` runs return the deterministic exit code and require a certifying PASS.
 
 ## Sandbox and containment primitives
 
@@ -27,7 +27,7 @@ Native runs print a warning because they provide functional isolation for known 
 
 `results.v1.json` is the deterministic authority for flow status and exit code. It records immutable invalid reasons, build identity, classifier selections, structured expected/observed failure classes, product restoration separately from harness recovery, assertions, bounded side effects, transformed evidence hashes, and artifact policy. Semantic validation is applied after JSON Schema validation.
 
-Non-raw evidence is always terminal-sanitized, credential-redacted, rescanned, bounded, and hashed during collection. Raw ANSI remains local by default; exceptional upload requires both a synthetic/no-secret attestation and a successful secret scan and remains explicitly marked unsanitized. PR CI uploads only results, report, projected build identity, containment output, and transformed flow evidence with seven-day retention; the `raw/` tree and release binary are excluded.
+Non-raw evidence is always terminal-sanitized, credential-redacted, rescanned, bounded, and hashed during collection. Raw ANSI remains local by default; exceptional upload requires both a synthetic/no-secret attestation and a successful secret scan and remains explicitly marked unsanitized. PR CI requires a certifying PASS for every required flow and uploads only results, report, projected build identity, containment output, and transformed flow evidence with seven-day retention; the `raw/` tree and release binary are excluded.
 
 `exploratory-supplement.v1.json` is the additive handoff for the bounded exploratory agent. It is bound to a deterministic results hash, sanitizes advisory text, may request additional optional flows, and cannot contain deterministic status fields or override required outcomes.
 
