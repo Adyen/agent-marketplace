@@ -165,6 +165,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
+	recordConfigSnapshotSpans(m.ctx, msg)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

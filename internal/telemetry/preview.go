@@ -130,9 +130,29 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 				},
 			},
 			{
-				Name: "agent_marketplace.config.load",
+				Name: "agent_marketplace.tui.config",
 				Attributes: map[string]string{
-					"config.scope": "user",
+					"harnesses":      "factory,devin",
+					"harness.scope":  "repo",
+					"registry.count": "1",
+					"resource.count": "2",
+				},
+			},
+			{
+				Name: "agent_marketplace.tui.config_registry",
+				Attributes: map[string]string{
+					"registry.location": "https://git.example.com/team/resources.git",
+					"registry.ref":      "main",
+					"config.scope":      "user",
+				},
+			},
+			{
+				Name: "agent_marketplace.tui.config_resources",
+				Attributes: map[string]string{
+					"resource.kind":     "skill",
+					"resource.names":    `["code-review","smith"]`,
+					"registry.location": "https://git.example.com/team/resources.git",
+					"config.scope":      "user",
 				},
 			},
 		}

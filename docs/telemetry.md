@@ -41,15 +41,19 @@ Metric point attributes:
 ### Detailed traces
 
 Spans include lifecycle stages such as `agent_marketplace.command`,
-`agent_marketplace.tui.session`, `agent_marketplace.tui.action`, and pipeline
-stages. Attributes are limited to command path, harness list, managed flag,
-outcome, resource kind, action name, and result count. The following are
-**never** attached to telemetry:
+`agent_marketplace.tui.session`, `agent_marketplace.tui.action`, configuration
+snapshots, and pipeline stages. Configuration snapshots include the effective
+harness list, configured remote registry locations, and exact enabled resource
+names grouped by kind, registry, and configuration scope. Registry locations
+omit URL user information, query strings, and fragments; local registries are
+reported only as `local`. Large resource sets are split into bounded chunks.
+The following are **never** attached to telemetry:
 
 - command arguments
-- resource names, repository names, or registry URLs
+- registry credentials or local registry paths
+- resource contents, descriptions, or tags
 - file paths (except the diagnostic review payload written locally)
-- user names, hostnames, or network addresses
+- user names, hostnames unrelated to a configured remote registry, or network addresses
 - prompts, terminal contents, search text, or subprocess output
 
 ### Diagnostic capture

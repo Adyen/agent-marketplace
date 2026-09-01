@@ -30,10 +30,13 @@ type snapshotLoadedMsg struct {
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
+	configuredRegistries []config.RegistryEntry
 	materializationModes config.MaterializationModes
 	localExcludes        []string
 	globalHarnesses      []string
 	projectHarnesses     []string
+	targetHarnesses      []hcc.Target
+	targetHarnessSource  config.Source
 	errs                 []error
 	warnings             []error
 	diagnostics          []tuiDiagnostic
@@ -156,8 +159,13 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		localExcludes:        localExcludes(resolvedResult.LocalCfg),
 		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
+		targetHarnesses:      resolvedResult.TargetHarnesses,
+		targetHarnessSource:  resolvedResult.TargetHarnessSource,
 		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
+	}
+	if resolvedResult.MergedCfg != nil {
+		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
 	}
 
 	var diagnostics []tuiDiagnostic

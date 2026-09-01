@@ -216,6 +216,11 @@ func TestPreview(t *testing.T) {
 	if !strings.Contains(string(data), "agent_marketplace.command") {
 		t.Fatalf("expected detailed spans in preview, got:\n%s", string(data))
 	}
+	for _, want := range []string{"agent_marketplace.tui.config_registry", "registry.location", "agent_marketplace.tui.config_resources", "resource.names", "code-review", "smith"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected detailed config value %q in preview, got:\n%s", want, string(data))
+		}
+	}
 
 	path, err = Preview(context.Background(), tmcfg.LevelDiagnostic, state)
 	if err != nil {
