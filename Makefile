@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -114,6 +114,17 @@ devin-probe:
 
 tui-qa-check:
 	cd tools/tui-qa && npm run check
+
+tui-qa:
+	@command -v npm >/dev/null || { echo "ERROR: npm is required for TUI QA" >&2; exit 1; }
+	@command -v go >/dev/null || { echo "ERROR: go is required for TUI QA" >&2; exit 1; }
+	cd tools/tui-qa && AM_TUI_QA_RUN_CLASS="$${AM_TUI_QA_RUN_CLASS:-baseline}" npm run qa
+
+tui-qa-contained:
+	@command -v docker >/dev/null || { echo "ERROR: Docker is required for contained TUI QA" >&2; exit 1; }
+	@command -v npm >/dev/null || { echo "ERROR: npm is required for contained TUI QA" >&2; exit 1; }
+	@command -v go >/dev/null || { echo "ERROR: go is required for contained TUI QA" >&2; exit 1; }
+	AM_TUI_QA_RUN_CLASS="$${AM_TUI_QA_RUN_CLASS:-baseline}" tools/tui-qa/run-container.sh
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

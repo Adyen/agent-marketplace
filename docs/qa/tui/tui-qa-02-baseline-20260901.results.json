@@ -1,0 +1,1644 @@
+{
+  "schemaVersion": 1,
+  "runId": "tui-qa-02-baseline-20260901",
+  "runClass": "baseline",
+  "certifying": true,
+  "startedAt": "2026-09-01T14:18:56.166Z",
+  "finishedAt": "2026-09-01T14:19:45.467Z",
+  "durationMs": 49301,
+  "revision": {
+    "base": "77450807563cbe80bb28cfdb86c187a4be6ac809",
+    "head": "59e88eb8f481fc16db5f905ba955006fa07e065d",
+    "worktreeDirty": false
+  },
+  "binary": {
+    "path": "<run-binary>/agent-marketplace",
+    "sha256": "af64f4a389d461cf6a790b69de7a9ad6c45ac4edc8a1c490de77fc46486891bf",
+    "buildClass": "release-equivalent",
+    "cgoEnabled": false,
+    "goVersion": "go1.26.6",
+    "goos": "linux",
+    "goarch": "arm64",
+    "command": [
+      "go",
+      "build",
+      "-o",
+      "<run-binary>/agent-marketplace",
+      "-ldflags",
+      "-X main.version=tui-qa-59e88eb8f481fc16db5f905ba955006fa07e065d",
+      "./cmd/agent-marketplace"
+    ],
+    "tags": [],
+    "ldflags": [
+      "-X main.version=tui-qa-59e88eb8f481fc16db5f905ba955006fa07e065d"
+    ]
+  },
+  "classifier": {
+    "version": "invariant-v1",
+    "input": {
+      "requestedFlowIds": [
+        "bare-non-tty-help",
+        "frame-baseline-80x24",
+        "frame-constrained-50x12",
+        "launch-bare-tty",
+        "launch-explicit-tui",
+        "no-tui-env",
+        "no-tui-flag",
+        "org-fallback",
+        "quit-ctrl-c",
+        "quit-q",
+        "quit-sigterm",
+        "tui-without-tty"
+      ]
+    },
+    "selections": [
+      {
+        "flowId": "bare-non-tty-help",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "frame-baseline-80x24",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "frame-constrained-50x12",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "launch-bare-tty",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "launch-explicit-tui",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "no-tui-env",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "no-tui-flag",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "org-fallback",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "quit-ctrl-c",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "quit-q",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "quit-sigterm",
+        "reason": "required invariant matrix"
+      },
+      {
+        "flowId": "tui-without-tty",
+        "reason": "required invariant matrix"
+      }
+    ]
+  },
+  "fixture": {
+    "id": "local-bare-git-registry-v1",
+    "version": "1",
+    "source": "local-synthetic"
+  },
+  "tools": {
+    "nodeVersion": "v24.18.0",
+    "npmVersion": "11.16.0",
+    "driver": {
+      "name": "@microsoft/tui-test",
+      "version": "0.0.4"
+    }
+  },
+  "environment": {
+    "AM_TUI_QA_RUN_ID": "tui-qa-02-baseline-20260901",
+    "AM_TUI_QA_RUN_CLASS": "baseline",
+    "AM_TUI_QA_RETRIES": "1"
+  },
+  "limits": {
+    "semanticWaitMs": 5000,
+    "longOperationWaitMs": 30000,
+    "flowTimeoutMs": 120000,
+    "maxRetries": 1,
+    "transcriptCapBytes": 10485760,
+    "uploadCapBytes": 104857600
+  },
+  "artifactPolicy": {
+    "retentionDays": 0,
+    "rawAnsiLocalOnly": true,
+    "exceptionalRawUpload": false,
+    "secretScanRequired": true,
+    "uploadBytes": 49380,
+    "uploadCapBytes": 104857600,
+    "truncated": false
+  },
+  "flows": [
+    {
+      "flowId": "bare-non-tty-help",
+      "kind": "invariant",
+      "driver": "command",
+      "boundary": "non-tty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "non-tty",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "bare-non-tty-help/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-bare-non-tty-help-a1-NG9Nv8",
+          "startedAt": "2026-09-01T14:18:56.190Z",
+          "finishedAt": "2026-09-01T14:18:56.280Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 90,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "alternateScreenExited": "NOT_APPLICABLE",
+            "cursorVisible": "NOT_APPLICABLE",
+            "mouseDisabled": "NOT_APPLICABLE",
+            "bracketedPasteDisabled": "NOT_APPLICABLE",
+            "complete": false
+          },
+          "harnessRecovery": {
+            "applied": false,
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "bare invocation without a TTY prints help and exits cleanly",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "5f1c7cd89e3631fc561f010a539dd1c679cf7b176296ed96f5f8aabf97bf994d",
+        "afterDigest": "7d7f9ed694d13160325c890b540fbb24cdd333621a4b1c382192f4e619a34af5",
+        "changedPaths": [
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/bare-non-tty-help/attempt-1/driver-log.txt",
+          "sha256": "c78607a7b293e93c2497b07772c3276fb011c87152f5fda81b8a7edd0a6fd29d",
+          "bytes": 1789,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/bare-non-tty-help/attempt-1/process-cleanup.json",
+          "sha256": "51af5624e927d7462b68e77f789aa765a5d3ed69d4ede4d30ff26e56e3c2ef51",
+          "bytes": 123,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "frame-baseline-80x24",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "frame-baseline-80x24/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-frame-baseline-80x24-a1-zgTwSf",
+          "startedAt": "2026-09-01T14:18:56.281Z",
+          "finishedAt": "2026-09-01T14:19:01.780Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5499,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "the first nonblank baseline frame fits 80x24 with trusted chrome",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "16bad80f2476b0cdc129bd4b706fe8c98128f326b6ce0d12017f2ab54ff5a3f9",
+        "afterDigest": "fc4c7ffc59ee168d65953e788fb23d99240f68300b37ce6bc58f83c8c5fbcdef",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/41415fb3e022ad47/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/41415fb3e022ad47/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/driver-log.txt",
+          "sha256": "632093b69359ee2cdc031082b58274b70ce706b0cf50ded771bae6bb467037c2",
+          "bytes": 38,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/flow-result.json",
+          "sha256": "6a7d2b0262ac3e4cf750f122bb197a88161218913b5c2da1a94f44c6d5be3fd2",
+          "bytes": 71,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/lifecycle/lifecycle-124.json",
+          "sha256": "479c8e13e84e8dbc1ad71919fb503fe31c260d0566ffbebed9a10b135b736c58",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/process-cleanup.json",
+          "sha256": "f8ffd8f9c50a5ea7fd066482a4384f0c570c9f741c8f0e1cc7d685dc71d26042",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-baseline-80x24/attempt-1/trace-summary.txt",
+          "sha256": "e578f480ec36bbcafc63a892c092b8276385d0448d476094fa9ad23a507ecaa4",
+          "bytes": 3427,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/frame-baseline-80x24/attempt-1/traces/tests-invariant.spec.ts-frame-baseline-80x24--the-first-nonblank-baseline-frame-fits-80x24-with-trusted-chrome",
+          "sha256": "d85a190202253de7293a16dda8ee2d4db98c5a079ac807dabce46e39eccce464",
+          "bytes": 821,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "frame-constrained-50x12",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "50x12",
+        "columns": 50,
+        "rows": 12
+      },
+      "attempts": [
+        {
+          "attemptId": "frame-constrained-50x12/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-frame-constrained-50x12-a1-xRFLvo",
+          "startedAt": "2026-09-01T14:19:01.782Z",
+          "finishedAt": "2026-09-01T14:19:07.281Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5499,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "the approved minimum frame fits 50x12 with required keys visible",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "6f2b875eab1ab5364412ae06745e95dddbf2ea53d5e5b2d8d831915c2eb7505a",
+        "afterDigest": "f9c44f688b273b1e427573cc2a2b6e36a8fb84bff9f9a32064e8862713c2a556",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/20f1fe4725e51358/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/20f1fe4725e51358/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/driver-log.txt",
+          "sha256": "eddf40f3840ebdb80c2e06b333a063ad3b7e7ee0a01acdbd886bd3aeffaabe78",
+          "bytes": 41,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/flow-result.json",
+          "sha256": "9d312951d77f3214378a50fc1538379aad0182d29a5d6130be952a35965a8be1",
+          "bytes": 74,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/frame.snapshot.txt",
+          "sha256": "d06b8a631d33c4621b9f1e9dc5b05588af3d8b286a42bfd4d62e09e4fe5a3d83",
+          "bytes": 622,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/lifecycle/lifecycle-217.json",
+          "sha256": "559ff3ade34c898564d0fd0ff3c36eecbd12d4b725e4f9c3c5b664a95f54739e",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/process-cleanup.json",
+          "sha256": "6c04ab892658edf6c8296dec877c5ca60799639fac7e275d7112d6577b56fd1a",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/frame-constrained-50x12/attempt-1/trace-summary.txt",
+          "sha256": "d724ccd681d0986ac70499ff8975e83c0abbbf58d59378d3245eb80d1850e8c6",
+          "bytes": 1301,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/frame-constrained-50x12/attempt-1/traces/tests-invariant.spec.ts-frame-constrained-50x12--the-approved-minimum-frame-fits-50x12-with-required-keys-visible",
+          "sha256": "588832676bf82ac2e5cae27f38ec9fa51e797714b4a16a82d705f05506625b21",
+          "bytes": 767,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "launch-bare-tty",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "launch-bare-tty/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-launch-bare-tty-a1-nzVaGn",
+          "startedAt": "2026-09-01T14:19:07.283Z",
+          "finishedAt": "2026-09-01T14:19:12.782Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5500,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "bare invocation on a TTY launches the TUI",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "a3e6a6b4baab79b25b38c582dad0fb91a2b62be89342011103089eb357040e2f",
+        "afterDigest": "84cf21095fdbc71d0ad017db6fd6bbdf8232022f5806f2b762ffcefe4c593938",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/1e918fd70e83075f/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/1e918fd70e83075f/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/launch-bare-tty/attempt-1/driver-log.txt",
+          "sha256": "f4066781f0e84a0c88b13c4ece7c8b8d3b758703d0a4558fd8d68534b3fa5102",
+          "bytes": 33,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-bare-tty/attempt-1/flow-result.json",
+          "sha256": "582ec9b1880219ae1b9f866736acf91c94d6431bd57b2310d4b8809495889462",
+          "bytes": 66,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-bare-tty/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-bare-tty/attempt-1/lifecycle/lifecycle-304.json",
+          "sha256": "bb8230708ee818b47f97c350577b268c4567109af041d01d8c37badc70863dda",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-bare-tty/attempt-1/process-cleanup.json",
+          "sha256": "a7b74b77b94ff0dccb6762c3b8c20ee22fb82bf8d46db890118197cdd99c815d",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-bare-tty/attempt-1/trace-summary.txt",
+          "sha256": "e578f480ec36bbcafc63a892c092b8276385d0448d476094fa9ad23a507ecaa4",
+          "bytes": 3427,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/launch-bare-tty/attempt-1/traces/tests-invariant.spec.ts-launch-bare-tty--bare-invocation-on-a-TTY-launches-the-TUI",
+          "sha256": "894cf0ceb8c55d144363e39935f84ef10440befe32004f6d7fff83bf470cb900",
+          "bytes": 805,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "launch-explicit-tui",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "launch-explicit-tui/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-launch-explicit-tui-a1-bLPOUg",
+          "startedAt": "2026-09-01T14:19:12.784Z",
+          "finishedAt": "2026-09-01T14:19:18.263Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5479,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "explicit tui invocation on a TTY launches the TUI",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "d177eef62d62465bb5ff8819443d1ced9b341dd3cbd02aea26b5e7267c5244d7",
+        "afterDigest": "81085706788d605de20f7e1155fe21c7bf3f343d4d12fb0374647d99b2ed3ce2",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/335bce14930e30bb/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/335bce14930e30bb/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/driver-log.txt",
+          "sha256": "877b5f41757ea85eae68293a42866fc12acf402c24f8989b9b5998d8ea4125f2",
+          "bytes": 37,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/flow-result.json",
+          "sha256": "9def0f529ec6e22d6c32f8056178c00fcf03b9991f2d65ab3d3b7f4a89e8ff0a",
+          "bytes": 70,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/lifecycle/lifecycle-394.json",
+          "sha256": "a754be6024bf5bd6045d65517279bcfb05f6b04173c6bf7952dc507297c18fff",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/process-cleanup.json",
+          "sha256": "e0cc1d00890eefa27988e948ac0754a1dedd83f51394bbff3e605b245e1f2f59",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/launch-explicit-tui/attempt-1/trace-summary.txt",
+          "sha256": "9e2323f4d147b0bd84324f233a67e1da45a127478c00a747159b0feb077c9968",
+          "bytes": 2886,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/launch-explicit-tui/attempt-1/traces/tests-invariant.spec.ts-launch-explicit-tui--explicit-tui-invocation-on-a-TTY-launches-the-TUI",
+          "sha256": "f270b4c3dc4b6f56a43720131edc9e886efb3fe0386026c8c97ddd8445c1cfe6",
+          "bytes": 755,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "no-tui-env",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "no-tui-env/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-no-tui-env-a1-ueNOFZ",
+          "startedAt": "2026-09-01T14:19:18.264Z",
+          "finishedAt": "2026-09-01T14:19:23.566Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5302,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "AGENT_MARKETPLACE_NO_TUI suppresses bare TTY launch",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "0403d5e011119803b30f39524235d74faa9d851abd28660990bbdf8dac1cb2eb",
+        "afterDigest": "d5312a90bbe1192b2c29145dbf6e02a9861fae85aea7fadb9bb4c47fce96f4e6",
+        "changedPaths": [
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/no-tui-env/attempt-1/driver-log.txt",
+          "sha256": "ecf829c669ff84792c81daaee296dc04a3aa5406a6ba5ebd3c8f34acac61433e",
+          "bytes": 28,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-env/attempt-1/flow-result.json",
+          "sha256": "7333742b0ad8a1ab6b201dc21708cedf38a0ce8a35df68fd31db14ab6823ee31",
+          "bytes": 61,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-env/attempt-1/frame.snapshot.txt",
+          "sha256": "ed17811104a845aa166aeee47164231e4defa82c978e64f582643f949666789a",
+          "bytes": 1944,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-env/attempt-1/lifecycle/lifecycle-484.json",
+          "sha256": "67a7dd0bee1aedd53eacded5b70250ea8d26c018a39b72674b1aba22d5aab589",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-env/attempt-1/process-cleanup.json",
+          "sha256": "2b063e43d6e358ec9d0906abc2c5d066c76a3df6376ea84122dda0e8a0963d31",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-env/attempt-1/trace-summary.txt",
+          "sha256": "7b3e297dc696f6a2b25ff6991fd2fa13e2289450c16f62e960c5bcb932ed28dd",
+          "bytes": 1805,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/no-tui-env/attempt-1/traces/tests-invariant.spec.ts-no-tui-env--AGENT_MARKETPLACE_NO_TUI-suppresses-bare-TTY-launch",
+          "sha256": "6b4b98f4cbafae956fe5dcc30278976e2d508054cc096e60c4d56db44852337b",
+          "bytes": 1108,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "no-tui-flag",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "no-tui-flag/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-no-tui-flag-a1-OHMCzL",
+          "startedAt": "2026-09-01T14:19:23.568Z",
+          "finishedAt": "2026-09-01T14:19:28.895Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5327,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "--no-tui suppresses bare TTY launch",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "4c51a4daacc5eee1da1a57dbc23e344a80127e7e18dfcd5349c1c8702464461d",
+        "afterDigest": "2ea9810292583439f0497dad96045ff0d94a7a4471e442074b15252750d8434e",
+        "changedPaths": [
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/no-tui-flag/attempt-1/driver-log.txt",
+          "sha256": "318f187ed22c82a8218446d5a0043b5e6c2c6c4c47b96f668fbdb43cb1e4ef06",
+          "bytes": 29,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-flag/attempt-1/flow-result.json",
+          "sha256": "de9630bdd99f204ac839b5e3206552ab44d47634f7af249c2c8fc5e9072f1b4a",
+          "bytes": 62,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-flag/attempt-1/frame.snapshot.txt",
+          "sha256": "681d6e7556863b13c2e133f023ef01da48f717001669bf4655667d3c02d935e7",
+          "bytes": 1944,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-flag/attempt-1/lifecycle/lifecycle-560.json",
+          "sha256": "f8288af206118574365e8498ed25fbe56a76fbf640166b93556f56df604ccef5",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-flag/attempt-1/process-cleanup.json",
+          "sha256": "ffdf476771ec97f5d3c2b678b7c39d101aedb848a4daab2ea580a23e8987b8d7",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/no-tui-flag/attempt-1/trace-summary.txt",
+          "sha256": "7b3e297dc696f6a2b25ff6991fd2fa13e2289450c16f62e960c5bcb932ed28dd",
+          "bytes": 1805,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/no-tui-flag/attempt-1/traces/tests-invariant.spec.ts-no-tui-flag----no-tui-suppresses-bare-TTY-launch",
+          "sha256": "6eb29163749d3d4f60880eea3b08847ba3f94ce26959330896f9239dfd3daf94",
+          "bytes": 1095,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "org-fallback",
+      "kind": "invariant",
+      "driver": "command",
+      "boundary": "non-tty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "non-tty",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "org-fallback/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-org-fallback-a1-PwMs9d",
+          "startedAt": "2026-09-01T14:19:28.896Z",
+          "finishedAt": "2026-09-01T14:19:28.976Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 80,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "alternateScreenExited": "NOT_APPLICABLE",
+            "cursorVisible": "NOT_APPLICABLE",
+            "mouseDisabled": "NOT_APPLICABLE",
+            "bracketedPasteDisabled": "NOT_APPLICABLE",
+            "complete": false
+          },
+          "harnessRecovery": {
+            "applied": false,
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "the fixed organization config supplies fallback harnesses inside containment",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "7ef94dc3c3df16eae29373a913e02a7d52ec5eec6c43b7188c052def7dc95014",
+        "afterDigest": "da3379ec5689be09499a6772c0f2fcdf345ae1fbdfd4dc400fa5671d8b8f4e2a",
+        "changedPaths": [
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/org-fallback/attempt-1/driver-log.txt",
+          "sha256": "8acd469472b9b48da0c0e1af7e1003d15024c29999f60bb38fe6dda039850138",
+          "bytes": 1186,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/org-fallback/attempt-1/process-cleanup.json",
+          "sha256": "e4b688ac71f4eb91c1dae1611739f96e9679ddb42004e1752732ecfc1318791f",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "quit-ctrl-c",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "quit-ctrl-c/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-quit-ctrl-c-a1-an42o5",
+          "startedAt": "2026-09-01T14:19:28.977Z",
+          "finishedAt": "2026-09-01T14:19:34.383Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5406,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "Ctrl+C exits and restores the terminal",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "d7d809bcbb3c829086b8ec16af5fc18ededfd98f81583c7861a7282e6df3a922",
+        "afterDigest": "994f91759e31fa6fc1033046925979cefb8ee8fb549d232b51a05102ebd20aa1",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/baf2beae15a85aa1/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/baf2beae15a85aa1/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/driver-log.txt",
+          "sha256": "1caee398ef6f1bcbf78a37dc7f0986519135482d4c89cd8fb3d8526c73f3039e",
+          "bytes": 29,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/flow-result.json",
+          "sha256": "3ca8ec8c898cc23600cfd87e1617a8603f0fb328c8c47a3a1c1df195adaaba56",
+          "bytes": 62,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/lifecycle/lifecycle-680.json",
+          "sha256": "e8a36f47542e32ff10bc931a619c1e7958a5e41caa84d97eaf6189b78ae24b9d",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/process-cleanup.json",
+          "sha256": "311938f1ec5342bcb4e2ce2c4cfac147eeaca4e968910f6e37f70a96eafb44f7",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-ctrl-c/attempt-1/trace-summary.txt",
+          "sha256": "9e2323f4d147b0bd84324f233a67e1da45a127478c00a747159b0feb077c9968",
+          "bytes": 2886,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/quit-ctrl-c/attempt-1/traces/tests-invariant.spec.ts-quit-ctrl-c--Ctrl+C-exits-and-restores-the-terminal",
+          "sha256": "c144a26fa464484987b9ebd985e2760b1b9eb981f328b131437b5b54a9222a7f",
+          "bytes": 748,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "quit-q",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "quit-q/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-quit-q-a1-zbA72s",
+          "startedAt": "2026-09-01T14:19:34.385Z",
+          "finishedAt": "2026-09-01T14:19:39.887Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5502,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "q exits and restores the terminal",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "a1065a576e2461d024d290d6f049b7d3790d15fb283ee857f7e68c5f82cabd63",
+        "afterDigest": "d3c1c43c8cb5a14d1efd9230f175e6eaa0273426233702bbe538f015ada5cd30",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/87f12ae78f11e800/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/87f12ae78f11e800/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/quit-q/attempt-1/driver-log.txt",
+          "sha256": "b0446338e6344c668b4bdc529714937bd79d4b45019d67d7121500248d472fb0",
+          "bytes": 24,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-q/attempt-1/flow-result.json",
+          "sha256": "e9f49bd6877ebe2c1f54963ccc173d0aeb6e13689ba2abc6448577345cf7cc03",
+          "bytes": 57,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-q/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-q/attempt-1/lifecycle/lifecycle-770.json",
+          "sha256": "8875cbd5811a4cf0510842531445228a41430f85620dde43877fcaf9ce08c28d",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-q/attempt-1/process-cleanup.json",
+          "sha256": "2bf1bbd7f11aabdef0c1fbf396b387f36c581c5eb7026af212cc24df47a4fef9",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-q/attempt-1/trace-summary.txt",
+          "sha256": "e578f480ec36bbcafc63a892c092b8276385d0448d476094fa9ad23a507ecaa4",
+          "bytes": 3427,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/quit-q/attempt-1/traces/tests-invariant.spec.ts-quit-q--q-exits-and-restores-the-terminal",
+          "sha256": "da9fbacc5f0c242d553f3ee7c5573202ada6f3228a8060fe3b83dfba786d42b1",
+          "bytes": 793,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "quit-sigterm",
+      "kind": "invariant",
+      "driver": "pty",
+      "boundary": "real-pty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "80x24",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "quit-sigterm/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-quit-sigterm-a1-V97DMi",
+          "startedAt": "2026-09-01T14:19:39.888Z",
+          "finishedAt": "2026-09-01T14:19:45.384Z",
+          "status": "PASS",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 5496,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "PASS",
+            "echo": "PASS",
+            "alternateScreenExited": "PASS",
+            "cursorVisible": "PASS",
+            "mouseDisabled": "PASS",
+            "bracketedPasteDisabled": "PASS",
+            "complete": true
+          },
+          "harnessRecovery": {
+            "applied": true,
+            "canonical": "PASS",
+            "echo": "PASS",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "SIGTERM exits and restores the terminal",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "2909eb8a29d14b30671a817fc3b328f6efec3dce7eb01175c0600fd5224227b1",
+        "afterDigest": "e633eede315d75d3b4202ef2c756d83b2b7c791415a02d1f03f08f2cdb02d910",
+        "changedPaths": [
+          "home/.cache/agent-marketplace/0fa5e7376cc88a35/main/.git/FETCH_HEAD",
+          "home/.cache/agent-marketplace/0fa5e7376cc88a35/main/.git/logs/HEAD",
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/quit-sigterm/attempt-1/driver-log.txt",
+          "sha256": "a9443df26332e0f7e5acab35082adf1a0d9677bb089e016bcf0134e3d1456098",
+          "bytes": 30,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-sigterm/attempt-1/flow-result.json",
+          "sha256": "31a140b18ca66dfb8efb4ba7d98221597a36a57c730d9938d0ba6363c9e627d6",
+          "bytes": 63,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-sigterm/attempt-1/frame.snapshot.txt",
+          "sha256": "7a888d382c2cf372718565976ce9b849697f3e7b32d95fa364064b72a62cd28c",
+          "bytes": 1956,
+          "kind": "sanitized-frame",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-sigterm/attempt-1/lifecycle/lifecycle-860.json",
+          "sha256": "6ab5938576ac1565e4ba31f5699eaf5a0e8eb6a0fcbd258d839ee7fb19178b23",
+          "bytes": 363,
+          "kind": "other",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-sigterm/attempt-1/process-cleanup.json",
+          "sha256": "69579ff5c969352342c5463e56fc92857ced44e3d4fb49b1daa7408eb8bdec18",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/quit-sigterm/attempt-1/trace-summary.txt",
+          "sha256": "e578f480ec36bbcafc63a892c092b8276385d0448d476094fa9ad23a507ecaa4",
+          "bytes": 3427,
+          "kind": "trace-summary",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "raw/quit-sigterm/attempt-1/traces/tests-invariant.spec.ts-quit-sigterm--SIGTERM-exits-and-restores-the-terminal",
+          "sha256": "948104a947f90c16943267f6555d20f869976040af9e1bae67a9496c7c5cf5a5",
+          "bytes": 805,
+          "kind": "raw-trace",
+          "sanitized": false,
+          "sanitization": "raw",
+          "localOnly": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "flowId": "tui-without-tty",
+      "kind": "invariant",
+      "driver": "command",
+      "boundary": "non-tty-process",
+      "required": true,
+      "status": "PASS",
+      "selectionReason": "required invariant matrix",
+      "fixtureId": "local-bare-git-registry-v1",
+      "expectedFailureClass": null,
+      "terminal": {
+        "profileId": "non-tty",
+        "columns": 80,
+        "rows": 24
+      },
+      "attempts": [
+        {
+          "attemptId": "tui-without-tty/a1",
+          "attempt": 1,
+          "sandboxId": "tui-qa-tui-qa-02-baseline-20260901-tui-without-tty-a1-OQQz62",
+          "startedAt": "2026-09-01T14:19:45.386Z",
+          "finishedAt": "2026-09-01T14:19:45.466Z",
+          "status": "PASS",
+          "exitCode": 1,
+          "signal": null,
+          "durationMs": 80,
+          "observedFailureClass": null,
+          "productRestoration": {
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "alternateScreenExited": "NOT_APPLICABLE",
+            "cursorVisible": "NOT_APPLICABLE",
+            "mouseDisabled": "NOT_APPLICABLE",
+            "bracketedPasteDisabled": "NOT_APPLICABLE",
+            "complete": false
+          },
+          "harnessRecovery": {
+            "applied": false,
+            "canonical": "NOT_APPLICABLE",
+            "echo": "NOT_APPLICABLE",
+            "noDescendants": "PASS",
+            "complete": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "id": "flow-outcome",
+          "status": "PASS",
+          "expected": "explicit tui without a usable terminal fails fast and does not hang",
+          "observed": "passed"
+        }
+      ],
+      "sideEffects": {
+        "rootClass": "declared-application-roots",
+        "beforeDigest": "fbad23143ad00ab4b4a457cf1cb662fb47f35cd256c34ec7c12dd42118356fdc",
+        "afterDigest": "3274d02e26feafda1f246f8f27bb46d7884e0423637989bb68fa76edf85c0345",
+        "changedPaths": [
+          "logs/agent-marketplace.log"
+        ],
+        "truncated": false
+      },
+      "evidence": [
+        {
+          "path": "flows/tui-without-tty/attempt-1/driver-log.txt",
+          "sha256": "a2f9159850d8e4d5fe1b5c40841e8d3f923a4af67c0e91a7bdba9f9394be93d5",
+          "bytes": 128,
+          "kind": "driver-log",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        },
+        {
+          "path": "flows/tui-without-tty/attempt-1/process-cleanup.json",
+          "sha256": "030d4d237231e5a4f620cc5041c593a806d28b32ce446c94f26966f6d9f2a5a0",
+          "bytes": 125,
+          "kind": "process-cleanup",
+          "sanitized": true,
+          "sanitization": "transformed",
+          "localOnly": false,
+          "truncated": false
+        }
+      ]
+    }
+  ],
+  "findings": [],
+  "invalidReasons": [],
+  "finalDecision": {
+    "status": "PASS",
+    "exitCode": 0,
+    "precedence": [
+      "INVALID",
+      "FAIL",
+      "BLOCKED",
+      "PASS",
+      "NOT_APPLICABLE"
+    ],
+    "reasons": [
+      "all applicable required flows passed"
+    ]
+  },
+  "finalStatus": "PASS",
+  "exitCode": 0
+}

@@ -12,6 +12,7 @@
 .DS_Store
 /dist/
 /.tmp/
+/.local/
 /.windsurf/
 /.devin/skills/
 /.devin/hooks.v1.json

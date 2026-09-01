@@ -27,6 +27,36 @@ describe("containment self-test", () => {
     }
   });
 
+  it("runs the release binary in the disposable contained workbench", () => {
+    const runner = read("run-container.sh");
+    for (const required of [
+      "--network none",
+      "--read-only",
+      "--cap-drop ALL",
+      "--security-opt no-new-privileges",
+      "--pids-limit 512",
+      "/sandbox:rw,nosuid,nodev,exec",
+      "/workbench/.tui-test:rw,nosuid,nodev,noexec",
+      "$root_dir:/src:ro",
+      "$out_dir/artifacts:/qa/artifacts:rw",
+      "$out_dir/bin/agent-marketplace:/opt/agent-marketplace:ro",
+      "$out_dir/bin/build-identity.json:/opt/build-identity.json:ro"
+    ]) {
+      assert.ok(runner.includes(required), required);
+    }
+    assert.equal(runner.includes("/etc/agent-marketplace:rw"), false);
+    const dockerfile = read("Dockerfile");
+    assert.ok(dockerfile.includes("oracle-10-base-image@sha256:"));
+    assert.ok(dockerfile.includes("ARG NODE_VERSION=24.18.0"));
+    assert.ok(dockerfile.includes("/etc/agent-marketplace/config.yaml"));
+    const entrypointLines = read("container-entrypoint.sh").split("\n");
+    const selftestIndex = entrypointLines.findIndex((line) => line.startsWith("if /workbench/selftest-containment.sh "));
+    const workbenchIndex = entrypointLines.findIndex((line) => line === "exec node dist/run-workbench.js");
+    assert.ok(selftestIndex >= 0);
+    assert.ok(workbenchIndex >= 0);
+    assert.ok(selftestIndex < workbenchIndex);
+  });
+
   it("fails when required write and network probes cannot run", () => {
     const selftest = read("selftest-containment.sh");
     for (const required of [
@@ -43,8 +73,9 @@ describe("containment self-test", () => {
     assert.equal(selftest.includes("sh -c"), false);
   });
 
-  it("keeps both scripts executable", () => {
-    assert.ok(fs.statSync(scriptPath("run-containment-selftest.sh")).mode & 0o111);
-    assert.ok(fs.statSync(scriptPath("selftest-containment.sh")).mode & 0o111);
+  it("keeps runtime scripts executable", () => {
+    for (const name of ["run-containment-selftest.sh", "selftest-containment.sh", "run-container.sh", "container-entrypoint.sh"]) {
+      assert.ok(fs.statSync(scriptPath(name)).mode & 0o111, name);
+    }
   });
 });

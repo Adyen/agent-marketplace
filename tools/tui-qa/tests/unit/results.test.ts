@@ -190,6 +190,30 @@ describe("validateResults", () => {
     assert.ok(validateResults(baseResults([flowRecord("PASS", true, 2)])).some((problem) => problem.includes("PASS")));
   });
 
+  it("requires complete recovery on a flaky passing retry without masking first-attempt failure", () => {
+    const flow = flowRecord("FLAKY", true, 2);
+    flow.attempts[0].harnessRecovery = harnessRecovery("BLOCKED");
+    assert.deepEqual(validateResults(baseResults([flow])), []);
+    flow.attempts[1].harnessRecovery = harnessRecovery("BLOCKED");
+    assert.ok(validateResults(baseResults([flow])).some((problem) => problem.includes("passing retry")));
+  });
+
+  it("preserves required failure precedence when its retry is blocked", () => {
+    const flow = flowRecord("FAIL", true, 2);
+    flow.attempts[1].status = "BLOCKED";
+    flow.attempts[1].exitCode = null;
+    flow.attempts[1].observedFailureClass = "HARNESS_ERROR";
+    flow.attempts[1].productRestoration = productRestoration("BLOCKED");
+    flow.attempts[1].harnessRecovery = harnessRecovery("BLOCKED");
+    assert.deepEqual(validateResults(baseResults([flow])), []);
+    flow.attempts[1].status = "PASS";
+    flow.attempts[1].exitCode = 0;
+    flow.attempts[1].observedFailureClass = null;
+    flow.attempts[1].productRestoration = productRestoration("PASS");
+    flow.attempts[1].harnessRecovery = harnessRecovery("PASS");
+    assert.ok(validateResults(baseResults([flow])).some((problem) => problem.includes("non-passing final attempt")));
+  });
+
   it("prevents dirty or instrumented builds from certifying", () => {
     const instrumented = baseResults([flowRecord("PASS")]);
     instrumented.binary.buildClass = "instrumented";
@@ -211,6 +235,21 @@ describe("validateResults", () => {
     flow.evidence[0].sanitized = false;
     flow.evidence[0].sanitization = "raw";
     assert.ok(validateResults(baseResults([flow])).some((problem) => problem.includes("not transformed")));
+  });
+
+  it("allows passing non-TTY command flows with non-applicable terminal restoration", () => {
+    const flow = flowRecord("PASS");
+    flow.driver = "command";
+    flow.boundary = "non-tty-process";
+    flow.attempts[0].productRestoration = productRestoration("NOT_APPLICABLE");
+    flow.attempts[0].harnessRecovery = {
+      applied: false,
+      canonical: "NOT_APPLICABLE",
+      echo: "NOT_APPLICABLE",
+      noDescendants: "PASS",
+      complete: true
+    };
+    assert.deepEqual(validateResults(baseResults([flow])), []);
   });
 
   it("allows local-only raw evidence but requires policy for upload", () => {

@@ -7,7 +7,26 @@ import process from "node:process";
 import { TARGET_EXIT_BOUNDARY_VERSION, TERMINAL_RESET_SEQUENCE } from "./protocol.js";
 
 const separator = process.argv.indexOf("--");
-const argv = separator >= 0 ? process.argv.slice(separator + 1) : process.argv.slice(2);
+if (separator < 0) {
+  process.stderr.write("pty-wrapper: target separator missing\n");
+  process.exit(127);
+}
+const options = process.argv.slice(2, separator);
+let targetCwd = process.cwd();
+if (options.length > 0) {
+  if (options.length !== 2 || options[0] !== "--cwd" || !path.isAbsolute(options[1])) {
+    process.stderr.write("pty-wrapper: invalid options\n");
+    process.exit(127);
+  }
+  try {
+    targetCwd = fs.realpathSync(options[1]);
+    if (!fs.statSync(targetCwd).isDirectory()) throw new Error("not a directory");
+  } catch {
+    process.stderr.write("pty-wrapper: target cwd unavailable\n");
+    process.exit(127);
+  }
+}
+const argv = process.argv.slice(separator + 1);
 if (argv.length === 0) {
   process.stderr.write("pty-wrapper: target missing\n");
   process.exit(127);
@@ -19,7 +38,7 @@ if (lifecycleDir) fs.mkdirSync(lifecycleDir, { recursive: true });
 const activePidFile = process.env.AM_TUI_QA_ACTIVE_PID_FILE;
 
 const child = spawn(target, args, {
-  cwd: process.cwd(),
+  cwd: targetCwd,
   env: process.env,
   stdio: "inherit"
 });

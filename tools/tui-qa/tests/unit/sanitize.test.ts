@@ -77,5 +77,6 @@ describe("Markdown safety", () => {
     const fenced = markdownCodeFence("before```after token=super-secret");
     assert.equal(fenced.includes("super-secret"), false);
     assert.ok(fenced.includes("\\`\\`\\`"));
+    assert.ok(markdownCodeFence("one\ntwo").includes("one\ntwo"));
   });
 });
