@@ -869,10 +869,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Search):
+		resetRemoteSearch := m.filter != ""
 		m.filterActive = true
 		m.searchInput.SetValue("")
 		cmd := m.searchInput.Focus()
 		m.filter = ""
+		if resetRemoteSearch {
+			m.restoreBrowseDiscovery()
+			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false))
+		}
 		return m, cmd
 
 	case key.Matches(msg, m.keys.Help):
@@ -1035,6 +1040,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) restoreBrowseDiscovery() {
+	if m.authoritativeRows != nil {
+		m.discoveryRows = slices.Clone(m.browseDiscoveryRows)
+		m.mergeDiscoveryRows()
+	} else {
+		m.recomputeView()
+	}
+}
+
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Clear):
@@ -1042,12 +1056,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = ""
 		m.searchInput.SetValue("")
 		m.searchInput.Blur()
-		if m.authoritativeRows != nil {
-			m.discoveryRows = slices.Clone(m.browseDiscoveryRows)
-			m.mergeDiscoveryRows()
-		} else {
-			m.recomputeView()
-		}
+		m.restoreBrowseDiscovery()
 		recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
 		return m, m.beginMarketplaceDiscovery("", false)
 
@@ -1069,10 +1078,7 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.filter == "" {
-			if m.authoritativeRows != nil {
-				m.discoveryRows = slices.Clone(m.browseDiscoveryRows)
-				m.mergeDiscoveryRows()
-			}
+			m.restoreBrowseDiscovery()
 			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false), m.spinner.Tick)
 		}
 		return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
