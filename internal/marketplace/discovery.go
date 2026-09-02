@@ -18,6 +18,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	maxDiscoveryCacheSize       = 2 * 1024 * 1024
 	maxDiscoveryMaintenanceDirs = 4096
 	maxDiscoveryDirEntries      = DiscoveryQueryLimit + 128
+	discoveryCacheLockName      = ".discovery.lock"
 )
 
 type DiscoveryCacheState string
@@ -79,6 +81,43 @@ func NewDiscoveryCache(root string) *DiscoveryCache {
 }
 
 func DefaultDiscoveryCache() *DiscoveryCache { return NewDiscoveryCache(DefaultCache().root) }
+
+func (c *DiscoveryCache) withFilesystemLock(createParent bool, fn func() error) error {
+	parent := filepath.Dir(c.root)
+	if createParent {
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			return fmt.Errorf("create discovery cache parent: %w", err)
+		}
+	}
+	info, err := os.Lstat(parent)
+	if errors.Is(err, os.ErrNotExist) && !createParent {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("discovery cache lock parent is unsafe")
+	}
+	lockPath := filepath.Join(parent, discoveryCacheLockName)
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open discovery cache lock: %w", err)
+	}
+	defer func() { _ = lock.Close() }()
+	lockInfo, err := lock.Stat()
+	if err != nil || !lockInfo.Mode().IsRegular() {
+		return errors.New("discovery cache lock is unsafe")
+	}
+	for {
+		err = unix.Flock(int(lock.Fd()), unix.LOCK_EX)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("lock discovery cache: %w", err)
+	}
+	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	return fn()
+}
 
 func normalizeDiscoveryQuery(query string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(query)), " ")
@@ -155,7 +194,13 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	if len(data) > maxDiscoveryCacheSize {
 		return errors.New("discovery cache record exceeds size limit")
 	}
-	path := c.path(out.Endpoint, query, kind, limit)
+	return c.withFilesystemLock(true, func() error {
+		return c.storeLocked(out.Endpoint, query, kind, limit, data)
+	})
+}
+
+func (c *DiscoveryCache) storeLocked(endpoint config.MarketplaceEntry, query, kind string, limit int, data []byte) error {
+	path := c.path(endpoint, query, kind, limit)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(c.root, 0o700); err != nil {
 		return fmt.Errorf("create discovery cache root: %w", err)
@@ -180,8 +225,23 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("discovery cache directory is unsafe")
 	}
-	if _, err := readDirWithinCapacity(dir, maxDiscoveryDirEntries-1); err != nil {
+	entries, err := readDirWithinCapacity(dir, maxDiscoveryDirEntries)
+	if err != nil {
 		return fmt.Errorf("prepare discovery cache directory: %w", err)
+	}
+	_, statErr := os.Lstat(path)
+	replacing := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect discovery cache destination: %w", statErr)
+	}
+	if replacing {
+		// The lock makes the temporary entry the only transient capacity excess;
+		// rename removes it while replacing this recognized record count-neutrally.
+		if _, recognized := c.readRecognizedRecord(dir, filepath.Base(path)); !recognized {
+			return errors.New("discovery cache destination is not an owned record")
+		}
+	} else if len(entries) == maxDiscoveryDirEntries {
+		return errors.New("discovery cache directory is at capacity")
 	}
 	tmp, err := os.CreateTemp(dir, ".discovery-*")
 	if err != nil {
@@ -205,7 +265,7 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("replace discovery cache: %w", err)
 	}
-	return c.retain(dir)
+	return c.retainLocked(dir)
 }
 
 func readDirBounded(path string, limit int) ([]os.DirEntry, bool, error) {
@@ -239,6 +299,10 @@ func readDirWithinCapacity(path string, limit int) ([]os.DirEntry, error) {
 }
 
 func (c *DiscoveryCache) retain(dir string) error {
+	return c.withFilesystemLock(false, func() error { return c.retainLocked(dir) })
+}
+
+func (c *DiscoveryCache) retainLocked(dir string) error {
 	entries, overCap, err := readDirBounded(dir, maxDiscoveryDirEntries)
 	if err != nil {
 		return err
@@ -250,22 +314,32 @@ func (c *DiscoveryCache) retain(dir string) error {
 		path     string
 		observed time.Time
 	}
-	var nonEmpty []candidate
+	var empty, nonEmpty []candidate
 	for _, entry := range entries {
 		record, ok := c.readRecognizedRecord(dir, entry.Name())
-		if ok && record.Query != "" {
-			nonEmpty = append(nonEmpty, candidate{path: filepath.Join(dir, entry.Name()), observed: record.ObservedAt})
+		if !ok {
+			continue
+		}
+		candidate := candidate{path: filepath.Join(dir, entry.Name()), observed: record.ObservedAt}
+		if record.Query == "" {
+			empty = append(empty, candidate)
+		} else {
+			nonEmpty = append(nonEmpty, candidate)
 		}
 	}
-	slices.SortFunc(nonEmpty, func(a, b candidate) int {
+	newestFirst := func(a, b candidate) int {
 		if c := b.observed.Compare(a.observed); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.path, b.path)
-	})
-	for _, old := range nonEmpty[min(len(nonEmpty), DiscoveryQueryLimit):] {
-		if err := os.Remove(old.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+	}
+	slices.SortFunc(empty, newestFirst)
+	slices.SortFunc(nonEmpty, newestFirst)
+	for _, candidates := range [][]candidate{empty[min(len(empty), 1):], nonEmpty[min(len(nonEmpty), DiscoveryQueryLimit):]} {
+		for _, old := range candidates {
+			if err := os.Remove(old.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -324,6 +398,10 @@ func (c *DiscoveryCache) maintain(endpoints []config.MarketplaceEntry) error {
 	if c == nil || c.root == "" {
 		return nil
 	}
+	return c.withFilesystemLock(false, func() error { return c.maintainLocked(endpoints) })
+}
+
+func (c *DiscoveryCache) maintainLocked(endpoints []config.MarketplaceEntry) error {
 	info, err := os.Lstat(c.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

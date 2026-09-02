@@ -22,6 +22,48 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func TestToggleSnapshotReloadPreservesNonEmptyMarketplaceQuery(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	queries := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("market-id", "https://example.com", "https://example.com"))
+		case "/api/v1/search":
+			queries <- r.URL.Query().Get("q")
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Limit: marketplace.DiscoveryPageLimit})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	m := newTestModel()
+	m.filter = "remote query"
+	generation := m.requests.active(requestSnapshot)
+	updated, cmd := m.Update(snapshotLoadedMsg{
+		generation:      generation,
+		mergedCfg:       &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "market-id"}}},
+		driftAssessment: driftReady,
+	})
+	m = updated.(Model)
+	if m.filter != "remote query" {
+		t.Fatalf("filter = %q, want remote query", m.filter)
+	}
+	commands := batchCmds(cmd)
+	for _, candidate := range commands {
+		_ = candidate()
+	}
+	select {
+	case got := <-queries:
+		if got != "remote query" {
+			t.Fatalf("remote query = %q, want %q", got, "remote query")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("snapshot reload did not issue Marketplace search")
+	}
+}
+
 func TestMarketplaceDiscoveryCommandPublishesFastEndpointBeforeSlowEndpointCompletes(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	blocked := make(chan struct{})

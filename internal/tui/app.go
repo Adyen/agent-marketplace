@@ -262,7 +262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg)
-		discoveryCmd := m.beginMarketplaceDiscovery("", false)
+		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
 		installCmd := m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
 		if msg.refreshAfterLoad {
 			m.refreshing = true
