@@ -39,6 +39,19 @@ const (
 // Higher values override lower values.
 func (s Source) Precedence() int { return int(s) }
 
+// CompareEntryPrecedence compares two entries by layer and then file order.
+// It returns zero when they have equal authority. File order is ignored if
+// either file value is zero, preserving behavior for configs without includes.
+func CompareEntryPrecedence(aSource Source, aFile int, bSource Source, bFile int) int {
+	if aSource.Precedence() != bSource.Precedence() {
+		return aSource.Precedence() - bSource.Precedence()
+	}
+	if aFile == 0 || bFile == 0 {
+		return 0
+	}
+	return aFile - bFile
+}
+
 // IsMachineScope reports whether skills from this source are installed at
 // the user-wide scope rather than the per-repo scope.
 // SourceUnset (zero value) is treated as repo-scoped.

@@ -705,6 +705,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 
 	// Phase 1: Build occurrence map from registry entries.
 	occurrencesByName, errs := buildOccurrences(cfg, catalogs, ro.resources, malformedIdx, targetSet)
+	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
 	// Phase 2: Pick winners (deduplicate, detect collisions).
@@ -851,17 +852,10 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		}
 	}
 
-	// Build a set of explicitly-excluded resources across all registry entries,
-	// the top-level Collections selector, and local/personal excludes.
-	// Collection members that are excluded should not be expanded.
+	// Build a set of unconditional top-level and local/personal exclusions.
+	// Registry exclusions retain their authority metadata and are evaluated at
+	// the member binding below.
 	excludedResources := make(map[string]struct{})
-	for _, entry := range cfg.Registries {
-		for _, kind := range config.AllKinds {
-			for _, name := range entry.SelectorForKind(kind).Exclude {
-				excludedResources[ViaMapKey(kind, strings.TrimSpace(name))] = struct{}{}
-			}
-		}
-	}
 	for _, name := range cfg.Collections.Exclude {
 		excludedResources[ViaMapKey(ir.KindCollection, strings.TrimSpace(name))] = struct{}{}
 	}
@@ -1037,7 +1031,7 @@ func expandMembersRecursive(
 			// bindings, so a collection can never re-introduce a resource
 			// through the back door of a directory the user removed. Required
 			// entries stay immune to excludes, as everywhere else.
-			eligible := candidatesNotScopedAway(candidates, member.Kind)
+			eligible := candidatesNotScopedAway(candidates, member.Kind, cfg.Registries)
 			if len(eligible) == 0 {
 				slog.Debug("collection member skipped: every configured location is excluded",
 					"collection", col.Label(), "kind", member.Kind.String(), "name", memberName, "registry", memberRegistry)
@@ -1176,8 +1170,20 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Skip if explicitly excluded (e.g. via `remove` of a collection member).
-		if _, excluded := excludedResources[memberKey]; excluded {
+		// Skip only exclusions that outrank the selected member binding. Required
+		// members remain immune, matching direct-resource exclusion semantics.
+		memberArtifact := ResolvedArtifact{
+			Entry:          catalog.Entry{Kind: member.Kind, Name: memberName},
+			RegistryURL:    memberRegistryURL,
+			RegistryPath:   memberRegistryPath,
+			Source:         memberSource,
+			FilePrecedence: memberFilePrecedence,
+			Required:       memberRequired,
+		}
+		if collectionMemberShadowedByEntries(memberArtifact, cfg.Registries) {
+			continue
+		}
+		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
 			continue
 		}
 
@@ -1367,30 +1373,41 @@ func filterCandidates(candidates []memberEntryCandidate, keep func(memberEntryCa
 	return filtered
 }
 
-// candidatesNotScopedAway drops candidates whose entry has `exclude_all` set
-// for the member's kind, which is what `agent-marketplace remove --from <url>`
-// writes. A collection must not re-introduce a resource from a location the
-// user removed. Required entries are immune to excludes everywhere else, so
-// they are immune here too.
-func candidatesNotScopedAway(candidates []memberEntryCandidate, kind ir.ResourceKind) []memberEntryCandidate {
+// candidatesNotScopedAway drops candidates excluded by their own entry or a
+// higher-authority shadow. Required entries remain immune to exclusions.
+func candidatesNotScopedAway(candidates []memberEntryCandidate, kind ir.ResourceKind, entries []config.RegistryEntry) []memberEntryCandidate {
 	return filterCandidates(candidates, func(candidate memberEntryCandidate) bool {
-		return candidate.entry.Required || !candidate.entry.SelectorForKind(kind).ExcludeAll
+		if candidate.entry.Required || candidate.entry.SelectorForKind(kind).ExcludeAll {
+			return candidate.entry.Required
+		}
+		for _, shadow := range entries {
+			if entryCanShadow(shadow, candidate.entry.Source, candidate.entry.FilePrecedence) &&
+				shadow.SelectorForKind(kind).ExcludeAll &&
+				normalizedRegistryURL(shadow.URL) == normalizedRegistryURL(candidate.entry.URL) &&
+				pathScopeCovers(shadow.Path, candidate.entry.Path) {
+				return false
+			}
+		}
+		return true
 	})
 }
 
-// preferRequired picks the binding among equally-valid candidates. A
-// `required: true` entry is org policy: when it provides the member, it must
-// win over a merely-available entry that happens to come first in config
-// order, otherwise the materialized artifact silently loses its required-ness
-// (and with it collision precedence and `remove` refusal). Ties keep config
-// order, so the choice stays deterministic.
+// preferRequired chooses among valid bindings. Required entries outrank
+// optional entries; otherwise higher config authority wins. Ties retain config
+// order.
 func preferRequired(candidates []memberEntryCandidate) memberEntryCandidate {
-	for _, candidate := range candidates {
-		if candidate.entry.Required {
-			return candidate
+	winner := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.entry.Required && !winner.entry.Required {
+			winner = candidate
+			continue
+		}
+		if candidate.entry.Required == winner.entry.Required &&
+			config.CompareEntryPrecedence(candidate.entry.Source, candidate.entry.FilePrecedence, winner.entry.Source, winner.entry.FilePrecedence) > 0 {
+			winner = candidate
 		}
 	}
-	return candidates[0]
+	return winner
 }
 
 // normalizedEntryPath renders a registry subdirectory for comparison, so a
@@ -2116,67 +2133,101 @@ func validateCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Re
 	return warns
 }
 
-// applyCrossLayerExcludes removes any resolved skill whose name appears in the
-// Exclude list of a higher-precedence layer or later file in the same layer,
-// unless the skill is Required=true. This allows a repo config to opt out of
-// user-personal skills without touching the local config. ExcludeAll=true on a
-// per-kind selector is also honored, but only when the higher-precedence
-// entry's registry URL matches the resource's registry URL (normalized) AND
-// the entry's path covers the resource's path. This prevents cross-registry
-// AND cross-path bleed: exclude_all on teams/example-team/plugins/oncall
-// only suppresses resources from that path (or a sub-path of it), not resources
-// from a sibling path. A root-scoped (empty path) exclude_all covers every
-// sub-path of the URL, consistent with the "root discovers everything"
-// convention in isPathPrefix.
+// entryCanShadow reports whether an entry has authority to suppress a target.
+// Repository layers cannot suppress machine-scoped targets, and only user
+// config can suppress organization targets.
+func entryCanShadow(entry config.RegistryEntry, source config.Source, filePrecedence int) bool {
+	if config.CompareEntryPrecedence(entry.Source, entry.FilePrecedence, source, filePrecedence) <= 0 {
+		return false
+	}
+	if entry.Source != source && source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
+		return false
+	}
+	if entry.Source != source && source == config.Organization && entry.Source != config.UserPersonal {
+		return false
+	}
+	return true
+}
+
+func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntry) bool {
+	if s.Required {
+		return false
+	}
+	for _, entry := range entries {
+		if !entryCanShadow(entry, s.Source, s.FilePrecedence) {
+			continue
+		}
+		for _, ex := range entryResourceExcludes(entry) {
+			if ex.kind != s.Kind || strings.TrimSpace(ex.name) != s.Name {
+				continue
+			}
+			if entry.Source != s.Source ||
+				(config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) && pathScopeCovers(entry.Path, s.RegistryPath)) {
+				return true
+			}
+		}
+		if entry.SelectorForKind(s.Kind).ExcludeAll &&
+			config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) &&
+			pathScopeCovers(entry.Path, s.RegistryPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectionMemberShadowedByEntries also honors exclusions in the entry that
+// binds the member; other entries must have higher authority.
+func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config.RegistryEntry) bool {
+	if member.Required {
+		return false
+	}
+	for _, entry := range entries {
+		sameFile := entry.Source == member.Source && entry.FilePrecedence == member.FilePrecedence
+		if (!sameFile && !entryCanShadow(entry, member.Source, member.FilePrecedence)) ||
+			config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(member.RegistryURL) ||
+			!pathScopeCovers(entry.Path, member.RegistryPath) {
+			continue
+		}
+		selector := entry.SelectorForKind(member.Kind)
+		if selector.ExcludeAll {
+			return true
+		}
+		for _, name := range selector.Exclude {
+			if strings.TrimSpace(name) == member.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func filterShadowedOccurrences(byName map[resourceSelection][]skillOccurrence, entries []config.RegistryEntry) {
+	for key, occurrences := range byName {
+		filtered := occurrences[:0]
+		for _, occurrence := range occurrences {
+			if !artifactShadowedByEntries(occurrence.resolved, entries) {
+				filtered = append(filtered, occurrence)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(byName, key)
+		} else {
+			byName[key] = filtered
+		}
+	}
+}
+
+// applyCrossLayerExcludes removes artifacts suppressed by higher-authority
+// entries while preserving required artifacts.
 func applyCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.RegistryEntry) []ResolvedArtifact {
 	if len(resolved) == 0 || len(entries) == 0 {
 		return resolved
 	}
 
 	filtered := make([]ResolvedArtifact, 0, len(resolved))
-	for _, s := range resolved {
-		if s.Required {
-			filtered = append(filtered, s)
-			continue
-		}
-		excluded := false
-		for _, entry := range entries {
-			sameSource := entry.Source == s.Source
-			if sameSource {
-				if entry.FilePrecedence == 0 || s.FilePrecedence == 0 || entry.FilePrecedence <= s.FilePrecedence {
-					continue
-				}
-			} else if entry.Source.Precedence() <= s.Source.Precedence() {
-				continue
-			}
-			if !sameSource && s.Source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
-				continue
-			}
-			// Organization defaults may only be suppressed by User Personal
-			// configuration, not by repository layers.
-			if !sameSource && s.Source == config.Organization && entry.Source != config.UserPersonal {
-				continue
-			}
-			for _, ex := range entryResourceExcludes(entry) {
-				if ex.kind == s.Kind && strings.TrimSpace(ex.name) == s.Name {
-					excluded = true
-					break
-				}
-			}
-			// Check ExcludeAll scoped by registry URL AND path to prevent
-			// cross-registry and cross-path bleed.
-			if !excluded && entry.SelectorForKind(s.Kind).ExcludeAll {
-				if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) &&
-					pathScopeCovers(entry.Path, s.RegistryPath) {
-					excluded = true
-				}
-			}
-			if excluded {
-				break
-			}
-		}
-		if !excluded {
-			filtered = append(filtered, s)
+	for _, artifact := range resolved {
+		if !artifactShadowedByEntries(artifact, entries) {
+			filtered = append(filtered, artifact)
 		}
 	}
 
@@ -2539,7 +2590,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 				continue
 			}
 			if occ.resolved.Required == winner.resolved.Required &&
-				occ.resolved.Source.Precedence() > winner.resolved.Source.Precedence() {
+				config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) > 0 {
 				winner = occ
 				continue
 			}
@@ -2548,7 +2599,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			// (longer) path wins because it explicitly targets the
 			// sub-directory and its selectors/policy are more precise.
 			if occ.resolved.Required == winner.resolved.Required &&
-				occ.resolved.Source.Precedence() == winner.resolved.Source.Precedence() &&
+				config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) == 0 &&
 				occ.url == winner.url && occ.resolved.Ref == winner.resolved.Ref {
 				if isPathPrefix(winner.resolved.RegistryPath, occ.resolved.RegistryPath) {
 					// winner is parent, occ is child → child wins
@@ -2703,12 +2754,12 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 			continue
 		}
 		if occ.resolved.Required == winner.resolved.Required &&
-			occ.resolved.Source.Precedence() > winner.resolved.Source.Precedence() {
+			config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) > 0 {
 			winner = occ
 			continue
 		}
 		if occ.resolved.Required == winner.resolved.Required &&
-			occ.resolved.Source.Precedence() == winner.resolved.Source.Precedence() &&
+			config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) == 0 &&
 			config.NormalizeGitURL(occ.url) < config.NormalizeGitURL(winner.url) {
 			winner = occ
 		}

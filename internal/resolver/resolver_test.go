@@ -3297,6 +3297,57 @@ func TestApplyCrossLayerExcludesUsesFilePrecedenceWithinLayer(t *testing.T) {
 	}
 }
 
+func TestDeduplicateOccurrencesPrefersLaterFileMetadata(t *testing.T) {
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 1, CatalogKey: "included"}, url: "registry", order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 2, CatalogKey: "root"}, url: "registry", order: 1},
+	}
+	got := deduplicateOccurrences(occurrences)
+	if len(got) != 1 || got[0].resolved.CatalogKey != "root" {
+		t.Fatalf("deduplicated = %#v, want later root metadata", got)
+	}
+}
+
+func TestShadowedCollisionOccurrenceFallsBackWithoutWarning(t *testing.T) {
+	selection := resourceSelection{kind: ir.KindSkill, name: "shared"}
+	byName := map[resourceSelection][]skillOccurrence{
+		selection: {
+			{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "shadowed", Source: config.RepoCommitted, FilePrecedence: 1}, url: "shadowed", order: 0},
+			{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "active", Source: config.RepoCommitted, FilePrecedence: 1}, url: "active", order: 1},
+		},
+	}
+	shadow := config.RegistryEntry{URL: "shadowed", Source: config.RepoCommitted, FilePrecedence: 2, Skills: config.KindSelector{ExcludeAll: true}}
+	filterShadowedOccurrences(byName, []config.RegistryEntry{shadow})
+	winners, warnings := pickWinners(byName)
+	if len(warnings) != 0 || len(winners) != 1 || winners[0].resolved.RegistryURL != "active" {
+		t.Fatalf("winners=%#v warnings=%v, want active fallback without collision", winners, warnings)
+	}
+}
+
+func TestCollectionCandidateAndMemberExclusionsRespectAuthority(t *testing.T) {
+	included := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 1}
+	shadow := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 2, Skills: config.KindSelector{ExcludeAll: true}}
+	candidates := []memberEntryCandidate{{entry: included, catalogKey: "included"}}
+	if got := candidatesNotScopedAway(candidates, ir.KindSkill, []config.RegistryEntry{included, shadow}); len(got) != 0 {
+		t.Fatalf("shadowed collection candidate remained eligible: %#v", got)
+	}
+
+	rootMember := ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "member"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 2}
+	lowerExclude := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 1, Skills: config.KindSelector{Exclude: []string{"member"}}}
+	if collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{lowerExclude}) {
+		t.Fatal("lower included fragment excluded a root-selected collection member")
+	}
+	higherExclude := lowerExclude
+	higherExclude.FilePrecedence = 3
+	if !collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{higherExclude}) {
+		t.Fatal("higher-authority exclusion did not suppress collection member")
+	}
+	rootMember.Required = true
+	if collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{higherExclude}) {
+		t.Fatal("required collection member was excluded")
+	}
+}
+
 func TestResolveExcludeAllDoesNotBleedAcrossRegistries(t *testing.T) {
 	// Two registries with different skill names; ExcludeAll on one should not
 	// affect the other. This verifies URL scoping in applyCrossLayerExcludes.

@@ -48,7 +48,7 @@ list narrows the effective target list for that entry.
 
 ## Registry allowlist
 
-`allowed_registries` is a first-authority setting: the first layer in precedence order that declares it (org, then user, then repo) fixes the allowlist for the whole effective config. Lower layers cannot broaden or override it, and `config.local.yaml` is not allowed to declare `allowed_registries`.
+`allowed_registries` is a first-authority setting. The first layer in merge order that declares it (org, then user, then repo) fixes the allowlist for the effective config. Within that layer, the earliest declaration in include order wins; later includes and the containing root cannot relax it. Later layers cannot broaden or override it, and `config.local.yaml` cannot declare it.
 
 - When `allowed_registries` is omitted (or `nil`) in every layer, no allowlist is configured and all remote registry origins are permitted.
 - When `allowed_registries` is explicitly set to an empty list (`allowed_registries: []`), all remote registries are denied.

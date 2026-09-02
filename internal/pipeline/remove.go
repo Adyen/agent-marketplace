@@ -170,6 +170,15 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 }
 
+func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, name string) error {
+	if err := config.DisableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, ir.KindCollection, name); err != nil {
+		return err
+	}
+	// Retain an exclusion after removing a root selection so an included or
+	// lower-layer selection cannot re-enable the collection.
+	return config.AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, ir.KindCollection, name)
+}
+
 func removeOrExcludeCollection(configPath, name string) error {
 	rootCfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
@@ -746,9 +755,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config", fromURL, fromPath)
 	}
 
-	// Check if it's a collection.
-	if isCollectionInstalled(mergedCfg, name) {
-		if err := removeOrExcludeCollection(configPath, name); err != nil {
+	// A named --from collection remains scoped to the selected registry.
+	if collectionInstalledInRegistry(mergedCfg, name, fromURL, fromPath) {
+		if !entryInTarget {
+			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
+				return nil, err
+			}
+		}
+		if err := disableCollectionInRegistry(configPath, fromURL, fromPath, shadowRef, name); err != nil {
 			return nil, err
 		}
 		if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
@@ -806,6 +820,27 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil
+}
+
+func collectionInstalledInRegistry(cfg *config.Config, name, registryURL, registryPath string) bool {
+	if cfg == nil {
+		return false
+	}
+	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(registryURL))
+	for _, entry := range cfg.Registries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
+			continue
+		}
+		if registryPath != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(registryPath) {
+			continue
+		}
+		for _, selected := range entry.Collections.Include {
+			if strings.TrimSpace(selected) == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isCollectionInstalled reports whether any layer of the merged config

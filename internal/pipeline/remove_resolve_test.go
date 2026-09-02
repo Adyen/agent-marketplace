@@ -446,6 +446,37 @@ func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 	}
 }
 
+func TestDisableCollectionIsRegistrySpecific(t *testing.T) {
+	rootPath := config.ProjectConfigPath(t.TempDir())
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - path: /registry-a\n    collections: [shared-bundle]\n  - path: /registry-b\n    collections: [shared-bundle]\n")
+	if err := disableCollectionInRegistry(rootPath, "/registry-a", "", "", "shared-bundle"); err != nil {
+		t.Fatal(err)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 2 || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "shared-bundle") || !slices.Contains(rootCfg.Registries[1].Collections.Include, "shared-bundle") {
+		t.Fatalf("registries = %#v, want only registry-a collection excluded", rootCfg.Registries)
+	}
+}
+
+func TestRemoveNamedFromCollectionRejectsMachineToRepoBoundary(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: %q\n    collections: [machine-bundle]\n", registryRoot))
+
+	_, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle", FromURL: registryRoot, Scope: ScopeRepo, ScopeSpecified: true})
+	if err == nil || !strings.Contains(err.Error(), "cannot exclude registry") {
+		t.Fatalf("error = %v, want machine-to-repo boundary rejection", err)
+	}
+}
+
 func TestRegistryPathOwns(t *testing.T) {
 	cases := []struct {
 		entry, artifact string
