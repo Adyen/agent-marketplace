@@ -114,6 +114,9 @@ func EnsureRegistryWithPathsInConfig(configPath, url, ref, path string) error {
 	if url == "" {
 		return fmt.Errorf("registry url is required")
 	}
+	if err := validateRegistryWrite(configPath, RegistryEntry{URL: url}); err != nil {
+		return err
+	}
 
 	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
@@ -186,6 +189,9 @@ func EnsureRegistryWithDefaultInConfig(configPath, url, ref, path string) error 
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return fmt.Errorf("registry url is required")
+	}
+	if err := validateRegistryWrite(configPath, RegistryEntry{URL: url}); err != nil {
+		return err
 	}
 
 	doc, mode, err := readOrInitConfig(configPath)
@@ -274,6 +280,9 @@ func SetRegistryExcludeAllInConfig(configPath, url, ref, path string) error {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return fmt.Errorf("registry url is required")
+	}
+	if err := validateRegistryWrite(configPath, RegistryEntry{URL: url}); err != nil {
+		return err
 	}
 
 	doc, mode, err := readOrInitConfig(configPath)

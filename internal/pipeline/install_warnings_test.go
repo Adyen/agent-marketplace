@@ -103,7 +103,7 @@ func TestExpandInstalledCollectionResourcesKeepsMemberWarnings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			expanded, err := expandInstalledCollectionResources(tt.installed, available, registries)
+			expanded, err := expandInstalledCollectionResources(tt.installed, available, registries, ScopeRepo)
 			if err != nil {
 				t.Fatalf("expandInstalledCollectionResources() error = %v", err)
 			}

@@ -338,6 +338,20 @@ func benchDiscardLogs() func() {
 	return func() { slog.SetDefault(old) }
 }
 
+func BenchmarkValidateToggleRegistryWrite(b *testing.B) {
+	selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
+	competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+	rows := []row{selected, competitor}
+	errs := []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
+	act := scopedToggleAction(selected, scopeGlobal)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = validateToggleRegistryWrite(rows, errs, act)
+	}
+}
+
 func BenchmarkRecordActionSpan(b *testing.B) {
 	defer benchDiscardLogs()()
 

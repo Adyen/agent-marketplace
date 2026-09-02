@@ -401,6 +401,63 @@ func TestIsLocal(t *testing.T) {
 	}
 }
 
+func TestIsRepoRelativeLocal(t *testing.T) {
+	testCases := []struct {
+		url  string
+		ref  string
+		want bool
+	}{
+		{"/absolute/path", "", false},
+		{"~/home/path", "", false},
+		{"./relative/path", "", true},
+		{"../parent/path", "", true},
+		{".", "", true},
+		{"..", "", true},
+		{"./relative.git", "", true},
+		{"not-relative", "", false},
+		{"https://example.com/repo.git", "", false},
+		{"", "", false},
+		{"   ", "", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.url, func(t *testing.T) {
+			entry := RegistryEntry{URL: tc.url, Ref: tc.ref}
+			if got := entry.IsRepoRelativeLocal(); got != tc.want {
+				t.Fatalf("IsRepoRelativeLocal(URL=%q, Ref=%q) = %v, want %v", tc.url, tc.ref, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGlobalRelativeRegistryError(t *testing.T) {
+	err := &GlobalRelativeRegistryError{URL: "./plugins/gitlab-mr"}
+	msg := err.Error()
+	if !strings.Contains(msg, "./plugins/gitlab-mr") {
+		t.Fatalf("expected error to contain URL, got %q", msg)
+	}
+	if !strings.Contains(msg, "global config") {
+		t.Fatalf("expected error to mention global config, got %q", msg)
+	}
+}
+
+func TestValidateGlobalRegistryWrite(t *testing.T) {
+	if err := ValidateGlobalRegistryWrite(
+		RegistryEntry{URL: "https://example.com/remote.git"},
+		RegistryEntry{URL: "/absolute/local"},
+	); err != nil {
+		t.Fatalf("expected portable registries to pass: %v", err)
+	}
+
+	err := ValidateGlobalRegistryWrite(
+		RegistryEntry{URL: "https://example.com/remote.git"},
+		RegistryEntry{URL: "./relative.git"},
+	)
+	if _, ok := err.(*GlobalRelativeRegistryError); !ok {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", err, err)
+	}
+}
+
 func TestResolveLocalPath(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
 
