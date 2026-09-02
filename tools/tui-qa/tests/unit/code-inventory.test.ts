@@ -20,22 +20,40 @@ const exportInventory = (): string => execFileSync(
   { cwd: qaRoot, encoding: "utf8", maxBuffer: 1024 * 1024 }
 );
 
+interface InventoryFixture {
+  json: string;
+  inventory: CodeInventory;
+}
+
+let cachedInventory: InventoryFixture | undefined;
+const inventoryFixture = (): InventoryFixture => {
+  if (cachedInventory) return cachedInventory;
+  const json = exportInventory();
+  const parsed: unknown = JSON.parse(json);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("exported TUI code inventory must be a JSON object");
+  }
+  const problems = validateCodeInventory(parsed);
+  if (problems.length > 0) throw new Error(`invalid exported TUI code inventory: ${problems.join("; ")}`);
+  cachedInventory = { json, inventory: parsed as CodeInventory };
+  return cachedInventory;
+};
+
 describe("code-owned TUI inventory", () => {
   it("exports deterministic schema-valid JSON", () => {
-    const first = exportInventory();
+    const { json: first, inventory } = inventoryFixture();
     const second = exportInventory();
     assert.equal(second, first);
 
-    const inventory: unknown = JSON.parse(first);
     assert.deepEqual(validateCodeInventory(inventory), []);
     assert.ok(validateCodeInventory({
-      ...(inventory as Record<string, unknown>),
+      ...inventory,
       generatedAt: "2026-09-01T00:00:00Z"
     }).length > 0);
   });
 
   it("rejects duplicate nested IDs even when the records differ", () => {
-    const inventory = JSON.parse(exportInventory()) as CodeInventory;
+    const { inventory } = inventoryFixture();
     const duplicateAction = {
       ...inventory.actions[0],
       helpDescription: `${inventory.actions[0].helpDescription} changed`
@@ -49,7 +67,7 @@ describe("code-owned TUI inventory", () => {
   });
 
   it("rejects invalid action prefixes", () => {
-    const inventory = JSON.parse(exportInventory()) as CodeInventory;
+    const { inventory } = inventoryFixture();
     const unknown = { ...inventory.actions[0], prefix: "missing-action" };
     const self = { ...inventory.actions[0], prefix: inventory.actions[0].id };
     const nested = { ...inventory.actions[0], prefix: "fold-toggle" };

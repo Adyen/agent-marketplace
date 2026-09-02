@@ -33,9 +33,10 @@ const duplicateIDs = (ids: string[]): string[] => {
 };
 
 export const validateCodeInventory = (value: unknown): string[] => {
-  const problems = validateAgainstSchema("code-inventory.v1.json", value);
-  if (problems.length > 0) return problems;
+  const schemaProblems = validateAgainstSchema("code-inventory.v1.json", value);
+  if (schemaProblems.length > 0) return schemaProblems;
 
+  const problems: string[] = [];
   const inventory = value as CodeInventory;
   for (const id of duplicateIDs(inventory.actions.map((action) => action.id))) {
     problems.push(`duplicate action ID ${JSON.stringify(id)}`);
