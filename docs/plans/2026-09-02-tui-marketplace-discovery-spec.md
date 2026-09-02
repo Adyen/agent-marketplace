@@ -14,7 +14,7 @@ The existing `/` search interaction will remain an immediate in-memory filter fo
 
 Marketplace discovery pages will use a bounded, per-endpoint disk cache. Fresh pages will render without a network request. Pages older than the fresh TTL but within the stale retention period will render immediately with a stale indication while they are revalidated. Successful endpoints will update independently; failed endpoints may retain stale cached results without affecting successful endpoints or authoritative TUI state.
 
-Discovery rows will identify their Marketplace and source Registry and will preserve resource-coordinate and resource-revision identity. Blocked and revoked resources will remain visible for transparency but will not be installable. Installing an available Marketplace resource will resolve and verify its exact revision, present a preview derived from verified content, obtain confirmation when required, write an exact pin to the selected scope, and then reload the authoritative snapshot.
+Discovery rows will identify their Marketplace and source Registry and will preserve resource-coordinate and resource-revision identity. Blocked and revoked resources will remain visible for transparency but will not be installable. Installing an available Marketplace resource will resolve and verify its exact revision, present a preview derived from verified content for confirmation, write an exact pin to the selected scope, and then reload the authoritative snapshot.
 
 ## User stories
 
@@ -49,7 +49,7 @@ Discovery rows will identify their Marketplace and source Registry and will pres
 29. As a TUI user, I want cached discovery metadata to be treated only as a hint, so that stale search data can never directly authorize an installation.
 30. As a TUI user, I want installation to verify the selected Marketplace instance, Registry, resource coordinate, revision, digest, assessment, provenance, and artifact, so that the written pin identifies verified immutable content.
 31. As a TUI user, I want installation preparation to happen asynchronously, so that verification and acquisition do not freeze rendering or input.
-32. As a TUI user, I want a verified installation preview before a risky installation is committed, so that findings and active capabilities are visible before configuration changes.
+32. As a TUI user, I want to confirm a verified installation preview before any installation is committed, so that exact identity, findings, and active capabilities are visible before configuration changes.
 33. As a TUI user, I want installation previews to come from verified resource content rather than search metadata, so that an index response cannot misrepresent the artifact being installed.
 34. As a TUI user, I want to select user, project, or local installation scope using the existing scope interaction, so that Marketplace resources follow the same configuration model as other resources.
 35. As a TUI user, I want collection installation to verify and acquire every member before writing configuration, so that a collection is installed atomically.
@@ -109,7 +109,7 @@ Discovery rows will identify their Marketplace and source Registry and will pres
 - Installation constructs an exact Marketplace locator from the configured endpoint, Registry slug or ID, resource kind, registry-local name, revision, and content digest returned by discovery.
 - The Marketplace resolver prepares the locator before any configuration mutation. Preparation verifies endpoint and instance identity, Registry identity and acquisition mode, exact resource revision and content digest, assessment and policy outcome, provenance, canonical artifact integrity, and applicable origin policy.
 - Installation preview data comes from the verified prepared install. Findings, capabilities, license, provenance, acquisition type, exact digests, and collection members are never trusted from the search response.
-- Existing risk-consent policy remains authoritative. Findings or active capabilities require confirmation before configuration mutation, and confirmation commits the same prepared plan used to produce the verified preview.
+- Every TUI discovery install requires confirmation of the verified preview. Existing risk-consent policy remains authoritative, and confirmation commits the same prepared plan used to produce that preview.
 - Immediately before mutation, the pipeline reloads effective configuration and refuses the prepared plan if Marketplace or Registry allowlist policy, target harnesses, endpoint identity, or collision state changed after preview.
 - User, project, and local scopes use the existing scope meanings and layered configuration paths. The prepared exact pin is written only to the selected scope.
 - Collection preparation verifies and acquires the root and all transitive members before mutation. Configuration writes all exact pins or none.
