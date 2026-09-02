@@ -627,42 +627,49 @@ func TestToggleMovesSkillBetweenSections(t *testing.T) {
 	}
 }
 
-func TestDisableSelectsNextResourceAfterSnapshot(t *testing.T) {
-	alpha := mkRow("alpha", withProject)
-	bravo := mkRow("bravo", withProject)
-	charlie := mkRow("charlie", withProject)
-	m := NewModel("/repo", "/home")
-	m.loading = false
-	m.rows = []row{alpha, bravo, charlie}
-	m.filteredRows = m.rows
-	m.rebuildFlatItems()
-	for i, item := range m.flatItems {
-		if item.Kind == flatArtifact && item.Row.Artifact.Name == "bravo" {
-			m.cursor = i
-			break
-		}
-	}
+func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		disabled      string
+		disabledIndex int
+		want          string
+	}{
+		{name: "next resource", disabled: "bravo", disabledIndex: 1, want: "charlie"},
+		{name: "previous resource at end", disabled: "charlie", disabledIndex: 2, want: "bravo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			alpha := mkRow("alpha", withProject)
+			bravo := mkRow("bravo", withProject)
+			charlie := mkRow("charlie", withProject)
+			m := NewModel("/repo", "/home")
+			m.loading = false
+			m.rows = []row{alpha, bravo, charlie}
+			m.filteredRows = m.rows
+			m.rebuildFlatItems()
+			for i, item := range m.flatItems {
+				if item.Kind == flatArtifact && item.Row.Artifact.Name == tc.disabled {
+					m.cursor = i
+					break
+				}
+			}
 
-	operation, ok := m.beginOperation(operationMutation)
-	if !ok {
-		t.Fatal("mutation operation was not accepted")
-	}
-	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "bravo", selectNext: true})
-	m = updated.(Model)
-	generation := m.requests.active(requestSnapshot)
-	updated, _ = m.Update(snapshotLoadedMsg{
-		generation: generation,
-		rows: []row{
-			alpha,
-			mkRow("bravo", withAvailable),
-			charlie,
-		},
-	})
-	m = updated.(Model)
+			operation, ok := m.beginOperation(operationMutation)
+			if !ok {
+				t.Fatal("mutation operation was not accepted")
+			}
+			updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: tc.disabled, selectNext: true})
+			m = updated.(Model)
+			generation := m.requests.active(requestSnapshot)
+			after := []row{alpha, bravo, charlie}
+			after[tc.disabledIndex] = mkRow(tc.disabled, withAvailable)
+			updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: after})
+			m = updated.(Model)
 
-	selected, ok := m.selectedRow()
-	if !ok || selected.Artifact.Name != "charlie" {
-		t.Fatalf("selection after disabling bravo = %#v, ok=%v; want charlie", selected, ok)
+			selected, ok := m.selectedRow()
+			if !ok || selected.Artifact.Name != tc.want {
+				t.Fatalf("selection after disabling %s = %#v, ok=%v; want %s", tc.disabled, selected, ok, tc.want)
+			}
+		})
 	}
 }
 
