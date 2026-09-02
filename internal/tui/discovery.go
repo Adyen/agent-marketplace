@@ -231,17 +231,21 @@ func (m *Model) cancelMarketplaceDiscovery() {
 	m.discoveryLoading = false
 }
 
+func (m *Model) clearMarketplaceDiscovery(rebuildAuthoritative bool) {
+	m.cancelMarketplaceDiscovery()
+	m.discoveryRows = nil
+	m.browseDiscoveryRows = nil
+	m.discoveryOutcomes = nil
+	m.discoveryErrs = nil
+	if rebuildAuthoritative {
+		m.mergeDiscoveryRows()
+	}
+}
+
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {
-		hadDiscovery := len(m.discoveryRows) > 0 || len(m.browseDiscoveryRows) > 0
-		m.cancelMarketplaceDiscovery()
-		m.discoveryRows = nil
-		m.browseDiscoveryRows = nil
-		m.discoveryOutcomes = nil
-		m.discoveryErrs = nil
-		if hadDiscovery || m.authoritativeRows != nil {
-			m.mergeDiscoveryRows()
-		}
+		rebuildAuthoritative := len(m.discoveryRows) > 0 || len(m.browseDiscoveryRows) > 0 || m.authoritativeRows != nil
+		m.clearMarketplaceDiscovery(rebuildAuthoritative)
 		return nil
 	}
 	configured := make(map[string]struct{}, len(m.mergedCfg.Marketplaces))
@@ -286,6 +290,7 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if !debounce {
 		cached, needsNetwork, err := marketplace.CachedDiscovery(effectiveMarketplaceConfig(m.mergedCfg), query, marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit})
 		if err != nil {
+			m.clearMarketplaceDiscovery(true)
 			m.discoveryErrs = []error{err}
 			return nil
 		}
