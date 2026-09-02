@@ -1164,7 +1164,11 @@ func Run(ctx context.Context, repoRoot, homeDir string) error {
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	return runTUIModel(model, defaultTUIProgramOptions()...)
+}
+
+func defaultTUIProgramOptions() []tea.ProgramOption {
+	return []tea.ProgramOption{tea.WithAltScreen()}
 }
 
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
