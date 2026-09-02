@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -224,13 +226,120 @@ func TestMarketplaceDiscoveryDedupesInstalledAliasByPinnedCoordinate(t *testing.
 
 func TestMarketplaceDiscoveryDropsSameInstanceAtReplacedEndpoint(t *testing.T) {
 	m := newTestModel()
-	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://old.example", InstanceID: "market", Alias: "old"}}}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: m.mergedCfg.Marketplaces[0], Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "old", Availability: mpapi.AvailabilityAvailable}}}})
-	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "market", Alias: "new"}}}
+	old := config.MarketplaceEntry{URL: "https://old.example", InstanceID: "market", Alias: "old"}
+	remaining := config.MarketplaceEntry{URL: "https://remaining.example", InstanceID: "remaining", Alias: "remaining"}
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{old, remaining}}
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{
+		{Endpoint: old, Total: 75, Truncated: true, Err: errors.New("old failure")},
+		{Endpoint: remaining, Total: 1, Err: errors.New("remaining failure")},
+	})
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{URL: "https://new.example", InstanceID: "market", Alias: "new"},
+		remaining,
+	}}
 
 	m.beginMarketplaceDiscovery("", true)
 	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 {
 		t.Fatalf("superseded endpoint rows retained: discovery=%#v browse=%#v", m.discoveryRows, m.browseDiscoveryRows)
+	}
+	if len(m.discoveryOutcomes) != 1 || m.discoveryOutcomes[0].Endpoint.InstanceID != "remaining" {
+		t.Fatalf("superseded endpoint outcome retained: %#v", m.discoveryOutcomes)
+	}
+	if len(m.discoveryErrs) != 1 || !strings.HasPrefix(m.discoveryErrs[0].Error(), "remaining: ") {
+		t.Fatalf("discovery errors were not rebuilt from retained outcomes: %v", m.discoveryErrs)
+	}
+	if !m.discoveryLoading {
+		t.Fatal("remaining endpoint discovery did not proceed")
+	}
+}
+
+func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	m.marketplaceInstallOperation = operation
+	m.marketplaceInstallReload = m.beginRequest(requestSnapshot)
+	failure := errors.New("catalog unavailable")
+
+	updated, _ := m.Update(snapshotLoadedMsg{
+		generation:      m.marketplaceInstallReload,
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftFailed,
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticCatalog, failure)},
+	})
+	m = updated.(Model)
+	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("failed reload did not unblock operation: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	}
+	if !strings.HasPrefix(m.toast, "Marketplace install reload failed:") || strings.Contains(m.toast, "resource installed") {
+		t.Fatalf("hard snapshot diagnostic reported success: %q", m.toast)
+	}
+}
+
+func TestLowRiskMarketplaceDiscoveryPreparesBeforePreviewAndCommitsSamePlan(t *testing.T) {
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("apiVersion: v2\nharnesses: [claude]\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prepared := &pipeline.PreparedMarketplaceInstall{}
+	oldPrepare, oldCommit := prepareDiscoveryMarketplaceInstall, commitPreparedMarketplaceInstall
+	t.Cleanup(func() {
+		prepareDiscoveryMarketplaceInstall = oldPrepare
+		commitPreparedMarketplaceInstall = oldCommit
+	})
+	prepareDiscoveryMarketplaceInstall = func(context.Context, pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+		return prepared, nil // low-risk plan: no findings or capabilities requiring CLI consent
+	}
+	var committed *pipeline.PreparedMarketplaceInstall
+	commitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+		committed = got
+		return &pipeline.InstallResult{Installed: []string{"review"}}, nil
+	}
+	row := row{MarketplaceDiscovery: &marketplaceDiscovery{
+		Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"},
+		Item:     mpapi.ResourceListItem{RegistryID: "registry", Kind: "skill", Name: "review", Revision: "revision", ContentDigest: "sha256:" + strings.Repeat("a", 64), Availability: mpapi.AvailabilityAvailable},
+	}}
+
+	m := newTestModel()
+	m.repoRoot = repo
+	updated, cmd := m.startDiscoveryInstall(row, scopeProject)
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("install did not start asynchronous preparation")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	if m.pane != paneMarketplaceConsent || m.marketplacePreparedInstall != prepared {
+		t.Fatalf("low-risk preparation did not open verified preview: pane=%v prepared=%p", m.pane, m.marketplacePreparedInstall)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != string(original) {
+		t.Fatalf("configuration changed before confirmation: %q err=%v", got, err)
+	}
+	updated, _ = m.handleMarketplaceConsentKey(keyPress('n'))
+	m = updated.(Model)
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != string(original) {
+		t.Fatalf("configuration changed after cancellation: %q err=%v", got, err)
+	}
+
+	updated, cmd = m.startDiscoveryInstall(row, scopeProject)
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	updated, cmd = m.handleMarketplaceConsentKey(keyPress('y'))
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("confirmation did not schedule commit")
+	}
+	_ = cmd()
+	if committed != prepared {
+		t.Fatalf("commit got plan %p, want exact prepared plan %p", committed, prepared)
 	}
 }
 
@@ -274,7 +383,7 @@ func TestMarketplaceInstallOperationRemainsSerializedThroughReload(t *testing.T)
 		t.Fatal("second mutation started before authoritative reload")
 	}
 	generation := m.marketplaceInstallReload
-	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
 	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
 		t.Fatalf("install operation remained active after reload: %#v", m.operations.active)
@@ -293,12 +402,12 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 	installGeneration := m.marketplaceInstallReload
 	updateGeneration := m.beginRequest(requestSnapshot)
 
-	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
 	if m.operations.active == nil {
 		t.Fatal("stale install snapshot finished the operation")
 	}
-	updated, _ = m.Update(updateDoneMsg{generation: updateGeneration, snapshot: snapshotLoadedMsg{generation: updateGeneration, mergedCfg: &config.Config{}}})
+	updated, _ = m.Update(updateDoneMsg{generation: updateGeneration, snapshot: snapshotLoadedMsg{generation: updateGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady}})
 	m = updated.(Model)
 	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
 		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
@@ -310,7 +419,7 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 	if !ok {
 		t.Fatal("later mutation remained blocked")
 	}
-	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
 	if !m.operations.accepts(later) {
 		t.Fatal("stale original snapshot finished the later operation")

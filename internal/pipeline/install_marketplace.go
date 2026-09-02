@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -172,15 +173,54 @@ func marketplaceRegistrationConfigPath(ec *config.EffectiveConfig, source config
 	}
 }
 
-func installMarketplace(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*InstallResult, error) {
-	prepared, err := prepareMarketplaceInstall(ctx, opts, configPath, ec)
+// Preview returns the verified human-readable plan that must be confirmed before commit.
+func (p *PreparedMarketplaceInstall) Preview() string {
+	if p == nil {
+		return ""
+	}
+	return p.preview
+}
+
+// PrepareMarketplaceInstall resolves and verifies an exact Marketplace install
+// without mutating configuration. The returned plan is the only value accepted
+// by CommitPreparedMarketplaceInstall.
+func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*PreparedMarketplaceInstall, error) {
+	if !isMarketplaceInstall(opts) || isMarketplaceEndpointRegistration(opts) {
+		return nil, errors.New("marketplace resource install is required")
+	}
+	configPath, err := ScopedConfigPath(opts.RepoRoot, opts.Scope)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
-	if err := evaluateMarketplaceConsent(prepared.plan, opts.AcceptRisk); err != nil {
-		return nil, &MarketplaceConsentError{Preview: prepared.preview, Prepared: prepared, Err: err}
+	if opts.Scope == ScopeRepo && config.IsHomeDir(opts.RepoRoot) {
+		return nil, fmt.Errorf("cannot install to repo config from home directory: the project config path would overwrite %s; use --scope user to write to the global config instead", configPath)
 	}
-	return CommitPreparedMarketplaceInstall(ctx, prepared)
+	if opts.Scope == ScopeRepo || opts.Scope == ScopeLocal {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("get current working directory for Marketplace install: %w", err)
+		}
+		if filepath.Clean(cwd) != filepath.Clean(opts.RepoRoot) {
+			switch opts.Scope {
+			case ScopeRepo:
+				cwdConfig := config.ProjectConfigPath(cwd)
+				if _, statErr := os.Stat(cwdConfig); errors.Is(statErr, os.ErrNotExist) {
+					opts.RepoRoot = filepath.Clean(cwd)
+					configPath = config.ProjectConfigPath(opts.RepoRoot)
+				} else if statErr != nil {
+					return nil, fmt.Errorf("stat cwd project config %s: %w", cwdConfig, statErr)
+				}
+			case ScopeLocal:
+				opts.LocalConfigDir = filepath.Clean(cwd)
+				configPath = config.LocalConfigPath(opts.LocalConfigDir)
+			}
+		}
+	}
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: opts.RepoRoot, LocalConfigDir: opts.LocalConfigDir})
+	if len(ec.Errors) > 0 {
+		return nil, errors.Join(ec.Errors...)
+	}
+	return prepareMarketplaceInstall(ctx, opts, configPath, &ec)
 }
 
 func prepareMarketplaceInstall(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*PreparedMarketplaceInstall, error) {

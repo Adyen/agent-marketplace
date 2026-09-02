@@ -327,7 +327,7 @@ func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *t
 
 func TestMarketplaceInstallRequiresTargetHarnessSetBeforeMutation(t *testing.T) {
 	configPath := t.TempDir() + "/config.yaml"
-	_, err := installMarketplace(context.Background(), InstallOptions{Args: []string{"public:source/skill/review"}}, configPath, &config.EffectiveConfig{})
+	_, err := prepareMarketplaceInstall(context.Background(), InstallOptions{Args: []string{"public:source/skill/review"}}, configPath, &config.EffectiveConfig{})
 	var missing *TargetHarnessSetMissingError
 	if !errors.As(err, &missing) {
 		t.Fatalf("error = %v, want TargetHarnessSetMissingError", err)
