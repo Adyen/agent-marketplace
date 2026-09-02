@@ -427,7 +427,7 @@ func TestResolveRejectsDisabledUserTransportSettingsWhenOrganizationEnablesTelem
 	}
 }
 
-func TestResolveOrganizationRequiresRetention(t *testing.T) {
+func TestResolveOrganizationUsesDefaultRetention(t *testing.T) {
 	setStateRoot(t)
 	org := &amconfig.Config{
 		Telemetry: &tmcfg.TelemetryConfig{
@@ -435,9 +435,12 @@ func TestResolveOrganizationRequiresRetention(t *testing.T) {
 			Endpoint: "https://org.example.com",
 		},
 	}
-	_, err := ResolveTelemetryConfig(org, nil, "https://project.example.com", "https://project.example.com/retention")
-	if err == nil {
-		t.Fatal("expected error when organization endpoint lacks retention_policy")
+	state, err := ResolveTelemetryConfig(org, nil, "https://project.example.com", "https://project.example.com/retention")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.RetentionPolicyURL != "https://project.example.com/retention" {
+		t.Fatalf("retention = %q, want project default", state.RetentionPolicyURL)
 	}
 }
 

@@ -221,9 +221,6 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	if err := validateRetentionPolicy(tc.RetentionPolicy); err != nil {
 		errs = append(errs, err)
 	}
-	if layer == "organization" && tc.Endpoint != "" && tc.RetentionPolicy == "" {
-		errs = append(errs, fmt.Errorf("retention_policy is required when an organization endpoint is configured"))
-	}
 	if err := validateCAFile(tc.CAFile); err != nil {
 		errs = append(errs, err)
 	}
