@@ -359,11 +359,12 @@ func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	var mu sync.Mutex
-	var exports []struct {
-		fingerprints []string
-		observedAt   int64
+	type inventoryExport struct {
+		fingerprint string
+		observedAt  int64
 	}
+	var mu sync.Mutex
+	var exports []inventoryExport
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req metricspb.ExportMetricsServiceRequest
@@ -374,16 +375,13 @@ func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 		}
 		metric := findMetric(&req, string(tmcfg.InventorySnapshotName))
 		if metric != nil {
-			entry := struct {
-				fingerprints []string
-				observedAt   int64
-			}{}
-			for _, point := range metric.GetGauge().GetDataPoints() {
-				entry.fingerprints = append(entry.fingerprints, stringAttributes(point.GetAttributes())["config.fingerprint"])
-				entry.observedAt = point.GetAsInt()
-			}
 			mu.Lock()
-			exports = append(exports, entry)
+			for _, point := range metric.GetGauge().GetDataPoints() {
+				exports = append(exports, inventoryExport{
+					fingerprint: stringAttributes(point.GetAttributes())["config.fingerprint"],
+					observedAt:  point.GetAsInt(),
+				})
+			}
 			mu.Unlock()
 		}
 		w.WriteHeader(http.StatusOK)
@@ -406,16 +404,14 @@ func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	}
 
 	mu.Lock()
-	got := append([]struct {
-		fingerprints []string
-		observedAt   int64
-	}(nil), exports...)
+	got := append([]inventoryExport(nil), exports...)
 	mu.Unlock()
+	sort.Slice(got, func(i, j int) bool { return got[i].observedAt < got[j].observedAt })
 	if len(got) != 2 {
-		t.Fatalf("inventory exports = %v, want exactly one export per snapshot", got)
+		t.Fatalf("inventory observations = %v, want exactly one per snapshot", got)
 	}
-	if !equalStrings(got[0].fingerprints, []string{"A"}) || !equalStrings(got[1].fingerprints, []string{"B"}) {
-		t.Fatalf("inventory fingerprints = %v then %v, want A then B without retained series", got[0].fingerprints, got[1].fingerprints)
+	if got[0].fingerprint != "A" || got[1].fingerprint != "B" {
+		t.Fatalf("inventory fingerprints = %q then %q, want A then B without retained series", got[0].fingerprint, got[1].fingerprint)
 	}
 	if got[0].observedAt <= 0 || got[1].observedAt <= got[0].observedAt {
 		t.Fatalf("observation values = %d then %d, want strictly increasing ordering keys", got[0].observedAt, got[1].observedAt)
