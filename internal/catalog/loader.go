@@ -757,7 +757,21 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 }
 
 func inspectLocalRegistryPath(root, path string, allowMissing bool) (bool, error) {
-	return inspectDirectoryPath(root, path, allowMissing)
+	exists, inspectErr := inspectDirectoryPath(root, path, allowMissing)
+	if inspectErr == nil || (allowMissing && errors.Is(inspectErr, os.ErrNotExist)) {
+		return exists, inspectErr
+	}
+
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return exists, inspectErr
+	}
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		if localErr := config.ValidateLocalRegistryPath(path); localErr != nil {
+			return false, fmt.Errorf("%w: %v", localErr, inspectErr)
+		}
+	}
+	return exists, inspectErr
 }
 
 func inspectRemoteGitCachePath(path string, allowMissing bool) (bool, error) {
