@@ -116,7 +116,7 @@ Discovery rows will identify their Marketplace and source Registry and will pres
 - Installed names are never silently prefixed or renamed. A collision produces an actionable operation diagnostic; custom installed-name selection is outside this specification.
 - Successful configuration mutation schedules an authoritative snapshot reload. Only the accepted healthy snapshot changes the row from discovery-available to enabled.
 - Preparation, consent cancellation, or write failure leaves configuration bytes unchanged and preserves the discovery row. Errors remain operation diagnostics rather than discovery or snapshot failures.
-- Configuration changes that alter effective Marketplace endpoints cancel and supersede discovery for the prior endpoint set. Results from no-longer-configured endpoints cannot be accepted into current state.
+- Configuration changes that alter effective Marketplace endpoints or allowlist policy cancel and supersede prior discovery. A snapshot that requires migration or has hard configuration errors also cancels discovery and clears its rows and diagnostics. Late results from invalidated discovery cannot be accepted into current state.
 - Structured logging records operation boundaries, endpoint counts, success and failure counts, result and truncation counts, cache fresh/stale/miss outcomes, durations, cancellations, and generation rejection. Logs and telemetry exclude raw query text, response payloads, credentials, headers, artifact content, and unbounded identifiers.
 - The TUI product contract will be extended to define Marketplace discovery as non-authoritative replaceable work, document stale-while-revalidate presentation and partial-failure behavior, and state that discovery metadata never authorizes installation.
 
