@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -2006,69 +2007,52 @@ metadata:
 	}
 }
 
-func TestLoadRegistries_MissingLocalPathReportsClearError(t *testing.T) {
-	repoRoot := t.TempDir()
-	missing := filepath.Join(repoRoot, "missing-dir")
+func TestPrepareFetchJobsExactSnapshotPreservesLogicalCatalogKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	entry := config.RegistryEntry{
+		URL:  "https://example.invalid/team/resources.git",
+		Ref:  "main",
+		Path: "bundles/review",
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{entry}}
+	commitQualifiedKey := entry.URL + "@sha1:" + strings.Repeat("a", 40) + ":" + entry.Path
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./missing-dir",
-			Source: config.RepoCommitted,
-		}},
+	requests, jobs, errs := prepareFetchJobs(cfg, "", LoadModeRefresh, "", func(config.RegistryEntry) (string, string, error) {
+		return "/exact/snapshot", commitQualifiedKey, nil
+	})
+	if len(errs) != 0 || len(jobs) != 0 || len(requests) != 1 {
+		t.Fatalf("prepareFetchJobs exact result = %d requests, %d jobs, errors %v", len(requests), len(jobs), errs)
 	}
-
-	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
-	if len(result.Errors) != 1 {
-		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
+	want := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+	if got := cfg.Registries[0].CatalogKey; got != want {
+		t.Fatalf("exact snapshot catalog key = %q, want stable logical key %q", got, want)
 	}
-	want := fmt.Sprintf("local registry path does not exist: %s", missing)
-	if !strings.Contains(result.Errors[0].Error(), want) {
-		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	if got := requests[0].catalogKey; got != want {
+		t.Fatalf("exact snapshot request key = %q, want stable logical key %q", got, want)
 	}
-	if len(result.Catalogs) != 0 {
-		t.Fatalf("expected no catalogs for missing local path, got %d", len(result.Catalogs))
+	if requests[0].basePath != "/exact/snapshot" {
+		t.Fatalf("exact snapshot base path = %q", requests[0].basePath)
 	}
 }
 
-func TestLoadRegistries_MissingLocalPathSkippedInCachedNoFetch(t *testing.T) {
-	repoRoot := t.TempDir()
+func TestRebaseCatalogEntryPathsPreservesExactResourceSource(t *testing.T) {
+	snapshotRoot := t.TempDir()
+	logicalRoot := filepath.Join(t.TempDir(), "mutable", "main")
+	sourceFile := filepath.Join(snapshotRoot, "skills", "review", "SKILL.md")
+	skill := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{File: "skills/review/SKILL.md", Line: 1})
+	skill.SupportFiles = []string{"scripts/review.sh"}
+	loaded := LoadedCatalog{Entries: []Entry{{Kind: ir.KindSkill, Name: "review", Resource: skill, Path: sourceFile}}}
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./missing-dir",
-			Source: config.RepoCommitted,
-		}},
-	}
+	rebaseCatalogEntryPaths(&loaded, snapshotRoot, logicalRoot)
 
-	result := LoadRegistries(cfg, repoRoot, LoadModeCachedNoFetch)
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected no errors in CachedNoFetch mode, got %v", result.Errors)
+	if got, want := loaded.Entries[0].Path, filepath.Join(logicalRoot, "skills", "review", "SKILL.md"); got != want {
+		t.Fatalf("rebased entry path = %q, want %q", got, want)
 	}
-	if len(result.Catalogs) != 0 {
-		t.Fatalf("expected no catalogs when skipping missing local path, got %d", len(result.Catalogs))
+	if got := skill.Source.File; got != sourceFile {
+		t.Fatalf("resource source path = %q, want immutable snapshot path %q", got, sourceFile)
 	}
-}
-
-func TestLoadRegistries_LocalPathFileReportsNotDir(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, "not-a-dir"), []byte("hi"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./not-a-dir",
-			Source: config.RepoCommitted,
-		}},
-	}
-
-	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
-	if len(result.Errors) != 1 {
-		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
-	}
-	want := "local registry path is not a directory:"
-	if !strings.Contains(result.Errors[0].Error(), want) {
-		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	if got := skill.SupportFiles; len(got) != 1 || got[0] != "scripts/review.sh" {
+		t.Fatalf("resource support files = %v, want intrinsic support path", got)
 	}
 }
 

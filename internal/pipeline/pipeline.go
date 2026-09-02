@@ -304,10 +304,20 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		if err != nil {
 			errs = append(errs, err)
 		}
+		globalPath, globalPathErr := config.GlobalConfigPath()
+		if globalPathErr != nil {
+			errs = append(errs, globalPathErr)
+		}
+		localDir := opts.LocalConfigDir
+		if localDir == "" {
+			localDir = opts.RepoRoot
+		}
+		localLayer := config.LayerResult{Source: config.RepoPersonal, Path: config.LocalConfigPath(localDir), Local: localCfg}
 		ec = config.EffectiveConfig{
-			Organization: config.LayerResult{Source: config.Organization, Config: orgCfg},
-			User:         config.LayerResult{Source: config.UserPersonal, Config: globalCfg},
-			Repo:         config.LayerResult{Source: config.RepoCommitted, Config: repoCfg},
+			Organization: config.LayerResult{Source: config.Organization, Path: config.OrganizationConfigPath(), Config: orgCfg},
+			User:         config.LayerResult{Source: config.UserPersonal, Path: globalPath, Config: globalCfg},
+			Repo:         config.LayerResult{Source: config.RepoCommitted, Path: config.ProjectConfigPath(opts.RepoRoot), Config: repoCfg},
+			LocalLayer:   localLayer,
 			Local:        localCfg,
 			Errors:       errs,
 		}
@@ -428,6 +438,13 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	}
 
 	catalogOpts := opts.CatalogOption
+	var readOnlyView readOnlyExactView
+	if opts.ReadOnlyExactLocks {
+		readOnlyView = exactLockView(ec)
+		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
+		result.LockMetadata = readOnlyView.gitMetadata
+		result.MarketplaceLockMetadata = readOnlyView.marketplaceMetadata
+	}
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
 	}
@@ -444,6 +461,19 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	}
 
 	loadedCfg := loadResult.Config
+	if loadedCfg != nil && opts.ReadOnlyExactLocks {
+		loadedCfg = readOnlyView.marketplaceView(loadedCfg)
+	}
+	if loadedCfg != nil && opts.MarketplaceExactView != nil && !opts.ReadOnlyExactLocks {
+		exactCfg, exactErr := opts.MarketplaceExactView(loadedCfg)
+		if exactErr != nil {
+			viewErr := fmt.Errorf("build exact Marketplace lock view: %w", exactErr)
+			result.ResolveErrors = append(result.ResolveErrors, viewErr)
+			result.Errors = append(errs, viewErr)
+			return result
+		}
+		loadedCfg = exactCfg
+	}
 
 	// Malformed resources are dropped from Entries by the ingesters, so the
 	// resolver needs them separately to tell "failed validation" apart from
@@ -458,9 +488,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
-	result.ResolveErrors = resolveErrs
-	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(resolveErrs))
-	for _, resolveErr := range resolveErrs {
+	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
+	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
+	for _, resolveErr := range result.ResolveErrors {
 		if resolver.IsWarning(resolveErr) {
 			continue
 		}
@@ -809,24 +839,31 @@ func EnsureLocalConfigGitignored(repoRoot string) {
 	}
 
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
-	entry := ".agents/config.local.yaml"
-
+	entries := []string{".agents/config.local.yaml", ".agents/lock.local.yaml"}
 	data, err := os.ReadFile(gitignorePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			slog.Warn("failed to read gitignore", "path", gitignorePath, "error", err)
 			return
 		}
-		if err := os.WriteFile(gitignorePath, []byte(entry+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(strings.Join(entries, "\n")+"\n"), 0o644); err != nil {
 			slog.Warn("failed to create gitignore", "path", gitignorePath, "error", err)
 		}
 		return
 	}
 
+	present := make(map[string]bool, len(entries))
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == entry {
-			return
+		present[strings.TrimSpace(line)] = true
+	}
+	missing := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !present[entry] {
+			missing = append(missing, entry)
 		}
+	}
+	if len(missing) == 0 {
+		return
 	}
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -839,5 +876,5 @@ func EnsureLocalConfigGitignored(repoRoot string) {
 	if !strings.HasSuffix(string(data), "\n") {
 		_, _ = f.WriteString("\n")
 	}
-	_, _ = f.WriteString(entry + "\n")
+	_, _ = f.WriteString(strings.Join(missing, "\n") + "\n")
 }

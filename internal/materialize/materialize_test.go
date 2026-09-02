@@ -4259,6 +4259,44 @@ func TestRunFileModeDeinitAfterSymlinkMode(t *testing.T) {
 	}
 }
 
+func TestRunCopiesSkillSupportFilesFromImmutableResourceSource(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+	sourceDir := filepath.Join(t.TempDir(), "snapshot", "skills", "review")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(sourceDir, "SKILL.md")
+	if err := os.WriteFile(sourceFile, []byte("---\nname: review\ndescription: Review\n---\n\nbody"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "review.sh"), []byte("echo review\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resource := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{File: sourceFile, Line: 1})
+	resource.SupportFiles = []string{"scripts/review.sh"}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "review", Path: filepath.Join(homeDir, "mutable", "main", "skills", "review", "SKILL.md"), Resource: resource},
+		Source:    config.UserPersonal,
+		Harnesses: []hcc.Target{hcc.TargetDevin},
+	}}
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("materialize exact-snapshot skill: %v", err)
+	}
+	if hasDiagCode(report.Diags, diag.CodeSkillSupportFilesDeferred) {
+		t.Fatalf("materialized support files reported %s", diag.CodeSkillSupportFilesDeferred)
+	}
+	installed := filepath.Join(homeDir, ".config", "devin", "skills", "review", "scripts", "review.sh")
+	if got, err := os.ReadFile(installed); err != nil || string(got) != "echo review\n" {
+		t.Fatalf("installed immutable support file = %q, %v", got, err)
+	}
+}
+
 func TestPrepareSkillLinkCachePrunesRemovedSupportFiles(t *testing.T) {
 	sourceDir := t.TempDir()
 	cacheDir := t.TempDir()

@@ -888,7 +888,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
 	if len(snap.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", snap.errs)
 	}
@@ -923,7 +923,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	}
 
 	// Reload snapshot and verify project enablement.
-	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
 	// Overlap warnings are acceptable (global and project entries can overlap).
 	for _, err := range snap2.errs {
 		if !catalog.IsOverlapWarning(err) {

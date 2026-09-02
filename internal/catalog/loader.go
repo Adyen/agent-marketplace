@@ -103,12 +103,15 @@ type LoadResult struct {
 
 type CloneOrPullFunc func(url, ref string) (string, error)
 
+type ExactSnapshotFunc func(entry config.RegistryEntry) (snapshotPath, snapshotIdentity string, err error)
+
 type DiscoverFunc func(dir, sourceHarness string) (LoadedCatalog, error)
 
 type LoadOption func(*loadConfig)
 
 type loadConfig struct {
 	cloneOrPull    CloneOrPullFunc
+	exactSnapshot  ExactSnapshotFunc
 	discover       DiscoverFunc
 	localConfigDir string // base dir for resolving local-config entries' relative paths
 }
@@ -122,14 +125,19 @@ type fetchJob struct {
 }
 
 type loadRequest struct {
-	entry      config.RegistryEntry
-	catalogKey string
-	basePath   string
-	job        *fetchJob
+	entry           config.RegistryEntry
+	catalogKey      string
+	basePath        string
+	catalogBasePath string
+	job             *fetchJob
 }
 
 func WithCloneOrPull(fn CloneOrPullFunc) LoadOption {
 	return func(c *loadConfig) { c.cloneOrPull = fn }
+}
+
+func WithExactSnapshots(fn ExactSnapshotFunc) LoadOption {
+	return func(c *loadConfig) { c.exactSnapshot = fn }
 }
 
 func WithDiscoverFunc(fn DiscoverFunc) LoadOption {
@@ -709,7 +717,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	}
 
 	// Phase 1: Prepare fetch jobs from registry entries.
-	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)
+	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir, lc.exactSnapshot)
 	result.Errors = append(result.Errors, err...)
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -744,7 +752,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 
 // prepareFetchJobs builds fetch jobs and load requests from registry entries.
 // Local entries get a nil job; remote entries get deduplicated fetch jobs.
-func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localConfigDir string) ([]loadRequest, []*fetchJob, []error) {
+func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localConfigDir string, exactSnapshot ...ExactSnapshotFunc) ([]loadRequest, []*fetchJob, []error) {
 	jobsByKey := make(map[string]*fetchJob)
 	requests := make([]loadRequest, 0, len(cfg.Registries))
 	var errs []error
@@ -789,6 +797,22 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 			}
 
 			requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, basePath: localPath})
+			continue
+		}
+
+		if len(exactSnapshot) > 0 && exactSnapshot[0] != nil {
+			snapshotPath, _, err := exactSnapshot[0](entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("open exact snapshot for registry %q (ref %q): %w", entry.URL, entry.Ref, err))
+				continue
+			}
+			catalogKey := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+			entry.CatalogKey = catalogKey
+			cfg.Registries[i].CatalogKey = catalogKey
+			requests = append(requests, loadRequest{
+				entry: entry, catalogKey: catalogKey, basePath: snapshotPath,
+				catalogBasePath: cache.RegistryCachePath(entry.URL, entry.Ref),
+			})
 			continue
 		}
 
@@ -955,6 +979,9 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
 			continue
 		}
+		if req.catalogBasePath != "" {
+			rebaseCatalogEntryPaths(&discovered, basePath, req.catalogBasePath)
+		}
 
 		// When recursive discovery split the result into per-sub-bundle
 		// catalogs, process each sub-bundle separately with its own catalog
@@ -1030,6 +1057,25 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			result.RefreshAfterLoad = true
 			break
 		}
+	}
+}
+
+func rebaseCatalogEntryPaths(loaded *LoadedCatalog, fromRoot, toRoot string) {
+	for i := range loaded.Entries {
+		path := loaded.Entries[i].Path
+		if !filepath.IsAbs(path) {
+			continue
+		}
+		rel, err := filepath.Rel(fromRoot, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		preserveResourceSourcePath(loaded.Entries[i].Resource, path)
+		loaded.Entries[i].Path = filepath.Join(toRoot, rel)
+	}
+	for path, subBundle := range loaded.SubBundles {
+		rebaseCatalogEntryPaths(&subBundle, fromRoot, toRoot)
+		loaded.SubBundles[path] = subBundle
 	}
 }
 

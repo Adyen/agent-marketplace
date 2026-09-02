@@ -152,6 +152,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			catalog.WithCloneOrPull(cloneOrPull),
 			catalog.WithDiscoverFunc(discoverCatalog),
 		},
+		ReadOnlyExactLocks: mode == catalogLoadCached,
 	})
 
 	base := snapshotLoadedMsg{
@@ -808,6 +809,28 @@ var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
 		result := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
+	}
+}
+
+func runDependencySyncCmd(ctx context.Context, repoRoot string, sync DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg {
+		return syncDoneMsg{err: sync(ctx, repoRoot)}
+	}
+}
+
+func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg {
+		lifecycleErr := update(ctx, repoRoot)
+		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		current.generation = generation
+		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
+		if lifecycleErr != nil {
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, lifecycleErr)
+		} else if reloadErr := errors.Join(diagnosticErrors(current.diagnostics)...); reloadErr != nil {
+			result.stage = updateStageReload
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, reloadErr)
+		}
+		return result
 	}
 }
 

@@ -122,8 +122,11 @@ func TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll(t *testing.T) {
 	for _, args := range [][]string{{"sync", "--check"}, {"status"}} {
 		name := strings.Join(args, " ")
 		output, err := executeCommand(args...)
-		if err != nil && strings.Contains(err.Error(), "lock") {
-			t.Fatalf("%s reported a locking failure: %v\noutput:\n%s", name, err, output)
+		if err != nil && strings.Contains(err.Error(), "ownership.lock") {
+			t.Fatalf("%s reported an ownership locking failure: %v\noutput:\n%s", name, err, output)
+		}
+		if args[0] == "sync" && (err == nil || !strings.Contains(err.Error(), "lock.missing")) {
+			t.Fatalf("%s must report missing lock freshness on a first run: %v\noutput:\n%s", name, err, output)
 		}
 		if _, statErr := os.Lstat(stateRoot); !os.IsNotExist(statErr) {
 			t.Fatalf("%s created the durable state root %s (%v)", name, stateRoot, statErr)

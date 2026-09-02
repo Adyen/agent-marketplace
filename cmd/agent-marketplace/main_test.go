@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,23 @@ import (
 )
 
 var testMainHome string
+
+func TestExactCacheLeaseCoversCommandFailure(t *testing.T) {
+	original := acquireExactCacheLease
+	released := false
+	acquireExactCacheLease = func() (func(), error) {
+		return func() { released = true }, nil
+	}
+	t.Cleanup(func() { acquireExactCacheLease = original })
+
+	bodyErr := errors.New("command failed")
+	if err := withExactCacheLease(func() error { return bodyErr }); !errors.Is(err, bodyErr) {
+		t.Fatalf("withExactCacheLease error = %v, want command failure", err)
+	}
+	if !released {
+		t.Fatal("exact cache lease was not released after command failure")
+	}
+}
 
 func TestMain(m *testing.M) {
 	// Use a visible stderr logger for TestMain diagnostics. Command tests
@@ -114,6 +132,26 @@ func TestHelpListsPlaceholderSubcommands(t *testing.T) {
 		if !strings.Contains(output, subcommand) {
 			t.Fatalf("expected help output to contain %q, got %q", subcommand, output)
 		}
+	}
+}
+
+func canonicalTempDir(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	return canonical
+}
+
+func requireOrganizationLock(t testing.TB, configPath string) {
+	t.Helper()
+	if err := os.Chmod(configPath, 0o600); err != nil {
+		t.Fatalf("secure organization config: %v", err)
+	}
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("create trusted organization lock: %v\n%s", err, output)
 	}
 }
 

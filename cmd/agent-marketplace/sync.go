@@ -220,7 +220,6 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			return errors.Join(allErrs...)
 		}
 		if pruned > 0 {
-			recordComputedInventory = false
 			slog.Info("sync stale selections pruned; starting re-sync",
 				"repo_root", repoRoot,
 				"count", pruned,
@@ -262,6 +261,34 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 		return err
 	}
 	return newSyncCommandError(errs, true, "error:")
+}
+
+func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
+	effective := config.LoadEffective(ctx, config.LoadEffectiveOptions{
+		RepoRoot: repoRoot, LocalConfigDir: localDir, AllowMissingOrganizationLock: true,
+	})
+	seen := make(map[string]struct{})
+	for _, layer := range effective.PresentLayers() {
+		var entries []config.RegistryEntry
+		if layer.Config != nil {
+			entries = layer.Config.Registries
+		} else if layer.Local != nil {
+			entries = layer.Local.Registries
+		}
+		for _, entry := range entries {
+			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindCollection} {
+				for _, name := range entry.SelectorForKind(kind).Include {
+					seen[fmt.Sprintf("%s %q", skill.KindLabel(kind), name)] = struct{}{}
+				}
+			}
+		}
+	}
+	labels := make([]string, 0, len(seen))
+	for label := range seen {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	return labels
 }
 
 // dedupIssues drops later occurrences of the same underlying problem while
@@ -354,7 +381,7 @@ func runSyncCheck(ctx context.Context, out io.Writer) error {
 	// Warnings do not affect drift detection or the --check exit code.
 	// Concat, not append: appending to resolvedResult.Warnings could write into
 	// its spare capacity and mutate the caller's slice.
-	allWarnings := slices.Concat(resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
+	allWarnings := slices.Concat(lockWarnings, resolvedResult.Warnings, pipeline.SoftWarnings(resolvedResult))
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err

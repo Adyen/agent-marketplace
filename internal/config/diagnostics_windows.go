@@ -30,3 +30,5 @@ func ownerAndGroup(info os.FileInfo) (owner, group string) {
 func isTrustedOwner(info os.FileInfo) bool {
 	return true
 }
+
+func ownedByCurrentProcess(info os.FileInfo) bool { return true }

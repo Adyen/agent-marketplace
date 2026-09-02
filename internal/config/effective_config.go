@@ -69,6 +69,7 @@ type EffectiveConfig struct {
 	Organization LayerResult
 	User         LayerResult
 	Repo         LayerResult
+	LocalLayer   LayerResult
 	Local        *LocalConfig
 	Merged       *Config
 	// Allowed is the resolved registry allowlist. It is nil when no layer
@@ -89,12 +90,29 @@ type EffectiveConfig struct {
 // LoadEffectiveOptions overrides the default layer paths for tests and
 // non-standard layouts. Empty values use the standard resolution rules.
 type LoadEffectiveOptions struct {
-	RepoRoot         string
-	LocalConfigDir   string
-	OrganizationPath string
-	GlobalPath       string
-	RepoPath         string
-	LocalPath        string
+	RepoRoot                     string
+	LocalConfigDir               string
+	OrganizationPath             string
+	GlobalPath                   string
+	RepoPath                     string
+	LocalPath                    string
+	AllowMissingOrganizationLock bool
+	FileOverlays                 map[string][]byte
+}
+
+func (ec EffectiveConfig) LayerResults() []LayerResult {
+	return []LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
+}
+
+func (ec EffectiveConfig) PresentLayers() []LayerResult {
+	all := ec.LayerResults()
+	present := make([]LayerResult, 0, len(all))
+	for _, layer := range all {
+		if layer.Config != nil || layer.Local != nil {
+			present = append(present, layer)
+		}
+	}
+	return present
 }
 
 // LoadEffective loads every applicable Configuration Layer, validates each
@@ -123,20 +141,20 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 	ec := EffectiveConfig{}
 
 	orgPath := organizationConfigPath(opts.OrganizationPath)
-	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath)
+	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath, opts.AllowMissingOrganizationLock)
 	ec.Managed = ec.Diagnostics.Managed()
 	ec.Warnings = append(ec.Warnings, ec.Diagnostics.Warnings...)
 	LogManagedDiagnostics(ec.Diagnostics)
 
-	ec.User = loadEffectiveUser(opts.GlobalPath)
-	ec.Repo = loadEffectiveRepo(repoRoot, opts.RepoPath)
-	localCfg, localErrs := loadEffectiveLocal(localDir, opts.LocalPath)
-	ec.Local = localCfg
+	ec.User = loadEffectiveUser(opts.GlobalPath, opts.FileOverlays)
+	ec.Repo = loadEffectiveRepo(repoRoot, opts.RepoPath, opts.FileOverlays)
+	ec.LocalLayer = loadEffectiveLocal(localDir, opts.LocalPath, opts.FileOverlays)
+	ec.Local = ec.LocalLayer.Local
 
 	ec.Errors = append(ec.Errors, ec.Organization.Errors...)
 	ec.Errors = append(ec.Errors, ec.User.Errors...)
 	ec.Errors = append(ec.Errors, ec.Repo.Errors...)
-	ec.Errors = append(ec.Errors, localErrs...)
+	ec.Errors = append(ec.Errors, ec.LocalLayer.Errors...)
 
 	for _, err := range ec.Errors {
 		slog.Error("effective config layer error", "error", err)
@@ -221,37 +239,46 @@ func globalConfigPath() (string, error) {
 // loading both with strict per-layer rules. Windows is always treated as
 // unmanaged. A missing file is valid (unmanaged). Any other read error is a
 // hard error.
-func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
+func loadEffectiveOrganization(path string, allowMissingLock bool) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
 		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
 	}
 
-	canonicalPath, canonicalErr := canonicalConfigPath(path)
-	if canonicalErr != nil {
-		if errors.Is(canonicalErr, os.ErrNotExist) {
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			lr := LayerResult{Source: SourceUnset, Path: path}
-			return lr, inspectManagedConfig(path, os.ErrNotExist, nil, SourceUnset, nil)
+			return lr, inspectManagedConfig(path, err, nil, SourceUnset, nil)
 		}
-		lr := LayerResult{Source: Organization, Path: path, Errors: []error{canonicalErr}}
-		return lr, inspectManagedConfig(path, canonicalErr, nil, Organization, lr.Errors)
+		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("inspect organization config %q: %w", path, err)}}
+		return lr, inspectManagedConfig(path, err, nil, Organization, lr.Errors)
 	}
-	data, readErr := os.ReadFile(canonicalPath)
-	if readErr == nil {
-		cfg, err := loadConfigTreeFromRootData(canonicalPath, data, organizationLayer)
-		lr := LayerResult{Source: Organization, Path: path, Config: cfg}
-		if err != nil {
-			lr.Errors = []error{err}
-		}
-		return lr, inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
+
+	if trustErr := ValidateOrganizationConfigAuthority(path); trustErr != nil {
+		lr := LayerResult{Source: Organization, Path: path, Errors: []error{trustErr}}
+		d := inspectManagedConfig(path, nil, nil, Organization, lr.Errors)
+		d.Validation = "untrusted"
+		d.Warnings = append(d.Warnings, trustErr)
+		return lr, d
 	}
-	if !errors.Is(readErr, os.ErrNotExist) {
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
 		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
 	}
-
-	lr := LayerResult{Source: SourceUnset, Path: path}
-	return lr, inspectManagedConfig(path, readErr, nil, SourceUnset, nil)
+	lr := loadOrganizationConfig(path, data)
+	d := inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
+	if len(lr.Errors) == 0 && lr.Config != nil && organizationHasRemoteRequirements(lr.Config) {
+		if trustErr := ValidateOrganizationTrustUnit(path, true, allowMissingLock); trustErr != nil {
+			lr.Errors = append(lr.Errors, trustErr)
+			lr.Config = nil
+			d.State = ManagedInstallationUnmanaged
+			d.Validation = "blocked"
+			d.Warnings = append(d.Warnings, trustErr)
+		}
+	}
+	return lr, d
 }
 
 // LoadOrganizationConfig reads the externally managed organization config at
@@ -260,14 +287,33 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 // apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
-	lr, _ := loadEffectiveOrganization(path)
+	lr, _ := loadEffectiveOrganization(path, false)
 	if len(lr.Errors) > 0 {
 		return nil, errors.Join(lr.Errors...)
 	}
 	return lr.Config, nil
 }
 
-func loadEffectiveUser(override string) LayerResult {
+func organizationHasRemoteRequirements(cfg *Config) bool {
+	for _, entry := range cfg.Registries {
+		if !entry.IsLocal() {
+			return true
+		}
+	}
+	return len(cfg.Marketplaces) > 0
+}
+
+func loadOrganizationConfig(path string, data []byte) LayerResult {
+	cfg, errs := loadV3Config(data, organizationLayer, false)
+	if cfg != nil {
+		if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+			errs = append(errs, logErrs...)
+		}
+	}
+	return LayerResult{Source: Organization, Path: path, Config: cfg, Errors: errs}
+}
+
+func loadEffectiveUser(override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		var err error
@@ -277,9 +323,9 @@ func loadEffectiveUser(override string) LayerResult {
 		}
 	}
 
-	cfg, err := loadConfigTree(path, userLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
+	data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return LayerResult{Source: UserPersonal, Path: path}
 		}
 		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
@@ -287,18 +333,18 @@ func loadEffectiveUser(override string) LayerResult {
 	return LayerResult{Source: UserPersonal, Path: path, Config: cfg}
 }
 
-func loadEffectiveRepo(repoRoot, override string) LayerResult {
-	if IsHomeDir(repoRoot) {
-		return LayerResult{Source: RepoCommitted, Path: ""}
-	}
+func loadEffectiveRepo(repoRoot, override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		path = ProjectConfigPath(repoRoot)
 	}
+	if IsHomeDir(repoRoot) {
+		return LayerResult{Source: RepoCommitted, Path: path}
+	}
 
-	cfg, err := loadConfigTree(path, repoLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
+	data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return LayerResult{Source: RepoCommitted, Path: path}
 		}
 		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
@@ -306,21 +352,50 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
 }
 
-func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
-	if IsHomeDir(localDir) {
-		return nil, nil
-	}
+func loadEffectiveLocal(localDir, override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		path = LocalConfigPath(localDir)
 	}
-
-	loaded, err := loadConfigTree(path, localLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
-			return nil, nil
-		}
-		return nil, []error{err}
+	if IsHomeDir(localDir) {
+		return LayerResult{Source: RepoPersonal, Path: path}
 	}
-	return configAsLocal(loaded), nil
+
+	data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return LayerResult{Source: RepoPersonal, Path: path}
+		}
+		return LayerResult{Source: RepoPersonal, Path: path, Errors: []error{fmt.Errorf("read local config %q: %w", path, readErr)}}
+	}
+
+	cfg, errs := loadV3LocalConfig(data)
+	return LayerResult{Source: RepoPersonal, Path: path, Local: cfg, Errors: errs}
+}
+
+func readEffectiveLayer(path string, overlays map[string][]byte) ([]byte, error) {
+	if data, ok := overlays[path]; ok {
+		return append([]byte(nil), data...), nil
+	}
+	current := filepath.Clean(path)
+	missing := []string{}
+	for {
+		canonical, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			if data, ok := overlays[canonical]; ok {
+				return append([]byte(nil), data...), nil
+			}
+			break
+		}
+		parent := filepath.Dir(current)
+		if !errors.Is(err, os.ErrNotExist) || parent == current {
+			break
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+	return os.ReadFile(path)
 }

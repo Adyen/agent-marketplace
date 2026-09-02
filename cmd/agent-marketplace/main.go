@@ -13,13 +13,13 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
-	"github.com/Adyen/agent-marketplace/internal/tui"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -53,12 +53,19 @@ func newRootCmd() *cobra.Command {
 	var noTUI bool
 	var debug bool
 
-	rootCmd := &cobra.Command{
+	var rootCmd *cobra.Command
+	rootCmd = &cobra.Command{
 		Use:           "agent-marketplace",
 		Short:         "Sync shared AI agent skills from configured registries",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
+			if commandNeedsDependencyRecovery(cmd) || rootTUI {
+				if err := recoverDependencyTransactions(cmd.Context()); err != nil {
+					return err
+				}
+			}
 			start := time.Now()
 			initRootLogging(cmd, debug)
 			initTelemetry(cmd, start)
@@ -89,7 +96,9 @@ func newRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return tui.Run(cmd.Context(), repoRoot, homeDir)
+					return withExactCacheLease(func() error {
+						return runProductionTUI(cmd.Context(), repoRoot, homeDir)
+					})
 				}
 			}
 
@@ -123,6 +132,37 @@ func newRootCmd() *cobra.Command {
 	)
 
 	return rootCmd
+}
+
+func commandNeedsDependencyRecovery(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "status", "tui", "gc":
+		return true
+	case "list":
+		from, err := cmd.Flags().GetString("from")
+		return err == nil && strings.TrimSpace(from) == ""
+	default:
+		return false
+	}
+}
+
+var acquireExactCacheLease = cache.AcquireExactGitNamespaceLease
+
+func withExactCacheCommandLease(cmd *cobra.Command) *cobra.Command {
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return withExactCacheLease(func() error { return run(cmd, args) })
+	}
+	return cmd
+}
+
+func withExactCacheLease(run func() error) error {
+	release, err := acquireExactCacheLease()
+	if err != nil {
+		return fmt.Errorf("acquire exact cache lease: %w", err)
+	}
+	defer release()
+	return run()
 }
 
 func validateStartupTargetRegistrations() error {
@@ -382,17 +422,21 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 
 	repoRoot := config.FindRepoRoot()
 	result, err := pipeline.Remove(ctx, pipeline.RemoveOptions{
-		RepoRoot:       repoRoot,
-		ResourceName:   skillName,
-		Kind:           kind,
-		HasKind:        hasKind,
-		Scope:          scope,
-		ScopeSpecified: scopeSpecified,
-		FromURL:        fromURL,
-		FromRef:        fromRef,
-		FromPath:       fromPath,
+		RepoRoot:            repoRoot,
+		ResourceName:        skillName,
+		Kind:                kind,
+		HasKind:             hasKind,
+		Scope:               scope,
+		ScopeSpecified:      scopeSpecified,
+		FromURL:             fromURL,
+		FromRef:             fromRef,
+		FromPath:            fromPath,
+		DependencyReconcile: reconcileCommandDependencies,
 	})
 	if err != nil {
+		return err
+	}
+	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
 		return err
 	}
 

@@ -23,7 +23,12 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		resolveOpts.LocalConfigDir = o.LocalConfigDir
 	}
 	syncResult := Sync(ctx, resolveOpts)
-	return syncResult.Warnings, errors.Join(syncResult.Errors...)
+	err := errors.Join(syncResult.Errors...)
+	if err != nil && o.DependencyCommitted {
+		err = &DependencyCommittedSyncError{Err: err}
+	}
+	warnings := append(dependencyWarnings, syncResult.Warnings...)
+	return warnings, err
 }
 
 type silentSyncOptions struct {

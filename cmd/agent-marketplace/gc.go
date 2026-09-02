@@ -17,7 +17,7 @@ func newGCCmd() *cobra.Command {
 		Short: "Remove orphaned registry cache directories",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGC(cmd.OutOrStdout(), dryRun)
+			return runGC(cmd.Context(), cmd.OutOrStdout(), dryRun)
 		},
 	}
 

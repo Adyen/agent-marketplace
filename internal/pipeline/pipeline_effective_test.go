@@ -79,6 +79,7 @@ registries:
     ref: main
     required: true
 `)
+	writeFile(t, filepath.Join(dir, "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
 
 	result := Resolve(context.Background(), ResolveOptions{
 		RepoRoot:    dir,

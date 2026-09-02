@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -88,10 +89,14 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 		var err error
 		switch act.scope {
 		case scopeGlobal:
-			globalPath, pathErr := config.GlobalConfigPath()
-			if pathErr != nil {
-				err = pathErr
-				break
+			globalPath := configPath
+			if globalPath == "" {
+				var pathErr error
+				globalPath, pathErr = config.GlobalConfigPath()
+				if pathErr != nil {
+					err = pathErr
+					break
+				}
 			}
 			// Repo-relative local paths are valid in repo/local configs but
 			// meaningless machine-wide; refuse to write them to the user
@@ -119,7 +124,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(globalPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeProject:
-			projectPath := config.ProjectConfigPath(repoRoot)
+			projectPath := configPath
+			if projectPath == "" {
+				projectPath = config.ProjectConfigPath(repoRoot)
+			}
 			if act.enable {
 				if err := config.EnsureRegistryWithPathsInConfig(projectPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
 					return configWrittenMsg{
@@ -133,7 +141,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(projectPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeLocal:
-			localPath := config.LocalConfigPath(repoRoot)
+			localPath := configPath
+			if localPath == "" {
+				localPath = config.LocalConfigPath(repoRoot)
+			}
 			if act.enable {
 				// Write the include scoped to the registry entry (creating a
 				// local shadow entry when the registry lives in a lower layer),
@@ -151,12 +162,15 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(localPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeLocalExclude:
-			localPath := config.LocalConfigPath(repoRoot)
+			localPath := configPath
+			if localPath == "" {
+				localPath = config.LocalConfigPath(repoRoot)
+			}
 			if act.enable {
 				if strings.TrimSpace(act.registryURL) == "" {
 					// No registry context (shouldn't normally happen): fall back
 					// to the top-level personal exclude.
-					err = config.AddKindExcludeToLocalConfig(repoRoot, act.kind, act.skillName)
+					err = config.AddKindExcludeToConfig(localPath, act.kind, act.skillName)
 					break
 				}
 				// Suppress locally, registry-scoped. The exclude is written under
@@ -188,7 +202,7 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 						break
 					}
 				}
-				err = config.RemoveKindExcludeFromLocalConfig(repoRoot, act.kind, act.skillName)
+				err = config.RemoveKindExcludeFromConfig(localPath, act.kind, act.skillName)
 			}
 		}
 		return configWrittenMsg{
@@ -204,6 +218,37 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 // competing registry URLs that provide the same resource name. This resolves
 // name collisions when the user toggles ON a colliding skill.
 func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction) tea.Cmd {
+	return excludeCompetingRegistriesCmdAt(repoRoot, rows, act, "")
+}
+
+func excludeCompetingRegistriesWithDependenciesCmd(ctx context.Context, repoRoot string, rows []row, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
+	if len(competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)) == 0 {
+		return nil
+	}
+	if mutate == nil {
+		return excludeCompetingRegistriesCmd(repoRoot, rows, act)
+	}
+	return func() tea.Msg {
+		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
+			path, err := scopedToggleConfigPath(repoRoot, act.scope)
+			if err != nil {
+				return err
+			}
+			path, err = mapper(path)
+			if err != nil {
+				return err
+			}
+			msg, ok := excludeCompetingRegistriesCmdAt(repoRoot, rows, act, path)().(configWrittenMsg)
+			if !ok {
+				return fmt.Errorf("collision exclusions did not produce a config result")
+			}
+			return msg.err
+		})
+		return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
+	}
+}
+
+func excludeCompetingRegistriesCmdAt(repoRoot string, rows []row, act toggleAction, configPath string) tea.Cmd {
 	competing := competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)
 	if len(competing) == 0 {
 		return nil
@@ -224,17 +269,14 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 	}
 
 	return func() tea.Msg {
-		var configPath string
-		switch act.scope {
-		case scopeGlobal:
-			p, err := config.GlobalConfigPath()
+		if configPath == "" {
+			var err error
+			configPath, err = scopedToggleConfigPath(repoRoot, act.scope)
 			if err != nil {
 				return configWrittenMsg{skillName: act.skillName, err: err}
 			}
-			configPath = p
-		case scopeProject:
-			configPath = config.ProjectConfigPath(repoRoot)
-		default:
+		}
+		if act.scope != scopeGlobal && act.scope != scopeProject {
 			return nil
 		}
 		if act.scope == scopeGlobal {

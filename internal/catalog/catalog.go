@@ -527,6 +527,32 @@ func extraFromResource(r ir.Resource) map[string]any {
 	}
 }
 
+func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
+	if r == nil || !filepath.IsAbs(sourcePath) {
+		return
+	}
+	var source *ir.SourceRef
+	switch v := r.(type) {
+	case *ir.Skill:
+		source = &v.Source
+	case *ir.Command:
+		source = &v.Source
+	case *ir.Subagent:
+		source = &v.Source
+	case *ir.Hook:
+		source = &v.Source
+	case *ir.McpServer:
+		source = &v.Source
+	case *ir.Rule:
+		source = &v.Source
+	case *ir.Collection:
+		source = &v.Source
+	}
+	if source != nil && !filepath.IsAbs(source.File) {
+		source.File = sourcePath
+	}
+}
+
 // sourceRefFromResource extracts the source file path from an ir.Resource.
 // The ir.Resource interface only exposes Kind() and Name(); this helper checks
 // concrete resource types for their exported SourceRef fields.

@@ -39,6 +39,7 @@ registries:
 	if err != nil {
 		t.Fatalf("expected config to be readable before update: %v", err)
 	}
+	beforeLock := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
 
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle v2", []string{"openstack"})
 	commitAndPushAll(t, working, "Update infra skills")
@@ -57,15 +58,9 @@ registries:
 		t.Fatalf("expected update without --bump to keep config unchanged\nbefore:\n%s\nafter:\n%s", beforeConfig, afterConfig)
 	}
 
-	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "skills", "vm-lifecycle"))
-
-	updatedSkill, err := os.ReadFile(filepath.Join(cache.RegistryCachePath(origin, "main"), "skills", "vm-lifecycle", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("expected refreshed cache skill to be readable: %v", err)
-	}
-
-	if !strings.Contains(string(updatedSkill), "VM lifecycle v2") {
-		t.Fatalf("expected refreshed cache to include updated skill content, got:\n%s", updatedSkill)
+	afterLock := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+	if len(beforeLock.Registries) != 1 || len(afterLock.Registries) != 1 || beforeLock.Registries[0].Commit == afterLock.Registries[0].Commit {
+		t.Fatalf("update did not advance exact lock: before=%+v after=%+v", beforeLock.Registries, afterLock.Registries)
 	}
 }
 
@@ -101,9 +96,33 @@ registries:
 
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "v1.0"), "skills", "vm-lifecycle"))
 
+	originalConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCommit := commitDependencyTransaction
+	transactionObserved := false
+	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+		current, readErr := os.ReadFile(configPath)
+		if readErr != nil || !bytes.Equal(current, originalConfig) {
+			t.Fatalf("repo config changed before dependency transaction: %q, %v", current, readErr)
+		}
+		foundConfig, foundLock := false, false
+		for _, file := range desired {
+			foundConfig = foundConfig || filepath.Base(file.Path) == "config.yaml" && bytes.Contains(file.Bytes, []byte("ref: v1.1"))
+			foundLock = foundLock || filepath.Base(file.Path) == "lock.yaml" && bytes.Contains(file.Bytes, []byte("ref: v1.1"))
+		}
+		transactionObserved = foundConfig && foundLock
+		return originalCommit(ctx, stateDir, desired, opts...)
+	}
+	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+
 	output, err := executeCommand("update", "--bump")
 	if err != nil {
 		t.Fatalf("expected update --bump to succeed: %v\n%s", err, output)
+	}
+	if !transactionObserved {
+		t.Fatal("update --bump did not commit config and lock in one transaction")
 	}
 
 	cfg, err := config.LoadRepoConfig()
@@ -115,15 +134,123 @@ registries:
 		t.Fatalf("expected bumped ref %q, got %q", want, got)
 	}
 
-	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "v1.1"), "skills", "vm-lifecycle"))
-
-	bumpedSkill, err := os.ReadFile(filepath.Join(cache.RegistryCachePath(origin, "v1.1"), "skills", "vm-lifecycle", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("expected bumped cache skill to be readable: %v", err)
+	locked := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+	if len(locked.Registries) != 1 || locked.Registries[0].Ref != "v1.1" {
+		t.Fatalf("bumped lock = %+v, want ref v1.1", locked.Registries)
 	}
 
-	if !strings.Contains(string(bumpedSkill), "VM lifecycle v1.1") {
-		t.Fatalf("expected bumped cache to include v1.1 content, got:\n%s", bumpedSkill)
+}
+
+func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	targetOrigin, targetWorking := createBareRepoWithWorkingClone(t, "target-skills.git")
+	writeSkill(t, targetWorking, "target", "Target v1", nil)
+	commitAndPushAll(t, targetWorking, "target v1")
+	unrelatedOrigin, unrelatedWorking := createBareRepoWithWorkingClone(t, "unrelated-skills.git")
+	writeSkill(t, unrelatedWorking, "unrelated", "Unrelated v1", nil)
+	commitAndPushAll(t, unrelatedWorking, "unrelated v1")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+targetOrigin+`
+    ref: main
+    skills:
+      include: [target]
+  - url: `+unrelatedOrigin+`
+    ref: main
+    skills:
+      include: [unrelated]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	before := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+	canonicalTarget, err := canonicalRegistryURL(targetOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalUnrelated, err := canonicalRegistryURL(unrelatedOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var targetCommit, unrelatedCommit lockfile.GitOID
+	for _, registry := range before.Registries {
+		switch registry.URL {
+		case canonicalTarget:
+			targetCommit = registry.Commit
+		case canonicalUnrelated:
+			unrelatedCommit = registry.Commit
+		}
+	}
+	if targetCommit == (lockfile.GitOID{}) || unrelatedCommit == (lockfile.GitOID{}) {
+		t.Fatalf("initial lock missing registry: %+v", before.Registries)
+	}
+
+	writeSkill(t, targetWorking, "target", "Target v2", nil)
+	commitAndPushAll(t, targetWorking, "target v2")
+	writeSkill(t, unrelatedWorking, "target", "Transient collision", nil)
+	commitAndPushAll(t, unrelatedWorking, "unrelated moved branch")
+
+	output, err := executeCommand("update", "--registry", targetOrigin)
+	if err != nil {
+		t.Fatalf("targeted update loaded unrelated moved branch: %v\n%s", err, output)
+	}
+	after := readLockDocument(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
+	for _, registry := range after.Registries {
+		switch registry.URL {
+		case canonicalTarget:
+			if registry.Commit == targetCommit {
+				t.Fatalf("selected lock did not advance from %v", targetCommit)
+			}
+		case canonicalUnrelated:
+			if registry.Commit != unrelatedCommit {
+				t.Fatalf("unrelated lock moved from %v to %v", unrelatedCommit, registry.Commit)
+			}
+		}
+	}
+}
+
+func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	userOrigin, userWorking := createBareRepoWithWorkingClone(t, "user-missing-lock.git")
+	repoOrigin, repoWorking := createBareRepoWithWorkingClone(t, "repo-update.git")
+	writeSkill(t, userWorking, "user-skill", "User v1", nil)
+	writeSkill(t, repoWorking, "repo-skill", "Repo v1", nil)
+	commitAndPushAll(t, userWorking, "user v1")
+	commitAndPushAll(t, repoWorking, "repo v1")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n")
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+repoOrigin+"\n    ref: main\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	userLockPath := filepath.Join(home, ".agents", "lock.yaml")
+	repoLockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	repoBefore := readLockDocument(t, repoLockPath).Registries[0].Commit
+	if err := os.Remove(userLockPath); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, repoWorking, "repo-skill", "Repo v2", nil)
+	commitAndPushAll(t, repoWorking, "repo v2")
+
+	output, err := executeCommand("update", "--scope", "repo")
+	if err != nil {
+		t.Fatalf("scoped update: %v\n%s", err, output)
+	}
+	userLock := readLockDocument(t, userLockPath)
+	if len(userLock.Registries) != 1 {
+		t.Fatalf("missing unselected user lock was not reconciled: %+v", userLock)
+	}
+	if got := readLockDocument(t, repoLockPath).Registries[0].Commit; got == repoBefore {
+		t.Fatal("selected repo lock did not advance")
 	}
 }
 

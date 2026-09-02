@@ -47,6 +47,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -105,6 +106,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -152,6 +154,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -189,6 +192,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	// No sync yet — skill is enabled in config but not on disk
 	output, err := executeCommand("list")
@@ -209,6 +213,13 @@ registries:
 	}
 	if strings.Contains(output, "out of sync") {
 		t.Fatalf("expected no drift footer after sync, got:\n%s", output)
+	}
+}
+
+func requireExactLocks(t *testing.T) {
+	t.Helper()
+	if output, err := executeCommand("lock"); err != nil {
+		t.Fatalf("create exact read lock: %v\n%s", err, output)
 	}
 }
 

@@ -20,11 +20,13 @@ registries:
   - url: ssh://git@example.com/security.git
     ref: main
 `)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
   - url: ssh://git@example.com/repo-skills.git
     ref: main
 `)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
 	activeRepoCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/repo-skills.git"))
 	activeGlobalCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/security.git"))
@@ -73,11 +75,13 @@ registries:
   - url: ssh://git@example.com/security.git
     ref: main
 `)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
   - url: ssh://git@example.com/repo-skills.git
     ref: main
 `)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
 	activeCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/repo-skills.git"))
 	orphanCache := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/legacy-skills.git"))

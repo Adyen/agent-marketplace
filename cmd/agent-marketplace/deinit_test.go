@@ -364,6 +364,7 @@ registries:
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	output, err := executeCommand("sync")
 	if err != nil {
@@ -416,6 +417,7 @@ registries:
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)
@@ -502,6 +504,7 @@ registries:
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)
@@ -596,6 +599,7 @@ registries:
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)

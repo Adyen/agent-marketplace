@@ -20,6 +20,7 @@ registries:
     ref: main
     required: true
 `)
+	writeTrustedOrganizationLock(t, orgPath)
 
 	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
@@ -87,6 +88,7 @@ registries:
   - url: git@example.com:org.git
     ref: main
 `)
+		writeTrustedOrganizationLock(t, orgPath)
 		writeFile(t, userPath, `apiVersion: agent-marketplace/v3
 harnesses:
   - factory
@@ -320,6 +322,7 @@ registries:
     ref: main
     required: true
 `)
+	writeTrustedOrganizationLock(t, orgPath)
 
 	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
@@ -556,7 +559,7 @@ registries: []
 				}
 			},
 			wantWarn:    "writable",
-			wantManaged: true,
+			wantManaged: false,
 		},
 		{
 			name: "wrong-owner",
@@ -650,6 +653,11 @@ registries: []
 			}
 		})
 	}
+}
+
+func writeTrustedOrganizationLock(t *testing.T, configPath string) {
+	t.Helper()
+	writeFile(t, OrganizationLockPath(configPath), "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
 }
 
 func writeFile(t *testing.T, path, content string) {

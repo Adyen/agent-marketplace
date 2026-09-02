@@ -79,9 +79,16 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
+	if err := recoverDependencyTransactions(ctx); err != nil {
+		return err
+	}
 
 	repoRoot := config.FindRepoRoot()
-	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot})
+	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+		RepoRoot:           repoRoot,
+		CatalogMode:        catalog.LoadModeInspect,
+		ReadOnlyExactLocks: true,
+	})
 
 	if len(result.TargetHarnesses) == 0 {
 		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; add `harnesses` to your user config.\n"); err != nil {
@@ -121,7 +128,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		}
 	}
 
-	if len(result.Errors) > 0 {
+	if result.LoadedCfg == nil && len(result.Errors) > 0 {
 		return errors.Join(result.Errors...)
 	}
 
@@ -153,6 +160,9 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		if _, err := fmt.Fprintf(out, "%d resources out of sync — run 'agent-marketplace sync'\n", pending); err != nil {
 			return err
 		}
+	}
+	if len(result.Errors) > 0 {
+		return errors.Join(result.Errors...)
 	}
 
 	return nil

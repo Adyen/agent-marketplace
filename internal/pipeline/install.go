@@ -43,6 +43,7 @@ type InstallOptions struct {
 	// materialization) stays as the parent. Empty means use the default
 	// (ScopedConfigPath).
 	LocalConfigDir string
+	configStaging  *configStagingManager
 }
 
 // silentSyncOptsForInstall builds silentSync options from InstallOptions.
@@ -180,6 +181,19 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
+	realConfigPath := configPath
+	if opts.DependencyReconcile != nil {
+		opts.configStaging, err = newConfigStagingManager()
+		if err != nil {
+			return nil, err
+		}
+		defer closeConfigStaging(opts.configStaging, "install", &retErr)
+		configPath, err = opts.configStaging.Path(realConfigPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{
@@ -200,7 +214,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
 	if repoCfg == nil && opts.Scope == ScopeRepo {
-		repoConfigPath := config.ProjectConfigPath(repoRoot)
+		repoConfigPath := configPath
 		if err := os.MkdirAll(filepath.Dir(repoConfigPath), 0755); err != nil {
 			return nil, fmt.Errorf("create .agents directory: %w", err)
 		}
@@ -219,9 +233,17 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 		// The discovery helper needs the newly created repo layer to be
 		// reflected in the effective config.
+		var overlays map[string][]byte
+		if opts.configStaging != nil {
+			overlays, err = opts.configStaging.Overlays()
+			if err != nil {
+				return nil, err
+			}
+		}
 		ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
 			RepoRoot:       repoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
+			FileOverlays:   overlays,
 		})
 		if len(ec.Errors) > 0 {
 			return nil, errors.Join(ec.Errors...)
@@ -325,7 +347,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		arg := strings.TrimSpace(opts.Args[0])
 		// Detect collection install.
 		if col := collection.Find(discoveredCollections, arg); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
 			}
@@ -371,11 +393,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, fmt.Errorf("%s %q was found but no providing registry entry could be identified", skill.KindLabel(match.kind), resourceName)
 			}
 		} else {
-			// Repo-relative local registries are project-local and cannot be
-			// shadowed into the user-personal (global) config.
-			if err := validateRegistryWriteScope(opts.Scope, *entry); err != nil {
-				return nil, err
-			}
 			// Always write the include scoped to the providing registry entry,
 			// creating a shadow entry in the target scope's config when the
 			// registry is only defined at a lower layer. Keeping every selection
@@ -393,12 +410,12 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, err
 			}
 		}
-		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName); err != nil {
+		if err := clearInstallExcludes(repoRoot, opts.Scope, opts.configStaging, match.kind, resourceName); err != nil {
 			return nil, err
 		}
 	}
 
-	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries)
 	if err != nil {
 		return nil, err
 	}
@@ -421,17 +438,9 @@ func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity
 	return resources
 }
 
-func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
+func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry) ([]resourceIdentity, error) {
 	expanded, expandErrs := collection.Expand([]string{name}, available, registries)
 	if err := errors.Join(expandErrs...); err != nil {
-		return nil, err
-	}
-	providerEntries := make([]config.RegistryEntry, 0, len(expanded.SyntheticEntries)+1)
-	if col := collection.Find(available, name); col != nil {
-		providerEntries = append(providerEntries, config.RegistryEntry{URL: col.SourceRegistryURL})
-	}
-	providerEntries = append(providerEntries, expanded.SyntheticEntries...)
-	if err := validateRegistryWriteScope(scope, providerEntries...); err != nil {
 		return nil, err
 	}
 	var resources []resourceIdentity
@@ -443,13 +452,13 @@ func collectionInstallResources(name string, available []collection.Collection, 
 	return resources, nil
 }
 
-func expandInstalledCollectionResources(installed []resourceIdentity, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
+func expandInstalledCollectionResources(installed []resourceIdentity, available []collection.Collection, registries []config.RegistryEntry) ([]resourceIdentity, error) {
 	expanded := slices.Clone(installed)
 	for _, resource := range installed {
 		if resource.kind != ir.KindCollection {
 			continue
 		}
-		members, err := collectionInstallResources(resource.name, available, registries, scope)
+		members, err := collectionInstallResources(resource.name, available, registries)
 		if err != nil {
 			return nil, err
 		}
@@ -480,6 +489,9 @@ func filterRequirementWarnings(warnings []error, installed []resourceIdentity) [
 	for _, warning := range warnings {
 		var requirement *resolver.UnmetRequirementWarning
 		if !errors.As(warning, &requirement) {
+			if _, ok := warning.(interface{ DependencyWarning() }); ok {
+				requirementWarnings = append(requirementWarnings, warning)
+			}
 			continue
 		}
 		if installedResources != nil {
@@ -528,19 +540,38 @@ func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfig
 	return result.Catalogs, result.Collections, nil
 }
 
-func clearInstallExcludes(repoRoot string, scope Scope, kind ir.ResourceKind, name string) error {
-	if err := config.RemoveKindExcludeFromLocalConfig(repoRoot, kind, name); err != nil {
+func clearInstallExcludes(repoRoot string, scope Scope, staging *configStagingManager, kind ir.ResourceKind, name string) error {
+	stage := func(path string) (string, error) {
+		if staging == nil {
+			return path, nil
+		}
+		return staging.Path(path)
+	}
+	localPath, err := stage(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		return err
+	}
+	if err := config.RemoveKindExcludeFromConfig(localPath, kind, name); err != nil {
 		return err
 	}
 
+	var path string
 	switch scope {
 	case ScopeUser:
-		return config.RemoveKindExcludeFromGlobalConfig(kind, name)
+		path, err = config.GlobalConfigPath()
 	case ScopeRepo:
-		return config.RemoveAllKindExcludesFromRegistryEntries(config.ProjectConfigPath(repoRoot), kind, name)
+		path = config.ProjectConfigPath(repoRoot)
 	default:
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	path, err = stage(path)
+	if err != nil {
+		return err
+	}
+	return config.RemoveAllKindExcludesFromRegistryEntries(path, kind, name)
 }
 
 func allDiscoveredResourceNames(registries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, registryFilter string, kind ir.ResourceKind) ([]string, error) {
@@ -750,17 +781,6 @@ func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wante
 	return nil
 }
 
-func validateRegistryWriteScope(scope Scope, entries ...config.RegistryEntry) error {
-	if scope != ScopeUser {
-		return nil
-	}
-	if err := config.ValidateGlobalRegistryWrite(entries...); err != nil {
-		slog.Warn("install rejected registry write", "scope", scope, "error", err)
-		return err
-	}
-	return nil
-}
-
 // InstallScopeLabel returns a human-readable label for the install scope.
 func InstallScopeLabel(scope Scope) string {
 	switch scope {
@@ -860,15 +880,29 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if opts.LocalConfigDir != "" && opts.Scope == ScopeLocal {
 		configPath = config.LocalConfigPath(opts.LocalConfigDir)
 	}
+	if opts.configStaging != nil {
+		configPath, err = opts.configStaging.Path(configPath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := config.EnsureRegistryWithPathsInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
 	}
 
 	// Reload the effective config so the discovery helper sees the newly
 	// persisted registry entry.
+	var overlays map[string][]byte
+	if opts.configStaging != nil {
+		overlays, err = opts.configStaging.Overlays()
+		if err != nil {
+			return nil, err
+		}
+	}
 	*ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
+		FileOverlays:   overlays,
 	})
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -910,7 +944,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 		// Check collections.
 		if col := collection.Find(discoveredCollections, resourceName); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
 			if err != nil {
 				return nil, err
 			}
@@ -942,7 +976,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, resourceName); err != nil {
 			return nil, err
 		}
-		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName); err != nil {
+		if err := clearInstallExcludes(repoRoot, opts.Scope, opts.configStaging, match.kind, resourceName); err != nil {
 			return nil, err
 		}
 		requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
@@ -979,7 +1013,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 				if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, inferredName); err != nil {
 					return nil, err
 				}
-				if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, inferredName); err != nil {
+				if err := clearInstallExcludes(repoRoot, opts.Scope, opts.configStaging, match.kind, inferredName); err != nil {
 					return nil, err
 				}
 				requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)
@@ -1027,7 +1061,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}
-	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries, opts.Scope)
+	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries)
 	if err != nil {
 		return nil, err
 	}

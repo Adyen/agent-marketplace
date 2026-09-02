@@ -50,3 +50,8 @@ func isTrustedOwner(info os.FileInfo) bool {
 	}
 	return st.Uid == 0
 }
+
+func ownedByCurrentProcess(info os.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == uint32(os.Getuid())
+}

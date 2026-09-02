@@ -104,12 +104,15 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 // (user-personal) config file at ~/.agents/config.yaml. This determines
 // whether a skeleton config should include the default harnesses (global
 // configs include them; project/local configs wait for explicit selection).
+const UserConfigShadowMarker = ".agent-marketplace-user-layer"
+
 func isGlobalConfigPath(configPath string) bool {
 	gp, err := GlobalConfigPath()
-	if err != nil {
-		return false
+	if err == nil && filepath.Clean(configPath) == filepath.Clean(gp) {
+		return true
 	}
-	return filepath.Clean(configPath) == filepath.Clean(gp)
+	_, err = os.Stat(filepath.Join(filepath.Dir(configPath), UserConfigShadowMarker))
+	return err == nil
 }
 
 // isLocalConfigPath reports whether configPath refers to a local/personal

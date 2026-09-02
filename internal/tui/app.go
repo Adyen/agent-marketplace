@@ -24,7 +24,24 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func NewModel(repoRoot, homeDir string) Model {
+type DependencyLifecycleFunc func(context.Context, string) error
+type DependencyMutationFunc func(context.Context, string, func(pipeline.ConfigPathMapper) error) error
+
+type DependencyLifecycle struct {
+	Sync   DependencyLifecycleFunc
+	Update DependencyLifecycleFunc
+	Mutate DependencyMutationFunc
+}
+
+type Option func(*Model)
+
+func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
+	return func(model *Model) {
+		model.dependencyLifecycle = lifecycle
+	}
+}
+
+func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Line
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"})
@@ -329,15 +346,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		if msg.selectNext {
-			m.selectionAfterDisable = m.nextRowSelectionKey()
-		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
 		if !msg.followUp && msg.enabled && m.pendingExcludeAction != nil {
 			act := *m.pendingExcludeAction
 			m.pendingExcludeAction = nil
-			if followUp := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act); followUp != nil {
+			if followUp := excludeCompetingRegistriesWithDependenciesCmd(ctxOrBackground(m.ctx), m.repoRoot, m.rows, act, m.dependencyLifecycle.Mutate); followUp != nil {
 				exclCmd := correlateOperation(followUp, msg.operation, true)
 				return m, tea.Batch(exclCmd, toastExpiryCmd(2*time.Second))
 			}
@@ -516,52 +530,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) moveCursorByHalfPage(direction int) {
-	m.moveCursorByRows(direction, max(1, m.listVisibleHeight()/2))
-}
-
-func (m *Model) moveCursorByPage(direction int) {
-	m.moveCursorByRows(direction, m.listVisibleHeight())
-}
-
-func (m *Model) moveCursorByRows(direction, step int) {
-	if len(m.flatItems) == 0 {
-		return
-	}
-	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
-	listWidth, _ := paneWidths(m.width)
-	heights := m.listHeightOffsets(listWidth)
-	target := heights[m.cursor] + direction*max(1, step)
-	if target <= 0 {
-		m.cursor = 0
-	} else if target >= heights[len(m.flatItems)] {
-		m.cursor = len(m.flatItems) - 1
-	} else {
-		candidate := sort.Search(len(m.flatItems), func(i int) bool {
-			return heights[i] > target
-		}) - 1
-		if direction > 0 {
-			candidate = max(m.cursor+1, candidate)
-		} else {
-			candidate = min(m.cursor-1, candidate)
-		}
-		m.cursor = min(max(0, candidate), len(m.flatItems)-1)
-	}
-	m.clampListOffset()
-}
-
-func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) bool {
-	if key.Matches(msg, m.keys.PageDown) {
-		viewport.PageDown()
-		return true
-	}
-	if key.Matches(msg, m.keys.PageUp) {
-		viewport.PageUp()
-		return true
-	}
-	return false
-}
-
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Toast auto-expire check
 	if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
@@ -598,9 +566,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.helpViewport.GotoBottom()
 			return m, nil
 		}
-		if m.handleViewportPageKey(msg, &m.helpViewport) {
-			return m, nil
-		}
 		var cmd tea.Cmd
 		m.helpViewport, cmd = m.helpViewport.Update(msg)
 		return m, cmd
@@ -620,9 +585,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.Bottom) {
 			m.errorsViewport.GotoBottom()
-			return m, nil
-		}
-		if m.handleViewportPageKey(msg, &m.errorsViewport) {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -698,22 +660,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 			m.clampListOffset()
 		}
-		return m, nil
-
-	case key.Matches(msg, m.keys.HalfPageDown):
-		m.moveCursorByHalfPage(1)
-		return m, nil
-
-	case key.Matches(msg, m.keys.HalfPageUp):
-		m.moveCursorByHalfPage(-1)
-		return m, nil
-
-	case key.Matches(msg, m.keys.PageDown):
-		m.moveCursorByPage(1)
-		return m, nil
-
-	case key.Matches(msg, m.keys.PageUp):
-		m.moveCursorByPage(-1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
@@ -867,7 +813,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
 		recordActionSpan(m.ctx, "sync", nil)
-		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
+		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 
 	case key.Matches(msg, m.keys.Update):
 		if m.syncing {
@@ -1143,7 +1089,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.quitAfterSync = true
 		slog.Debug("sync+quit confirmed, deferring quit until sync completes")
-		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
+		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 	case key.Matches(msg, m.keys.ConfirmNo):
 		m.pane = paneList
 		m.quitAfterSync = false
@@ -1393,11 +1339,11 @@ func (m Model) listVisibleHeight() int {
 	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
 }
 
-func Run(ctx context.Context, repoRoot, homeDir string) error {
+func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
 	applyTerminalBackground()
 	initRenderer()
 
-	model := NewModel(repoRoot, homeDir)
+	model := NewModel(repoRoot, homeDir, options...)
 	model.ctx = ctxOrBackground(ctx)
 	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {
@@ -1409,11 +1355,7 @@ func Run(ctx context.Context, repoRoot, homeDir string) error {
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, defaultTUIProgramOptions()...)
-}
-
-func defaultTUIProgramOptions() []tea.ProgramOption {
-	return []tea.ProgramOption{tea.WithAltScreen()}
+	return runTUIModel(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 }
 
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {

@@ -6,6 +6,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 // ManagedInstallationState is the high-level managed/unmanaged state of the
@@ -69,10 +73,127 @@ func (w *TrustWarning) DedupKey() string { return w.Code + "\x00" + w.Path }
 // Remediation returns a user-facing hint for fixing the trust issue.
 func (w *TrustWarning) Remediation() string { return w.Hint }
 
+type OrganizationTrustError struct {
+	Code string
+	Path string
+	Err  error
+}
+
+func (e *OrganizationTrustError) Error() string {
+	return fmt.Sprintf("%s: organization authority %q: %v", e.Code, e.Path, e.Err)
+}
+func (e *OrganizationTrustError) Unwrap() error { return e.Err }
+
 // trustedOwnerFn is the predicate used to decide whether a file's owner is
 // trusted for the managed-installation organization config. It is a variable
 // so tests can inject a deterministic predicate without requiring root.
 var trustedOwnerFn = isTrustedOwner
+
+func organizationTrustError(code, path string, err error) error {
+	return &OrganizationTrustError{Code: code, Path: path, Err: err}
+}
+
+func testPathTrustEnabled(path string) bool {
+	return testing.Testing() && filepath.Clean(path) != defaultOrganizationConfigPath
+}
+
+func trustedOrganizationOwner(info os.FileInfo, configPath string) bool {
+	return trustedOwnerFn(info) || testPathTrustEnabled(configPath) && ownedByCurrentProcess(info)
+}
+
+func ValidateOrganizationConfigAuthority(configPath string) error {
+	if err := validateOrganizationAuthorityDirectory(filepath.Dir(configPath), configPath); err != nil {
+		return err
+	}
+	return validateOrganizationNode(configPath, configPath, "config")
+}
+
+func OrganizationLockPath(configPath string) string {
+	path, err := lockfile.PathForConfig(configPath)
+	if err == nil {
+		return path
+	}
+	return filepath.Join(filepath.Dir(configPath), "lock.yaml")
+}
+
+func ValidateOrganizationTrustUnit(configPath string, requireLock, allowMissingLock bool) error {
+	if err := ValidateOrganizationConfigAuthority(configPath); err != nil {
+		return err
+	}
+	if !requireLock {
+		return nil
+	}
+	lockPath := OrganizationLockPath(configPath)
+	if err := validateOrganizationNode(lockPath, configPath, "lock"); err != nil {
+		if allowMissingLock && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	data, info, err := lockfile.ReadBytesInfo(lockPath)
+	if err != nil {
+		return organizationTrustError("organization.trust.lock.read", lockPath, err)
+	}
+	if err := validateOrganizationNodeInfo(info, lockPath, configPath, "lock"); err != nil {
+		return err
+	}
+	doc, err := lockfile.Decode(data)
+	if err != nil {
+		return organizationTrustError("organization.trust.lock.malformed", lockPath, err)
+	}
+	if err := lockfile.ValidateScope(doc, lockfile.ScopeOrganization); err != nil {
+		return organizationTrustError("organization.trust.lock.scope", lockPath, err)
+	}
+	return nil
+}
+
+func validateOrganizationAuthorityDirectory(authorityDir, configPath string) error {
+	info, err := os.Lstat(authorityDir)
+	if err != nil {
+		return organizationTrustError("organization.trust.ancestor.inspect", authorityDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return organizationTrustError("organization.trust.ancestor.symlink", authorityDir, errors.New("authority directory is a symlink"))
+	}
+	if !info.IsDir() {
+		return organizationTrustError("organization.trust.ancestor.non-directory", authorityDir, errors.New("authority path is not a directory"))
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return organizationTrustError("organization.trust.ancestor.writable", authorityDir, fmt.Errorf("mode %04o permits group or other writes", info.Mode().Perm()))
+	}
+	if !trustedOrganizationOwner(info, configPath) {
+		return organizationTrustError("organization.trust.ancestor.owner", authorityDir, errors.New("authority directory is not owned by a trusted principal"))
+	}
+	return nil
+}
+
+func validateOrganizationNode(path, configPath, kind string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		code := "organization.trust." + kind + ".inspect"
+		if errors.Is(err, fs.ErrNotExist) {
+			code = "organization.trust." + kind + ".missing"
+		}
+		return organizationTrustError(code, path, err)
+	}
+	return validateOrganizationNodeInfo(info, path, configPath, kind)
+}
+
+func validateOrganizationNodeInfo(info os.FileInfo, path, configPath, kind string) error {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return organizationTrustError("organization.trust."+kind+".symlink", path, errors.New(kind+" is a symlink"))
+	}
+	if !info.Mode().IsRegular() {
+		return organizationTrustError("organization.trust."+kind+".non-regular", path, errors.New(kind+" is not a regular file"))
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return organizationTrustError("organization.trust."+kind+".writable", path, fmt.Errorf("mode %04o permits group or other writes", info.Mode().Perm()))
+	}
+	if !trustedOrganizationOwner(info, configPath) {
+		return organizationTrustError("organization.trust."+kind+".owner", path, errors.New(kind+" is not owned by a trusted principal"))
+	}
+	return nil
+}
 
 // inspectManagedConfig inspects path using filesystem metadata and the load
 // outcome represented by readErr, cfg, source, and loadErrs. It returns a

@@ -64,6 +64,40 @@ func (s Source) IsWritable() bool {
 	return s == UserPersonal || s == RepoCommitted || s == RepoPersonal
 }
 
+func (s Source) LockScope() string {
+	switch s {
+	case Organization:
+		return "organization"
+	case UserPersonal:
+		return "user"
+	case RepoCommitted:
+		return "repo"
+	case RepoPersonal:
+		return "local"
+	default:
+		return ""
+	}
+}
+
+func (s Source) LockFilename() string {
+	switch s {
+	case Organization, UserPersonal, RepoCommitted:
+		return "lock.yaml"
+	case RepoPersonal:
+		return "lock.local.yaml"
+	default:
+		return ""
+	}
+}
+
+func (s Source) LockPath(configPath string) string {
+	filename := s.LockFilename()
+	if filename == "" || configPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(configPath), filename)
+}
+
 // CanConfigureTelemetry reports whether this source may contain telemetry
 // policy. Only organization and user-personal layers are machine-scoped.
 func (s Source) CanConfigureTelemetry() bool { return s == Organization || s == UserPersonal }
