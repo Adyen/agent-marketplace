@@ -281,6 +281,74 @@ func TestMarketplaceInstallOperationRemainsSerializedThroughReload(t *testing.T)
 	}
 }
 
+func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	m.marketplaceInstallOperation = operation
+	updated, _ := m.Update(discoveryInstallMsg{operation: operation, result: &pipeline.InstallResult{Installed: []string{"review"}}})
+	m = updated.(Model)
+	installGeneration := m.marketplaceInstallReload
+	updateGeneration := m.beginRequest(requestSnapshot)
+
+	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}})
+	m = updated.(Model)
+	if m.operations.active == nil {
+		t.Fatal("stale install snapshot finished the operation")
+	}
+	updated, _ = m.Update(updateDoneMsg{generation: updateGeneration, snapshot: snapshotLoadedMsg{generation: updateGeneration, mergedCfg: &config.Config{}}})
+	m = updated.(Model)
+	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	}
+	if m.toast != "Marketplace resource installed" {
+		t.Fatalf("install outcome = %q", m.toast)
+	}
+	later, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("later mutation remained blocked")
+	}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}})
+	m = updated.(Model)
+	if !m.operations.accepts(later) {
+		t.Fatal("stale original snapshot finished the later operation")
+	}
+}
+
+func TestAliaslessMarketplaceEndpointDisplayIsCanonicalAndStable(t *testing.T) {
+	m := newTestModel()
+	m.loading = false
+	endpoint := config.MarketplaceEntry{URL: "HTTPS://Z.EXAMPLE/", InstanceID: "z"}
+	item := mpapi.ResourceListItem{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "review", Availability: mpapi.AvailabilityAvailable}
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{
+		{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Err: errors.New("unavailable")},
+		{Endpoint: config.MarketplaceEntry{URL: "https://a.example", InstanceID: "a"}, Items: []mpapi.ResourceListItem{item}},
+	})
+	if got := m.discoveryRows[1].RegistryName; got != "https://z.example/tools" {
+		t.Fatalf("alias-less row registry = %q", got)
+	}
+	if got := m.discoveryRows[0].MarketplaceDiscovery.Endpoint.InstanceID; got != "a" {
+		t.Fatalf("alias-less ordering first instance = %q, want a", got)
+	}
+	if len(m.discoveryErrs) != 1 || !strings.HasPrefix(m.discoveryErrs[0].Error(), "https://z.example: ") {
+		t.Fatalf("alias-less error prefix = %v", m.discoveryErrs)
+	}
+	m.rows = m.discoveryRows
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, flat := range m.flatItems {
+		if flat.Kind == flatArtifact && flat.Row.MarketplaceDiscovery.Endpoint.InstanceID == "z" {
+			m.cursor = i
+			break
+		}
+	}
+	if detail := renderDetail(m); !strings.Contains(detail, "https://z.example") {
+		t.Fatalf("alias-less detail omitted canonical endpoint: %q", detail)
+	}
+}
+
 func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T) {
 	m := newTestModel()
 	m.loading = false

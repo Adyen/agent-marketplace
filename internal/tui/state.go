@@ -118,7 +118,7 @@ func (r *row) ensureSearchable() {
 	b.WriteString(r.Artifact.Description)
 	if r.MarketplaceDiscovery != nil {
 		b.WriteByte(' ')
-		b.WriteString(r.MarketplaceDiscovery.Endpoint.Alias)
+		b.WriteString(marketplaceEndpointDisplay(r.MarketplaceDiscovery.Endpoint))
 		b.WriteByte(' ')
 		b.WriteString(r.MarketplaceDiscovery.Item.RegistrySlug)
 		b.WriteByte(' ')

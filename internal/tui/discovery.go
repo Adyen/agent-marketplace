@@ -148,6 +148,16 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func marketplaceEndpointDisplay(endpoint config.MarketplaceEntry) string {
+	if endpoint.Alias != "" {
+		return endpoint.Alias
+	}
+	if normalized, err := marketplace.NormalizeMarketplaceURL(endpoint.URL); err == nil {
+		return normalized
+	}
+	return endpoint.URL
+}
+
 func effectiveMarketplaceConfig(cfg *config.Config) config.EffectiveConfig {
 	ec := config.EffectiveConfig{Merged: cfg}
 	if cfg != nil && cfg.AllowedMarketplaces != nil {
@@ -299,7 +309,7 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 	var rows []row
 	for _, outcome := range outcomes {
 		if outcome.Err != nil {
-			m.discoveryErrs = append(m.discoveryErrs, fmt.Errorf("%s: %w", outcome.Endpoint.Alias, outcome.Err))
+			m.discoveryErrs = append(m.discoveryErrs, fmt.Errorf("%s: %w", marketplaceEndpointDisplay(outcome.Endpoint), outcome.Err))
 		}
 		for _, item := range outcome.Items {
 			kind, ok := skill.ParseKind(item.Kind)
@@ -323,7 +333,7 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 				},
 				IsAvailable:          true,
 				RegistryURL:          outcome.Endpoint.URL,
-				RegistryName:         outcome.Endpoint.Alias + "/" + item.RegistrySlug,
+				RegistryName:         marketplaceEndpointDisplay(outcome.Endpoint) + "/" + item.RegistrySlug,
 				MarketplaceDiscovery: discovery,
 			})
 		}
@@ -337,7 +347,9 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 			return 1
 		}
 		for _, c := range []int{
-			cmp.Compare(da.Endpoint.Alias, db.Endpoint.Alias),
+			cmp.Compare(marketplaceEndpointDisplay(da.Endpoint), marketplaceEndpointDisplay(db.Endpoint)),
+			cmp.Compare(da.Endpoint.URL, db.Endpoint.URL),
+			cmp.Compare(da.Endpoint.InstanceID, db.Endpoint.InstanceID),
 			cmp.Compare(da.Item.RegistrySlug, db.Item.RegistrySlug),
 			cmp.Compare(da.Item.Kind, db.Item.Kind),
 			cmp.Compare(da.Item.Name, db.Item.Name),
