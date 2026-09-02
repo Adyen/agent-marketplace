@@ -212,7 +212,8 @@ type Model struct {
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
 	// Set when enabling a colliding resource; cleared on configWrittenMsg.
-	pendingExcludeAction *toggleAction
+	pendingExcludeAction  *toggleAction
+	selectionAfterDisable string
 
 	migrationPrompt migrationPrompt
 

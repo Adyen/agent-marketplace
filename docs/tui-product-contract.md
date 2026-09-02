@@ -26,7 +26,7 @@ Replaceable detail rendering and snapshot-producing load, reload, refresh, and u
 
 Rejected stale completions do not change the active pane, input focus, selected resource, detail content, rows, cached configuration, drift state, or success and error state. Because an update may already have changed disk before its state delivery becomes stale, a stale update result schedules a new authoritative snapshot instead of applying either stale outcome.
 
-Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered.
+Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered. After disabling a resource, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
 
 ## Mutation operations
 

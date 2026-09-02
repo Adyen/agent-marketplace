@@ -65,6 +65,13 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	return act
 }
 
+func (a toggleAction) disablesResource() bool {
+	if a.scope == scopeLocalExclude {
+		return a.enable
+	}
+	return !a.enable
+}
+
 // runScopedToggle returns a Cmd that writes the toggle to the appropriate
 // config file and emits a configWrittenMsg on completion. The existing
 // configWrittenMsg handler in Update() re-loads the snapshot, which picks
@@ -185,9 +192,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 			}
 		}
 		return configWrittenMsg{
-			skillName: act.skillName,
-			enabled:   act.enable,
-			err:       err,
+			skillName:  act.skillName,
+			enabled:    act.enable,
+			selectNext: act.disablesResource(),
+			err:        err,
 		}
 	}
 }
