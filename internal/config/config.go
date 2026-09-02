@@ -513,6 +513,11 @@ type RegistryEntry struct {
 	// Set during merge; not serialized in YAML.
 	Source Source `yaml:"-"`
 
+	// FilePrecedence orders registry entries from files composed into one layer.
+	// Higher values have higher precedence. Zero retains equal-source behavior
+	// for configs without includes.
+	FilePrecedence int `yaml:"-"`
+
 	// CatalogKey is the key used to look up this registry's skill catalog in
 	// the catalogs map. For git registries it is the cache path; for local
 	// registries it is the resolved absolute path. Set by catalog loading;

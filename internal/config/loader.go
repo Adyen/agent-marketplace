@@ -245,9 +245,10 @@ func DefaultHarnesses() []string {
 }
 
 type configIncludeLoader struct {
-	kind     layerKind
-	loaded   map[string]struct{}
-	visiting map[string]struct{}
+	kind               layerKind
+	loaded             map[string]struct{}
+	visiting           map[string]struct{}
+	nextFilePrecedence int
 }
 
 func newConfigIncludeLoader(kind layerKind) *configIncludeLoader {
@@ -300,7 +301,7 @@ func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", canonical, err)
 	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root)
+	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root && l.kind != localLayer)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("validate config %q: %w", canonical, errors.Join(errs...))
 	}
@@ -330,6 +331,10 @@ func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
 		if fragment != nil {
 			layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: fragment})
 		}
+	}
+	l.nextFilePrecedence++
+	for i := range cfg.Registries {
+		cfg.Registries[i].FilePrecedence = l.nextFilePrecedence
 	}
 	layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: cfg})
 	var merged *Config
@@ -375,7 +380,7 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
-	return newConfigIncludeLoader(kind).load(path, kind != localLayer)
+	return newConfigIncludeLoader(kind).load(path, true)
 }
 
 func rootConfigNotExist(path string, err error) bool {

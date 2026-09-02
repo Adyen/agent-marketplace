@@ -36,14 +36,21 @@ func TestConfigIncludeResolutionOrderAndDeduplication(t *testing.T) {
 	writeIncludeConfig(t, filepath.Join(dir, "first.yaml"), "include: nested/leaf.yaml\nregistries:\n  - path: /first\n")
 	absolute := filepath.Join(dir, "absolute.yaml")
 	writeIncludeConfig(t, absolute, "registries:\n  - path: /absolute\n")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude:\n  - first.yaml\n  - "+absolute+"\n  - nested/../first.yaml\nregistries:\n  - path: /root\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude:\n  - first.yaml\n  - "+absolute+"\n  - nested/../first.yaml\nregistries:\n  - path: /root\n  - path: /root-second\n")
 
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := registryURLs(cfg), []string{"/leaf", "/first", "/absolute", "/root"}; !reflect.DeepEqual(got, want) {
+	if got, want := registryURLs(cfg), []string{"/leaf", "/first", "/absolute", "/root", "/root-second"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("registries = %v, want %v", got, want)
+	}
+	precedence := make([]int, 0, len(cfg.Registries))
+	for _, entry := range cfg.Registries {
+		precedence = append(precedence, entry.FilePrecedence)
+	}
+	if want := []int{1, 2, 3, 4, 4}; !reflect.DeepEqual(precedence, want) {
+		t.Fatalf("file precedence = %v, want %v", precedence, want)
 	}
 }
 

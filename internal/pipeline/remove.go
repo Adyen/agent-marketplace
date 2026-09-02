@@ -335,6 +335,21 @@ func registryEntryInList(entries []config.RegistryEntry, url, path string) bool 
 	return false
 }
 
+func registryEntryCount(entries []config.RegistryEntry, url, path string) int {
+	count := 0
+	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(url))
+	for _, entry := range entries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
+			continue
+		}
+		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // findRegistryInMerged finds a registry entry in the merged config matching
 // url (normalized) and path. When path is empty it matches any entry with the
 // URL (URL-only match). It returns the matched entry (carrying its Source
@@ -680,10 +695,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
-	// MergeLayers orders entries from lowest to highest precedence. An entry
-	// absent from the target root must be shadowed rather than deleted.
+	// A matching entry outside the target root must remain suppressed.
 	mergedEntry, entryInMerged := findRegistryInMerged(mergedCfg, fromURL, fromPath)
-	requiresShadow := entryInMerged && !entryInTarget
+	var rootEntries []config.RegistryEntry
+	if cfg != nil {
+		rootEntries = cfg.Registries
+	}
+	requiresShadow := entryInMerged && registryEntryCount(mergedCfg.Registries, fromURL, fromPath) > registryEntryCount(rootEntries, fromURL, fromPath)
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef

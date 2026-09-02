@@ -25,12 +25,13 @@ import (
 // Kind, Name, Description, Tags, Resource, and Path for direct access.
 type ResolvedArtifact struct {
 	catalog.Entry
-	RegistryURL  string
-	RegistryPath string // path from the registry entry; empty for root
-	Ref          string
-	Source       config.Source
-	Required     bool
-	CatalogKey   string
+	RegistryURL    string
+	RegistryPath   string // path from the registry entry; empty for root
+	Ref            string
+	Source         config.Source
+	FilePrecedence int
+	Required       bool
+	CatalogKey     string
 	// Via is set when the artifact was contributed by a collection rather than
 	// directly configured. Format: "collection:<name>@<version>".
 	// Empty string for directly-configured artifacts.
@@ -998,6 +999,7 @@ func expandMembersRecursive(
 		memberRegistryPath := artifact.RegistryPath
 		memberRef := artifact.Ref
 		memberSource := artifact.Source
+		memberFilePrecedence := artifact.FilePrecedence
 		memberRequired := artifact.Required
 		memberEntry := config.RegistryEntry{}
 		memberEntryFound := false
@@ -1108,6 +1110,7 @@ func expandMembersRecursive(
 			}
 			memberRef = entry.Ref
 			memberSource = entry.Source
+			memberFilePrecedence = entry.FilePrecedence
 			memberRequired = entry.Required
 			memberEntry = entry
 			memberEntryFound = true
@@ -1182,15 +1185,16 @@ func expandMembersRecursive(
 		directResolved[memberKey] = struct{}{}
 
 		*out = append(*out, ResolvedArtifact{
-			Entry:        attachResource(catEntry, resources, memberCatalogKey),
-			RegistryURL:  memberRegistryURL,
-			RegistryPath: memberRegistryPath,
-			Ref:          memberRef,
-			Source:       memberSource,
-			Required:     memberRequired,
-			CatalogKey:   memberCatalogKey,
-			Via:          viaLabel,
-			Harnesses:    memberHarnesses,
+			Entry:          attachResource(catEntry, resources, memberCatalogKey),
+			RegistryURL:    memberRegistryURL,
+			RegistryPath:   memberRegistryPath,
+			Ref:            memberRef,
+			Source:         memberSource,
+			FilePrecedence: memberFilePrecedence,
+			Required:       memberRequired,
+			CatalogKey:     memberCatalogKey,
+			Via:            viaLabel,
+			Harnesses:      memberHarnesses,
 		})
 	}
 
@@ -1223,13 +1227,14 @@ func expandMembersRecursive(
 		// Recursively expand the included collection's members.
 		includedViaLabel := viaLabel + " > " + "collection:" + irCol.Label()
 		includedArtifact := ResolvedArtifact{
-			Entry:        includedEntry.entry,
-			RegistryURL:  artifact.RegistryURL,
-			RegistryPath: artifact.RegistryPath,
-			Ref:          artifact.Ref,
-			Source:       artifact.Source,
-			CatalogKey:   includedEntry.catalogKey,
-			Harnesses:    artifact.Harnesses,
+			Entry:          includedEntry.entry,
+			RegistryURL:    artifact.RegistryURL,
+			RegistryPath:   artifact.RegistryPath,
+			Ref:            artifact.Ref,
+			Source:         artifact.Source,
+			FilePrecedence: artifact.FilePrecedence,
+			CatalogKey:     includedEntry.catalogKey,
+			Harnesses:      artifact.Harnesses,
 		}
 		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet)
 	}
@@ -1610,14 +1615,15 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 
 			occurrencesByName[selected] = append(occurrencesByName[selected], skillOccurrence{
 				resolved: ResolvedArtifact{
-					Entry:        attachResource(selectedSkill, resources, catalogKey),
-					RegistryURL:  entry.URL,
-					RegistryPath: entry.Path,
-					Ref:          entry.Ref,
-					Source:       entry.Source,
-					Required:     entry.Required,
-					CatalogKey:   entry.CatalogKey,
-					Harnesses:    harnessTargets,
+					Entry:          attachResource(selectedSkill, resources, catalogKey),
+					RegistryURL:    entry.URL,
+					RegistryPath:   entry.Path,
+					Ref:            entry.Ref,
+					Source:         entry.Source,
+					FilePrecedence: entry.FilePrecedence,
+					Required:       entry.Required,
+					CatalogKey:     entry.CatalogKey,
+					Harnesses:      harnessTargets,
 				},
 				source: config.RegistrySelectionKey(entry, entryIndex),
 				url:    entry.URL,
@@ -1993,14 +1999,15 @@ func applyLocalResources(resolved []ResolvedArtifact, localSelections resourceSe
 		}
 
 		resolved = append(resolved, ResolvedArtifact{
-			Entry:        attachResource(*found, resources, foundEntry.CatalogKey),
-			RegistryURL:  foundEntry.URL,
-			RegistryPath: foundEntry.Path,
-			Ref:          foundEntry.Ref,
-			Source:       config.RepoPersonal,
-			Required:     false,
-			CatalogKey:   foundEntry.CatalogKey,
-			Harnesses:    harnessTargets,
+			Entry:          attachResource(*found, resources, foundEntry.CatalogKey),
+			RegistryURL:    foundEntry.URL,
+			RegistryPath:   foundEntry.Path,
+			Ref:            foundEntry.Ref,
+			Source:         config.RepoPersonal,
+			FilePrecedence: foundEntry.FilePrecedence,
+			Required:       false,
+			CatalogKey:     foundEntry.CatalogKey,
+			Harnesses:      harnessTargets,
 		})
 		resolvedIndexByName[selected] = len(resolved) - 1
 	}
@@ -2110,7 +2117,7 @@ func validateCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Re
 }
 
 // applyCrossLayerExcludes removes any resolved skill whose name appears in the
-// Exclude list of a registry entry from a higher-precedence Source layer,
+// Exclude list of a higher-precedence layer or later file in the same layer,
 // unless the skill is Required=true. This allows a repo config to opt out of
 // user-personal skills without touching the local config. ExcludeAll=true on a
 // per-kind selector is also honored, but only when the higher-precedence
@@ -2134,15 +2141,20 @@ func applyCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Regis
 		}
 		excluded := false
 		for _, entry := range entries {
-			if entry.Source.Precedence() <= s.Source.Precedence() {
+			sameSource := entry.Source == s.Source
+			if sameSource {
+				if entry.FilePrecedence == 0 || s.FilePrecedence == 0 || entry.FilePrecedence <= s.FilePrecedence {
+					continue
+				}
+			} else if entry.Source.Precedence() <= s.Source.Precedence() {
 				continue
 			}
-			if s.Source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
+			if !sameSource && s.Source.IsMachineScope() && (entry.Source == config.RepoCommitted || entry.Source == config.RepoPersonal) {
 				continue
 			}
 			// Organization defaults may only be suppressed by User Personal
 			// configuration, not by repository layers.
-			if s.Source == config.Organization && entry.Source != config.UserPersonal {
+			if !sameSource && s.Source == config.Organization && entry.Source != config.UserPersonal {
 				continue
 			}
 			for _, ex := range entryResourceExcludes(entry) {

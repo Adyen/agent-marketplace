@@ -159,14 +159,15 @@ func (s Source) CanConfigureLogging() bool {
 
 func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 	resolved := RegistryEntry{
-		URL:           entry.URL,
-		Ref:           entry.Ref,
-		Path:          entry.Path,
-		Required:      entry.Required,
-		Default:       entry.Default,
-		SourceHarness: entry.SourceHarness,
-		Tags:          resolveInheritedList(cfg.Tags, entry.Tags),
-		Harnesses:     resolveInheritedList(cfg.Harnesses, entry.Harnesses),
+		URL:            entry.URL,
+		Ref:            entry.Ref,
+		Path:           entry.Path,
+		Required:       entry.Required,
+		Default:        entry.Default,
+		SourceHarness:  entry.SourceHarness,
+		FilePrecedence: entry.FilePrecedence,
+		Tags:           resolveInheritedList(cfg.Tags, entry.Tags),
+		Harnesses:      resolveInheritedList(cfg.Harnesses, entry.Harnesses),
 	}
 	// Resolve per-kind selectors with top-level inheritance (entry-specific wins).
 	for _, kind := range AllKinds {

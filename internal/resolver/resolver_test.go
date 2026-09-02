@@ -3264,6 +3264,39 @@ func TestResolvePerRegistryExcludeAllSugarCrossLayer(t *testing.T) {
 	}
 }
 
+func TestApplyCrossLayerExcludesUsesFilePrecedenceWithinLayer(t *testing.T) {
+	for _, source := range []config.Source{config.RepoCommitted, config.UserPersonal} {
+		t.Run(source.String(), func(t *testing.T) {
+			artifact := ResolvedArtifact{
+				Entry:          catalog.Entry{Kind: ir.KindSkill, Name: "included-skill"},
+				RegistryURL:    "git@example.com:team.git",
+				Source:         source,
+				FilePrecedence: 1,
+			}
+			shadow := config.RegistryEntry{
+				URL:            "git@example.com:team.git",
+				Source:         source,
+				FilePrecedence: 2,
+				Skills:         config.KindSelector{Exclude: []string{"included-skill"}},
+			}
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 0 {
+				t.Fatalf("later file did not suppress earlier artifact: %#v", got)
+			}
+
+			shadow.FilePrecedence = artifact.FilePrecedence
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 1 {
+				t.Fatalf("same file suppressed artifact: %#v", got)
+			}
+
+			shadow.FilePrecedence = 0
+			artifact.FilePrecedence = 0
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 1 {
+				t.Fatalf("zero file precedence suppressed artifact: %#v", got)
+			}
+		})
+	}
+}
+
 func TestResolveExcludeAllDoesNotBleedAcrossRegistries(t *testing.T) {
 	// Two registries with different skill names; ExcludeAll on one should not
 	// affect the other. This verifies URL scoping in applyCrossLayerExcludes.

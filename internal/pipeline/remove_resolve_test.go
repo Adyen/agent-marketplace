@@ -196,6 +196,8 @@ func TestResolvedResourceInRegistry_EntryPathOwnsDiscoveredSubPath(t *testing.T)
 
 func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "included-skill", "included skill", nil)
 
@@ -239,6 +241,78 @@ func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
 	if !strings.Contains(string(rootData), "include: team.yaml") {
 		t.Fatalf("root include directive lost:\n%s", rootData)
 	}
+	assertResourceNotResolved(t, repoRoot, "included-skill")
+}
+
+func TestRemoveNamedResourceFromIncludedAdHocRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "included-named-skill", "included named skill", nil)
+	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
+	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-named-skill]\n", registryRoot)
+	writeFile(t, includedPath, includedData)
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot:       repoRoot,
+		ResourceName:   "included-named-skill",
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		FromURL:        registryRoot,
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || result.RemovedName != "included-named-skill" {
+		t.Fatalf("result = %#v", result)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	assertResourceNotResolved(t, repoRoot, "included-named-skill")
+}
+
+func TestRemoveFromAdHocReplacesRootDuplicateWithShadow(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "duplicate-skill", "duplicate skill", nil)
+	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
+	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-skill]\n", registryRoot)
+	writeFile(t, includedPath, includedData)
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\nregistries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-skill]\n", registryRoot))
+
+	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, Scope: ScopeRepo, ScopeSpecified: true, FromURL: registryRoot})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || !result.ExcludedRegistry {
+		t.Fatalf("result = %#v, want exclusion shadow", result)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !rootCfg.Registries[0].ExcludeAll {
+		t.Fatalf("root registries = %#v, want retained exclude_all shadow", rootCfg.Registries)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	assertResourceNotResolved(t, repoRoot, "duplicate-skill")
 }
 
 func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
@@ -356,6 +430,19 @@ func TestRemoveOrExcludeCollectionDeletesRootSelection(t *testing.T) {
 	}
 	if slices.Contains(rootCfg.Collections.Include, "root-bundle") || slices.Contains(rootCfg.Collections.Exclude, "root-bundle") {
 		t.Fatalf("root collections = %#v, want selection removed without exclusion", rootCfg.Collections)
+	}
+}
+
+func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
+	t.Helper()
+	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	if len(resolved.Errors) != 0 {
+		t.Fatalf("resolve errors = %v", resolved.Errors)
+	}
+	for _, item := range resolved.Resolved {
+		if item.Name == name {
+			t.Fatalf("resource %q remained enabled: %#v", name, item)
+		}
 	}
 }
 
