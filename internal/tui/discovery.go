@@ -175,12 +175,19 @@ func waitMarketplaceDiscoveryUpdate(generation requestGeneration, sequence uint6
 
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {
-		hadDiscovery := len(m.discoveryRows) > 0
+		hadDiscovery := len(m.discoveryRows) > 0 || len(m.browseDiscoveryRows) > 0
+		if m.discoveryCancel != nil {
+			m.discoveryCancel()
+			m.discoveryCancel = nil
+		}
+		m.cancelRequest(requestDiscovery)
+		m.discoverySequence = 0
 		m.discoveryLoading = false
 		m.discoveryRows = nil
 		m.browseDiscoveryRows = nil
 		m.discoveryOutcomes = nil
-		if hadDiscovery && m.authoritativeRows != nil {
+		m.discoveryErrs = nil
+		if hadDiscovery || m.authoritativeRows != nil {
 			m.mergeDiscoveryRows()
 		}
 		return nil
@@ -258,7 +265,18 @@ func (m *Model) mergeDiscoveryRows() {
 		if r.IsAvailable || !r.Artifact.IsMarketplace {
 			continue
 		}
-		enabled[discoveryCoordinate(r.Artifact.MarketplaceInstanceID, r.Artifact.MarketplaceRegistryID, r.Artifact.Kind.String(), r.Artifact.Name)] = struct{}{}
+		selectionCoordinates := 0
+		for _, selection := range r.MarketplaceSelections {
+			pin := selection.Pin
+			if selection.Entry.InstanceID == "" || pin.RegistryID == "" || pin.Kind == "" || pin.Name == "" {
+				continue
+			}
+			enabled[discoveryCoordinate(selection.Entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name)] = struct{}{}
+			selectionCoordinates++
+		}
+		if selectionCoordinates == 0 {
+			enabled[discoveryCoordinate(r.Artifact.MarketplaceInstanceID, r.Artifact.MarketplaceRegistryID, r.Artifact.Kind.String(), r.Artifact.Name)] = struct{}{}
+		}
 	}
 	for _, r := range m.discoveryRows {
 		d := r.MarketplaceDiscovery
