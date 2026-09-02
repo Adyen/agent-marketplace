@@ -341,6 +341,29 @@ func TestDisableResourceWithShadowFallbackDoesNotEditIncludedRegistry(t *testing
 	}
 }
 
+func TestDisableDuplicateRootAndIncludedResourceRetainsExclusion(t *testing.T) {
+	dir := t.TempDir()
+	includedPath := filepath.Join(dir, "child.yaml")
+	root := filepath.Join(dir, "config.yaml")
+	includedData := "registries:\n  - path: /registry\n    skills: [shared]\n"
+	writeIncludeConfig(t, includedPath, includedData)
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /registry\n    skills: [shared]\n")
+	if err := DisableResourceWithShadowFallback(root, "/registry", "", "", ir.KindSkill, "shared"); err != nil {
+		t.Fatal(err)
+	}
+	rootCfg, err := LoadRootConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !stringSliceContains(rootCfg.Registries[0].Skills.Exclude, "shared") || stringSliceContains(rootCfg.Registries[0].Skills.Include, "shared") {
+		t.Fatalf("root registry = %#v, want exclusion without selection", rootCfg.Registries)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil || string(gotIncluded) != includedData {
+		t.Fatalf("included config changed: %v\n%s", err, gotIncluded)
+	}
+}
+
 func TestEditorPreservesIncludeAndMutatesOnlyRoot(t *testing.T) {
 	dir := t.TempDir()
 	child := filepath.Join(dir, "child.yaml")

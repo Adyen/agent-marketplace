@@ -279,6 +279,60 @@ func TestRemoveNamedResourceFromIncludedAdHocRegistry(t *testing.T) {
 	assertResourceNotResolved(t, repoRoot, "included-named-skill")
 }
 
+func TestRemoveDuplicateRootAndIncludedSkillRetainsExclusion(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		adHoc bool
+	}{
+		{name: "configured"},
+		{name: "ad-hoc", adHoc: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			t.Chdir(repoRoot)
+			config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+			registryRoot := t.TempDir()
+			writeSkill(t, registryRoot, "duplicate-explicit-skill", "duplicate explicit skill", nil)
+			includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
+			includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-explicit-skill]\n", registryRoot)
+			writeFile(t, includedPath, includedData)
+			rootPath := config.ProjectConfigPath(repoRoot)
+			writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\nregistries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-explicit-skill]\n", registryRoot))
+
+			opts := RemoveOptions{RepoRoot: repoRoot, ResourceName: "duplicate-explicit-skill", Scope: ScopeRepo, ScopeSpecified: true}
+			if tc.adHoc {
+				opts.FromURL = registryRoot
+			}
+			result, err := Remove(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("Remove: %v", err)
+			}
+			if result == nil || result.RemovedName != "duplicate-explicit-skill" {
+				t.Fatalf("result = %#v", result)
+			}
+			gotIncluded, err := os.ReadFile(includedPath)
+			if err != nil || string(gotIncluded) != includedData {
+				t.Fatalf("included config changed: %v\n%s", err, gotIncluded)
+			}
+			rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Skills.Exclude, "duplicate-explicit-skill") || slices.Contains(rootCfg.Registries[0].Skills.Include, "duplicate-explicit-skill") {
+				t.Fatalf("root registries = %#v", rootCfg.Registries)
+			}
+			rootData, err := os.ReadFile(rootPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(rootData), "include: team.yaml") {
+				t.Fatalf("root include directive lost:\n%s", rootData)
+			}
+			assertResourceNotResolved(t, repoRoot, "duplicate-explicit-skill")
+		})
+	}
+}
+
 func TestRemoveFromAdHocReplacesRootDuplicateWithShadow(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)

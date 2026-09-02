@@ -83,8 +83,35 @@ func DisableResourceWithShadowFallback(configPath, registryURL, registryPath, re
 	return AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, kind, name)
 }
 
-// countEntriesByURL counts registry entries with the given URL (after
-// normalization, so .git-suffixed and bare forms are treated as equivalent).
+func matchingRegistryCount(cfg *Config, url, path string) int {
+	if cfg == nil {
+		return 0
+	}
+	count := 0
+	normalizedURL := NormalizeGitURL(strings.TrimSpace(url))
+	trimmedPath := strings.TrimSpace(path)
+	for _, entry := range cfg.Registries {
+		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
+			continue
+		}
+		if strings.TrimSpace(entry.Path) == trimmedPath {
+			count++
+		}
+	}
+	return count
+}
+
+func hasIncludedRegistryDefinition(configPath string, root *Config, url, path string) (bool, error) {
+	if root == nil || len(root.Include) == 0 {
+		return false, nil
+	}
+	expanded, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		return false, err
+	}
+	return matchingRegistryCount(expanded, url, path) > matchingRegistryCount(root, url, path), nil
+}
+
 func countEntriesByURL(cfg *Config, url string) int {
 	count := 0
 	for _, entry := range cfg.Registries {
@@ -237,13 +264,16 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		}
 		entryResources := entryResourcesForKind(entry, kind)
 		if entryResources != nil && stringSliceContains(entryResources, name) {
+			includedDefinition, err := hasIncludedRegistryDefinition(configPath, cfg, registryURL, entry.Path)
+			if err != nil {
+				return err
+			}
 			if err := RemoveResourceFromRegistryInConfig(configPath, registryURL, entry.Path, kind, name); err != nil {
 				return err
 			}
-			// If the entry has default:true, required:true, or tags that would
-			// re-select the resource after include removal, also add to exclude
-			// so the disable takes effect in a single press.
-			if entry.Default || entry.Required || len(entry.Tags) > 0 {
+			// Retain an exclusion when policy or a lower included definition
+			// could re-select the resource after removing the root include.
+			if entry.Default || entry.Required || len(entry.Tags) > 0 || includedDefinition {
 				return AddKindExcludeToRegistryInConfig(configPath, registryURL, entry.Path, kind, name)
 			}
 			return nil
