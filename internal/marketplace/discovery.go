@@ -124,7 +124,7 @@ func normalizeDiscoveryQuery(query string) string {
 }
 
 func (c *DiscoveryCache) key(ep config.MarketplaceEntry, query, kind string, limit int) string {
-	sum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00" + kind + "\x00" + fmt.Sprint(limit)))
+	sum := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00" + kind + "\x00" + fmt.Sprint(limit)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -382,7 +382,7 @@ func (c *DiscoveryCache) readRecognizedRecord(dir, name string) (discoveryCacheR
 		return discoveryCacheRecord{}, false
 	}
 	ep := config.MarketplaceEntry{URL: record.Endpoint, InstanceID: record.InstanceID}
-	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.key(ep, record.Query, record.Kind, record.Limit)+".json" != name || record.ObservedAt.IsZero() {
+	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.key(ep, record.Query, record.Kind, record.Limit)+".json" != name || record.ObservedAt.IsZero() || c.now().Before(record.ObservedAt) {
 		return discoveryCacheRecord{}, false
 	}
 	if err := validateDiscoveryPage(record.Items, record.Total, record.Limit); err != nil {
