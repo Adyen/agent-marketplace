@@ -7,7 +7,7 @@ import {
 } from "../../src/schema.js";
 
 describe("versioned JSON Schemas", () => {
-  it("compiles every deterministic, coverage, and exploratory schema", () => {
+  it("compiles every TUI QA schema", () => {
     assert.deepEqual(validateAllSchemasCompile(), []);
   });
 

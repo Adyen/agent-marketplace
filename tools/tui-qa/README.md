@@ -23,6 +23,12 @@ Each flow attempt receives a validated fresh root containing isolated HOME, XDG 
 
 Native runs print a warning because they provide functional isolation for known application-managed paths, not a hostile-code security boundary. `run-container.sh` builds and disposes the pinned Linux workbench (internal Oracle base locally, pinned public Node base on hosted CI) with a read-only root and checkout, read-only release binary and build manifest, writable sandbox and artifact mounts only, no runtime network, dropped capabilities, no-new-privileges, a PID limit, and symlink-escape denial. The containment self-test runs before product flows.
 
+## Code-owned inventory
+
+`internal/tui` owns stable screen, keymap-action, and finite state IDs. `npm run code-inventory` emits their deterministic `code-inventory.v1.json` projection, including key/help data read from the real keymap and UI targets read in target-metadata order. Prefixed fold actions retain their prefix ActionID rather than duplicating key sequences.
+
+The code inventory defines identity only. It contains no paths, flow assignments, locators, exceptions, classifier decisions, or status authority; those belong to the coverage-index layer.
+
 ## Results and artifact contracts
 
 `results.v1.json` is the deterministic authority for flow status and exit code. It records immutable invalid reasons, build identity, classifier selections, structured expected/observed failure classes, product restoration separately from harness recovery, assertions, bounded side effects, transformed evidence hashes, and artifact policy. Semantic validation is applied after JSON Schema validation.
@@ -51,6 +57,7 @@ Node is pinned by `.node-version`; package metadata accepts that pinned Node 24 
 
 ```sh
 npm ci
+npm run code-inventory
 npm run unit
 npm run driver
 npm run check
