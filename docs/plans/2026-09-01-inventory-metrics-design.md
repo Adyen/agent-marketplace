@@ -154,19 +154,20 @@ incremented.
 
 ## Route isolation
 
-The telemetry runtime uses route-specific providers so detailed inventory cannot leak through a shared reader to the community route:
+The telemetry runtime uses instrument-family and route-specific providers so detailed inventory cannot leak through a shared reader to the optional project-report route:
 
-- the primary provider owns command instruments and, at detailed level, all four inventory instruments;
-- the community provider owns only the basic command counter and duration histogram;
-- command recording writes to both providers when both routes are active;
-- inventory gauge and omission recording writes only to the detailed primary provider; and
-- when community reporting is folded into the primary route, only the primary provider is needed.
+- the primary command provider owns the basic command counter and duration histogram;
+- the primary inventory provider owns all four detailed inventory instruments, uses delta temporality, and supports prompt per-observation export;
+- the project-report provider owns only the basic command counter and duration histogram;
+- command recording writes to both command providers when both routes are active;
+- inventory gauge and omission recording writes only to the primary inventory provider; and
+- when project reporting is folded into the primary route, no separate project-report provider is needed.
 
 Each provider must own its exporter and reader. Exporter cache reuse must not attach one SDK exporter instance to multiple readers. Shutdown flushes every provider within the existing bounded timeout. Queue envelopes continue to preserve route and signal.
 
 Instrument-specific attribute allowlists remain separate. Inventory attributes must not be added to the command metric allowlist.
 
-The community receiver continues accepting only the basic command instruments. Tests must prove inventory instruments never reach it, including when detailed primary telemetry and community reporting are simultaneously enabled.
+The optional project-report route exports only the basic command instruments. Tests must prove inventory instruments never reach that route, including when detailed primary telemetry and project reporting are simultaneously enabled.
 
 ## Point-in-time query model
 
@@ -281,7 +282,7 @@ This is an additive detailed schema change. The telemetry schema is major `1`, m
 - telemetry disclosure and retention documentation;
 - the transparent telemetry design's detailed-metric exception;
 - benchmarks and documented overhead; and
-- collector/runbook guidance with cardinality and Grafana query prerequisites.
+- external operations guidance with collector cardinality and Grafana query prerequisites.
 
 ## Verification
 

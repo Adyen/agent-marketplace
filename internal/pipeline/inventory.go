@@ -101,6 +101,9 @@ func RecordResolvedInventory(ctx context.Context, result ResolveResult) {
 }
 
 func recordResolvedInventory(ctx context.Context, result ResolveResult) {
+	if !telemetry.InventoryEnabled(ctx) {
+		return
+	}
 	defer warnInventoryPanic()
 	if len(result.Errors) != 0 {
 		return

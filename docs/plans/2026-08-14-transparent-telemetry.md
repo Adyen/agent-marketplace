@@ -5,8 +5,9 @@
 Approved scope for epic `agent-marketplace-d5u.1.10`.
 
 This plan covers CLI telemetry, its configuration and transparency surfaces, the
-hosted community receiver, and acceptance work. Implementation is split into
-child beads so the public telemetry contract lands before instrumentation.
+optional project-report route and externally operated endpoint, and acceptance
+work. Implementation is split into child beads so the public telemetry contract
+lands before instrumentation.
 
 ## Goals
 
@@ -357,7 +358,7 @@ Minimum acceptance coverage:
   failure retention, and underlying exit-code preservation
 - bounded flush, queue cap/age/eviction, route preservation, reset, and purge
 - TLS, CA, insecure-private exception, and auth-source handling
-- OTLP receiver contract tests with local HTTP servers
+- OTLP route/export contract tests with local capture servers
 - command-path and TUI instrumentation benchmarks
 - security review of config, queue permissions, diagnostic disclosure, endpoint
   routing, and dependency additions
@@ -375,8 +376,8 @@ Minimum acceptance coverage:
    semantic TUI actions.
 6. **Diagnostic capture**: `--diagnostic`, buffered evidence, exact-payload
    review, confirmation, and diagnostic reference.
-7. **Community telemetry operations**: receiver/backend, dashboards, retention
-   policy, release endpoint, and cardinality budget.
+7. **Project-report operations**: external backend, dashboards, retention policy,
+   release endpoint, and cardinality budget.
 8. **Epic acceptance**: E2E route/consent/offline tests, benchmarks,
    security/privacy review, and user/operator documentation.
 

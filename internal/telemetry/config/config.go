@@ -43,7 +43,7 @@ const (
 	ResourceAttrInstallationID ResourceAttribute = "installation.id"
 )
 
-// MetricInstrument names the v1 basic instruments.
+// MetricInstrument names the telemetry schema instruments.
 type MetricInstrument string
 
 const (

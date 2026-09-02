@@ -109,6 +109,33 @@ func TestRecordResolvedInventoryExportsOmission(t *testing.T) {
 	}
 }
 
+func TestRecordResolvedInventorySkipsConstructionUnlessDetailed(t *testing.T) {
+	for _, test := range []struct {
+		level       string
+		wantOmitted bool
+	}{
+		{level: tmcfg.LevelBasic},
+		{level: tmcfg.LevelDetailed, wantOmitted: true},
+	} {
+		t.Run(test.level, func(t *testing.T) {
+			exporter := newPipelineSpanExporter(t)
+			ctx, tel := setupPipelineTelemetryAtLevel(t, exporter, test.level)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+
+			recordResolvedInventory(ctx, ResolveResult{})
+			if err := tel.Shutdown(context.Background()); err != nil {
+				t.Fatalf("shutdown telemetry: %v", err)
+			}
+			if got := strings.Contains(logs.String(), "configuration inventory omitted"); got != test.wantOmitted {
+				t.Fatalf("inventory omission logged = %v, want %v", got, test.wantOmitted)
+			}
+		})
+	}
+}
+
 func TestBuildInventorySnapshotRepresentsEffectiveResolveResult(t *testing.T) {
 	result := inventoryResolveResult()
 

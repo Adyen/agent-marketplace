@@ -245,11 +245,9 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		return t, nil
 	}
 
+	// Exporter cache keys include the endpoint and signal, so independent routes
+	// cannot attach one exporter instance to multiple readers.
 	cache := newExporterCache()
-	// Metric exporters are reader-owned SDK objects. Keep the community route's
-	// cache separate so one exporter instance can never be attached to readers
-	// from both route-specific providers.
-	communityCache := newExporterCache()
 
 	var primaryMetricExp sdkmetric.Exporter
 	var primaryInventoryMetricExp sdkmetric.Exporter
@@ -318,7 +316,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		}
 
 		cKey := cacheKeyFor(state.CommunityEndpoint, nil, "", false, queueSubdirMetrics)
-		cExp, sender, err := communityCache.metricExporter(ctx, cKey, func() (sdkmetric.Exporter, *http.Client, error) {
+		cExp, sender, err := cache.metricExporter(ctx, cKey, func() (sdkmetric.Exporter, *http.Client, error) {
 			live, send, err := buildRouteClients(state.CommunityEndpoint, nil, "", false, "community", queueSubdirMetrics, t.recordFailure, t.queue)
 			if err != nil {
 				return nil, nil, err
@@ -541,6 +539,10 @@ func (t *Telemetry) CommandCounter() Counter {
 func (t *Telemetry) CommandDuration() Histogram {
 	t.logger.Debug("returning command duration histogram")
 	return Histogram{instruments: []otelmetric.Int64Histogram{t.hist, t.communityHist}, allowed: t.allowedMetricAttrs}
+}
+
+func (t *Telemetry) TracingEnabled() bool {
+	return t != nil && t.tracer != nil
 }
 
 // StartSpan starts a new lifecycle span. Attributes are supplied as a plain

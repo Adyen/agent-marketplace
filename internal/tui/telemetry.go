@@ -68,7 +68,7 @@ type configResourceGroupKey struct {
 
 func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) {
 	tel := telemetryFromContext(ctx)
-	if tel == nil {
+	if tel == nil || !tel.TracingEnabled() {
 		return
 	}
 	result := snapshot.inventoryResult

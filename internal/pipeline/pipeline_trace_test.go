@@ -107,11 +107,16 @@ func (e *pipelineSpanExporter) hasSpan(name string) bool {
 
 func setupPipelineTelemetry(t *testing.T, e *pipelineSpanExporter) (context.Context, *telemetry.Telemetry) {
 	t.Helper()
+	return setupPipelineTelemetryAtLevel(t, e, tmcfg.LevelDetailed)
+}
+
+func setupPipelineTelemetryAtLevel(t *testing.T, e *pipelineSpanExporter, level string) (context.Context, *telemetry.Telemetry) {
+	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	user := &amconfig.Config{
 		Telemetry: &tmcfg.TelemetryConfig{
-			Level:    tmcfg.LevelDetailed,
+			Level:    level,
 			Endpoint: e.server.URL,
 		},
 	}
