@@ -46,6 +46,9 @@ type ResolveOptions struct {
 	// validation as non-fatal. Used by the remove path so a previously-allowed
 	// registry can still be removed after the policy is tightened.
 	IgnoreBlockedRegistries bool
+	// SkipInventory suppresses recording for internal pre-mutation lookups. The
+	// post-mutation Resolve performed by sync remains the reported generation.
+	SkipInventory bool
 }
 
 type ResolveResult struct {
@@ -243,6 +246,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			"resolve_errors", len(result.ResolveErrors),
 			"errors", len(result.Errors),
 		)
+		if tel != nil && !opts.SkipInventory {
+			recordResolvedInventory(ctx, result)
+		}
 		if resolveSpan != (telemetry.Span{}) {
 			resolveSpan.SetAttributes(resolveResultAttrs(result, time.Since(start)))
 			resolveSpan.End()

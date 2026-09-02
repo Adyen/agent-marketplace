@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -165,6 +166,10 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
+	if msg.inventoryResult != nil {
+		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
+	}
+	recordConfigSnapshotSpans(m.ctx, msg)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -332,8 +337,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingExcludeAction = nil
 			if followUp := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act); followUp != nil {
 				exclCmd := correlateOperation(followUp, msg.operation, true)
-				generation := m.beginRequest(requestSnapshot)
-				return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), exclCmd, toastExpiryCmd(2*time.Second))
+				return m, tea.Batch(exclCmd, toastExpiryCmd(2*time.Second))
 			}
 		}
 		m.pendingExcludeAction = nil

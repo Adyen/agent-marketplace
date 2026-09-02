@@ -30,10 +30,14 @@ type snapshotLoadedMsg struct {
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
+	configuredRegistries []config.RegistryEntry
+	inventoryResult      *pipeline.ResolveResult
 	materializationModes config.MaterializationModes
 	localExcludes        []string
 	globalHarnesses      []string
 	projectHarnesses     []string
+	targetHarnesses      []hcc.Target
+	targetHarnessSource  config.Source
 	errs                 []error
 	warnings             []error
 	diagnostics          []tuiDiagnostic
@@ -134,8 +138,9 @@ func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation r
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
 	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		RepoRoot:    repoRoot,
-		CatalogMode: tuiCatalogLoadMode(mode),
+		RepoRoot:      repoRoot,
+		CatalogMode:   tuiCatalogLoadMode(mode),
+		SkipInventory: true,
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
@@ -152,12 +157,18 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
 		resolved:             resolvedResult.Resolved,
 		mergedCfg:            resolvedResult.LoadedCfg,
+		inventoryResult:      &resolvedResult,
 		materializationModes: resolvedResult.MaterializationModes,
 		localExcludes:        localExcludes(resolvedResult.LocalCfg),
 		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
+		targetHarnesses:      resolvedResult.TargetHarnesses,
+		targetHarnessSource:  resolvedResult.TargetHarnessSource,
 		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
+	}
+	if resolvedResult.MergedCfg != nil {
+		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
 	}
 
 	var diagnostics []tuiDiagnostic
