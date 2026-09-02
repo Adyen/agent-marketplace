@@ -178,7 +178,7 @@ func renderDetail(m Model) string {
 
 	writeLine(label("Status:   ") + value(safe(r.StatusText())))
 	if discovery := r.MarketplaceDiscovery; discovery != nil {
-		writeLine(label("Marketplace: ") + value(safe(discovery.Endpoint.Alias)))
+		writeLine(label("Marketplace: ") + value(safe(marketplaceEndpointDisplay(discovery.Endpoint))))
 		writeLine(label("Registry:    ") + value(safe(discovery.Item.RegistrySlug+" ("+discovery.Item.RegistryID+")")))
 		writeLine(label("Revision:    ") + value(safe(discovery.Item.Revision)))
 		writeLine(label("Digest:      ") + value(safe(discovery.Item.ContentDigest)))
