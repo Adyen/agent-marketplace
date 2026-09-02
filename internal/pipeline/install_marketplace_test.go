@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -277,6 +278,50 @@ func TestMarketplaceCollectionLeavesAllowSameExactMarketplaceIdentity(t *testing
 	}
 	if err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir()}, &config.EffectiveConfig{Merged: &config.Config{}}, plan); err != nil {
 		t.Fatalf("same exact collection leaf identity collided: %v", err)
+	}
+}
+
+func TestCommitPreparedMarketplaceInstallRejectsPolicyChangeWithoutMutation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		policyYAML string
+		want       string
+	}{
+		{name: "marketplace allowlist", policyYAML: "allowed_marketplaces:\n  - 127\\.0\\.0\\.1\n", want: "allowed_marketplaces"},
+		{name: "registry nil to empty", policyYAML: "allowed_registries: []\n", want: "allowed_registries"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+			t.Setenv("HOME", t.TempDir())
+			repoRoot := t.TempDir()
+			configPath := config.ProjectConfigPath(repoRoot)
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n" + test.policyYAML + "marketplaces:\n  - url: http://127.0.0.1:43210\n    instance_id: marketplace-id\n")
+			if err := os.WriteFile(configPath, before, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			prepared := &PreparedMarketplaceInstall{
+				options:            InstallOptions{RepoRoot: repoRoot},
+				configPath:         configPath,
+				plan:               &marketplace.PreparedInstall{Entry: config.MarketplaceEntry{URL: "http://127.0.0.1:43210", InstanceID: "marketplace-id"}},
+				targetHarnesses:    []string{"factory"},
+				endpointConfigured: true,
+			}
+
+			_, err := CommitPreparedMarketplaceInstall(context.Background(), prepared)
+			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "preview again") {
+				t.Fatalf("error = %v, want actionable %s policy change", err, test.want)
+			}
+			after, readErr := os.ReadFile(configPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("config changed after policy refusal:\n%s", after)
+			}
+		})
 	}
 }
 
