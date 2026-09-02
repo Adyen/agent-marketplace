@@ -249,6 +249,8 @@ type configIncludeLoader struct {
 	loaded             map[string]struct{}
 	visiting           map[string]struct{}
 	files              []*Config
+	rootPath           string
+	rootData           []byte
 	nextFilePrecedence int
 }
 
@@ -284,9 +286,13 @@ func sourceForLayer(kind layerKind) Source {
 }
 
 func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
-	canonical, err := canonicalConfigPath(path)
-	if err != nil {
-		return nil, err
+	canonical := l.rootPath
+	var err error
+	if !root || canonical == "" {
+		canonical, err = canonicalConfigPath(path)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if _, ok := l.visiting[canonical]; ok {
 		return nil, fmt.Errorf("config include cycle at %q", canonical)
@@ -298,9 +304,12 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 
 	l.visiting[canonical] = struct{}{}
 	defer delete(l.visiting, canonical)
-	data, err := os.ReadFile(canonical)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", canonical, err)
+	data := l.rootData
+	if !root || data == nil {
+		data, err = os.ReadFile(canonical)
+		if err != nil {
+			return nil, fmt.Errorf("read config %q: %w", canonical, err)
+		}
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root && l.kind != localLayer)
 	if len(errs) > 0 {
@@ -336,9 +345,11 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 
 func mergeIncludeSelector(dst *KindSelector, src KindSelector) {
 	dst.Exclude = removeSelectorNames(dst.Exclude, src.Include)
-	dst.Include = appendUniqueStrings(dst.Include, src.Include)
+	dst.Include = removeSelectorNames(dst.Include, src.Include)
+	dst.Include = appendSelectorNames(dst.Include, src.Include)
 	dst.Include = removeSelectorNames(dst.Include, src.Exclude)
-	dst.Exclude = appendUniqueStrings(dst.Exclude, src.Exclude)
+	dst.Exclude = removeSelectorNames(dst.Exclude, src.Exclude)
+	dst.Exclude = appendSelectorNames(dst.Exclude, src.Exclude)
 	dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
 }
 
@@ -348,15 +359,34 @@ func removeSelectorNames(values, removed []string) []string {
 	}
 	set := make(map[string]struct{}, len(removed))
 	for _, value := range removed {
-		set[value] = struct{}{}
+		set[strings.TrimSpace(value)] = struct{}{}
 	}
 	filtered := values[:0]
 	for _, value := range values {
-		if _, drop := set[value]; !drop {
+		if _, drop := set[strings.TrimSpace(value)]; !drop {
 			filtered = append(filtered, value)
 		}
 	}
 	return filtered
+}
+
+func appendSelectorNames(dst, src []string) []string {
+	if len(src) == 0 {
+		return dst
+	}
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	for _, value := range dst {
+		seen[strings.TrimSpace(value)] = struct{}{}
+	}
+	for _, value := range src {
+		key := strings.TrimSpace(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dst = append(dst, value)
+	}
+	return dst
 }
 
 func mergeLocalIncludeLayers(layers []Layer) *Config {
@@ -381,7 +411,18 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
+	return loadCollectedConfigTree(path, newConfigIncludeLoader(kind))
+}
+
+func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKind) (*Config, error) {
 	loader := newConfigIncludeLoader(kind)
+	loader.rootPath = canonicalPath
+	loader.rootData = data
+	return loadCollectedConfigTree(canonicalPath, loader)
+}
+
+func loadCollectedConfigTree(path string, loader *configIncludeLoader) (*Config, error) {
+	kind := loader.kind
 	root, err := loader.collect(path, true)
 	if err != nil {
 		return nil, err

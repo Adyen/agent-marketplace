@@ -227,9 +227,18 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
 	}
 
-	_, readErr := os.ReadFile(path)
+	canonicalPath, canonicalErr := canonicalConfigPath(path)
+	if canonicalErr != nil {
+		if errors.Is(canonicalErr, os.ErrNotExist) {
+			lr := LayerResult{Source: SourceUnset, Path: path}
+			return lr, inspectManagedConfig(path, os.ErrNotExist, nil, SourceUnset, nil)
+		}
+		lr := LayerResult{Source: Organization, Path: path, Errors: []error{canonicalErr}}
+		return lr, inspectManagedConfig(path, canonicalErr, nil, Organization, lr.Errors)
+	}
+	data, readErr := os.ReadFile(canonicalPath)
 	if readErr == nil {
-		cfg, err := loadConfigTree(path, organizationLayer)
+		cfg, err := loadConfigTreeFromRootData(canonicalPath, data, organizationLayer)
 		lr := LayerResult{Source: Organization, Path: path, Config: cfg}
 		if err != nil {
 			lr.Errors = []error{err}

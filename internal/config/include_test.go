@@ -54,28 +54,50 @@ func TestConfigIncludeResolutionOrderAndDeduplication(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "config.yaml")
+	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "registries:\n  - path: /fragment\n")
+	data := []byte("apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries:\n  - path: /root\n")
+	writeIncludeConfig(t, root, string(data))
+	canonical, err := canonicalConfigPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfigTreeFromRootData(canonical, data, repoLayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := registryURLs(cfg), []string{"/fragment", "/root"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("registries = %v, want %v", got, want)
+	}
+}
+
 func TestIncludeSelectorConflictsFavorLaterFilesAndExcludes(t *testing.T) {
 	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "collections:\n  exclude: [root-wins, fragment-wins]\n")
+	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "collections:\n  include: [' root-excludes ']\n  exclude: [' root-wins ', fragment-wins]\n")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\ncollections:\n  include: [root-wins, same-file]\n  exclude: [same-file]\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\ncollections:\n  include: [root-wins, same-file]\n  exclude: [' root-excludes ', same-file]\n")
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCollections := KindSelector{Include: []string{"root-wins"}, Exclude: []string{"fragment-wins", "same-file"}}
+	wantCollections := KindSelector{Include: []string{"root-wins"}, Exclude: []string{"fragment-wins", " root-excludes ", "same-file"}}
 	if !reflect.DeepEqual(cfg.Collections, wantCollections) {
 		t.Fatalf("collections = %#v, want %#v", cfg.Collections, wantCollections)
 	}
 
 	localRoot := filepath.Join(dir, "config.local.yaml")
-	writeIncludeConfig(t, filepath.Join(dir, "local-fragment.yaml"), "skills:\n  exclude: [root-skill, fragment-skill]\n")
-	writeIncludeConfig(t, localRoot, "include: local-fragment.yaml\nskills:\n  include: [root-skill, same-skill]\n  exclude: [same-skill]\n")
+	writeIncludeConfig(t, filepath.Join(dir, "local-fragment.yaml"), "skills:\n  include: [' root-excludes-skill ']\n  exclude: [' root-skill ', fragment-skill]\n")
+	writeIncludeConfig(t, localRoot, "include: local-fragment.yaml\nskills:\n  include: [root-skill, same-skill]\n  exclude: [' root-excludes-skill ', same-skill]\n")
 	local, err := LoadLocalConfigFromPath(localRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSkills := KindSelector{Include: []string{"root-skill"}, Exclude: []string{"fragment-skill", "same-skill"}}
+	wantSkills := KindSelector{Include: []string{"root-skill"}, Exclude: []string{"fragment-skill", " root-excludes-skill ", "same-skill"}}
 	if !reflect.DeepEqual(local.Skills, wantSkills) {
 		t.Fatalf("local skills = %#v, want %#v", local.Skills, wantSkills)
 	}

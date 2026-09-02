@@ -1115,6 +1115,18 @@ func expandMembersRecursive(
 			}
 		}
 
+		memberArtifact := ResolvedArtifact{
+			Entry:          catalog.Entry{Kind: member.Kind, Name: memberName},
+			RegistryURL:    memberRegistryURL,
+			RegistryPath:   memberRegistryPath,
+			Source:         memberSource,
+			FilePrecedence: memberFilePrecedence,
+			Required:       memberRequired,
+		}
+		if collectionMemberShadowedByEntries(memberArtifact, cfg.Registries) {
+			continue
+		}
+
 		// Compute effective harnesses for the member. Inherit from the parent
 		// collection when the member's entry has no per-entry harnesses, and
 		// intersect with the machine-wide target set when one is configured.
@@ -1170,19 +1182,6 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Skip only exclusions that outrank the selected member binding. Required
-		// members remain immune, matching direct-resource exclusion semantics.
-		memberArtifact := ResolvedArtifact{
-			Entry:          catalog.Entry{Kind: member.Kind, Name: memberName},
-			RegistryURL:    memberRegistryURL,
-			RegistryPath:   memberRegistryPath,
-			Source:         memberSource,
-			FilePrecedence: memberFilePrecedence,
-			Required:       memberRequired,
-		}
-		if collectionMemberShadowedByEntries(memberArtifact, cfg.Registries) {
-			continue
-		}
 		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
 			continue
 		}
