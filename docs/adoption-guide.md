@@ -214,11 +214,11 @@ agent-marketplace install --from git@gitlab.example.com:example-org/infra-skills
 # Remove a specific resource from that registry
 agent-marketplace remove vm-lifecycle --from git@gitlab.example.com:example-org/infra-skills
 
-# Remove the entire ad-hoc registry entry (all resources + the entry)
+# Remove the entire ad-hoc registry at this scope
 agent-marketplace remove --from git@gitlab.example.com:example-org/infra-skills
 ```
 
-Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `remove --from` without a name removes the entire entry; `list --from` is browse-only.
+Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `list --from` is browse-only. `remove --from` without a name deletes an entry from the selected root. If the entry comes from an included file or a lower layer, the command writes an `exclude_all` shadow in the selected root instead. The source file remains unchanged, and normal scope boundaries still apply.
 
 ## How sync works
 

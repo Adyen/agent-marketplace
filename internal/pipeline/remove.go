@@ -656,21 +656,15 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 	entryInTarget := cfg != nil && registryEntryInList(cfg.Registries, fromURL, fromPath)
 
-	// Load the merged config so we can (a) validate the registry exists at
-	// all, and (b) handle the cross-layer case where the entry is enabled in
-	// a lower-precedence layer (e.g. committed project config) but the user
-	// wants to suppress it at a higher scope (e.g. config.local.yaml).
+	// The merged config finds entries defined by includes or lower layers.
 	mergedCfg, _, err := loadRemoveConfig(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	// findRegistryInMerged returns the lowest-precedence layer that defines the
-	// registry (MergeLayers appends org→user→repo→local in order). When that
-	// layer is below the target scope, the registry is inherited and cannot be
-	// deleted at this scope — it must be suppressed via exclude_all instead.
+	// MergeLayers orders entries from lowest to highest precedence. An entry
+	// absent from the target root must be shadowed rather than deleted.
 	mergedEntry, entryInMerged := findRegistryInMerged(mergedCfg, fromURL, fromPath)
-	targetSource := scopeToConfigSource(opts.Scope)
-	inheritedFromLower := entryInMerged && mergedEntry.Source.Precedence() < targetSource.Precedence()
+	requiresShadow := entryInMerged && !entryInTarget
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef
@@ -678,13 +672,10 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		shadowRef = mergedEntry.Ref
 	}
 
-	// Without a name: suppress / remove the entire registry at this scope.
+	// An empty name targets the registry.
 	name := strings.TrimSpace(opts.ResourceName)
 	if name == "" {
-		// Registry inherited from a lower layer: deleting a target-scope entry
-		// would not stop the inherited resources from resolving, so suppress
-		// them with an exclude_all shadow entry instead.
-		if inheritedFromLower {
+		if requiresShadow {
 			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
 			}

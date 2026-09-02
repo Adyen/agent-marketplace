@@ -1,6 +1,10 @@
 package pipeline
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -186,6 +190,53 @@ func TestResolvedResourceInRegistry_EntryPathOwnsDiscoveredSubPath(t *testing.T)
 	}
 	if got == nil {
 		t.Fatal("entry path should own the deeper discovered sub-bundle path")
+	}
+}
+
+func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "included-skill", "included skill", nil)
+
+	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
+	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-skill]\n", registryRoot)
+	writeFile(t, includedPath, includedData)
+	rootPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot:       repoRoot,
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+		FromURL:        registryRoot,
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || !result.ExcludedRegistry || result.ExcludedURL != registryRoot || result.ExcludedScope != ScopeRepo {
+		t.Fatalf("result = %#v, want repo exclude_all shadow", result)
+	}
+
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !rootCfg.Registries[0].ExcludeAll || rootCfg.Registries[0].URL != registryRoot {
+		t.Fatalf("root registries = %#v, want registry shadow", rootCfg.Registries)
+	}
+	rootData, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "include: team.yaml") {
+		t.Fatalf("root include directive lost:\n%s", rootData)
 	}
 }
 

@@ -29,7 +29,7 @@ Each included fragment has lower precedence than the file containing it. For a l
 
 Loading the owning layer fails if any include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion` as described above; this exception does not relax validation for a regular root.
 
-The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments.
+The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. When whole-registry `remove --from` targets an included entry, it writes a registry-level `exclude_all` shadow in the selected root. The included file remains unchanged, and normal scope boundaries still apply.
 
 ## Layer order
 
