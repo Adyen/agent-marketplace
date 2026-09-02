@@ -166,8 +166,6 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
 		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
-		errs:                 errs,
-		warnings:             warnings,
 		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}
 	if resolvedResult.MergedCfg != nil {
