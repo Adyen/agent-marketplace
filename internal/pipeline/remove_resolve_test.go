@@ -472,6 +472,49 @@ func TestRemoveCollectionExcludesIncludedSelection(t *testing.T) {
 	}
 }
 
+func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	includedPath := filepath.Join(repoRoot, ".agents", "collections.yaml")
+	includedData := "collections:\n  include: [duplicate-bundle]\n"
+	writeFile(t, includedPath, includedData)
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: collections.yaml\ncollections:\n  include: [duplicate-bundle]\n")
+	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "duplicate-bundle", Scope: ScopeRepo, ScopeSpecified: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || !result.IsCollection || result.RemovedName != "duplicate-bundle" {
+		t.Fatalf("result = %#v, want removed collection", result)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil || string(gotIncluded) != includedData {
+		t.Fatalf("included config changed: %v\n%s", err, gotIncluded)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(rootCfg.Collections.Include, "duplicate-bundle") || !slices.Contains(rootCfg.Collections.Exclude, "duplicate-bundle") {
+		t.Fatalf("root collections = %#v, want exclusion without selection", rootCfg.Collections)
+	}
+	rootData, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "include: collections.yaml") {
+		t.Fatalf("root include directive lost:\n%s", rootData)
+	}
+	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot})
+	if len(ec.Errors) != 0 {
+		t.Fatalf("effective config errors = %v", ec.Errors)
+	}
+	if isCollectionInstalled(ec.Merged, "duplicate-bundle") {
+		t.Fatalf("collection remained installed: %#v", ec.Merged.Collections)
+	}
+}
+
 func TestRemoveOrExcludeCollectionDeletesRootSelection(t *testing.T) {
 	rootPath := config.ProjectConfigPath(t.TempDir())
 	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [root-bundle]\n")

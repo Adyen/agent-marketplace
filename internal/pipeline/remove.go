@@ -179,16 +179,34 @@ func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, nam
 	return config.AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, ir.KindCollection, name)
 }
 
+func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	for _, selected := range cfg.Collections.Include {
+		if strings.TrimSpace(selected) == name {
+			return true
+		}
+	}
+	return false
+}
+
 func removeOrExcludeCollection(configPath, name string) error {
 	rootCfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		return fmt.Errorf("load root config %q: %w", configPath, err)
 	}
-	if rootCfg != nil {
-		for _, selected := range rootCfg.Collections.Include {
-			if strings.TrimSpace(selected) == name {
-				return config.RemoveCollectionFromConfig(configPath, name)
-			}
+	if hasTopLevelCollectionSelection(rootCfg, name) {
+		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
+			return err
+		}
+		expandedCfg, err := config.LoadConfigFromPath(configPath)
+		if err != nil {
+			return fmt.Errorf("reload expanded config %q: %w", configPath, err)
+		}
+		if !hasTopLevelCollectionSelection(expandedCfg, name) {
+			return nil
 		}
 	}
 	return config.AddKindExcludeToConfig(configPath, ir.KindCollection, name)
@@ -851,6 +869,11 @@ func isCollectionInstalled(cfg *config.Config, name string) bool {
 		return false
 	}
 	name = strings.TrimSpace(name)
+	for _, n := range cfg.Collections.Exclude {
+		if strings.TrimSpace(n) == name {
+			return false
+		}
+	}
 	for _, n := range cfg.Collections.Include {
 		if strings.TrimSpace(n) == name {
 			return true
