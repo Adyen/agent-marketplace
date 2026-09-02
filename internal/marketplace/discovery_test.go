@@ -111,6 +111,31 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCacheRejectsOversizedRecordBeforeCreatingTemporaryFile(t *testing.T) {
+	root := t.TempDir()
+	cache := NewDiscoveryCache(root)
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	item := canonicalSearchItem("registry", "skill", "review", 1)
+	item.Metadata = map[string]string{"oversized": strings.Repeat("x", maxDiscoveryCacheSize)}
+	outcome := DiscoveryOutcome{Endpoint: ep, ObservedAt: time.Now(), Items: []mpapi.ResourceListItem{item}, Total: 1}
+
+	if err := cache.Store(outcome, "oversized", "", DiscoveryPageLimit); err == nil {
+		t.Fatal("oversized discovery cache record was stored")
+	}
+	path := cache.path(ep, "oversized", "", DiscoveryPageLimit)
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("published cache exists after oversized record: %v", err)
+	}
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temporary or staging residue remains: %v", entries)
+	}
+}
+
 func TestDiscoveryCacheRejectsSymlinkNamespaceWithoutWritingOutside(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

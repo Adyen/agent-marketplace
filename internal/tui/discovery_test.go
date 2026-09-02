@@ -178,6 +178,50 @@ func TestMarketplaceDiscoveryRejectsOlderPartialReplay(t *testing.T) {
 	}
 }
 
+func TestMarketplaceDiscoveryRemovalCancelsAndRejectsLateCompletion(t *testing.T) {
+	m := newTestModel()
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market"}}}
+	generation := m.beginRequest(requestDiscovery)
+	cancelled := false
+	m.discoveryCancel = func() { cancelled = true }
+	m.discoveryLoading = true
+	m.discoverySequence = 7
+	m.discoveryRows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "old"}}}}
+	m.browseDiscoveryRows = append([]row(nil), m.discoveryRows...)
+	m.discoveryOutcomes = []marketplace.DiscoveryOutcome{{Endpoint: m.mergedCfg.Marketplaces[0]}}
+	m.discoveryErrs = []error{errors.New("old failure")}
+	m.mergedCfg = &config.Config{}
+
+	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
+		t.Fatal("zero Marketplace config scheduled discovery")
+	}
+	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 {
+		t.Fatalf("discovery was not invalidated: cancelled=%t cancel=%v generation=%d sequence=%d", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence)
+	}
+	if m.discoveryLoading || len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
+		t.Fatalf("removed Marketplace state retained: loading=%t rows=%#v browse=%#v outcomes=%#v errs=%#v", m.discoveryLoading, m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
+	}
+	late := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 8, outcomes: []marketplace.DiscoveryOutcome{late}})
+	m = updated.(Model)
+	if len(m.discoveryRows) != 0 || len(m.rows) != 0 {
+		t.Fatalf("late completion repopulated removed Marketplace: rows=%#v all=%#v", m.discoveryRows, m.rows)
+	}
+}
+
+func TestMarketplaceDiscoveryDedupesInstalledAliasByPinnedCoordinate(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public", Source: config.RepoCommitted}
+	m := newTestModel()
+	m.authoritativeRows = []row{{
+		Artifact:              resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "installed-alias"}, IsMarketplace: true, MarketplaceInstanceID: endpoint.InstanceID, MarketplaceRegistryID: "registry"},
+		MarketplaceSelections: map[config.Source]marketplaceSelection{config.RepoCommitted: {Entry: endpoint, Pin: config.MarketplaceResourcePin{RegistryID: "registry", Kind: "skill", Name: "original-name"}}},
+	}}
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "original-name", Availability: mpapi.AvailabilityAvailable}}}})
+	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed-alias" {
+		t.Fatalf("discovery duplicated pinned resource under original name: %#v", m.rows)
+	}
+}
+
 func TestMarketplaceDiscoveryDropsSameInstanceAtReplacedEndpoint(t *testing.T) {
 	m := newTestModel()
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://old.example", InstanceID: "market", Alias: "old"}}}

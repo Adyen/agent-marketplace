@@ -11,8 +11,8 @@ import (
 )
 
 // BenchmarkMarketplaceDiscoveryMerge includes deterministic merge, display
-// deduplication, filtering, sorting, and tree rebuilding; it excludes network
-// and disk I/O.
+// deduplication, filtering, sorting, tree rebuilding, and rendering at a
+// representative terminal size; it excludes network and disk I/O.
 func BenchmarkMarketplaceDiscoveryMerge(b *testing.B) {
 	outcomes := make([]marketplace.DiscoveryOutcome, 12)
 	for endpoint := range outcomes {
@@ -26,7 +26,9 @@ func BenchmarkMarketplaceDiscoveryMerge(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		m := newTestModel()
 		m.loading = false
+		m.width, m.height = 120, 40
 		m.filter = "resource team"
 		m.applyDiscovery("resource team", outcomes)
+		_ = m.View()
 	}
 }

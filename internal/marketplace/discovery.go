@@ -145,6 +145,14 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	if err := validateDiscoveryPage(out.Items, out.Total, limit); err != nil {
 		return fmt.Errorf("invalid discovery cache page: %w", err)
 	}
+	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: out.Endpoint.URL, InstanceID: out.Endpoint.InstanceID, Query: query, Kind: kind, Limit: limit, ObservedAt: out.ObservedAt, Items: out.Items, Total: out.Total}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode discovery cache: %w", err)
+	}
+	if len(data) > maxDiscoveryCacheSize {
+		return errors.New("discovery cache record exceeds size limit")
+	}
 	path := c.path(out.Endpoint, query, kind, limit)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(c.root, 0o700); err != nil {
@@ -158,11 +166,6 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	}
 	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("discovery cache directory is unsafe")
-	}
-	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: out.Endpoint.URL, InstanceID: out.Endpoint.InstanceID, Query: query, Kind: kind, Limit: limit, ObservedAt: out.ObservedAt, Items: out.Items, Total: out.Total}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("encode discovery cache: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".discovery-*")
 	if err != nil {

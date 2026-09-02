@@ -41,6 +41,67 @@ func waitForMarketplaceTUI(t *testing.T, output *synchronizedBuffer, condition f
 	t.Fatalf("timed out waiting for Marketplace TUI:\n%s", output.String())
 }
 
+func TestMarketplaceTUIDiscoversAndInstallsExactPin(t *testing.T) {
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("TUI discovery install", false))
+	consumer := fixture.newConsumer(t, fixture.server.URL)
+	digest := fixture.resourceDigest(t, "skill", "skill-one")
+	cmd := exec.Command(consumer.binary, "tui")
+	cmd.Dir = consumer.workspace
+	cmd.Env = append(consumer.subprocessEnv(), "TERM=xterm-256color")
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 160})
+	if err != nil {
+		t.Fatalf("start Marketplace TUI: %v", err)
+	}
+	defer terminal.Close()
+	var output synchronizedBuffer
+	go func() { _, _ = io.Copy(&output, terminal) }()
+	if _, err := terminal.Write([]byte("\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")); err != nil {
+		t.Fatal(err)
+	}
+	waitForMarketplaceTUI(t, &output, func(value string) bool {
+		return strings.Contains(value, "skill-one") && strings.Contains(value, "Available")
+	})
+	time.Sleep(500 * time.Millisecond)
+	for _, key := range []byte("/skill-one\rjjj ") {
+		if _, err := terminal.Write([]byte{key}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "use installation scopes") })
+	if _, err := terminal.Write([]byte("p")); err != nil {
+		t.Fatal(err)
+	}
+	waitForMarketplaceTUI(t, &output, func(value string) bool {
+		return consumer.CheckFileContains("/workspace/.agents/config.yaml", digest) || strings.Contains(value, "Install this exact verified revision?")
+	})
+	if strings.Contains(output.String(), "Install this exact verified revision?") {
+		if _, err := terminal.Write([]byte("y")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForMarketplaceTUI(t, &output, func(value string) bool {
+		return consumer.CheckFileContains("/workspace/.agents/config.yaml", digest) && strings.Contains(value, "enabled")
+	})
+	config := consumer.ReadFile("/workspace/.agents/config.yaml")
+	for _, value := range []string{digest, "registry_id: behavior-source-id", "kind: skill", "name: skill-one", "direct: true"} {
+		if !strings.Contains(config, value) {
+			t.Fatalf("project Marketplace pin missing %q:\n%s", value, config)
+		}
+	}
+	if _, err := terminal.Write([]byte{3}); err != nil {
+		t.Fatal(err)
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	select {
+	case <-wait:
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("Marketplace TUI did not exit after Ctrl-C")
+	}
+}
+
 func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("TUI exact pin", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
