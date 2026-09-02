@@ -214,6 +214,53 @@ func TestStopInventoryWorkerReturnsAtDeadline(t *testing.T) {
 	close(tel.inventoryDone)
 }
 
+func TestShutdownPersistsEveryAcceptedInventoryObservation(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	var mu sync.Mutex
+	seen := make(map[string]bool)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req metricspb.ExportMetricsServiceRequest
+		_ = proto.Unmarshal(body, &req)
+		if metric := findMetric(&req, string(tmcfg.InventorySnapshotName)); metric != nil {
+			mu.Lock()
+			for _, point := range metric.GetGauge().GetDataPoints() {
+				seen[stringAttributes(point.GetAttributes())["config.fingerprint"]] = true
+			}
+			mu.Unlock()
+		}
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		t.Fatalf("resolve telemetry: %v", err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("new telemetry: %v", err)
+	}
+	for _, fingerprint := range []string{"one", "two", "three"} {
+		tel.RecordInventory(context.Background(), InventorySnapshot{Fingerprint: fingerprint})
+	}
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, fingerprint := range []string{"one", "two", "three"} {
+		if !seen[fingerprint] {
+			t.Errorf("accepted inventory %q never reached the exporter", fingerprint)
+		}
+	}
+	if got := tel.queue.Count(); got == 0 {
+		t.Fatal("failed shutdown export was not durably queued")
+	}
+}
+
 func TestConcurrentRecordInventoryAndRepeatedShutdown(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

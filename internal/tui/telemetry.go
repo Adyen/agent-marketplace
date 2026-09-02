@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -57,7 +57,7 @@ func recordControlledErrorSpan(ctx context.Context, action string, err error) {
 const configResourceChunkSize = 64
 
 type configResourceGroupKey struct {
-	kind     ir.ResourceKind
+	kind     string
 	location string
 	path     string
 	ref      string
@@ -68,50 +68,39 @@ type configResourceGroupKey struct {
 
 func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) {
 	tel := telemetryFromContext(ctx)
-	if tel == nil || snapshot.mergedCfg == nil {
+	if tel == nil {
+		return
+	}
+	result := snapshot.inventoryResult
+	if result == nil {
+		result = &pipeline.ResolveResult{
+			MergedCfg:           &config.Config{Registries: snapshot.configuredRegistries},
+			Resolved:            snapshot.resolved,
+			TargetHarnesses:     snapshot.targetHarnesses,
+			TargetHarnessSource: snapshot.targetHarnessSource,
+		}
+	}
+	inventory, _, ok := pipeline.BuildInventorySnapshot(*result)
+	if !ok {
 		return
 	}
 
 	spanCtx, span := tel.StartSpan(ctxOrBackground(ctx), "agent_marketplace.tui.config", map[string]string{
-		"harnesses":      strings.Join(targetsToHarnesses(snapshot.targetHarnesses), ","),
-		"harness.scope":  strings.ToLower(snapshot.targetHarnessSource.String()),
-		"registry.count": strconv.Itoa(len(snapshot.configuredRegistries)),
-		"resource.count": strconv.Itoa(len(snapshot.resolved)),
+		"harnesses":      inventory.Harnesses,
+		"harness.scope":  inventory.HarnessScope,
+		"registry.count": strconv.Itoa(len(inventory.Registries)),
+		"resource.count": strconv.Itoa(len(inventory.Resources)),
 	})
 	defer span.End()
 
-	registries := append([]config.RegistryEntry(nil), snapshot.configuredRegistries...)
-	sort.Slice(registries, func(i, j int) bool {
-		left, right := registryTelemetryLocation(registries[i]), registryTelemetryLocation(registries[j])
-		if left != right {
-			return left < right
-		}
-		if registries[i].Path != registries[j].Path {
-			return registries[i].Path < registries[j].Path
-		}
-		if registries[i].Source != registries[j].Source {
-			return registries[i].Source < registries[j].Source
-		}
-		if registries[i].Ref != registries[j].Ref {
-			return registries[i].Ref < registries[j].Ref
-		}
-		if registries[i].Required != registries[j].Required {
-			return !registries[i].Required
-		}
-		return !registries[i].Default && registries[j].Default
-	})
-	for _, registry := range registries {
-		_, location, local, valid := telemetry.SanitizeRegistryTelemetry(registry.URL)
-		if !valid {
-			location = "unknown"
-		}
+	for _, registry := range inventory.Registries {
 		attrs := map[string]string{
-			"registry.location": location,
-			"config.scope":      strings.ToLower(registry.Source.String()),
+			"registry.location": registry.Location,
+			"config.scope":      registry.ConfigScope,
 			"registry.required": strconv.FormatBool(registry.Required),
 			"registry.default":  strconv.FormatBool(registry.Default),
 		}
-		if valid && !local {
+		if registry.ID != "local" {
 			attrs["registry.path"] = registry.Path
 			attrs["registry.ref"] = registry.Ref
 		}
@@ -120,21 +109,15 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 	}
 
 	groups := make(map[configResourceGroupKey][]string)
-	for _, resource := range snapshot.resolved {
-		_, location, local, valid := telemetry.SanitizeRegistryTelemetry(resource.RegistryURL)
-		if !valid {
-			location = "unknown"
-		}
+	for _, resource := range inventory.Resources {
 		key := configResourceGroupKey{
 			kind:     resource.Kind,
-			location: location,
-			scope:    strings.ToLower(resource.Source.String()),
+			location: resource.RegistryLocation,
+			path:     resource.RegistryPath,
+			ref:      resource.RegistryRef,
+			scope:    resource.ConfigScope,
 			required: resource.Required,
-		}
-		if valid && !local {
-			key.path = resource.RegistryPath
-			key.ref = resource.Ref
-			key.remote = true
+			remote:   resource.RegistryID != "local",
 		}
 		groups[key] = append(groups[key], resource.Name)
 	}
@@ -170,7 +153,7 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 			end := min(start+configResourceChunkSize, len(names))
 			encoded, _ := json.Marshal(names[start:end])
 			attrs := map[string]string{
-				"resource.kind":     key.kind.String(),
+				"resource.kind":     key.kind,
 				"resource.names":    string(encoded),
 				"resource.count":    strconv.Itoa(len(names)),
 				"registry.location": key.location,
@@ -189,14 +172,6 @@ func recordConfigSnapshotSpans(ctx context.Context, snapshot snapshotLoadedMsg) 
 			resourceSpan.End()
 		}
 	}
-}
-
-func registryTelemetryLocation(registry config.RegistryEntry) string {
-	_, location, _, ok := telemetry.SanitizeRegistryTelemetry(registry.URL)
-	if !ok {
-		return "unknown"
-	}
-	return location
 }
 
 func recordToggleActionSpan(ctx context.Context, act toggleAction, kind ir.ResourceKind) {

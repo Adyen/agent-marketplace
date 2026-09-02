@@ -29,11 +29,12 @@ import (
 )
 
 const (
-	maxShutdownFlush       = 500 * time.Millisecond
-	preExportDrainTimeout  = 250 * time.Millisecond
-	inventoryExportTimeout = 250 * time.Millisecond
-	inventoryQueueCapacity = 32
-	traceBatchTimeout      = time.Second
+	maxShutdownFlush               = 500 * time.Millisecond
+	preExportDrainTimeout          = 250 * time.Millisecond
+	inventoryExportTimeout         = 250 * time.Millisecond
+	inventoryShutdownExportTimeout = 200 * time.Millisecond
+	inventoryQueueCapacity         = 32
+	traceBatchTimeout              = time.Second
 )
 
 // Telemetry is the runtime telemetry handle. It exposes only small wrapper

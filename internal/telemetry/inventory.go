@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 
@@ -69,35 +70,44 @@ type inventoryObservation struct {
 	observedAt int64
 }
 
-// InventorySnapshotWithinBounds reports whether a complete snapshot fits the
-// public inventory cardinality and UTF-8 byte limits.
-func InventorySnapshotWithinBounds(snapshot InventorySnapshot) bool {
+// InventorySnapshotOmissionReason validates the public inventory cardinality
+// and UTF-8 attribute contract.
+func InventorySnapshotOmissionReason(snapshot InventorySnapshot) InventoryOmissionReason {
 	if len(snapshot.Registries) > MaxInventoryRegistries || len(snapshot.Resources) > MaxInventoryResources {
-		return false
+		return InventoryOmissionTooLarge
 	}
-	if !inventoryAttributesWithinBounds(snapshot.Fingerprint, snapshot.Harnesses, snapshot.HarnessScope) {
-		return false
+	if reason := inventoryAttributeOmissionReason(snapshot.Fingerprint, snapshot.Harnesses, snapshot.HarnessScope); reason != "" {
+		return reason
 	}
 	for _, registry := range snapshot.Registries {
-		if !inventoryAttributesWithinBounds(registry.ID, registry.Location, registry.Path, registry.Ref, registry.ConfigScope) {
-			return false
+		if reason := inventoryAttributeOmissionReason(registry.ID, registry.Location, registry.Path, registry.Ref, registry.ConfigScope); reason != "" {
+			return reason
 		}
 	}
 	for _, resource := range snapshot.Resources {
-		if !inventoryAttributesWithinBounds(resource.RegistryID, resource.RegistryLocation, resource.RegistryPath, resource.RegistryRef, resource.Kind, resource.Name, resource.ConfigScope) {
-			return false
+		if reason := inventoryAttributeOmissionReason(resource.RegistryID, resource.RegistryLocation, resource.RegistryPath, resource.RegistryRef, resource.Kind, resource.Name, resource.ConfigScope); reason != "" {
+			return reason
 		}
 	}
-	return true
+	return ""
 }
 
-func inventoryAttributesWithinBounds(values ...string) bool {
+func inventoryAttributeOmissionReason(values ...string) InventoryOmissionReason {
 	for _, value := range values {
+		if !utf8.ValidString(value) {
+			return InventoryOmissionInvalid
+		}
 		if len(value) > MaxInventoryAttributeBytes {
-			return false
+			return InventoryOmissionTooLarge
 		}
 	}
-	return true
+	return ""
+}
+
+// InventorySnapshotWithinBounds reports whether a complete snapshot fits the
+// public inventory cardinality and UTF-8 byte limits.
+func InventorySnapshotWithinBounds(snapshot InventorySnapshot) bool {
+	return InventorySnapshotOmissionReason(snapshot) == ""
 }
 
 // RecordInventory records a complete inventory snapshot on the telemetry
@@ -128,8 +138,8 @@ func (t *Telemetry) RecordInventory(ctx context.Context, snapshot InventorySnaps
 	if t == nil || t.inventorySnapshotGauge == nil {
 		return
 	}
-	if !InventorySnapshotWithinBounds(snapshot) {
-		t.RecordInventoryOmission(ctx, InventoryOmissionTooLarge)
+	if reason := InventorySnapshotOmissionReason(snapshot); reason != "" {
+		t.RecordInventoryOmission(ctx, reason)
 		return
 	}
 	snapshot.Registries = append([]InventoryRegistry(nil), snapshot.Registries...)
@@ -199,15 +209,32 @@ func (t *Telemetry) startInventoryWorker() {
 					return
 				}
 				t.recordInventoryObservation(workerCtx, observation)
-				flushCtx, flushCancel := context.WithTimeout(workerCtx, inventoryExportTimeout)
-				err := t.inventoryMP.ForceFlush(flushCtx)
-				flushCancel()
-				if err != nil && workerCtx.Err() == nil {
-					t.recordFailure(err)
+				if t.inventoryIsStopped() {
+					for observation := range t.inventoryQueue {
+						t.recordInventoryObservation(workerCtx, observation)
+					}
+					t.flushInventory(workerCtx, inventoryShutdownExportTimeout)
+					return
 				}
+				t.flushInventory(workerCtx, inventoryExportTimeout)
 			}
 		}
 	}()
+}
+
+func (t *Telemetry) inventoryIsStopped() bool {
+	t.inventoryMu.Lock()
+	defer t.inventoryMu.Unlock()
+	return t.inventoryStopped
+}
+
+func (t *Telemetry) flushInventory(ctx context.Context, timeout time.Duration) {
+	flushCtx, cancel := context.WithTimeout(ctx, timeout)
+	err := t.inventoryMP.ForceFlush(flushCtx)
+	cancel()
+	if err != nil && ctx.Err() == nil {
+		t.recordFailure(err)
+	}
 }
 
 func (t *Telemetry) stopInventoryWorker(ctx context.Context) bool {

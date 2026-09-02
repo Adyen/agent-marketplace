@@ -16,12 +16,14 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	amconfig "github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
+	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracev1pb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -29,9 +31,10 @@ import (
 )
 
 type testSpanExporter struct {
-	mu     sync.Mutex
-	spans  []*tracev1pb.Span
-	server *httptest.Server
+	mu                 sync.Mutex
+	spans              []*tracev1pb.Span
+	inventorySnapshots int
+	server             *httptest.Server
 }
 
 func newTestSpanExporter(t *testing.T) *testSpanExporter {
@@ -39,6 +42,27 @@ func newTestSpanExporter(t *testing.T) *testSpanExporter {
 	e := &testSpanExporter{}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/metrics" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read metrics: %v", err)
+			} else {
+				var req metricspb.ExportMetricsServiceRequest
+				if err := proto.Unmarshal(body, &req); err != nil {
+					t.Errorf("unmarshal metrics: %v", err)
+				} else {
+					e.mu.Lock()
+					for _, resource := range req.ResourceMetrics {
+						for _, scope := range resource.ScopeMetrics {
+							for _, metric := range scope.Metrics {
+								if metric.Name == string(tmcfg.InventorySnapshotName) {
+									e.inventorySnapshots += len(metric.GetGauge().DataPoints)
+								}
+							}
+						}
+					}
+					e.mu.Unlock()
+				}
+			}
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -92,6 +116,12 @@ func (e *testSpanExporter) spansNamed(name string) []*tracev1pb.Span {
 		}
 	}
 	return spans
+}
+
+func (e *testSpanExporter) inventorySnapshotCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.inventorySnapshots
 }
 
 func (e *testSpanExporter) waitForSpan(name string, timeout time.Duration) *tracev1pb.Span {
@@ -184,6 +214,31 @@ func TestRecordActionSpanNoTelemetry(t *testing.T) {
 	recordActionSpan(ctx, "tui.action.test", nil)
 }
 
+func TestModelRecordsInventoryOnlyForAcceptedSnapshots(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.ctx = ctx
+	staleGeneration := m.beginRequest(requestSnapshot)
+	acceptedGeneration := m.beginRequest(requestSnapshot)
+	result := pipeline.ResolveResult{
+		MergedCfg:           &amconfig.Config{},
+		TargetHarnesses:     []hcc.Target{hcc.TargetFactory},
+		TargetHarnessSource: amconfig.UserPersonal,
+	}
+
+	updated, _ := m.Update(snapshotLoadedMsg{generation: staleGeneration, mergedCfg: result.MergedCfg, inventoryResult: &result})
+	m = updated.(Model)
+	updated, _ = m.Update(snapshotLoadedMsg{generation: acceptedGeneration, mergedCfg: result.MergedCfg, inventoryResult: &result})
+	_ = updated.(Model)
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := e.inventorySnapshotCount(); got != 1 {
+		t.Fatalf("inventory snapshots = %d, want only the accepted generation", got)
+	}
+}
+
 func TestRecordConfigSnapshotSpansEmitsExactNamesAndSanitizedRegistries(t *testing.T) {
 	e := newTestSpanExporter(t)
 	ctx, tel := setupTuiTelemetry(t, e)
@@ -217,8 +272,8 @@ func TestRecordConfigSnapshotSpansEmitsExactNamesAndSanitizedRegistries(t *testi
 	if summary == nil {
 		t.Fatal("expected config summary span")
 	}
-	if got := attrValue(summary.Attributes, "harnesses"); got != "factory,devin" {
-		t.Fatalf("harnesses = %q, want factory,devin", got)
+	if got := attrValue(summary.Attributes, "harnesses"); got != "devin,factory" {
+		t.Fatalf("harnesses = %q, want devin,factory", got)
 	}
 	if got := attrValue(summary.Attributes, "harness.scope"); got != "repo" {
 		t.Fatalf("harness.scope = %q, want repo", got)
@@ -270,76 +325,23 @@ func TestRecordConfigSnapshotSpansEmitsExactNamesAndSanitizedRegistries(t *testi
 	}
 }
 
-func TestRecordConfigSnapshotSpansFailsClosedForLocalAndInvalidLocations(t *testing.T) {
+func TestRecordConfigSnapshotSpansRejectsInvalidInventory(t *testing.T) {
 	e := newTestSpanExporter(t)
 	ctx, tel := setupTuiTelemetry(t, e)
 	defer func() { _ = tel.Shutdown(context.Background()) }()
 
-	localURL := "FILE:///Users/private/local-repo.git"
-	invalidURL := "credential@second-secret@git.example:team/repo.git"
-	remoteURL := "git@Git.Example:Team/Repo.git"
 	recordConfigSnapshotSpans(ctx, snapshotLoadedMsg{
-		mergedCfg: &amconfig.Config{},
-		configuredRegistries: []amconfig.RegistryEntry{
-			{URL: localURL, Path: "local-private-path", Ref: "local-private-ref"},
-			{URL: invalidURL, Path: "invalid-private-path", Ref: "invalid-private-ref"},
-			{URL: remoteURL, Path: "catalog", Ref: "main"},
-		},
-		resolved: []resolver.ResolvedArtifact{
-			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "local-control"}, RegistryURL: localURL, RegistryPath: "local-resource-path", Ref: "local-resource-ref"},
-			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "invalid-control"}, RegistryURL: invalidURL, RegistryPath: "invalid-resource-path", Ref: "invalid-resource-ref"},
-			{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "remote-control"}, RegistryURL: remoteURL, RegistryPath: "catalog", Ref: "main"},
-		},
+		configuredRegistries: []amconfig.RegistryEntry{{URL: "credential@second-secret@git.example:team/repo.git"}},
+		resolved: []resolver.ResolvedArtifact{{
+			Entry: catalog.Entry{Kind: ir.KindSkill, Name: "invalid-control"}, RegistryURL: "credential@second-secret@git.example:team/repo.git",
+		}},
 	})
 	if err := tel.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-
-	registrySpans := e.spansNamed("agent_marketplace.tui.config_registry")
-	resourceSpans := e.spansNamed("agent_marketplace.tui.config_resources")
-	if len(registrySpans) != 3 || len(resourceSpans) != 3 {
-		t.Fatalf("registry/resource spans = %d/%d, want 3/3", len(registrySpans), len(resourceSpans))
-	}
-	locations := make(map[string]bool)
-	hasAttr := func(span *tracev1pb.Span, key string) bool {
-		for _, attr := range span.Attributes {
-			if attr.Key == key {
-				return true
-			}
-		}
-		return false
-	}
-	for _, span := range registrySpans {
-		location := attrValue(span.Attributes, "registry.location")
-		locations[location] = true
-		if (location == "local" || location == "unknown") && (hasAttr(span, "registry.path") || hasAttr(span, "registry.ref")) {
-			t.Errorf("%s registry span emitted local/invalid path or ref: %v", location, span.Attributes)
-		}
-	}
-	for _, span := range resourceSpans {
-		location := attrValue(span.Attributes, "registry.location")
-		if (location == "local" || location == "unknown") && (hasAttr(span, "registry.path") || hasAttr(span, "registry.ref")) {
-			t.Errorf("%s resource span emitted local/invalid path or ref: %v", location, span.Attributes)
-		}
-	}
-	for _, want := range []string{"local", "unknown", "git.example:Team/Repo.git"} {
-		if !locations[want] {
-			t.Errorf("missing registry location %q", want)
-		}
-	}
-	payload, err := json.Marshal([]any{registrySpans, resourceSpans})
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded := string(payload)
-	for _, forbidden := range []string{"/Users/private", "credential", "second-secret", "local-private", "local-resource", "invalid-private", "invalid-resource"} {
-		if strings.Contains(encoded, forbidden) {
-			t.Errorf("config trace payload contains forbidden value %q", forbidden)
-		}
-	}
-	for _, control := range []string{"git.example:Team/Repo.git", "catalog", "main", "remote-control"} {
-		if !strings.Contains(encoded, control) {
-			t.Errorf("config trace payload omitted valid control %q", control)
+	for _, name := range []string{"agent_marketplace.tui.config", "agent_marketplace.tui.config_registry", "agent_marketplace.tui.config_resources"} {
+		if span := e.findSpan(name); span != nil {
+			t.Errorf("invalid inventory emitted %q span", name)
 		}
 	}
 }

@@ -112,7 +112,7 @@ func TestRecordResolvedInventoryExportsOmission(t *testing.T) {
 func TestBuildInventorySnapshotRepresentsEffectiveResolveResult(t *testing.T) {
 	result := inventoryResolveResult()
 
-	snapshot, omission, ok := buildInventorySnapshot(result)
+	snapshot, omission, ok := BuildInventorySnapshot(result)
 	if !ok || omission != "" {
 		t.Fatalf("expected complete inventory snapshot, omission=%q", omission)
 	}
@@ -148,11 +148,11 @@ func TestBuildInventorySnapshotDeterministicAcrossOrdering(t *testing.T) {
 	reverse(first.MergedCfg.Registries)
 	reverse(first.Resolved)
 
-	gotFirst, firstOmission, ok := buildInventorySnapshot(first)
+	gotFirst, firstOmission, ok := BuildInventorySnapshot(first)
 	if !ok || firstOmission != "" {
 		t.Fatalf("first snapshot omitted: %q", firstOmission)
 	}
-	gotSecond, secondOmission, ok := buildInventorySnapshot(second)
+	gotSecond, secondOmission, ok := BuildInventorySnapshot(second)
 	if !ok || secondOmission != "" {
 		t.Fatalf("second snapshot omitted: %q", secondOmission)
 	}
@@ -163,7 +163,7 @@ func TestBuildInventorySnapshotDeterministicAcrossOrdering(t *testing.T) {
 
 func TestBuildInventorySnapshotFingerprintChangesForRepresentedFields(t *testing.T) {
 	base := inventoryResolveResult()
-	baseSnapshot, omission, ok := buildInventorySnapshot(base)
+	baseSnapshot, omission, ok := BuildInventorySnapshot(base)
 	if !ok || omission != "" {
 		t.Fatalf("base snapshot omitted: %q", omission)
 	}
@@ -189,7 +189,7 @@ func TestBuildInventorySnapshotFingerprintChangesForRepresentedFields(t *testing
 		t.Run(name, func(t *testing.T) {
 			changed := inventoryResolveResult()
 			mutate(&changed)
-			snapshot, omission, ok := buildInventorySnapshot(changed)
+			snapshot, omission, ok := BuildInventorySnapshot(changed)
 			if !ok || omission != "" {
 				t.Fatalf("changed snapshot omitted: %q", omission)
 			}
@@ -214,7 +214,7 @@ func TestBuildInventorySnapshotRedactsLocationsAndNormalizesGitIdentity(t *testi
 		}},
 	}
 
-	snapshot, omission, ok := buildInventorySnapshot(result)
+	snapshot, omission, ok := BuildInventorySnapshot(result)
 	if !ok || omission != "" {
 		t.Fatalf("snapshot omitted: %q", omission)
 	}
@@ -251,7 +251,7 @@ func TestBuildInventorySnapshotTreatsExplicitFilesystemSyntaxAsLocal(t *testing.
 				MergedCfg: &config.Config{Registries: []config.RegistryEntry{{URL: location, Path: "private", Ref: "secret"}}},
 				Resolved:  []resolver.ResolvedArtifact{{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "safe"}, RegistryURL: location, RegistryPath: "private", Ref: "secret"}},
 			}
-			snapshot, omission, ok := buildInventorySnapshot(result)
+			snapshot, omission, ok := BuildInventorySnapshot(result)
 			if !ok || omission != "" {
 				t.Fatalf("local location omitted: reason=%q", omission)
 			}
@@ -265,7 +265,7 @@ func TestBuildInventorySnapshotTreatsExplicitFilesystemSyntaxAsLocal(t *testing.
 	}
 
 	result := ResolveResult{MergedCfg: &config.Config{Registries: []config.RegistryEntry{{URL: "git@github.com:Adyen/repo.git"}}}}
-	snapshot, omission, ok := buildInventorySnapshot(result)
+	snapshot, omission, ok := BuildInventorySnapshot(result)
 	if !ok || omission != "" {
 		t.Fatalf("SCP remote omitted: reason=%q", omission)
 	}
@@ -284,7 +284,7 @@ func TestBuildInventorySnapshotRejectsUnsafeRegistryLocations(t *testing.T) {
 	} {
 		t.Run(location, func(t *testing.T) {
 			result := ResolveResult{MergedCfg: &config.Config{Registries: []config.RegistryEntry{{URL: location, Path: "private", Ref: "secret"}}}}
-			snapshot, omission, ok := buildInventorySnapshot(result)
+			snapshot, omission, ok := BuildInventorySnapshot(result)
 			if ok || omission != telemetry.InventoryOmissionInvalid || !reflect.DeepEqual(snapshot, telemetry.InventorySnapshot{}) {
 				t.Fatalf("unsafe location result = ok:%v omission:%q snapshot:%#v", ok, omission, snapshot)
 			}
@@ -319,12 +319,16 @@ func TestBuildInventorySnapshotClassifiesOmissionsWithoutPartialData(t *testing.
 			mutate: func(result *ResolveResult) { result.MergedCfg.Registries[0].URL = "" },
 			want:   telemetry.InventoryOmissionInvalid,
 		},
+		"invalid UTF-8 attribute": {
+			mutate: func(result *ResolveResult) { result.MergedCfg.Registries[0].Ref = "\xff" },
+			want:   telemetry.InventoryOmissionInvalid,
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			result := inventoryResolveResult()
 			test.mutate(&result)
-			snapshot, omission, ok := buildInventorySnapshot(result)
+			snapshot, omission, ok := BuildInventorySnapshot(result)
 			if ok || omission != test.want {
 				t.Fatalf("result = ok:%v omission:%q snapshot:%#v, want omission %q", ok, omission, snapshot, test.want)
 			}
@@ -338,11 +342,11 @@ func TestBuildInventorySnapshotClassifiesOmissionsWithoutPartialData(t *testing.
 func TestBuildInventorySnapshotSuppressesHardErrors(t *testing.T) {
 	result := inventoryResolveResult()
 	result.Warnings = []error{errors.New("soft warning")}
-	if _, omission, ok := buildInventorySnapshot(result); !ok || omission != "" {
+	if _, omission, ok := BuildInventorySnapshot(result); !ok || omission != "" {
 		t.Fatalf("soft warnings suppressed snapshot: %q", omission)
 	}
 	result.Errors = []error{errors.New("hard error")}
-	if snapshot, omission, ok := buildInventorySnapshot(result); ok || omission != "" {
+	if snapshot, omission, ok := BuildInventorySnapshot(result); ok || omission != "" {
 		t.Fatalf("hard error result = ok:%v omission:%q snapshot:%#v", ok, omission, snapshot)
 	}
 }

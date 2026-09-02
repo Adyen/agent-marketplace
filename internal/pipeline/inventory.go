@@ -13,8 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
-// buildInventorySnapshot returns a bounded omission reason rather than a partial generation.
-func buildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, telemetry.InventoryOmissionReason, bool) {
+// BuildInventorySnapshot returns a bounded omission reason rather than a partial generation.
+func BuildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, telemetry.InventoryOmissionReason, bool) {
 	if len(result.Errors) != 0 {
 		return telemetry.InventorySnapshot{}, "", false
 	}
@@ -76,8 +76,8 @@ func buildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, 
 	sort.Slice(snapshot.Resources, func(i, j int) bool {
 		return inventoryResourceKey(snapshot.Resources[i]) < inventoryResourceKey(snapshot.Resources[j])
 	})
-	if !telemetry.InventorySnapshotWithinBounds(snapshot) {
-		return telemetry.InventorySnapshot{}, telemetry.InventoryOmissionTooLarge, false
+	if reason := telemetry.InventorySnapshotOmissionReason(snapshot); reason != "" {
+		return telemetry.InventorySnapshot{}, reason, false
 	}
 	canonical, err := json.Marshal(struct {
 		Harnesses    string                        `json:"harnesses"`
@@ -105,7 +105,7 @@ func recordResolvedInventory(ctx context.Context, result ResolveResult) {
 	if len(result.Errors) != 0 {
 		return
 	}
-	snapshot, omission, ok := buildInventorySnapshot(result)
+	snapshot, omission, ok := BuildInventorySnapshot(result)
 	if !ok {
 		if omission == "" {
 			return

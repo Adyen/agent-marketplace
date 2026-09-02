@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // SanitizeRegistryTelemetry returns the stable identity and display location
 // permitted in telemetry. Local locations collapse completely to "local".
 func SanitizeRegistryTelemetry(raw string) (identity, location string, local, ok bool) {
-	if containsControl(raw) {
+	if !utf8.ValidString(raw) || containsControl(raw) {
 		return "", "", false, false
 	}
 	raw = strings.TrimSpace(raw)
@@ -19,7 +20,7 @@ func SanitizeRegistryTelemetry(raw string) (identity, location string, local, ok
 		return "", "", false, false
 	}
 	decoded, err := url.PathUnescape(raw)
-	if err != nil || containsControl(decoded) {
+	if err != nil || !utf8.ValidString(decoded) || containsControl(decoded) {
 		return "", "", false, false
 	}
 
@@ -84,20 +85,34 @@ func sanitizeURLTelemetry(raw string) (identity, location string, local, ok bool
 	}
 
 	hostname := strings.ToLower(parsed.Hostname())
-	host := hostname
-	if port := parsed.Port(); port != "" {
-		host = net.JoinHostPort(hostname, port)
-	} else if strings.Contains(hostname, ":") {
-		host = "[" + hostname + "]"
+	port := parsed.Port()
+	displayHost := registryHost(hostname, port)
+	identityHost := displayHost
+	if isDefaultRegistryPort(strings.ToLower(parsed.Scheme), port) {
+		identityHost = registryHost(hostname, "")
 	}
 	parsed.User = nil
-	parsed.Host = host
+	parsed.Host = displayHost
 	parsed.RawQuery = ""
 	parsed.ForceQuery = false
 	parsed.Fragment = ""
 	parsed.Path = "/" + path
 	parsed.RawPath = ""
-	return host + "/" + identityPath, strings.TrimSuffix(parsed.String(), "/"), false, true
+	return identityHost + "/" + identityPath, strings.TrimSuffix(parsed.String(), "/"), false, true
+}
+
+func registryHost(hostname, port string) string {
+	if port != "" {
+		return net.JoinHostPort(hostname, port)
+	}
+	if strings.Contains(hostname, ":") {
+		return "[" + hostname + "]"
+	}
+	return hostname
+}
+
+func isDefaultRegistryPort(scheme, port string) bool {
+	return scheme == "ssh" && port == "22" || scheme == "https" && port == "443" || scheme == "http" && port == "80" || scheme == "git" && port == "9418"
 }
 
 func canonicalRegistryPath(value string) string {
