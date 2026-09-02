@@ -163,11 +163,25 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	if info, err := os.Lstat(c.root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("discovery cache root is unsafe")
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("create discovery cache endpoint directory: %w", err)
+	rootEntries, err := readDirWithinCapacity(c.root, maxDiscoveryMaintenanceDirs)
+	if err != nil {
+		return fmt.Errorf("prepare discovery cache root: %w", err)
 	}
-	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if len(rootEntries) == maxDiscoveryMaintenanceDirs {
+			return errors.New("discovery cache root is at capacity")
+		}
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return fmt.Errorf("create discovery cache endpoint directory: %w", err)
+		}
+		info, err = os.Lstat(dir)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("discovery cache directory is unsafe")
+	}
+	if _, err := readDirWithinCapacity(dir, maxDiscoveryDirEntries-1); err != nil {
+		return fmt.Errorf("prepare discovery cache directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".discovery-*")
 	if err != nil {
@@ -211,6 +225,17 @@ func readDirBounded(path string, limit int) ([]os.DirEntry, bool, error) {
 		return nil, true, nil
 	}
 	return entries, false, nil
+}
+
+func readDirWithinCapacity(path string, limit int) ([]os.DirEntry, error) {
+	entries, overCap, err := readDirBounded(path, limit)
+	if err != nil {
+		return nil, err
+	}
+	if overCap {
+		return nil, errors.New("discovery cache directory capacity exceeded")
+	}
+	return entries, nil
 }
 
 func (c *DiscoveryCache) retain(dir string) error {

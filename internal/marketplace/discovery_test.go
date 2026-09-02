@@ -110,6 +110,25 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	if _, ok := cache.Load(ep, "query-51", "", DiscoveryPageLimit); !ok {
 		t.Fatal("newest non-empty query was evicted")
 	}
+	dir := filepath.Dir(cache.path(ep, "", "", DiscoveryPageLimit))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recognized, browse := 0, 0
+	for _, entry := range entries {
+		record, ok := cache.readRecognizedRecord(dir, entry.Name())
+		if !ok {
+			continue
+		}
+		recognized++
+		if record.Query == "" {
+			browse++
+		}
+	}
+	if recognized != DiscoveryQueryLimit+1 || browse != 1 {
+		t.Fatalf("recognized records = %d with %d browse, want %d with 1 browse", recognized, browse, DiscoveryQueryLimit+1)
+	}
 }
 
 func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.MarketplaceEntry, query string, observed time.Time) string {
@@ -238,6 +257,81 @@ func TestDiscoveryCacheOverCapDirectoryFailsClosed(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, fmt.Sprintf("unknown-%03d", maxDiscoveryDirEntries))); err != nil {
 		t.Fatalf("over-cap scan deleted unknown content: %v", err)
+	}
+}
+
+func TestDiscoveryCacheStoreRejectsOverCapEndpointBeforeMutation(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	for i := 0; i < DiscoveryQueryLimit; i++ {
+		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%03d", i), now.Add(time.Duration(i)*time.Second))
+	}
+	dir := filepath.Dir(cache.path(ep, "query-000", "", DiscoveryPageLimit))
+	for i := DiscoveryQueryLimit; i <= maxDiscoveryDirEntries; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("unknown-%03d", i)), []byte("preserve"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		query := fmt.Sprintf("new-%03d", i)
+		outcome := DiscoveryOutcome{Endpoint: ep, ObservedAt: now, Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", query, 1)}, Total: 1}
+		if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err == nil {
+			t.Fatalf("Store(%q) succeeded in over-cap endpoint directory", query)
+		}
+		if _, err := os.Lstat(cache.path(ep, query, "", DiscoveryPageLimit)); !os.IsNotExist(err) {
+			t.Fatalf("Store(%q) created a record: %v", query, err)
+		}
+	}
+	after, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("endpoint entries changed from %d to %d", len(before), len(after))
+	}
+	recognized := 0
+	for _, entry := range after {
+		if _, ok := cache.readRecognizedRecord(dir, entry.Name()); ok {
+			recognized++
+		}
+		if strings.HasPrefix(entry.Name(), ".discovery-") {
+			t.Fatalf("temporary residue remains: %s", entry.Name())
+		}
+	}
+	if recognized != DiscoveryQueryLimit {
+		t.Fatalf("recognized records = %d, want %d", recognized, DiscoveryQueryLimit)
+	}
+}
+
+func TestDiscoveryCacheStoreRejectsFullRootBeforeCreatingEndpoint(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := os.MkdirAll(cache.root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxDiscoveryMaintenanceDirs; i++ {
+		if err := os.WriteFile(filepath.Join(cache.root, fmt.Sprintf("unknown-%04d", i)), []byte("preserve"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ep := config.MarketplaceEntry{URL: "https://new.example", InstanceID: "new"}
+	outcome := DiscoveryOutcome{Endpoint: ep, ObservedAt: time.Now(), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "new", 1)}, Total: 1}
+	if err := cache.Store(outcome, "new", "", DiscoveryPageLimit); err == nil {
+		t.Fatal("Store succeeded with a full discovery root")
+	}
+	if _, err := os.Lstat(filepath.Dir(cache.path(ep, "new", "", DiscoveryPageLimit))); !os.IsNotExist(err) {
+		t.Fatalf("endpoint directory was created: %v", err)
+	}
+	entries, err := os.ReadDir(cache.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != maxDiscoveryMaintenanceDirs {
+		t.Fatalf("root entries = %d, want %d", len(entries), maxDiscoveryMaintenanceDirs)
 	}
 }
 
