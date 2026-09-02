@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -108,6 +109,135 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	}
 	if _, ok := cache.Load(ep, "query-51", "", DiscoveryPageLimit); !ok {
 		t.Fatal("newest non-empty query was evicted")
+	}
+}
+
+func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.MarketplaceEntry, query string, observed time.Time) string {
+	t.Helper()
+	record := discoveryCacheRecord{
+		Schema: discoveryCacheSchema, Endpoint: ep.URL, InstanceID: ep.InstanceID, Query: query,
+		Limit: DiscoveryPageLimit, ObservedAt: observed,
+		Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", query+"-result", 1)}, Total: 1,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := cache.path(ep, query, "", DiscoveryPageLimit)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestDiscoveryCacheStoreDoesNotOpenFIFO(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	path := cache.path(ep, "stored", "", DiscoveryPageLimit)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(filepath.Dir(path), strings.Repeat("a", 64)+".json")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fifoFD, err := os.OpenFile(fifo, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = fifoFD.Close()
+		}
+	})
+	outcome := DiscoveryOutcome{Endpoint: ep, ObservedAt: time.Now(), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "stored", 1)}, Total: 1}
+	done := make(chan error, 1)
+	go func() { done <- cache.Store(outcome, "stored", "", DiscoveryPageLimit) }()
+	select {
+	case err := <-done:
+		closed = true
+		_ = fifoFD.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		closed = true
+		_ = fifoFD.Close()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("Store blocked while retaining beside a FIFO")
+	}
+	if info, err := os.Lstat(fifo); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("FIFO was not preserved: info=%v err=%v", info, err)
+	}
+}
+
+func TestDiscoveryCacheRetentionPreservesArbitraryNameJSON(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	for i := 0; i < DiscoveryQueryLimit; i++ {
+		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%02d", i), now.Add(time.Duration(i)*time.Second))
+	}
+	dir := filepath.Dir(cache.path(ep, "query-00", "", DiscoveryPageLimit))
+	arbitrary := filepath.Join(dir, "arbitrary.json")
+	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: ep.URL, InstanceID: ep.InstanceID, Query: "arbitrary", Limit: DiscoveryPageLimit, ObservedAt: now.Add(-time.Hour), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "arbitrary", 1)}, Total: 1}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(arbitrary, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newest := writeDiscoveryRecord(t, cache, ep, "query-50", now.Add(time.Minute))
+	if err := cache.retain(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, preserved := range []string{arbitrary, newest} {
+		if _, err := os.Lstat(preserved); err != nil {
+			t.Fatalf("retention removed %s: %v", preserved, err)
+		}
+	}
+	oldest := cache.path(ep, "query-00", "", DiscoveryPageLimit)
+	if _, err := os.Lstat(oldest); !os.IsNotExist(err) {
+		t.Fatalf("retention did not evict the oldest recognized record: %v", err)
+	}
+}
+
+func TestDiscoveryCacheOverCapDirectoryFailsClosed(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	var oldest string
+	for i := 0; i <= DiscoveryQueryLimit; i++ {
+		path := writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%03d", i), now.Add(-DiscoveryStaleTTL-time.Minute+time.Duration(i)*time.Second))
+		if i == 0 {
+			oldest = path
+		}
+	}
+	dir := filepath.Dir(oldest)
+	for i := DiscoveryQueryLimit + 1; i <= maxDiscoveryDirEntries; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("unknown-%03d", i)), []byte("preserve"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cache.retain(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.maintain([]config.MarketplaceEntry{ep}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(oldest); err != nil {
+		t.Fatalf("over-cap scan deleted recognized content: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, fmt.Sprintf("unknown-%03d", maxDiscoveryDirEntries))); err != nil {
+		t.Fatalf("over-cap scan deleted unknown content: %v", err)
 	}
 }
 
