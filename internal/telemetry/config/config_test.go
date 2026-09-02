@@ -162,19 +162,17 @@ func TestValidateEndpointForDeliveryRejectsUnresolvedHostname(t *testing.T) {
 	}
 }
 
-func TestValidateOrganizationRequiresRetention(t *testing.T) {
+func TestValidateOrganizationAllowsDefaultRetention(t *testing.T) {
 	tc := &TelemetryConfig{
 		Level:    LevelBasic,
 		Endpoint: "https://otel.example.com",
 	}
-	errs := Validate(tc, "organization")
-	if len(errs) == 0 {
-		t.Fatalf("expected organization endpoint to require retention_policy")
+	if errs := Validate(tc, "organization"); len(errs) > 0 {
+		t.Fatalf("expected organization endpoint without retention policy to use the default, got %v", errs)
 	}
 
 	tc.RetentionPolicy = "https://example.com/telemetry-retention"
-	errs = Validate(tc, "organization")
-	if len(errs) > 0 {
+	if errs := Validate(tc, "organization"); len(errs) > 0 {
 		t.Fatalf("expected valid org telemetry with retention policy, got %v", errs)
 	}
 }
