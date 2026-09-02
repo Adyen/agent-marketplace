@@ -176,8 +176,13 @@ func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
 	if msg.pendingMigration.hasConfigs() {
 		return errors.New("configuration migration is required")
 	}
-	if msg.mergedCfg == nil && len(msg.errs) > 0 {
-		return errors.Join(msg.errs...)
+	hardErrors := append([]error(nil), msg.errs...)
+	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
+	if len(hardErrors) > 0 {
+		return errors.Join(hardErrors...)
+	}
+	if msg.driftAssessment != driftReady {
+		return errors.New("post-install state could not be verified")
 	}
 	return nil
 }
@@ -278,7 +283,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery("", false)
-		installCmd := m.finishMarketplaceInstallReload(msg.generation, nil)
+		installCmd := m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
@@ -302,7 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, nil))
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg)))
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -359,6 +364,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case discoveryInstallMsg:
 		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		if msg.err == nil && msg.prepared != nil && msg.result == nil {
+			m.marketplaceInstallOptions = msg.options
+			m.marketplaceInstallOperation = msg.operation
+			m.marketplacePreparedInstall = msg.prepared
+			m.marketplaceInstallPreview = msg.preview
+			m.pane = paneMarketplaceConsent
 			return m, nil
 		}
 		var consent *pipeline.MarketplaceConsentError

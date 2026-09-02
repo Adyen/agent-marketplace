@@ -38,6 +38,8 @@ type discoveryDebounceMsg struct {
 type discoveryInstallMsg struct {
 	operation operationID
 	options   pipeline.InstallOptions
+	prepared  *pipeline.PreparedMarketplaceInstall
+	preview   string
 	result    *pipeline.InstallResult
 	err       error
 }
@@ -79,16 +81,25 @@ func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallO
 	return pipeline.InstallOptions{RepoRoot: repoRoot, Args: []string{locator}, Kind: kind, HasKind: true, Scope: pipelineScope(s), ScopeSpecified: true, Marketplace: selector, ExactMarketplaceLocator: exact}, nil
 }
 
-func runDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
+var (
+	prepareDiscoveryMarketplaceInstall = pipeline.PrepareMarketplaceInstall
+	commitPreparedMarketplaceInstall   = pipeline.CommitPreparedMarketplaceInstall
+)
+
+func prepareDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
 	return func() tea.Msg {
-		result, err := pipeline.Install(ctx, options)
-		return discoveryInstallMsg{operation: operation, options: options, result: result, err: err}
+		prepared, err := prepareDiscoveryMarketplaceInstall(ctx, options)
+		preview := ""
+		if prepared != nil {
+			preview = prepared.Preview()
+		}
+		return discoveryInstallMsg{operation: operation, options: options, prepared: prepared, preview: preview, err: err}
 	}
 }
 
 func commitDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions, prepared *pipeline.PreparedMarketplaceInstall) tea.Cmd {
 	return func() tea.Msg {
-		result, err := pipeline.CommitPreparedMarketplaceInstall(ctx, prepared)
+		result, err := commitPreparedMarketplaceInstall(ctx, prepared)
 		return discoveryInstallMsg{operation: operation, options: options, result: result, err: err}
 	}
 }
@@ -105,7 +116,7 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
-	return m, runDiscoveryInstall(ctxOrBackground(m.ctx), operation, options)
+	return m, prepareDiscoveryInstall(ctxOrBackground(m.ctx), operation, options)
 }
 
 func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err error) tea.Cmd {
@@ -209,18 +220,19 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 			configured[url+"\x00"+endpoint.InstanceID] = struct{}{}
 		}
 	}
+	isConfigured := func(endpoint config.MarketplaceEntry) bool {
+		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
+		if err != nil {
+			return false
+		}
+		_, ok := configured[url+"\x00"+endpoint.InstanceID]
+		return ok
+	}
 	filterConfigured := func(rows []row) []row {
 		kept := rows[:0]
 		for _, candidate := range rows {
-			if candidate.MarketplaceDiscovery == nil {
-				continue
-			}
-			endpoint := candidate.MarketplaceDiscovery.Endpoint
-			url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
-			if err == nil {
-				if _, ok := configured[url+"\x00"+endpoint.InstanceID]; ok {
-					kept = append(kept, candidate)
-				}
+			if candidate.MarketplaceDiscovery != nil && isConfigured(candidate.MarketplaceDiscovery.Endpoint) {
+				kept = append(kept, candidate)
 			}
 		}
 		return kept
@@ -228,6 +240,14 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	before := len(m.discoveryRows)
 	m.discoveryRows = filterConfigured(m.discoveryRows)
 	m.browseDiscoveryRows = filterConfigured(m.browseDiscoveryRows)
+	retainedOutcomes := m.discoveryOutcomes[:0]
+	for _, outcome := range m.discoveryOutcomes {
+		if isConfigured(outcome.Endpoint) {
+			retainedOutcomes = append(retainedOutcomes, outcome)
+		}
+	}
+	m.discoveryOutcomes = retainedOutcomes
+	m.rebuildDiscoveryErrors()
 	if len(m.discoveryRows) != before {
 		m.mergeDiscoveryRows()
 	}
@@ -303,14 +323,20 @@ func (m *Model) mergeDiscoveryRows() {
 	m.restoreSelectionAfterRebuild(selection)
 }
 
-func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOutcome) {
-	m.discoveryOutcomes = outcomes
+func (m *Model) rebuildDiscoveryErrors() {
 	m.discoveryErrs = m.discoveryErrs[:0]
-	var rows []row
-	for _, outcome := range outcomes {
+	for _, outcome := range m.discoveryOutcomes {
 		if outcome.Err != nil {
 			m.discoveryErrs = append(m.discoveryErrs, fmt.Errorf("%s: %w", marketplaceEndpointDisplay(outcome.Endpoint), outcome.Err))
 		}
+	}
+}
+
+func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOutcome) {
+	m.discoveryOutcomes = outcomes
+	m.rebuildDiscoveryErrors()
+	var rows []row
+	for _, outcome := range outcomes {
 		for _, item := range outcome.Items {
 			kind, ok := skill.ParseKind(item.Kind)
 			if !ok {

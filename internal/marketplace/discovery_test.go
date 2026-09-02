@@ -111,6 +111,91 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCacheMaintenanceExpiresRecognizedRecordsAndPreservesUnknownAndSymlinks(t *testing.T) {
+	root := t.TempDir()
+	cache := NewDiscoveryCache(root)
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	expired := DiscoveryOutcome{Endpoint: ep, ObservedAt: now.Add(-DiscoveryStaleTTL - time.Second), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "expired", 1)}, Total: 1}
+	if err := cache.Store(expired, "expired", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	expiredPath := cache.path(ep, "expired", "", DiscoveryPageLimit)
+	dir := filepath.Dir(expiredPath)
+	unknown := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(unknown, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked.json")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	if _, _, err := CachedDiscovery(ec, "", DiscoveryOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(expiredPath); !os.IsNotExist(err) {
+		t.Fatalf("expired recognized record remains: %v", err)
+	}
+	for _, preserved := range []string{unknown, link, outside} {
+		if _, err := os.Lstat(preserved); err != nil {
+			t.Fatalf("safe maintenance removed %s: %v", preserved, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".discovery-") {
+			t.Fatalf("maintenance residue remains: %s", entry.Name())
+		}
+	}
+}
+
+func TestDiscoveryCacheMaintenanceRemovesOnlySafelyRecognizedRetiredEndpoints(t *testing.T) {
+	root := t.TempDir()
+	cache := NewDiscoveryCache(root)
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+	current := config.MarketplaceEntry{URL: "https://current.example", InstanceID: "current"}
+	retired := config.MarketplaceEntry{URL: "https://retired.example", InstanceID: "retired"}
+	outcome := DiscoveryOutcome{Endpoint: retired, ObservedAt: now, Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "retired", 1)}, Total: 1}
+	if err := cache.Store(outcome, "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	retiredDir := filepath.Dir(cache.path(retired, "", "", DiscoveryPageLimit))
+	ambiguousDir := filepath.Join(cache.root, strings.Repeat("a", 64))
+	if err := os.Mkdir(ambiguousDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ambiguousDir, "unknown"), []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	linkedDir := filepath.Join(cache.root, strings.Repeat("b", 64))
+	if err := os.Symlink(outside, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{current}}}
+	if _, _, err := CachedDiscovery(ec, "", DiscoveryOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(retiredDir); !os.IsNotExist(err) {
+		t.Fatalf("safely removable retired endpoint remains: %v", err)
+	}
+	for _, preserved := range []string{ambiguousDir, filepath.Join(ambiguousDir, "unknown"), linkedDir, outside} {
+		if _, err := os.Lstat(preserved); err != nil {
+			t.Fatalf("ambiguous or linked entry removed %s: %v", preserved, err)
+		}
+	}
+}
+
 func TestDiscoveryCacheRejectsOversizedRecordBeforeCreatingTemporaryFile(t *testing.T) {
 	root := t.TempDir()
 	cache := NewDiscoveryCache(root)

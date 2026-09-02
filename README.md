@@ -73,8 +73,9 @@ The TUI caches discovery results per endpoint. Results stay fresh for five
 minutes, then may remain visible as stale for up to 24 hours during refreshes or
 outages. A failed endpoint does not remove results from working endpoints.
 Blocked and revoked resources remain visible but cannot be installed. Before an
-install, the TUI verifies the exact revision, shows any required risk preview,
-writes the exact pin to the selected scope, and reloads its authoritative state.
+install, the TUI verifies the exact revision and shows a verified preview for
+confirmation. It then writes the exact pin to the selected scope and reloads its
+authoritative state.
 
 ---
 

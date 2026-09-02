@@ -110,13 +110,23 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	kind, hasKind := opts.Kind, opts.HasKind
 	repoRoot := opts.RepoRoot
+	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
+	if marketplaceInstallRequested {
+		prepared, err := PrepareMarketplaceInstall(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := evaluateMarketplaceConsent(prepared.plan, opts.AcceptRisk); err != nil {
+			return nil, &MarketplaceConsentError{Preview: prepared.preview, Prepared: prepared, Err: err}
+		}
+		return CommitPreparedMarketplaceInstall(ctx, prepared)
+	}
 
 	configPath, err := ScopedConfigPath(repoRoot, opts.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
-	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
-	marketplaceMutationRequested := marketplaceInstallRequested || marketplaceEndpointRequested
+	marketplaceMutationRequested := marketplaceEndpointRequested
 
 	// Guard: when the resolved repo root is the home directory and scope is
 	// repo (default), the project config path collapses into the global
@@ -236,10 +246,6 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	if marketplaceEndpointRequested {
 		return registerMarketplaceEndpoint(ctx, opts, configPath, &ec)
 	}
-	if marketplaceInstallRequested {
-		return installMarketplace(ctx, opts, configPath, &ec)
-	}
-
 	// --from ad-hoc registry path: validate URL, persist entry, then
 	// discover and install resources from the new entry.
 	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {

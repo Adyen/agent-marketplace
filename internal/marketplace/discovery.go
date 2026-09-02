@@ -21,12 +21,14 @@ import (
 )
 
 const (
-	DiscoveryPageLimit    = 50
-	DiscoveryFreshTTL     = 5 * time.Minute
-	DiscoveryStaleTTL     = 24 * time.Hour
-	DiscoveryQueryLimit   = 50
-	discoveryCacheSchema  = 1
-	maxDiscoveryCacheSize = 2 * 1024 * 1024
+	DiscoveryPageLimit          = 50
+	DiscoveryFreshTTL           = 5 * time.Minute
+	DiscoveryStaleTTL           = 24 * time.Hour
+	DiscoveryQueryLimit         = 50
+	discoveryCacheSchema        = 1
+	maxDiscoveryCacheSize       = 2 * 1024 * 1024
+	maxDiscoveryMaintenanceDirs = 4096
+	maxDiscoveryDirEntries      = DiscoveryQueryLimit + 128
 )
 
 type DiscoveryCacheState string
@@ -232,6 +234,118 @@ func (c *DiscoveryCache) retain(dir string) error {
 	return nil
 }
 
+func discoveryEndpointDirectoryName(ep config.MarketplaceEntry) string {
+	sum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID))
+	return hex.EncodeToString(sum[:])
+}
+
+func validDiscoveryHashName(name string) bool {
+	if len(name) != sha256.Size*2 {
+		return false
+	}
+	decoded, err := hex.DecodeString(name)
+	return err == nil && hex.EncodeToString(decoded) == name
+}
+
+func (c *DiscoveryCache) readRecognizedRecord(dir, name string) (discoveryCacheRecord, bool) {
+	if filepath.Ext(name) != ".json" || !validDiscoveryHashName(strings.TrimSuffix(name, ".json")) {
+		return discoveryCacheRecord{}, false
+	}
+	path := filepath.Join(dir, name)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxDiscoveryCacheSize {
+		return discoveryCacheRecord{}, false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return discoveryCacheRecord{}, false
+	}
+	defer func() { _ = f.Close() }()
+	var record discoveryCacheRecord
+	dec := json.NewDecoder(io.LimitReader(f, maxDiscoveryCacheSize+1))
+	if err := dec.Decode(&record); err != nil {
+		return discoveryCacheRecord{}, false
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return discoveryCacheRecord{}, false
+	}
+	ep := config.MarketplaceEntry{URL: record.Endpoint, InstanceID: record.InstanceID}
+	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.key(ep, record.Query, record.Kind, record.Limit)+".json" != name || record.ObservedAt.IsZero() {
+		return discoveryCacheRecord{}, false
+	}
+	if err := validateDiscoveryPage(record.Items, record.Total, record.Limit); err != nil {
+		return discoveryCacheRecord{}, false
+	}
+	return record, true
+}
+
+// maintain removes only fully recognized cache content. Scans are capped so a
+// hostile or accidentally polluted cache cannot turn discovery into unbounded
+// filesystem work.
+func (c *DiscoveryCache) maintain(endpoints []config.MarketplaceEntry) error {
+	if c == nil || c.root == "" {
+		return nil
+	}
+	info, err := os.Lstat(c.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(c.root)
+	if err != nil {
+		return err
+	}
+	if len(entries) > maxDiscoveryMaintenanceDirs {
+		return nil
+	}
+	current := make(map[string]struct{}, len(endpoints))
+	for _, endpoint := range endpoints {
+		current[discoveryEndpointDirectoryName(endpoint)] = struct{}{}
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() || !validDiscoveryHashName(entry.Name()) {
+			continue
+		}
+		dir := filepath.Join(c.root, entry.Name())
+		children, readErr := os.ReadDir(dir)
+		if readErr != nil || len(children) > maxDiscoveryDirEntries {
+			continue
+		}
+		_, retained := current[entry.Name()]
+		recognized := make([]string, 0, len(children))
+		allRecognized := true
+		for _, child := range children {
+			record, ok := c.readRecognizedRecord(dir, child.Name())
+			if !ok {
+				allRecognized = false
+				continue
+			}
+			path := filepath.Join(dir, child.Name())
+			recognized = append(recognized, path)
+			if retained && c.now().Sub(record.ObservedAt) > DiscoveryStaleTTL {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
+		}
+		if retained || !allRecognized {
+			continue
+		}
+		for _, path := range recognized {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 // CachedDiscovery returns retained endpoint pages without network access and
 // reports whether any endpoint needs fetching or stale revalidation.
 func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOptions) ([]DiscoveryOutcome, bool, error) {
@@ -254,6 +368,9 @@ func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOpti
 	cache := opts.Cache
 	if cache == nil {
 		cache = DefaultDiscoveryCache()
+	}
+	if err := cache.maintain(entries); err != nil {
+		slog.Warn("marketplace discovery cache maintenance failed", "error", err)
 	}
 	outcomes := make([]DiscoveryOutcome, 0, len(endpoints))
 	needsNetwork := false
@@ -300,6 +417,9 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 	cache := opts.Cache
 	if cache == nil {
 		cache = DefaultDiscoveryCache()
+	}
+	if err := cache.maintain(entries); err != nil {
+		slog.Warn("marketplace discovery cache maintenance failed", "error", err)
 	}
 	updates := make(chan []DiscoveryOutcome, len(endpoints)+1)
 	results := make(chan DiscoveryOutcome, len(endpoints))
