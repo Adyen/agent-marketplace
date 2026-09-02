@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -237,6 +238,124 @@ func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
 	}
 	if !strings.Contains(string(rootData), "include: team.yaml") {
 		t.Fatalf("root include directive lost:\n%s", rootData)
+	}
+}
+
+func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "included-local-skill", "included local skill", nil)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+
+	includedPath := filepath.Join(repoRoot, ".agents", "local-team.yaml")
+	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-local-skill]\n", registryRoot)
+	writeFile(t, includedPath, includedData)
+	rootPath := config.LocalConfigPath(repoRoot)
+	writeFile(t, rootPath, "include: local-team.yaml\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot:       repoRoot,
+		ResourceName:   "included-local-skill",
+		Scope:          ScopeLocal,
+		ScopeSpecified: true,
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || result.RemovedName != "included-local-skill" {
+		t.Fatalf("result = %#v", result)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Skills.Exclude, "included-local-skill") {
+		t.Fatalf("local root registries = %#v, want resource exclusion", rootCfg.Registries)
+	}
+	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	if len(resolved.Errors) != 0 {
+		t.Fatalf("resolve errors = %v", resolved.Errors)
+	}
+	for _, item := range resolved.Resolved {
+		if item.Name == "included-local-skill" {
+			t.Fatalf("included local skill remained enabled: %#v", item)
+		}
+	}
+	rootData, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "include: local-team.yaml") {
+		t.Fatalf("local root include directive lost:\n%s", rootData)
+	}
+}
+
+func TestRemoveCollectionExcludesIncludedSelection(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	includedPath := filepath.Join(repoRoot, ".agents", "collections.yaml")
+	includedData := "collections:\n  include: [included-bundle]\n"
+	writeFile(t, includedPath, includedData)
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: collections.yaml\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot:       repoRoot,
+		ResourceName:   "included-bundle",
+		Scope:          ScopeRepo,
+		ScopeSpecified: true,
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || !result.IsCollection || result.RemovedName != "included-bundle" {
+		t.Fatalf("result = %#v", result)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(rootCfg.Collections.Exclude, "included-bundle") {
+		t.Fatalf("root collections = %#v, want collection exclusion", rootCfg.Collections)
+	}
+	rootData, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "include: collections.yaml") {
+		t.Fatalf("root include directive lost:\n%s", rootData)
+	}
+}
+
+func TestRemoveOrExcludeCollectionDeletesRootSelection(t *testing.T) {
+	rootPath := config.ProjectConfigPath(t.TempDir())
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [root-bundle]\n")
+	if err := removeOrExcludeCollection(rootPath, "root-bundle"); err != nil {
+		t.Fatal(err)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(rootCfg.Collections.Include, "root-bundle") || slices.Contains(rootCfg.Collections.Exclude, "root-bundle") {
+		t.Fatalf("root collections = %#v, want selection removed without exclusion", rootCfg.Collections)
 	}
 }
 

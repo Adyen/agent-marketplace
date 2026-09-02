@@ -103,7 +103,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
 		}
-		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
+		if err := removeOrExcludeCollection(configPath, name); err != nil {
 			return nil, err
 		}
 		if err := silentSync(ctx, opts.RepoRoot); err != nil {
@@ -170,6 +170,21 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
 }
 
+func removeOrExcludeCollection(configPath, name string) error {
+	rootCfg, err := config.LoadRootConfigFromPath(configPath)
+	if err != nil {
+		return fmt.Errorf("load root config %q: %w", configPath, err)
+	}
+	if rootCfg != nil {
+		for _, selected := range rootCfg.Collections.Include {
+			if strings.TrimSpace(selected) == name {
+				return config.RemoveCollectionFromConfig(configPath, name)
+			}
+		}
+	}
+	return config.AddKindExcludeToConfig(configPath, ir.KindCollection, name)
+}
+
 func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg *config.Config, repoCfg *config.Config, err error) {
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
@@ -216,24 +231,28 @@ func removeResource(repoRoot string, scope Scope, repoCfg *config.Config, target
 	case ScopeLocal:
 		if target.Source == config.RepoPersonal {
 			localCfgPath := config.LocalConfigPath(repoRoot)
-			// Check whether the registry entry exists in config.local.yaml.
-			// When it does, remove from include and add exclude in that entry.
-			// When it doesn't (the resource was installed via the top-level
-			// selector), remove from the top-level selector and add to the
-			// top-level exclude list instead.
-			localCfg, err := config.LoadLocalConfig()
+			rootCfg, err := config.LoadRootConfigFromPath(localCfgPath)
 			if err != nil {
-				return fmt.Errorf("load local config: %w", err)
+				return fmt.Errorf("load local root config: %w", err)
 			}
-			if localCfg != nil && localRegistryEntryExists(localCfg, target.RegistryURL, target.RegistryPath) {
+			if rootCfg != nil && registryEntryInList(rootCfg.Registries, target.RegistryURL, target.RegistryPath) {
 				if err := config.RemoveResourceFromRegistryInConfig(localCfgPath, target.RegistryURL, target.RegistryPath, target.Kind, name); err != nil {
 					return fmt.Errorf("remove resource from registry entry: %w", err)
 				}
 				return config.AddKindExcludeToRegistryInConfig(localCfgPath, target.RegistryURL, target.RegistryPath, target.Kind, name)
 			}
-			// Resource is in the top-level selector (or a new shadow entry
-			// is needed): remove from the top-level include and add a
-			// registry-level exclude so cross-layer exclusion suppresses it.
+			localCfg, err := config.LoadLocalConfigFromPath(localCfgPath)
+			if err != nil {
+				return fmt.Errorf("load local config: %w", err)
+			}
+			if localCfg != nil && localRegistryEntryExists(localCfg, target.RegistryURL, target.RegistryPath) {
+				if err := config.DisableResourceWithShadowFallback(localCfgPath, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name); err != nil {
+					return err
+				}
+				return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
+			}
+			// A top-level local selector owns the resource directly, so remove
+			// that selection and retain the established top-level exclude.
 			if err := config.RemoveKindExcludeFromLocalConfig(repoRoot, target.Kind, name); err != nil {
 				return fmt.Errorf("clear stale exclude from local config: %w", err)
 			}
@@ -711,7 +730,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 
 	// Check if it's a collection.
 	if isCollectionInstalled(mergedCfg, name) {
-		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
+		if err := removeOrExcludeCollection(configPath, name); err != nil {
 			return nil, err
 		}
 		if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
