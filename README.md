@@ -62,6 +62,20 @@ resource, `/` to search, `s` to sync pending changes, `u` to refresh registry
 caches, `r` to reload from disk, `H` to pick which harnesses to target, and `q`
 to quit.
 
+The TUI renders configured and enabled resources before it contacts a
+Marketplace. It then loads the first 50 results from each configured Marketplace.
+`/` filters loaded rows as you type. After 250 ms without input, it also searches
+the configured Marketplaces. This does not change the command-line `search`
+interface. Discovery has no pagination, so use search to narrow large result
+sets.
+
+The TUI caches discovery results per endpoint. Results stay fresh for five
+minutes, then may remain visible as stale for up to 24 hours during refreshes or
+outages. A failed endpoint does not remove results from working endpoints.
+Blocked and revoked resources remain visible but cannot be installed. Before an
+install, the TUI verifies the exact revision, shows any required risk preview,
+writes the exact pin to the selected scope, and reloads its authoritative state.
+
 ---
 
 ## Quick start

@@ -541,10 +541,19 @@ func (m Model) handleToggleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		return m, nil
 	case key.Matches(msg, m.keys.ToggleGlobal):
+		if m.modalSkill.MarketplaceDiscovery != nil {
+			return m.startDiscoveryInstall(m.modalSkill, scopeGlobal)
+		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
 	case key.Matches(msg, m.keys.ToggleProject):
+		if m.modalSkill.MarketplaceDiscovery != nil {
+			return m.startDiscoveryInstall(m.modalSkill, scopeProject)
+		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
 	case key.Matches(msg, m.keys.ToggleLocal):
+		if m.modalSkill.MarketplaceDiscovery != nil {
+			return m.startDiscoveryInstall(m.modalSkill, scopeLocal)
+		}
 		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
 	case key.Matches(msg, m.keys.ToggleExclude):
 		if m.modalSkill.Artifact.IsMarketplace {
