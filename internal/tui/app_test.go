@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,6 +12,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
+
+func TestDefaultTUIProgramOptionsLeaveMouseSelectionToTerminal(t *testing.T) {
+	var output bytes.Buffer
+	options := append(defaultTUIProgramOptions(), tea.WithInput(nil), tea.WithOutput(&output))
+	if _, err := tea.NewProgram(guardProbeModel{}, options...).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "\x1b[?1049h") {
+		t.Fatalf("TUI did not enter the alternate screen: %q", got)
+	}
+	for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
+		if strings.Contains(got, sequence) {
+			t.Fatalf("TUI enabled mouse tracking with %q, preventing native text selection", sequence)
+		}
+	}
+}
 
 func TestRowGlyphEnabled(t *testing.T) {
 	r := row{IsAvailable: false}

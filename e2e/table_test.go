@@ -1017,6 +1017,41 @@ registries:
 		},
 	},
 	{
+		Name: "install/scope_user_rejects_repo_relative_registry",
+		Desc: "Given a repo-relative local registry, When install --scope user is run, Then it fails without changing the user config",
+		GlobalCfg: `
+registries: []
+`,
+		RepoCfg: `
+registries:
+  - url: ./plugins/local
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/plugins/local/skills/local-skill/SKILL.md", Body: "---\nname: local-skill\ndescription: Local skill\n---\n"},
+			{Args: []string{"install", "--scope", "user", "local-skill"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"repo-relative", "global config"},
+				FileNotContains: map[string]string{
+					"/root/.agents/config.yaml": "plugins/local",
+				}},
+		},
+	},
+	{
+		Name:      "install/from_local_missing_path_does_not_persist",
+		Desc:      "Given an existing local registry root with a missing bundle path, When ad-hoc install runs, Then it fails before changing repo config",
+		GlobalCfg: ``,
+		RepoCfg: `
+registries: []
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/local-registry/README.md", Body: "local registry\n"},
+			{Args: []string{"install", "some-skill", "--from", "./local-registry", "--path", "missing"}, AssertExitCode: intPtr(1),
+				OutContains: []string{"local registry path does not exist"},
+				FileNotContains: map[string]string{
+					"/workspace/.agents/config.yaml": "local-registry",
+				}},
+		},
+	},
+	{
 		Name: "install/scope_user_writes_to_global",
 		Desc: "Given a registry in global config, When install --scope user is run and synced, Then the skill materializes at machine scope",
 		Registries: []RegistryDef{
