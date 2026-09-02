@@ -290,7 +290,35 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+type IncludePaths []string
+
+func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" {
+			return nil
+		}
+		var path string
+		if err := value.Decode(&path); err != nil {
+			return err
+		}
+		*p = IncludePaths{path}
+		return nil
+	case yaml.SequenceNode:
+		var paths []string
+		if err := value.Decode(&paths); err != nil {
+			return err
+		}
+		*p = paths
+		return nil
+	default:
+		return fmt.Errorf("include must be a path or sequence of paths")
+	}
+}
+
 type Config struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is the schema version sentinel. The canonical version is
 	// "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
 	// compatibility alias. v1 configs have no apiVersion field and are
@@ -379,6 +407,8 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 }
 
 type LocalConfig struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
 	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it

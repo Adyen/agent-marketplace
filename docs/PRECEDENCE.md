@@ -4,7 +4,32 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-Organization, user, and committed repository configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` files use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. The loader rejects v1 configs (no `apiVersion`) in the regular config layers. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+Organization, user, and committed repository root configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but they must use the same per-layer fields as the root that includes them. The loader still rejects a regular root with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+
+## Config includes
+
+All four config layers accept `include` as one local path or an ordered list of local paths:
+
+```yaml
+apiVersion: agent-marketplace/v2
+include: profiles/company.yaml
+```
+
+Use a sequence when order matters:
+
+```yaml
+include:
+  - profiles/company.yaml
+  - profiles/payments-team.yaml
+```
+
+Relative paths resolve from the directory containing the file that declares them; absolute paths are accepted. Includes are recursive. Files are identified by canonical path, so the same file reached more than once, including through a symlink or normalized relative path, contributes only at its first position. Glob patterns and remote URLs are not supported.
+
+Each included fragment has lower precedence than the file containing it. For a list, the first fragment is merged first, later fragments merge over earlier ones, and the containing file merges last. Recursive includes follow the same rule. Merging continues to use the field-specific rules in this reference; `include` does not turn every field into a simple replacement.
+
+Loading the owning layer fails if any include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion` as described above; this exception does not relax validation for a regular root.
+
+The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments.
 
 ## Layer order
 

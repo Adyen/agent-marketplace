@@ -648,10 +648,9 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
 
-	// Load the target-scope config to see whether the --from registry entry
-	// is defined there. LoadConfigFromPath does not require apiVersion for
-	// local configs (config.local.yaml), which are generated without it.
-	cfg, err := config.LoadConfigFromPath(configPath)
+	// Load only the target root to decide whether the entry is defined there;
+	// included entries belong to their included files and must not be edited.
+	cfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", configPath, err)
 	}

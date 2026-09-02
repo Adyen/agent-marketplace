@@ -38,6 +38,7 @@ func (k layerKind) name() string {
 // decoding, so unknown keys are also caught.
 var topLevelAllowed = map[layerKind]map[string]bool{
 	organizationLayer: {
+		"include":            true,
 		"apiVersion":         true,
 		"harnesses":          true,
 		"allowed_registries": true,
@@ -54,6 +55,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"telemetry":          true,
 	},
 	userLayer: {
+		"include":            true,
 		"apiVersion":         true,
 		"harnesses":          true,
 		"allowed_registries": true,
@@ -70,6 +72,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"telemetry":          true,
 	},
 	repoLayer: {
+		"include":            true,
 		"apiVersion":         true,
 		"harnesses":          true,
 		"allowed_registries": true,
@@ -84,6 +87,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"materialization":    true,
 	},
 	localLayer: {
+		"include":         true,
 		"apiVersion":      true,
 		"registries":      true,
 		"collections":     true,
@@ -130,9 +134,13 @@ func resolveAlias(n *yaml.Node) *yaml.Node {
 // validates the YAML node against the per-layer allowlist, decodes with
 // KnownFields, and then runs structural validation.
 func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, []error) {
+	return loadV3ConfigWithAPIVersion(data, kind, requireHarnesses, kind != localLayer)
+}
+
+func loadV3ConfigWithAPIVersion(data []byte, kind layerKind, requireHarnesses, requireAPIVersion bool) (*Config, []error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		var cfg Config
-		if err := cfg.validate(requireHarnesses, kind != localLayer, kind.name()); err != nil {
+		if err := cfg.validate(requireHarnesses, requireAPIVersion, kind.name()); err != nil {
 			return nil, []error{fmt.Errorf("validate empty %s config: %w", kind.name(), err)}
 		}
 		return &cfg, nil
@@ -173,9 +181,6 @@ func loadV3Config(data []byte, kind layerKind, requireHarnesses bool) (*Config, 
 		validateRequireHarnesses = false
 	}
 
-	// apiVersion is required for Config-schema files (org/user/repo) but
-	// optional for local configs, which are generated without it.
-	requireAPIVersion := kind != localLayer
 	if err := cfg.validate(validateRequireHarnesses, requireAPIVersion, kind.name()); err != nil {
 		nodeErrs = append(nodeErrs, err)
 	}

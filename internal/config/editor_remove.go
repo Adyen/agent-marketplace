@@ -28,7 +28,7 @@ func DisableResourceWithShadowFallback(configPath, registryURL, registryPath, re
 	registryURL = strings.TrimSpace(registryURL)
 	registryPath = strings.TrimSpace(registryPath)
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
@@ -217,7 +217,7 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		return fmt.Errorf("%s name is required", skill.KindLabel(kind))
 	}
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -294,7 +294,7 @@ func RemoveAllKindExcludesFromRegistryEntries(configPath string, kind ir.Resourc
 		return fmt.Errorf("unsupported resource kind %q", skill.KindLabel(kind))
 	}
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

@@ -227,9 +227,13 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
 	}
 
-	data, readErr := os.ReadFile(path)
+	_, readErr := os.ReadFile(path)
 	if readErr == nil {
-		lr := loadOrganizationConfig(path, data)
+		cfg, err := loadConfigTree(path, organizationLayer)
+		lr := LayerResult{Source: Organization, Path: path, Config: cfg}
+		if err != nil {
+			lr.Errors = []error{err}
+		}
 		return lr, inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
 	}
 	if !errors.Is(readErr, os.ErrNotExist) {
@@ -254,16 +258,6 @@ func LoadOrganizationConfig() (*Config, error) {
 	return lr.Config, nil
 }
 
-func loadOrganizationConfig(path string, data []byte) LayerResult {
-	cfg, errs := loadV3Config(data, organizationLayer, false)
-	if cfg != nil {
-		if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-			errs = append(errs, logErrs...)
-		}
-	}
-	return LayerResult{Source: Organization, Path: path, Config: cfg, Errors: errs}
-}
-
 func loadEffectiveUser(override string) LayerResult {
 	path := override
 	if path == "" {
@@ -274,22 +268,14 @@ func loadEffectiveUser(override string) LayerResult {
 		}
 	}
 
-	data, readErr := os.ReadFile(path)
-	if readErr != nil {
-		if errors.Is(readErr, os.ErrNotExist) {
+	cfg, err := loadConfigTree(path, userLayer)
+	if err != nil {
+		if rootConfigNotExist(path, err) {
 			return LayerResult{Source: UserPersonal, Path: path}
 		}
-		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{fmt.Errorf("read user config %q: %w", path, readErr)}}
+		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
 	}
-
-	cfg, errs := loadV3Config(data, userLayer, false)
-	if len(errs) > 0 {
-		return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
-	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		errs = append(errs, logErrs...)
-	}
-	return LayerResult{Source: UserPersonal, Path: path, Config: cfg, Errors: errs}
+	return LayerResult{Source: UserPersonal, Path: path, Config: cfg}
 }
 
 func loadEffectiveRepo(repoRoot, override string) LayerResult {
@@ -301,16 +287,14 @@ func loadEffectiveRepo(repoRoot, override string) LayerResult {
 		path = ProjectConfigPath(repoRoot)
 	}
 
-	data, readErr := os.ReadFile(path)
-	if readErr != nil {
-		if errors.Is(readErr, os.ErrNotExist) {
+	cfg, err := loadConfigTree(path, repoLayer)
+	if err != nil {
+		if rootConfigNotExist(path, err) {
 			return LayerResult{Source: RepoCommitted, Path: path}
 		}
-		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{fmt.Errorf("read repo config %q: %w", path, readErr)}}
+		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
 	}
-
-	cfg, errs := loadV3Config(data, repoLayer, false)
-	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Errors: errs}
+	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
 }
 
 func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
@@ -322,14 +306,12 @@ func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
 		path = LocalConfigPath(localDir)
 	}
 
-	data, readErr := os.ReadFile(path)
-	if readErr != nil {
-		if errors.Is(readErr, os.ErrNotExist) {
+	loaded, err := loadConfigTree(path, localLayer)
+	if err != nil {
+		if rootConfigNotExist(path, err) {
 			return nil, nil
 		}
-		return nil, []error{fmt.Errorf("read local config %q: %w", path, readErr)}
+		return nil, []error{err}
 	}
-
-	cfg, errs := loadV3LocalConfig(data)
-	return cfg, errs
+	return configAsLocal(loaded), nil
 }

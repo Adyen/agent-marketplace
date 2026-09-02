@@ -244,18 +244,176 @@ func DefaultHarnesses() []string {
 	return []string{"factory", "windsurf"}
 }
 
+type configIncludeLoader struct {
+	kind     layerKind
+	loaded   map[string]struct{}
+	visiting map[string]struct{}
+}
+
+func newConfigIncludeLoader(kind layerKind) *configIncludeLoader {
+	return &configIncludeLoader{kind: kind, loaded: map[string]struct{}{}, visiting: map[string]struct{}{}}
+}
+
+func canonicalConfigPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path %q: %w", path, err)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path %q: %w", absolute, err)
+	}
+	return filepath.Clean(canonical), nil
+}
+
+func sourceForLayer(kind layerKind) Source {
+	switch kind {
+	case organizationLayer:
+		return Organization
+	case userLayer:
+		return UserPersonal
+	case repoLayer:
+		return RepoCommitted
+	case localLayer:
+		return RepoPersonal
+	default:
+		return SourceUnset
+	}
+}
+
+func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
+	canonical, err := canonicalConfigPath(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := l.visiting[canonical]; ok {
+		return nil, fmt.Errorf("config include cycle at %q", canonical)
+	}
+	if _, ok := l.loaded[canonical]; ok {
+		slog.Debug("config include skipped", "path", canonical, "reason", "duplicate")
+		return nil, nil
+	}
+
+	l.visiting[canonical] = struct{}{}
+	defer delete(l.visiting, canonical)
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("read config %q: %w", canonical, err)
+	}
+	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", canonical, errors.Join(errs...))
+	}
+	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+		return nil, fmt.Errorf("validate logging config %q: %w", canonical, errors.Join(logErrs...))
+	}
+	if root && len(cfg.Include) == 0 {
+		l.loaded[canonical] = struct{}{}
+		return cfg, nil
+	}
+
+	layers := make([]Layer, 0, len(cfg.Include)+1)
+	for _, include := range cfg.Include {
+		if strings.TrimSpace(include) == "" {
+			return nil, fmt.Errorf("validate config %q: include path must not be empty", canonical)
+		}
+		includePath := include
+		if !filepath.IsAbs(includePath) {
+			includePath = filepath.Join(filepath.Dir(canonical), includePath)
+		}
+		slog.Debug("loading config include", "owner", canonical, "path", includePath)
+		fragment, err := l.load(includePath, false)
+		if err != nil {
+			slog.Error("config include failed", "owner", canonical, "path", includePath, "error", err)
+			return nil, fmt.Errorf("load include %q referenced by %q: %w", includePath, canonical, err)
+		}
+		if fragment != nil {
+			layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: fragment})
+		}
+	}
+	layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: cfg})
+	var merged *Config
+	if l.kind == localLayer {
+		merged = mergeLocalIncludeLayers(layers)
+	} else {
+		merged = MergeLayers(layers)
+		for _, layer := range layers {
+			if layer.Config.Telemetry != nil {
+				telemetry := *layer.Config.Telemetry
+				merged.Telemetry = &telemetry
+			}
+		}
+	}
+	merged.Include = append(IncludePaths(nil), cfg.Include...)
+	l.loaded[canonical] = struct{}{}
+	return merged, nil
+}
+
+func mergeLocalIncludeLayers(layers []Layer) *Config {
+	merged := &Config{}
+	for _, layer := range layers {
+		cfg := layer.Config
+		if cfg == nil {
+			continue
+		}
+		merged.Registries = append(merged.Registries, cfg.Registries...)
+		for _, kind := range AllKinds {
+			dst := merged.SelectorForKindPtr(kind)
+			src := cfg.SelectorForKind(kind)
+			dst.Include = appendUniqueStrings(dst.Include, src.Include)
+			dst.Exclude = appendUniqueStrings(dst.Exclude, src.Exclude)
+			dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
+		}
+		if cfg.APIVersion != "" {
+			merged.APIVersion = cfg.APIVersion
+		}
+		if cfg.Materialization != nil {
+			merged.Materialization = &MaterializationConfig{Mode: cfg.Materialization.Mode}
+		}
+	}
+	return merged
+}
+
+func loadConfigTree(path string, kind layerKind) (*Config, error) {
+	return newConfigIncludeLoader(kind).load(path, kind != localLayer)
+}
+
+func rootConfigNotExist(path string, err error) bool {
+	if !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	_, statErr := os.Stat(path)
+	return errors.Is(statErr, os.ErrNotExist)
+}
+
+func configAsLocal(cfg *Config) *LocalConfig {
+	if cfg == nil {
+		return nil
+	}
+	return &LocalConfig{
+		Include:         cfg.Include,
+		APIVersion:      cfg.APIVersion,
+		Registries:      cfg.Registries,
+		Skills:          cfg.Skills,
+		Commands:        cfg.Commands,
+		Subagents:       cfg.Subagents,
+		Hooks:           cfg.Hooks,
+		MCP:             cfg.MCP,
+		Collections:     cfg.Collections,
+		Materialization: cfg.Materialization,
+	}
+}
+
 // loadV3OrV2Config reads a Config from path using the strict layer-aware
 // loader. v2 is the canonical schema and v3 is accepted as a compatibility
 // alias; neither version is rewritten while loading.
 func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Config, error) {
-	data, err := os.ReadFile(path)
+	cfg, err := loadConfigTree(path, kind)
 	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
+		return nil, err
 	}
-
-	cfg, errs := loadV3Config(data, kind, requireHarnesses)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	if requireHarnesses && len(cfg.Harnesses) == 0 {
+		return nil, fmt.Errorf("validate config %q: harnesses is required", path)
 	}
 	return cfg, nil
 }
@@ -269,7 +427,7 @@ func LoadGlobalConfig() (*Config, error) {
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	cfg, err := loadV3OrV2Config(configPath, userLayer, false)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(configPath, err) {
 			slog.Debug("config skipped", "layer", "user", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
@@ -292,37 +450,49 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(configPath)
+	cfg, err := loadConfigTree(configPath, userLayer)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(configPath, err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("read user logging config %q: %w", configPath, err)
-	}
-	var cfg struct {
-		Logging *LoggingConfig `yaml:"logging,omitempty"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse user logging config %q: %w", configPath, err)
-	}
-	if errs := validateLogging(cfg.Logging); len(errs) > 0 {
-		return nil, fmt.Errorf("validate user logging config %q: %w", configPath, errors.Join(errs...))
+		return nil, fmt.Errorf("load user logging config %q: %w", configPath, err)
 	}
 	return cfg.Logging, nil
 }
 
-// LoadConfigFromPath loads a Config from an explicit file path.
-// Unlike LoadRepoConfig, it does not use FindRepoRoot.
-// Harnesses is not required; project-level configs may omit it. When the path
-// is a local config (config.local.yaml), apiVersion is also not required —
-// these files use the LocalConfig schema and are generated without it. Editor
-// helpers read every scope's config through this function, so the leniency
-// here keeps remove/exclude operations working against local configs.
+func LoadRootConfigFromPath(path string) (*Config, error) {
+	kind := repoLayer
+	requireAPIVersion := true
+	if isLocalConfigPath(path) {
+		kind = localLayer
+		requireAPIVersion = false
+	} else if isGlobalConfigPath(path) {
+		kind = userLayer
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	}
+	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
+		return nil, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
+	}
+	return cfg, nil
+}
+
+// LoadConfigFromPath loads an explicit config and its includes.
+// Harnesses is optional. Local configs may also omit apiVersion.
 func LoadConfigFromPath(path string) (*Config, error) {
 	if isLocalConfigPath(path) {
-		cfg, err := loadConfigGated(path, false, false, localLayer.name())
+		cfg, err := loadConfigTree(path, localLayer)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if rootConfigNotExist(path, err) {
 				slog.Debug("config skipped", "path", path, "reason", "not_found")
 				return nil, nil
 			}
@@ -342,7 +512,7 @@ func LoadConfigFromPath(path string) (*Config, error) {
 
 	cfg, err := loadV3OrV2Config(path, kind, false)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(path, err) {
 			slog.Debug("config skipped", "path", path, "reason", "not_found")
 			return nil, nil
 		}
@@ -356,9 +526,10 @@ func LoadConfigFromPath(path string) (*Config, error) {
 // LoadLocalConfigFromPath loads a LocalConfig from an explicit file path.
 // Unlike LoadLocalConfig, it does not use FindRepoRoot.
 func LoadLocalConfigFromPath(path string) (*LocalConfig, error) {
-	cfg, err := loadLocalConfig(path)
+	loaded, err := loadConfigTree(path, localLayer)
+	cfg := configAsLocal(loaded)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(path, err) {
 			slog.Debug("local config skipped", "path", path, "reason", "not_found")
 			return nil, nil
 		}
@@ -383,7 +554,7 @@ func LoadRepoConfig() (*Config, error) {
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	cfg, err := loadV3OrV2Config(configPath, repoLayer, false)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(configPath, err) {
 			slog.Debug("config skipped", "layer", "repo", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
@@ -403,9 +574,10 @@ func LoadLocalConfig() (*LocalConfig, error) {
 	}
 
 	configPath := filepath.Join(localDir, ".agents", "config.local.yaml")
-	cfg, err := loadLocalConfig(configPath)
+	loaded, err := loadConfigTree(configPath, localLayer)
+	cfg := configAsLocal(loaded)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if rootConfigNotExist(configPath, err) {
 			slog.Debug("local config skipped", "path", configPath, "reason", "not_found")
 			return nil, nil
 		}
