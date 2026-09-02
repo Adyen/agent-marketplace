@@ -39,20 +39,21 @@ func NewModel(repoRoot, homeDir string) Model {
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
 	m := Model{
-		repoRoot:       repoRoot,
-		homeDir:        homeDir,
-		width:          80,
-		height:         24,
-		loading:        true,
-		activeTab:      tabScope,
-		tabStates:      newTabStates(),
-		spinner:        sp,
-		searchInput:    si,
-		detailViewport: viewport.New(80, 24),
-		helpViewport:   viewport.New(80, 23),
-		errorsViewport: viewport.New(80, 23),
-		keys:           defaultKeyMap,
-		help:           newHelpModel(),
+		repoRoot:                   repoRoot,
+		homeDir:                    homeDir,
+		width:                      80,
+		height:                     24,
+		loading:                    true,
+		activeTab:                  tabScope,
+		tabStates:                  newTabStates(),
+		spinner:                    sp,
+		searchInput:                si,
+		detailViewport:             viewport.New(80, 24),
+		helpViewport:               viewport.New(80, 23),
+		errorsViewport:             viewport.New(80, 23),
+		marketplaceConsentViewport: viewport.New(80, 22),
+		keys:                       defaultKeyMap,
+		help:                       newHelpModel(),
 	}
 	if !testSkipInitModal && shouldShowInitModal(homeDir) {
 		slog.Info("init modal opened", "home_dir", homeDir)
@@ -203,6 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpViewport.Height = max(1, msg.Height-1)
 		m.errorsViewport.Width = msg.Width
 		m.errorsViewport.Height = max(1, msg.Height-1)
+		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
@@ -350,7 +352,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplaceInstallOptions = msg.options
 			m.marketplaceInstallOperation = msg.operation
 			m.marketplacePreparedInstall = msg.prepared
-			m.marketplaceInstallPreview = msg.preview
+			m.setMarketplaceConsentPreview(msg.preview)
 			m.pane = paneMarketplaceConsent
 			return m, nil
 		}
@@ -359,7 +361,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.marketplaceInstallOptions = msg.options
 			m.marketplaceInstallOperation = msg.operation
 			m.marketplacePreparedInstall = consent.Prepared
-			m.marketplaceInstallPreview = consent.Preview
+			m.setMarketplaceConsentPreview(consent.Preview)
 			m.pane = paneMarketplaceConsent
 			return m, nil
 		}
@@ -1144,7 +1146,7 @@ func (m Model) View() string {
 	case paneConfirm:
 		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneMarketplaceConsent:
-		return fitTerminalWithFooter(renderMarketplaceConsent(m), "y install · n/esc cancel · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(renderMarketplaceConsent(m), "↑/↓/page · y install · n/esc cancel · ^C quit", m.width, m.height)
 	case paneDetail:
 		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ or ctrl-d/u scroll · Ctrl+C quit", m.width, m.height)
 	}

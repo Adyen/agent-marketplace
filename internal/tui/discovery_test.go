@@ -253,6 +253,38 @@ func TestMarketplaceDiscoveryRemovalCancelsAndRejectsLateCompletion(t *testing.T
 	}
 }
 
+func TestMarketplaceDiscoveryValidationFailureInvalidatesPriorRequest(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
+	m := newTestModel()
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "retained", Availability: mpapi.AvailabilityAvailable}}}})
+	generation := m.beginRequest(requestDiscovery)
+	m.discoverySequence = 4
+	m.discoveryLoading = true
+	cancelled := false
+	m.discoveryCancel = func() { cancelled = true }
+	allowed := []string{`^allowed\.example$`}
+	m.mergedCfg.AllowedMarketplaces = &allowed
+
+	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
+		t.Fatal("invalid Marketplace config scheduled discovery")
+	}
+	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+	}
+	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "retained" {
+		t.Fatalf("validation failure discarded filtered stale rows: %#v", m.discoveryRows)
+	}
+	late := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 5, outcomes: []marketplace.DiscoveryOutcome{late}})
+	m = updated.(Model)
+	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
+	m = updated.(Model)
+	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "retained" {
+		t.Fatalf("late prior completion changed retained rows: %#v", m.discoveryRows)
+	}
+}
+
 func TestMarketplaceDiscoveryDedupesInstalledAliasByPinnedCoordinate(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public", Source: config.RepoCommitted}
 	m := newTestModel()
@@ -515,12 +547,80 @@ func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T)
 	}
 }
 
-func TestMarketplaceConsentFitsSupportedMinimum(t *testing.T) {
+func TestMarketplaceConsentPreviewScrollsAtSupportedMinimum(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 50, 12
-	m.pane = paneMarketplaceConsent
-	m.marketplaceInstallPreview = strings.Repeat("verified capability and finding ", 20)
-	assertTerminalBounds(t, m.View(), 50, 12)
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	preview := strings.Join([]string{
+		"Marketplace install preview:",
+		"marketplace: public (https://market.example)",
+		"instance_id: market",
+		"registry: tools (registry-id)",
+		"kind: skill",
+		"name: review",
+		"revision: sha256:" + strings.Repeat("a", 64),
+		"content_digest: sha256:" + strings.Repeat("b", 64),
+		"archive_digest: sha256:" + strings.Repeat("c", 64),
+		"security: high-risk capability requires review",
+		"provenance: registry_url=https://market.example path=skills/review generator=scanner\x1b]52;c;bad\a",
+	}, "\n")
+	updated, _ := m.Update(discoveryInstallMsg{operation: operation, prepared: &pipeline.PreparedMarketplaceInstall{}, preview: preview})
+	m = updated.(Model)
+
+	initial := m.View()
+	assertTerminalBounds(t, initial, 50, 12)
+	if strings.Contains(initial, "security:") || strings.Contains(initial, "provenance:") {
+		t.Fatalf("long preview did not start at the top:\n%s", initial)
+	}
+	for _, required := range []string{"Verified Marketplace install", "Install this exact verified revision?", "↑/↓/page", "y install", "n/esc cancel", "^C quit"} {
+		if !strings.Contains(initial, required) {
+			t.Fatalf("initial consent omitted %q:\n%s", required, initial)
+		}
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = updated.(Model)
+	if m.marketplaceConsentViewport.YOffset == 0 {
+		t.Fatal("page down did not scroll the consent preview")
+	}
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 14})
+	m = updated.(Model)
+	if m.marketplaceConsentViewport.YOffset == 0 {
+		t.Fatal("resize reset the consent scroll position")
+	}
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	m = updated.(Model)
+	if m.marketplaceConsentViewport.YOffset == 0 {
+		t.Fatal("returning to minimum size reset the consent scroll position")
+	}
+	for i := 0; i < 10 && !strings.Contains(m.View(), "provenance:"); i++ {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = updated.(Model)
+	}
+	scrolled := m.View()
+	assertTerminalBounds(t, scrolled, 50, 12)
+	for _, required := range []string{"security:", "provenance:", "y install", "n/esc cancel"} {
+		if !strings.Contains(scrolled, required) {
+			t.Fatalf("scrolled consent omitted %q:\n%s", required, scrolled)
+		}
+	}
+	if strings.Contains(scrolled, "\x1b]52;") || strings.ContainsRune(scrolled, '\a') {
+		t.Fatalf("unsanitized preview reached viewport: %q", scrolled)
+	}
+	offset := m.marketplaceConsentViewport.YOffset
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+	if m.marketplaceConsentViewport.YOffset >= offset {
+		t.Fatal("up did not preserve and adjust consent scroll position")
+	}
+	updated, cmd := m.Update(keyPress('y'))
+	m = updated.(Model)
+	if cmd == nil || m.pane != paneList {
+		t.Fatalf("confirmation became unavailable after scrolling: pane=%v cmd=%v", m.pane, cmd)
+	}
 }
 
 func TestMarketplaceDiscoveryInstallCapturesExactLocatorAndScope(t *testing.T) {

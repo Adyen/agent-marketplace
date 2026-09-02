@@ -15,7 +15,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const marketplaceSearchDebounce = 250 * time.Millisecond
@@ -138,9 +140,22 @@ func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err
 	return toastExpiryCmd(2 * time.Second)
 }
 
+func (m *Model) resizeMarketplaceConsentViewport(reset bool) {
+	m.marketplaceConsentViewport.Width = max(1, m.width)
+	m.marketplaceConsentViewport.Height = max(1, m.height-3)
+	m.marketplaceConsentViewport.SetContent(ansi.Hardwrap(m.marketplaceInstallPreview, m.marketplaceConsentViewport.Width, true))
+	if reset {
+		m.marketplaceConsentViewport.GotoTop()
+	}
+}
+
+func (m *Model) setMarketplaceConsentPreview(preview string) {
+	m.marketplaceInstallPreview = sanitizeTerminalData(preview, terminalMarkdownBody)
+	m.resizeMarketplaceConsentViewport(true)
+}
+
 func renderMarketplaceConsent(m Model) string {
-	preview := sanitizeTerminalData(m.marketplaceInstallPreview, terminalMarkdownBody)
-	return styleHelpOverlay.Render(styleConfirmTitle.Render("Verified Marketplace install") + "\n\n" + preview + "\n\nInstall this exact verified revision? [y] yes  [n/esc] cancel")
+	return styleConfirmTitle.Render("Verified Marketplace install") + "\nInstall this exact verified revision?\n" + m.marketplaceConsentViewport.View()
 }
 
 func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -154,9 +169,21 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.marketplaceInstallOperation = 0
 		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
+		m.marketplaceConsentViewport.SetContent("")
+		m.marketplaceConsentViewport.GotoTop()
 		return m, nil
 	}
-	return m, nil
+	if key.Matches(msg, m.keys.Top) {
+		m.marketplaceConsentViewport.GotoTop()
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Bottom) {
+		m.marketplaceConsentViewport.GotoBottom()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.marketplaceConsentViewport, cmd = m.marketplaceConsentViewport.Update(msg)
+	return m, cmd
 }
 
 func marketplaceEndpointDisplay(endpoint config.MarketplaceEntry) string {
@@ -194,16 +221,20 @@ func waitMarketplaceDiscoveryUpdate(generation requestGeneration, sequence uint6
 	}
 }
 
+func (m *Model) cancelMarketplaceDiscovery() {
+	if m.discoveryCancel != nil {
+		m.discoveryCancel()
+		m.discoveryCancel = nil
+	}
+	m.cancelRequest(requestDiscovery)
+	m.discoverySequence = 0
+	m.discoveryLoading = false
+}
+
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {
 		hadDiscovery := len(m.discoveryRows) > 0 || len(m.browseDiscoveryRows) > 0
-		if m.discoveryCancel != nil {
-			m.discoveryCancel()
-			m.discoveryCancel = nil
-		}
-		m.cancelRequest(requestDiscovery)
-		m.discoverySequence = 0
-		m.discoveryLoading = false
+		m.cancelMarketplaceDiscovery()
 		m.discoveryRows = nil
 		m.browseDiscoveryRows = nil
 		m.discoveryOutcomes = nil
@@ -251,10 +282,7 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if len(m.discoveryRows) != before {
 		m.mergeDiscoveryRows()
 	}
-	if m.discoveryCancel != nil {
-		m.discoveryCancel()
-		m.discoveryCancel = nil
-	}
+	m.cancelMarketplaceDiscovery()
 	if !debounce {
 		cached, needsNetwork, err := marketplace.CachedDiscovery(effectiveMarketplaceConfig(m.mergedCfg), query, marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit})
 		if err != nil {
