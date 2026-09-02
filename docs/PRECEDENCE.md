@@ -58,8 +58,8 @@ list narrows the effective target list for that entry.
 
 For each registry entry, selection works per resource kind:
 
-- top-level `skills/commands/subagents/hooks/mcp/tags/exclude` in that config are defaults for entries that do not set their own values
-- if entry sets its own kind-specific list (e.g. `skills`), entry values replace (not merge with) top-level defaults for that entry and kind
+- top-level kind selectors and `tags` provide defaults for registry entries that omit those values. Defaults in later files cascade to registries from earlier includes; the last declaration wins
+- an entry's own selector list or `tags` value, including an explicit empty list, replaces the inherited default rather than merging with it. Once inherited or set, `exclude_all: true` remains true
 - selected names = union of:
   - auto-select all when `(required || default) && no kind-specific selections && tags == nil`
   - explicit per-kind selections (`skills`, `commands`, `subagents`, `hooks`, `mcp`)

@@ -120,6 +120,26 @@ func TestNestedIncludesComposeDefaultsOnce(t *testing.T) {
 	}
 }
 
+func TestContainingDefaultsCascadeToIncludedRegistries(t *testing.T) {
+	dir := t.TempDir()
+	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "registries:\n  - path: /leaf\n  - path: /explicit\n    skills: {include: []}\n    tags: []\n")
+	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nskills: {include: [middle]}\ntags: [middle]\nregistries:\n  - path: /middle\n")
+	root := filepath.Join(dir, "config.yaml")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: middle.yaml\nskills:\n  include: [root]\n  exclude: [blocked]\ntags: [root-tag]\n")
+	cfg, err := LoadConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{0, 2} {
+		if !reflect.DeepEqual(cfg.Registries[index].Skills.Include, []string{"root"}) || !reflect.DeepEqual(cfg.Registries[index].Skills.Exclude, []string{"blocked"}) || !reflect.DeepEqual(cfg.Registries[index].Tags, []string{"root-tag"}) {
+			t.Fatalf("registry %d defaults = %#v, want root skill and tag defaults", index, cfg.Registries[index])
+		}
+	}
+	if cfg.Registries[1].Skills.Include == nil || len(cfg.Registries[1].Skills.Include) != 0 || cfg.Registries[1].Tags == nil || len(cfg.Registries[1].Tags) != 0 {
+		t.Fatalf("explicit entry = %#v, want empty skill and tag overrides", cfg.Registries[1])
+	}
+}
+
 func TestConfigIncludeContainingFileHasHigherPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	writeIncludeConfig(t, filepath.Join(dir, "base.yaml"), "harnesses: [factory]\nmaterialization:\n  mode: symlink\n")

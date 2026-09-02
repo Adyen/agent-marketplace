@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
 )
 
@@ -421,6 +422,31 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 	return loadCollectedConfigTree(canonicalPath, loader)
 }
 
+func configWithCascadingDefaults(files []*Config, index int) *Config {
+	copyCfg := *files[index]
+	for i := index + 1; i < len(files); i++ {
+		later := files[i]
+		if later.Tags != nil {
+			copyCfg.Tags = later.Tags
+		}
+		for _, kind := range AllKinds {
+			if kind == ir.KindCollection {
+				continue
+			}
+			dst := copyCfg.SelectorForKindPtr(kind)
+			src := later.SelectorForKind(kind)
+			if src.Include != nil {
+				dst.Include = src.Include
+			}
+			if src.Exclude != nil {
+				dst.Exclude = src.Exclude
+			}
+			dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
+		}
+	}
+	return &copyCfg
+}
+
 func loadCollectedConfigTree(path string, loader *configIncludeLoader) (*Config, error) {
 	kind := loader.kind
 	root, err := loader.collect(path, true)
@@ -431,7 +457,10 @@ func loadCollectedConfigTree(path string, loader *configIncludeLoader) (*Config,
 		return root, nil
 	}
 	layers := make([]Layer, 0, len(loader.files))
-	for _, cfg := range loader.files {
+	for i, cfg := range loader.files {
+		if kind != localLayer {
+			cfg = configWithCascadingDefaults(loader.files, i)
+		}
 		layers = append(layers, Layer{Source: sourceForLayer(kind), Config: cfg})
 	}
 	var merged *Config
