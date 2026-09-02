@@ -194,10 +194,32 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 	return c.retain(dir)
 }
 
+func readDirBounded(path string, limit int) ([]os.DirEntry, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	entries, readErr := f.ReadDir(limit + 1)
+	closeErr := f.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, false, readErr
+	}
+	if closeErr != nil {
+		return nil, false, closeErr
+	}
+	if len(entries) > limit {
+		return nil, true, nil
+	}
+	return entries, false, nil
+}
+
 func (c *DiscoveryCache) retain(dir string) error {
-	entries, err := os.ReadDir(dir)
+	entries, overCap, err := readDirBounded(dir, maxDiscoveryDirEntries)
 	if err != nil {
 		return err
+	}
+	if overCap {
+		return nil
 	}
 	type candidate struct {
 		path     string
@@ -205,19 +227,9 @@ func (c *DiscoveryCache) retain(dir string) error {
 	}
 	var nonEmpty []candidate
 	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		f, err := os.Open(path)
-		if err != nil {
-			continue
-		}
-		var record discoveryCacheRecord
-		err = json.NewDecoder(io.LimitReader(f, maxDiscoveryCacheSize+1)).Decode(&record)
-		_ = f.Close()
-		if err == nil && record.Schema == discoveryCacheSchema && record.Query != "" {
-			nonEmpty = append(nonEmpty, candidate{path: path, observed: record.ObservedAt})
+		record, ok := c.readRecognizedRecord(dir, entry.Name())
+		if ok && record.Query != "" {
+			nonEmpty = append(nonEmpty, candidate{path: filepath.Join(dir, entry.Name()), observed: record.ObservedAt})
 		}
 	}
 	slices.SortFunc(nonEmpty, func(a, b candidate) int {
@@ -294,11 +306,11 @@ func (c *DiscoveryCache) maintain(endpoints []config.MarketplaceEntry) error {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil
 	}
-	entries, err := os.ReadDir(c.root)
+	entries, overCap, err := readDirBounded(c.root, maxDiscoveryMaintenanceDirs)
 	if err != nil {
 		return err
 	}
-	if len(entries) > maxDiscoveryMaintenanceDirs {
+	if overCap {
 		return nil
 	}
 	current := make(map[string]struct{}, len(endpoints))
@@ -310,8 +322,8 @@ func (c *DiscoveryCache) maintain(endpoints []config.MarketplaceEntry) error {
 			continue
 		}
 		dir := filepath.Join(c.root, entry.Name())
-		children, readErr := os.ReadDir(dir)
-		if readErr != nil || len(children) > maxDiscoveryDirEntries {
+		children, overCap, readErr := readDirBounded(dir, maxDiscoveryDirEntries)
+		if readErr != nil || overCap {
 			continue
 		}
 		_, retained := current[entry.Name()]
