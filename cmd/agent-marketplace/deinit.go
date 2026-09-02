@@ -142,7 +142,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	opts = append(opts, materialize.WithMaterializationModes(modes))
-	report, err := materialize.Run(ctx, repoRoot, resolvedArtifacts, opts...)
+	report, err := materialize.Run(context.Background(), repoRoot, resolvedArtifacts, opts...)
 	if err != nil {
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
