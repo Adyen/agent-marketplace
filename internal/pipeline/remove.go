@@ -115,6 +115,13 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
+	// Validate mixed explicit selection sites before resolution decides which
+	// removal path to take. A resolved top-level copy must not hide an
+	// independent stale registry-scoped selection of the same resource.
+	if err := validateMixedExplicitSelectionSites(effectiveCfg, opts.RepoRoot, name, opts.Kind, opts.HasKind, opts.Scope, opts.ScopeSpecified); err != nil {
+		return nil, err
+	}
+
 	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
@@ -201,6 +208,27 @@ type explicitRemovalSelection struct {
 	ConfigPath string
 }
 
+func validateMixedExplicitSelectionSites(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, scopeSpecified bool) error {
+	selections := allExplicitRemovalSelections(ec, repoRoot, name)
+	if hasKind {
+		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool { return selection.Kind != kind })
+	} else if len(explicitKindLabels(selections)) > 1 {
+		// Preserve the resolved path's existing --kind diagnostics.
+		return nil
+	}
+	if len(selections) == 0 {
+		return nil
+	}
+	var err error
+	selections, err = filterExplicitSelectionsByScope(selections, name, scope, scopeSpecified)
+	if err != nil {
+		// Preserve the resolved path's scope-boundary diagnostics. The complete
+		// unresolved fallback still reports this selection error when needed.
+		return nil
+	}
+	return mixedExplicitSelectionSitesError(name, selections)
+}
+
 func explicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, scopeSpecified bool) ([]explicitRemovalSelection, error) {
 	selections := allExplicitRemovalSelections(ec, repoRoot, name)
 	if hasKind {
@@ -212,38 +240,31 @@ func explicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name string,
 		return nil, nil
 	}
 
-	if scopeSpecified {
-		selectionKind := selections[0].Kind
-		targetSource := scopeToConfigSource(scope)
-		exact := slices.Clone(selections)
-		exact = slices.DeleteFunc(exact, func(selection explicitRemovalSelection) bool { return selection.Source != targetSource })
-		if len(exact) > 0 {
-			selections = exact
-		} else {
-			selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
-				return targetSource.Precedence() <= selection.Source.Precedence() || config.ValidateScopeBoundary(selection.Source, targetSource) != nil
-			})
-			if len(selections) == 0 {
-				return nil, fmt.Errorf("%s %q is not selected at %s scope", skill.KindLabel(selectionKind), name, scope)
-			}
-		}
-	} else if sources := explicitSelectionSources(selections); len(sources) > 1 {
-		return nil, explicitScopeAmbiguityError(name, selections)
-	}
-	if len(selections) == 0 {
-		return nil, nil
+	selections, err := filterExplicitSelectionsByScope(selections, name, scope, scopeSpecified)
+	if err != nil || len(selections) == 0 {
+		return selections, err
 	}
 
-	hasTopLevel := slices.ContainsFunc(selections, func(selection explicitRemovalSelection) bool { return selection.TopLevel })
 	for _, selection := range selections {
 		if !selection.TopLevel && registryRefCollisionAtSource(ec, selection.Source, config.NormalizeGitURL(selection.RegistryURL), selection.RegistryPath) {
 			return nil, fmt.Errorf("%s %q is selected from the same registry path at multiple refs; automatic removal cannot safely distinguish those entries", skill.KindLabel(selection.Kind), name)
 		}
 	}
-	if !hasTopLevel && distinctExplicitRegistryCount(selections) > 1 {
+	if err := mixedExplicitSelectionSitesError(name, selections); err != nil {
+		return nil, err
+	}
+	if distinctExplicitRegistryCount(selections) > 1 {
 		return nil, explicitRegistryAmbiguityError(name, selections)
 	}
 	return selections, nil
+}
+
+func mixedExplicitSelectionSitesError(name string, selections []explicitRemovalSelection) error {
+	hasTopLevel := slices.ContainsFunc(selections, func(selection explicitRemovalSelection) bool { return selection.TopLevel })
+	if hasTopLevel && slices.ContainsFunc(selections, func(selection explicitRemovalSelection) bool { return !selection.TopLevel }) {
+		return fmt.Errorf("%s %q has explicit selections spanning multiple registries (top-level and registry-scoped); rerun with --from to remove a registry-scoped selection first", skill.KindLabel(selections[0].Kind), name)
+	}
+	return nil
 }
 
 func allExplicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name string) []explicitRemovalSelection {
@@ -264,44 +285,63 @@ func allExplicitRemovalSelections(ec config.EffectiveConfig, repoRoot, name stri
 	return selections
 }
 
+func filterExplicitSelectionsByScope(selections []explicitRemovalSelection, name string, scope Scope, scopeSpecified bool) ([]explicitRemovalSelection, error) {
+	if !scopeSpecified {
+		if sources := explicitSelectionSources(selections); len(sources) > 1 {
+			return nil, explicitScopeAmbiguityError(name, selections)
+		}
+		return selections, nil
+	}
+
+	selectionKind := selections[0].Kind
+	targetSource := scopeToConfigSource(scope)
+	exact := slices.Clone(selections)
+	exact = slices.DeleteFunc(exact, func(selection explicitRemovalSelection) bool { return selection.Source != targetSource })
+	if len(exact) > 0 {
+		return exact, nil
+	}
+	selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
+		return targetSource.Precedence() <= selection.Source.Precedence() || config.ValidateScopeBoundary(selection.Source, targetSource) != nil
+	})
+	if len(selections) == 0 {
+		return nil, fmt.Errorf("%s %q is not selected at %s scope", skill.KindLabel(selectionKind), name, scope)
+	}
+	return selections, nil
+}
+
 func explicitRemovalSelectionsInRegistry(ec config.EffectiveConfig, repoRoot, name string, kind ir.ResourceKind, hasKind bool, scope Scope, url, ref, path string) ([]explicitRemovalSelection, error) {
 	selections := allExplicitRemovalSelections(ec, repoRoot, name)
 	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(url))
+	configuredPath := strings.TrimSpace(path)
 	selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
-		return selection.TopLevel || config.NormalizeGitURL(strings.TrimSpace(selection.RegistryURL)) != normalizedURL || !registryPathOwns(path, selection.RegistryPath)
+		return selection.TopLevel || config.NormalizeGitURL(strings.TrimSpace(selection.RegistryURL)) != normalizedURL || strings.TrimSpace(selection.RegistryPath) != configuredPath
 	})
-	if len(explicitSelectionRefs(selections)) > 1 || registryRefCollisionAtScope(ec, scope, normalizedURL, path) {
-		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", url)
-	}
-	if strings.TrimSpace(ref) != "" {
+	explicitRef := strings.TrimSpace(ref)
+	if explicitRef != "" {
 		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
-			return strings.TrimSpace(selection.Ref) != strings.TrimSpace(ref)
+			return strings.TrimSpace(selection.Ref) != explicitRef
 		})
+	} else if len(explicitSelectionRefs(selections)) > 1 || registryRefCollisionAtScope(ec, scope, normalizedURL, path) {
+		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; rerun with --ref to disambiguate", url)
 	}
 	if hasKind {
 		selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool { return selection.Kind != kind })
 	} else if labels := explicitKindLabels(selections); len(labels) > 1 {
 		return nil, fmt.Errorf("resource %q is ambiguous across kinds (%s); rerun with --kind", name, strings.Join(labels, ", "))
 	}
-	if len(selections) > 0 {
-		targetSource := scopeToConfigSource(scope)
-		exact := slices.Clone(selections)
-		exact = slices.DeleteFunc(exact, func(selection explicitRemovalSelection) bool { return selection.Source != targetSource })
-		if len(exact) > 0 {
-			selections = exact
-		} else {
-			selectionKind := selections[0].Kind
-			selections = slices.DeleteFunc(selections, func(selection explicitRemovalSelection) bool {
-				return targetSource.Precedence() <= selection.Source.Precedence() || config.ValidateScopeBoundary(selection.Source, targetSource) != nil
-			})
-			if len(selections) == 0 {
-				return nil, fmt.Errorf("%s %q is not selected at %s scope", skill.KindLabel(selectionKind), name, scope)
-			}
-		}
+	if len(selections) == 0 {
+		return nil, nil
 	}
-	for _, selection := range selections {
-		if registryRefCollisionAtSource(ec, selection.Source, normalizedURL, selection.RegistryPath) {
-			return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", url)
+	var err error
+	selections, err = filterExplicitSelectionsByScope(selections, name, scope, true)
+	if err != nil {
+		return nil, err
+	}
+	if explicitRef == "" {
+		for _, selection := range selections {
+			if registryRefCollisionAtSource(ec, selection.Source, normalizedURL, selection.RegistryPath) {
+				return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; rerun with --ref to disambiguate", url)
+			}
 		}
 	}
 	if strings.TrimSpace(path) == "" && distinctExplicitRegistryCount(selections) > 1 {
@@ -382,22 +422,17 @@ func registryEntriesAtSource(ec config.EffectiveConfig, source config.Source) []
 }
 
 func registryRefCollision(entries []config.RegistryEntry, normalizedURL, selectedPath string) bool {
-	refsByPath := make(map[string][]string)
+	var firstRef string
+	found := false
 	for _, entry := range entries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
-			continue
-		}
-		path := strings.TrimSpace(entry.Path)
-		if path != selectedPath {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL || strings.TrimSpace(entry.Path) != selectedPath {
 			continue
 		}
 		ref := strings.TrimSpace(entry.Ref)
-		if !slices.Contains(refsByPath[path], ref) {
-			refsByPath[path] = append(refsByPath[path], ref)
-		}
-		if len(refsByPath[path]) > 1 {
+		if found && ref != firstRef {
 			return true
 		}
+		firstRef, found = ref, true
 	}
 	return false
 }
@@ -483,6 +518,11 @@ func removeExplicitSelections(repoRoot string, selections []explicitRemovalSelec
 						if err := config.DisableResourceWithShadowFallback(selection.ConfigPath, entry.URL, entry.Path, entry.Ref, selection.Kind, selection.Name); err != nil {
 							return err
 						}
+						// Entry-local YAML cannot reveal tags inherited from the
+						// top level, so persist the exclusion by exact identity.
+						if err := config.AddKindExcludeToRegistryIdentityInConfig(selection.ConfigPath, entry.URL, entry.Path, entry.Ref, selection.Kind, selection.Name); err != nil {
+							return err
+						}
 					}
 				}
 			} else {
@@ -490,7 +530,7 @@ func removeExplicitSelections(repoRoot string, selections []explicitRemovalSelec
 					return err
 				}
 				if selection.AutoSelected {
-					if err := config.AddKindExcludeToRegistryInConfig(selection.ConfigPath, selection.RegistryURL, selection.RegistryPath, selection.Kind, selection.Name); err != nil {
+					if err := config.AddKindExcludeToRegistryIdentityInConfig(selection.ConfigPath, selection.RegistryURL, selection.RegistryPath, selection.Ref, selection.Kind, selection.Name); err != nil {
 						return err
 					}
 				}
@@ -643,9 +683,10 @@ func scopedConfigPath(repoRoot string, scope Scope) (string, error) {
 // registryEntryInList reports whether the list contains an entry that exactly
 // matches url and path (the same exact-match rule the editor uses when writing
 // to a specific scope's config).
-func registryEntryInList(entries []config.RegistryEntry, url, path string) bool {
+func registryEntryInList(entries []config.RegistryEntry, url, path, ref string) bool {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.URL) == url && strings.TrimSpace(entry.Path) == path {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) == config.NormalizeGitURL(strings.TrimSpace(url)) && strings.TrimSpace(entry.Path) == strings.TrimSpace(path) &&
+			(strings.TrimSpace(ref) == "" || strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref)) {
 			return true
 		}
 	}
@@ -656,7 +697,7 @@ func registryEntryInList(entries []config.RegistryEntry, url, path string) bool 
 // url (normalized) and path. When path is empty it matches any entry with the
 // URL (URL-only match). It returns the matched entry (carrying its Source
 // layer) so callers can validate scope boundaries.
-func findRegistryInMerged(cfg *config.Config, url, path string) (config.RegistryEntry, bool) {
+func findRegistryInMerged(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool) {
 	if cfg == nil {
 		return config.RegistryEntry{}, false
 	}
@@ -665,9 +706,13 @@ func findRegistryInMerged(cfg *config.Config, url, path string) (config.Registry
 		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != nu {
 			continue
 		}
-		if path == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path) {
-			return entry, true
+		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
+			continue
 		}
+		if strings.TrimSpace(ref) != "" && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
+			continue
+		}
+		return entry, true
 	}
 	return config.RegistryEntry{}, false
 }
@@ -815,20 +860,10 @@ func owningRegistryEntry(cfg *config.Config, m resolver.ResolvedArtifact) (url, 
 	return url, path, ref
 }
 
-// resolvedResourceInRegistry finds a resolved artifact by name (and optional
-// kind) restricted to a single registry entry identified by url (+ optional
-// path). The --from remove path uses this so the user-supplied --from/--path
-// flags actually narrow the lookup: a resource that resolves from several
-// registry entries or config layers is no longer spuriously "ambiguous" once a
-// specific entry is named. When multiple same-kind artifacts still match the
-// same entry (e.g. the resource is enabled at more than one scope for that
-// entry) the first is returned — they refer to the same underlying resource,
-// so Required status and Kind are identical. When --kind was NOT supplied and
-// the matches span multiple kinds (e.g. a skill and a command sharing a name in
-// the same entry), an error is returned so the caller asks for --kind rather
-// than silently disabling an arbitrary kind.
-func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, url, path string) (*resolver.ResolvedArtifact, error) {
+// resolvedResourceInRegistry restricts lookup to one --from identity.
+func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, url, ref, path string) (*resolver.ResolvedArtifact, error) {
 	nu := config.NormalizeGitURL(strings.TrimSpace(url))
+	wantRef := strings.TrimSpace(ref)
 	wantPath := strings.TrimSpace(path)
 	var matches []resolver.ResolvedArtifact
 	for i := range resolved {
@@ -843,6 +878,9 @@ func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name strin
 			continue
 		}
 		if !registryPathOwns(wantPath, candidate.RegistryPath) {
+			continue
+		}
+		if wantRef != "" && strings.TrimSpace(candidate.Ref) != wantRef {
 			continue
 		}
 		matches = append(matches, candidate)
@@ -991,8 +1029,8 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", configPath, err)
 	}
-	entryInTarget := cfg != nil && registryEntryInList(cfg.Registries, fromURL, fromPath)
-	if entryInTarget && registryRefCollisionAtScope(ec, opts.Scope, config.NormalizeGitURL(fromURL), fromPath) {
+	entryInTarget := cfg != nil && registryEntryInList(cfg.Registries, fromURL, fromPath, fromRef)
+	if strings.TrimSpace(fromRef) == "" && entryInTarget && registryRefCollisionAtScope(ec, opts.Scope, config.NormalizeGitURL(fromURL), fromPath) {
 		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", fromURL)
 	}
 
@@ -1005,14 +1043,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	mergedCfg := effectiveCfg.Merged
-	if !entryInTarget && mergedCfg != nil && registryRefCollision(mergedCfg.Registries, config.NormalizeGitURL(fromURL), fromPath) {
+	if strings.TrimSpace(fromRef) == "" && !entryInTarget && mergedCfg != nil && registryRefCollision(mergedCfg.Registries, config.NormalizeGitURL(fromURL), fromPath) {
 		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", fromURL)
 	}
 	// findRegistryInMerged returns the lowest-precedence layer that defines the
 	// registry (MergeLayers appends org→user→repo→local in order). When that
 	// layer is below the target scope, the registry is inherited and cannot be
 	// deleted at this scope — it must be suppressed via exclude_all instead.
-	mergedEntry, entryInMerged := findRegistryInMerged(mergedCfg, fromURL, fromPath)
+	mergedEntry, entryInMerged := findRegistryInMerged(mergedCfg, fromURL, fromPath, fromRef)
 	targetSource := scopeToConfigSource(opts.Scope)
 	inheritedFromLower := entryInMerged && mergedEntry.Source.Precedence() < targetSource.Precedence()
 	// Prefer the defining layer's ref when writing a shadow entry, so git
@@ -1043,8 +1081,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		// Registry is defined at this scope (and not inherited from below):
 		// deleting the entry fully removes it.
 		if entryInTarget {
-			if err := config.RemoveRegistryEntryFromConfig(configPath, fromURL, fromPath); err != nil {
-				return nil, fmt.Errorf("remove registry entry from %s config: %w", opts.Scope, err)
+			var removeErr error
+			if strings.TrimSpace(fromRef) != "" {
+				removeErr = config.RemoveRegistryEntryByIdentityFromConfig(configPath, fromURL, fromPath, fromRef)
+			} else {
+				removeErr = config.RemoveRegistryEntryFromConfig(configPath, fromURL, fromPath)
+			}
+			if removeErr != nil {
+				return nil, fmt.Errorf("remove registry entry from %s config: %w", opts.Scope, removeErr)
 			}
 			if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
 				return nil, err
@@ -1083,13 +1127,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
-	target, err := resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, fromPath)
+	target, err := resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, fromRef, fromPath)
 	if err != nil {
 		return nil, err
 	}
 	if target != nil {
 		_, targetPath, _ := owningRegistryEntry(mergedCfg, *target)
-		if registryRefCollisionAtSource(effectiveCfg, target.Source, config.NormalizeGitURL(fromURL), targetPath) {
+		if strings.TrimSpace(fromRef) == "" && registryRefCollisionAtSource(effectiveCfg, target.Source, config.NormalizeGitURL(fromURL), targetPath) {
 			return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", fromURL)
 		}
 	}
@@ -1100,6 +1144,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// Use the resolved kind (not opts.Kind) so non-skill resources are
 	// excluded from the correct selector when --kind is omitted.
 	resolvedKind := opts.Kind
+	unresolvedAutoSelected := false
 	if target != nil {
 		resolvedKind = target.Kind
 	} else {
@@ -1116,6 +1161,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 				return nil, fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(selections[0].Kind), name)
 			}
 			resolvedKind = selections[0].Kind
+			unresolvedAutoSelected = slices.ContainsFunc(selections, func(selection explicitRemovalSelection) bool { return selection.AutoSelected })
 		}
 	}
 
@@ -1137,6 +1183,11 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// validation for git registries.
 	if err := config.DisableResourceWithShadowFallback(configPath, fromURL, fromPath, shadowRef, resolvedKind, name); err != nil {
 		return nil, err
+	}
+	if unresolvedAutoSelected {
+		if err := config.AddKindExcludeToRegistryIdentityInConfig(configPath, fromURL, fromPath, shadowRef, resolvedKind, name); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {

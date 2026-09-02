@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -1312,35 +1313,37 @@ registries:
 }
 
 func TestDisableResourceWithShadowFallbackRegistryInConfig(t *testing.T) {
-	t.Run("existing_registry_modifies_entry", func(t *testing.T) {
-		configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-		mustMkdirAll(t, filepath.Dir(configPath))
-		mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+	for _, defaultValue := range []string{"true", "yes"} {
+		t.Run("existing_registry_default_"+defaultValue, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+			mustMkdirAll(t, filepath.Dir(configPath))
+			mustWriteFile(t, configPath, []byte(fmt.Sprintf(`apiVersion: agent-marketplace/v2
 registries:
   - url: git@example.com:infra.git
     ref: main
-    default: true
+    default: %s
     skills:
       include:
         - smith
-`))
-		if err := DisableResourceWithShadowFallback(configPath, "git@example.com:infra.git", "", "main", ir.KindSkill, "smith"); err != nil {
-			t.Fatalf("DisableResourceWithShadowFallback: %v", err)
-		}
-		cfg, err := loadProjectConfig(t, configPath)
-		if err != nil {
-			t.Fatalf("load: %v", err)
-		}
-		if len(cfg.Registries) != 1 {
-			t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
-		}
-		if stringSliceContains(cfg.Registries[0].Skills.Include, "smith") {
-			t.Fatalf("expected smith removed from include")
-		}
-		if !stringSliceContains(cfg.Registries[0].Skills.Exclude, "smith") {
-			t.Fatalf("expected smith in exclude (default:true triggers exclude)")
-		}
-	})
+`, defaultValue)))
+			if err := DisableResourceWithShadowFallback(configPath, "git@example.com:infra.git", "", "main", ir.KindSkill, "smith"); err != nil {
+				t.Fatalf("DisableResourceWithShadowFallback: %v", err)
+			}
+			cfg, err := loadProjectConfig(t, configPath)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if len(cfg.Registries) != 1 {
+				t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
+			}
+			if stringSliceContains(cfg.Registries[0].Skills.Include, "smith") {
+				t.Fatalf("expected smith removed from include")
+			}
+			if !stringSliceContains(cfg.Registries[0].Skills.Exclude, "smith") {
+				t.Fatalf("expected smith in exclude (default:%s triggers exclude)", defaultValue)
+			}
+		})
+	}
 
 	t.Run("missing_registry_creates_shadow_entry", func(t *testing.T) {
 		// Simulates the case where the registry is in the org config but
@@ -2206,6 +2209,53 @@ registries:
 			t.Fatalf("expected cohort-analysis removed from exclude, got %#v", entry.Skills.Exclude)
 		}
 	})
+}
+
+func TestDisableResourceWithShadowFallbackTargetsRefAndAllExactDuplicates(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - url: git@example.com:infra
+    ref: main
+    default: true
+    skills:
+      include: [gone]
+  - url: git@example.com:infra
+    ref: release
+    default: true
+    skills: [gone] # keep release shorthand
+  - url: git@example.com:infra
+    ref: main
+    default: true
+    skills:
+      include: [gone]
+`))
+
+	if err := DisableResourceWithShadowFallback(configPath, "git@example.com:infra", "", "main", ir.KindSkill, "gone"); err != nil {
+		t.Fatalf("DisableResourceWithShadowFallback: %v", err)
+	}
+	cfg, err := loadProjectConfig(t, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, entry := range cfg.Registries {
+		selected := slices.Contains(entry.Skills.Include, "gone")
+		excluded := slices.Contains(entry.Skills.Exclude, "gone")
+		if entry.Ref == "main" && (selected || !excluded) {
+			t.Fatalf("main duplicate %d was not disabled: %#v", i, entry.Skills)
+		}
+		if entry.Ref == "release" && (!selected || excluded) {
+			t.Fatalf("different ref was mutated: %#v", entry.Skills)
+		}
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("skills: [gone] # keep release shorthand")) {
+		t.Fatalf("untouched ref lost its comment or shorthand selector:\n%s", data)
+	}
 }
 
 func TestRemoveRegistryEntryFromConfig(t *testing.T) {

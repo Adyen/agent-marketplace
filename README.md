@@ -665,6 +665,9 @@ agent-marketplace tui                            Launch the interactive browser 
 **Ad-hoc flag rules:**
 
 - `--ref` and `--path` require `--from`.
+- On `remove --from`, `--ref` selects the matching URL + path + ref entry. If
+  the same URL and path are configured at multiple refs, supply `--ref` to
+  disambiguate the resource or registry entry to remove.
 - On `install`, `--from` cannot be combined with `--tag` or `--all`; it operates
   only on the given URL.
 - Omitting the resource name on `install --from` installs the whole bundle; on

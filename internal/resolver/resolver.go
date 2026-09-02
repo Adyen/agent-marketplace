@@ -1,7 +1,6 @@
 package resolver
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1552,7 +1551,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 	// the same false positive, and it is a HARD error, so it must defer too.
 	var collectionNotFoundErrs []deferredCollectionError
 	order := 0
-	suppressedCrossLayer := 0
 
 	for entryIndex, entry := range cfg.Registries {
 		catalogKey := entry.CatalogKey
@@ -1575,7 +1573,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			selectedSkill, found := byName[selected]
 			if !found {
 				if selectedEntryIsCrossLayerExcluded(entry, selected, cfg.Registries) {
-					suppressedCrossLayer++
 					continue
 				}
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref, required: entry.Required}
@@ -1648,8 +1645,6 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		}
 		errs = append(errs, deferred.err)
 	}
-	logSuppressedSelections("suppressed cross-layer excluded unresolved selections", suppressedCrossLayer)
-
 	return occurrencesByName, errs
 }
 
@@ -1923,24 +1918,10 @@ func excludeSelections(selections, excludes resourceSelections, excludeAllKinds 
 	for _, selection := range excludes {
 		excluded[selection] = struct{}{}
 	}
-	suppressed := 0
-	selections = slices.DeleteFunc(selections, func(selection resourceSelection) bool {
+	return slices.DeleteFunc(selections, func(selection resourceSelection) bool {
 		_, excludedByName := excluded[selection]
-		if excludedByName || excludeAllKinds[selection.kind] {
-			suppressed++
-			return true
-		}
-		return false
+		return excludedByName || excludeAllKinds[selection.kind]
 	})
-	logSuppressedSelections("suppressed locally excluded selections", suppressed)
-	return selections
-}
-
-func logSuppressedSelections(message string, count int) {
-	logger := slog.Default()
-	if count > 0 && logger.Enabled(context.Background(), slog.LevelDebug) {
-		logger.Debug(message, "count", count)
-	}
 }
 
 func entryResourceExcludes(entry config.RegistryEntry) resourceSelections {
@@ -2144,7 +2125,7 @@ func validateCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Re
 }
 
 func selectedEntryIsCrossLayerExcluded(entry config.RegistryEntry, selected resourceSelection, entries []config.RegistryEntry) bool {
-	return ArtifactIsCrossLayerExcluded(ResolvedArtifact{
+	return artifactIsCrossLayerExcluded(ResolvedArtifact{
 		Entry:        catalog.Entry{Kind: selected.kind, Name: selected.name},
 		RegistryURL:  entry.URL,
 		RegistryPath: entry.Path,
@@ -2173,14 +2154,14 @@ func applyCrossLayerExcludes(resolved []ResolvedArtifact, entries []config.Regis
 
 	filtered := make([]ResolvedArtifact, 0, len(resolved))
 	for _, artifact := range resolved {
-		if !ArtifactIsCrossLayerExcluded(artifact, entries) {
+		if !artifactIsCrossLayerExcluded(artifact, entries) {
 			filtered = append(filtered, artifact)
 		}
 	}
 	return filtered
 }
 
-func ArtifactIsCrossLayerExcluded(artifact ResolvedArtifact, entries []config.RegistryEntry) bool {
+func artifactIsCrossLayerExcluded(artifact ResolvedArtifact, entries []config.RegistryEntry) bool {
 	if artifact.Required {
 		return false
 	}

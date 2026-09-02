@@ -1906,6 +1906,36 @@ func TestSkillExcludeDoesNotSuppressCommandWithSameName(t *testing.T) {
 	}
 }
 
+func TestHigherLayerExcludeSuppressesOnlyOptionalUnresolvedSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		required    bool
+		wantWarning bool
+	}{
+		{name: "optional selection is suppressed", wantWarning: false},
+		{name: "required selection remains unsuppressed", required: true, wantWarning: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "git@example.com:team.git", Ref: "main", Path: "skills", Source: config.RepoCommitted, Required: tc.required, Skills: ks("gone")},
+				{URL: "git@example.com:team", Ref: "main", Path: "skills", Source: config.RepoPersonal, Skills: kse(nil, []string{"gone"})},
+			}}
+			setCatalogKeys(cfg)
+			_, errs := Resolve(cfg, map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}, nil)
+			found := false
+			for _, err := range errs {
+				var notFound *SelectedNotFoundError
+				if errors.As(err, &notFound) && notFound.Name == "gone" {
+					found = true
+				}
+			}
+			if found != tc.wantWarning {
+				t.Fatalf("SelectedNotFound warning = %v, want %v; errors: %v", found, tc.wantWarning, errs)
+			}
+		})
+	}
+}
+
 func TestLocalSkillExcludeDoesNotSuppressCommandWithSameName(t *testing.T) {
 	// A per-kind local exclude (Skills.Exclude) should only suppress skills,
 	// not commands with the same name.
@@ -2962,36 +2992,6 @@ func TestLocalExcludeSuppressesRepoPersonalResource(t *testing.T) {
 	}
 	if !names["other-skill"] {
 		t.Fatal("expected other-skill to remain (not excluded)")
-	}
-}
-
-func TestCrossLayerExcludeSuppressesSelectedNotFound(t *testing.T) {
-	cfg := &config.Config{Registries: []config.RegistryEntry{
-		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Skills: ks("test")},
-		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
-	}}
-	setCatalogKeys(cfg)
-
-	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}
-	catalogs[cfg.Registries[1].CatalogKey] = []catalog.Entry{}
-	_, errs := Resolve(cfg, catalogs, nil)
-	if len(errs) != 0 {
-		t.Fatalf("expected user exclude to suppress organization not-found warning, got %v", errs)
-	}
-}
-
-func TestCrossLayerExcludeDoesNotSuppressRequiredSelectedNotFound(t *testing.T) {
-	cfg := &config.Config{Registries: []config.RegistryEntry{
-		{URL: "git@example.com:skills.git", Ref: "main", Path: "skills", Source: config.Organization, Required: true, Skills: ks("test")},
-		{URL: "git@example.com:skills", Ref: "main", Path: "skills", Source: config.UserPersonal, Skills: kse(nil, []string{"test"})},
-	}}
-	setCatalogKeys(cfg)
-
-	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {}}
-	catalogs[cfg.Registries[1].CatalogKey] = []catalog.Entry{}
-	_, errs := Resolve(cfg, catalogs, nil)
-	if len(errs) != 1 || !IsSelectedNotFound(errs[0]) {
-		t.Fatalf("expected required not-found error to survive user exclude, got %v", errs)
 	}
 }
 

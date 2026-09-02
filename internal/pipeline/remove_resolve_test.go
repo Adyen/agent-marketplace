@@ -120,7 +120,7 @@ func TestResolvedResourceInRegistry_FiltersByURLAndPath(t *testing.T) {
 		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins", config.RepoCommitted),
 		artifact(ir.KindSkill, "sql-queries", "other-reg", "elsewhere", config.RepoCommitted),
 	}
-	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "teams/pm/plugins")
+	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "", "teams/pm/plugins")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestResolvedResourceInRegistry_SameRegistryCrossKindRequiresKind(t *testing
 		artifact(ir.KindCommand, "deploy", "awesome-ai", "teams/pm/plugins", config.RepoCommitted),
 	}
 	// hasKind == false → the two kinds cannot be disambiguated; expect an error.
-	got, err := resolvedResourceInRegistry(resolved, "deploy", 0, false, "awesome-ai", "teams/pm/plugins")
+	got, err := resolvedResourceInRegistry(resolved, "deploy", 0, false, "awesome-ai", "", "teams/pm/plugins")
 	if err == nil {
 		t.Fatalf("expected a cross-kind ambiguity error, got match %#v", got)
 	}
@@ -153,7 +153,7 @@ func TestResolvedResourceInRegistry_SameRegistryCrossKindRequiresKind(t *testing
 	}
 	// hasKind == true → the caller named the kind, so the matching entry from
 	// the requested registry is returned instead of erroring.
-	got, err = resolvedResourceInRegistry(resolved, "deploy", ir.KindCommand, true, "awesome-ai", "teams/pm/plugins")
+	got, err = resolvedResourceInRegistry(resolved, "deploy", ir.KindCommand, true, "awesome-ai", "", "teams/pm/plugins")
 	if err != nil {
 		t.Fatalf("unexpected error once --kind narrows the lookup: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestResolvedResourceInRegistry_NoMatch(t *testing.T) {
 	resolved := []resolver.ResolvedArtifact{
 		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins", config.UserPersonal),
 	}
-	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "different/path")
+	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "", "different/path")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestResolvedResourceInRegistry_EntryPathOwnsDiscoveredSubPath(t *testing.T)
 	resolved := []resolver.ResolvedArtifact{
 		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins/pm-data-analytics", config.UserPersonal),
 	}
-	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "teams/pm/plugins")
+	got, err := resolvedResourceInRegistry(resolved, "sql-queries", ir.KindSkill, true, "awesome-ai", "", "teams/pm/plugins")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -269,16 +269,64 @@ func TestExplicitRemovalSelectionDoesNotInheritRequiredThroughOverride(t *testin
 	}
 }
 
-func TestExplicitRemovalSelectionsInRegistryRejectsRefCollisionWithoutDuplicateSelection(t *testing.T) {
+func TestExplicitRemovalSelectionsInRegistryUsesExplicitRef(t *testing.T) {
 	ec := config.EffectiveConfig{
 		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
 			{URL: "registry", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}},
-			{URL: "registry", Ref: "release"},
+			{URL: "registry", Ref: "release", Skills: config.KindSelector{Include: []string{"gone"}}},
 		}}},
 	}
-	_, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, "registry", "main", "")
-	if err == nil || !strings.Contains(err.Error(), "different refs") {
-		t.Fatalf("expected ref collision to fail safely, got %v", err)
+	got, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, "registry", "main", "")
+	if err != nil {
+		t.Fatalf("explicit ref should disambiguate same URL/path entries: %v", err)
+	}
+	if len(got) != 1 || got[0].Ref != "main" {
+		t.Fatalf("expected only the main selection, got %#v", got)
+	}
+}
+
+func TestExplicitRemovalSelectionsInRegistryDoesNotClaimChildPath(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{Registries: []config.RegistryEntry{
+			{URL: "registry", Ref: "main", Path: "plugins"},
+			{URL: "registry", Ref: "main", Path: "plugins/team", Skills: config.KindSelector{Include: []string{"gone"}}},
+		}}},
+	}
+	got, err := explicitRemovalSelectionsInRegistry(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, "registry", "main", "plugins")
+	if err != nil {
+		t.Fatalf("lookup stale selection at parent path: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("parent path must not claim stale selection from child path, got %#v", got)
+	}
+}
+
+func TestExplicitRemovalSelectionsRequireRegistryForTopLevelAndPerEntryMixture(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{
+			Skills: config.KindSelector{Include: []string{"gone"}},
+			Registries: []config.RegistryEntry{
+				{URL: "top-level-owner", Ref: "main"},
+				{URL: "independent", Ref: "main", Skills: config.KindSelector{Include: []string{"gone"}}},
+			},
+		}},
+	}
+	_, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err == nil || !strings.Contains(err.Error(), "multiple registries") {
+		t.Fatalf("expected registry disambiguation for mixed selection sites, got %v", err)
+	}
+}
+
+func TestExplicitRemovalSelectionsAllowsSoleTopLevelSelection(t *testing.T) {
+	ec := config.EffectiveConfig{
+		Repo: config.LayerResult{Config: &config.Config{
+			Skills:     config.KindSelector{Include: []string{"gone"}},
+			Registries: []config.RegistryEntry{{URL: "registry", Ref: "main"}},
+		}},
+	}
+	got, err := explicitRemovalSelections(ec, t.TempDir(), "gone", ir.KindSkill, true, ScopeRepo, false)
+	if err != nil || len(got) != 1 || !got[0].TopLevel {
+		t.Fatalf("expected sole top-level selection to remain removable, got %#v, %v", got, err)
 	}
 }
 

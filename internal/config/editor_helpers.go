@@ -725,6 +725,13 @@ func yamlEntryPath(entryNode *yaml.Node) string {
 	return ""
 }
 
+func yamlEntryRef(entryNode *yaml.Node) string {
+	if refNode := findMappingValue(entryNode, "ref"); refNode != nil {
+		return strings.TrimSpace(refNode.Value)
+	}
+	return ""
+}
+
 // pathLabel returns a human-readable label for a registry path value,
 // using "(root)" for the empty-string root path.
 func pathLabel(p string) string {

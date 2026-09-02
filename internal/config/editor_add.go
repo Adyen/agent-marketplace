@@ -110,6 +110,14 @@ func EnsureRegistryInConfig(configPath, url, ref string) error {
 // that the same repo URL can have multiple sub-path entries coexisting.
 // Creates the file and parent directories if they do not exist.
 func EnsureRegistryWithPathsInConfig(configPath, url, ref, path string) error {
+	return ensureRegistryWithPathsInConfig(configPath, url, ref, path, false)
+}
+
+func ensureRegistryIdentityInConfig(configPath, url, ref, path string) error {
+	return ensureRegistryWithPathsInConfig(configPath, url, ref, path, true)
+}
+
+func ensureRegistryWithPathsInConfig(configPath, url, ref, path string, matchRef bool) error {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return fmt.Errorf("registry url is required")
@@ -138,14 +146,9 @@ func EnsureRegistryWithPathsInConfig(configPath, url, ref, path string) error {
 			if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) {
 				continue
 			}
-			// URL matches (after normalization). Entries are only duplicates
-			// when both their paths match (including empty). A root-level
-			// entry (path="") and a sub-path entry (path="skills/X") are
-			// distinct, allowing the same repo URL to have multiple entries
-			// at different scopes.
 			existingPath := yamlEntryPath(entryNode)
-			if strings.TrimSpace(path) != existingPath {
-				continue // same URL, different path — not a duplicate
+			if strings.TrimSpace(path) != existingPath || (matchRef && strings.TrimSpace(ref) != yamlEntryRef(entryNode)) {
+				continue
 			}
 			return nil // already present
 		}

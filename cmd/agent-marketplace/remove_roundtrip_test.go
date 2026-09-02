@@ -206,35 +206,53 @@ registries:
 	}
 }
 
-func TestRemoveStaleExplicitSelectionFromRepoConfig(t *testing.T) {
+func TestRemoveSkillDeletedUpstreamClearsSubsequentStaleWarning(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	origin, working := createBareRepoWithWorkingClone(t, "stale-repo.git")
+	origin, working := createBareRepoWithWorkingClone(t, "removed-upstream-lifecycle.git")
+	writeSkill(t, working, "removed-upstream", "Removed upstream", nil)
 	writeSkill(t, working, "keeper", "Keeper", nil)
-	commitAndPushAll(t, working, "setup")
+	commitAndPushAll(t, working, "add selected skill")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
   - url: `+origin+`
     ref: main
     skills:
-      - keeper
       - removed-upstream
 `)
 	withWorkingDir(t, repoRoot)
-
-	if out, err := executeCommand("remove", "removed-upstream"); err != nil {
-		t.Fatalf("remove stale selection failed: %v\n%s", err, out)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync failed: %v\n%s", err, output)
 	}
-	cfg, err := config.LoadConfigFromPath(configPath)
-	if err != nil {
+	assertFactorySkillExists(t, repoRoot, "removed-upstream")
+
+	if err := os.RemoveAll(filepath.Join(working, "skills", "removed-upstream")); err != nil {
 		t.Fatal(err)
 	}
-	if containsStr(cfg.Registries[0].Skills.Include, "removed-upstream") {
-		t.Fatalf("stale selection remains in repo config: %v", cfg.Registries[0].Skills.Include)
+	commitAndPushAll(t, working, "remove selected skill upstream")
+	if output, err := executeCommand("update"); err != nil {
+		t.Fatalf("update after upstream removal failed: %v\n%s", err, output)
+	}
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("stale sync failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, `skill "removed-upstream" was selected but not found`) {
+		t.Fatalf("expected stale warning after upstream removal, got:\n%s", output)
+	}
+
+	if output, err = executeCommand("remove", "removed-upstream"); err != nil {
+		t.Fatalf("remove stale selection failed: %v\n%s", err, output)
+	}
+	output, err = executeCommand("sync")
+	if err != nil {
+		t.Fatalf("sync after stale removal failed: %v\n%s", err, output)
+	}
+	if strings.Contains(output, `skill "removed-upstream" was selected but not found`) {
+		t.Fatalf("stale warning survived removal:\n%s", output)
 	}
 }
 
@@ -582,16 +600,20 @@ registries:
 	}
 }
 
-func TestRemoveFromRejectsSamePathAtDifferentRefs(t *testing.T) {
+func TestRemoveFromUsesRefToDisambiguateSamePath(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
 	origin, working := createBareRepoWithWorkingClone(t, "remove-from-refs.git")
 	writeSkill(t, working, "keeper", "Keeper", nil)
 	commitAndPushAll(t, working, "setup")
+	runGit(t, working, "checkout", "-b", "release")
+	runGit(t, working, "push", "origin", "release")
+	runGit(t, working, "checkout", "main")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
 registries:
   - url: `+origin+`
     ref: main
@@ -599,13 +621,31 @@ registries:
       - keeper
   - url: `+origin+`
     ref: release
+    skills:
+      - keeper
 `)
 	withWorkingDir(t, repoRoot)
 
-	for _, args := range [][]string{{"remove", "keeper", "--from", origin, "--ref", "main"}, {"remove", "--from", origin, "--ref", "main"}} {
-		if _, err := executeCommand(args...); err == nil || !strings.Contains(err.Error(), "different refs") {
-			t.Fatalf("expected ref collision for %v, got %v", args, err)
-		}
+	if out, err := executeCommand("remove", "keeper", "--from", origin, "--ref", "main"); err != nil {
+		t.Fatalf("explicit ref should disambiguate named removal: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Include, "keeper") || !containsStr(cfg.Registries[1].Skills.Include, "keeper") {
+		t.Fatalf("named removal mutated the wrong ref: %#v", cfg.Registries)
+	}
+
+	if out, err := executeCommand("remove", "--from", origin, "--ref", "main"); err != nil {
+		t.Fatalf("explicit ref should disambiguate registry removal: %v\n%s", err, out)
+	}
+	cfg, err = config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Registries) != 1 || cfg.Registries[0].Ref != "release" {
+		t.Fatalf("expected only release entry to remain, got %#v", cfg.Registries)
 	}
 }
 
@@ -1313,5 +1353,120 @@ allowed_registries: []
 	}
 	if factoryPresent["k8s-onboarding"] {
 		assertFactorySkillExists(t, repoRoot, "k8s-onboarding")
+	}
+}
+
+func TestRemoveUnresolvedAutoSelectionDisablesEveryExactDuplicate(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	origin, working := createBareRepoWithWorkingClone(t, "duplicate-auto-remove.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+origin+`
+    ref: main
+    default: true
+    skills: [removed-upstream]
+  - url: `+origin+`
+    ref: main
+    default: true
+    skills: [removed-upstream]
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "removed-upstream"); err != nil {
+		t.Fatalf("remove duplicate unresolved auto-selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("expected both duplicate entries to remain, got %#v", cfg.Registries)
+	}
+	for i, entry := range cfg.Registries {
+		if containsStr(entry.Skills.Include, "removed-upstream") || !containsStr(entry.Skills.Exclude, "removed-upstream") {
+			t.Fatalf("duplicate %d was not persistently disabled: %#v", i, entry.Skills)
+		}
+	}
+}
+
+func TestRemoveFromRefPersistsInheritedTagExcludeWithoutTouchingOtherRef(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	origin, working := createBareRepoWithWorkingClone(t, "inherited-tag-ref-remove.git")
+	writeSkill(t, working, "keeper", "Keeper", []string{"security"})
+	commitAndPushAll(t, working, "setup")
+	runGit(t, working, "checkout", "-b", "release")
+	runGit(t, working, "push", "origin", "release")
+	runGit(t, working, "checkout", "main")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+tags: [security]
+registries:
+  - url: `+origin+`
+    ref: main
+    skills: [removed-upstream]
+  - url: `+origin+`
+    ref: release
+    skills: [removed-upstream]
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "removed-upstream", "--from", origin, "--ref", "main"); err != nil {
+		t.Fatalf("remove --from --ref inherited-tag selection failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainEntry, releaseEntry := cfg.Registries[0], cfg.Registries[1]
+	if containsStr(mainEntry.Skills.Include, "removed-upstream") || !containsStr(mainEntry.Skills.Exclude, "removed-upstream") {
+		t.Fatalf("main ref exclusion did not persist: %#v", mainEntry.Skills)
+	}
+	if !containsStr(releaseEntry.Skills.Include, "removed-upstream") || containsStr(releaseEntry.Skills.Exclude, "removed-upstream") {
+		t.Fatalf("release ref was touched: %#v", releaseEntry.Skills)
+	}
+}
+
+func TestRemoveRequiresFromForResolvedTopLevelAndStalePerEntrySelection(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	resolvedOrigin, resolvedWorking := createBareRepoWithWorkingClone(t, "mixed-resolved.git")
+	writeSkill(t, resolvedWorking, "mixed-selection", "Mixed selection", nil)
+	commitAndPushAll(t, resolvedWorking, "setup")
+	staleOrigin, staleWorking := createBareRepoWithWorkingClone(t, "mixed-stale.git")
+	writeSkill(t, staleWorking, "keeper", "Keeper", nil)
+	commitAndPushAll(t, staleWorking, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+skills: [mixed-selection]
+registries:
+  - url: `+resolvedOrigin+`
+    ref: main
+  - url: `+staleOrigin+`
+    ref: main
+    skills: [mixed-selection]
+`)
+	withWorkingDir(t, repoRoot)
+
+	out, err := executeCommand("remove", "mixed-selection")
+	if err == nil || !strings.Contains(out+err.Error(), "rerun with --from") {
+		t.Fatalf("expected mixed selection sites to require --from, got %v\n%s", err, out)
+	}
+	cfg, loadErr := config.LoadConfigFromPath(configPath)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if !containsStr(cfg.Skills.Include, "mixed-selection") || !containsStr(cfg.Registries[1].Skills.Include, "mixed-selection") {
+		t.Fatalf("ambiguous remove mutated config: %#v", cfg)
 	}
 }

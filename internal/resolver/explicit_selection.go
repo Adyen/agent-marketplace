@@ -84,7 +84,7 @@ func explicitSelectionEnabled(selection ExplicitSelection, cfg *config.Config, l
 			continue
 		}
 		artifact := ResolvedArtifact{Entry: catalog.Entry{Kind: selection.Kind, Name: selection.Name}, RegistryURL: entry.URL, RegistryPath: entry.Path, Ref: entry.Ref, Source: entry.Source, Required: entry.Required}
-		if !ArtifactIsCrossLayerExcluded(artifact, cfg.Registries) {
+		if !artifactIsCrossLayerExcluded(artifact, cfg.Registries) {
 			return true
 		}
 	}
