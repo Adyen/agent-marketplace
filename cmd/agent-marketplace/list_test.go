@@ -239,7 +239,7 @@ func parseTable(t *testing.T, output string) ([]string, []string) {
 	return header, rows
 }
 
-func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, string) {
+func createBareRepoWithWorkingClone(t testing.TB, bareName string) (string, string) {
 	t.Helper()
 
 	baseDir := t.TempDir()
@@ -258,7 +258,7 @@ func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, stri
 	return origin, working
 }
 
-func commitAndPushAll(t *testing.T, repoDir, message string) {
+func commitAndPushAll(t testing.TB, repoDir, message string) {
 	t.Helper()
 
 	runGit(t, repoDir, "add", ".")
@@ -266,7 +266,7 @@ func commitAndPushAll(t *testing.T, repoDir, message string) {
 	runGit(t, repoDir, "push", "origin", "main")
 }
 
-func writeSkill(t *testing.T, repoDir, name, description string, tags []string) {
+func writeSkill(t testing.TB, repoDir, name, description string, tags []string) {
 	t.Helper()
 
 	// Idempotent layout: callers may pass either a bundle root or a path that
@@ -341,7 +341,7 @@ var (
 	harnessesRegex = regexp.MustCompile(`(?m)^harnesses:[ \t]*(?:\[[^\]]*\][ \t]*(?:\n|$)|(?:\n(?:[ \t]*-[^\n]*(?:\n|$))+))?`)
 )
 
-func writeConfig(t *testing.T, path, content string) {
+func writeConfig(t testing.TB, path, content string) {
 	t.Helper()
 	content = strings.TrimSpace(content)
 
@@ -420,7 +420,7 @@ func extractAndStripHarnesses(content string) (string, []string) {
 	return content, parsed.Harnesses
 }
 
-func ensureGlobalConfig(t *testing.T) {
+func ensureGlobalConfig(t testing.TB) {
 	t.Helper()
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -433,7 +433,7 @@ func ensureGlobalConfig(t *testing.T) {
 	writeFile(t, globalPath, "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n")
 }
 
-func writeFile(t *testing.T, path, content string) {
+func writeFile(t testing.TB, path, content string) {
 	t.Helper()
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -445,7 +445,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func withWorkingDir(t *testing.T, dir string) {
+func withWorkingDir(t testing.TB, dir string) {
 	t.Helper()
 
 	previous, err := os.Getwd()
@@ -464,7 +464,7 @@ func withWorkingDir(t *testing.T, dir string) {
 	})
 }
 
-func runGit(t *testing.T, dir string, args ...string) {
+func runGit(t testing.TB, dir string, args ...string) {
 	t.Helper()
 
 	cmd := exec.Command("git", args...)

@@ -48,7 +48,8 @@ type ResolveOptions struct {
 	IgnoreBlockedRegistries bool
 	// SkipInventory suppresses recording for internal pre-mutation lookups. The
 	// post-mutation Resolve performed by sync remains the reported generation.
-	SkipInventory bool
+	SkipInventory           bool
+	CatalogAlreadyRefreshed bool
 }
 
 type ResolveResult struct {
@@ -483,7 +484,11 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	start := time.Now()
 	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot)
-	opts.CatalogMode = catalog.LoadModeRefresh
+	if opts.CatalogAlreadyRefreshed {
+		opts.CatalogMode = catalog.LoadModeCached
+	} else {
+		opts.CatalogMode = catalog.LoadModeRefresh
+	}
 	opts.Gitignore = true
 	opts.RequireTargetSet = true
 

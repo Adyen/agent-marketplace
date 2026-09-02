@@ -22,6 +22,7 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 	if o.LocalConfigDir != "" && o.LocalConfigDir != repoRoot {
 		resolveOpts.LocalConfigDir = o.LocalConfigDir
 	}
+	resolveOpts.CatalogAlreadyRefreshed = o.CatalogAlreadyRefreshed
 	syncResult := Sync(ctx, resolveOpts)
 	return syncResult.Warnings, errors.Join(syncResult.Errors...)
 }
@@ -30,6 +31,7 @@ type silentSyncOptions struct {
 	MaterializeRoot         string
 	LocalConfigDir          string
 	IgnoreBlockedRegistries bool
+	CatalogAlreadyRefreshed bool
 }
 
 type silentSyncOpt func(*silentSyncOptions)
@@ -52,4 +54,8 @@ func withLocalConfigDir(dir string) silentSyncOpt {
 // registry can be de-synced after the policy is tightened.
 func WithIgnoreBlockedRegistries() silentSyncOpt {
 	return func(o *silentSyncOptions) { o.IgnoreBlockedRegistries = true }
+}
+
+func withAlreadyRefreshedCatalog() silentSyncOpt {
+	return func(o *silentSyncOptions) { o.CatalogAlreadyRefreshed = true }
 }

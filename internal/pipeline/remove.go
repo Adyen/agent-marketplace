@@ -894,6 +894,47 @@ func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name strin
 	return &matches[0], nil
 }
 
+func catalogResourceInRegistry(result ResolveResult, name string, kind ir.ResourceKind, hasKind bool, url, ref, path string) (*catalogResourceMatch, bool, error) {
+	if result.LoadedCfg == nil {
+		return nil, false, nil
+	}
+	nu := config.NormalizeGitURL(strings.TrimSpace(url))
+	wantRef := strings.TrimSpace(ref)
+	matches := make(map[string]catalogResourceMatch)
+	required := make(map[string]bool)
+	for _, entry := range result.LoadedCfg.Registries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != nu || !registryPathOwns(path, entry.Path) {
+			continue
+		}
+		if wantRef != "" && strings.TrimSpace(entry.Ref) != wantRef {
+			continue
+		}
+		for _, candidate := range result.CatalogLoad.Catalogs[entry.CatalogKey].Entries {
+			if strings.TrimSpace(candidate.Name) != strings.TrimSpace(name) || hasKind && candidate.Kind != kind {
+				continue
+			}
+			key := skill.ResourceKey(candidate.Kind, candidate.Name)
+			matches[key] = catalogResourceMatch{kind: candidate.Kind, name: candidate.Name}
+			required[key] = required[key] || entry.Required
+		}
+	}
+	if len(matches) == 0 {
+		return nil, false, nil
+	}
+	if len(matches) > 1 {
+		labels := make([]string, 0, len(matches))
+		for _, match := range matches {
+			labels = append(labels, skill.KindLabel(match.kind))
+		}
+		slices.Sort(labels)
+		return nil, false, fmt.Errorf("resource %q is ambiguous across kinds (%s); rerun with --kind", name, strings.Join(labels, ", "))
+	}
+	for key, match := range matches {
+		return &match, required[key], nil
+	}
+	return nil, false, nil
+}
+
 // registryPathOwns reports whether the configured registry entry path
 // entryPath "owns" an artifact discovered at artifactPath. An empty entryPath
 // matches everything (URL-only targeting). Otherwise the artifact belongs to
@@ -1038,10 +1079,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// all, and (b) handle the cross-layer case where the entry is enabled in
 	// a lower-precedence layer (e.g. committed project config) but the user
 	// wants to suppress it at a higher scope (e.g. config.local.yaml).
-	effectiveCfg, err := loadRemoveConfig(ctx, repoRoot)
-	if err != nil {
-		return nil, err
-	}
+	effectiveCfg := ec
 	mergedCfg := effectiveCfg.Merged
 	if strings.TrimSpace(fromRef) == "" && !entryInTarget && mergedCfg != nil && registryRefCollision(mergedCfg.Registries, config.NormalizeGitURL(fromURL), fromPath) {
 		return nil, fmt.Errorf("registry %q has multiple entries for the same path at different refs; automatic removal cannot safely distinguish those entries", fromURL)
@@ -1153,7 +1191,16 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			return nil, err
 		}
 		if len(selections) == 0 {
-			if !config.OnlyRegistryURLBlockedErrors(effectiveCfg.Errors) {
+			catalogMatch, required, err := catalogResourceInRegistry(resolvedResult, name, opts.Kind, opts.HasKind, fromURL, fromRef, fromPath)
+			if err != nil {
+				return nil, err
+			}
+			if catalogMatch != nil {
+				if required {
+					return nil, fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(catalogMatch.kind), name)
+				}
+				resolvedKind = catalogMatch.kind
+			} else if !config.OnlyRegistryURLBlockedErrors(effectiveCfg.Errors) {
 				return nil, fmt.Errorf("resource %q is not currently enabled", name)
 			}
 		} else {
@@ -1190,7 +1237,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		}
 	}
 
-	if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
+	if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries(), withAlreadyRefreshedCatalog()); err != nil {
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil

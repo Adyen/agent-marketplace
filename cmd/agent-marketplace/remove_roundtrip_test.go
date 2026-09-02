@@ -600,6 +600,46 @@ registries:
 	}
 }
 
+func TestRemoveFromExcludesCollisionRunnerUp(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	originA, workingA := createBareRepoWithWorkingClone(t, "collision-source-a.git")
+	writeSkill(t, workingA, "tdd", "TDD from A", nil)
+	commitAndPushAll(t, workingA, "setup")
+	originB, workingB := createBareRepoWithWorkingClone(t, "collision-source-b.git")
+	writeSkill(t, workingB, "tdd", "TDD from B", nil)
+	commitAndPushAll(t, workingB, "setup")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+registries:
+  - url: `+originA+`
+    ref: main
+    default: true
+  - url: `+originB+`
+    ref: main
+    default: true
+`)
+	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("remove", "tdd", "--from", originB); err != nil {
+		t.Fatalf("remove collision runner-up failed: %v\n%s", err, out)
+	}
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStr(cfg.Registries[0].Skills.Exclude, "tdd") {
+		t.Fatal("winner was excluded instead of the requested registry")
+	}
+	if !containsStr(cfg.Registries[1].Skills.Exclude, "tdd") {
+		t.Fatalf("expected registry-scoped exclude, got %#v", cfg.Registries[1].Skills)
+	}
+	assertFactorySkillExists(t, repoRoot, "tdd")
+}
+
 func TestRemoveFromUsesRefToDisambiguateSamePath(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

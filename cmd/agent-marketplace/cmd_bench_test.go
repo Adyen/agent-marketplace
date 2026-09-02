@@ -206,6 +206,40 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 	}
 }
 
+func BenchmarkRemoveNamedFromWarmGit(b *testing.B) {
+	homeDir := b.TempDir()
+	b.Setenv("HOME", homeDir)
+	origin, working := createBareRepoWithWorkingClone(b, "remove-bench.git")
+	writeSkill(b, working, "bench-skill", "Benchmark skill", nil)
+	commitAndPushAll(b, working, "setup")
+
+	repoRoot := b.TempDir()
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	configBody := `
+registries:
+  - url: ` + origin + `
+    ref: main
+    skills:
+      - bench-skill
+`
+	writeConfig(b, configPath, configBody)
+	withWorkingDir(b, repoRoot)
+	if out, err := executeCommand("sync"); err != nil {
+		b.Fatalf("warm sync failed: %v\n%s", err, out)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		writeConfig(b, configPath, configBody)
+		b.StartTimer()
+		if out, err := executeCommand("remove", "bench-skill", "--from", origin); err != nil {
+			b.Fatalf("remove failed: %v\n%s", err, out)
+		}
+	}
+}
+
 func kindForIdx(s int) ir.ResourceKind {
 	v := s % 5
 	switch v {
