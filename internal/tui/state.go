@@ -281,9 +281,10 @@ type Model struct {
 	// loading, refreshing, or syncing.
 	spinner spinner.Model
 
-	detailViewport viewport.Model
-	helpViewport   viewport.Model
-	errorsViewport viewport.Model
+	detailViewport             viewport.Model
+	helpViewport               viewport.Model
+	errorsViewport             viewport.Model
+	marketplaceConsentViewport viewport.Model
 
 	// detailKey is the stable row identity of the resource whose full detail
 	// pane is open. It keeps an accepted snapshot rebuild anchored to the same
