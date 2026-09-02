@@ -152,6 +152,8 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
+	selectionAfterDisable := m.selectionAfterDisable
+	m.selectionAfterDisable = ""
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
@@ -160,7 +162,9 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
 	m.recomputeView()
-	m.restoreSelectionAfterRebuild(selection)
+	if !m.restoreSelectionKey(selectionAfterDisable) {
+		m.restoreSelectionAfterRebuild(selection)
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -318,6 +322,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
+		if msg.selectNext {
+			m.selectionAfterDisable = m.nextRowSelectionKey()
+		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
 		if !msg.followUp && msg.enabled && m.pendingExcludeAction != nil {

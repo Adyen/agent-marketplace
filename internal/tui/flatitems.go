@@ -161,6 +161,15 @@ func (m Model) selectionKey() string {
 	return flatItemKey(m.flatItems[m.cursor])
 }
 
+func (m Model) nextRowSelectionKey() string {
+	for i := m.cursor + 1; i < len(m.flatItems); i++ {
+		if m.flatItems[i].Kind == flatArtifact {
+			return flatItemKey(m.flatItems[i])
+		}
+	}
+	return ""
+}
+
 func (m *Model) restoreSelectionKey(key string) bool {
 	if key == "" {
 		return false

@@ -627,6 +627,45 @@ func TestToggleMovesSkillBetweenSections(t *testing.T) {
 	}
 }
 
+func TestDisableSelectsNextResourceAfterSnapshot(t *testing.T) {
+	alpha := mkRow("alpha", withProject)
+	bravo := mkRow("bravo", withProject)
+	charlie := mkRow("charlie", withProject)
+	m := NewModel("/repo", "/home")
+	m.loading = false
+	m.rows = []row{alpha, bravo, charlie}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "bravo" {
+			m.cursor = i
+			break
+		}
+	}
+
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "bravo", selectNext: true})
+	m = updated.(Model)
+	generation := m.requests.active(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{
+		generation: generation,
+		rows: []row{
+			alpha,
+			mkRow("bravo", withAvailable),
+			charlie,
+		},
+	})
+	m = updated.(Model)
+
+	selected, ok := m.selectedRow()
+	if !ok || selected.Artifact.Name != "charlie" {
+		t.Fatalf("selection after disabling bravo = %#v, ok=%v; want charlie", selected, ok)
+	}
+}
+
 // TestReadSnapshotExpandsCollections verifies that the TUI's readSnapshot
 // expands collection references into synthetic registry entries before
 // resolving skills. Without this step, skills selected via collections
