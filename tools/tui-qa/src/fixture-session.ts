@@ -79,7 +79,7 @@ const renderFrame = async (raw: string, columns: number, rows: number): Promise<
   }
 };
 
-const readLifecycle = (directory: string): FixtureLifecycle => {
+export const readLifecycleRecord = (directory: string): FixtureLifecycle => {
   const files = fs.readdirSync(directory).filter((name) => name.startsWith("lifecycle-") && name.endsWith(".json"));
   if (files.length !== 1) throw new Error(`expected one fixture lifecycle record, found ${files.length}`);
   const value: unknown = JSON.parse(fs.readFileSync(path.join(directory, files[0]), "utf8"));
@@ -205,7 +205,7 @@ export const runFixtureSession = async (options: FixtureSessionOptions): Promise
 
     const cleanup = await cleanupProcessTree(terminal.pid, terminal.pid, 300);
     const segments = splitTargetTrace(raw);
-    const lifecycle = readLifecycle(lifecycleDirectory);
+    const lifecycle = readLifecycleRecord(lifecycleDirectory);
     return {
       raw,
       targetRaw: segments.target,
