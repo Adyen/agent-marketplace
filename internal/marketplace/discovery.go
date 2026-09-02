@@ -117,7 +117,14 @@ func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, li
 	if err := dec.Decode(&record); err != nil {
 		return DiscoveryOutcome{}, false
 	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return DiscoveryOutcome{}, false
+	}
 	if record.Schema != discoveryCacheSchema || record.Endpoint != ep.URL || record.InstanceID != ep.InstanceID || record.Query != query || record.Kind != kind || record.Limit != limit || record.ObservedAt.IsZero() {
+		return DiscoveryOutcome{}, false
+	}
+	if err := validateDiscoveryPage(record.Items, record.Total, record.Limit); err != nil {
 		return DiscoveryOutcome{}, false
 	}
 	age := c.now().Sub(record.ObservedAt)
@@ -134,6 +141,9 @@ func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, li
 func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit int) error {
 	if c == nil || c.root == "" {
 		return nil
+	}
+	if err := validateDiscoveryPage(out.Items, out.Total, limit); err != nil {
+		return fmt.Errorf("invalid discovery cache page: %w", err)
 	}
 	path := c.path(out.Endpoint, query, kind, limit)
 	dir := filepath.Dir(path)
@@ -360,6 +370,13 @@ func Discover(ctx context.Context, ec config.EffectiveConfig, query string, opts
 	return outcomes, nil
 }
 
+func validateDiscoveryPage(items []mpapi.ResourceListItem, total, limit int) error {
+	if limit <= 0 || limit > DiscoveryPageLimit || total < 0 || len(items) > limit || len(items) > total {
+		return errors.New("discovery page exceeds bounds")
+	}
+	return validateAPISearchResponse(SearchResponse{Items: items, Total: total, Limit: limit}, SearchRequest{Limit: limit})
+}
+
 func upsertDiscoveryOutcome(outcomes []DiscoveryOutcome, update DiscoveryOutcome) []DiscoveryOutcome {
 	for i := range outcomes {
 		if outcomes[i].Endpoint.URL == update.Endpoint.URL && outcomes[i].Endpoint.InstanceID == update.Endpoint.InstanceID {
@@ -382,7 +399,7 @@ func sortedDiscoveryOutcomes(outcomes []DiscoveryOutcome) []DiscoveryOutcome {
 }
 
 func logDiscoveryCompletion(started time.Time, outcomes []DiscoveryOutcome) {
-	var failures, results, truncated, fresh, stale int
+	var failures, results, truncated, miss, fresh, stale int
 	for _, outcome := range outcomes {
 		if outcome.Err != nil {
 			failures++
@@ -392,13 +409,15 @@ func logDiscoveryCompletion(started time.Time, outcomes []DiscoveryOutcome) {
 			truncated++
 		}
 		switch outcome.CacheState {
+		case DiscoveryCacheMiss:
+			miss++
 		case DiscoveryCacheFresh:
 			fresh++
 		case DiscoveryCacheStale:
 			stale++
 		}
 	}
-	slog.Info("marketplace discovery completed", "endpoints", len(outcomes), "failures", failures, "results", results, "truncated_endpoints", truncated, "cache_fresh", fresh, "cache_stale", stale, "duration_ms", time.Since(started).Milliseconds())
+	slog.Info("marketplace discovery completed", "endpoints", len(outcomes), "failures", failures, "results", results, "truncated_endpoints", truncated, "cache_miss", miss, "cache_fresh", fresh, "cache_stale", stale, "duration_ms", time.Since(started).Milliseconds())
 }
 
 func discoverOne(ctx context.Context, ep config.MarketplaceEntry, verify bool, query string, opts DiscoveryOptions, limit int) (DiscoveryOutcome, error) {

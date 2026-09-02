@@ -186,7 +186,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResponse,
 	if err := c.getJSON(ctx, c.requestURL([]string{"api", "v1", "search"}, q), &sr); err != nil {
 		return sr, err
 	}
-	if err := validateAPISearchResponse(sr); err != nil {
+	if err := validateAPISearchResponse(sr, req); err != nil {
 		return sr, fmt.Errorf("invalid Marketplace search response: %w", err)
 	}
 	return sr, nil
@@ -663,9 +663,16 @@ func validateAPIWellKnown(wk mpapi.WellKnown) error {
 	return nil
 }
 
-func validateAPISearchResponse(response SearchResponse) error {
-	if response.Total < 0 || response.Offset < 0 || response.Limit <= 0 {
+func validateAPISearchResponse(response SearchResponse, request SearchRequest) error {
+	if response.Total < 0 || response.Offset < 0 || response.Limit <= 0 || response.Offset != request.Offset {
 		return fmt.Errorf("search pagination is invalid")
+	}
+	pageLimit := response.Limit
+	if request.Limit > 0 && request.Limit < pageLimit {
+		pageLimit = request.Limit
+	}
+	if len(response.Items) > pageLimit || (len(response.Items) > 0 && response.Offset+len(response.Items) > response.Total) {
+		return fmt.Errorf("search page exceeds pagination bounds")
 	}
 	for _, item := range response.Items {
 		if err := validateAPIResourceListItem(item); err != nil {

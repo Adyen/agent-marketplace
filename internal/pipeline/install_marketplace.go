@@ -23,8 +23,20 @@ import (
 // MarketplaceConsentError carries the verified preview even when consent
 // prevents mutation, so automation can log the exact artifact it declined.
 type MarketplaceConsentError struct {
-	Preview string
-	Err     error
+	Preview  string
+	Prepared *PreparedMarketplaceInstall
+	Err      error
+}
+
+type PreparedMarketplaceInstall struct {
+	options             InstallOptions
+	configPath          string
+	plan                *marketplace.PreparedInstall
+	preview             string
+	targetHarnesses     []string
+	allowedMarketplaces *[]string
+	allowedRegistries   *[]string
+	endpointConfigured  bool
 }
 
 func (e *MarketplaceConsentError) Error() string { return e.Err.Error() }
@@ -161,6 +173,17 @@ func marketplaceRegistrationConfigPath(ec *config.EffectiveConfig, source config
 }
 
 func installMarketplace(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*InstallResult, error) {
+	prepared, err := prepareMarketplaceInstall(ctx, opts, configPath, ec)
+	if err != nil {
+		return nil, err
+	}
+	if err := evaluateMarketplaceConsent(prepared.plan, opts.AcceptRisk); err != nil {
+		return nil, &MarketplaceConsentError{Preview: prepared.preview, Prepared: prepared, Err: err}
+	}
+	return CommitPreparedMarketplaceInstall(ctx, prepared)
+}
+
+func prepareMarketplaceInstall(ctx context.Context, opts InstallOptions, configPath string, ec *config.EffectiveConfig) (*PreparedMarketplaceInstall, error) {
 	if ec == nil || len(ec.TargetHarnesses) == 0 {
 		return nil, &TargetHarnessSetMissingError{}
 	}
@@ -199,7 +222,6 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
 	allowedRegistries := []string(nil)
 	if ec.Merged != nil && ec.Merged.AllowedRegistries != nil {
 		allowedRegistries = *ec.Merged.AllowedRegistries
@@ -220,16 +242,64 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 	if err != nil {
 		return nil, err
 	}
-	if err := evaluateMarketplaceConsent(plan, opts.AcceptRisk); err != nil {
-		return nil, &MarketplaceConsentError{Preview: preview, Err: err}
+	var preparedAllowedMarketplaces, preparedAllowedRegistries *[]string
+	if ec.Merged != nil {
+		preparedAllowedMarketplaces = cloneStringPolicy(ec.Merged.AllowedMarketplaces)
+		preparedAllowedRegistries = cloneStringPolicy(ec.Merged.AllowedRegistries)
+	}
+	return &PreparedMarketplaceInstall{
+		options:             opts,
+		configPath:          configPath,
+		plan:                plan,
+		preview:             preview,
+		targetHarnesses:     slices.Clone(ec.TargetHarnesses),
+		allowedMarketplaces: preparedAllowedMarketplaces,
+		allowedRegistries:   preparedAllowedRegistries,
+		endpointConfigured:  hasMarketplaceIdentity(ec.Merged, plan.Entry),
+	}, nil
+}
+
+func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMarketplaceInstall) (*InstallResult, error) {
+	if prepared == nil || prepared.plan == nil {
+		return nil, errors.New("marketplace install was not prepared")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	pins := marketplaceInstallPins(plan)
-	identities := marketplaceInstallIdentities(plan)
-	requirementWarnings, err := ensureMarketplacePinsAndSync(configPath, plan.Entry, pins, func() ([]error, error) {
-		return syncAfterInstall(ctx, opts.RepoRoot, identities, silentSyncOptsForInstall(opts)...)
+	if err := evaluateMarketplaceConsent(prepared.plan, true); err != nil {
+		return nil, err
+	}
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: prepared.options.RepoRoot, LocalConfigDir: prepared.options.LocalConfigDir})
+	var allowedMarketplaces, allowedRegistries *[]string
+	if ec.Merged != nil {
+		allowedMarketplaces = ec.Merged.AllowedMarketplaces
+		allowedRegistries = ec.Merged.AllowedRegistries
+	}
+	if !equalStringPolicy(prepared.allowedMarketplaces, allowedMarketplaces) {
+		return nil, errors.New("allowed_marketplaces changed after Marketplace install preview; preview again")
+	}
+	if !equalStringPolicy(prepared.allowedRegistries, allowedRegistries) {
+		return nil, errors.New("allowed_registries changed after Marketplace install preview; preview again")
+	}
+	if len(ec.Errors) > 0 {
+		return nil, errors.Join(ec.Errors...)
+	}
+	if !slices.Equal(ec.TargetHarnesses, prepared.targetHarnesses) {
+		return nil, errors.New("target harnesses changed after Marketplace install preview; preview again")
+	}
+	commitEntry := prepared.plan.Entry
+	if current, ok := marketplaceIdentity(ec.Merged, prepared.plan.Entry); ok {
+		commitEntry.Alias = current.Alias
+	} else if prepared.endpointConfigured {
+		return nil, errors.New("marketplace endpoint changed after install preview; preview again")
+	}
+	if err := checkMarketplaceInstallCollision(ctx, prepared.options, &ec, prepared.plan); err != nil {
+		return nil, err
+	}
+	pins := marketplaceInstallPins(prepared.plan)
+	identities := marketplaceInstallIdentities(prepared.plan)
+	requirementWarnings, err := ensureMarketplacePinsAndSync(prepared.configPath, commitEntry, pins, func() ([]error, error) {
+		return syncAfterInstall(ctx, prepared.options.RepoRoot, identities, silentSyncOptsForInstall(prepared.options)...)
 	})
 	if err != nil {
 		return nil, err
@@ -238,7 +308,38 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 	for _, identity := range identities {
 		installed = append(installed, identity.name)
 	}
-	return &InstallResult{Installed: installed, IsCollection: len(plan.CollectionMembers) > 0, CollectionLabel: plan.Pin.Name, MarketplacePreview: preview, RequirementWarnings: requirementWarnings}, nil
+	return &InstallResult{Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0, CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview, RequirementWarnings: requirementWarnings}, nil
+}
+
+func cloneStringPolicy(policy *[]string) *[]string {
+	if policy == nil {
+		return nil
+	}
+	cloned := slices.Clone(*policy)
+	return &cloned
+}
+
+func equalStringPolicy(a, b *[]string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return slices.Equal(*a, *b)
+}
+
+func hasMarketplaceIdentity(cfg *config.Config, want config.MarketplaceEntry) bool {
+	_, ok := marketplaceIdentity(cfg, want)
+	return ok
+}
+
+func marketplaceIdentity(cfg *config.Config, want config.MarketplaceEntry) (config.MarketplaceEntry, bool) {
+	if cfg != nil {
+		for _, entry := range cfg.Marketplaces {
+			if canonicalMarketplaceURL(entry.URL) == canonicalMarketplaceURL(want.URL) && entry.InstanceID == want.InstanceID {
+				return entry, true
+			}
+		}
+	}
+	return config.MarketplaceEntry{}, false
 }
 
 func marketplaceInstallPins(plan *marketplace.PreparedInstall) []config.MarketplaceResourcePin {
