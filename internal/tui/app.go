@@ -260,21 +260,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
-			return m, nil
+			return m, m.finishMarketplaceInstallReload(msg.generation, errors.New("configuration migration is required"))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
-			return m, nil
+			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg)
 		discoveryCmd := m.beginMarketplaceDiscovery("", false)
+		installCmd := m.finishMarketplaceInstallReload(msg.generation, nil)
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), discoveryCmd, m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), discoveryCmd, installCmd, m.spinner.Tick)
 		}
 		m.refreshing = false
-		return m, discoveryCmd
+		return m, tea.Batch(discoveryCmd, installCmd)
 
 	case refreshLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -339,11 +340,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.requests.active(requestDiscovery) != msg.generation {
+		if m.requests.active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
 			return m, nil
 		}
+		m.discoverySequence = msg.sequence
 		m.applyDiscovery(msg.query, msg.outcomes)
-		return m, waitMarketplaceDiscoveryUpdate(msg.generation, msg.query, msg.updates)
+		return m, waitMarketplaceDiscoveryUpdate(msg.generation, msg.sequence+1, msg.query, msg.updates)
 
 	case discoveryInstallMsg:
 		if !m.acceptsOperation(msg.operation) {
@@ -353,24 +355,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if errors.As(msg.err, &consent) {
 			m.marketplaceInstallOptions = msg.options
 			m.marketplaceInstallOperation = msg.operation
+			m.marketplacePreparedInstall = consent.Prepared
 			m.marketplaceInstallPreview = consent.Preview
 			m.pane = paneMarketplaceConsent
 			return m, nil
 		}
-		m.finishOperation(msg.operation)
-		m.marketplaceInstallOperation = 0
+		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
 		if msg.err != nil {
+			m.finishOperation(msg.operation)
+			m.marketplaceInstallOperation = 0
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.toast = "Marketplace install failed: " + msg.err.Error()
 			m.toastExp = time.Now().Add(5 * time.Second)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
-		m.recordOperationSuccess(operationMutation)
-		m.toast = "Marketplace resource installed"
-		m.toastExp = time.Now().Add(2 * time.Second)
 		generation := m.beginRequest(requestSnapshot)
-		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
+		m.marketplaceInstallReload = generation
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case toastMsg:
 		m.toast = msg.text

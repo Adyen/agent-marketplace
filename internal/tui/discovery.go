@@ -22,6 +22,7 @@ const marketplaceSearchDebounce = 250 * time.Millisecond
 
 type discoveryLoadedMsg struct {
 	generation requestGeneration
+	sequence   uint64
 	query      string
 	outcomes   []marketplace.DiscoveryOutcome
 	updates    <-chan []marketplace.DiscoveryOutcome
@@ -85,6 +86,13 @@ func runDiscoveryInstall(ctx context.Context, operation operationID, options pip
 	}
 }
 
+func commitDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions, prepared *pipeline.PreparedMarketplaceInstall) tea.Cmd {
+	return func() tea.Msg {
+		result, err := pipeline.CommitPreparedMarketplaceInstall(ctx, prepared)
+		return discoveryInstallMsg{operation: operation, options: options, result: result, err: err}
+	}
+}
+
 func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	options, err := discoveryInstallOptions(m.repoRoot, r, s)
 	if err != nil {
@@ -100,6 +108,25 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	return m, runDiscoveryInstall(ctxOrBackground(m.ctx), operation, options)
 }
 
+func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err error) tea.Cmd {
+	if m.marketplaceInstallReload == 0 || generation < m.marketplaceInstallReload {
+		return nil
+	}
+	m.finishOperation(m.marketplaceInstallOperation)
+	m.marketplaceInstallOperation = 0
+	m.marketplaceInstallReload = 0
+	if err != nil {
+		m.recordOperationFailure(operationMutation, diagnosticMutation, err)
+		m.toast = "Marketplace install reload failed: " + err.Error()
+		m.toastExp = time.Now().Add(5 * time.Second)
+		return toastExpiryCmd(5 * time.Second)
+	}
+	m.recordOperationSuccess(operationMutation)
+	m.toast = "Marketplace resource installed"
+	m.toastExp = time.Now().Add(2 * time.Second)
+	return toastExpiryCmd(2 * time.Second)
+}
+
 func renderMarketplaceConsent(m Model) string {
 	preview := sanitizeTerminalData(m.marketplaceInstallPreview, terminalMarkdownBody)
 	return styleHelpOverlay.Render(styleConfirmTitle.Render("Verified Marketplace install") + "\n\n" + preview + "\n\nInstall this exact verified revision? [y] yes  [n/esc] cancel")
@@ -109,12 +136,12 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	switch msg.String() {
 	case "y", "Y":
 		m.pane = paneList
-		m.marketplaceInstallOptions.AcceptRisk = true
-		return m, runDiscoveryInstall(ctxOrBackground(m.ctx), m.marketplaceInstallOperation, m.marketplaceInstallOptions)
+		return m, commitDiscoveryInstall(ctxOrBackground(m.ctx), m.marketplaceInstallOperation, m.marketplaceInstallOptions, m.marketplacePreparedInstall)
 	case "n", "N", "esc":
 		m.pane = paneList
 		m.finishOperation(m.marketplaceInstallOperation)
 		m.marketplaceInstallOperation = 0
+		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
 		return m, nil
 	}
@@ -135,14 +162,14 @@ func loadMarketplaceDiscovery(ctx context.Context, cfg *config.Config, query str
 		if err != nil {
 			return discoveryLoadedMsg{generation: generation, query: query, done: true, err: err}
 		}
-		return waitMarketplaceDiscoveryUpdate(generation, query, updates)()
+		return waitMarketplaceDiscoveryUpdate(generation, 1, query, updates)()
 	}
 }
 
-func waitMarketplaceDiscoveryUpdate(generation requestGeneration, query string, updates <-chan []marketplace.DiscoveryOutcome) tea.Cmd {
+func waitMarketplaceDiscoveryUpdate(generation requestGeneration, sequence uint64, query string, updates <-chan []marketplace.DiscoveryOutcome) tea.Cmd {
 	return func() tea.Msg {
 		outcomes, ok := <-updates
-		return discoveryLoadedMsg{generation: generation, query: query, outcomes: outcomes, updates: updates, done: !ok}
+		return discoveryLoadedMsg{generation: generation, sequence: sequence, query: query, outcomes: outcomes, updates: updates, done: !ok}
 	}
 }
 
@@ -160,7 +187,10 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	}
 	configured := make(map[string]struct{}, len(m.mergedCfg.Marketplaces))
 	for _, endpoint := range m.mergedCfg.Marketplaces {
-		configured[endpoint.InstanceID] = struct{}{}
+		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
+		if err == nil {
+			configured[url+"\x00"+endpoint.InstanceID] = struct{}{}
+		}
 	}
 	filterConfigured := func(rows []row) []row {
 		kept := rows[:0]
@@ -168,8 +198,12 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 			if candidate.MarketplaceDiscovery == nil {
 				continue
 			}
-			if _, ok := configured[candidate.MarketplaceDiscovery.Endpoint.InstanceID]; ok {
-				kept = append(kept, candidate)
+			endpoint := candidate.MarketplaceDiscovery.Endpoint
+			url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
+			if err == nil {
+				if _, ok := configured[url+"\x00"+endpoint.InstanceID]; ok {
+					kept = append(kept, candidate)
+				}
 			}
 		}
 		return kept

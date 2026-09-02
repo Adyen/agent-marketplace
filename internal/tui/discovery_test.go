@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -161,6 +163,103 @@ func TestMarketplaceDiscoveryRejectsSupersededAndDuplicateCompletions(t *testing
 	}
 }
 
+func TestMarketplaceDiscoveryRejectsOlderPartialReplay(t *testing.T) {
+	m := newTestModel()
+	generation := m.beginRequest(requestDiscovery)
+	newer := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "newer", Availability: mpapi.AvailabilityAvailable}}}
+	older := marketplace.DiscoveryOutcome{Endpoint: newer.Endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "older", Availability: mpapi.AvailabilityAvailable}}}
+
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 2, outcomes: []marketplace.DiscoveryOutcome{newer}})
+	m = updated.(Model)
+	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, sequence: 1, outcomes: []marketplace.DiscoveryOutcome{older}})
+	m = updated.(Model)
+	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "newer" {
+		t.Fatalf("older partial replay changed rows: %#v", m.discoveryRows)
+	}
+}
+
+func TestMarketplaceDiscoveryDropsSameInstanceAtReplacedEndpoint(t *testing.T) {
+	m := newTestModel()
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://old.example", InstanceID: "market", Alias: "old"}}}
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: m.mergedCfg.Marketplaces[0], Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "old", Availability: mpapi.AvailabilityAvailable}}}})
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "market", Alias: "new"}}}
+
+	m.beginMarketplaceDiscovery("", true)
+	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 {
+		t.Fatalf("superseded endpoint rows retained: discovery=%#v browse=%#v", m.discoveryRows, m.browseDiscoveryRows)
+	}
+}
+
+func TestMarketplaceConsentRetainsAndDelegatesPreparedInstall(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	prepared := &pipeline.PreparedMarketplaceInstall{}
+	consent := &pipeline.MarketplaceConsentError{Preview: "verified", Prepared: prepared, Err: errors.New("consent required")}
+	updated, _ := m.Update(discoveryInstallMsg{operation: operation, options: pipeline.InstallOptions{RepoRoot: t.TempDir()}, err: consent})
+	m = updated.(Model)
+	if m.marketplacePreparedInstall != prepared || m.pane != paneMarketplaceConsent {
+		t.Fatal("consent did not retain the exact prepared install")
+	}
+	updated, cmd := m.handleMarketplaceConsentKey(keyPress('y'))
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("consent did not delegate prepared commit")
+	}
+	result := cmd().(discoveryInstallMsg)
+	if result.err == nil || !strings.Contains(result.err.Error(), "not prepared") {
+		t.Fatalf("consent reran install instead of committing captured plan: %v", result.err)
+	}
+}
+
+func TestMarketplaceInstallOperationRemainsSerializedThroughReload(t *testing.T) {
+	m := newTestModel()
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("failed to start install operation")
+	}
+	m.marketplaceInstallOperation = operation
+	updated, cmd := m.Update(discoveryInstallMsg{operation: operation, result: &pipeline.InstallResult{Installed: []string{"review"}}})
+	m = updated.(Model)
+	if cmd == nil || m.marketplaceInstallReload == 0 {
+		t.Fatal("successful install did not schedule authoritative reload")
+	}
+	if _, ok := m.beginOperation(operationMutation); ok {
+		t.Fatal("second mutation started before authoritative reload")
+	}
+	generation := m.marketplaceInstallReload
+	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}})
+	m = updated.(Model)
+	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("install operation remained active after reload: %#v", m.operations.active)
+	}
+}
+
+func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T) {
+	m := newTestModel()
+	m.loading = false
+	m.width, m.height = 80, 20
+	hostile := "remote\x1b]52;c;c2VjcmV0\a\u202e\nname"
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: hostile}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: hostile, Kind: "skill", Name: hostile, Description: hostile, Availability: mpapi.AvailabilityAvailable}}}})
+	output := m.View()
+	if strings.Contains(output, "\x1b]52;") || strings.ContainsAny(output, "\a\u202e") || strings.Contains(output, "\nname") {
+		t.Fatalf("hostile discovery data reached terminal output: %q", output)
+	}
+	if !strings.Contains(output, `\x1B`) {
+		t.Fatalf("sanitized evidence missing from output: %q", output)
+	}
+}
+
+func TestMarketplaceConsentFitsSupportedMinimum(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 50, 12
+	m.pane = paneMarketplaceConsent
+	m.marketplaceInstallPreview = strings.Repeat("verified capability and finding ", 20)
+	assertTerminalBounds(t, m.View(), 50, 12)
+}
+
 func TestMarketplaceDiscoveryInstallCapturesExactLocatorAndScope(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("b", 64)
 	revision := "registry-revision-7"
@@ -181,22 +280,26 @@ func TestMarketplaceDiscoveryInstallCapturesExactLocatorAndScope(t *testing.T) {
 	}
 }
 
-func TestBlockedMarketplaceDiscoveryRowCannotOpenInstallScope(t *testing.T) {
-	m := newTestModel()
-	m.loading = false
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{InstanceID: "market", Alias: "public"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "blocked", Availability: mpapi.AvailabilityBlocked}}}})
-	for i, item := range m.flatItems {
-		if item.Kind == flatArtifact {
-			m.cursor = i
-			break
-		}
-	}
-	updated, cmd := m.Update(keyPress(' '))
-	m = updated.(Model)
-	if m.pane == paneToggleModal {
-		t.Fatal("blocked discovery row opened install scope modal")
-	}
-	if cmd == nil {
-		t.Fatal("blocked discovery row did not explain refusal")
+func TestUnavailableMarketplaceDiscoveryRowsCannotOpenInstallScope(t *testing.T) {
+	for _, availability := range []mpapi.Availability{mpapi.AvailabilityBlocked, mpapi.AvailabilityRevoked, "unknown"} {
+		t.Run(string(availability), func(t *testing.T) {
+			m := newTestModel()
+			m.loading = false
+			m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{InstanceID: "market", Alias: "public"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "unavailable", Availability: availability}}}})
+			for i, item := range m.flatItems {
+				if item.Kind == flatArtifact {
+					m.cursor = i
+					break
+				}
+			}
+			updated, cmd := m.Update(keyPress(' '))
+			m = updated.(Model)
+			if m.pane == paneToggleModal {
+				t.Fatal("unavailable discovery row opened install scope modal")
+			}
+			if cmd == nil {
+				t.Fatal("unavailable discovery row did not explain refusal")
+			}
+		})
 	}
 }

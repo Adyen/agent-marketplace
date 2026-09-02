@@ -207,6 +207,7 @@ type Model struct {
 	discoveryOutcomes   []marketplace.DiscoveryOutcome
 	discoveryCancel     context.CancelFunc
 	discoveryLoading    bool
+	discoverySequence   uint64
 	discoveryErrs       []error
 	filteredRows        []row
 	filterScratch       []row
@@ -261,7 +262,9 @@ type Model struct {
 	// user is acting on mid-interaction.
 	modalSkill                  row
 	marketplaceInstallOptions   pipeline.InstallOptions
+	marketplacePreparedInstall  *pipeline.PreparedMarketplaceInstall
 	marketplaceInstallOperation operationID
+	marketplaceInstallReload    requestGeneration
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState

@@ -71,6 +71,9 @@ func (r *requestState) cancel(kind requestKind) requestGeneration {
 
 func (m *Model) beginRequest(kind requestKind) requestGeneration {
 	generation := m.requests.begin(kind)
+	if kind == requestDiscovery {
+		m.discoverySequence = 0
+	}
 	slog.Debug("tui request created", "kind", kind, "generation", generation)
 	return generation
 }
