@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -24,22 +25,23 @@ import (
 
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
-	RepoRoot       string
-	Args           []string // resource name args (0 or 1)
-	Tag            string   // --tag flag
-	InstallAll     bool     // --all flag
-	Registry       string   // --registry filter for --all
-	Kind           ir.ResourceKind
-	HasKind        bool
-	Scope          Scope
-	ScopeSpecified bool
-	FromURL        string // --from flag: ad-hoc registry URL
-	FromRef        string // --ref flag: git ref for --from
-	FromPath       string // --path flag: subdirectory for --from
-	InstalledName  string // --as for Marketplace installs
-	AcceptRisk     bool   // --accept-risk/--yes for Marketplace installs
-	Marketplace    string // --marketplace alias or endpoint selector
-	CatalogOption  []catalog.LoadOption
+	RepoRoot                string
+	Args                    []string // resource name args (0 or 1)
+	Tag                     string   // --tag flag
+	InstallAll              bool     // --all flag
+	Registry                string   // --registry filter for --all
+	Kind                    ir.ResourceKind
+	HasKind                 bool
+	Scope                   Scope
+	ScopeSpecified          bool
+	FromURL                 string // --from flag: ad-hoc registry URL
+	FromRef                 string // --ref flag: git ref for --from
+	FromPath                string // --path flag: subdirectory for --from
+	InstalledName           string // --as for Marketplace installs
+	AcceptRisk              bool   // --accept-risk/--yes for Marketplace installs
+	Marketplace             string // --marketplace alias or endpoint selector
+	ExactMarketplaceLocator *marketplace.MarketplaceLocator
+	CatalogOption           []catalog.LoadOption
 
 	// LocalConfigDir overrides the directory where the local config
 	// (config.local.yaml) is written. Set by the Install function when

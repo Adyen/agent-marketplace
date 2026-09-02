@@ -31,6 +31,9 @@ func (e *MarketplaceConsentError) Error() string { return e.Err.Error() }
 func (e *MarketplaceConsentError) Unwrap() error { return e.Err }
 
 func isMarketplaceInstall(opts InstallOptions) bool {
+	if opts.ExactMarketplaceLocator != nil {
+		return true
+	}
 	if strings.TrimSpace(opts.Marketplace) != "" {
 		return true
 	}
@@ -46,7 +49,7 @@ func isMarketplaceInstall(opts InstallOptions) bool {
 }
 
 func isMarketplaceEndpointRegistration(opts InstallOptions) bool {
-	if len(opts.Args) != 1 || strings.TrimSpace(opts.Marketplace) != "" || strings.TrimSpace(opts.FromURL) != "" {
+	if opts.ExactMarketplaceLocator != nil || len(opts.Args) != 1 || strings.TrimSpace(opts.Marketplace) != "" || strings.TrimSpace(opts.FromURL) != "" {
 		return false
 	}
 	raw := strings.TrimSpace(opts.Args[0])
@@ -161,12 +164,18 @@ func installMarketplace(ctx context.Context, opts InstallOptions, configPath str
 	if ec == nil || len(ec.TargetHarnesses) == 0 {
 		return nil, &TargetHarnessSetMissingError{}
 	}
-	if len(opts.Args) != 1 {
-		return nil, fmt.Errorf("marketplace install requires exactly one resource locator")
-	}
-	locator, err := marketplaceLocator(opts.Args[0], opts.Marketplace)
-	if err != nil {
-		return nil, err
+	var locator marketplace.MarketplaceLocator
+	var err error
+	if opts.ExactMarketplaceLocator != nil {
+		locator = *opts.ExactMarketplaceLocator
+	} else {
+		if len(opts.Args) != 1 {
+			return nil, fmt.Errorf("marketplace install requires exactly one resource locator")
+		}
+		locator, err = marketplaceLocator(opts.Args[0], opts.Marketplace)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if opts.HasKind && !marketplaceKindMatches(opts.Kind, locator.Kind) {
 		return nil, fmt.Errorf("--kind %s does not match Marketplace locator kind %s", opts.Kind, locator.Kind)
