@@ -135,6 +135,9 @@ func (m *Model) expandAllSections() {
 // Registry coordinates disambiguate same-name resources while the source path
 // keeps malformed and otherwise unattributed rows distinct.
 func rowKey(r row) string {
+	if d := r.MarketplaceDiscovery; d != nil {
+		return "marketplace-discovery\x00" + d.Endpoint.InstanceID + "\x00" + d.Item.RegistryID + "\x00" + d.Item.Kind + "\x00" + d.Item.Name + "\x00" + d.Item.Revision + "\x00" + d.Item.ContentDigest
+	}
 	if r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned {
 		return "orphan\x00" + r.DriftItem.Name
 	}
