@@ -257,10 +257,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
+			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
+			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg)
@@ -283,9 +285,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.pendingMigration.hasConfigs() {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
+			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.clearMarketplaceDiscovery(true)
 			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
@@ -305,6 +309,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
+		if snapshot.pendingMigration.hasConfigs() {
+			m.migrationPrompt = snapshot.pendingMigration
+			m.pane = paneMigrationModal
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot))
+		}
+		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...))
+		}
 		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
@@ -498,6 +512,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
 			m.applySnapshotData(msg.snapshot)
+			if msg.snapshot.pendingMigration.hasConfigs() {
+				m.migrationPrompt = msg.snapshot.pendingMigration
+				m.pane = paneMigrationModal
+				m.clearMarketplaceDiscovery(true)
+			} else if msg.snapshot.mergedCfg == nil && len(m.errs) > 0 {
+				m.clearMarketplaceDiscovery(true)
+			}
 		}
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.

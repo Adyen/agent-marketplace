@@ -253,11 +253,20 @@ func TestMarketplaceDiscoveryRemovalCancelsAndRejectsLateCompletion(t *testing.T
 	}
 }
 
-func TestMarketplaceDiscoveryValidationFailureInvalidatesPriorRequest(t *testing.T) {
+func TestMarketplaceDiscoveryAllowlistTighteningClearsPriorStateAndRejectsLateCompletions(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
+	authoritative := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "installed"}}}
 	m := newTestModel()
+	m.authoritativeRows = []row{authoritative}
+	m.rows = []row{authoritative}
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "retained", Availability: mpapi.AvailabilityAvailable}}}})
+	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{
+		Endpoint:  endpoint,
+		Items:     []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "now-blocked", Availability: mpapi.AvailabilityAvailable}},
+		Total:     75,
+		Truncated: true,
+		Err:       errors.New("old endpoint failure"),
+	}})
 	generation := m.beginRequest(requestDiscovery)
 	m.discoverySequence = 4
 	m.discoveryLoading = true
@@ -272,16 +281,94 @@ func TestMarketplaceDiscoveryValidationFailureInvalidatesPriorRequest(t *testing
 	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
 		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
 	}
-	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "retained" {
-		t.Fatalf("validation failure discarded filtered stale rows: %#v", m.discoveryRows)
+	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 {
+		t.Fatalf("blocked endpoint metadata remained: rows=%#v browse=%#v outcomes=%#v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes)
+	}
+	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+		t.Fatalf("authoritative rows were not rebuilt: %#v", m.rows)
+	}
+	if len(m.discoveryErrs) != 1 {
+		t.Fatalf("discovery errors = %v, want only current validation error", m.discoveryErrs)
+	}
+	var blocked *config.MarketplaceURLBlockedError
+	if !errors.As(m.discoveryErrs[0], &blocked) {
+		t.Fatalf("discovery error = %v, want MarketplaceURLBlockedError", m.discoveryErrs[0])
 	}
 	late := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
 	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 5, outcomes: []marketplace.DiscoveryOutcome{late}})
 	m = updated.(Model)
 	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
 	m = updated.(Model)
-	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "retained" {
-		t.Fatalf("late prior completion changed retained rows: %#v", m.discoveryRows)
+	if len(m.discoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+		t.Fatalf("late prior completion changed cleared state: discovery=%#v outcomes=%#v rows=%#v", m.discoveryRows, m.discoveryOutcomes, m.rows)
+	}
+}
+
+func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		snapshot snapshotLoadedMsg
+		wantPane pane
+	}{
+		{
+			name: "migration required",
+			snapshot: snapshotLoadedMsg{
+				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
+				pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
+			},
+			wantPane: paneMigrationModal,
+		},
+		{
+			name: "config error",
+			snapshot: snapshotLoadedMsg{
+				driftAssessment: driftFailed,
+				errs:            []error{errors.New("invalid effective config")},
+			},
+			wantPane: paneList,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			endpoint := config.MarketplaceEntry{URL: "https://old.example", InstanceID: "old", Alias: "old"}
+			authoritative := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "installed"}}}
+			m := newTestModel()
+			m.authoritativeRows = []row{authoritative}
+			m.rows = []row{authoritative}
+			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+			m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "old", Availability: mpapi.AvailabilityAvailable}}, Err: errors.New("old endpoint failure")}})
+			discoveryGeneration := m.beginRequest(requestDiscovery)
+			m.discoverySequence = 3
+			m.discoveryLoading = true
+			cancelled := false
+			m.discoveryCancel = func() { cancelled = true }
+			test.snapshot.generation = m.requests.active(requestSnapshot)
+
+			updated, _ := m.Update(test.snapshot)
+			m = updated.(Model)
+			if !cancelled || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+				t.Fatalf("active discovery was not invalidated: cancelled=%t generation=%d sequence=%d loading=%t", cancelled, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+			}
+			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
+				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
+			}
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+				t.Fatalf("authoritative rows changed: %#v", m.rows)
+			}
+			if m.pane != test.wantPane {
+				t.Fatalf("pane = %v, want %v", m.pane, test.wantPane)
+			}
+			if test.name == "config error" && (len(m.errs) != 1 || m.errs[0].Error() != "invalid effective config") {
+				t.Fatalf("snapshot error behavior changed: %v", m.errs)
+			}
+
+			late := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
+			updated, _ = m.Update(discoveryLoadedMsg{generation: discoveryGeneration, sequence: 4, outcomes: []marketplace.DiscoveryOutcome{late}})
+			m = updated.(Model)
+			updated, _ = m.Update(discoveryLoadedMsg{generation: discoveryGeneration, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
+			m = updated.(Model)
+			if len(m.discoveryRows) != 0 || len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+				t.Fatalf("late discovery changed authoritative state: discovery=%#v rows=%#v", m.discoveryRows, m.rows)
+			}
+		})
 	}
 }
 
