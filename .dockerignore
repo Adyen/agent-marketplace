@@ -1,0 +1,10 @@
+.agents/config.local.yaml
+.beads
+.env
+.env.*
+.git
+*.key
+*.pem
+agent-marketplace
+coverage*
+dist

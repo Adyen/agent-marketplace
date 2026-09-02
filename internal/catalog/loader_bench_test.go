@@ -189,3 +189,33 @@ func BenchmarkHasBundleRoot(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkPrepareFetchJobs_LocalRegistry exercises the local-registry path
+// in prepareFetchJobs, including the stat check added to fail fast on missing
+// local directories.
+func BenchmarkPrepareFetchJobs_LocalRegistry(b *testing.B) {
+	regDir := b.TempDir()
+	skillDir := filepath.Join(regDir, "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\n---\n"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{{
+			URL:    regDir,
+			Source: config.RepoCommitted,
+		}},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, errs := prepareFetchJobs(cfg, "", LoadModeRefresh, "")
+		if len(errs) > 0 {
+			b.Fatalf("unexpected errors: %v", errs)
+		}
+	}
+}

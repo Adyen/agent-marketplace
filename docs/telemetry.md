@@ -4,10 +4,6 @@
 vendor-neutral OTLP/HTTP. Telemetry is opt-in for unmanaged installations and
 can be locked by organization policy for managed installations.
 
-For the community receiver retention and access policy, see
-[`telemetry-retention.md`](./telemetry-retention.md). For operator runbook
-information, see [`telemetry-runbook.md`](./telemetry-runbook.md).
-
 ## Telemetry levels
 
 | Level | Signals | When to use |
@@ -97,7 +93,6 @@ harnesses:
 telemetry:
   level: detailed
   endpoint: https://otel.example.com/v1
-  retention_policy: https://example.com/telemetry-retention.md
   community_reporting: false
   ca_file: /etc/example/otel-ca.pem
   allow_insecure: false
@@ -151,13 +146,11 @@ the command exit status or queues the payload for normal delivery.
 
 ## Retention
 
-- Community endpoint data: 30 days.
+- Collector-side retention is controlled by the OTEL collector deployment.
 - Queued payloads on the CLI: 7 days or 5 MiB, whichever comes first.
 - Diagnostic review payloads: deleted after successful export; retained on
   failure.
 - Installation ID: stored until `telemetry reset-id`.
-
-See [`telemetry-retention.md`](./telemetry-retention.md) for the full policy.
 
 ## Troubleshooting
 
@@ -187,8 +180,8 @@ agent-marketplace telemetry purge
   payload is written or exported.
 - Standard `OTEL_*` environment variables are ignored for policy resolution to
   prevent silent bypass of organization settings.
-- The community report contains only the basic schema.
-- Detailed and diagnostic data never flow to the community report.
+- The optional project report contains only the basic schema.
+- Detailed and diagnostic data never flow to the project report.
 
 ## Performance
 

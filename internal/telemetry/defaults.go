@@ -8,15 +8,7 @@ var (
 	DefaultProjectRetentionURL = ""
 )
 
-const (
-	DefaultInstallationIDSubpath = "telemetry/installation-id"
-
-	// DefaultInstallationIDCardinalityBudget is the maximum number of unique
-	// installation.id values the community telemetry receiver accepts. It is
-	// shared between the receiver default and the client-side validation
-	// helper that documents the cardinality contract.
-	DefaultInstallationIDCardinalityBudget = 10000
-)
+const DefaultInstallationIDSubpath = "telemetry/installation-id"
 
 // Environment variables that may override user telemetry preferences when the
 // corresponding organization policy field is not locked. Standard OTEL_*

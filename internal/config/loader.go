@@ -93,16 +93,17 @@ func gitRootFor(dir string) string {
 		return root
 	}
 
-	// Slow path: obtain the per-directory lock so only one goroutine probes
-	// for this directory. Other goroutines for the same dir block here; callers
-	// for other dirs can proceed in parallel. Release the cache mutex before
-	// waiting so the probing goroutine can publish its result.
+	// for other dirs can proceed in parallel. Release the cache lock before
+	// acquiring the per-dir lock to avoid a lock-order inversion: the probing
+	// goroutine later needs the cache lock to publish the result, while waiters
+	// would otherwise hold the cache lock waiting for the per-dir lock.
 	mu, ok := gitRootLocks[dir]
 	if !ok {
 		mu = &sync.Mutex{}
 		gitRootLocks[dir] = mu
 	}
 	gitRootMu.Unlock()
+
 	mu.Lock()
 	defer mu.Unlock()
 
