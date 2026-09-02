@@ -248,6 +248,7 @@ type configIncludeLoader struct {
 	kind               layerKind
 	loaded             map[string]struct{}
 	visiting           map[string]struct{}
+	files              []*Config
 	nextFilePrecedence int
 }
 
@@ -282,7 +283,7 @@ func sourceForLayer(kind layerKind) Source {
 	}
 }
 
-func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
+func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 	canonical, err := canonicalConfigPath(path)
 	if err != nil {
 		return nil, err
@@ -308,12 +309,6 @@ func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
 	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
 		return nil, fmt.Errorf("validate logging config %q: %w", canonical, errors.Join(logErrs...))
 	}
-	if root && len(cfg.Include) == 0 {
-		l.loaded[canonical] = struct{}{}
-		return cfg, nil
-	}
-
-	layers := make([]Layer, 0, len(cfg.Include)+1)
 	for _, include := range cfg.Include {
 		if strings.TrimSpace(include) == "" {
 			return nil, fmt.Errorf("validate config %q: include path must not be empty", canonical)
@@ -323,35 +318,45 @@ func (l *configIncludeLoader) load(path string, root bool) (*Config, error) {
 			includePath = filepath.Join(filepath.Dir(canonical), includePath)
 		}
 		slog.Debug("loading config include", "owner", canonical, "path", includePath)
-		fragment, err := l.load(includePath, false)
-		if err != nil {
+		if _, err := l.collect(includePath, false); err != nil {
 			slog.Error("config include failed", "owner", canonical, "path", includePath, "error", err)
 			return nil, fmt.Errorf("load include %q referenced by %q: %w", includePath, canonical, err)
 		}
-		if fragment != nil {
-			layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: fragment})
+	}
+	if !root || len(cfg.Include) > 0 {
+		l.nextFilePrecedence++
+		for i := range cfg.Registries {
+			cfg.Registries[i].FilePrecedence = l.nextFilePrecedence
 		}
 	}
-	l.nextFilePrecedence++
-	for i := range cfg.Registries {
-		cfg.Registries[i].FilePrecedence = l.nextFilePrecedence
-	}
-	layers = append(layers, Layer{Source: sourceForLayer(l.kind), Config: cfg})
-	var merged *Config
-	if l.kind == localLayer {
-		merged = mergeLocalIncludeLayers(layers)
-	} else {
-		merged = MergeLayers(layers)
-		for _, layer := range layers {
-			if layer.Config.Telemetry != nil {
-				telemetry := *layer.Config.Telemetry
-				merged.Telemetry = &telemetry
-			}
-		}
-	}
-	merged.Include = append(IncludePaths(nil), cfg.Include...)
+	l.files = append(l.files, cfg)
 	l.loaded[canonical] = struct{}{}
-	return merged, nil
+	return cfg, nil
+}
+
+func mergeIncludeSelector(dst *KindSelector, src KindSelector) {
+	dst.Exclude = removeSelectorNames(dst.Exclude, src.Include)
+	dst.Include = appendUniqueStrings(dst.Include, src.Include)
+	dst.Include = removeSelectorNames(dst.Include, src.Exclude)
+	dst.Exclude = appendUniqueStrings(dst.Exclude, src.Exclude)
+	dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
+}
+
+func removeSelectorNames(values, removed []string) []string {
+	if len(values) == 0 || len(removed) == 0 {
+		return values
+	}
+	set := make(map[string]struct{}, len(removed))
+	for _, value := range removed {
+		set[value] = struct{}{}
+	}
+	filtered := values[:0]
+	for _, value := range values {
+		if _, drop := set[value]; !drop {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func mergeLocalIncludeLayers(layers []Layer) *Config {
@@ -363,11 +368,7 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 		}
 		merged.Registries = append(merged.Registries, cfg.Registries...)
 		for _, kind := range AllKinds {
-			dst := merged.SelectorForKindPtr(kind)
-			src := cfg.SelectorForKind(kind)
-			dst.Include = appendUniqueStrings(dst.Include, src.Include)
-			dst.Exclude = appendUniqueStrings(dst.Exclude, src.Exclude)
-			dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
+			mergeIncludeSelector(merged.SelectorForKindPtr(kind), cfg.SelectorForKind(kind))
 		}
 		if cfg.APIVersion != "" {
 			merged.APIVersion = cfg.APIVersion
@@ -380,7 +381,34 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
-	return newConfigIncludeLoader(kind).load(path, true)
+	loader := newConfigIncludeLoader(kind)
+	root, err := loader.collect(path, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(loader.files) == 1 && len(root.Include) == 0 {
+		return root, nil
+	}
+	layers := make([]Layer, 0, len(loader.files))
+	for _, cfg := range loader.files {
+		layers = append(layers, Layer{Source: sourceForLayer(kind), Config: cfg})
+	}
+	var merged *Config
+	if kind == localLayer {
+		merged = mergeLocalIncludeLayers(layers)
+	} else {
+		merged = MergeLayers(layers)
+		merged.Collections = KindSelector{}
+		for _, cfg := range loader.files {
+			mergeIncludeSelector(&merged.Collections, cfg.Collections)
+			if cfg.Telemetry != nil {
+				telemetry := *cfg.Telemetry
+				merged.Telemetry = &telemetry
+			}
+		}
+	}
+	merged.Include = append(IncludePaths(nil), root.Include...)
+	return merged, nil
 }
 
 func rootConfigNotExist(path string, err error) bool {

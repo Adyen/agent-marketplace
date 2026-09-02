@@ -3297,6 +3297,29 @@ func TestApplyCrossLayerExcludesUsesFilePrecedenceWithinLayer(t *testing.T) {
 	}
 }
 
+func TestResolveSkipsShadowedMissingSelectionsBeforeNotFound(t *testing.T) {
+	for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCollection} {
+		t.Run(kind.String(), func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "registry", CatalogKey: "catalog", Source: config.RepoCommitted, FilePrecedence: 1},
+				{URL: "registry", CatalogKey: "catalog", Source: config.RepoCommitted, FilePrecedence: 2},
+			}}
+			cfg.Registries[0].SelectorForKindPtr(kind).Include = []string{"missing"}
+			cfg.Registries[1].SelectorForKindPtr(kind).Exclude = []string{"missing"}
+			catalogs := map[string][]catalog.Entry{"catalog": {}}
+			unshadowed := *cfg
+			unshadowed.Registries = cfg.Registries[:1]
+			if _, errs := Resolve(&unshadowed, catalogs, nil); len(errs) == 0 {
+				t.Fatal("unshadowed missing selection did not report an error")
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 || len(resolved) != 0 {
+				t.Fatalf("resolved=%#v errors=%v, want shadowed missing selection skipped", resolved, errs)
+			}
+		})
+	}
+}
+
 func TestDeduplicateOccurrencesPrefersLaterFileMetadata(t *testing.T) {
 	occurrences := []skillOccurrence{
 		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 1, CatalogKey: "included"}, url: "registry", order: 0},

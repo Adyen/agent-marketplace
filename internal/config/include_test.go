@@ -54,6 +54,50 @@ func TestConfigIncludeResolutionOrderAndDeduplication(t *testing.T) {
 	}
 }
 
+func TestIncludeSelectorConflictsFavorLaterFilesAndExcludes(t *testing.T) {
+	dir := t.TempDir()
+	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "collections:\n  exclude: [root-wins, fragment-wins]\n")
+	root := filepath.Join(dir, "config.yaml")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\ncollections:\n  include: [root-wins, same-file]\n  exclude: [same-file]\n")
+	cfg, err := LoadConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCollections := KindSelector{Include: []string{"root-wins"}, Exclude: []string{"fragment-wins", "same-file"}}
+	if !reflect.DeepEqual(cfg.Collections, wantCollections) {
+		t.Fatalf("collections = %#v, want %#v", cfg.Collections, wantCollections)
+	}
+
+	localRoot := filepath.Join(dir, "config.local.yaml")
+	writeIncludeConfig(t, filepath.Join(dir, "local-fragment.yaml"), "skills:\n  exclude: [root-skill, fragment-skill]\n")
+	writeIncludeConfig(t, localRoot, "include: local-fragment.yaml\nskills:\n  include: [root-skill, same-skill]\n  exclude: [same-skill]\n")
+	local, err := LoadLocalConfigFromPath(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSkills := KindSelector{Include: []string{"root-skill"}, Exclude: []string{"fragment-skill", "same-skill"}}
+	if !reflect.DeepEqual(local.Skills, wantSkills) {
+		t.Fatalf("local skills = %#v, want %#v", local.Skills, wantSkills)
+	}
+}
+
+func TestNestedIncludesComposeDefaultsOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "registries:\n  - path: /leaf\n")
+	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nharnesses: [claude]\nregistries:\n  - path: /middle\n")
+	root := filepath.Join(dir, "config.yaml")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: middle.yaml\nharnesses: [devin]\nregistries:\n  - path: /root\n")
+	cfg, err := LoadConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := [][]string{cfg.Registries[0].Harnesses, cfg.Registries[1].Harnesses, cfg.Registries[2].Harnesses}
+	want := [][]string{{"devin"}, {"claude"}, {"devin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("registry harnesses = %v, want %v", got, want)
+	}
+}
+
 func TestConfigIncludeContainingFileHasHigherPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	writeIncludeConfig(t, filepath.Join(dir, "base.yaml"), "harnesses: [factory]\nmaterialization:\n  mode: symlink\n")

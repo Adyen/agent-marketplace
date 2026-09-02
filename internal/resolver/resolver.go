@@ -1557,6 +1557,17 @@ type deferredCollectionError struct {
 	err  error
 }
 
+func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSelection) ResolvedArtifact {
+	return ResolvedArtifact{
+		Entry:          catalog.Entry{Kind: selected.kind, Name: selected.name},
+		RegistryURL:    entry.URL,
+		RegistryPath:   entry.Path,
+		Source:         entry.Source,
+		FilePrecedence: entry.FilePrecedence,
+		Required:       entry.Required,
+	}
+}
+
 // buildOccurrences iterates over registry entries and catalogs to build a map
 // of skill occurrences keyed by (kind, name).
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
@@ -1586,6 +1597,9 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		selectedResources := resolveSelectedResources(entry, catalog)
 
 		for _, selected := range selectedResources {
+			if artifactShadowedByEntries(unresolvedSelectionArtifact(entry, selected), cfg.Registries) {
+				continue
+			}
 			if len(targetSet) > 0 && len(harnessTargets) == 0 {
 				appendEmptyHarnessError(entry, selected.kind, selected.name, targetSet, &errs)
 				continue
