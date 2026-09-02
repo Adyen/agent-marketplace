@@ -52,7 +52,9 @@ While the alternate screen is active, structured logs continue to the managed lo
 
 The supported minimum is **50 columns by 12 rows**. At or above that size, the active core view or modal stays within physical bounds and keeps its required action, confirmation, quit, and recovery keys visible. Help and diagnostics are scrollable with persistent offsets.
 
-Below either minimum dimension, the TUI displays only a bounded resize-required state. Normal keyboard and mouse workflow input is suspended; `q` and Ctrl+C remain available. Returning to a supported size restores the prior workflow state.
+Below either minimum dimension, the TUI displays only a bounded resize-required state. Normal keyboard workflow input is suspended; `q` and Ctrl+C remain available. Returning to a supported size restores the prior workflow state.
+
+The TUI does not enable terminal mouse tracking. Drag selection remains terminal-owned so rendered text can be copied natively; scrolling and navigation use the documented keyboard bindings.
 
 Registry metadata, paths, diagnostics, config values, Markdown-derived text, and returned errors are untrusted terminal data. C0, DEL, C1, ESC, carriage return, tab, unsupported structural newlines, invalid UTF-8, Unicode line separators, and bidi formatting controls render as visible escapes. Markdown is sanitized before entity decoding can turn encoded values into terminal controls. Printable Unicode, including combining and double-width characters, remains readable.
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -920,15 +921,22 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Global config: default:true registry with smith in the catalog.
+	// Use an absolute local path (not a repo-relative one) so the catalog
+	// loader can stat the directory; repo-relative URLs are meaningless in
+	// the user-personal (global) config.
+	globalSkillsDir := filepath.Join(t.TempDir(), "global-skills")
+	if err := os.MkdirAll(filepath.Join(globalSkillsDir, "skills"), 0o755); err != nil {
+		t.Fatalf("mkdir global skills: %v", err)
+	}
 	homeAgentsDir := filepath.Join(homeDir, ".agents")
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + `registries:
-  - url: ./global-skills
+	globalConfig := v2Header + fmt.Sprintf(`registries:
+  - url: %s
     path: skills
     default: true
-`
+`, globalSkillsDir)
 	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
@@ -965,7 +973,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 
 	// Step 1: Disable smith at global scope — adds to exclude.
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	if err := config.DisableSkillInRegistryInConfig(globalPath, "./global-skills", "", "smith"); err != nil {
+	if err := config.DisableSkillInRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
 		t.Fatalf("disable smith: %v", err)
 	}
 
@@ -988,7 +996,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Step 2: Re-enable smith at global scope — adds to include, must clean up exclude.
-	if err := config.AddSkillToRegistryInConfig(globalPath, "./global-skills", "", "smith"); err != nil {
+	if err := config.AddSkillToRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
 		t.Fatalf("re-enable smith: %v", err)
 	}
 
@@ -1016,7 +1024,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	for _, e := range cfg.Registries {
-		if e.URL == "./global-skills" {
+		if e.URL == globalSkillsDir {
 			for _, ex := range e.Skills.Exclude {
 				if ex == "smith" {
 					t.Fatalf("smith should NOT be in exclude after re-enable, got Exclude=%v", e.Skills.Exclude)
