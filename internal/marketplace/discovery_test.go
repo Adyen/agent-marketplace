@@ -3,6 +3,8 @@ package marketplace
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +89,52 @@ func TestDiscoveryLogsCountsWithoutRawQuery(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCacheSchemaOwnsDistinctPath(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	query := "review"
+	priorSchema := discoveryCacheSchema - 1
+	priorKey := sha256.Sum256([]byte(fmt.Sprint(priorSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
+	priorPath := filepath.Join(cache.root, discoveryEndpointDirectoryName(ep), hex.EncodeToString(priorKey[:])+".json")
+	priorRecord := discoveryCacheRecord{Schema: priorSchema, Endpoint: ep.URL, InstanceID: ep.InstanceID, Query: query, Limit: DiscoveryPageLimit, ObservedAt: time.Now(), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "prior", 1)}, Total: 1}
+	priorData, err := json.Marshal(priorRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(priorPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(priorPath, priorData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(filepath.Dir(priorPath), "unrelated")
+	if err := os.WriteFile(unrelated, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcome := DiscoveryOutcome{Endpoint: ep, ObservedAt: time.Now(), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "current", 1)}, Total: 1}
+	if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	currentKey := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
+	currentPath := filepath.Join(cache.root, discoveryEndpointDirectoryName(ep), hex.EncodeToString(currentKey[:])+".json")
+	if currentPath == priorPath {
+		t.Fatal("schema versions share a cache path")
+	}
+	if _, err := os.Stat(currentPath); err != nil {
+		t.Fatalf("current-schema record missing: %v", err)
+	}
+	if got, err := os.ReadFile(priorPath); err != nil || !bytes.Equal(got, priorData) {
+		t.Fatalf("prior-schema record changed: data=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(unrelated); err != nil || string(got) != "preserve" {
+		t.Fatalf("unrelated file changed: data=%q err=%v", got, err)
+	}
+	loaded, ok := cache.Load(ep, query, "", DiscoveryPageLimit)
+	if !ok || len(loaded.Items) != 1 || loaded.Items[0].Name != "current" {
+		t.Fatalf("current-schema load = %#v, %t", loaded, ok)
+	}
+}
+
 func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	cache := NewDiscoveryCache(t.TempDir())
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
@@ -131,6 +179,46 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	}
 	if recognized != DiscoveryQueryLimit+1 || browse != 1 {
 		t.Fatalf("recognized records = %d with %d browse, want %d with 1 browse", recognized, browse, DiscoveryQueryLimit+1)
+	}
+}
+
+func TestDiscoveryCacheRetentionPreservesFutureRecordWithoutDisplacingRecentQueries(t *testing.T) {
+	cache := NewDiscoveryCache(t.TempDir())
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cache.now = func() time.Time { return now }
+	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	var recent []string
+	for i := 0; i < DiscoveryQueryLimit; i++ {
+		recent = append(recent, writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%02d", i), now.Add(-time.Minute+time.Duration(i)*time.Second)))
+	}
+	futurePath := writeDiscoveryRecord(t, cache, ep, "future", now.Add(time.Hour))
+	if _, ok := cache.Load(ep, "future", "", DiscoveryPageLimit); ok {
+		t.Fatal("future-dated record loaded")
+	}
+	dir := filepath.Dir(futurePath)
+	if err := cache.retain(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(futurePath); err != nil {
+		t.Fatalf("future-dated unknown record changed: %v", err)
+	}
+	for _, path := range recent {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("recent valid record displaced: %s: %v", path, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recognized := 0
+	for _, entry := range entries {
+		if _, ok := cache.readRecognizedRecord(dir, entry.Name()); ok {
+			recognized++
+		}
+	}
+	if recognized != DiscoveryQueryLimit {
+		t.Fatalf("recognized retention candidates = %d, want %d", recognized, DiscoveryQueryLimit)
 	}
 }
 

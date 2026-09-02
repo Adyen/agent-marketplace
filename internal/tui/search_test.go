@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -173,6 +174,38 @@ func searchModel() Model {
 	m.loading = false
 	m.recomputeView()
 	return m
+}
+
+func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	m := searchModel()
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	m.authoritativeRows = slices.Clone(m.rows)
+	browse := mkRow("browse-result", withAvailable, withRegistry("https://market.example", "market"))
+	browse.MarketplaceDiscovery = &marketplaceDiscovery{Endpoint: endpoint}
+	remote := mkRow("remote-result", withAvailable, withRegistry("https://market.example", "market"))
+	remote.MarketplaceDiscovery = &marketplaceDiscovery{Endpoint: endpoint}
+	m.browseDiscoveryRows = []row{browse}
+	m.discoveryRows = []row{remote}
+	m.filter = "remote"
+	m.searchInput.SetValue("remote")
+	m.mergeDiscoveryRows()
+
+	updated, cmd := m.Update(keyPress('/'))
+	m = updated.(Model)
+	if !m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
+		t.Fatalf("reopened search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	}
+	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"browse-result"}) {
+		t.Fatalf("visible discovery rows = %v, want browse results", got)
+	}
+	if got := rowNames(m.rows); !slices.Equal(got, []string{"audit", "deploy", "release", "browse-result"}) {
+		t.Fatalf("merged rows = %v", got)
+	}
+	if cmd == nil || !m.discoveryLoading {
+		t.Fatalf("empty-query discovery not scheduled: cmd=%v loading=%t", cmd, m.discoveryLoading)
+	}
 }
 
 func TestSearchInputTypingUpdatesFilter(t *testing.T) {
