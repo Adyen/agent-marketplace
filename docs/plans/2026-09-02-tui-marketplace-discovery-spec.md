@@ -90,7 +90,7 @@ Discovery rows will identify their Marketplace and source Registry and will pres
 - Exact row identity includes the resource revision so asynchronous updates are stable and distinct immutable revisions cannot be conflated.
 - Display deduplication gives an authoritative enabled pin precedence over a discovery record with the same resource coordinate, even if the enabled pin references an older revision. This specification does not turn the discovery result into an update notification.
 - Same-name resources from different Marketplaces, Registries, or resource kinds remain distinct rows.
-- Marketplace discovery rows participate in the existing Available grouping. Registry-oriented grouping shows the Marketplace alias and Registry slug so remote and configured Git registry origins remain distinguishable.
+- Marketplace discovery rows participate in the existing Available grouping. Registry-oriented grouping shows the Marketplace alias, or its normalized endpoint URL when no alias is configured, together with the Registry slug so remote and configured Git registry origins remain distinguishable.
 - Marketplace-provided name, description, Registry slug, availability, and supported metadata may participate in the local searchable projection. Every remote field is sanitized at the terminal render seam.
 - Search result metadata is explicitly labeled as discovery metadata in details. It is not used as a verified artifact preview.
 - Blocked and revoked discovery records remain inspectable but cannot start an installation operation. Unsupported or unknown availability is represented truthfully rather than silently treated as installable.
