@@ -725,6 +725,22 @@ func yamlEntryPath(entryNode *yaml.Node) string {
 	return ""
 }
 
+// registryEntryMatchesExactURLPathRef matches one URL/path/ref YAML entry.
+func registryEntryMatchesExactURLPathRef(entryNode *yaml.Node, registryURL, registryPath, registryRef string) bool {
+	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
+		return false
+	}
+	urlNode := findRegistryURLNode(entryNode)
+	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(registryURL)) {
+		return false
+	}
+	refNode := findMappingValue(entryNode, "ref")
+	if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(registryRef) {
+		return false
+	}
+	return yamlEntryPath(entryNode) == strings.TrimSpace(registryPath)
+}
+
 // pathLabel returns a human-readable label for a registry path value,
 // using "(root)" for the empty-string root path.
 func pathLabel(p string) string {

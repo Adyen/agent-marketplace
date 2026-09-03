@@ -1624,6 +1624,86 @@ registries:
 	}
 }
 
+func TestDisableResourceWithShadowFallbackAtRefAddsDistinctRefEntry(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: git@example.com:org/registry.git\n    ref: main\n    path: collections\n    collections: [shared-bundle]\n"))
+
+	err := DisableResourceWithShadowFallbackAtRef(configPath, "git@example.com:org/registry.git", "collections", "release", ir.KindCollection, "shared-bundle")
+	if err != nil {
+		t.Fatalf("DisableResourceWithShadowFallbackAtRef: %v", err)
+	}
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("registries = %#v, want main plus release shadow", cfg.Registries)
+	}
+	if !slices.Contains(cfg.Registries[0].Collections.Include, "shared-bundle") || slices.Contains(cfg.Registries[0].Collections.Exclude, "shared-bundle") {
+		t.Fatalf("main entry changed: %#v", cfg.Registries[0])
+	}
+	if cfg.Registries[1].Ref != "release" || slices.Contains(cfg.Registries[1].Collections.Include, "shared-bundle") || !slices.Contains(cfg.Registries[1].Collections.Exclude, "shared-bundle") {
+		t.Fatalf("release shadow entry = %#v", cfg.Registries[1])
+	}
+}
+
+func TestDisableResourceInRegistryInConfigAtRefRejectsDuplicateExactEntries(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	initial := []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: git@example.com:org/registry.git\n    ref: release\n    path: collections\n    collections: [shared-bundle]\n  - url: git@example.com:org/registry.git\n    ref: release\n    path: collections\n    collections: [shared-bundle]\n")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, initial)
+
+	err := DisableResourceInRegistryInConfigAtRef(configPath, "git@example.com:org/registry.git", "collections", "release", ir.KindCollection, "shared-bundle")
+	if err == nil || !strings.Contains(err.Error(), "matches multiple entries") {
+		t.Fatalf("error = %v, want duplicate exact-entry refusal", err)
+	}
+	updated, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !slices.Equal(updated, initial) {
+		t.Fatalf("config changed after ambiguous edit:\nbefore %q\nafter %q", initial, updated)
+	}
+}
+
+func TestDisableCollectionAtRefOnlyChangesRequestedEntry(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	initial := "apiVersion: agent-marketplace/v2\nregistries:\n  # Keep this entry unchanged.\n  - url: git@example.com:org/registry.git\n    ref: main\n    path: collections\n    collections: [shared-bundle]\n  - url: git@example.com:org/registry.git\n    ref: release\n    path: collections\n    collections: [shared-bundle]\n"
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(initial))
+	if err := DisableResourceWithShadowFallbackAtRef(configPath, "git@example.com:org/registry.git", "collections", "release", ir.KindCollection, "shared-bundle"); err != nil {
+		t.Fatalf("DisableResourceWithShadowFallbackAtRef: %v", err)
+	}
+	cfg, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if len(cfg.Registries) != 2 {
+		t.Fatalf("registries = %#v, want two entries", cfg.Registries)
+	}
+	for _, entry := range cfg.Registries {
+		selector := entry.Collections
+		switch entry.Ref {
+		case "main":
+			if !slices.Contains(selector.Include, "shared-bundle") || slices.Contains(selector.Exclude, "shared-bundle") {
+				t.Fatalf("main entry changed: %#v", entry)
+			}
+		case "release":
+			if slices.Contains(selector.Include, "shared-bundle") || !slices.Contains(selector.Exclude, "shared-bundle") {
+				t.Fatalf("release entry not disabled: %#v", entry)
+			}
+		}
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "# Keep this entry unchanged.") {
+		t.Fatalf("unrelated entry comment was lost:\n%s", updated)
+	}
+}
+
 // TestDisableResourcePrefixPathAmbiguity verifies that when a config has two
 // entries for the same URL — one with path "plugins" and one with
 // "plugins/personal" — disabling a resource whose RegistryPath is

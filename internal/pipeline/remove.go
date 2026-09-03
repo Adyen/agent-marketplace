@@ -93,23 +93,41 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 
-	// Check if the arg refers to a collection in the merged config.
-	if isCollectionInstalled(mergedCfg, name) {
-		effective := opts.Scope
-		if !opts.ScopeSpecified {
-			effective = ScopeRepo // collections are repo-scoped by default
-		}
-		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+	// Collections disappear during expansion, so locate their owning selection
+	// before resolving ordinary resources.
+	if !opts.HasKind || opts.Kind == ir.KindCollection {
+		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, name, opts.Scope, opts.ScopeSpecified)
 		if err != nil {
-			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		if err := removeOrExcludeCollection(configPath, name); err != nil {
 			return nil, err
 		}
-		if err := silentSync(ctx, opts.RepoRoot); err != nil {
-			return nil, err
+		if selection != nil {
+			if selection.Required {
+				return nil, fmt.Errorf("collection %q is required and cannot be removed", name)
+			}
+			if err := config.ValidateScopeBoundary(selection.Source, scopeToConfigSource(effective)); err != nil {
+				var boundaryErr *config.ScopeBoundaryError
+				if errors.As(err, &boundaryErr) {
+					return nil, fmt.Errorf("cannot exclude collection %q at %s scope: collection is managed at %s level. %s", name, effective, selection.Source, boundaryErr.Suggestion)
+				}
+				return nil, err
+			}
+			configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+			if err != nil {
+				return nil, fmt.Errorf("resolve config path: %w", err)
+			}
+			if selection.RegistryScoped {
+				registryURL, registryPath := collectionRegistryLocation(selection)
+				if err := disableCollectionInRegistry(configPath, registryURL, registryPath, selection.Ref, name); err != nil {
+					return nil, err
+				}
+			} else if err := removeOrExcludeCollection(configPath, name); err != nil {
+				return nil, err
+			}
+			if err := silentSync(ctx, opts.RepoRoot); err != nil {
+				return nil, err
+			}
+			return &RemoveResult{RemovedName: name, IsCollection: true, InferredUserScope: !opts.ScopeSpecified && effective == ScopeUser}, nil
 		}
-		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
 	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true})
@@ -171,6 +189,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 }
 
 func disableCollectionInRegistry(configPath, registryURL, registryPath, ref, name string) error {
+	if strings.TrimSpace(ref) != "" {
+		return config.DisableResourceWithShadowFallbackAtRef(configPath, registryURL, registryPath, ref, ir.KindCollection, name)
+	}
 	if err := config.DisableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, ir.KindCollection, name); err != nil {
 		return err
 	}
@@ -192,10 +213,177 @@ func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
 	return false
 }
 
+type collectionRemovalSelection struct {
+	Source         config.Source
+	Required       bool
+	RegistryScoped bool
+	RegistryURL    string
+	RegistryPath   string
+	Ref            string
+}
+
+// findCollectionRemovalSelection finds the collection occurrence owned by the
+// requested scope. Merged config is used for policy, not file selection.
+func findCollectionRemovalSelection(repoRoot string, mergedCfg *config.Config, name string, requested Scope, specified bool) (*collectionRemovalSelection, Scope, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, "", nil
+	}
+
+	scopes := []Scope{ScopeRepo, ScopeLocal, ScopeUser}
+	if specified {
+		scopes = []Scope{requested}
+	}
+	for _, scope := range scopes {
+		selection, err := collectionSelectionAtScope(repoRoot, scope, name, mergedCfg)
+		if err != nil {
+			return nil, "", err
+		}
+		if selection != nil {
+			return selection, scope, nil
+		}
+	}
+
+	// Preserve top-level ownership for explicit scopes before checking merged
+	// registry selections, whose layer metadata is otherwise easy to lose.
+	if specified {
+		for _, scope := range []Scope{ScopeUser, ScopeRepo, ScopeLocal} {
+			selection, err := collectionSelectionAtScope(repoRoot, scope, name, mergedCfg)
+			if err != nil {
+				return nil, "", err
+			}
+			if selection != nil && !selection.RegistryScoped {
+				return selection, requested, nil
+			}
+		}
+	}
+
+	// Preserve organization ownership so unscoped removal can infer user scope
+	// and explicit repo/local removal can enforce the boundary.
+	if selection, err := collectionSelectionAtPath(config.OrganizationConfigPath(), config.Organization, name, mergedCfg); err != nil {
+		return nil, "", err
+	} else if selection != nil {
+		if specified {
+			return selection, requested, nil
+		}
+		return selection, inferCollectionRemoveScope(selection), nil
+	}
+
+	if specified {
+		if mergedCfg != nil {
+			for _, entry := range mergedCfg.Registries {
+				if !collectionSelectedInEntry(entry, name) {
+					continue
+				}
+				return &collectionRemovalSelection{
+					Source:         entry.Source,
+					Required:       entry.Required,
+					RegistryScoped: true,
+					RegistryURL:    entry.URL,
+					RegistryPath:   entry.Path,
+					Ref:            entry.Ref,
+				}, requested, nil
+			}
+		}
+	}
+	return nil, "", nil
+}
+
+func collectionSelectionAtScope(repoRoot string, scope Scope, name string, mergedCfg *config.Config) (*collectionRemovalSelection, error) {
+	configPath, err := scopedConfigPath(repoRoot, scope)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config path: %w", err)
+	}
+	return collectionSelectionAtPath(configPath, scopeToConfigSource(scope), name, mergedCfg)
+}
+
+func collectionSelectionAtPath(configPath string, source config.Source, name string, mergedCfg *config.Config) (*collectionRemovalSelection, error) {
+	cfg, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("load config %q: %w", configPath, err)
+	}
+	if cfg == nil {
+		return nil, nil
+	}
+
+	if hasTopLevelCollectionSelection(cfg, name) {
+		return &collectionRemovalSelection{
+			Source:   source,
+			Required: collectionRequiredInConfig(mergedCfg, name),
+		}, nil
+	}
+	for _, entry := range cfg.Registries {
+		if !collectionSelectedInEntry(entry, name) {
+			continue
+		}
+		entrySource := entry.Source
+		if entrySource == config.SourceUnset {
+			entrySource = source
+		}
+		return &collectionRemovalSelection{
+			Source:         entrySource,
+			Required:       entry.Required || collectionRequiredInConfig(mergedCfg, name),
+			RegistryScoped: true,
+			RegistryURL:    entry.URL,
+			RegistryPath:   entry.Path,
+			Ref:            entry.Ref,
+		}, nil
+	}
+	return nil, nil
+}
+
+func inferCollectionRemoveScope(selection *collectionRemovalSelection) Scope {
+	if selection == nil {
+		return ScopeRepo
+	}
+	if selection.Source == config.RepoPersonal {
+		return ScopeLocal
+	}
+	if selection.Source.IsMachineScope() {
+		return ScopeUser
+	}
+	return ScopeRepo
+}
+
+func collectionRegistryLocation(selection *collectionRemovalSelection) (url, path string) {
+	url = strings.TrimSpace(selection.RegistryURL)
+	path = strings.TrimSpace(selection.RegistryPath)
+	// A path-only registry is represented as Path in the in-memory entry.
+	if url == "" && path != "" {
+		return path, ""
+	}
+	return url, path
+}
+
+func collectionSelectedInEntry(entry config.RegistryEntry, name string) bool {
+	for _, selected := range entry.Collections.Include {
+		if strings.TrimSpace(selected) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func collectionRequiredInConfig(cfg *config.Config, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, entry := range cfg.Registries {
+		if entry.Required && collectionSelectedInEntry(entry, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func removeOrExcludeCollection(configPath, name string) error {
 	rootCfg, err := config.LoadRootConfigFromPath(configPath)
 	if err != nil {
 		return fmt.Errorf("load root config %q: %w", configPath, err)
+	}
+	// Validate includes before mutating the root selection.
+	if _, err := config.LoadConfigFromPath(configPath); err != nil {
+		return fmt.Errorf("validate config includes %q: %w", configPath, err)
 	}
 	if hasTopLevelCollectionSelection(rootCfg, name) {
 		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
@@ -362,6 +550,19 @@ func registryEntryInList(entries []config.RegistryEntry, url, path string) bool 
 	return false
 }
 
+func registryEntryInListAtRef(entries []config.RegistryEntry, url, path, ref string) bool {
+	for _, entry := range entries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != config.NormalizeGitURL(strings.TrimSpace(url)) {
+			continue
+		}
+		if strings.TrimSpace(entry.Path) != strings.TrimSpace(path) || strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func registryEntryCount(entries []config.RegistryEntry, url, path string) int {
 	count := 0
 	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(url))
@@ -393,6 +594,26 @@ func findRegistryInMerged(cfg *config.Config, url, path string) (config.Registry
 		if path == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path) {
 			return entry, true
 		}
+	}
+	return config.RegistryEntry{}, false
+}
+
+func findRegistryInMergedAtRef(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool) {
+	if cfg == nil {
+		return config.RegistryEntry{}, false
+	}
+	nu := config.NormalizeGitURL(strings.TrimSpace(url))
+	for _, entry := range cfg.Registries {
+		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != nu {
+			continue
+		}
+		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
+			continue
+		}
+		if strings.TrimSpace(ref) != "" && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
+			continue
+		}
+		return entry, true
 	}
 	return config.RegistryEntry{}, false
 }
@@ -814,14 +1035,20 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config", fromURL, fromPath)
 	}
 
-	// A named --from collection remains scoped to the selected registry.
-	if collectionInstalledInRegistry(mergedCfg, name, fromURL, fromPath) {
-		if !entryInTarget {
-			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
+	// Scope a named --from collection to the selected URL/path/ref entry.
+	collectionEntryInTarget := cfg != nil && registryEntryInListAtRef(cfg.Registries, fromURL, fromPath, fromRef)
+	collectionMergedEntry, collectionEntryInMerged := findRegistryInMergedAtRef(mergedCfg, fromURL, fromPath, fromRef)
+	if collectionInstalledInRegistry(mergedCfg, name, fromURL, fromPath, fromRef) {
+		if !collectionEntryInTarget && collectionEntryInMerged {
+			if err := validateRegistryScopeBoundary(collectionMergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
 			}
 		}
-		if err := disableCollectionInRegistry(configPath, fromURL, fromPath, shadowRef, name); err != nil {
+		collectionShadowRef := fromRef
+		if collectionEntryInMerged && strings.TrimSpace(collectionMergedEntry.Ref) != "" {
+			collectionShadowRef = collectionMergedEntry.Ref
+		}
+		if err := disableCollectionInRegistry(configPath, fromURL, fromPath, collectionShadowRef, name); err != nil {
 			return nil, err
 		}
 		if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
@@ -881,7 +1108,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	return &RemoveResult{RemovedName: name}, nil
 }
 
-func collectionInstalledInRegistry(cfg *config.Config, name, registryURL, registryPath string) bool {
+func collectionInstalledInRegistry(cfg *config.Config, name, registryURL, registryPath, registryRef string) bool {
 	if cfg == nil {
 		return false
 	}
@@ -893,36 +1120,11 @@ func collectionInstalledInRegistry(cfg *config.Config, name, registryURL, regist
 		if registryPath != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(registryPath) {
 			continue
 		}
+		if strings.TrimSpace(registryRef) != "" && strings.TrimSpace(entry.Ref) != strings.TrimSpace(registryRef) {
+			continue
+		}
 		for _, selected := range entry.Collections.Include {
 			if strings.TrimSpace(selected) == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// isCollectionInstalled reports whether any layer of the merged config
-// contains a collection ref with the given name, including registry-scoped
-// collection selections.
-func isCollectionInstalled(cfg *config.Config, name string) bool {
-	if cfg == nil {
-		return false
-	}
-	name = strings.TrimSpace(name)
-	for _, n := range cfg.Collections.Exclude {
-		if strings.TrimSpace(n) == name {
-			return false
-		}
-	}
-	for _, n := range cfg.Collections.Include {
-		if strings.TrimSpace(n) == name {
-			return true
-		}
-	}
-	for _, entry := range cfg.Registries {
-		for _, n := range entry.Collections.Include {
-			if strings.TrimSpace(n) == name {
 				return true
 			}
 		}

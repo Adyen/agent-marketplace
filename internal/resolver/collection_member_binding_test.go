@@ -461,6 +461,44 @@ func TestExplicitPathMemberBindsToThatPath(t *testing.T) {
 	}
 }
 
+func TestExplicitPathMemberWithoutRefReportsRefAmbiguity(t *testing.T) {
+	col := goToolsCollection(ir.CollectionMember{
+		Name:     "efficient-go",
+		Kind:     ir.KindSkill,
+		Registry: monorepoURL,
+		Path:     "teams/development/plugins/dev-language-guides",
+	})
+	cfg, catalogs := buildMemberCase(t, col, []memberFixture{
+		{url: monorepoURL, path: "teams/development/plugins/dev-language-guides", ref: "main", names: []string{"efficient-go"}},
+		{url: monorepoURL, path: "teams/development/plugins/dev-language-guides", ref: "next", names: []string{"efficient-go"}},
+	})
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	var warning *AmbiguousCollectionMemberWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected ambiguity warning for an unqualified ref, got: %v", errs)
+	}
+	if warning.Path != "teams/development/plugins/dev-language-guides" {
+		t.Fatalf("warning path = %q, want explicit member path", warning.Path)
+	}
+	for _, want := range []string{"teams/development/plugins/dev-language-guides@main", "teams/development/plugins/dev-language-guides@next"} {
+		if !slices.Contains(warning.Candidates, want) {
+			t.Fatalf("candidates = %#v, want %q", warning.Candidates, want)
+		}
+	}
+	if !strings.Contains(warning.Error(), "without a ref") {
+		t.Fatalf("warning should identify missing ref: %s", warning)
+	}
+	if got := findResolved(resolved, "efficient-go"); got == nil {
+		t.Fatal("ambiguous member was not deterministically resolved")
+	}
+}
+
 // TestExplicitPathMemberUnknownPathNamesConfiguredPaths keeps a pinned path
 // diagnosable: when no entry uses it, the error names the paths that are
 // configured rather than claiming the repository is absent entirely.

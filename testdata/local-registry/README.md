@@ -21,7 +21,7 @@ Point a local config at this directory (no `ref:` — local registries skip git)
 # .agents/config.local.yaml  (gitignored, personal)
 apiVersion: agent-marketplace/v2
 registries:
-  - url: ./testdata/local-registry
+  - url: ../testdata/local-registry
 collections:
   include: [agent-marketplace-tools]
 ```

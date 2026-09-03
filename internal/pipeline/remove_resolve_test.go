@@ -539,7 +539,7 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	if len(ec.Errors) != 0 {
 		t.Fatalf("effective config errors = %v", ec.Errors)
 	}
-	if isCollectionInstalled(ec.Merged, "duplicate-bundle") {
+	if hasTopLevelCollectionSelection(ec.Merged, "duplicate-bundle") {
 		t.Fatalf("collection remained installed: %#v", ec.Merged.Collections)
 	}
 }
@@ -559,6 +559,140 @@ func TestRemoveOrExcludeCollectionDeletesRootSelection(t *testing.T) {
 	}
 }
 
+func TestRemoveOrExcludeCollectionValidatesIncludesBeforeEditing(t *testing.T) {
+	repoRoot := t.TempDir()
+	rootPath := config.ProjectConfigPath(repoRoot)
+	original := []byte("apiVersion: agent-marketplace/v2\ninclude: missing.yaml\ncollections:\n  include: [root-bundle]\n")
+	writeFile(t, rootPath, string(original))
+
+	if err := removeOrExcludeCollection(rootPath, "root-bundle"); err == nil {
+		t.Fatal("expected missing include validation error")
+	}
+	got, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, original) {
+		t.Fatalf("root bytes changed after include validation failure:\nbefore %q\nafter  %q", original, got)
+	}
+}
+
+func TestRemoveCollectionUsesRequestedScopeAndPreservesOtherRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections:\n  include: [repo-bundle]\n")
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, userPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [user-bundle]\n")
+
+	if _, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "user-bundle", Scope: ScopeUser, ScopeSpecified: true,
+	}); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	userCfg, err := config.LoadRootConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(userCfg.Collections.Include, "user-bundle") {
+		t.Fatalf("user selection remained: %#v", userCfg.Collections)
+	}
+	repoCfg, err := config.LoadRootConfigFromPath(config.ProjectConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(repoCfg.Collections.Include, "repo-bundle") {
+		t.Fatalf("repo selection was changed by user-scope removal: %#v", repoCfg.Collections)
+	}
+}
+
+func TestRemoveTopLevelMachineCollectionRejectsRepoScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+
+	_, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "machine-bundle", Scope: ScopeRepo, ScopeSpecified: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot exclude collection") {
+		t.Fatalf("error = %v, want machine-to-repo collection boundary rejection", err)
+	}
+}
+
+func TestRemoveTopLevelMachineCollectionRejectsLocalScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+
+	_, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "machine-bundle", Scope: ScopeLocal, ScopeSpecified: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot exclude collection") {
+		t.Fatalf("error = %v, want machine-to-local collection boundary rejection", err)
+	}
+}
+
+func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle"})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || !result.IsCollection || !result.InferredUserScope {
+		t.Fatalf("result = %#v, want collection removal inferred to user scope", result)
+	}
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userCfg, err := config.LoadRootConfigFromPath(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(userCfg.Collections.Exclude, "machine-bundle") {
+		t.Fatalf("user collections = %#v, want machine-bundle excluded", userCfg.Collections)
+	}
+}
+
+func TestRemoveRequiredMachineCollectionRejectsRepoScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	t.Setenv("HOME", t.TempDir())
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, userPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: /machine\n    required: true\n    collections: [required-bundle]\n")
+
+	_, err = Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "required-bundle", Scope: ScopeRepo, ScopeSpecified: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "required and cannot be removed") {
+		t.Fatalf("error = %v, want required machine collection rejection", err)
+	}
+}
+
 func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 	t.Helper()
 	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
@@ -569,6 +703,29 @@ func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 		if item.Name == name {
 			t.Fatalf("resource %q remained enabled: %#v", name, item)
 		}
+	}
+}
+
+func TestDisableCollectionPathOnlyAliasIsRegistrySpecific(t *testing.T) {
+	rootPath := config.ProjectConfigPath(t.TempDir())
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - path: /local/skills\n    collections: [local-bundle]\n")
+	selection, err := collectionSelectionAtPath(rootPath, config.RepoCommitted, "local-bundle", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection == nil || !selection.RegistryScoped {
+		t.Fatalf("selection = %#v, want registry-scoped path alias", selection)
+	}
+	registryURL, registryPath := collectionRegistryLocation(selection)
+	if err := disableCollectionInRegistry(rootPath, registryURL, registryPath, "", "local-bundle"); err != nil {
+		t.Fatal(err)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "local-bundle") || slices.Contains(rootCfg.Registries[0].Collections.Include, "local-bundle") {
+		t.Fatalf("registries = %#v, want path-only registry collection excluded", rootCfg.Registries)
 	}
 }
 
@@ -584,6 +741,27 @@ func TestDisableCollectionIsRegistrySpecific(t *testing.T) {
 	}
 	if len(rootCfg.Registries) != 2 || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "shared-bundle") || !slices.Contains(rootCfg.Registries[1].Collections.Include, "shared-bundle") {
 		t.Fatalf("registries = %#v, want only registry-a collection excluded", rootCfg.Registries)
+	}
+}
+
+func TestDisableCollectionAtRefIsRegistrySpecific(t *testing.T) {
+	rootPath := config.ProjectConfigPath(t.TempDir())
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: git@example.com:shared.git\n    ref: main\n    path: bundles\n    collections: [shared-bundle]\n  - url: git@example.com:shared.git\n    ref: release\n    path: bundles\n    collections: [shared-bundle]\n")
+	if err := disableCollectionInRegistry(rootPath, "git@example.com:shared.git", "bundles", "release", "shared-bundle"); err != nil {
+		t.Fatal(err)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 2 {
+		t.Fatalf("registries = %#v, want two entries", rootCfg.Registries)
+	}
+	if !slices.Contains(rootCfg.Registries[0].Collections.Include, "shared-bundle") || slices.Contains(rootCfg.Registries[0].Collections.Exclude, "shared-bundle") {
+		t.Fatalf("main entry changed: %#v", rootCfg.Registries[0])
+	}
+	if slices.Contains(rootCfg.Registries[1].Collections.Include, "shared-bundle") || !slices.Contains(rootCfg.Registries[1].Collections.Exclude, "shared-bundle") {
+		t.Fatalf("release entry not disabled: %#v", rootCfg.Registries[1])
 	}
 }
 

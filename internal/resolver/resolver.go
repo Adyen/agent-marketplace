@@ -226,12 +226,7 @@ func (e *NameCollisionWarning) Remediation() string {
 	return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from <url>'", e.Name)
 }
 
-// AmbiguousCollectionMemberWarning is emitted when a collection member names a
-// registry URL without a path and more than one configured location for that
-// repository actually contains the member. Binding to whichever entry came
-// first in config order would be arbitrary, so the resolver reports every
-// containing location, then binds the first one deterministically so the
-// resource still materializes.
+// AmbiguousCollectionMemberWarning reports a member with multiple registry locations.
 type AmbiguousCollectionMemberWarning struct {
 	Kind ir.ResourceKind
 	Name string
@@ -244,6 +239,7 @@ type AmbiguousCollectionMemberWarning struct {
 	// Chosen is the label of the location that was bound, in the same
 	// spelling as the matching element of Candidates.
 	Chosen string
+	Path   string
 	// Candidates lists every configured location that contains the member, in
 	// config order. It always holds one label per distinct location, so
 	// len(Candidates) is the number of locations the warning is about.
@@ -251,13 +247,20 @@ type AmbiguousCollectionMemberWarning struct {
 }
 
 func (w *AmbiguousCollectionMemberWarning) Error() string {
-	return fmt.Sprintf("%s %q is provided by %d configured locations of %s@%s (%s); %s references it without a path, so %s was used",
+	reference := "references it without a path"
+	if w.Path != "" {
+		reference = fmt.Sprintf("references it at path %q without a ref", w.Path)
+	}
+	return fmt.Sprintf("%s %q is provided by %d configured locations of %s@%s (%s); %s, so %s was used",
 		skill.KindLabel(w.Kind), w.Name, len(w.Candidates), w.URL, w.Ref,
-		strings.Join(w.Candidates, ", "), w.Via, w.Chosen)
+		strings.Join(w.Candidates, ", "), w.Via+" "+reference, w.Chosen)
 }
 
 // Remediation returns a user-facing hint about how to make the binding explicit.
 func (w *AmbiguousCollectionMemberWarning) Remediation() string {
+	if w.Path != "" {
+		return fmt.Sprintf("pin the member to %s by adding an explicit 'ref:' next to the path %q for %q in the collection definition, or drop the duplicate registry entry from your config", w.Chosen, w.Path, w.Name)
+	}
 	return fmt.Sprintf("pin the member to %s by adding an explicit 'path:' (and a 'ref:' when the locations differ only by ref) next to %q in the collection definition, or drop the duplicate registry entry from your config", w.Chosen, w.Name)
 }
 
@@ -1177,6 +1180,18 @@ func expandMembersRecursive(
 					continue
 				}
 				chosen = preferRequired(atPath)
+				if strings.TrimSpace(member.Ref) == "" && distinctLocations(atPath) > 1 {
+					*errs = append(*errs, &AmbiguousCollectionMemberWarning{
+						Kind:       member.Kind,
+						Name:       memberName,
+						URL:        memberRegistry,
+						Ref:        strings.TrimSpace(chosen.entry.Ref),
+						Via:        viaLabel,
+						Path:       requestedPath,
+						Chosen:     locationLabel(chosen.entry, spansMultipleRefs(atPath)),
+						Candidates: candidateLocationLabels(atPath),
+					})
+				}
 			} else {
 				// A path-less member means "this repository, wherever the
 				// resource actually is": select by containment, not by config

@@ -164,7 +164,7 @@ collections:
     - platform-onboarding
 ```
 
-Removing a collection member keeps the bundle and writes an `exclude`. Removing the collection name deletes a selection from the selected root. If the selection comes from an included file, the command writes a collection exclusion in the root and leaves the included file unchanged.
+Removing a collection member keeps the bundle and writes an `exclude`. Removing the collection name deletes the selection from the selected root, or writes a collection exclusion in the root when an included file owns it.
 
 ## Personal overrides
 

@@ -110,6 +110,15 @@ func EnsureRegistryInConfig(configPath, url, ref string) error {
 // that the same repo URL can have multiple sub-path entries coexisting.
 // Creates the file and parent directories if they do not exist.
 func EnsureRegistryWithPathsInConfig(configPath, url, ref, path string) error {
+	return ensureRegistryWithPathsInConfig(configPath, url, ref, path, false)
+}
+
+// EnsureRegistryWithPathsAtRefInConfig ensures a URL/path/ref registry entry exists.
+func EnsureRegistryWithPathsAtRefInConfig(configPath, url, ref, path string) error {
+	return ensureRegistryWithPathsInConfig(configPath, url, ref, path, true)
+}
+
+func ensureRegistryWithPathsInConfig(configPath, url, ref, path string, requireRef bool) error {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return fmt.Errorf("registry url is required")
@@ -146,6 +155,12 @@ func EnsureRegistryWithPathsInConfig(configPath, url, ref, path string) error {
 			existingPath := yamlEntryPath(entryNode)
 			if strings.TrimSpace(path) != existingPath {
 				continue // same URL, different path — not a duplicate
+			}
+			if requireRef {
+				refNode := findMappingValue(entryNode, "ref")
+				if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(ref) {
+					continue
+				}
 			}
 			return nil // already present
 		}
@@ -602,11 +617,7 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	return writeConfigDocument(configPath, mode, doc)
 }
 
-// AddResourceToExactRegistryEntry adds a per-kind include to a specific
-// registry entry identified by exact URL and path. Unlike
-// AddResourceToRegistryInConfig, when path is empty this matches only
-// entries with no path (root entries), avoiding "matches multiple entries"
-// errors when the same URL has entries at different paths.
+// AddResourceToExactRegistryEntry adds a per-kind include to one registry entry.
 func AddResourceToExactRegistryEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, name string) error {
 	if err := addValuesToExactRegistryEntry(configPath, registryURL, registryPath, kind, "include", []string{name}); err != nil {
 		return err
@@ -622,6 +633,14 @@ func AddResourceToExactRegistryEntry(configPath, registryURL, registryPath strin
 // match — unlike addValuesToRegistrySubSequence where empty path means
 // URL-only matching.
 func addValuesToExactRegistryEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, subKey string, values []string) error {
+	return addValuesToExactRegistryEntryWithRef(configPath, registryURL, registryPath, "", false, kind, subKey, values)
+}
+
+func addValuesToExactRegistryEntryAtRef(configPath, registryURL, registryPath, registryRef string, kind ir.ResourceKind, subKey string, values []string) error {
+	return addValuesToExactRegistryEntryWithRef(configPath, registryURL, registryPath, registryRef, true, kind, subKey, values)
+}
+
+func addValuesToExactRegistryEntryWithRef(configPath, registryURL, registryPath, registryRef string, requireRef bool, kind ir.ResourceKind, subKey string, values []string) error {
 	key := skill.ConfigKeyForKind(kind)
 	if key == "" {
 		return fmt.Errorf("unsupported resource kind %q", skill.KindLabel(kind))
@@ -658,6 +677,12 @@ func addValuesToExactRegistryEntry(configPath, registryURL, registryPath string,
 
 	var matchingEntries []*yaml.Node
 	for _, entryNode := range registriesNode.Content {
+		if requireRef {
+			if registryEntryMatchesExactURLPathRef(entryNode, registryURL, registryPath, registryRef) {
+				matchingEntries = append(matchingEntries, entryNode)
+			}
+			continue
+		}
 		if entryNode.Kind != yaml.MappingNode {
 			continue
 		}
@@ -677,6 +702,9 @@ func addValuesToExactRegistryEntry(configPath, registryURL, registryPath string,
 	matchingEntries = preferExactPathMatch(matchingEntries, registryPath)
 	if len(matchingEntries) == 0 {
 		return fmt.Errorf("update config %q: registry %q with path %q not found", configPath, registryURL, pathLabel(registryPath))
+	}
+	if requireRef && len(matchingEntries) > 1 {
+		return fmt.Errorf("update config %q: registry %q with path %q and ref %q matches multiple entries", configPath, registryURL, pathLabel(registryPath), registryRef)
 	}
 	matchingEntry := matchingEntries[0]
 
@@ -721,6 +749,14 @@ func addValuesToExactRegistryEntry(configPath, registryURL, registryPath string,
 // registry entry matched by exact URL and path. When path is empty, only
 // entries with no path (root entries) match.
 func removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, subKey string, values []string) error {
+	return removeValuesFromExactRegistryEntryWithRef(configPath, registryURL, registryPath, "", false, kind, subKey, values)
+}
+
+func removeValuesFromExactRegistryEntryAtRef(configPath, registryURL, registryPath, registryRef string, kind ir.ResourceKind, subKey string, values []string) error {
+	return removeValuesFromExactRegistryEntryWithRef(configPath, registryURL, registryPath, registryRef, true, kind, subKey, values)
+}
+
+func removeValuesFromExactRegistryEntryWithRef(configPath, registryURL, registryPath, registryRef string, requireRef bool, kind ir.ResourceKind, subKey string, values []string) error {
 	key := skill.ConfigKeyForKind(kind)
 	if key == "" {
 		return fmt.Errorf("unsupported resource kind %q", skill.KindLabel(kind))
@@ -760,6 +796,12 @@ func removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath st
 
 	var matchingEntries []*yaml.Node
 	for _, entryNode := range registriesNode.Content {
+		if requireRef {
+			if registryEntryMatchesExactURLPathRef(entryNode, registryURL, registryPath, registryRef) {
+				matchingEntries = append(matchingEntries, entryNode)
+			}
+			continue
+		}
 		if entryNode.Kind != yaml.MappingNode {
 			continue
 		}
@@ -776,6 +818,9 @@ func removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath st
 	matchingEntries = preferExactPathMatch(matchingEntries, registryPath)
 	if len(matchingEntries) == 0 {
 		return nil
+	}
+	if requireRef && len(matchingEntries) > 1 {
+		return fmt.Errorf("update config %q: registry %q with path %q and ref %q matches multiple entries", configPath, registryURL, pathLabel(registryPath), registryRef)
 	}
 	matchingEntry := matchingEntries[0]
 

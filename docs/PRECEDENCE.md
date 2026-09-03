@@ -115,6 +115,21 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   suffixes are labels only; pass the URL and optional `--ref`/`--path` as
   separate flags.
 
+Collection removal uses a separate lookup because expansion drops the
+collection artifact. Without `--scope`, it checks repo, local, then user roots;
+`--scope user|repo|local` selects a root. Top-level selections are removed or
+shadowed there. Organization-only selections infer user scope when unscoped,
+while explicit repo/local scope fails the authority check. Registry-scoped
+selections match URL, path, and supplied `ref`; path-only local aliases stay
+registry-scoped. Required collections and machine-managed collections cannot be
+removed from any scope or from repo/local scope, respectively. The include tree
+is validated before a top-level edit.
+
+A member with `path` but no `ref` binds deterministically when that path is
+unique. If multiple refs provide it, the resolver warns with each `path@ref`
+candidate and the chosen location. Path-less members retain repository-wide
+lookup and candidate-path diagnostics.
+
 ## Collection precedence
 
 - Collections expand into synthetic registry entries before resolution. The
