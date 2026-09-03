@@ -27,7 +27,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Multi-resource kinds (skill/command/subagent/hook/mcp) | Full IR fidelity; same selection/exclude UX across all kinds |
 | Tags in `metadata.tags` | Uses the spec's extension point; no deviation |
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |
-| Name collisions across registries refuse sync | Prevents silent overwrites when independent registries provide the same resource |
+| Name collisions across registries resolve deterministically with a warning | Keeps one materializable winner visible; required policy, config precedence, normalized URL, and stable config order determine the winner |
 | Same-URL different-path collisions emit warning | User deliberately configured both entries; keep all for visibility but warn that only one materializes per scope |
 | `required:true` registries immune to all excludes | Enforces org-wide security standards |
 | `--from` ad-hoc registry operations on install/remove/list | Zero-config onboarding: browse, install, and remove resources from any registry URL without editing config files first |

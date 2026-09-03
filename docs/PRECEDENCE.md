@@ -31,6 +31,8 @@ Loading the owning layer fails if any include is missing, unreadable, malformed,
 
 The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. Removing an include-owned named resource or collection records an exclusion in the selected root; whole-registry `remove --from` writes a registry-level `exclude_all` shadow there. The included file remains unchanged, and normal scope boundaries still apply.
 
+When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Editors and removals use the same interpretation.
+
 ## Layer order
 
 Effective merge order (low → high):
@@ -98,9 +100,10 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 - A member that names a `registry:` **without** a `path:` means "this repository, wherever the resource actually is": it binds to whichever configured entry for that repository actually contains the member, independent of config order and of a `.git` suffix difference. This matters for monorepos, where recursive discovery and org team profiles can both contribute many entries at different paths for one URL.
   - If no configured entry contains it, the warning names every path searched instead of blaming one, and does not claim an upstream removal.
   - Such an unbindable member is a hard (sync-failing) error as soon as **any** configured *location* for that repository is `required: true`, and a soft warning otherwise. Required-ness is judged per location, not per config entry, so two spellings of one location (with and without `.git`) are one location.
-    - This rule used to require **every** location to be `required: true`. That was bypassable: `required: true` exists to enforce org-wide security standards, and adding a non-required entry for the same repository at a different path in `.agents/config.local.yaml` — gitignored and personal — downgraded an org-mandated hard failure to a warning. A severity a personal config layer can soften is not enforcement, so the quantifier is `any`.
-    - The accepted cost is escalation: one `required: true` entry anywhere in a monorepo makes an *unbindable* member of that repository a hard failure, even when the mandated subdirectory is unrelated to the member. It is bounded to members that bind nowhere — a member that binds to some location is unaffected, and so is every member of a repository with no required entry — and the remedy is visible in the message: pin a `path:` on the member, or configure a registry entry for the subdirectory that provides it.
   - If more than one distinct location contains it, the ambiguity is reported as a warning and the first location — preferring a `required: true` one — is used. Pin a `path:` on the member to make it explicit.
+- Nested collection definitions use configured registry ownership, not catalog or cache-key order. For duplicates, `required: true` wins, followed by config source/file precedence.
+  - If authority ties, the resolver prefers an owner matching the parent URL/ref/path, then uses stable URL/path order.
+  - Recursively expanded members inherit the selected URL, path, ref, harness targets, and required policy, intersected with the effective target set.
 
 ## Resource prerequisites
 
@@ -131,10 +134,9 @@ needed. `kind` defaults to `skill`.
 
 ## Name collisions and ambiguity
 
-- If the same resource name (within the same kind) is selected from multiple different registries, resolution errors.
-- The CLI does not auto-pick a winner across different registries.
-- Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one source.
-- The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- If the same resource name (within the same kind) is selected from multiple different registries, resolution emits a soft warning, chooses one deterministic winner, and continues materializing the resource. The winner is selected by `required: true`, then higher config source/file precedence, then alphabetically first normalized registry URL; if those criteria tie, stable config order wins.
+- Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
+- To change a winner, exclude it with `agent-marketplace remove <name> --from <winning-registry>` or make selection registry-specific. If the winning registry has multiple configured paths, pass the desired `--path <path>` explicitly; grouped sync output does not add a path-specific flag. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples
 

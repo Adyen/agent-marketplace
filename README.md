@@ -621,6 +621,17 @@ registries:
       include: [my-custom-skill]
 ```
 
+For a local-path registry, `path` may also be used as the registry location when
+`url` is omitted:
+
+```yaml
+registries:
+  - path: /tmp/local-skills    # `path` is the URL/location alias here
+    skills:
+      include: [my-custom-skill]
+```
+
+When `url` is present, `path` instead means a subdirectory within that registry.
 Local registries are read directly from disk (no clone or fetch), are excluded
 from `update`, and show `local` as their cache freshness in `status`.
 
@@ -642,8 +653,8 @@ agent-marketplace install --tag <tag>                       Install everything m
 agent-marketplace install --all [--registry <url>]          Install every discovered resource
 agent-marketplace install ... --scope {user,repo,local}     Choose which config layer to write
 
-agent-marketplace remove <name> --from <url>     Remove/exclude a resource from a registry entry
-agent-marketplace remove --from <url>            Remove an entire ad-hoc registry entry
+agent-marketplace remove <name> --from <url> [--path <dir>]  Remove/exclude a resource from a registry entry
+agent-marketplace remove --from <url> [--path <dir>]         Remove an entire ad-hoc registry entry
 agent-marketplace remove <collection>            Remove a collection reference
 agent-marketplace remove ... --scope {user,repo,local}      Choose which config layer to edit
 

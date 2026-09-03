@@ -844,8 +844,10 @@ func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string)
 func entryURLAndPath(entryNode *yaml.Node) (string, string) {
 	urlNode := findMappingValue(entryNode, "url")
 	url := ""
-	if urlNode != nil {
+	if urlNode != nil && strings.TrimSpace(urlNode.Value) != "" {
 		url = strings.TrimSpace(urlNode.Value)
+	} else if pathNode := findMappingValue(entryNode, "path"); pathNode != nil {
+		url = strings.TrimSpace(pathNode.Value)
 	}
 	return url, yamlEntryPath(entryNode)
 }

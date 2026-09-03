@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -607,6 +608,45 @@ func TestResolveSameURLSameRefDeduplicates(t *testing.T) {
 	}
 	if !names["shared-skill"] || !names["extra"] {
 		t.Fatalf("expected shared-skill and extra, got %v", got)
+	}
+}
+
+func TestResolveCollisionWarningNamesEveryPathAndRegistry(t *testing.T) {
+	const sharedURL = "git@example.com:shared.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: sharedURL, Ref: "main", Path: "teams/a", Skills: ks("shared")},
+		{URL: sharedURL, Ref: "main", Path: "teams/b", Skills: ks("shared")},
+		{URL: "git@example.com:other.git", Ref: "main", Path: "teams/c", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Name: "shared", Path: "/cache/a/shared"}},
+		cfg.Registries[1].CatalogKey: {{Name: "shared", Path: "/cache/b/shared"}},
+		cfg.Registries[2].CatalogKey: {{Name: "shared", Path: "/cache/c/shared"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].Name != "shared" {
+		t.Fatalf("expected one deterministic materialized winner, got %#v", resolved)
+	}
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	if warning.Winner != "git@example.com:other (teams/c)" {
+		t.Fatalf("warning winner = %q, want the alphabetically first normalized URL", warning.Winner)
+	}
+	wantRunnersUp := []string{
+		"git@example.com:shared (teams/a)",
+		"git@example.com:shared (teams/b)",
+	}
+	if !slices.Equal(warning.RunnersUp, wantRunnersUp) {
+		t.Fatalf("warning runners-up = %#v, want %#v", warning.RunnersUp, wantRunnersUp)
 	}
 }
 

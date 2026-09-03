@@ -552,3 +552,125 @@ func TestPathLessMemberRequiredWhenAnyCandidateIsRequired(t *testing.T) {
 		})
 	}
 }
+
+func TestNestedCollectionDefinitionUsesConfiguredOwnerAndAuthority(t *testing.T) {
+	tests := []struct {
+		name         string
+		memberName   string
+		ownerA       config.Source
+		ownerB       config.Source
+		wantURL      string
+		wantPath     string
+		wantRef      string
+		wantSource   config.Source
+		wantRequired bool
+	}{
+		{
+			name:         "parent owner wins equal authority",
+			memberName:   "member-a",
+			wantURL:      "git@example.com:collections-a",
+			wantPath:     "bundles/a",
+			wantRef:      "main",
+			wantRequired: false,
+		},
+		{
+			name:         "higher config authority wins",
+			memberName:   "member-b",
+			ownerA:       config.UserPersonal,
+			ownerB:       config.RepoCommitted,
+			wantURL:      "git@example.com:collections-b",
+			wantPath:     "bundles/b",
+			wantRef:      "next",
+			wantSource:   config.RepoCommitted,
+			wantRequired: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			innerA := ir.NewCollection("inner", "1.0.0", "A", []ir.CollectionMember{{Name: tc.memberName, Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			innerB := ir.NewCollection("inner", "2.0.0", "B", []ir.CollectionMember{{Name: tc.memberName, Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			outer := ir.NewCollection("outer", "1.0.0", "Outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "git@example.com:collections-a", Ref: "main", Path: "bundles/a", Source: tc.ownerA, Collections: ks("outer")},
+				{URL: "git@example.com:collections-b", Ref: "next", Path: "bundles/b", Source: tc.ownerB},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "outer", Resource: outer},
+					{Kind: ir.KindCollection, Name: "inner", Resource: innerA},
+					{Kind: ir.KindSkill, Name: tc.memberName},
+				},
+				cfg.Registries[1].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "inner", Resource: innerB},
+					{Kind: ir.KindSkill, Name: tc.memberName},
+				},
+			}
+
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors = %v", errs)
+			}
+			got := findResolved(resolved, tc.memberName)
+			if got == nil {
+				t.Fatalf("member %q was not expanded: %#v", tc.memberName, resolved)
+			}
+			if got.RegistryURL != tc.wantURL || got.RegistryPath != tc.wantPath || got.Ref != tc.wantRef || got.Source != tc.wantSource {
+				t.Fatalf("member metadata = %s/%s@%s source=%s, want %s/%s@%s source=%s", got.RegistryURL, got.RegistryPath, got.Ref, got.Source, tc.wantURL, tc.wantPath, tc.wantRef, tc.wantSource)
+			}
+			if got.Required != tc.wantRequired {
+				t.Fatalf("member Required = %v, want %v", got.Required, tc.wantRequired)
+			}
+			if got.Via == "" {
+				t.Fatalf("member %q was directly resolved instead of expanded from the selected nested collection", tc.memberName)
+			}
+		})
+	}
+}
+
+// TestChooseNestedCollectionRequiredCandidateWins isolates required-policy
+// precedence from Resolve's direct-selection behavior. A required duplicate
+// definition must win even when the non-required definition appears first.
+func TestChooseNestedCollectionRequiredCandidateWins(t *testing.T) {
+	nonRequiredDefinition := ir.NewCollection("duplicate", "1.0.0", "non-required", nil, nil, nil, ir.SourceRef{})
+	requiredDefinition := ir.NewCollection("duplicate", "2.0.0", "required", nil, nil, nil, ir.SourceRef{})
+
+	candidates := []collectionCandidate{
+		{
+			entry:      catalog.Entry{Kind: ir.KindCollection, Name: "duplicate", Resource: nonRequiredDefinition},
+			catalogKey: "catalog-a",
+			owner: config.RegistryEntry{
+				URL:  "git@example.com:collections-a",
+				Ref:  "main",
+				Path: "bundles/a",
+			},
+			ownerFound: true,
+		},
+		{
+			entry:      catalog.Entry{Kind: ir.KindCollection, Name: "duplicate", Resource: requiredDefinition},
+			catalogKey: "catalog-b",
+			owner: config.RegistryEntry{
+				URL:      "git@example.com:collections-b",
+				Ref:      "next",
+				Path:     "bundles/b",
+				Required: true,
+			},
+			ownerFound: true,
+		},
+	}
+
+	chosen, ok := chooseNestedCollection(candidates, ResolvedArtifact{RegistryURL: "git@example.com:collections-a", Ref: "main", RegistryPath: "bundles/a"})
+	if !ok {
+		t.Fatal("chooseNestedCollection() found no duplicate definition")
+	}
+	if chosen.entry.Resource != requiredDefinition {
+		t.Fatalf("chosen definition = %v, want required duplicate", chosen.entry.Resource)
+	}
+	if chosen.owner.URL != "git@example.com:collections-b" || chosen.owner.Path != "bundles/b" || chosen.owner.Ref != "next" {
+		t.Fatalf("chosen owner = %s/%s@%s, want git@example.com:collections-b/bundles/b@next", chosen.owner.URL, chosen.owner.Path, chosen.owner.Ref)
+	}
+	if !chosen.owner.Required {
+		t.Fatal("chosen duplicate owner is not marked required")
+	}
+}

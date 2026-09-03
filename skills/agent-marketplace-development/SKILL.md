@@ -220,14 +220,18 @@ commands, subagents, hooks, and MCP servers stay aligned.
 configured machine-scope harness roots regardless of repo/local config.
 The resolver enforces this; never add a bypass.
 
-### Name collisions refuse sync
+### Name collisions resolve deterministically
 
-If two registries expose the same resource kind and name, `Resolve`
-returns an error. Resolve via per-registry kind-specific lists,
-`exclude`, or removing a source. The same name may exist in different
-kinds; CLI install/remove paths must ask for `--kind` when that makes a
-name ambiguous. `cmd/install.go` mirrors collision behavior for
-`install --all`.
+If two registries expose the same resource kind and name, `Resolve` selects a
+winner and returns a soft warning. It chooses by `required: true`, config
+source/file precedence, then alphabetically first normalized URL; complete ties
+use stable config order. Warnings list
+every registry/path participant, including same-registry paths deduplicated for
+materialization. Use per-registry kind-specific lists, `exclude`, or removal of
+the current winner to change the result. When the registry has multiple paths,
+pass the desired `--path` explicitly to `remove`. The same name may exist in
+different kinds; CLI install/remove paths must ask for `--kind` when needed.
+`cmd/install.go` mirrors this behavior for `install --all`.
 
 ### Config editing preserves comments
 

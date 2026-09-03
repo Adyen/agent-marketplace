@@ -2266,6 +2266,25 @@ registries:
 		}
 	})
 
+	t.Run("removes_path_only_url_alias_entry", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		mustMkdirAll(t, filepath.Dir(configPath))
+		mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+registries:
+  - path: /tmp/local-skills
+`))
+		if err := RemoveRegistryEntryFromConfig(configPath, "/tmp/local-skills", ""); err != nil {
+			t.Fatalf("RemoveRegistryEntryFromConfig: %v", err)
+		}
+		cfg, err := loadProjectConfig(t, configPath)
+		if err != nil {
+			t.Fatalf("load edited config: %v", err)
+		}
+		if len(cfg.Registries) != 0 {
+			t.Fatalf("expected path-only registry alias to be removed, got %#v", cfg.Registries)
+		}
+	})
+
 	t.Run("idempotent_when_entry_not_found", func(t *testing.T) {
 		configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 		mustMkdirAll(t, filepath.Dir(configPath))

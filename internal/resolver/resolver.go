@@ -188,7 +188,7 @@ func (e *NameCollisionError) Remediation() string {
 type NameCollisionWarning struct {
 	Kind      ir.ResourceKind
 	Name      string
-	Winner    string // registry URL of the winning source
+	Winner    string // source label of the winning occurrence
 	RunnersUp []string
 }
 
@@ -872,13 +872,11 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 	// Build an index of all discovered KindCollection entries by name so we
 	// can resolve includes (nested collections) even when the included
-	// collection isn't independently selected.
-	type collectionCandidate struct {
-		entry      catalog.Entry
-		catalogKey string
-	}
+	// collection isn't independently selected. Keep every configured owner so
+	// config authority, not catalog-key order, selects nested definitions.
 	collectionCandidates := make(map[string][]collectionCandidate)
 	for key, entries := range catalogs {
+		owners := registryEntriesForCatalogKey(cfg, key)
 		for _, entry := range entries {
 			if entry.Kind != ir.KindCollection {
 				continue
@@ -887,21 +885,35 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 			if name == "" {
 				continue
 			}
-			collectionCandidates[name] = append(collectionCandidates[name], collectionCandidate{
-				entry:      entry,
-				catalogKey: key,
-			})
+			if len(owners) == 0 {
+				collectionCandidates[name] = append(collectionCandidates[name], collectionCandidate{
+					entry:      entry,
+					catalogKey: key,
+				})
+				continue
+			}
+			for _, owner := range owners {
+				collectionCandidates[name] = append(collectionCandidates[name], collectionCandidate{
+					entry:      entry,
+					catalogKey: key,
+					owner:      owner,
+					ownerFound: true,
+				})
+			}
 		}
 	}
-	allCollectionsByName := make(map[string]collectionCatalogEntry)
+	allCollectionsByName := make(map[string][]collectionCandidate, len(collectionCandidates))
 	for name, candidates := range collectionCandidates {
 		slices.SortFunc(candidates, func(a, b collectionCandidate) int {
-			return strings.Compare(a.catalogKey, b.catalogKey)
+			if a.catalogKey != b.catalogKey {
+				return strings.Compare(a.catalogKey, b.catalogKey)
+			}
+			if a.owner.URL != b.owner.URL {
+				return strings.Compare(a.owner.URL, b.owner.URL)
+			}
+			return strings.Compare(a.owner.Path, b.owner.Path)
 		})
-		allCollectionsByName[name] = collectionCatalogEntry{
-			entry:      candidates[0].entry,
-			catalogKey: candidates[0].catalogKey,
-		}
+		allCollectionsByName[name] = candidates
 	}
 
 	// Expand each resolved collection artifact into member resources.
@@ -954,10 +966,98 @@ func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{
 	return filtered
 }
 
-// collectionCatalogEntry pairs a catalog Entry with its catalog key.
-type collectionCatalogEntry struct {
+// collectionCandidate pairs a discovered collection definition with the
+// configured registry entry that owns its catalog. A collection can be defined
+// more than once, so ownership metadata must travel with the definition until
+// the recursive include chooses one.
+type collectionCandidate struct {
 	entry      catalog.Entry
 	catalogKey string
+	owner      config.RegistryEntry
+	ownerFound bool
+}
+
+// registryEntriesForCatalogKey returns every configured owner of a catalog.
+// Duplicate owners are retained because their source and file precedence may
+// differ after include composition.
+func registryEntriesForCatalogKey(cfg *config.Config, catalogKey string) []config.RegistryEntry {
+	var owners []config.RegistryEntry
+	for _, entry := range cfg.Registries {
+		if entry.CatalogKey == catalogKey {
+			owners = append(owners, entry)
+		}
+	}
+	return owners
+}
+
+// nestedCollectionOwnerMatch reports whether a candidate is owned by the
+// collection currently being expanded. Matching the parent location first
+// keeps an include bound to its defining registry when duplicate definitions
+// exist; required and precedence still outrank that locality preference.
+func nestedCollectionOwnerMatch(candidate collectionCandidate, parent ResolvedArtifact) bool {
+	if !candidate.ownerFound {
+		return false
+	}
+	return normalizedRegistryURL(candidate.owner.URL) == normalizedRegistryURL(parent.RegistryURL) &&
+		strings.TrimSpace(candidate.owner.Ref) == strings.TrimSpace(parent.Ref) &&
+		strings.TrimSpace(candidate.owner.Path) == strings.TrimSpace(parent.RegistryPath)
+}
+
+// chooseNestedCollection selects a definition using policy authority and
+// stable ownership tie-breakers.
+func chooseNestedCollection(candidates []collectionCandidate, parent ResolvedArtifact) (collectionCandidate, bool) {
+	if len(candidates) == 0 {
+		return collectionCandidate{}, false
+	}
+	chosen := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.owner.Required != chosen.owner.Required {
+			if candidate.owner.Required {
+				chosen = candidate
+			}
+			continue
+		}
+		if candidate.ownerFound && chosen.ownerFound {
+			precedence := config.CompareEntryPrecedence(candidate.owner.Source, candidate.owner.FilePrecedence, chosen.owner.Source, chosen.owner.FilePrecedence)
+			if precedence != 0 {
+				if precedence > 0 {
+					chosen = candidate
+				}
+				continue
+			}
+		} else if candidate.ownerFound != chosen.ownerFound {
+			if candidate.ownerFound {
+				chosen = candidate
+			}
+			continue
+		}
+		candidateMatches := nestedCollectionOwnerMatch(candidate, parent)
+		chosenMatches := nestedCollectionOwnerMatch(chosen, parent)
+		if candidateMatches != chosenMatches {
+			if candidateMatches {
+				chosen = candidate
+			}
+			continue
+		}
+		candidateURL, chosenURL := normalizedRegistryURL(candidate.owner.URL), normalizedRegistryURL(chosen.owner.URL)
+		if candidateURL != chosenURL {
+			if candidateURL < chosenURL {
+				chosen = candidate
+			}
+			continue
+		}
+		candidatePath, chosenPath := strings.TrimSpace(candidate.owner.Path), strings.TrimSpace(chosen.owner.Path)
+		if candidatePath != chosenPath {
+			if candidatePath < chosenPath {
+				chosen = candidate
+			}
+			continue
+		}
+		if candidate.catalogKey < chosen.catalogKey {
+			chosen = candidate
+		}
+	}
+	return chosen, true
 }
 
 // expandMembersRecursive walks the members of a collection and appends resolved
@@ -971,7 +1071,7 @@ func expandMembersRecursive(
 	catalogIndex map[string]map[resourceSelection]catalog.Entry,
 	resources map[string]map[string]ir.Resource,
 	malformed *malformedIndex,
-	allCollectionsByName map[string]collectionCatalogEntry,
+	allCollectionsByName map[string][]collectionCandidate,
 	directResolved map[string]struct{},
 	excludedResources map[string]struct{},
 	visited map[string]struct{},
@@ -1217,8 +1317,7 @@ func expandMembersRecursive(
 		}
 		visited[name] = struct{}{}
 
-		// Look up the included collection in the all-collections index.
-		includedEntry, found := allCollectionsByName[name]
+		includedEntry, found := chooseNestedCollection(allCollectionsByName[name], artifact)
 		if !found {
 			*errs = append(*errs, fmt.Errorf("collection %q: includes %q which was not found in configured registries", col.Label(), name))
 			continue
@@ -1229,17 +1328,29 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Recursively expand the included collection's members.
 		includedViaLabel := viaLabel + " > " + "collection:" + irCol.Label()
 		includedArtifact := ResolvedArtifact{
-			Entry:          includedEntry.entry,
+			Entry:          attachResource(includedEntry.entry, resources, includedEntry.catalogKey),
 			RegistryURL:    artifact.RegistryURL,
 			RegistryPath:   artifact.RegistryPath,
 			Ref:            artifact.Ref,
 			Source:         artifact.Source,
 			FilePrecedence: artifact.FilePrecedence,
+			Required:       artifact.Required,
 			CatalogKey:     includedEntry.catalogKey,
 			Harnesses:      artifact.Harnesses,
+		}
+		if includedEntry.ownerFound {
+			includedArtifact.RegistryURL = includedEntry.owner.URL
+			includedArtifact.RegistryPath = includedEntry.owner.Path
+			includedArtifact.Ref = includedEntry.owner.Ref
+			includedArtifact.Source = includedEntry.owner.Source
+			includedArtifact.FilePrecedence = includedEntry.owner.FilePrecedence
+			includedArtifact.Required = includedEntry.owner.Required
+			includedArtifact.Harnesses = resolveEntryHarnesses(includedEntry.owner, targetSet)
+			if len(targetSet) == 0 && includedEntry.owner.Harnesses == nil {
+				includedArtifact.Harnesses = artifact.Harnesses
+			}
 		}
 		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet)
 	}
@@ -1708,10 +1819,11 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			// Precedence: required > higher source precedence > alphabetically-first URL.
 			winner := pickCollisionWinner(deduped)
 			warning := &NameCollisionWarning{
-				Kind:      winner.resolved.Kind,
-				Name:      winner.resolved.Name,
-				Winner:    config.NormalizeGitURL(winner.url),
-				RunnersUp: collisionRunnersUp(deduped, winner.url),
+				Kind:   winner.resolved.Kind,
+				Name:   winner.resolved.Name,
+				Winner: collisionSourceLabel(winner),
+				// Report original occurrences, including deduplicated paths.
+				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
 			}
 			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
 			errs = append(errs, warning)
@@ -1731,7 +1843,8 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 		// warning per scope group so the user knows.
 		if len(deduped) > 1 && scopesSeparated(deduped) {
 			winners = append(winners, deduped...)
-			for _, group := range groupByScope(deduped) {
+			// Classify all occurrences, including paths deduplicated for output.
+			for _, group := range groupByScope(occurrences) {
 				if len(group) > 1 && pathsDiffer(group) {
 					winner := pickCollisionWinner(group)
 					warning := &NameCollisionWarning{
@@ -1754,10 +1867,11 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			winners = append(winners, deduped...)
 			winner := pickCollisionWinner(deduped)
 			warning := &NameCollisionWarning{
-				Kind:      winner.resolved.Kind,
-				Name:      winner.resolved.Name,
-				Winner:    collisionSourceLabel(winner),
-				RunnersUp: collisionRunnersUpByPath(deduped, winner),
+				Kind:   winner.resolved.Kind,
+				Name:   winner.resolved.Name,
+				Winner: collisionSourceLabel(winner),
+				// Include paths deduplicated for materialization.
+				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
 			}
 			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
 			errs = append(errs, warning)
@@ -2778,25 +2892,6 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 		}
 	}
 	return winner
-}
-
-// collisionRunnersUp returns the registry URLs of all occurrences except the
-// winner, for inclusion in the warning message.
-func collisionRunnersUp(occurrences []skillOccurrence, winnerURL string) []string {
-	var runnersUp []string
-	seen := make(map[string]struct{})
-	for _, occ := range occurrences {
-		url := config.NormalizeGitURL(occ.url)
-		if url == config.NormalizeGitURL(winnerURL) {
-			continue
-		}
-		if _, exists := seen[url]; exists {
-			continue
-		}
-		seen[url] = struct{}{}
-		runnersUp = append(runnersUp, url)
-	}
-	return runnersUp
 }
 
 // collisionSourceLabel returns a human-readable label for a collision
