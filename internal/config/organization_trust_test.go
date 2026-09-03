@@ -134,6 +134,39 @@ func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {
 		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
 		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
 	})
+
+	t.Run("symlinked existing ancestor", func(t *testing.T) {
+		root := t.TempDir()
+		external := t.TempDir()
+		authority := filepath.Join(external, "authority")
+		if err := os.Mkdir(authority, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(authority, "config.yaml"), remoteOrganizationFixture)
+		link := filepath.Join(root, "authority-parent")
+		if err := os.Symlink(external, link); err != nil {
+			t.Fatal(err)
+		}
+		configPath := filepath.Join(link, "authority", "config.yaml")
+		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
+	})
+
+	t.Run("writable existing ancestor", func(t *testing.T) {
+		root := t.TempDir()
+		parent := filepath.Join(root, "parent")
+		authority := filepath.Join(parent, "authority")
+		if err := os.MkdirAll(authority, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(authority, "config.yaml"), remoteOrganizationFixture)
+		if err := os.Chmod(parent, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(filepath.Join(authority, "config.yaml")))
+		assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.writable")
+	})
 }
 
 func TestOrganizationTrustRejectsWrongOwnerWhenFeasible(t *testing.T) {

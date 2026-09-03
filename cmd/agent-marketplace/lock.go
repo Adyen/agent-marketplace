@@ -538,15 +538,15 @@ func recoverDependencyTransactions(ctx context.Context) error {
 }
 
 func rejectGeneratedLockSymlink(name string) (string, error) {
-	clean := filepath.Clean(name)
-	info, err := os.Lstat(clean)
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%w: generated lock destination is a symlink: %s", dependencytxn.ErrUnsafePath, clean)
+	return dependencytxn.ValidateDestination(filepath.Clean(name))
+}
+
+func canonicalConfigDependencyPath(name string) (string, error) {
+	absolute, err := filepath.Abs(name)
+	if err != nil {
+		return "", fmt.Errorf("resolve config dependency path %s: %w", name, err)
 	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect generated lock destination %s: %w", clean, err)
-	}
-	return clean, nil
+	return dependencytxn.CanonicalConfigDestination(filepath.Clean(absolute))
 }
 
 func canonicalizeFuturePath(name string) (string, error) {
@@ -570,11 +570,17 @@ func canonicalizeFuturePath(name string) (string, error) {
 }
 
 func validateStagedConfigPathIdentity(edit pipeline.StagedConfigEdit) (string, error) {
-	requested, err := canonicalizeFuturePath(edit.RequestedPath)
+	requested, err := canonicalConfigDependencyPath(edit.RequestedPath)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolve requested staged config path %s: %v", dependencytxn.ErrGenerationConflict, edit.RequestedPath, err)
+		// A final config symlink can be retargeted after staging. Preserve the
+		// generation-conflict contract for that race; ancestor symlinks remain
+		// unsafe path errors because they can redirect the transaction layer.
+		if info, lstatErr := os.Lstat(filepath.Clean(edit.RequestedPath)); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%w: staged config path identity changed at %s", dependencytxn.ErrGenerationConflict, edit.RequestedPath)
+		}
+		return "", fmt.Errorf("resolve requested staged config path %s: %w", edit.RequestedPath, err)
 	}
-	destination, err := canonicalizeFuturePath(edit.Path)
+	destination, err := canonicalConfigDependencyPath(edit.Path)
 	if err != nil {
 		return "", fmt.Errorf("resolve staged config destination %s: %w", edit.Path, err)
 	}
@@ -609,7 +615,7 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 	snapshots := make(map[config.Source]configTransactionSnapshot)
 	writablePaths := make(map[string]config.Source)
 	for _, layer := range ec.PresentLayers() {
-		participantPath, err := canonicalizeFuturePath(layer.Path)
+		participantPath, err := canonicalConfigDependencyPath(layer.Path)
 		if err != nil {
 			return nil, fmt.Errorf("resolve configuration transaction participant %s: %w", layer.Path, err)
 		}
@@ -789,13 +795,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			lockPath = filepath.Join(filepath.Dir(configPath), name)
 		}
+		requestedLockPath := lockPath
 		lockPath, pathErr = rejectGeneratedLockSymlink(lockPath)
 		if pathErr != nil {
-			return nil, nil, changed, pathErr
-		}
-		lockPath, pathErr = canonicalizeFuturePath(lockPath)
-		if pathErr != nil {
-			return nil, nil, changed, fmt.Errorf("resolve lock destination %s: %w", lockPath, pathErr)
+			return nil, nil, changed, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
 		}
 		selected := mode.selects == nil || mode.selects[scope]
 		current, generation, exists, loadErr := loadLayerLock(lockPath, scope)
@@ -1185,30 +1188,38 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		if err != nil {
 			return err
 		}
-		var snapshot string
-		if offline {
-			snapshot, err = cache.OpenExactGit(registry.URL, cacheOID)
-		} else {
-			snapshot, err = cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID)
+		if !offline {
+			if _, err := cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID); err != nil {
+				return &lockLifecycleError{Code: "lock.snapshot-unavailable", Err: err}
+			}
 		}
+		var snapshot string
+		err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, func(path string) error {
+			snapshot = path
+			for _, root := range registry.Roots {
+				warnings, verifyErr := verifyLockedGitRoot(path, root)
+				if verifyErr != nil {
+					return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
+				}
+				if warningSink != nil {
+					for _, warning := range warnings {
+						*warningSink = append(*warningSink, warning)
+					}
+				}
+				verified++
+			}
+			return nil
+		})
 		if err != nil {
+			var lifecycleErr *lockLifecycleError
+			if errors.As(err, &lifecycleErr) {
+				return err
+			}
 			code := "lock.snapshot-unavailable"
 			if offline {
 				code = "lock.offline-snapshot-missing"
 			}
 			return &lockLifecycleError{Code: code, Err: err}
-		}
-		for _, root := range registry.Roots {
-			warnings, err := verifyLockedGitRoot(snapshot, root)
-			if err != nil {
-				return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, err)}
-			}
-			if warningSink != nil {
-				for _, warning := range warnings {
-					*warningSink = append(*warningSink, warning)
-				}
-			}
-			verified++
 		}
 		locked := lockedGit{canonical: registry.URL, fetchURL: fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
 		set.bySource[sourceLockKey(source, registry.URL, registry.Ref)] = locked

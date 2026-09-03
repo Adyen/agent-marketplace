@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -327,6 +328,56 @@ func TestExactGitNamespaceLeaseHonorsContextDeadline(t *testing.T) {
 	_, err = AcquireExactGitNamespaceLeaseWithContext(ctx)
 	if !errors.Is(err, ErrExactGitLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("namespace lock error = %v, want timeout and deadline", err)
+	}
+}
+
+func TestExactGitReadOnlyConsumptionBlocksGarbageCollection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := newExactGitRepository(t, "sha1")
+	canonical := "https://example.invalid/read-lease"
+	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- WithExactGitReadOnly(context.Background(), canonical, oid, func(path string) error {
+			close(entered)
+			<-release
+			raw, err := os.ReadFile(filepath.Join(path, "resource.txt"))
+			if err != nil {
+				return err
+			}
+			if got := string(raw); got != "first\n" {
+				return fmt.Errorf("consumed snapshot = %q", got)
+			}
+			return nil
+		})
+	}()
+	<-entered
+
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := garbageCollectExactGit(false, nil)
+		gcDone <- err
+	}()
+	select {
+	case err := <-gcDone:
+		t.Fatalf("garbage collection completed during exact snapshot consumption: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-consumeDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(exactGitSnapshotPath(canonical, oid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("garbage collection did not remove unreferenced snapshot: %v", err)
 	}
 }
 

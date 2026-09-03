@@ -259,7 +259,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, fmt.Errorf("no registries configured; add at least one registry to the config")
 	}
 
-	discoveryView := exactLockView(ec)
+	discoveryView := exactLockViewWithContext(ctx, ec)
 	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir, installCatalogOption(discoveryView))
 	if err != nil {
 		return nil, err

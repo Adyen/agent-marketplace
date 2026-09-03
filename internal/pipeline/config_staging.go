@@ -174,30 +174,9 @@ func closeConfigStaging(m *configStagingManager, operation string, retErr *error
 }
 
 func canonicalConfigDestination(path string) (string, error) {
-	path, err := filepath.Abs(path)
+	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve config destination %s: %w", path, err)
 	}
-	path = filepath.Clean(path)
-	if canonical, err := filepath.EvalSymlinks(path); err == nil {
-		return canonical, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("resolve config destination %s: %w", path, err)
-	}
-	missing := []string{filepath.Base(path)}
-	current := filepath.Dir(path)
-	for {
-		canonical, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				canonical = filepath.Join(canonical, missing[i])
-			}
-			return canonical, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) || filepath.Dir(current) == current {
-			return "", fmt.Errorf("resolve config destination %s: %w", path, err)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = filepath.Dir(current)
-	}
+	return dependencytxn.CanonicalConfigDestination(filepath.Clean(absolute))
 }

@@ -254,8 +254,10 @@ which subtree you are in.)
 ## Selecting resources: opt-in and opt-out
 
 Every registry entry carries its own `include`/`exclude` selectors per resource
-kind. Because selection is attached to the registry, the resource is always
-fully qualified by its source (`url` + `ref` + `path`).
+kind. Because selection is attached to the registry, the requirement is fully
+qualified by its source (`url` + `ref` + `path`). When a locked Git snapshot is
+consumed, its catalog identity also includes the exact algorithm-qualified
+commit, so retained snapshots from different commits cannot share a catalog.
 
 ```yaml
 registries:

@@ -2,6 +2,7 @@ package dependencytxn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -65,6 +66,85 @@ func TestCommitRejectsConcurrentChangeWithoutResidue(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	assertFile(t, path, "foreign", 0o600)
+	assertNoTransactionResidue(t, root, state)
+}
+
+func TestCommitRejectsSymlinkedDestinationAncestor(t *testing.T) {
+	root, state := testDirs(t)
+	external := t.TempDir()
+	link := filepath.Join(root, "config")
+	if err := os.Symlink(external, link); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(link, "config.yaml")
+
+	_, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Bytes: []byte("desired"), Mode: 0o600}})
+	if !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(external, "config.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("symlink target was written: %v", statErr)
+	}
+	assertNoTransactionResidue(t, root, state)
+}
+
+func TestCommitSupportsSystemPathAlias(t *testing.T) {
+	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(canonicalRoot, "state")
+	path := filepath.Join(root, "config.yaml")
+	_, err = Commit(context.Background(), state, []DesiredFile{{Path: path, Bytes: []byte("desired"), Mode: 0o600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, path, "desired", 0o600)
+}
+
+func TestCommitRetainsRecoveryEvidenceAfterJournalRenameFsyncFailure(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("old"), 0o600)
+	injected := errors.New("injected state directory fsync failure")
+	failed := false
+
+	_, err := Commit(context.Background(), state, []DesiredFile{{
+		Path: path, Expected: generation(t, path), Bytes: []byte("new"), Mode: 0o640,
+	}}, WithFsyncDir(func(dir string) error {
+		if dir == state && !failed {
+			failed = true
+			return injected
+		}
+		return fsyncDir(dir)
+	}))
+	if !errors.Is(err, injected) {
+		t.Fatalf("Commit error = %v, want injected fsync failure", err)
+	}
+	journalPaths := journals(t, state)
+	if len(journalPaths) != 1 {
+		t.Fatalf("journals = %v, want durable recovery journal", journalPaths)
+	}
+	raw, readErr := os.ReadFile(journalPaths[0])
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var persisted journal
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Files) != 1 {
+		t.Fatalf("journal files = %d, want 1", len(persisted.Files))
+	}
+	if _, statErr := os.Stat(persisted.Files[0].Temp); statErr != nil {
+		t.Fatalf("staged recovery file missing: %v", statErr)
+	}
+
+	if err := Recover(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, path, "new", 0o640)
 	assertNoTransactionResidue(t, root, state)
 }
 

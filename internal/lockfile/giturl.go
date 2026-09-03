@@ -38,6 +38,11 @@ func CanonicalGitURLV1(raw string) (string, error) {
 	if matches := scpOrigin.FindStringSubmatch(raw); matches != nil {
 		return canonicalSCP(matches[1], matches[2], matches[3])
 	}
+	// net/url represents a literal trailing fragment marker as an empty
+	// Fragment, so checking Fragment alone would silently accept "#".
+	if strings.HasSuffix(raw, "#") {
+		return "", invalidURL("empty fragments are forbidden")
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", invalidURL("parse: %v", err)

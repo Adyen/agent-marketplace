@@ -66,11 +66,24 @@ type FaultHook func(FaultPoint) error
 type Option func(*options)
 
 type options struct {
-	fault FaultHook
+	fault   FaultHook
+	syncDir func(string) error
 }
 
 func WithFaultHook(hook FaultHook) Option {
 	return func(o *options) { o.fault = hook }
+}
+
+// WithFsyncDir replaces directory syncing for tests that need to exercise a
+// failure after an on-disk rename. The default remains fsyncDir, so callers
+// cannot weaken the transaction's durability unless they explicitly opt into
+// this test seam.
+func WithFsyncDir(syncDir func(string) error) Option {
+	return func(o *options) {
+		if syncDir != nil {
+			o.syncDir = syncDir
+		}
+	}
 }
 
 type journal struct {
@@ -200,9 +213,9 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		return Result{}, nil
 	}
 
-	persisted := false
+	journalPublished := false
 	defer func() {
-		if !persisted {
+		if !journalPublished {
 			for _, file := range changed {
 				if file.temp != "" {
 					_ = os.Remove(file.temp)
@@ -223,7 +236,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		}
 	}
 	for _, dir := range sortedKeys(stagedDirs) {
-		if err := fsyncDir(dir); err != nil {
+		if err := cfg.syncDir(dir); err != nil {
 			return Result{}, err
 		}
 	}
@@ -236,11 +249,15 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	for i, file := range changed {
 		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, NewDigest: Digest(file.desired.Bytes), NewMode: file.desired.Mode}
 	}
-	journalPath, err := persistJournal(stateDir, &j)
+	journalPath, err := persistJournal(stateDir, &j, cfg.syncDir)
+	if journalPath != "" {
+		// Rename publishes recovery evidence even when the following directory
+		// fsync fails. Never remove staged files after that point.
+		journalPublished = true
+	}
 	if err != nil {
 		return Result{}, err
 	}
-	persisted = true
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterJournal, Index: -1}); err != nil {
 		return Result{}, err
 	}
@@ -251,14 +268,14 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
 			return Result{}, err
 		}
-		if err := publish(file); err != nil {
+		if err := publish(file, cfg.syncDir); err != nil {
 			return Result{}, err
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterPublish, Index: i, Path: file.Path}); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := finalizeJournal(journalPath, stateDir); err != nil {
+	if err := finalizeJournal(journalPath, stateDir, cfg.syncDir); err != nil {
 		return Result{}, err
 	}
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterFinalize, Index: -1}); err != nil {
@@ -359,14 +376,14 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
 			return err
 		}
-		if err := publish(file); err != nil {
+		if err := publish(file, cfg.syncDir); err != nil {
 			return err
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterPublish, Index: i, Path: file.Path}); err != nil {
 			return err
 		}
 	}
-	if err := finalizeJournal(path, stateDir); err != nil {
+	if err := finalizeJournal(path, stateDir, cfg.syncDir); err != nil {
 		return err
 	}
 	slog.Info("dependency transaction recovered", "journal", filepath.Base(path), "files", len(j.Files))
@@ -397,26 +414,130 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 	return files, nil
 }
 
-func canonicalDestination(path string) (string, error) {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return "", fmt.Errorf("%w: destination must be a clean absolute path: %s", ErrUnsafePath, path)
-	}
-	parent := filepath.Dir(path)
-	canonicalParent, err := filepath.EvalSymlinks(parent)
+// ValidateDestination validates the lexical destination used by a dependency
+// transaction. Existing ancestors are inspected with Lstat so a symlink cannot
+// be canonicalized into a different layer before the transaction starts.
+func ValidateDestination(path string) (string, error) {
+	path, err := normalizeDestinationPath(path)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolve destination parent %s: %v", ErrUnsafePath, parent, err)
-	}
-	if canonicalParent != parent {
-		return "", fmt.Errorf("%w: symlink in destination ancestors: %s", ErrUnsafePath, path)
+		return "", err
 	}
 	info, err := os.Lstat(path)
-	if err == nil && !info.Mode().IsRegular() {
+	if err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
 		return "", fmt.Errorf("%w: destination is not a regular file: %s", ErrUnsafePath, path)
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("dependency transaction: inspect destination %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// CanonicalConfigDestination preserves the supported config-file symlink
+// compatibility, but only when the target remains adjacent to the logical
+// config path. It never follows an ancestor symlink, and therefore cannot
+// redirect a config transaction (or its adjacent lock) outside its layer.
+func CanonicalConfigDestination(path string) (string, error) {
+	path, err := normalizeDestinationPath(path)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return path, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("dependency transaction: inspect config destination %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%w: config destination is not a regular file: %s", ErrUnsafePath, path)
+		}
+		return path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve config destination symlink %s: %v", ErrUnsafePath, path, err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil || filepath.Dir(resolved) != parent {
+		return "", fmt.Errorf("%w: config symlink target is outside its logical layer: %s", ErrUnsafePath, path)
+	}
+	resolvedInfo, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("%w: inspect config symlink target %s: %v", ErrUnsafePath, resolved, err)
+	}
+	if !resolvedInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("%w: config symlink target is not a regular file: %s", ErrUnsafePath, resolved)
+	}
+	return resolved, nil
+}
+
+func canonicalDestination(path string) (string, error) {
+	return ValidateDestination(path)
+}
+
+func normalizeDestinationPath(path string) (string, error) {
+	if err := validateCleanAbsolutePath(path); err != nil {
+		return "", err
+	}
+	// macOS exposes /var, /tmp, and /etc as root-level aliases into /private.
+	// Resolve those platform aliases so ordinary temporary and system paths are
+	// usable, while still rejecting every symlink below the trusted root alias.
+	root := filepath.VolumeName(path) + string(filepath.Separator)
+	relative := strings.TrimPrefix(path, root)
+	first := relative
+	if separator := strings.IndexByte(relative, byte(filepath.Separator)); separator >= 0 {
+		first = relative[:separator]
+	}
+	if first != "" {
+		alias := filepath.Join(root, first)
+		info, err := os.Lstat(alias)
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("%w: inspect destination root %s: %v", ErrUnsafePath, alias, err)
+		}
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			resolved, resolveErr := filepath.EvalSymlinks(alias)
+			if resolveErr != nil {
+				return "", fmt.Errorf("%w: resolve destination root alias %s: %v", ErrUnsafePath, alias, resolveErr)
+			}
+			expected := filepath.Join(string(filepath.Separator), "private", first)
+			if resolved != expected || (first != "var" && first != "tmp" && first != "etc") {
+				return "", fmt.Errorf("%w: symlink in destination ancestors: %s", ErrUnsafePath, alias)
+			}
+			path = filepath.Join(resolved, strings.TrimPrefix(path, alias))
+		}
+	}
+	if err := validateDestinationAncestors(filepath.Dir(path)); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func validateCleanAbsolutePath(path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return fmt.Errorf("%w: destination must be a clean absolute path: %s", ErrUnsafePath, path)
+	}
+	return nil
+}
+
+func validateDestinationAncestors(parent string) error {
+	for current := parent; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("%w: symlink in destination ancestors: %s", ErrUnsafePath, current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("%w: destination ancestor is not a directory: %s", ErrUnsafePath, current)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("%w: inspect destination ancestor %s: %v", ErrUnsafePath, current, err)
+		}
+		if filepath.Dir(current) == current {
+			return nil
+		}
+	}
 }
 
 func prepareStateDir(path string) (string, error) {
@@ -493,7 +614,7 @@ func stageFile(destination string, data []byte, mode fs.FileMode) (string, error
 	return path, nil
 }
 
-func persistJournal(stateDir string, j *journal) (string, error) {
+func persistJournal(stateDir string, j *journal, syncDir func(string) error) (string, error) {
 	raw, err := json.Marshal(j)
 	if err != nil {
 		return "", fmt.Errorf("dependency transaction: marshal journal: %w", err)
@@ -523,8 +644,10 @@ func persistJournal(stateDir string, j *journal) (string, error) {
 	if err := os.Rename(tempPath, path); err != nil {
 		return "", fmt.Errorf("dependency transaction: publish journal: %w", err)
 	}
-	if err := fsyncDir(stateDir); err != nil {
-		return "", err
+	if err := syncDir(stateDir); err != nil {
+		// The rename is already visible and the journal remains the durable
+		// recovery authority even if its directory fsync failed.
+		return path, err
 	}
 	return path, nil
 }
@@ -562,7 +685,7 @@ func validateAssertions(assertions []journalAssertion) error {
 	return nil
 }
 
-func publish(file journalFile) error {
+func publish(file journalFile, syncDir func(string) error) error {
 	state, err := classify(file)
 	if err != nil {
 		return err
@@ -579,7 +702,7 @@ func publish(file journalFile) error {
 	if err := os.Rename(file.Temp, file.Path); err != nil {
 		return fmt.Errorf("dependency transaction: publish %s: %w", file.Path, err)
 	}
-	return fsyncDir(filepath.Dir(file.Path))
+	return syncDir(filepath.Dir(file.Path))
 }
 
 func classify(file journalFile) (string, error) {
@@ -672,11 +795,11 @@ func ensureContained(dir, path string) error {
 	return nil
 }
 
-func finalizeJournal(path, stateDir string) error {
+func finalizeJournal(path, stateDir string, syncDir func(string) error) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("dependency transaction: remove journal: %w", err)
 	}
-	return fsyncDir(stateDir)
+	return syncDir(stateDir)
 }
 
 func fsyncDir(path string) error {
@@ -720,7 +843,7 @@ func sortedKeys(values map[string]struct{}) []string {
 }
 
 func applyOptions(opts []Option) options {
-	var cfg options
+	cfg := options{syncDir: fsyncDir}
 	for _, opt := range opts {
 		opt(&cfg)
 	}

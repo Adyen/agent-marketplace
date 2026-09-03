@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -65,6 +66,10 @@ type readOnlyExactView struct {
 }
 
 func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
+	return exactLockViewWithContext(context.Background(), ec)
+}
+
+func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) readOnlyExactView {
 	bySource := make(map[string]readOnlyLockedGit)
 	byIdentity := make(map[string][]readOnlyLockedGit)
 	documents := make(map[config.Source]lockfile.Document)
@@ -125,15 +130,18 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 			snapshot := ""
 			openErr := parseErr
 			if openErr == nil {
-				snapshot, openErr = cache.OpenExactGitReadOnly(registry.URL, oid)
-			}
-			if openErr == nil {
-				for _, root := range registry.Roots {
-					if _, verifyErr := sourcerevision.VerifyLockedGitRoot(snapshot, root); verifyErr != nil {
-						openErr = &LockViewError{Code: "lock.manifest-mismatch", Scope: scope, Path: lockPath, Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
-						viewErrors = append(viewErrors, openErr)
-						break
+				openErr = cache.WithExactGitReadOnly(ctx, registry.URL, oid, func(path string) error {
+					snapshot = path
+					for _, root := range registry.Roots {
+						if _, verifyErr := sourcerevision.VerifyLockedGitRoot(path, root); verifyErr != nil {
+							return &LockViewError{Code: "lock.manifest-mismatch", Scope: scope, Path: lockPath, Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
+						}
 					}
+					return nil
+				})
+				var manifestErr *LockViewError
+				if errors.As(openErr, &manifestErr) && manifestErr.Code == "lock.manifest-mismatch" {
+					viewErrors = append(viewErrors, openErr)
 				}
 			}
 			gitMetadata = append(gitMetadata, LockMetadata{

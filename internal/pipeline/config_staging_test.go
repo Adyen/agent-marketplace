@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestConfigStagingManagerCoalescesAndCleans(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	destination := filepath.Join(dir, "config.yaml")
 	original := []byte("apiVersion: v2\n")
 	if err := os.WriteFile(destination, original, 0o640); err != nil {
@@ -57,6 +58,60 @@ func TestConfigStagingManagerCoalescesAndCleans(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("staging root remains: %v", err)
+	}
+}
+
+func TestConfigStagingManagerRejectsSymlinkedAncestor(t *testing.T) {
+	repo := canonicalTempDir(t)
+	external := canonicalTempDir(t)
+	if err := os.Symlink(external, filepath.Join(repo, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newConfigStagingManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	_, err = manager.Path(filepath.Join(repo, ".agents", "config.yaml"))
+	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(external, "config.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("external config was created: %v", statErr)
+	}
+}
+
+func TestConfigStagingManagerRejectsConfigSymlinkOutsideLayer(t *testing.T) {
+	dir := canonicalTempDir(t)
+	external := canonicalTempDir(t)
+	target := filepath.Join(external, "config.yaml")
+	original := []byte("apiVersion: v2\n")
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newConfigStagingManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := manager.Path(link); !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("external config changed: %q, %v", got, err)
 	}
 }
 
@@ -117,4 +172,13 @@ func TestConfigStagingManagerSupportsMissingAndSymlink(t *testing.T) {
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("missing destination created early: %v", err)
 	}
+}
+
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

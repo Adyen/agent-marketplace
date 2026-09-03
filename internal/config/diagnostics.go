@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -148,23 +149,53 @@ func ValidateOrganizationTrustUnit(configPath string, requireLock, allowMissingL
 }
 
 func validateOrganizationAuthorityDirectory(authorityDir, configPath string) error {
-	info, err := os.Lstat(authorityDir)
-	if err != nil {
-		return organizationTrustError("organization.trust.ancestor.inspect", authorityDir, err)
+	authorityDir = filepath.Clean(authorityDir)
+	boundary := organizationTrustBoundary(authorityDir, configPath)
+	for current := authorityDir; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return organizationTrustError("organization.trust.ancestor.inspect", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return organizationTrustError("organization.trust.ancestor.symlink", current, errors.New("organization authority ancestor is a symlink"))
+		}
+		if !info.IsDir() {
+			return organizationTrustError("organization.trust.ancestor.non-directory", current, errors.New("organization authority ancestor is not a directory"))
+		}
+		// Test-only organization paths live below the process temporary
+		// directory, whose permissions and owner are controlled by the test
+		// harness rather than by the organization authority. Keep validating
+		// the boundary's type and symlink status, but preserve the existing
+		// owner override and metadata checks for every fixture ancestor below it.
+		boundaryNode := current == boundary
+		if !boundaryNode || !testPathTrustEnabled(configPath) {
+			if info.Mode().Perm()&0o022 != 0 {
+				return organizationTrustError("organization.trust.ancestor.writable", current, fmt.Errorf("mode %04o permits group or other writes", info.Mode().Perm()))
+			}
+			if !trustedOrganizationOwner(info, configPath) {
+				return organizationTrustError("organization.trust.ancestor.owner", current, errors.New("organization authority ancestor is not owned by a trusted principal"))
+			}
+		}
+		if boundaryNode || filepath.Dir(current) == current {
+			return nil
+		}
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return organizationTrustError("organization.trust.ancestor.symlink", authorityDir, errors.New("authority directory is a symlink"))
+}
+
+func organizationTrustBoundary(authorityDir, configPath string) string {
+	if testPathTrustEnabled(configPath) {
+		boundary := filepath.Clean(os.TempDir())
+		if isPathWithin(boundary, authorityDir) {
+			return boundary
+		}
+		return filepath.Dir(authorityDir)
 	}
-	if !info.IsDir() {
-		return organizationTrustError("organization.trust.ancestor.non-directory", authorityDir, errors.New("authority path is not a directory"))
-	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return organizationTrustError("organization.trust.ancestor.writable", authorityDir, fmt.Errorf("mode %04o permits group or other writes", info.Mode().Perm()))
-	}
-	if !trustedOrganizationOwner(info, configPath) {
-		return organizationTrustError("organization.trust.ancestor.owner", authorityDir, errors.New("authority directory is not owned by a trusted principal"))
-	}
-	return nil
+	return filepath.Dir(defaultOrganizationConfigPath)
+}
+
+func isPathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func validateOrganizationNode(path, configPath, kind string) error {

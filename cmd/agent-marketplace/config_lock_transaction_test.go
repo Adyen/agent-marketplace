@@ -31,7 +31,7 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			repo := filepath.Join(t.TempDir(), "repo")
+			repo := filepath.Join(canonicalTempDir(t), "repo")
 			configPath := filepath.Join(repo, ".agents", "config.yaml")
 			if test.initial != "" {
 				writeConfig(t, configPath, test.initial)
@@ -71,7 +71,7 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	first := filepath.Join(dir, "first", "config.yaml")
 	second := filepath.Join(dir, "second", "config.yaml")
 	writeConfig(t, first, "\nharnesses: [claude]\n")
@@ -109,8 +109,8 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	repo := t.TempDir()
-	unmatched := filepath.Join(t.TempDir(), "config.yaml")
+	repo := canonicalTempDir(t)
+	unmatched := filepath.Join(canonicalTempDir(t), "config.yaml")
 	writeConfig(t, unmatched, "\nskills: [review]\n")
 	canonical, err := canonicalizeFuturePath(unmatched)
 	if err != nil {
@@ -149,15 +149,92 @@ func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {
 	}
 }
 
+func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "ancestor-symlink.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "review")
+
+	repo := filepath.Join(canonicalTempDir(t), "repo")
+	external := filepath.Join(canonicalTempDir(t), "external")
+	if err := os.MkdirAll(external, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(external, "config.yaml")
+	original := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(repo, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	if got, readErr := os.ReadFile(configPath); readErr != nil || !bytes.Equal(got, original) {
+		t.Fatalf("external config changed: %q, %v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(external, "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("external lock was published: %v", statErr)
+	}
+}
+
+func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "staged-ancestor-symlink.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "review")
+
+	repo := filepath.Join(canonicalTempDir(t), "repo")
+	external := filepath.Join(canonicalTempDir(t), "external")
+	if err := os.MkdirAll(external, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requested := filepath.Join(repo, ".agents", "config.yaml")
+	if err := os.Symlink(external, filepath.Join(repo, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(external, "config.yaml")
+	original := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	if err := os.WriteFile(destination, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := dependencytxn.ReadGeneration(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	if got, readErr := os.ReadFile(destination); readErr != nil || !bytes.Equal(got, original) {
+		t.Fatalf("external staged config changed: %q, %v", got, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(external, "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("external staged lock was published: %v", statErr)
+	}
+}
+
 func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	repo := t.TempDir()
+	repo := canonicalTempDir(t)
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 	target := filepath.Join(t.TempDir(), "lock.yaml")
-	original := []byte("user-owned lock target\\n")
+	original := []byte("user-owned lock target\n")
 	if err := os.WriteFile(target, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -179,12 +256,12 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
-	home := t.TempDir()
+	home := canonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	target := filepath.Join(t.TempDir(), "config.yaml")
+	target := filepath.Join(canonicalTempDir(t), "config.yaml")
 	writeConfig(t, target, "\nskills: [review]\n")
-	repo := filepath.Join(t.TempDir(), "repo")
+	repo := filepath.Join(canonicalTempDir(t), "repo")
 	for _, link := range []string{filepath.Join(home, ".agents", "config.yaml"), filepath.Join(repo, ".agents", "config.yaml")} {
 		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 			t.Fatal(err)
@@ -194,8 +271,8 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 		}
 	}
 	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
-	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-		t.Fatalf("error = %v, want generation conflict", err)
+	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
 }
 
@@ -206,7 +283,7 @@ func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 	writeSkill(t, working, "review", "Review", nil)
 	commitAndPushAll(t, working, "review")
 
-	repo := filepath.Join(t.TempDir(), "repo")
+	repo := filepath.Join(canonicalTempDir(t), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
 	original, err := os.ReadFile(configPath)

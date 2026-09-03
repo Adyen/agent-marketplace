@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -2007,7 +2006,7 @@ metadata:
 	}
 }
 
-func TestPrepareFetchJobsExactSnapshotPreservesLogicalCatalogKey(t *testing.T) {
+func TestPrepareFetchJobsExactSnapshotPreservesCommitQualifiedCatalogKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	entry := config.RegistryEntry{
 		URL:  "https://example.invalid/team/resources.git",
@@ -2023,15 +2022,67 @@ func TestPrepareFetchJobsExactSnapshotPreservesLogicalCatalogKey(t *testing.T) {
 	if len(errs) != 0 || len(jobs) != 0 || len(requests) != 1 {
 		t.Fatalf("prepareFetchJobs exact result = %d requests, %d jobs, errors %v", len(requests), len(jobs), errs)
 	}
-	want := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
-	if got := cfg.Registries[0].CatalogKey; got != want {
-		t.Fatalf("exact snapshot catalog key = %q, want stable logical key %q", got, want)
+	if got := cfg.Registries[0].CatalogKey; got != commitQualifiedKey {
+		t.Fatalf("exact snapshot catalog key = %q, want commit-qualified key %q", got, commitQualifiedKey)
 	}
-	if got := requests[0].catalogKey; got != want {
-		t.Fatalf("exact snapshot request key = %q, want stable logical key %q", got, want)
+	if got := requests[0].catalogKey; got != commitQualifiedKey {
+		t.Fatalf("exact snapshot request key = %q, want commit-qualified key %q", got, commitQualifiedKey)
 	}
 	if requests[0].basePath != "/exact/snapshot" {
 		t.Fatalf("exact snapshot base path = %q", requests[0].basePath)
+	}
+}
+
+func TestLoadRegistriesKeepsDistinctExactSnapshotCatalogs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	skillDir := filepath.Join(snapshot, "bundles", "review", "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+name: review
+description: Review skill
+metadata:
+  tags: []
+---
+
+# Review
+`)
+
+	url := "https://example.invalid/team/resources.git"
+	path := "bundles/review"
+	firstIdentity := url + "@sha1:" + strings.Repeat("a", 40) + ":" + path
+	secondIdentity := url + "@sha1:" + strings.Repeat("b", 40) + ":" + path
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "main", Path: path, Source: config.UserPersonal, SourceHarness: "factory"},
+		{URL: url, Ref: "main", Path: path, Source: config.UserPersonal, SourceHarness: "factory"},
+	}}
+	calls := 0
+	result := LoadRegistries(cfg, "", LoadModeRefresh, WithExactSnapshots(func(config.RegistryEntry) (string, string, error) {
+		calls++
+		if calls == 1 {
+			return snapshot, firstIdentity, nil
+		}
+		return snapshot, secondIdentity, nil
+	}))
+	if len(result.Errors) != 0 {
+		t.Fatalf("exact snapshot load errors = %v", result.Errors)
+	}
+	if len(result.Catalogs) != 2 {
+		t.Fatalf("exact snapshot catalogs = %d, want 2: %v", len(result.Catalogs), catalogKeyList(result.Catalogs))
+	}
+	for _, identity := range []string{firstIdentity, secondIdentity} {
+		loaded, ok := result.Catalogs[identity]
+		if !ok {
+			t.Fatalf("missing catalog for exact snapshot identity %q", identity)
+		}
+		if len(loaded.Entries) != 1 || loaded.Entries[0].Name != "review" {
+			t.Fatalf("catalog %q entries = %#v", identity, loaded.Entries)
+		}
+	}
+	if cfg.Registries[0].CatalogKey != firstIdentity || cfg.Registries[1].CatalogKey != secondIdentity {
+		t.Fatalf("configured exact catalog keys = %q, %q", cfg.Registries[0].CatalogKey, cfg.Registries[1].CatalogKey)
 	}
 }
 

@@ -19,7 +19,7 @@ func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	writeSkill(t, working, "required-org", "Required org", nil)
 	commitAndPushAll(t, working, "required org")
 
-	authority := t.TempDir()
+	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
 	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
 	if err := os.Chmod(authority, 0o555); err != nil {
@@ -27,7 +27,7 @@ func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
-	repo := filepath.Join(t.TempDir(), "repo")
+	repo := filepath.Join(canonicalTempDir(t), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 
@@ -52,7 +52,7 @@ func TestExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
 	writeSkill(t, working, "required-org", "Required org", nil)
 	commitAndPushAll(t, working, "required org")
 
-	authority := t.TempDir()
+	authority := canonicalTempDir(t)
 	orgPath := filepath.Join(authority, "config.yaml")
 	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)

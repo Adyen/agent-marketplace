@@ -255,6 +255,17 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	return writeListTable(out, rows)
 }
 
+func listCatalogKey(entry config.RegistryEntry, repoRoot string) string {
+	if entry.CatalogKey != "" {
+		return entry.CatalogKey
+	}
+	if entry.IsLocal() {
+		localPath, _ := entry.ResolveLocalPath(repoRoot)
+		return entry.BundlePath(localPath)
+	}
+	return cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+}
+
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {
 	enabled := make(map[string]struct{}, len(resolved))
 	for _, resolvedSkill := range resolved {
@@ -297,13 +308,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 			continue
 		}
 
-		var catalogKey string
-		if entry.IsLocal() {
-			localPath, _ := entry.ResolveLocalPath(repoRoot)
-			catalogKey = entry.BundlePath(localPath)
-		} else {
-			catalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
-		}
+		catalogKey := listCatalogKey(entry, repoRoot)
 
 		byNormalizedKey[normalizedKey] = len(mergedEntries)
 		mergedEntries = append(mergedEntries, mergedRegistry{
@@ -317,19 +322,17 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 	emittedNormalizedKeys := make(map[string]struct{}, len(mergedEntries))
 	for _, entry := range cfg.Registries {
 		var normalizedKey string
-		var entryCatalogKey string
 		if entry.IsLocal() {
 			localPath, _ := entry.ResolveLocalPath(repoRoot)
 			normalizedKey = "local\x00" + entry.BundlePath(localPath)
-			entryCatalogKey = entry.BundlePath(localPath)
 		} else {
 			cleanPath := filepath.Clean(strings.TrimSpace(entry.Path))
 			if cleanPath == "." {
 				cleanPath = ""
 			}
 			normalizedKey = config.NormalizeGitURL(entry.URL) + "\x00" + entry.Ref + "\x00" + cleanPath
-			entryCatalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
 		}
+		entryCatalogKey := listCatalogKey(entry, repoRoot)
 
 		if _, emitted := emittedNormalizedKeys[normalizedKey]; emitted {
 			continue

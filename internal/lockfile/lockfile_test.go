@@ -39,6 +39,7 @@ func TestCanonicalGitURL(t *testing.T) {
 		{"git@git.example.com:team//repo.git", "git+scp://git@git.example.com/team/repo"},
 		{"git+scp://git@git.example.com/team/repo", "git+scp://git@git.example.com/team/repo"},
 		{"file:///tmp/repos/example.git", "file:///tmp/repos/example"},
+		{"https://host/repo%23", "https://host/repo%23"},
 	} {
 		got, err := CanonicalGitURL(tc.in)
 		if err != nil || got != tc.want {
@@ -49,6 +50,21 @@ func TestCanonicalGitURL(t *testing.T) {
 		if got, err := CanonicalGitURL(in); err == nil {
 			t.Errorf("CanonicalGitURL(%q) = %q, want error", in, got)
 		}
+	}
+}
+
+func TestCanonicalGitURLRejectsLiteralEmptyFragment(t *testing.T) {
+	for _, in := range []string{"https://host/repo#", "ssh://git@host/repo#", "file:///tmp/repo#"} {
+		t.Run(in, func(t *testing.T) {
+			got, err := CanonicalGitURL(in)
+			if err == nil {
+				t.Fatalf("CanonicalGitURL(%q) = %q, want error", in, got)
+			}
+			var codedErr *Error
+			if !errors.As(err, &codedErr) || codedErr.Code != CodeInvalidGitURL {
+				t.Fatalf("error = %T %v, want code %q", err, err, CodeInvalidGitURL)
+			}
+		})
 	}
 }
 

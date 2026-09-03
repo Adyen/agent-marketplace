@@ -69,6 +69,15 @@ changing authoritative files (online cache warming is allowed).
 in a verified cache. `lock --check` checks whether lock files would change
 without writing them.
 
+Locked Git catalogs are identified by canonical source, exact
+algorithm-qualified commit, and root path; this keeps two retained commits
+separate even when they use the same configured URL and ref. Exact snapshot
+verification and consumption hold a shared cache lease, so garbage collection
+cannot remove a verified snapshot between the check and its use. Config/lock
+commits are journaled: if the journal directory fsync fails after the journal
+rename, the command reports the failure but leaves recovery evidence for the
+next invocation instead of discarding the staged transaction.
+
 The organization lock is optional for consumers. If it is missing, organization
 requirements are resolved live and no organization lock is created implicitly.
 When present, the config/lock pair must pass trusted-owner, permissions,
@@ -76,6 +85,10 @@ regular-file, and safe-ancestor checks; a malformed, stale, symlinked, or
 untrusted lock is a hard error and never falls back to a user lock.
 Administrators create or refresh it explicitly with
 `agent-marketplace lock --scope organization`.
+Dependency transaction destinations reject symlinked ancestors and unsafe
+non-regular paths. A final config-file symlink remains supported only when it
+resolves to a regular file beside the logical config path; it cannot redirect a
+config/lock transaction into another layer.
 
 Marketplace IDs and resource coordinates use safe single-segment values: they
 cannot be empty, contain whitespace or control characters, contain `/` or `\\`,
@@ -291,4 +304,4 @@ Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompati
 5. Compile each resolved resource to each configured harness.
 6. Materialize native harness files with prune-stale enabled.
 
-Run `agent-marketplace status` to see the selected harnesses, native targets, cache freshness, local excludes, orphaned files, collisions, and errors.
+Run `agent-marketplace status` to see the selected harnesses, native targets, cache freshness, local excludes, orphaned files, collisions, and errors. Lock and trust failures are reported as diagnostics (including missing or untrusted exact snapshots and source-manifest mismatches); the CLI does not silently fall back to a mutable ref.

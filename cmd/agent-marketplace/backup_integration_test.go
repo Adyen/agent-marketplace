@@ -447,11 +447,12 @@ registries:
 		t.Fatalf("resolved artifacts mutable/exact = %d/%d", len(mutable.Resolved), len(exact.Resolved))
 	}
 	mutableArtifact, exactArtifact := mutable.Resolved[0], exact.Resolved[0]
-	if mutableArtifact.CatalogKey != exactArtifact.CatalogKey ||
+	if mutableArtifact.CatalogKey == exactArtifact.CatalogKey ||
 		mutableArtifact.RegistryURL != exactArtifact.RegistryURL ||
 		mutableArtifact.Ref != exactArtifact.Ref ||
-		mutableArtifact.Path != exactArtifact.Path {
-		t.Fatalf("exact locking changed compiled-cache identity:\nmutable: key=%q url=%q ref=%q path=%q\nexact:   key=%q url=%q ref=%q path=%q",
+		mutableArtifact.Path != exactArtifact.Path ||
+		!strings.Contains(exactArtifact.CatalogKey, "@sha1:") {
+		t.Fatalf("exact locking did not preserve commit-qualified identity:\nmutable: key=%q url=%q ref=%q path=%q\nexact:   key=%q url=%q ref=%q path=%q",
 			mutableArtifact.CatalogKey, mutableArtifact.RegistryURL, mutableArtifact.Ref, mutableArtifact.Path,
 			exactArtifact.CatalogKey, exactArtifact.RegistryURL, exactArtifact.Ref, exactArtifact.Path)
 	}

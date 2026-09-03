@@ -440,7 +440,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	catalogOpts := opts.CatalogOption
 	var readOnlyView readOnlyExactView
 	if opts.ReadOnlyExactLocks {
-		readOnlyView = exactLockView(ec)
+		readOnlyView = exactLockViewWithContext(ctx, ec)
 		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
 		result.LockMetadata = readOnlyView.gitMetadata
 		result.MarketplaceLockMetadata = readOnlyView.marketplaceMetadata

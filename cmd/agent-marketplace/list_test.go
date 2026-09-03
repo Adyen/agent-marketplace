@@ -11,7 +11,49 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
+	const exactCatalogKey = "/cache/registry@sha1:0123456789abcdef"
+	const registryURL = "https://example.com/agents.git"
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:        registryURL,
+		Ref:        "main",
+		CatalogKey: exactCatalogKey,
+	}}}
+	catalogs := map[string]loadedCatalog{
+		exactCatalogKey: {
+			Entries: []catalog.Entry{{
+				Kind: ir.KindSkill,
+				Name: "locked-skill",
+				Tags: []string{"exact"},
+			}},
+		},
+	}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:       catalogs[exactCatalogKey].Entries[0],
+		RegistryURL: registryURL,
+		Ref:         "main",
+		CatalogKey:  exactCatalogKey,
+	}}
+
+	rows := buildListRows(cfg, catalogs, resolved)
+	if len(rows) != 1 {
+		t.Fatalf("expected one list row, got %d: %#v", len(rows), rows)
+	}
+	if got, want := rows[0].Status, "enabled"; got != want {
+		t.Fatalf("exact catalog entry status = %q, want %q", got, want)
+	}
+	if got, want := rows[0].Name, "locked-skill"; got != want {
+		t.Fatalf("exact catalog entry name = %q, want %q", got, want)
+	}
+}
 
 func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
 	homeDir := t.TempDir()

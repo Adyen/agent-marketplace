@@ -32,7 +32,7 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 }
 
 func TestMutateConfigWithDependenciesKeepsEditPrivateUntilReconcile(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	destination := filepath.Join(dir, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestMutateConfigWithDependenciesKeepsEditPrivateUntilReconcile(t *testing.T
 }
 
 func TestDependencyReconcilerReceivesCoalescedStagedConfig(t *testing.T) {
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	destination := filepath.Join(dir, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)

@@ -301,7 +301,7 @@ Pipeline orchestration composes these modules and passes locked catalogs through
 
 The current mutable `URL/ref` checkout cannot back two locks that retain different commits. Git caching therefore separates a shared source object store from immutable commit-addressed snapshots.
 
-A symbolic ref may be fetched into the source object store only during missing/invalid reconciliation or explicit update. Exact synchronization fetches the locked object when absent but never resolves the current ref tip as a fallback. A materialization snapshot is keyed by canonical source identity plus algorithm-qualified commit.
+A symbolic ref may be fetched into the source object store only during missing/invalid reconciliation or explicit update. Exact synchronization fetches the locked object when absent but never resolves the current ref tip as a fallback. A materialization snapshot is keyed by canonical source identity plus algorithm-qualified commit. When that exact snapshot is consumed, the catalog key is likewise commit-qualified (`canonical-source@algorithm:commit:path`), while mutable catalogs remain keyed by URL, ref, and root path.
 
 Before a snapshot becomes trusted, acquisition verifies:
 
@@ -313,7 +313,7 @@ Before a snapshot becomes trusted, acquisition verifies:
 
 The cache remains disposable. Deleting it has no effect on lock authority. Online synchronization can reconstruct it from exact identities; offline synchronization fails closed when the exact verified snapshot is absent.
 
-Cache writes and garbage collection require cross-process serialization. Snapshot publication uses temporary directories and rename so readers never observe a partially populated immutable entry. Exact Git cache lock handles are disposable files under the cache lock directory and are never lock authority.
+Cache writes and garbage collection require cross-process serialization. Snapshot publication uses temporary directories and rename so readers never observe a partially populated immutable entry. Read-only exact-snapshot verification and consumption hold a shared exact-cache namespace lease for the entire consume operation, so GC cannot remove a verified snapshot between validation and use. Exact Git cache lock handles are disposable files under the cache lock directory and are never lock authority.
 
 ## Marketplace acquisition and policy
 
@@ -336,7 +336,9 @@ Network and content verification complete before authoritative file mutation. A 
 7. releases advisory locks;
 8. begins materialization.
 
-Every CLI path that reads or writes these files participates in the same advisory-lock and recovery protocol. The journal permits the next invocation to complete or restore a process that exited between per-file renames. Recovery never guesses from timestamps and never treats malformed state as authority. Per-destination handles are named `.<basename>.dependencytxn.lock` beside the destination; repository `.agents/*.dependencytxn.lock` handles are transient and remain covered by the repository ignore rule rather than being treated as lockfiles.
+Every CLI path that reads or writes these files participates in the same advisory-lock and recovery protocol. The journal permits the next invocation to complete or restore a process that exited between per-file renames. Journal publication records recovery authority before the journal-directory fsync; if that fsync fails, the operation reports the error but retains the renamed journal and staged files for the next invocation rather than deleting its recovery evidence. Recovery never guesses from timestamps and never treats malformed state as authority. Per-destination handles are named `.<basename>.dependencytxn.lock` beside the destination; repository `.agents/*.dependencytxn.lock` handles are transient and remain covered by the repository ignore rule rather than being treated as lockfiles.
+
+Transaction destinations reject symlinked ancestors and non-regular paths after lexical normalization. The supported final config-file symlink is accepted only when its regular target remains adjacent to the logical config path; ancestor symlinks cannot redirect a config/lock transaction into another layer.
 
 The dependency commit is the transaction boundary. Materialization is intentionally outside it: multiple harness roots cannot be made one filesystem transaction, and a valid lock should not be discarded because one target compiler or destination fails.
 
@@ -363,7 +365,8 @@ The implementation may accept the legacy config shape only as migration input. I
 Stable coded diagnostics distinguish at least:
 
 - `lock.missing`, `lock.stale`, `lock.trust`, and `lock.change-required` for missing, mismatched, untrusted, or would-change locks;
-- missing or filesystem-untrusted managed lock;
+- `lock.snapshot-unavailable`, `lock.manifest-mismatch`, and `lock.lookup` for missing exact cache content, integrity mismatch, or ambiguous exact catalog selection;
+- `organization.trust.*` failures and `org-config-*` managed-installation warnings for symlinks, unsafe ancestors, ownership/permissions, malformed or scope-invalid organization locks; filesystem findings remain reportable even when the config cannot be parsed;
 - lock/config mismatch under `--locked`;
 - constrained exact requirement skipped by update;
 - unsupported lock schema or Git object algorithm;

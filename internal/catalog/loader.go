@@ -739,25 +739,43 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 		_, ingestSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.catalog_ingest", nil)
 	}
 
-	// Phase 3: Discover skills in fetched registries. Keep the read lease for
+	// Phase 3: Discover skills in fetched registries. Keep the read leases for
 	// the complete discovery pass so another process cannot collect a cache
-	// directory after fetching but before its contents are consumed.
+	// directory after fetching but before its contents are consumed. Exact
+	// snapshots use their own namespace lease because exact-git GC has a
+	// separate lock from the mutable registry cache.
 	hasRemoteRequest := false
+	hasExactRequest := false
 	for _, request := range requests {
 		if !request.entry.IsLocal() {
 			hasRemoteRequest = true
-			break
 		}
+		if request.catalogBasePath != "" {
+			hasExactRequest = true
+		}
+	}
+	discover := func() {
+		if hasExactRequest {
+			release, lockErr := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+			if lockErr != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("acquire exact git read lease: %w", lockErr))
+				return
+			}
+			discoverAll(&result, requests, lc.discover)
+			release()
+			return
+		}
+		discoverAll(&result, requests, lc.discover)
 	}
 	if hasRemoteRequest {
 		if _, lockErr := cache.WithCacheReadLock(func() (struct{}, error) {
-			discoverAll(&result, requests, lc.discover)
+			discover()
 			return struct{}{}, nil
 		}); lockErr != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("acquire registry cache read lease: %w", lockErr))
 		}
 	} else {
-		discoverAll(&result, requests, lc.discover)
+		discover()
 	}
 
 	if ingestSpan != (telemetry.Span{}) {
@@ -819,13 +837,16 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 		}
 
 		if len(exactSnapshot) > 0 && exactSnapshot[0] != nil {
-			snapshotPath, _, err := exactSnapshot[0](entry)
+			snapshotPath, snapshotIdentity, err := exactSnapshot[0](entry)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("open exact snapshot for registry %q (ref %q): %w", entry.URL, entry.Ref, err))
 				continue
 			}
 			if snapshotPath != "" {
-				catalogKey := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+				catalogKey := snapshotIdentity
+				if catalogKey == "" {
+					catalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+				}
 				entry.CatalogKey = catalogKey
 				cfg.Registries[i].CatalogKey = catalogKey
 				requests = append(requests, loadRequest{
