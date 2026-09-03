@@ -304,6 +304,12 @@ func exactMarketplaceConfig(input *config.Config, documents map[config.Source]lo
 	out := *input
 	out.Marketplaces = make([]config.MarketplaceEntry, 0, len(input.Marketplaces))
 	for _, entry := range input.Marketplaces {
+		if len(entry.Resources) == 0 {
+			// A registered endpoint without requirements has no exact resource
+			// state to project from the adjacent lock.
+			out.Marketplaces = append(out.Marketplaces, entry)
+			continue
+		}
 		if blocked[entry.Source] {
 			continue
 		}

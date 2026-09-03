@@ -54,16 +54,23 @@ func (f *lockfileGitFixture) replaceSkills(t *testing.T, message string, skills 
 	gitRun(t, f.working, "push", "origin", "main")
 }
 
-func TestLockfileSyncRetainsExactCommitUntilUpdate(t *testing.T) {
+func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "lock-lifecycle", Skill{Name: "review", Description: "Review version one"})
-	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+	// Keep this spelling literal: the regression is specifically the absolute
+	// file:// URL whose repository path ends in .git.
+	literalURL := "file://" + filepath.ToSlash(filepath.Join(fixture.env.repos, "lock-lifecycle.git"))
+	if fixture.url != literalURL {
+		t.Fatalf("fixture URL = %q, want literal absolute file URL %q", fixture.url, literalURL)
+	}
+	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", literalURL))
 
 	result := fixture.env.RunAM("sync")
 	if result.ExitCode != 0 {
 		t.Fatalf("first sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	lockBefore := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
-	for _, want := range []string{"apiVersion: agent-marketplace-lock/v1", "scope: repo", "commit: sha1:"} {
+	canonicalURL := strings.TrimSuffix(literalURL, ".git")
+	for _, want := range []string{"apiVersion: agent-marketplace-lock/v1", "scope: repo", "url: " + canonicalURL, "commit: sha1:"} {
 		if !strings.Contains(lockBefore, want) {
 			t.Fatalf("first sync lock missing %q:\n%s", want, lockBefore)
 		}

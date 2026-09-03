@@ -14,6 +14,9 @@ import (
 )
 
 func Decode(data []byte) (Document, error) {
+	if int64(len(data)) > MaxFileSize {
+		return Document{}, fmt.Errorf("%w: lock input exceeds %d bytes", ErrFileTooLarge, MaxFileSize)
+	}
 	if containsConflictMarkers(data) {
 		return Document{}, coded(CodeConflictMarkers, "Git conflict markers are forbidden")
 	}
@@ -60,7 +63,7 @@ func DecodeInto(data []byte, dst *Document) error {
 }
 
 func DecodeReader(r io.Reader) (Document, error) {
-	data, err := io.ReadAll(r)
+	data, err := io.ReadAll(io.LimitReader(r, MaxFileSize+1))
 	if err != nil {
 		return Document{}, fmt.Errorf("read lock: %w", err)
 	}

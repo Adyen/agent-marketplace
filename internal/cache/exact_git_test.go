@@ -14,8 +14,48 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/testutil"
 	"golang.org/x/sys/unix"
 )
+
+func TestExactGitCacheIdentityUsesSharedCanonicalURLFixtures(t *testing.T) {
+	for _, tc := range testutil.CanonicalGitURLFixtures {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, err := lockfile.CanonicalGitURL(tc.Raw)
+			if tc.Canonical == "" {
+				if err == nil {
+					t.Fatalf("CanonicalGitURL(%q) = %q, want rejection", tc.Raw, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CanonicalGitURL(%q): %v", tc.Raw, err)
+			}
+			if got != tc.Canonical {
+				t.Fatalf("canonical URL = %q, want %q", got, tc.Canonical)
+			}
+			if sourceKey(got) != sourceKey(tc.Canonical) {
+				t.Fatalf("equivalent URL spellings produced different cache identities")
+			}
+		})
+	}
+	for _, tc := range testutil.NonEquivalentGitURLPairs {
+		t.Run("non-equivalent/"+tc.Name, func(t *testing.T) {
+			left, err := lockfile.CanonicalGitURL(tc.Left)
+			if err != nil {
+				t.Fatalf("CanonicalGitURL(left): %v", err)
+			}
+			right, err := lockfile.CanonicalGitURL(tc.Right)
+			if err != nil {
+				t.Fatalf("CanonicalGitURL(right): %v", err)
+			}
+			if sourceKey(left) == sourceKey(right) {
+				t.Fatalf("non-equivalent URL identities collided: %q", left)
+			}
+		})
+	}
+}
 
 func TestParseGitOID(t *testing.T) {
 	tests := []struct {
@@ -109,6 +149,95 @@ func TestOpenExactGitDoesNotCreateCacheState(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(home, ".cache")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read-only open created cache state: %v", err)
+	}
+}
+
+func TestExactGitCancelledContextHasNoCacheSideEffects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	canonical := "https://example.invalid/cancelled"
+	oid, err := ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	consumed := false
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{name: "resolve", call: func() error {
+			_, err := ResolveExactGitRefWithContext(ctx, canonical, "/does/not/exist", "main")
+			return err
+		}},
+		{name: "acquire", call: func() error {
+			_, err := AcquireExactGitWithContext(ctx, canonical, "/does/not/exist", oid)
+			return err
+		}},
+		{name: "open", call: func() error {
+			_, err := OpenExactGitReadOnlyWithContext(ctx, canonical, oid)
+			return err
+		}},
+		{name: "read", call: func() error {
+			return WithExactGitReadOnly(ctx, canonical, oid, func(string) error {
+				consumed = true
+				return nil
+			})
+		}},
+		{name: "namespace lease", call: func() error {
+			release, err := AcquireExactGitNamespaceLeaseWithContext(ctx)
+			if release != nil {
+				release()
+			}
+			return err
+		}},
+	}
+	for _, tc := range calls {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled call error = %v, want context.Canceled", err)
+			}
+		})
+	}
+	if consumed {
+		t.Fatal("cancelled read invoked its consumer")
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".cache")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled exact git calls created cache state: %v", err)
+	}
+}
+
+func TestExactGitCancelledReadOnlyDoesNotCreateLockFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := newExactGitRepository(t, "sha1")
+	canonical := "https://example.invalid/cancelled-read"
+	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatal(err)
+	}
+	lockDir := filepath.Join(exactGitRoot(), "locks")
+	if err := os.RemoveAll(lockDir); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := OpenExactGitReadOnlyWithContext(ctx, canonical, oid); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled open error = %v, want context.Canceled", err)
+	}
+	readInvoked := false
+	if err := WithExactGitReadOnly(ctx, canonical, oid, func(string) error {
+		readInvoked = true
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled read error = %v, want context.Canceled", err)
+	}
+	if readInvoked {
+		t.Fatal("cancelled read invoked its consumer")
+	}
+	if _, err := os.Lstat(lockDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled read-only calls created lock state: %v", err)
 	}
 }
 

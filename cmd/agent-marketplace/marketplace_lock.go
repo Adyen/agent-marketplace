@@ -327,6 +327,13 @@ func exactMarketplaceView(documents map[config.Source]lockfile.Document) marketp
 		out := *input
 		out.Marketplaces = make([]config.MarketplaceEntry, 0, len(input.Marketplaces))
 		for _, entry := range input.Marketplaces {
+			// Endpoint registration without resource requirements has no lock
+			// record to project. Preserve the endpoint while allowing the
+			// adjacent lock to contain only its header.
+			if len(entry.Resources) == 0 {
+				out.Marketplaces = append(out.Marketplaces, entry)
+				continue
+			}
 			doc, ok := documents[entry.Source]
 			if !ok {
 				return nil, fmt.Errorf("no lock for Marketplace owned by %s", entry.Source)

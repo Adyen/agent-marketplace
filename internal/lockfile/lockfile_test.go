@@ -2,9 +2,12 @@ package lockfile
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/testutil"
 )
 
 const sha1a = "sha1:0123456789abcdef0123456789abcdef01234567"
@@ -31,38 +34,40 @@ func TestParseGitOID(t *testing.T) {
 	}
 }
 
-func TestCanonicalGitURL(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{" HTTPS://Git.Example.COM:443//team/repo.git/ ", "https://git.example.com/team/repo"},
-		{"http://git.example.com:80/team/repo.git", "http://git.example.com/team/repo"},
-		{"ssh://Git@Git.Example.COM:22//team/repo.git", "ssh://Git@git.example.com/team/repo"},
-		{"git@git.example.com:team//repo.git", "git+scp://git@git.example.com/team/repo"},
-		{"git+scp://git@git.example.com/team/repo", "git+scp://git@git.example.com/team/repo"},
-		{"file:///tmp/repos/example.git", "file:///tmp/repos/example"},
-		{"https://host/repo%23", "https://host/repo%23"},
-	} {
-		got, err := CanonicalGitURL(tc.in)
-		if err != nil || got != tc.want {
-			t.Errorf("CanonicalGitURL(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
-		}
-	}
-	for _, in := range []string{"https://host/repo?token=x", "https://u:p@host/repo", "https://host/a/%2f/b", "https://host/a/../b", "file://host/tmp/a", "file:relative", "git@host:/absolute"} {
-		if got, err := CanonicalGitURL(in); err == nil {
-			t.Errorf("CanonicalGitURL(%q) = %q, want error", in, got)
-		}
+func TestCanonicalGitURLSharedFixtures(t *testing.T) {
+	for _, tc := range testutil.CanonicalGitURLFixtures {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, err := CanonicalGitURL(tc.Raw)
+			if tc.Canonical == "" {
+				if err == nil {
+					t.Fatalf("CanonicalGitURL(%q) = %q, want rejection", tc.Raw, got)
+				}
+				var codedErr *Error
+				if !errors.As(err, &codedErr) || codedErr.Code != CodeInvalidGitURL {
+					t.Fatalf("error = %T %v, want code %q", err, err, CodeInvalidGitURL)
+				}
+				return
+			}
+			if err != nil || got != tc.Canonical {
+				t.Fatalf("CanonicalGitURL(%q) = %q, %v; want %q", tc.Raw, got, err, tc.Canonical)
+			}
+		})
 	}
 }
 
-func TestCanonicalGitURLRejectsLiteralEmptyFragment(t *testing.T) {
-	for _, in := range []string{"https://host/repo#", "ssh://git@host/repo#", "file:///tmp/repo#"} {
-		t.Run(in, func(t *testing.T) {
-			got, err := CanonicalGitURL(in)
-			if err == nil {
-				t.Fatalf("CanonicalGitURL(%q) = %q, want error", in, got)
+func TestCanonicalGitURLSharedNonEquivalentFixtures(t *testing.T) {
+	for _, tc := range testutil.NonEquivalentGitURLPairs {
+		t.Run(tc.Name, func(t *testing.T) {
+			left, err := CanonicalGitURL(tc.Left)
+			if err != nil {
+				t.Fatalf("CanonicalGitURL(left): %v", err)
 			}
-			var codedErr *Error
-			if !errors.As(err, &codedErr) || codedErr.Code != CodeInvalidGitURL {
-				t.Fatalf("error = %T %v, want code %q", err, err, CodeInvalidGitURL)
+			right, err := CanonicalGitURL(tc.Right)
+			if err != nil {
+				t.Fatalf("CanonicalGitURL(right): %v", err)
+			}
+			if left == right {
+				t.Fatalf("canonical identities collapsed: %q", left)
 			}
 		})
 	}
@@ -354,6 +359,78 @@ func TestMarketplaceCollectionGraphRejectsExcessiveDepth(t *testing.T) {
 	var lockErr *Error
 	if !errors.As(err, &lockErr) || lockErr.Code != CodeInvalidDocument || !strings.Contains(err.Error(), "depth limit") {
 		t.Fatalf("depth validation error = %v", err)
+	}
+}
+
+func TestMarketplaceCollectionGraphRejectsExcessiveEdges(t *testing.T) {
+	digest := Digest(sha256a)
+	members := make([]CollectionEdge, maxCollectionGraphEdges+1)
+	resources := make([]MarketplaceResource, maxCollectionGraphEdges+1)
+	for i := range members {
+		name := fmt.Sprintf("review-%d", i)
+		members[i] = CollectionEdge{SourceID: "source", Kind: "skill", Name: name, Revision: digest}
+		resources[i] = MarketplaceResource{SourceID: "source", Kind: "skill", Name: name, Revision: digest, Acquisition: AcquisitionMirror, ArchiveDigest: digest, Direct: true}
+	}
+	err := Validate(Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Marketplaces: []Marketplace{{
+		URL: "https://market.example", InstanceID: "market",
+		Collections: []MarketplaceCollection{{SourceID: "sets", Name: "base", Revision: digest, Direct: true, Members: members}},
+		Resources:   resources,
+	}}})
+	var lockErr *Error
+	if !errors.As(err, &lockErr) || lockErr.Code != CodeInvalidDocument || !strings.Contains(err.Error(), "edge limit") {
+		t.Fatalf("edge validation error = %v", err)
+	}
+}
+
+func TestMarketplaceCollectionGraphExpansionStepBoundaries(t *testing.T) {
+	const (
+		underLimitLeaves = 62499
+		atLimitLeaves    = 62500
+		overLimitLeaves  = 62501
+	)
+	digest := Digest(sha256a)
+	for _, tc := range []struct {
+		name      string
+		leafCount int
+		wantError bool
+	}{
+		{name: "under limit", leafCount: underLimitLeaves},
+		{name: "at limit", leafCount: atLimitLeaves},
+		{name: "over limit", leafCount: overLimitLeaves, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			collections := map[string]MarketplaceCollection{}
+			resources := make(map[string]MarketplaceResource, tc.leafCount)
+			sharedKey := "sets\x00shared\x00" + digest.String()
+			shared := MarketplaceCollection{SourceID: "sets", Name: "shared", Revision: digest}
+			for i := 0; i < tc.leafCount; i++ {
+				name := fmt.Sprintf("leaf-%05d", i)
+				shared.Members = append(shared.Members, CollectionEdge{SourceID: "source", Kind: "skill", Name: name, Revision: digest})
+				resources["source\x00skill\x00"+name+"\x00"+digest.String()] = MarketplaceResource{SourceID: "source", Kind: "skill", Name: name, Revision: digest}
+			}
+			collections[sharedKey] = shared
+			for i := 1; i <= 3; i++ {
+				name := fmt.Sprintf("root-%d", i)
+				root := MarketplaceCollection{SourceID: "sets", Name: name, Revision: digest, Members: []CollectionEdge{{SourceID: "sets", Kind: "collection", Name: "shared", Revision: digest}}}
+				collections["sets\x00"+name+"\x00"+digest.String()] = root
+			}
+
+			closures, err := buildCollectionClosures(collections, resources)
+			if tc.wantError {
+				var lockErr *Error
+				if !errors.As(err, &lockErr) || lockErr.Code != CodeInvalidDocument || !strings.Contains(err.Error(), "expansion limit") {
+					t.Fatalf("expansion error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildCollectionClosures() error = %v", err)
+			}
+			rootKey := "sets\x00root-1\x00" + digest.String()
+			if got := len(closures[rootKey].leaves); got != tc.leafCount {
+				t.Fatalf("root closure leaves = %d, want %d", got, tc.leafCount)
+			}
+		})
 	}
 }
 

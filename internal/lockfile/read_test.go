@@ -1,6 +1,7 @@
 package lockfile
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -40,6 +41,20 @@ func TestReadRejectsUnsafeAndOversizedFiles(t *testing.T) {
 	}
 	if _, err := Read(oversized); !errors.Is(err, ErrFileTooLarge) {
 		t.Fatalf("Read(oversized) error = %v", err)
+	}
+}
+
+func TestDecodeRejectsOversizedInputBeforeYAMLParsing(t *testing.T) {
+	data := bytes.Repeat([]byte("{"), int(MaxFileSize)+1)
+	if _, err := Decode(data); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("Decode(oversized) error = %v, want ErrFileTooLarge", err)
+	}
+}
+
+func TestDecodeReaderRejectsOversizedInputWithBoundedRead(t *testing.T) {
+	data := bytes.Repeat([]byte("{"), int(MaxFileSize)+1)
+	if _, err := DecodeReader(bytes.NewReader(data)); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("DecodeReader(oversized) error = %v, want ErrFileTooLarge", err)
 	}
 }
 
