@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestKeyMapNavigationBindingsMatch(t *testing.T) {
@@ -244,6 +246,25 @@ func TestKeyMapFullHelpReturnsGroups(t *testing.T) {
 	for i, g := range groups {
 		if len(g) == 0 {
 			t.Fatalf("%s group should have at least one binding", names[i])
+		}
+	}
+}
+
+func TestHelpKeepsLongNavigationAliasesTogether(t *testing.T) {
+	output := ansi.Strip(renderHelp(NewModel("/repo", "/home")))
+	for _, want := range []string{
+		"f/ctrl+f/pgdn  page down",
+		"b/ctrl+b/pgup  page up",
+	} {
+		found := false
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(line, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("help entry %q was wrapped or missing:\n%s", want, output)
 		}
 	}
 }
