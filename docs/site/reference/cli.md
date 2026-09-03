@@ -62,7 +62,7 @@ agent-marketplace init [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--harnesses` | comma-separated strings | non-terminal only | none | Target harnesses. Accepted values: `claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex`. |
+| `--harnesses` | comma-separated strings | non-terminal only | none | Target harnesses. Accepted values: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, and `windsurf`. |
 
 Without `--harnesses`, terminal execution detects installed harnesses and prompts for confirmation or editing. Non-terminal execution requires `--harnesses`. Interactive creation also requests telemetry consent unless organization policy already fixes the telemetry level.
 
@@ -133,8 +133,7 @@ Removes an explicit selection or records an exclusion, then synchronizes materia
 
 ```text
 agent-marketplace remove <resource-name> [flags]
-agent-marketplace remove --from <registry> [flags]
-agent-marketplace remove --from <registry> <resource-name> [flags]
+agent-marketplace remove --from <registry> [<resource-name>] [flags]
 ```
 
 | Flag | Type | Required | Default | Description |
@@ -251,7 +250,7 @@ agent-marketplace convert --autodetect --to <harness> <path> [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--from` | string | unless `--autodetect` | none | Source harness: `claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, or `codex`. |
+| `--from` | string | unless `--autodetect` | none | Source harness: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
 | `--autodetect` | boolean | no | `false` | Detects the source harness from layout markers instead of requiring `--from`. |
 | `--to` | string | yes | none | Target harness. Accepts the same seven values as `--from`. |
 | `--out` | path | no | `<path>-<to>` | Output directory. |
