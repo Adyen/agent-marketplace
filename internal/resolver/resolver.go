@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -740,7 +739,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// collections the same collision detection and disambiguation as
 	// skills/commands/etc.
 	var expandErrs []error
-	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, targetSet)
+	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
 	errs = append(errs, expandErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
@@ -842,7 +841,7 @@ func propagateTopLevelCollections(cfg *config.Config) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var errs []error
 
@@ -938,7 +937,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, &out, &errs, targetSet)
+		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
 	}
 
 	return out, suppressResolvedMemberMisses(errs, directResolved)
@@ -1004,7 +1003,7 @@ func nestedCollectionOwnerMatch(candidate collectionCandidate, parent ResolvedAr
 	}
 	return normalizedRegistryURL(candidate.owner.URL) == normalizedRegistryURL(parent.RegistryURL) &&
 		strings.TrimSpace(candidate.owner.Ref) == strings.TrimSpace(parent.Ref) &&
-		strings.TrimSpace(candidate.owner.Path) == strings.TrimSpace(parent.RegistryPath)
+		normalizedEntryPath(candidate.owner.Path) == normalizedEntryPath(parent.RegistryPath)
 }
 
 // chooseNestedCollection selects a definition using policy authority and
@@ -1050,7 +1049,7 @@ func chooseNestedCollection(candidates []collectionCandidate, parent ResolvedArt
 			}
 			continue
 		}
-		candidatePath, chosenPath := strings.TrimSpace(candidate.owner.Path), strings.TrimSpace(chosen.owner.Path)
+		candidatePath, chosenPath := normalizedEntryPath(candidate.owner.Path), normalizedEntryPath(chosen.owner.Path)
 		if candidatePath != chosenPath {
 			if candidatePath < chosenPath {
 				chosen = candidate
@@ -1090,6 +1089,8 @@ func expandMembersRecursive(
 	allCollectionsByName map[string][]collectionCandidate,
 	directResolved map[string]struct{},
 	excludedResources map[string]struct{},
+	collectionExcludeAll bool,
+	localExcludeAllKinds map[ir.ResourceKind]bool,
 	visited map[string]struct{},
 	out *[]ResolvedArtifact,
 	errs *[]error,
@@ -1216,7 +1217,7 @@ func expandMembersRecursive(
 			memberRegistryURL = entry.URL
 			memberRegistryPath = memberPath
 			if memberRegistryPath == "" {
-				memberRegistryPath = entry.Path
+				memberRegistryPath = normalizedEntryPath(entry.Path)
 			}
 			memberRef = entry.Ref
 			memberSource = entry.Source
@@ -1360,7 +1361,7 @@ func expandMembersRecursive(
 		}
 		if includedEntry.ownerFound {
 			includedArtifact.RegistryURL = includedEntry.owner.URL
-			includedArtifact.RegistryPath = includedEntry.owner.Path
+			includedArtifact.RegistryPath = normalizedEntryPath(includedEntry.owner.Path)
 			includedArtifact.Ref = includedEntry.owner.Ref
 			includedArtifact.Source = includedEntry.owner.Source
 			includedArtifact.FilePrecedence = includedEntry.owner.FilePrecedence
@@ -1379,7 +1380,11 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, branchVisited, out, errs, targetSet)
+		if collectionDefinitionExcluded(includedArtifact, excludedResources, collectionExcludeAll, localExcludeAllKinds, cfg.Registries) {
+			slog.Debug("nested collection skipped: excluded", "collection", irCol.Label(), "via", viaLabel)
+			continue
+		}
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
 }
 
@@ -1394,7 +1399,7 @@ type memberEntryCandidate struct {
 // that differ only in ".git" spelling, or that repeat across config layers,
 // describe one location and must not look like two.
 func (c memberEntryCandidate) location() string {
-	return normalizedRegistryURL(c.entry.URL) + "\x00" + strings.TrimSpace(c.entry.Path) + "\x00" + strings.TrimSpace(c.entry.Ref)
+	return normalizedRegistryURL(c.entry.URL) + "\x00" + normalizedEntryPath(c.entry.Path) + "\x00" + strings.TrimSpace(c.entry.Ref)
 }
 
 // normalizedRegistryURL normalizes a registry URL for comparison. It trims
@@ -1408,7 +1413,7 @@ func normalizedRegistryURL(url string) string {
 // pathLabel renders a registry entry subdirectory for user-facing messages. The
 // repository root has an empty path, which would otherwise print as nothing.
 func pathLabel(path string) string {
-	if p := strings.TrimSpace(path); p != "" {
+	if p := normalizedEntryPath(path); p != "" {
 		return p
 	}
 	return "<repository root>"
@@ -1547,15 +1552,9 @@ func preferRequired(candidates []memberEntryCandidate) memberEntryCandidate {
 	return winner
 }
 
-// normalizedEntryPath renders a registry subdirectory for comparison, so a
-// "./" prefix, a trailing slash, or mixed path separators cannot hide a
-// configured location.
+// normalizedEntryPath returns one comparison form for registry subdirectories.
 func normalizedEntryPath(p string) string {
-	p = strings.TrimSpace(filepath.ToSlash(p))
-	// filepath.ToSlash is OS-specific, so also replace any remaining backslashes
-	// explicitly. Collection-authored paths may come from Windows clients while
-	// the resolver runs on Unix, and the configured entry path is always slash-separated.
-	p = strings.ReplaceAll(p, "\\", "/")
+	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
 	if p == "" {
 		return ""
 	}
@@ -1563,7 +1562,7 @@ func normalizedEntryPath(p string) string {
 	if p == "." {
 		return ""
 	}
-	return strings.TrimPrefix(p, "./")
+	return p
 }
 
 // candidatesAtPath narrows candidates to those configured at exactly path.
@@ -1653,25 +1652,26 @@ func anyLocationRequired(candidates []memberEntryCandidate) bool {
 // (and optionally ref and path). Returns the entry, its catalog key, and
 // whether it was found.
 func findRegistryEntry(cfg *config.Config, registryURL, ref, path string) (config.RegistryEntry, string, bool) {
-	norm := config.NormalizeGitURL(registryURL)
+	norm := normalizedRegistryURL(registryURL)
+	wantPath := normalizedEntryPath(path)
 	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(entry.URL) != norm {
+		if normalizedRegistryURL(entry.URL) != norm {
 			continue
 		}
 		if ref != "" && strings.TrimSpace(entry.Ref) != ref {
 			continue
 		}
-		if path != "" && strings.TrimSpace(entry.Path) != path {
+		if wantPath != "" && normalizedEntryPath(entry.Path) != wantPath {
 			continue
 		}
 		return entry, entry.CatalogKey, true
 	}
 	// Fallback: try matching by URL only (for local registries where ref is optional).
 	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(entry.URL) != norm {
+		if normalizedRegistryURL(entry.URL) != norm {
 			continue
 		}
-		if path != "" && strings.TrimSpace(entry.Path) != path {
+		if wantPath != "" && normalizedEntryPath(entry.Path) != wantPath {
 			continue
 		}
 		return entry, entry.CatalogKey, true
@@ -1698,7 +1698,7 @@ func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSe
 	return ResolvedArtifact{
 		Entry:          catalog.Entry{Kind: selected.kind, Name: selected.name},
 		RegistryURL:    entry.URL,
-		RegistryPath:   entry.Path,
+		RegistryPath:   normalizedEntryPath(entry.Path),
 		Source:         entry.Source,
 		FilePrecedence: entry.FilePrecedence,
 		Required:       entry.Required,
@@ -1785,7 +1785,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				resolved: ResolvedArtifact{
 					Entry:          attachResource(selectedSkill, resources, catalogKey),
 					RegistryURL:    entry.URL,
-					RegistryPath:   entry.Path,
+					RegistryPath:   normalizedEntryPath(entry.Path),
 					Ref:            entry.Ref,
 					Source:         entry.Source,
 					FilePrecedence: entry.FilePrecedence,
@@ -2172,7 +2172,7 @@ func applyLocalResources(resolved []ResolvedArtifact, localSelections resourceSe
 		resolved = append(resolved, ResolvedArtifact{
 			Entry:          attachResource(*found, resources, foundEntry.CatalogKey),
 			RegistryURL:    foundEntry.URL,
-			RegistryPath:   foundEntry.Path,
+			RegistryPath:   normalizedEntryPath(foundEntry.Path),
 			Ref:            foundEntry.Ref,
 			Source:         config.RepoPersonal,
 			FilePrecedence: foundEntry.FilePrecedence,
@@ -2316,12 +2316,12 @@ func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntr
 				continue
 			}
 			if entry.Source != s.Source ||
-				(config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) && pathScopeCovers(entry.Path, s.RegistryPath)) {
+				(normalizedRegistryURL(entry.URL) == normalizedRegistryURL(s.RegistryURL) && pathScopeCovers(entry.Path, s.RegistryPath)) {
 				return true
 			}
 		}
 		if entry.SelectorForKind(s.Kind).ExcludeAll &&
-			config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(s.RegistryURL) &&
+			normalizedRegistryURL(entry.URL) == normalizedRegistryURL(s.RegistryURL) &&
 			pathScopeCovers(entry.Path, s.RegistryPath) {
 			return true
 		}
@@ -2338,7 +2338,7 @@ func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config
 	for _, entry := range entries {
 		sameFile := entry.Source == member.Source && entry.FilePrecedence == member.FilePrecedence
 		if (!sameFile && !entryCanShadow(entry, member.Source, member.FilePrecedence)) ||
-			config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(member.RegistryURL) ||
+			normalizedRegistryURL(entry.URL) != normalizedRegistryURL(member.RegistryURL) ||
 			!pathScopeCovers(entry.Path, member.RegistryPath) {
 			continue
 		}
@@ -2353,6 +2353,21 @@ func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config
 		}
 	}
 	return false
+}
+
+// collectionDefinitionExcluded prevents an included definition from bypassing
+// collection exclusions before its members are expanded.
+func collectionDefinitionExcluded(collection ResolvedArtifact, excludedResources map[string]struct{}, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) bool {
+	if collection.Required {
+		return false
+	}
+	if _, excluded := excludedResources[ViaMapKey(ir.KindCollection, collection.Name)]; excluded {
+		return true
+	}
+	if collectionExcludeAll || (localExcludeAllKinds[ir.KindCollection] && !collection.Source.IsMachineScope()) {
+		return true
+	}
+	return collectionMemberShadowedByEntries(collection, entries)
 }
 
 func filterShadowedOccurrences(byName map[resourceSelection][]skillOccurrence, entries []config.RegistryEntry) {
@@ -2576,14 +2591,14 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		// normalized URL+ref+path for git registries that differ only by .git suffix.
 		lk := logicalKey{catalogKey: occ.resolved.CatalogKey}
 		if !occ.resolved.IsLocal() {
-			lk.normalizedURL = config.NormalizeGitURL(occ.url)
-			lk.ref = occ.resolved.Ref
-			lk.path = occ.resolved.RegistryPath
+			lk.normalizedURL = normalizedRegistryURL(occ.url)
+			lk.ref = strings.TrimSpace(occ.resolved.Ref)
+			lk.path = normalizedEntryPath(occ.resolved.RegistryPath)
 		} else {
 			// For local registries, use the URL (file path) as the registry
 			// identity so overlapping-path detection can work.
 			lk.normalizedURL = occ.url
-			lk.path = occ.resolved.RegistryPath
+			lk.path = normalizedEntryPath(occ.resolved.RegistryPath)
 		}
 		byKey[lk] = append(byKey[lk], occ)
 	}
@@ -2784,8 +2799,9 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			// sub-directory and its selectors/policy are more precise.
 			if occ.resolved.Required == winner.resolved.Required &&
 				config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) == 0 &&
-				occ.url == winner.url && occ.resolved.Ref == winner.resolved.Ref {
-				if isPathPrefix(winner.resolved.RegistryPath, occ.resolved.RegistryPath) {
+				normalizedRegistryURL(occ.url) == normalizedRegistryURL(winner.url) &&
+				strings.TrimSpace(occ.resolved.Ref) == strings.TrimSpace(winner.resolved.Ref) {
+				if isPathPrefix(normalizedEntryPath(winner.resolved.RegistryPath), normalizedEntryPath(occ.resolved.RegistryPath)) {
 					// winner is parent, occ is child → child wins
 					winner = occ
 				}
@@ -2882,20 +2898,20 @@ func isPathPrefix(parent, child string) bool {
 // exclude_all so it only suppresses resources within the excluding entry's own
 // path subtree, not sibling paths of the same registry URL.
 func pathScopeCovers(scopePath, resourcePath string) bool {
-	scopePath = strings.TrimSpace(scopePath)
-	resourcePath = strings.TrimSpace(resourcePath)
+	scopePath = normalizedEntryPath(scopePath)
+	resourcePath = normalizedEntryPath(resourcePath)
 	return scopePath == resourcePath || isPathPrefix(scopePath, resourcePath)
 }
 
 // pathsDiffer reports whether any two occurrences in the set have different
-// RegistryPath values.
+// normalized RegistryPath values.
 func pathsDiffer(occurrences []skillOccurrence) bool {
 	if len(occurrences) < 2 {
 		return false
 	}
-	first := occurrences[0].resolved.RegistryPath
+	first := normalizedEntryPath(occurrences[0].resolved.RegistryPath)
 	for _, occ := range occurrences[1:] {
-		if occ.resolved.RegistryPath != first {
+		if normalizedEntryPath(occ.resolved.RegistryPath) != first {
 			return true
 		}
 	}
@@ -2922,7 +2938,7 @@ func logicalRegistryKey(occ skillOccurrence) string {
 	if occ.resolved.IsLocal() {
 		return occ.resolved.CatalogKey
 	}
-	return config.NormalizeGitURL(occ.url) + "\x00" + occ.resolved.Ref
+	return normalizedRegistryURL(occ.url) + "\x00" + strings.TrimSpace(occ.resolved.Ref)
 }
 
 // pickCollisionWinner selects a deterministic winner from colliding
@@ -2942,7 +2958,7 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 		}
 		if occ.resolved.Required == winner.resolved.Required &&
 			config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) == 0 &&
-			config.NormalizeGitURL(occ.url) < config.NormalizeGitURL(winner.url) {
+			normalizedRegistryURL(occ.url) < normalizedRegistryURL(winner.url) {
 			winner = occ
 		}
 	}
@@ -2955,7 +2971,7 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 func collisionLabelsNeedRef(occurrences []skillOccurrence) bool {
 	refsByLocation := make(map[string]string, len(occurrences))
 	for _, occ := range occurrences {
-		location := config.NormalizeGitURL(occ.url) + "\x00" + strings.TrimSpace(occ.resolved.RegistryPath)
+		location := normalizedRegistryURL(occ.url) + "\x00" + normalizedEntryPath(occ.resolved.RegistryPath)
 		ref := strings.TrimSpace(occ.resolved.Ref)
 		if previous, ok := refsByLocation[location]; ok && previous != ref {
 			return true
@@ -2970,9 +2986,9 @@ func collisionLabelsNeedRef(occurrences []skillOccurrence) bool {
 // same-URL-different-path entries are distinguishable in the warning. Include
 // refs when the same URL/path is configured at multiple refs.
 func collisionSourceLabel(occ skillOccurrence, includeRef bool) string {
-	label := config.NormalizeGitURL(occ.url)
-	if occ.resolved.RegistryPath != "" {
-		label += " (" + occ.resolved.RegistryPath + ")"
+	label := normalizedRegistryURL(occ.url)
+	if p := normalizedEntryPath(occ.resolved.RegistryPath); p != "" {
+		label += " (" + p + ")"
 	}
 	if includeRef && strings.TrimSpace(occ.resolved.Ref) != "" {
 		label += " @" + strings.TrimSpace(occ.resolved.Ref)

@@ -31,7 +31,7 @@ Loading the owning layer fails if any include is missing, unreadable, malformed,
 
 The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. Removing an include-owned named resource or collection records an exclusion in the selected root; whole-registry `remove --from` writes a registry-level `exclude_all` shadow there. The included file remains unchanged, and normal scope boundaries still apply.
 
-When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Editors and removals use the same interpretation.
+When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Editors and removals use the same interpretation. During resolver matching, equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
 
 ## Layer order
 
@@ -100,10 +100,11 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 - A member that names a `registry:` **without** a `path:` means "this repository, wherever the resource actually is": it binds to whichever configured entry for that repository actually contains the member, independent of config order and of a `.git` suffix difference. This matters for monorepos, where recursive discovery and org team profiles can both contribute many entries at different paths for one URL.
   - If no configured entry contains it, the warning names every path searched instead of blaming one, and does not claim an upstream removal.
   - Such an unbindable member is a hard (sync-failing) error as soon as **any** configured *location* for that repository is `required: true`, and a soft warning otherwise. Required-ness is judged per location, not per config entry, so two spellings of one location (with and without `.git`) are one location.
-  - If more than one distinct location contains it, the ambiguity is reported as a warning and the first location — preferring a `required: true` one — is used. Pin a `path:` on the member to make it explicit.
+  - If more than one distinct location contains it, the ambiguity is reported as a warning and the winner is chosen by `required: true`, then config source/file precedence, then config order. Pin a `path:` on the member to make it explicit.
 - Nested collection definitions use configured registry ownership, not catalog or cache-key order. For duplicates, `required: true` wins, followed by config source/file precedence.
   - If authority ties, the resolver prefers an owner matching the parent URL/ref/path, then uses stable URL/path order.
   - Recursively expanded members inherit the selected URL, path, ref, and required policy. Harness targets are inherited when the nested owner leaves them unset; an explicit nested-owner list can only narrow the containing collection's targets, and is intersected with the effective target set. An explicit empty list remains an opt-out.
+  - Before recursion, nested collection definitions obey the same exclusions as direct members: collection-name excludes, top-level/local `collections.exclude_all`, and higher-authority per-registry or registry-level `exclude_all` suppress the definition and all of its members. A `required: true` nested owner remains immune.
   - Include ancestry is branch-local: a collection shared by sibling include branches is valid and may be expanded under each branch, while an ancestor repeated along one branch is reported as a cycle. Members are still deduplicated by the normal direct/collection resolution rules.
 
 ## Resource prerequisites

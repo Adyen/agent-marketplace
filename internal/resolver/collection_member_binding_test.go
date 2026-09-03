@@ -99,6 +99,83 @@ func findResolved(resolved []ResolvedArtifact, name string) *ResolvedArtifact {
 	return nil
 }
 
+func TestNestedCollectionExclusionDoesNotBypassCollectionPolicy(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: monorepoURL, Ref: "main", Path: "bundles/inner", Collections: config.KindSelector{ExcludeAll: true}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if got := findResolved(resolved, "nested-skill"); got != nil {
+		t.Fatalf("excluded nested collection bypassed its collection exclusion: %#v", got)
+	}
+	for _, err := range errs {
+		if IsSelectedNotFound(err) {
+			t.Fatalf("collection exclusion should be a no-op, not a missing-resource error: %v", err)
+		}
+	}
+}
+
+func TestRequiredNestedCollectionIgnoresCollectionExclusion(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: monorepoURL, Ref: "main", Path: "bundles/inner", Required: true, Skills: ks("required-direct"), Collections: config.KindSelector{ExcludeAll: true}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+			{Kind: ir.KindSkill, Name: "required-direct"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if got := findResolved(resolved, "nested-skill"); got == nil || !got.Required {
+		t.Fatalf("required nested collection must survive collection exclusion, got %#v (errs=%v)", got, errs)
+	}
+}
+
+func TestEquivalentRegistryPathsDeduplicateAsOnePhysicalSource(t *testing.T) {
+	const registryURL = "git@example.com:shared.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: registryURL, Ref: "main", Path: "foo", Skills: ks("shared")},
+		{URL: registryURL, Ref: "main", Path: "./foo/", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 {
+		t.Fatalf("equivalent registry paths should produce one artifact, got %#v", resolved)
+	}
+	if resolved[0].RegistryPath != "foo" {
+		t.Fatalf("resolved path identity = %q, want canonical foo", resolved[0].RegistryPath)
+	}
+	for _, err := range errs {
+		if IsNameCollision(err) {
+			t.Fatalf("equivalent registry paths must not produce a collision warning: %v", err)
+		}
+	}
+}
+
 // TestPathLessMemberBindsToContainingEntry pins the core rule: with several
 // entries for the same repository at different paths, the member binds to the
 // one whose catalog contains it, not to the first one in config order.
