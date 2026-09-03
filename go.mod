@@ -3,9 +3,9 @@ module github.com/Adyen/agent-marketplace
 go 1.26.6
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.36.1
+	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.29.6
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.76.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
@@ -15,7 +15,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/google/licensecheck v0.3.1
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.7.4
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
@@ -37,17 +37,17 @@ require (
 require (
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.8 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.59 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.28 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.32 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.32 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.32 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.5.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.13 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.24.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.14 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.14 // indirect
@@ -89,7 +89,6 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

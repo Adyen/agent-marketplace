@@ -42,20 +42,6 @@ jobs:
       - name: Validate container packaging and Compose files
         run: make container-check compose-config
 
-  container:
-    name: Build telemetry receiver container
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build container
-        run: docker build --file Dockerfile.telemetry-receiver --tag agent-marketplace-telemetry-receiver:ci .
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -158,8 +144,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Enable pnpm
         run: corepack enable
