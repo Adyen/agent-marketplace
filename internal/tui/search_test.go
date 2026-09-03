@@ -2,6 +2,7 @@ package tui
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -174,6 +175,33 @@ func searchModel() Model {
 	m.loading = false
 	m.recomputeView()
 	return m
+}
+
+func TestSearchInputShowsSpinnerWhileMarketplaceResultsLoad(t *testing.T) {
+	m := searchModel()
+	m.filterActive = true
+	m.discoveryLoading = true
+	m.searchInput.SetValue("audit")
+
+	lines := strings.Split(m.renderBaseScreen(), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("rendered screen has no search line: %q", lines)
+	}
+	searchLine := lines[2]
+	spinnerPosition := strings.Index(searchLine, m.spinner.View())
+	queryPosition := strings.Index(searchLine, "audit")
+	if spinnerPosition < 0 || queryPosition < 0 || spinnerPosition > queryPosition || strings.Contains(searchLine, "/") {
+		t.Fatalf("search spinner should replace the slash before the query: %q", searchLine)
+	}
+	if strings.Contains(lines[len(lines)-1], "Marketplace...") {
+		t.Fatalf("footer should not duplicate the search loading indicator: %q", lines[len(lines)-1])
+	}
+
+	m.discoveryLoading = false
+	lines = strings.Split(m.renderBaseScreen(), "\n")
+	if strings.Contains(lines[2], m.spinner.View()) || !strings.Contains(lines[2], "/ audit") {
+		t.Fatalf("idle search line should restore the slash prompt: %q", lines[2])
+	}
 }
 
 func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {

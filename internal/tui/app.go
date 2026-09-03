@@ -1407,7 +1407,11 @@ func (m Model) renderBaseScreen() string {
 		parts = append(parts, renderTabBar(m.activeTab))
 	}
 	if layout.search {
-		parts = append(parts, m.searchInput.View())
+		searchInput := m.searchInput
+		if m.discoveryLoading {
+			searchInput.Prompt = m.spinner.View() + " "
+		}
+		parts = append(parts, searchInput.View())
 	}
 	if layout.mainHeight > 0 {
 		listWidth, detailWidth := paneWidths(m.width)

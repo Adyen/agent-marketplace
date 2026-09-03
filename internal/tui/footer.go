@@ -26,9 +26,6 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount())))
 	}
 
-	if m.discoveryLoading {
-		leftParts = append(leftParts, m.spinner.View()+styleFooterPending.Render(" Marketplace..."))
-	}
 	var staleEndpoints, truncatedEndpoints int
 	for _, outcome := range m.discoveryOutcomes {
 		if outcome.CacheState == "stale" {
