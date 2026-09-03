@@ -186,8 +186,15 @@ func (e *NameCollisionError) Remediation() string {
 type NameCollisionWarning struct {
 	Kind      ir.ResourceKind
 	Name      string
-	Winner    string // source label of the winning occurrence
+	Winner    string // display label of the winning occurrence
 	RunnersUp []string
+
+	// WinnerURL, WinnerPath, and WinnerRef retain the structured registry
+	// location used to produce Winner. Remediation must use these fields rather
+	// than parsing display labels, whose delimiters can occur in valid values.
+	WinnerURL  string
+	WinnerPath string
+	WinnerRef  string
 }
 
 func (e *NameCollisionWarning) Error() string {
@@ -205,27 +212,39 @@ func (e *NameCollisionWarning) Source() string {
 // if the user disagrees with the chosen winner.
 func (e *NameCollisionWarning) Remediation() string {
 	if len(e.RunnersUp) > 0 {
-		from := e.Winner
-		pathFlag := ""
-		refFlag := ""
-		// collisionSourceLabel appends " (path)" for same-URL different-path
-		// entries and " @ref" when refs are needed to distinguish sources.
-		// Strip display-only suffixes, but retain the winning ref as a real
-		// --ref argument so remediation cannot accidentally edit a sibling ref.
-		if idx := strings.LastIndex(from, " @"); idx >= 0 {
-			refFlag = " --ref " + from[idx+2:]
-			from = from[:idx]
+		from := e.WinnerURL
+		if from == "" {
+			from = e.Winner
 		}
-		if idx := strings.Index(from, " ("); idx >= 0 {
-			suffix := from[idx+2:]
-			if end := strings.Index(suffix, ")"); end >= 0 {
-				pathFlag = " --path " + suffix[:end]
-			}
-			from = from[:idx]
+		args := []string{"agent-marketplace", "remove", shellQuote(e.Name), "--from", shellQuote(redact.URL(from))}
+		if e.WinnerPath != "" {
+			args = append(args, "--path", shellQuote(e.WinnerPath))
 		}
-		return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from %s%s%s'", e.Name, redact.URL(from), redact.URL(pathFlag), refFlag)
+		if e.WinnerRef != "" {
+			args = append(args, "--ref", shellQuote(e.WinnerRef))
+		}
+		return "to prefer a different source, exclude the winner: " + strings.Join(args, " ")
 	}
-	return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from <url>'", e.Name)
+	return fmt.Sprintf("to prefer a different source, exclude the winner: agent-marketplace remove %s --from <url>", shellQuote(e.Name))
+}
+
+// shellQuote quotes one argument for a POSIX shell while leaving ordinary
+// registry URLs and resource names readable. Values containing shell syntax,
+// whitespace, or delimiters are single-quoted with embedded quotes escaped.
+func shellQuote(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return false
+		case strings.ContainsRune("._/:@%+,-=", r):
+			return false
+		default:
+			return true
+		}
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 // AmbiguousCollectionMemberWarning reports a member with multiple registry locations.
@@ -1901,6 +1920,18 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 	return occurrencesByName, errs
 }
 
+func newNameCollisionWarning(winner skillOccurrence, occurrences []skillOccurrence) *NameCollisionWarning {
+	return &NameCollisionWarning{
+		Kind:       winner.resolved.Kind,
+		Name:       winner.resolved.Name,
+		Winner:     collisionSourceLabel(winner, collisionLabelsNeedRef(occurrences)),
+		RunnersUp:  collisionRunnersUpByPath(occurrences, winner),
+		WinnerURL:  strings.TrimSpace(winner.url),
+		WinnerPath: strings.TrimSpace(winner.resolved.RegistryPath),
+		WinnerRef:  strings.TrimSpace(winner.resolved.Ref),
+	}
+}
+
 // pickWinners deduplicates occurrences and detects multi-registry collisions.
 // Returns the winning occurrences in insertion order.
 func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]skillOccurrence, []error) {
@@ -1927,13 +1958,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			// Pick a deterministic winner instead of skipping the resource.
 			// Precedence: required > higher source precedence > alphabetically-first URL.
 			winner := pickCollisionWinner(deduped)
-			warning := &NameCollisionWarning{
-				Kind:   winner.resolved.Kind,
-				Name:   winner.resolved.Name,
-				Winner: collisionSourceLabel(winner, collisionLabelsNeedRef(occurrences)),
-				// Report original occurrences, including deduplicated paths.
-				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
-			}
+			warning := newNameCollisionWarning(winner, occurrences)
 			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
 			errs = append(errs, warning)
 			winners = append(winners, winner)
@@ -1956,12 +1981,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			for _, group := range groupByScope(occurrences) {
 				if len(group) > 1 && pathsDiffer(group) {
 					winner := pickCollisionWinner(group)
-					warning := &NameCollisionWarning{
-						Kind:      winner.resolved.Kind,
-						Name:      winner.resolved.Name,
-						Winner:    collisionSourceLabel(winner, collisionLabelsNeedRef(group)),
-						RunnersUp: collisionRunnersUpByPath(group, winner),
-					}
+					warning := newNameCollisionWarning(winner, group)
 					slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
 					errs = append(errs, warning)
 				}
@@ -1975,13 +1995,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			// only install one to the shared target directory.
 			winners = append(winners, deduped...)
 			winner := pickCollisionWinner(deduped)
-			warning := &NameCollisionWarning{
-				Kind:   winner.resolved.Kind,
-				Name:   winner.resolved.Name,
-				Winner: collisionSourceLabel(winner, collisionLabelsNeedRef(occurrences)),
-				// Include paths deduplicated for materialization.
-				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
-			}
+			warning := newNameCollisionWarning(winner, occurrences)
 			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
 			errs = append(errs, warning)
 		} else {

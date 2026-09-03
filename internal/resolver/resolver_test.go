@@ -611,6 +611,64 @@ func TestResolveCollisionWarningNamesRefsForSameURLAndPath(t *testing.T) {
 	}
 }
 
+func TestNameCollisionWarningRemediationPreservesStructuredPathAndRef(t *testing.T) {
+	const (
+		url  = "git@example.com:registry.git"
+		path = "team (prod) @v1"
+		ref  = "feature) @fast path"
+	)
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: ref, Path: path, Skills: ks("shared")},
+		{URL: url, Ref: "other", Path: path, Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Name: "shared", Path: "/cache/first/shared"}},
+		cfg.Registries[1].CatalogKey: {{Name: "shared", Path: "/cache/second/shared"}},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	if warning.WinnerURL != url || warning.WinnerPath != path || warning.WinnerRef != ref {
+		t.Fatalf("structured winner location = (%q, %q, %q), want (%q, %q, %q)", warning.WinnerURL, warning.WinnerPath, warning.WinnerRef, url, path, ref)
+	}
+	remediation := warning.Remediation()
+	for _, want := range []string{
+		"--from " + url,
+		"--path 'team (prod) @v1'",
+		"--ref 'feature) @fast path'",
+	} {
+		if !strings.Contains(remediation, want) {
+			t.Fatalf("remediation = %q, want %q", remediation, want)
+		}
+	}
+}
+
+func TestNameCollisionWarningRemediationQuotesApostrophesForPOSIXShell(t *testing.T) {
+	warning := &NameCollisionWarning{
+		Name:       "owner's skill",
+		Winner:     "https://example.com/registry.git",
+		RunnersUp:  []string{"https://example.com/other.git"},
+		WinnerURL:  "https://example.com/registry.git",
+		WinnerPath: "team's skills",
+		WinnerRef:  "feature's branch",
+	}
+
+	remediation := warning.Remediation()
+	const want = `to prefer a different source, exclude the winner: agent-marketplace remove 'owner'\''s skill' --from https://example.com/registry.git --path 'team'\''s skills' --ref 'feature'\''s branch'`
+	if remediation != want {
+		t.Fatalf("Remediation() = %q, want %q", remediation, want)
+	}
+}
+
 func TestResolveSameURLSameRefDeduplicates(t *testing.T) {
 	// Same URL and same ref produce the same catalog key, so dedup applies.
 	cfg := &config.Config{

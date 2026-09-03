@@ -505,6 +505,46 @@ func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
 	}
 }
 
+func TestRemoveCollectionMemberShadowsIncludedRegistry(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Chdir(repoRoot)
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "included-member", "included member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "included-bundle", "COLLECTION.yaml"), "name: included-bundle\nskills:\n  - name: included-member\n")
+
+	includedPath := filepath.Join(repoRoot, ".agents", "registries.yaml")
+	includedData := fmt.Sprintf("registries:\n  - url: %q\n    source_harness: factory\n    collections: [included-bundle]\n", registryRoot)
+	writeFile(t, includedPath, includedData)
+	rootPath := config.ProjectConfigPath(repoRoot)
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: registries.yaml\n")
+
+	result, err := Remove(context.Background(), RemoveOptions{
+		RepoRoot: repoRoot, ResourceName: "included-member", Scope: ScopeRepo, ScopeSpecified: true,
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if result == nil || result.RemovedName != "included-member" || result.CollectionVia == "" {
+		t.Fatalf("result = %#v, want collection member removal", result)
+	}
+	gotIncluded, err := os.ReadFile(includedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotIncluded) != includedData {
+		t.Fatalf("included config changed:\n%s", gotIncluded)
+	}
+	rootCfg, err := config.LoadRootConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Skills.Exclude, "included-member") {
+		t.Fatalf("root registries = %#v, want member exclusion shadow", rootCfg.Registries)
+	}
+	assertResourceNotResolved(t, repoRoot, "included-member")
+}
+
 func TestRemoveCollectionExcludesIncludedSelection(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
@@ -756,6 +796,31 @@ func TestCollectionRequiredInConfigScopesRequirednessToProvider(t *testing.T) {
 	}
 	if collectionRequiredInRegistry(tagCfg, "bundle", selected, []string{"docs"}) {
 		t.Fatal("non-matching collection catalog tags must not preserve required policy")
+	}
+}
+
+func TestCollectionRequiredInRegistryMatchesPhysicalLocationAcrossScopes(t *testing.T) {
+	physical := config.RegistryEntry{URL: "git@example.com:policy.git", Path: "collections", Ref: "main"}
+	for _, requiredSource := range []config.Source{config.Organization, config.UserPersonal} {
+		t.Run(requiredSource.String(), func(t *testing.T) {
+			required := physical
+			required.Source = requiredSource
+			required.Required = true
+			required.Collections.Include = []string{"security-bundle"}
+			selected := physical
+			selected.Source = config.RepoCommitted
+			if !collectionRequiredInRegistry(&config.Config{Registries: []config.RegistryEntry{required}}, "security-bundle", selected) {
+				t.Fatalf("required %s provider at the same physical location was ignored", requiredSource)
+			}
+		})
+	}
+
+	unrelated := physical
+	unrelated.URL = "git@example.com:other.git"
+	unrelated.Required = true
+	unrelated.Collections.Include = []string{"security-bundle"}
+	if collectionRequiredInRegistry(&config.Config{Registries: []config.RegistryEntry{unrelated}}, "security-bundle", physical) {
+		t.Fatal("required provider at an unrelated physical location made collection immutable")
 	}
 }
 

@@ -386,7 +386,8 @@ func collectionRequiredInConfig(cfg *config.Config, name string) bool {
 
 // collectionRequiredInRegistry applies required policy only to the registry
 // entry that actually provides the selected collection. A required provider at
-// another URL/path/ref/source must not make an optional collection immutable.
+// another physical URL/path/ref must not make an optional collection immutable;
+// config-layer source is intentionally not part of physical identity.
 // Tag policy uses actual collection tags when callers have catalog context.
 // Without that context, a non-empty required tag policy remains protected
 // conservatively so an unknown collection cannot bypass required immunity.
@@ -419,8 +420,7 @@ func collectionRequiredInRegistry(cfg *config.Config, name string, selected conf
 func registryEntriesShareIdentity(a, b config.RegistryEntry) bool {
 	return config.NormalizeGitURL(a.URL) == config.NormalizeGitURL(b.URL) &&
 		config.NormalizeRegistryPath(a.Path) == config.NormalizeRegistryPath(b.Path) &&
-		strings.TrimSpace(a.Ref) == strings.TrimSpace(b.Ref) &&
-		a.Source == b.Source
+		strings.TrimSpace(a.Ref) == strings.TrimSpace(b.Ref)
 }
 
 // requiredCollectionAutoSelects mirrors resolver selection policy for the
@@ -491,7 +491,11 @@ func excludeCollectionMember(repoRoot string, scope Scope, target *resolver.Reso
 		}
 		return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 	default:
-		return config.AddKindExcludeToRegistryInConfig(config.ProjectConfigPath(repoRoot), target.RegistryURL, target.RegistryPath, target.Kind, name)
+		projectPath := config.ProjectConfigPath(repoRoot)
+		// A collection member may be provided by a registry declared in an
+		// included fragment. Keep included bytes untouched and shadow that
+		// registry in the editable root when it is absent there.
+		return config.DisableResourceWithShadowFallback(projectPath, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
 	}
 }
 
