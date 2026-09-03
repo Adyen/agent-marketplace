@@ -109,12 +109,12 @@ function decodeSegment(value) {
 function search(url) {
   const q = (url.searchParams.get('q') || '').trim().toLowerCase()
   const kind = url.searchParams.get('kind') || ''
-  const registryID = (url.searchParams.get('registry') || '').trim()
+  const registryIDs = url.searchParams.getAll('registry').map(value => value.trim()).filter(Boolean)
   const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0)
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 12), 1), 100)
   const filtered = items.filter(item => {
     const matchesQuery = !q || `${item.name} ${item.description}`.toLowerCase().includes(q)
-    return matchesQuery && (!kind || item.kind === kind) && (!registryID || item.registry_id === registryID)
+    return matchesQuery && (!kind || item.kind === kind) && (!registryIDs.length || registryIDs.includes(item.registry_id))
   })
   return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit }
 }
@@ -135,7 +135,7 @@ const server = createServer((request, response) => {
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
   if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin })
-  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [{ id: registry.id, slug: registry.slug }])
+  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [{ id: registry.id, slug: registry.slug }, { id: 'community-tools', slug: 'community-tools' }])
   if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
     return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
   }

@@ -213,7 +213,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	registry := q.Get("registry")
+	registryFilters := q["registry"]
 	searchQ := q.Get("q")
 	if len(searchQ) > 256 {
 		writeError(w, http.StatusBadRequest, "query too long")
@@ -233,7 +233,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	revs, err := s.meta.SearchResourceRevisions(r.Context(), store.ResourceSearchFilter{
 		Marketplace: s.mpID,
-		Registry:    registry,
+		Registries:  registryFilters,
 		Kind:        kind,
 		Query:       searchQ,
 	})

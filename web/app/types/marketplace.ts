@@ -44,13 +44,13 @@ export type ResourceRevision = Omit<GeneratedResourceRevision, 'assessment'> & {
 export interface SearchParams {
   q: string
   kind: ResourceKind | ''
-  registry: string
+  registry: string[]
   offset: number
   limit: number
 }
 
 export interface FetchOptions {
-  query?: Record<string, string | number>
+  query?: Record<string, string | number | string[]>
   responseType?: 'json' | 'text' | 'blob'
 }
 

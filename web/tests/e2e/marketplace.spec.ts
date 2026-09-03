@@ -81,10 +81,15 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(/q=secure/)
     await page.getByRole('combobox', { name: 'Registry', exact: true }).click()
     await page.getByRole('option', { name: 'team-tools', exact: true }).click()
+    await page.getByRole('option', { name: 'community-tools', exact: true }).click()
 
-    await expect(page).toHaveURL(/registry=team-tools/)
+    await expect(page).toHaveURL(/registry=team-tools&registry=community-tools/)
     await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Clear search', exact: true }).click()
+    await expect(page.getByLabel('Search', { exact: true })).toHaveValue('')
+    await expect(page).not.toHaveURL(/[?&]q=/)
   })
 
   test('filters by kind and omits the all-kinds sentinel from the URL', async ({ page }) => {
@@ -249,7 +254,7 @@ test.describe('Marketplace browser discovery', () => {
     expect(csp).toContain(`img-src 'self' data: ${mockURL}`)
     await expect(page.getByText(`searches ${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
     await page.getByLabel('Search', { exact: true }).fill('secure')
-    await page.getByRole('button', { name: 'Search' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page).toHaveURL(/q=secure/)
     expect(absoluteRequests.some(url => url.startsWith(`${mockURL}/api/v1/`))).toBe(true)
 
@@ -266,7 +271,7 @@ test.describe('Marketplace browser discovery', () => {
     await relativePage.goto(relativeAppURL)
     await expect(relativePage.getByRole('heading', { name: '2', exact: true })).toBeVisible()
     await relativePage.getByLabel('Search', { exact: true }).fill('secure')
-    await relativePage.getByRole('button', { name: 'Search' }).click()
+    await relativePage.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(relativePage.getByRole('heading', { name: '1', exact: true })).toBeVisible()
     expect(sameOriginRequests.some(url => {
       const requestURL = new URL(url)

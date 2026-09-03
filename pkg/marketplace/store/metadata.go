@@ -11,8 +11,12 @@ type ResourceSearchFilter struct {
 	// Marketplace restricts results to one Marketplace instance.
 	Marketplace MarketplaceID
 
-	// Registry optionally matches a registry ID or registry slug.
+	// Registry optionally matches one registry ID or registry slug. It is kept
+	// for callers that need a single registry filter.
 	Registry string
+
+	// Registries optionally matches any of the listed registry IDs or slugs.
+	Registries []string
 
 	// Kind optionally restricts results to one resource kind.
 	Kind string
@@ -20,6 +24,16 @@ type ResourceSearchFilter struct {
 	// Query is an optional case-insensitive substring matched against the
 	// resource name.
 	Query string
+}
+
+func (f ResourceSearchFilter) RegistryValues() []string {
+	if len(f.Registries) > 0 {
+		return f.Registries
+	}
+	if f.Registry != "" {
+		return []string{f.Registry}
+	}
+	return nil
 }
 
 // MaxRegistryHistoryEntries is the maximum number of registry occurrences returned

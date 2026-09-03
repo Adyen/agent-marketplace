@@ -45,11 +45,12 @@ export function selectMarketplaceFetcher(isServer: boolean, apiBase: string | un
   return isServer && !isAbsoluteApiBase(apiBase) ? requestFetcher : clientFetcher
 }
 
-export function serializeSearchQuery(params: SearchParams): Record<string, string | number> {
-  const query: Record<string, string | number> = {}
+export function serializeSearchQuery(params: SearchParams): Record<string, string | number | string[]> {
+  const query: Record<string, string | number | string[]> = {}
   if (params.q.trim()) query.q = params.q.trim()
   if (params.kind) query.kind = params.kind
-  if (params.registry.trim()) query.registry = params.registry.trim()
+  const registries = params.registry.map(registry => registry.trim()).filter(Boolean)
+  if (registries.length) query.registry = registries
   if (params.offset > 0) query.offset = params.offset
   if (params.limit > 0) query.limit = params.limit
   return query
