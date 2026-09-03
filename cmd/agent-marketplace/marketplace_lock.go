@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -252,7 +253,24 @@ func mergeMarketplaceEndpoint(doc *lockfile.Document, endpoint lockfile.Marketpl
 			continue
 		}
 		target := &doc.Marketplaces[i]
-		target.Collections = append(target.Collections, endpoint.Collections...)
+		for _, incoming := range endpoint.Collections {
+			merged := false
+			for j := range target.Collections {
+				existing := &target.Collections[j]
+				if existing.SourceID != incoming.SourceID || existing.Name != incoming.Name {
+					continue
+				}
+				if existing.Revision != incoming.Revision || !sameCollectionMembers(existing.Members, incoming.Members) {
+					return fmt.Errorf("conflicting Marketplace collection records for %s/%s", incoming.SourceID, incoming.Name)
+				}
+				existing.Direct = existing.Direct || incoming.Direct
+				merged = true
+				break
+			}
+			if !merged {
+				target.Collections = append(target.Collections, incoming)
+			}
+		}
 		for _, incoming := range endpoint.Resources {
 			merged := false
 			for j := range target.Resources {
@@ -276,6 +294,29 @@ func mergeMarketplaceEndpoint(doc *lockfile.Document, endpoint lockfile.Marketpl
 	}
 	doc.Marketplaces = append(doc.Marketplaces, endpoint)
 	return nil
+}
+
+func sameCollectionMembers(left, right []lockfile.CollectionEdge) bool {
+	left = append([]lockfile.CollectionEdge(nil), left...)
+	right = append([]lockfile.CollectionEdge(nil), right...)
+	less := func(edges []lockfile.CollectionEdge) {
+		sort.Slice(edges, func(i, j int) bool {
+			a, b := edges[i], edges[j]
+			if a.SourceID != b.SourceID {
+				return a.SourceID < b.SourceID
+			}
+			if a.Kind != b.Kind {
+				return a.Kind < b.Kind
+			}
+			if a.Name != b.Name {
+				return a.Name < b.Name
+			}
+			return a.Revision < b.Revision
+		})
+	}
+	less(left)
+	less(right)
+	return reflect.DeepEqual(left, right)
 }
 
 func exactMarketplaceView(documents map[config.Source]lockfile.Document) marketplaceLockView {

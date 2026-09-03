@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -133,6 +134,47 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 				t.Fatalf("error = %v, want generation conflict", err)
 			}
 		})
+	}
+}
+
+func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = filepath.Clean(filepath.Join(root, "..", ".."))
+	cmd := exec.Command("git", "-C", root, "check-ignore", "--no-index", "-q", ".agents/config.yaml.dependencytxn.lock")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("dependency transaction lock is not ignored: %v\n%s", err, output)
+	}
+}
+
+func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	target := filepath.Join(t.TempDir(), "lock.yaml")
+	original := []byte("user-owned lock target\\n")
+	if err := os.WriteFile(target, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, lockPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
+		t.Fatalf("error = %v, want ErrUnsafePath", err)
+	}
+	if got, readErr := os.ReadFile(target); readErr != nil || !bytes.Equal(got, original) {
+		t.Fatalf("symlink target changed: %q, %v", got, readErr)
+	}
+	info, lstatErr := os.Lstat(lockPath)
+	if lstatErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("generated lock symlink was replaced: info=%v err=%v", info, lstatErr)
 	}
 }
 

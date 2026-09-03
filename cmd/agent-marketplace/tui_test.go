@@ -94,6 +94,34 @@ func TestTUIConfigMutationCommitsProjectConfigWithExactLock(t *testing.T) {
 	}
 }
 
+func TestTUIDependencyLifecycleAllowsOrganizationWithoutLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "tui-org-unlocked.git")
+	writeSkill(t, working, "required-org", "Required org", nil)
+	commitAndPushAll(t, working, "required org")
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries: []\n")
+	t.Chdir(repo)
+
+	if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+		t.Fatalf("TUI lifecycle rejected organization config without a lock: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("TUI lifecycle created organization lock: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "required-org")); err != nil {
+		t.Fatalf("TUI lifecycle did not materialize organization requirement: %v", err)
+	}
+}
+
 func TestTUIDependencyLifecycleLockFailureBlocksSync(t *testing.T) {
 	previousPrepare, previousSync := prepareTUILocks, runTUIExactSync
 	t.Cleanup(func() {

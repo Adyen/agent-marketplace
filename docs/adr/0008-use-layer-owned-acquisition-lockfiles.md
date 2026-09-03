@@ -4,7 +4,7 @@ status: accepted
 
 # Use layer-owned acquisition lockfiles
 
-Agent Marketplace records remote acquisition resolutions in one generated lockfile owned by each organization, user, repository, or local configuration layer, then composes those locked catalogs before applying effective selection. This avoids a machine-specific effective lock and keeps human intent separate from generated resolution while still allowing normal sync to minimally reconcile config changes and explicit update to advance compatible resolutions; local filesystem registries remain deliberately live and unlocked.
+Agent Marketplace records remote acquisition resolutions in one generated lockfile owned by each user, repository, or local configuration layer, and optionally by the organization layer, then composes locked catalogs before applying effective selection. An organization without a lock remains deliberately unlocked and consumer commands never create that lock implicitly. This avoids a machine-specific effective lock and keeps human intent separate from generated resolution while still allowing normal sync to minimally reconcile config changes and explicit update to advance compatible resolutions; plain filesystem directory registries remain deliberately live and unlocked. Hostless `file://` URLs ending in `.git` are supported remote Git registries and can be locked.
 
 ## Considered options
 

@@ -214,6 +214,142 @@ registries:
 	}
 }
 
+func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	targetOrigin, targetWorking := createBareRepoWithWorkingClone(t, "bump-target.git")
+	writeSkill(t, targetWorking, "target", "Target v1", nil)
+	commitAndPushAll(t, targetWorking, "target v1")
+	createAndPushTag(t, targetWorking, "v1.0")
+	writeSkill(t, targetWorking, "target", "Target v1.1", nil)
+	commitAndPushAll(t, targetWorking, "target v1.1")
+	createAndPushTag(t, targetWorking, "v1.1")
+
+	otherOrigin, otherWorking := createBareRepoWithWorkingClone(t, "bump-other.git")
+	writeSkill(t, otherWorking, "other", "Other v1", nil)
+	commitAndPushAll(t, otherWorking, "other v1")
+	createAndPushTag(t, otherWorking, "v1.0")
+	writeSkill(t, otherWorking, "other", "Other v1.1", nil)
+	commitAndPushAll(t, otherWorking, "other v1.1")
+	createAndPushTag(t, otherWorking, "v1.1")
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, repoConfig, "\nharnesses: [claude]\nregistries:\n  - url: "+targetOrigin+"\n    ref: v1.0\n    skills: [target]\n  - url: "+otherOrigin+"\n    ref: v1.0\n    skills: [other]\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	beforeOther, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeOther.Registries) != 2 {
+		t.Fatalf("unexpected initial registries: %+v", beforeOther.Registries)
+	}
+
+	output, err := executeCommand("update", "--bump", "--scope", "repo", "--registry", targetOrigin, "--ref", "v1.0", "--path", ".", "--kind", "skill", "target")
+	if err != nil {
+		t.Fatalf("targeted bump: %v\n%s", err, output)
+	}
+	after, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Registries[0].Ref; got != "v1.1" {
+		t.Fatalf("target ref = %q, want v1.1", got)
+	}
+	if got := after.Registries[1].Ref; got != "v1.0" {
+		t.Fatalf("unrelated ref mutated by targeted bump: %q", got)
+	}
+}
+
+func TestUpdateBumpHonorsUserScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "bump-user.git")
+	writeSkill(t, working, "user-target", "User v1", nil)
+	commitAndPushAll(t, working, "user v1")
+	createAndPushTag(t, working, "v1.0")
+	writeSkill(t, working, "user-target", "User v1.1", nil)
+	commitAndPushAll(t, working, "user v1.1")
+	createAndPushTag(t, working, "v1.1")
+
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: v1.0\n    skills: [user-target]\n")
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	output, err := executeCommand("update", "--bump", "--scope", "user", "--registry", origin, "--kind", "skill", "user-target")
+	if err != nil {
+		t.Fatalf("user targeted bump: %v\n%s", err, output)
+	}
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := globalCfg.Registries[0].Ref; got != "v1.1" {
+		t.Fatalf("user target ref = %q, want v1.1", got)
+	}
+}
+
+func TestUpdateBumpHonorsLocalScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	localOrigin, localWorking := createBareRepoWithWorkingClone(t, "bump-local.git")
+	writeSkill(t, localWorking, "local-target", "Local v1", nil)
+	commitAndPushAll(t, localWorking, "local v1")
+	createAndPushTag(t, localWorking, "v1.0")
+	writeSkill(t, localWorking, "local-target", "Local v1.1", nil)
+	commitAndPushAll(t, localWorking, "local v1.1")
+	createAndPushTag(t, localWorking, "v1.1")
+
+	repoOrigin, repoWorking := createBareRepoWithWorkingClone(t, "bump-local-other.git")
+	writeSkill(t, repoWorking, "repo-target", "Repo v1", nil)
+	commitAndPushAll(t, repoWorking, "repo v1")
+	createAndPushTag(t, repoWorking, "v1.0")
+	writeSkill(t, repoWorking, "repo-target", "Repo v1.1", nil)
+	commitAndPushAll(t, repoWorking, "repo v1.1")
+	createAndPushTag(t, repoWorking, "v1.1")
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\nregistries:\n  - url: "+repoOrigin+"\n    ref: v1.0\n    skills: [repo-target]\n")
+	localConfig := filepath.Join(repo, ".agents", "config.local.yaml")
+	writeConfig(t, localConfig, "\nregistries:\n  - url: "+localOrigin+"\n    ref: v1.0\n    skills: [local-target]\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	output, err := executeCommand("update", "--bump", "--scope", "local", "--registry", localOrigin, "--kind", "skill", "local-target")
+	if err != nil {
+		t.Fatalf("local targeted bump: %v\n%s", err, output)
+	}
+	localCfg, err := config.LoadLocalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := localCfg.Registries[0].Ref; got != "v1.1" {
+		t.Fatalf("local target ref = %q, want v1.1", got)
+	}
+	repoCfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repoCfg.Registries[0].Ref; got != "v1.0" {
+		t.Fatalf("repo ref mutated by local-scoped bump: %q", got)
+	}
+}
+
 func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

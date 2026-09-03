@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -121,7 +122,7 @@ func (s *Store) BackupOnly(rel, absFile string, reason Reason) (string, error) {
 
 // backupOnlyLocked is BackupOnly's body, running with the per-root lock held.
 func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, error) {
-	if err := s.ensureUnderRoot(absFile); err != nil {
+	if err := s.ValidateAggregateFile(rel, absFile); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
@@ -151,6 +152,9 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 // this path, so a malformed or comment-laden file is preserved exactly, which is
 // the only version of a backup worth having for a file a user hand-wrote.
 func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, err error) {
+	if err := s.ValidateAggregateFile(rel, absFile); err != nil {
+		return "", "", false, err
+	}
 	raw, readErr := os.ReadFile(absFile)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
@@ -175,6 +179,8 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 			break
 		} else if statErr != nil {
 			return "", "", false, statErr
+		} else if err := validateRegularFile(backupPath, false); err != nil {
+			return "", "", false, err
 		}
 		backupPath = fmt.Sprintf("%s.%03d%s", base, seq, backupSuffix)
 	}
@@ -262,6 +268,9 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 // missing or unreadable is skipped: bytes without recorded provenance are not
 // evidence.
 func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
+	if err := validateRelativePath(rel); err != nil {
+		return nil, err
+	}
 	dir := s.SafetyBackupDir(rel)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -280,7 +289,20 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 	out := make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		metaBytes, err := os.ReadFile(metaPathFor(path))
+		if err := validateRegularFile(path, false); err != nil {
+			return nil, err
+		}
+		metaPath := metaPathFor(path)
+		if _, err := os.Lstat(metaPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		if err := validateRegularFile(metaPath, false); err != nil {
+			return nil, err
+		}
+		metaBytes, err := os.ReadFile(metaPath)
 		if err != nil {
 			continue
 		}

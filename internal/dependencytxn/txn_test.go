@@ -386,6 +386,37 @@ func TestUnsafeDestinations(t *testing.T) {
 	})
 }
 
+func TestReadGenerationRejectsOversizedSparseFileWithoutResidue(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(maxDependencyFileSize + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ReadGeneration(path)
+	if !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("ReadGeneration error = %v, want ErrRecoveryBlocked", err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("ReadGeneration created transaction state: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" {
+		t.Fatalf("oversized generation left residue: %v", entries)
+	}
+}
+
 func TestContextTimeoutWhileLockHeld(t *testing.T) {
 	root, state := testDirs(t)
 	path := filepath.Join(root, "config.yaml")

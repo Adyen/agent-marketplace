@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"time"
@@ -207,6 +206,9 @@ func validateEntry(e Entry) error {
 }
 
 func validateRecord(r *Record, canonicalRoot, rootKey string) error {
+	if r == nil {
+		return fmt.Errorf("%w: ownership record is missing", ErrStateCorrupt)
+	}
 	if r.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported state version %d", ErrStateCorrupt, r.Version)
 	}
@@ -216,17 +218,32 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 	if r.CanonicalRoot != canonicalRoot {
 		return ErrStateRootMismatch
 	}
+	if r.Generation == 0 {
+		return fmt.Errorf("%w: ownership generation must be positive", ErrStateCorrupt)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, r.UpdatedAt); err != nil {
+		return fmt.Errorf("%w: ownership timestamp is malformed", ErrStateCorrupt)
+	}
 	for rel, fs := range r.Files {
-		if rel == "" || filepath.IsAbs(rel) {
-			return fmt.Errorf("%w: file key is not an output-relative path", ErrStateCorrupt)
+		if err := validateRelativePath(rel); err != nil {
+			return fmt.Errorf("%w: file key: %v", ErrStateCorrupt, err)
 		}
-		if fs.ContentDigest != "" && !digestPattern.MatchString(fs.ContentDigest) {
+		if !digestPattern.MatchString(fs.ContentDigest) {
 			return fmt.Errorf("%w: file content digest is malformed", ErrStateCorrupt)
 		}
+		if len(fs.Entries) == 0 {
+			return fmt.Errorf("%w: file state has no owned entries", ErrStateCorrupt)
+		}
+		seen := make(map[string]struct{}, len(fs.Entries))
 		for _, e := range fs.Entries {
 			if err := validateEntry(e); err != nil {
 				return errors.Join(ErrStateCorrupt, err)
 			}
+			key := e.ID().mapKey()
+			if _, ok := seen[key]; ok {
+				return fmt.Errorf("%w: duplicate entry identity", ErrStateCorrupt)
+			}
+			seen[key] = struct{}{}
 		}
 	}
 	return nil

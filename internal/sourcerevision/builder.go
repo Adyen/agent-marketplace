@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	marketartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
@@ -169,6 +170,31 @@ func Build(input Input) (Result, error) {
 
 	slog.Debug("built direct-Git source revision", "root", normalizedRootPath(input.RootPath), "source_harness", cat.SourceHarness, "resources", len(resources), "warnings", len(warnings), "deferred_diagnostic_errors", diagnosticErrors)
 	return Result{SourceHarness: cat.SourceHarness, Manifest: manifest, Payload: payload, Warnings: warnings}, nil
+}
+
+func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarning, error) {
+	resources := make([]marketartifact.RevisionResource, 0, len(root.Resources))
+	for _, resource := range root.Resources {
+		support := make(map[string]string, len(resource.SupportFiles))
+		for name, digest := range resource.SupportFiles {
+			support[name] = digest.String()
+		}
+		if len(support) == 0 {
+			support = nil
+		}
+		resources = append(resources, marketartifact.RevisionResource{
+			Kind:          resource.Kind,
+			Name:          resource.Name,
+			ContentDigest: resource.ContentDigest.String(),
+			ArchiveDigest: resource.ArchiveDigest.String(),
+			SupportFiles:  support,
+		})
+	}
+	return Verify(Input{SnapshotRoot: snapshot, RootPath: root.Path}, Projection{
+		SourceHarness:  root.SourceHarness,
+		RevisionDigest: root.RevisionDigest.String(),
+		Resources:      resources,
+	})
 }
 
 func Verify(input Input, locked Projection) ([]ResourceWarning, error) {

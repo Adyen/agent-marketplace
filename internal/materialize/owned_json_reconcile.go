@@ -173,6 +173,11 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	var out ownedJSONAggregateReport
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
+	if err := store.ValidateAggregateFile(rel, abs); err != nil {
+		out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
+			fmt.Sprintf("aggregate %q is not a safe regular file: %v", ownedAggregateLabel(outDir, rel), err)))
+		return out
+	}
 
 	raw, readErr := os.ReadFile(abs)
 	switch {

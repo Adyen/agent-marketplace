@@ -2035,6 +2035,22 @@ func TestPrepareFetchJobsExactSnapshotPreservesLogicalCatalogKey(t *testing.T) {
 	}
 }
 
+func TestPrepareFetchJobsAllowsMutableSnapshotFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	entry := config.RegistryEntry{URL: "https://example.invalid/team/resources.git", Ref: "main"}
+	cfg := &config.Config{Registries: []config.RegistryEntry{entry}}
+
+	requests, jobs, errs := prepareFetchJobs(cfg, "", LoadModeRefresh, "", func(config.RegistryEntry) (string, string, error) {
+		return "", "", nil
+	})
+	if len(errs) != 0 || len(jobs) != 1 || len(requests) != 1 {
+		t.Fatalf("prepareFetchJobs fallback result = %d requests, %d jobs, errors %v", len(requests), len(jobs), errs)
+	}
+	if requests[0].job != jobs[0] || requests[0].basePath != "" {
+		t.Fatalf("mutable fallback request = %#v, job=%#v", requests[0], jobs[0])
+	}
+}
+
 func TestRebaseCatalogEntryPathsPreservesExactResourceSource(t *testing.T) {
 	snapshotRoot := t.TempDir()
 	logicalRoot := filepath.Join(t.TempDir(), "mutable", "main")

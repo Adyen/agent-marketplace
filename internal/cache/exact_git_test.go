@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 func TestParseGitOID(t *testing.T) {
@@ -293,6 +295,38 @@ func TestExactGitDoesNotPersistFetchCredentialsAndUsesPrivateModes(t *testing.T)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExactGitLockHonorsContextDeadline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := acquireExactGitFileLock(context.Background(), "held", unix.LOCK_EX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	_, err = acquireExactGitFileLock(ctx, "held", unix.LOCK_EX)
+	if !errors.Is(err, ErrExactGitLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lock error = %v, want timeout and deadline", err)
+	}
+}
+
+func TestExactGitNamespaceLeaseHonorsContextDeadline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := acquireExactGitFileLock(context.Background(), "namespace", unix.LOCK_EX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	_, err = AcquireExactGitNamespaceLeaseWithContext(ctx)
+	if !errors.Is(err, ErrExactGitLockTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("namespace lock error = %v, want timeout and deadline", err)
 	}
 }
 

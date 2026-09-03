@@ -5,13 +5,12 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestSyncBlocksOrganizationRequirementsWithoutTrustedLock(t *testing.T) {
+func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -23,20 +22,24 @@ func TestSyncBlocksOrganizationRequirementsWithoutTrustedLock(t *testing.T) {
 	authority := t.TempDir()
 	orgPath := filepath.Join(authority, "config.yaml")
 	writeConfig(t, orgPath, "registries:\n  - url: "+origin+"\n    ref: main\n    required: true\n")
+	if err := os.Chmod(authority, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries: []\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync")
-	if err == nil || !strings.Contains(err.Error(), "organization.trust.lock.missing") {
-		t.Fatalf("sync did not fail closed for missing organization lock: err=%v\n%s", err, output)
+	if err != nil {
+		t.Fatalf("sync rejected organization config without a lock: %v\n%s", err, output)
 	}
 	if _, statErr := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("consumer created or replaced organization lock: %v", statErr)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "required-org")); !os.IsNotExist(statErr) {
-		t.Fatalf("consumer materialized blocked organization policy: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(home, ".factory", "skills", "required-org")); statErr != nil {
+		t.Fatalf("organization requirement was not materialized: %v\n%s", statErr, output)
 	}
 }
 

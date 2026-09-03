@@ -259,7 +259,8 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, fmt.Errorf("no registries configured; add at least one registry to the config")
 	}
 
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
+	discoveryView := exactLockView(ec)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir, installCatalogOption(discoveryView))
 	if err != nil {
 		return nil, err
 	}
@@ -527,9 +528,26 @@ func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *co
 	return ec.Merged, nil
 }
 
-func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfigDir string) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
+func installCatalogOption(view readOnlyExactView) catalog.LoadOption {
+	return catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+		snapshot, identity, err := view.exactSnapshot(entry)
+		if err == nil {
+			return snapshot, identity, nil
+		}
+		var viewErr *LockViewError
+		if errors.As(err, &viewErr) && viewErr.Code == "lock.missing" {
+			return "", "", nil
+		}
+		return "", "", err
+	})
+}
+
+func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfigDir string, catalogOptions ...catalog.LoadOption) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
 	repoRoot := config.FindRepoRoot()
 	var opts []catalog.LoadOption
+	if len(catalogOptions) > 0 {
+		opts = append(opts, catalogOptions...)
+	}
 	if localConfigDir != "" && localConfigDir != repoRoot {
 		opts = append(opts, catalog.WithLocalConfigDir(localConfigDir))
 	}

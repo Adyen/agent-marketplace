@@ -102,8 +102,9 @@ type preparedFile struct {
 }
 
 const (
-	journalVersion = 1
-	maxJournalSize = 4 << 20
+	journalVersion              = 1
+	maxDependencyFileSize int64 = 4 << 20
+	maxJournalSize              = maxDependencyFileSize
 )
 
 func Digest(data []byte) string {
@@ -112,7 +113,7 @@ func Digest(data []byte) string {
 }
 
 func ReadGeneration(path string) (Generation, error) {
-	raw, _, err := readRegularFile(path, 0)
+	raw, _, err := readRegularFile(path, maxDependencyFileSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return Generation{}, nil
 	}

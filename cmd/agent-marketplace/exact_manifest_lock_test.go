@@ -99,6 +99,44 @@ func TestLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
 	}
 }
 
+func TestReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
+	for _, command := range []string{"status", "list"} {
+		t.Run(command, func(t *testing.T) {
+			repoRoot, _, _, lockPath := setupExactManifestRegistry(t)
+			doc := readExactManifestLock(t, lockPath)
+			doc.Registries[0].Roots[0].Resources[0].ContentDigest = tamperedLockDigest
+			writeExactManifestLock(t, lockPath, doc)
+			beforeLock, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeOutput, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			output, err := executeCommand(command)
+			if err == nil || !strings.Contains(err.Error(), "lock.manifest-mismatch") {
+				t.Fatalf("%s accepted tampered exact inventory: %v\n%s", command, err, output)
+			}
+			afterLock, readErr := os.ReadFile(lockPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(afterLock) != string(beforeLock) {
+				t.Fatalf("%s rewrote tampered lock", command)
+			}
+			afterOutput, readErr := os.ReadFile(filepath.Join(repoRoot, ".factory", "skills", "alpha", "SKILL.md"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(afterOutput) != string(beforeOutput) {
+				t.Fatalf("%s changed materialized output", command)
+			}
+		})
+	}
+}
+
 func TestSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *testing.T) {
 	repoRoot, origin, _, lockPath := setupExactManifestRegistry(t)
 	beforeLock, err := os.ReadFile(lockPath)

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -69,7 +70,15 @@ func (oid GitOID) validate() error {
 	return nil
 }
 
+const exactGitLockTimeout = 30 * time.Second
+
 func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
+	defer cancel()
+	return ResolveExactGitRefWithContext(ctx, canonicalSource, fetchURL, ref)
+}
+
+func ResolveExactGitRefWithContext(ctx context.Context, canonicalSource, fetchURL, ref string) (GitOID, error) {
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
 		return GitOID{}, err
 	}
@@ -78,7 +87,7 @@ func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
 	}
 
 	var oid GitOID
-	err := withExactGitLock(sourceKey(canonicalSource), func() error {
+	err := withExactGitLock(ctx, sourceKey(canonicalSource), func() error {
 		store := exactGitObjectStorePath(canonicalSource)
 		exists, err := validateExactGitDirectory(store)
 		if err != nil {
@@ -116,6 +125,12 @@ func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
 }
 
 func AcquireExactGit(canonicalSource, fetchURL string, oid GitOID) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
+	defer cancel()
+	return AcquireExactGitWithContext(ctx, canonicalSource, fetchURL, oid)
+}
+
+func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL string, oid GitOID) (string, error) {
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
 		return "", err
 	}
@@ -124,7 +139,7 @@ func AcquireExactGit(canonicalSource, fetchURL string, oid GitOID) (string, erro
 	}
 
 	path := exactGitSnapshotPath(canonicalSource, oid)
-	err := withExactGitLock(snapshotKey(canonicalSource, oid), func() error {
+	err := withExactGitLock(ctx, snapshotKey(canonicalSource, oid), func() error {
 		exists, err := validateExactGitDirectory(path)
 		if err != nil {
 			return fmt.Errorf("validate exact git snapshot: %w", err)
@@ -137,7 +152,7 @@ func AcquireExactGit(canonicalSource, fetchURL string, oid GitOID) (string, erro
 				return err
 			}
 		}
-		if err := ensureExactGitObject(canonicalSource, fetchURL, oid); err != nil {
+		if err := ensureExactGitObject(ctx, canonicalSource, fetchURL, oid); err != nil {
 			return err
 		}
 		return publishExactGitSnapshot(path, exactGitObjectStorePath(canonicalSource), oid)
@@ -224,8 +239,8 @@ func cloneExactGitObjectStore(fetchURL, store string) error {
 	return nil
 }
 
-func ensureExactGitObject(canonicalSource, fetchURL string, oid GitOID) error {
-	return withExactGitKeyLock(sourceKey(canonicalSource), func() error {
+func ensureExactGitObject(ctx context.Context, canonicalSource, fetchURL string, oid GitOID) error {
+	return withExactGitKeyLock(ctx, sourceKey(canonicalSource), func() error {
 		store := exactGitObjectStorePath(canonicalSource)
 		exists, err := validateExactGitDirectory(store)
 		if err != nil {
@@ -568,25 +583,31 @@ func validateExactGitTree(root string) error {
 }
 
 func AcquireExactGitNamespaceLease() (func(), error) {
-	return acquireExactGitFileLock("namespace", unix.LOCK_SH)
+	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
+	defer cancel()
+	return AcquireExactGitNamespaceLeaseWithContext(ctx)
 }
 
-func withExactGitLock(key string, fn func() error) error {
-	return withExactGitFileLock("namespace", unix.LOCK_SH, func() error {
-		return withExactGitKeyLock(key, fn)
+func AcquireExactGitNamespaceLeaseWithContext(ctx context.Context) (func(), error) {
+	return acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
+}
+
+func withExactGitLock(ctx context.Context, key string, fn func() error) error {
+	return withExactGitFileLock(ctx, "namespace", unix.LOCK_SH, func() error {
+		return withExactGitKeyLock(ctx, key, fn)
 	})
 }
 
-func withExactGitKeyLock(key string, fn func() error) error {
-	return withExactGitFileLock(key, unix.LOCK_EX, fn)
+func withExactGitKeyLock(ctx context.Context, key string, fn func() error) error {
+	return withExactGitFileLock(ctx, key, unix.LOCK_EX, fn)
 }
 
-func withExactGitExclusiveLock(fn func() error) error {
-	return withExactGitFileLock("namespace", unix.LOCK_EX, fn)
+func withExactGitExclusiveLock(ctx context.Context, fn func() error) error {
+	return withExactGitFileLock(ctx, "namespace", unix.LOCK_EX, fn)
 }
 
-func withExactGitFileLock(key string, operation int, fn func() error) error {
-	release, err := acquireExactGitFileLock(key, operation)
+func withExactGitFileLock(ctx context.Context, key string, operation int, fn func() error) error {
+	release, err := acquireExactGitFileLock(ctx, key, operation)
 	if err != nil {
 		return err
 	}
@@ -594,7 +615,17 @@ func withExactGitFileLock(key string, operation int, fn func() error) error {
 	return fn()
 }
 
-func acquireExactGitFileLock(key string, operation int) (func(), error) {
+var ErrExactGitLockTimeout = errors.New("exact git cache lock timeout")
+
+func acquireExactGitFileLock(ctx context.Context, key string, operation int) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, exactGitLockTimeout)
+		defer cancel()
+	}
 	lockDir := filepath.Join(exactGitRoot(), "locks")
 	if err := prepareExactGitDirectory(lockDir); err != nil {
 		return nil, err
@@ -618,9 +649,32 @@ func acquireExactGitFileLock(key string, operation int) (func(), error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("secure exact git lock: %w", err)
 	}
-	if err := unix.Flock(fd, operation); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock exact git cache: %w", err)
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, errors.Join(ErrExactGitLockTimeout, err)
+		}
+		err := unix.Flock(fd, operation|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock exact git cache: %w", err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = file.Close()
+			return nil, errors.Join(ErrExactGitLockTimeout, ctx.Err())
+		case <-timer.C:
+		}
 	}
 	var once sync.Once
 	return func() {
@@ -782,7 +836,9 @@ func garbageCollectExactGit(dryRun bool, locks []lockfile.Document) (result GCRe
 			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
 		}
 	}
-	err := withExactGitExclusiveLock(func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
+	defer cancel()
+	err := withExactGitExclusiveLock(ctx, func() error {
 		roots := []struct {
 			path      string
 			stage     string

@@ -90,14 +90,13 @@ type EffectiveConfig struct {
 // LoadEffectiveOptions overrides the default layer paths for tests and
 // non-standard layouts. Empty values use the standard resolution rules.
 type LoadEffectiveOptions struct {
-	RepoRoot                     string
-	LocalConfigDir               string
-	OrganizationPath             string
-	GlobalPath                   string
-	RepoPath                     string
-	LocalPath                    string
-	AllowMissingOrganizationLock bool
-	FileOverlays                 map[string][]byte
+	RepoRoot         string
+	LocalConfigDir   string
+	OrganizationPath string
+	GlobalPath       string
+	RepoPath         string
+	LocalPath        string
+	FileOverlays     map[string][]byte
 }
 
 func (ec EffectiveConfig) LayerResults() []LayerResult {
@@ -141,7 +140,7 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 	ec := EffectiveConfig{}
 
 	orgPath := organizationConfigPath(opts.OrganizationPath)
-	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath, opts.AllowMissingOrganizationLock)
+	ec.Organization, ec.Diagnostics = loadEffectiveOrganization(orgPath)
 	ec.Managed = ec.Diagnostics.Managed()
 	ec.Warnings = append(ec.Warnings, ec.Diagnostics.Warnings...)
 	LogManagedDiagnostics(ec.Diagnostics)
@@ -239,7 +238,7 @@ func globalConfigPath() (string, error) {
 // loading both with strict per-layer rules. Windows is always treated as
 // unmanaged. A missing file is valid (unmanaged). Any other read error is a
 // hard error.
-func loadEffectiveOrganization(path string, allowMissingLock bool) (LayerResult, ManagedInstallationDiagnostics) {
+func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDiagnostics) {
 	if runtime.GOOS == "windows" {
 		lr := LayerResult{Source: SourceUnset, Path: path}
 		return lr, inspectManagedConfig(path, fs.ErrNotExist, nil, SourceUnset, nil)
@@ -270,7 +269,7 @@ func loadEffectiveOrganization(path string, allowMissingLock bool) (LayerResult,
 	lr := loadOrganizationConfig(path, data)
 	d := inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
 	if len(lr.Errors) == 0 && lr.Config != nil && organizationHasRemoteRequirements(lr.Config) {
-		if trustErr := ValidateOrganizationTrustUnit(path, true, allowMissingLock); trustErr != nil {
+		if trustErr := ValidateOrganizationTrustUnit(path, true, true); trustErr != nil {
 			lr.Errors = append(lr.Errors, trustErr)
 			lr.Config = nil
 			d.State = ManagedInstallationUnmanaged
@@ -287,7 +286,7 @@ func loadEffectiveOrganization(path string, allowMissingLock bool) (LayerResult,
 // apiVersion.
 func LoadOrganizationConfig() (*Config, error) {
 	path := organizationConfigPath("")
-	lr, _ := loadEffectiveOrganization(path, false)
+	lr, _ := loadEffectiveOrganization(path)
 	if len(lr.Errors) > 0 {
 		return nil, errors.Join(lr.Errors...)
 	}

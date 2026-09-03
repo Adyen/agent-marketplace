@@ -21,7 +21,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
-	marketartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 )
 
 var commitDependencyTransaction = dependencytxn.Commit
@@ -266,6 +265,9 @@ func resolveUpgradeTargets(ec config.EffectiveConfig, mode lockMode) (upgradeTar
 				}
 				locked, ok := findLockedGitRoot(*current, entryURL, entry.Ref, rootPath)
 				if !ok {
+					locked, ok = findLockedGitRootAnyRef(*current, entryURL, rootPath)
+				}
+				if !ok {
 					return result, fmt.Errorf("git target %s@%s:%s is absent from the %s lock inventory", entryURL, entry.Ref, rootPath, scope)
 				}
 				occurrences = append(occurrences, gitOccurrence{selector: lockfile.GitUpgradeSelector{URL: entryURL, Ref: entry.Ref, Path: rootPath}, root: locked})
@@ -414,6 +416,24 @@ func findLockedGitRoot(doc lockfile.Document, url, ref, rootPath string) (lockfi
 	return lockfile.GitRoot{}, false
 }
 
+func findLockedGitRootAnyRef(doc lockfile.Document, url, rootPath string) (lockfile.GitRoot, bool) {
+	var match lockfile.GitRoot
+	found := 0
+	for _, registry := range doc.Registries {
+		if registry.URL != url {
+			continue
+		}
+		for _, root := range registry.Roots {
+			if root.Path != rootPath {
+				continue
+			}
+			match = root
+			found++
+		}
+	}
+	return match, found == 1
+}
+
 func lockedRootHasResource(root lockfile.GitRoot, kind, name string) bool {
 	for _, resource := range root.Resources {
 		if resource.Kind == kind && resource.Name == name {
@@ -515,6 +535,18 @@ func recoverDependencyTransactions(ctx context.Context) error {
 	}
 	slog.Debug("lock transaction recovery completed", "duration_ms", time.Since(started).Milliseconds())
 	return nil
+}
+
+func rejectGeneratedLockSymlink(name string) (string, error) {
+	clean := filepath.Clean(name)
+	info, err := os.Lstat(clean)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("%w: generated lock destination is a symlink: %s", dependencytxn.ErrUnsafePath, clean)
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect generated lock destination %s: %w", clean, err)
+	}
+	return clean, nil
 }
 
 func canonicalizeFuturePath(name string) (string, error) {
@@ -677,8 +709,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	loadOptions := config.LoadEffectiveOptions{
 		RepoRoot: repoRoot, LocalConfigDir: localDir,
-		AllowMissingOrganizationLock: mode.explicitOrganization,
-		FileOverlays:                 overlays,
+		FileOverlays: overlays,
 	}
 	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions)
 	if err != nil {
@@ -758,6 +789,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			lockPath = filepath.Join(filepath.Dir(configPath), name)
 		}
+		lockPath, pathErr = rejectGeneratedLockSymlink(lockPath)
+		if pathErr != nil {
+			return nil, nil, changed, pathErr
+		}
 		lockPath, pathErr = canonicalizeFuturePath(lockPath)
 		if pathErr != nil {
 			return nil, nil, changed, fmt.Errorf("resolve lock destination %s: %w", lockPath, pathErr)
@@ -785,7 +820,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
-		if !exists && (mode.locked || implicitOrg) {
+		if !exists && mode.locked {
 			return nil, nil, changed, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 
@@ -832,18 +867,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		layerChanged := !fresh || migration.MigrationNeeded
 		if layerChanged {
-			if mode.locked || implicitOrg || !selected && !mode.upgrade {
+			if mode.locked || implicitOrg && exists || !selected && !mode.upgrade {
 				return nil, nil, changed, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
 			}
-			changed++
-			if !mode.check {
-				data, err := lockfile.Encode(doc)
-				if err != nil {
-					return nil, nil, changed, err
-				}
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, Bytes: data, Mode: 0o644})
-				if migration.MigrationNeeded {
-					configDesired[layer.Source] = migration.SimplifiedConfig
+			if !implicitOrg {
+				changed++
+				if !mode.check {
+					data, err := lockfile.Encode(doc)
+					if err != nil {
+						return nil, nil, changed, err
+					}
+					desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, Bytes: data, Mode: 0o644})
+					if migration.MigrationNeeded {
+						configDesired[layer.Source] = migration.SimplifiedConfig
+					}
 				}
 			}
 		}
@@ -856,7 +893,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
 	}
 	for _, job := range snapshots {
-		if err := addLayerSnapshots(&set, job.source, job.entries, job.doc, mode.offline, mode.warningSink); err != nil {
+		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.warningSink); err != nil {
 			return nil, nil, changed, err
 		}
 	}
@@ -874,6 +911,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	if !mode.check && len(desiredFiles) > 0 {
 		for _, layer := range ec.PresentLayers() {
+			if !layer.Source.IsWritable() && !mode.explicitOrganization {
+				continue
+			}
 			snapshot, ok := configSnapshots[layer.Source]
 			if !ok || !snapshot.generation.Exists {
 				continue
@@ -1014,11 +1054,11 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 	if err := ctx.Err(); err != nil {
 		return lockfile.GitRegistry{}, err
 	}
-	oid, err := cache.ResolveExactGitRef(canonical, fetchURL, ref)
+	oid, err := cache.ResolveExactGitRefWithContext(ctx, canonical, fetchURL, ref)
 	if err != nil {
 		return lockfile.GitRegistry{}, fmt.Errorf("resolve exact Git ref %s@%s: %w", canonical, ref, err)
 	}
-	snapshot, err := cache.AcquireExactGit(canonical, fetchURL, oid)
+	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, fetchURL, oid)
 	if err != nil {
 		return lockfile.GitRegistry{}, fmt.Errorf("acquire exact Git snapshot %s: %w", oid.String(), err)
 	}
@@ -1120,7 +1160,7 @@ func projectLockedRoots(roots []lockfile.GitRoot, entries []config.RegistryEntry
 	return projected, true
 }
 
-func addLayerSnapshots(set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline bool, warningSink *[]error) (resultErr error) {
+func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline bool, warningSink *[]error) (resultErr error) {
 	started := time.Now()
 	verified := 0
 	defer func() {
@@ -1149,7 +1189,7 @@ func addLayerSnapshots(set *exactLockSet, source config.Source, entries []config
 		if offline {
 			snapshot, err = cache.OpenExactGit(registry.URL, cacheOID)
 		} else {
-			snapshot, err = cache.AcquireExactGit(registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID)
+			snapshot, err = cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID)
 		}
 		if err != nil {
 			code := "lock.snapshot-unavailable"
@@ -1179,28 +1219,7 @@ func addLayerSnapshots(set *exactLockSet, source config.Source, entries []config
 }
 
 func verifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]sourcerevision.ResourceWarning, error) {
-	resources := make([]marketartifact.RevisionResource, 0, len(root.Resources))
-	for _, resource := range root.Resources {
-		support := make(map[string]string, len(resource.SupportFiles))
-		for name, digest := range resource.SupportFiles {
-			support[name] = digest.String()
-		}
-		if len(support) == 0 {
-			support = nil
-		}
-		resources = append(resources, marketartifact.RevisionResource{
-			Kind:          resource.Kind,
-			Name:          resource.Name,
-			ContentDigest: resource.ContentDigest.String(),
-			ArchiveDigest: resource.ArchiveDigest.String(),
-			SupportFiles:  support,
-		})
-	}
-	return sourcerevision.Verify(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: root.Path}, sourcerevision.Projection{
-		SourceHarness:  root.SourceHarness,
-		RevisionDigest: root.RevisionDigest.String(),
-		Resources:      resources,
-	})
+	return sourcerevision.VerifyLockedGitRoot(snapshot, root)
 }
 
 func loadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, dependencytxn.Generation, bool, error) {

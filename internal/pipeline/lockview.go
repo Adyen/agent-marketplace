@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
 type LockMetadata struct {
@@ -56,6 +57,7 @@ type readOnlyLockedGit struct {
 
 type readOnlyExactView struct {
 	catalogOption       catalog.LoadOption
+	exactSnapshot       catalog.ExactSnapshotFunc
 	marketplaceView     func(*config.Config) *config.Config
 	gitMetadata         []LockMetadata
 	marketplaceMetadata []MarketplaceLockMetadata
@@ -67,6 +69,7 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 	byIdentity := make(map[string][]readOnlyLockedGit)
 	documents := make(map[config.Source]lockfile.Document)
 	blockedSources := make(map[config.Source]bool)
+	unlockedSources := make(map[config.Source]bool)
 	var gitMetadata []LockMetadata
 	var marketplaceMetadata []MarketplaceLockMetadata
 	var viewErrors []error
@@ -91,6 +94,8 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 		if layerErr != nil {
 			blockedSources[layer.Source] = true
 			viewErrors = append(viewErrors, layerErr)
+		} else if doc.APIVersion == "" && scope == lockfile.ScopeOrganization {
+			unlockedSources[layer.Source] = true
 		} else {
 			documents[layer.Source] = doc
 		}
@@ -121,6 +126,15 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 			openErr := parseErr
 			if openErr == nil {
 				snapshot, openErr = cache.OpenExactGitReadOnly(registry.URL, oid)
+			}
+			if openErr == nil {
+				for _, root := range registry.Roots {
+					if _, verifyErr := sourcerevision.VerifyLockedGitRoot(snapshot, root); verifyErr != nil {
+						openErr = &LockViewError{Code: "lock.manifest-mismatch", Scope: scope, Path: lockPath, Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
+						viewErrors = append(viewErrors, openErr)
+						break
+					}
+				}
 			}
 			gitMetadata = append(gitMetadata, LockMetadata{
 				Source: layer.Source, Scope: scope, Path: lockPath, URL: registry.URL,
@@ -155,10 +169,13 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 		return marketplaceMetadata[i].InstanceID < marketplaceMetadata[j].InstanceID
 	})
 
-	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+	exactSnapshot := func(entry config.RegistryEntry) (string, string, error) {
 		canonical, err := readOnlyCanonicalURL(entry.URL)
 		if err != nil {
 			return "", "", err
+		}
+		if unlockedSources[entry.Source] {
+			return "", "", nil
 		}
 		locked, ok := bySource[readOnlySourceKey(entry.Source, canonical, entry.Ref)]
 		if !ok {
@@ -172,11 +189,13 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 			return "", "", locked.err
 		}
 		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
-	})
+	}
+	option := catalog.WithExactSnapshots(exactSnapshot)
 	return readOnlyExactView{
 		catalogOption: option,
+		exactSnapshot: exactSnapshot,
 		marketplaceView: func(input *config.Config) *config.Config {
-			return exactMarketplaceConfig(input, documents, blockedSources)
+			return exactMarketplaceConfig(input, documents, blockedSources, unlockedSources)
 		},
 		gitMetadata: gitMetadata, marketplaceMetadata: marketplaceMetadata, errors: viewErrors,
 	}
@@ -184,12 +203,15 @@ func exactLockView(ec config.EffectiveConfig) readOnlyExactView {
 
 func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry, marketplaces []config.MarketplaceEntry) (lockfile.Document, error) {
 	if scope == lockfile.ScopeOrganization {
-		if err := config.ValidateOrganizationTrustUnit(configPath, true, false); err != nil {
+		if err := config.ValidateOrganizationTrustUnit(configPath, true, true); err != nil {
 			return lockfile.Document{}, &LockViewError{Code: "lock.trust", Scope: scope, Path: path, Err: err}
 		}
 	}
 	data, err := lockfile.ReadBytes(path)
 	if err != nil {
+		if scope == lockfile.ScopeOrganization && errors.Is(err, os.ErrNotExist) {
+			return lockfile.Document{}, nil
+		}
 		code := "lock.read"
 		if errors.Is(err, os.ErrNotExist) {
 			code = "lock.missing"
@@ -267,7 +289,7 @@ func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.Registry
 	return true
 }
 
-func exactMarketplaceConfig(input *config.Config, documents map[config.Source]lockfile.Document, blocked map[config.Source]bool) *config.Config {
+func exactMarketplaceConfig(input *config.Config, documents map[config.Source]lockfile.Document, blocked, unlocked map[config.Source]bool) *config.Config {
 	if input == nil {
 		return nil
 	}
@@ -275,6 +297,10 @@ func exactMarketplaceConfig(input *config.Config, documents map[config.Source]lo
 	out.Marketplaces = make([]config.MarketplaceEntry, 0, len(input.Marketplaces))
 	for _, entry := range input.Marketplaces {
 		if blocked[entry.Source] {
+			continue
+		}
+		if unlocked[entry.Source] {
+			out.Marketplaces = append(out.Marketplaces, entry)
 			continue
 		}
 		locked, ok := readOnlyLockedMarketplace(documents[entry.Source], entry)

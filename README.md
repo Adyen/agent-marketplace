@@ -9,16 +9,18 @@ Codex).
 A **registry** is just a Git repository (or a local directory) that holds those
 resources. You declare which registries you want, which resources to pull from
 each, and which harnesses to target. The CLI clones the registries, compiles
-the resources for your harness, and writes the result to disk. Your config is
-the source of truth for marketplace-managed output: standalone artifacts can be
-re-created with `sync`, while entries in shared native configuration are
-reconciled without treating the whole file as disposable.
+the resources for your harness, and writes the result to disk. Human-authored
+config declares acquisition intent; generated, layer-owned lockfiles record
+exact remote resolutions and integrity data. `sync` recreates standalone
+artifacts from the locked resolution, while entries in shared native
+configuration are reconciled without treating the whole file as disposable.
 
-> Every resource you enable is always tied to a specific registry — identified
-> by its **URL**, **ref**, and (optionally) **path**. There is no global,
-> registry-less "skill" or "command": everything is namespaced to where it
-> comes from. This keeps installs reproducible and makes it obvious which
-> source a resource was materialized from.
+> Every remote requirement is tied to a specific source — a canonical Git URL,
+> ref, and (optionally) path, or an immutable Marketplace identity. The owning
+> lock records the exact Git commit or Marketplace revision used for
+> materialization. Plain filesystem directory registries remain live and are
+> deliberately not locked. A hostless `file://` URL whose decoded path ends in
+> `.git` is a supported remote Git registry and can be locked.
 
 ---
 
@@ -116,17 +118,21 @@ agent-marketplace install \
 Day-to-day operation comes down to a handful of commands:
 
 ```bash
-agent-marketplace sync          # reconcile config -> disk (idempotent)
-agent-marketplace sync --check  # report drift only; exits 1 if out of sync (CI/pre-commit)
-agent-marketplace status        # what's installed, from where, and any drift/errors
-agent-marketplace update        # pull the latest commit for each pinned ref
-agent-marketplace list          # browse resources from your configured registries
+agent-marketplace sync          # reconcile writable locks, then config -> disk
+agent-marketplace sync --locked  # use only fresh locks; never write config or locks
+agent-marketplace sync --check   # check locks and output drift; exits 1 if stale
+agent-marketplace status        # installed state, lock metadata, drift, and errors
+agent-marketplace update        # upgrade eligible locked resolutions, then sync
+agent-marketplace lock --check  # verify lock freshness without writing
+agent-marketplace list           # read locked inventories; local/ad-hoc sources stay live
 ```
 
-> **`sync` is deterministic and idempotent.** The same config always produces
-> the same files. Delete the generated `.factory/` directory and re-run
-> `sync` — you get the identical result back. That is why `sync --check` is
-> safe to wire into pre-commit hooks and CI.
+> **`sync` is deterministic and idempotent for a config and its lockfiles.**
+> A moving Git branch or Marketplace publication does not change an existing
+> compatible lock. Delete the generated `.factory/` directory and re-run `sync`
+> to recreate the same result. Use `sync --check` to verify both lock freshness
+> and materialized output without changing authoritative files; online cache
+> warming may still occur.
 
 ---
 
@@ -149,19 +155,21 @@ excluded by any layer (see below).
 
 How it works from a user's point of view:
 
-- The CLI reads every layer that exists, then **merges** them. The result is one
-  effective set of registries and resources. When a repo-scoped resource is both
-  selected and excluded across layers, the more specific layer (repo, then
+- The CLI reads every layer that exists, loads that layer's adjacent lockfile
+  for remote requirements, and then **merges** the resulting catalogs. The
+  result is one effective set of registries and resources. When a resource is
+  both selected and excluded across layers, the more specific layer (repo, then
   personal) wins — except `required: true` resources, which no layer can exclude.
-  Machine-scoped resources are not suppressed by repo or checkout-local excludes.
 - **Machine-wide** layers materialize into your home harness root (e.g.
   `~/.factory/`); **repo** layers materialize into `<repo>/.factory/`. The two
   are complementary — a resource can exist at both scopes without conflict.
 - The CLI stamps every resource with the layer it came from, which is why
   `status` can show you the exact origin (and `--scope` lets you pick which
   file an `install`/`remove` writes to).
-- `sync` automatically adds `.agents/config.local.yaml` to `.gitignore` so your
-  personal overrides never get committed.
+- `.agents/config.local.yaml` and its generated `.agents/lock.local.yaml` are
+  personal and gitignored. The repository ignore rule also covers transient
+  `/.agents/*.dependencytxn.lock` handles used while config and lock pairs are
+  committed. These handles are not lockfiles and should never be committed.
 
 A minimal committed repo config looks like this — note that the resource
 selection lives **inside** the registry entry, namespaced by `url` + `ref`
@@ -188,6 +196,26 @@ registries:
 
 The full precedence and selection rules — including edge cases and error
 handling — are documented in [`docs/PRECEDENCE.md`](./docs/PRECEDENCE.md).
+
+## Layer-owned lockfiles
+
+Remote acquisition state is generated beside the configuration layer that owns
+it. Repository locks are committed; personal-local locks are gitignored; and
+plain filesystem directory registries remain live rather than being copied into
+a lock. Hostless `file://` URLs ending in `.git` are remote Git registries and
+are copied into locks like other Git sources.
+
+| Configuration | Lockfile | Ownership |
+|---|---|---|
+| `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | externally managed organization |
+| `~/.agents/config.yaml` | `~/.agents/lock.yaml` | user-personal, machine-local |
+| `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | repository, committed |
+| `<dir>/.agents/config.local.yaml` | `<dir>/.agents/lock.local.yaml` | personal-local, gitignored |
+
+Lockfiles use `apiVersion: agent-marketplace-lock/v1`; config remains the
+human-authored requirement while the adjacent lock records exact remote
+resolutions and integrity data. See the [lockfile adoption guide](./docs/adoption-guide.md)
+for lock lifecycle, validation, and command details.
 
 ### Monorepos and nested configs
 
@@ -614,12 +642,14 @@ agent-marketplace remove platform-onboarding         # remove the whole bundle
 
 ## Local-path registries
 
-Instead of a Git URL, a registry entry can point at a local directory — handy
-for developing or testing resources before publishing them. A URL is treated as
-a local path when it is `.`, starts with `./`, `/`, or `~/`, and does **not**
-end in `.git`. Parent traversal (`..` or a path containing a `..` component) is
-rejected. A `ref` on an accepted local directory is simply ignored rather than
-making it remote:
+Instead of a Git URL, a registry entry can point at a plain filesystem directory
+— handy for developing or testing resources before publishing them. A URL is
+treated as a local path when it starts with `/`, `~/`, `./`, or `../` (or is `.`/`..`)
+and does **not** end in `.git`. A hostless `file://` URL is local only when its
+decoded path does not end in `.git`; `file:///path/to/registry.git` is a
+supported remote Git registry, requires a `ref`, and participates in lockfiles.
+A `ref` on a plain local directory entry is simply ignored rather than making it
+remote:
 
 ```yaml
 registries:
@@ -629,19 +659,10 @@ registries:
       include: [my-custom-skill]
 ```
 
-For a local-path registry, `path` may also be used as the registry location when
-`url` is omitted:
-
-```yaml
-registries:
-  - path: /tmp/local-skills    # `path` is the URL/location alias here
-    skills:
-      include: [my-custom-skill]
-```
-
-When `url` is present, `path` instead means a subdirectory within that registry.
-Local registries are read directly from disk (no clone or fetch), are excluded
-from `update`, and show `local` as their cache freshness in `status`.
+Plain local-directory registries are read directly from disk (no clone or fetch),
+are excluded from `update`, and show `local` as their cache freshness in
+`status`. Hostless `file://` Git registries ending in `.git` are fetched and
+locked instead.
 
 ---
 
@@ -666,11 +687,17 @@ agent-marketplace remove --from <url> [--path <dir>]         Remove an entire ad
 agent-marketplace remove <collection>            Remove a collection reference
 agent-marketplace remove ... --scope {user,repo,local}      Choose which config layer to edit
 
-agent-marketplace sync                           Deterministic materialization from merged config
-agent-marketplace sync --check                   Report drift only; exits 1 if out of sync
-agent-marketplace update                         Pull the latest commit for each pinned ref
-agent-marketplace update --bump                  Discover and bump to newer refs
-agent-marketplace status                         Resources, harnesses, targets, refs, source layer, drift
+agent-marketplace lock                           Reconcile writable layer-owned locks (no materialization)
+agent-marketplace lock --check                   Report lock changes without writing
+agent-marketplace lock --scope organization      Admin-only organization lock generation/verification
+agent-marketplace lock --upgrade                 Deliberately refresh eligible locked resolutions
+agent-marketplace sync                           Reconcile locks, then materialize exact resolutions
+agent-marketplace sync --locked                  Require fresh locks; never write config or locks
+agent-marketplace sync --check                   Check locks and output drift; exits 1 if stale
+agent-marketplace sync --offline                 Use only plain local directories and verified exact caches
+agent-marketplace update                         Upgrade eligible resolutions, then sync
+agent-marketplace update --bump                  Bump matching declared Git tag refs, then lock
+agent-marketplace status                         Resources, harnesses, locks, targets, drift, errors
 agent-marketplace convert --from <h> --to <h> --out <dir> <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
 agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery

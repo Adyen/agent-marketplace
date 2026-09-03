@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -39,6 +40,56 @@ func TestInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
 	doc = readExactManifestLock(t, lockPath)
 	if len(doc.Registries) != 0 {
 		t.Fatalf("orphan Git lock retained after remove: %+v", doc.Registries)
+	}
+}
+
+func TestConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "configured-install-lock.git")
+	writeSkill(t, working, "locked", "Locked A", nil)
+	commitAndPushAll(t, working, "inventory A")
+
+	repo := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed sync: %v\n%s", err, output)
+	}
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err := os.ReadFile(filepath.Join(repo, ".agents", "lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeSkill(t, working, "new", "New B", nil)
+	commitAndPushAll(t, working, "inventory B")
+	output, err := executeCommand("install", "new")
+	if err == nil {
+		t.Fatalf("configured install reported success for resource absent from locked inventory:\n%s", output)
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("configured install error = %v, want a safe not-found result", err)
+	}
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterConfig) != string(beforeConfig) {
+		t.Fatalf("failed install changed config:\nbefore:\n%s\nafter:\n%s", beforeConfig, afterConfig)
+	}
+	afterLock, err := os.ReadFile(filepath.Join(repo, ".agents", "lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterLock) != string(beforeLock) {
+		t.Fatalf("failed install changed lock:\nbefore:\n%s\nafter:\n%s", beforeLock, afterLock)
 	}
 }
 

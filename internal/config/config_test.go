@@ -366,6 +366,9 @@ func TestIsLocal(t *testing.T) {
 		want bool
 	}{
 		{"/absolute/path", "", true},
+		{"file:///absolute/path", "", true},
+		{"file:///absolute/path.git", "main", false},
+		{"file:///absolute/path%2Egit", "main", false},
 		{"/absolute/path.git", "", false},
 		{"/absolute/path.git", "main", false},
 		{"/absolute/path", "main", true},
@@ -475,6 +478,18 @@ func TestResolveLocalPath(t *testing.T) {
 			want:    "/local/skills",
 		},
 		{
+			name:    "file URL path",
+			entry:   RegistryEntry{URL: "file:///local/skills"},
+			baseDir: "/repo",
+			want:    "/local/skills",
+		},
+		{
+			name:    "file URL bare git repo is remote",
+			entry:   RegistryEntry{URL: "file:///local/registry.git", Ref: "main"},
+			baseDir: "/repo",
+			want:    "",
+		},
+		{
 			name:    "relative path resolved against baseDir",
 			entry:   RegistryEntry{URL: "./skills"},
 			baseDir: "/repo",
@@ -559,6 +574,39 @@ func TestConfigValidateLocalRegistryWithRefAccepted(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected local registry with ref to pass validation: %v", err)
+	}
+}
+
+func TestConfigValidateFileURLRegistryClassification(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		ref     string
+		wantErr string
+	}{
+		{name: "plain file URL does not require ref", url: "file:///local/skills"},
+		{name: "bare git file URL requires ref", url: "file:///local/registry.git", wantErr: "registries[0].ref is required"},
+		{name: "bare git file URL with ref accepted", url: "file:///local/registry.git", ref: "main"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{
+				APIVersion: APIVersionV2,
+				Harnesses:  []string{"factory"},
+				Registries: []RegistryEntry{{URL: tc.url, Ref: tc.ref, Skills: ks("my-skill")}},
+			}
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no validation error, got: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected validation error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 

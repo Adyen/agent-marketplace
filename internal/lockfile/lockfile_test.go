@@ -292,6 +292,84 @@ func TestMarketplaceURLCanonicalizationUsesAuthoritativeSafetyRules(t *testing.T
 	}
 }
 
+func TestMarketplaceCoordinatesRejectUnsafeFieldsAndKinds(t *testing.T) {
+	digest := Digest(sha256a)
+	valid := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Marketplaces: []Marketplace{{
+		URL: "https://market.example", InstanceID: "market",
+		Collections: []MarketplaceCollection{{SourceID: "sets", Name: "base", Revision: digest, Direct: true, Members: []CollectionEdge{{SourceID: "source", Kind: "skill", Name: "review", Revision: digest}}}},
+		Resources:   []MarketplaceResource{{SourceID: "source", Kind: "skill", Name: "review", Revision: digest, Acquisition: AcquisitionMirror, ArchiveDigest: digest, SelectedBy: []CollectionEdge{{SourceID: "sets", Name: "base", Revision: digest}}}},
+	}}}
+	cases := map[string]func(*Document){
+		"instance whitespace":         func(doc *Document) { doc.Marketplaces[0].InstanceID = "market id" },
+		"collection source traversal": func(doc *Document) { doc.Marketplaces[0].Collections[0].SourceID = "../sets" },
+		"collection name control":     func(doc *Document) { doc.Marketplaces[0].Collections[0].Name = "base\n" },
+		"member source whitespace":    func(doc *Document) { doc.Marketplaces[0].Collections[0].Members[0].SourceID = "source id" },
+		"member kind unsupported":     func(doc *Document) { doc.Marketplaces[0].Collections[0].Members[0].Kind = "rule" },
+		"resource kind unsupported":   func(doc *Document) { doc.Marketplaces[0].Resources[0].Kind = "rule" },
+		"resource name separator":     func(doc *Document) { doc.Marketplaces[0].Resources[0].Name = "review\\copy" },
+		"selected by name whitespace": func(doc *Document) { doc.Marketplaces[0].Resources[0].SelectedBy[0].Name = "base id" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			doc := cloneDocument(valid)
+			mutate(&doc)
+			err := Validate(doc)
+			var lockErr *Error
+			if !errors.As(err, &lockErr) || lockErr.Code != CodeInvalidDocument {
+				t.Fatalf("Validate error = %v, want %s", err, CodeInvalidDocument)
+			}
+		})
+	}
+}
+
+func TestMarketplaceCollectionGraphRejectsExcessiveDepth(t *testing.T) {
+	const depth = maxCollectionGraphDepth + 1
+	digest := Digest(sha256a)
+	collections := make([]MarketplaceCollection, depth)
+	for i := range collections {
+		collections[i] = MarketplaceCollection{SourceID: "sets", Name: "c" + strings.Repeat("x", i+1), Revision: digest, Direct: i == 0}
+		if i+1 < len(collections) {
+			collections[i].Members = []CollectionEdge{{SourceID: "sets", Kind: "collection", Name: "c" + strings.Repeat("x", i+2), Revision: digest}}
+		}
+	}
+	err := Validate(Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Marketplaces: []Marketplace{{
+		URL: "https://market.example", InstanceID: "market", Collections: collections,
+	}}})
+	var lockErr *Error
+	if !errors.As(err, &lockErr) || lockErr.Code != CodeInvalidDocument || !strings.Contains(err.Error(), "depth limit") {
+		t.Fatalf("depth validation error = %v", err)
+	}
+}
+
+func TestPlanAutodetectedGitHarnessMatchesExistingRoot(t *testing.T) {
+	current := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{
+		URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a),
+		Roots: []GitRoot{{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}},
+	}}}
+	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{
+		URL: "https://example.com/repo.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills"}},
+	}}}
+	plan, err := Plan(requirements, &current, OperationSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Changed() || len(plan.Retained) != 1 || len(plan.Acquisitions) != 0 {
+		t.Fatalf("autodetected plan = %#v", plan)
+	}
+	if len(plan.Desired.Registries) != 1 || plan.Desired.Registries[0].Roots[0].SourceHarness != "factory" {
+		t.Fatalf("autodetected root was not retained: %#v", plan.Desired.Registries)
+	}
+
+	requirements.Git[0].Roots[0].SourceHarness = "claude"
+	plan, err = Plan(requirements, &current, OperationSync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Invalidated) != 1 || len(plan.Acquisitions) != 1 {
+		t.Fatalf("explicit harness mismatch plan = %#v", plan)
+	}
+}
+
 func marketplaceTestResource(source, kind, name string, revision Digest, direct bool) MarketplaceResource {
 	return MarketplaceResource{SourceID: source, Kind: kind, Name: name, Revision: revision, Acquisition: AcquisitionMirror, ArchiveDigest: revision, Direct: direct}
 }

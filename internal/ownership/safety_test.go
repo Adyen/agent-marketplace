@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -157,6 +158,45 @@ func TestSafetyBackupRetentionIsPerCanonicalOutputFile(t *testing.T) {
 	}
 	if st.SafetyBackupDir(f.rel) == st.SafetyBackupDir(other) {
 		t.Fatal("two canonical output files share one backup directory")
+	}
+}
+
+func TestApplyRefusesASafetyBackupSymlinkWithoutMutation(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	fixed := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	st := f.store(WithClock(func() time.Time { return fixed }))
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	const original = "outside safety data\n"
+	if err := os.WriteFile(sentinel, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := st.SafetyBackupDir(f.rel)
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := filepath.Join(backupDir, "20260803T120000.000000000Z.000.bak")
+	if err := os.Symlink(sentinel, backupPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := st.Apply(Mutation{Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "g", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorDigest: Digest([]byte(priorContent)), ExpectPriorGeneration: 0})
+	if err == nil {
+		t.Fatal("Apply accepted a symlinked safety backup path")
+	}
+	if got, _ := f.readAggregate(); got != priorContent {
+		t.Fatalf("aggregate changed after safety backup refusal: %q", got)
+	}
+	if got, readErr := os.ReadFile(sentinel); readErr != nil || string(got) != original {
+		t.Fatalf("safety backup symlink target changed: %q, %v", got, readErr)
+	}
+	if target, readErr := os.Readlink(backupPath); readErr != nil || target != sentinel {
+		t.Fatalf("safety backup symlink changed: %q, %v", target, readErr)
+	}
+	if journal, readErr := st.ReadJournal(); readErr != nil || journal != nil {
+		t.Fatalf("safety backup refusal left a journal: %#v, %v", journal, readErr)
 	}
 }
 

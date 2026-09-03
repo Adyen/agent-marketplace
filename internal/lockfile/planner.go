@@ -409,9 +409,6 @@ func normalizeGitRequirement(r GitRequirement) (GitRequirement, error) {
 		if err != nil {
 			return r, err
 		}
-		if r.Roots[i].SourceHarness == "" {
-			return r, coded(CodeInvalidDocument, "Git source harness is required")
-		}
 	}
 	sort.Slice(r.Roots, func(i, j int) bool {
 		if r.Roots[i].Path != r.Roots[j].Path {
@@ -451,11 +448,15 @@ func marketplaceIdentity(url, id string) string { return id + "\x00" + url }
 func marketplaceRequirementIdentity(source, kind, name string) string {
 	return source + "\x00" + kind + "\x00" + name
 }
+func gitRootMatches(want GitRootRequirement, got GitRoot) bool {
+	return want.Path == got.Path && (want.SourceHarness == "" || want.SourceHarness == got.SourceHarness)
+}
+
 func rootsCompatible(req []GitRootRequirement, locked []GitRoot) bool {
 	for _, want := range req {
 		found := false
 		for _, got := range locked {
-			if want.Path == got.Path && want.SourceHarness == got.SourceHarness {
+			if gitRootMatches(want, got) {
 				found = true
 				break
 			}
@@ -466,20 +467,30 @@ func rootsCompatible(req []GitRootRequirement, locked []GitRoot) bool {
 	}
 	return true
 }
+
 func requiresRoot(req []GitRootRequirement, locked GitRoot) bool {
 	for _, want := range req {
-		if want.Path == locked.Path && want.SourceHarness == locked.SourceHarness {
+		if gitRootMatches(want, locked) {
 			return true
 		}
 	}
 	return false
 }
+
 func projectRoots(req []GitRootRequirement, locked []GitRoot) []GitRoot {
 	out := make([]GitRoot, 0, len(req))
+	seen := make(map[string]bool, len(req))
 	for _, want := range req {
 		for _, got := range locked {
-			if want.Path == got.Path && want.SourceHarness == got.SourceHarness {
+			if !gitRootMatches(want, got) {
+				continue
+			}
+			key := got.Path + "\x00" + got.SourceHarness
+			if !seen[key] {
 				out = append(out, got)
+				seen[key] = true
+			}
+			if want.SourceHarness != "" {
 				break
 			}
 		}

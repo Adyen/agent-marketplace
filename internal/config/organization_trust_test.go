@@ -24,7 +24,6 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 		set  func(t *testing.T, configPath, lockPath string)
 		code string
 	}{
-		{name: "missing lock", code: "organization.trust.lock.missing"},
 		{name: "symlink lock", code: "organization.trust.lock.symlink", set: func(t *testing.T, _, lockPath string) {
 			target := filepath.Join(t.TempDir(), "target")
 			writeFile(t, target, "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
@@ -77,16 +76,23 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 	}
 }
 
-func TestOrganizationMarketplaceRequirementAlsoRequiresLock(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, configPath, `apiVersion: agent-marketplace/v2
+func TestOrganizationRemoteRequirementsLoadWithoutLock(t *testing.T) {
+	for _, fixture := range []string{
+		remoteOrganizationFixture,
+		`apiVersion: agent-marketplace/v2
 marketplaces:
   - url: https://marketplace.example.com
     instance_id: org
-`)
-	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
-	assertOrganizationTrustFailure(t, ec, "organization.trust.lock.missing")
+`,
+	} {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		writeFile(t, configPath, fixture)
+		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+		if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
+			t.Fatalf("organization config without lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
+		}
+	}
 }
 
 func TestOrganizationAuthorityRejectsConfigAndAncestorSymlinks(t *testing.T) {

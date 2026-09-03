@@ -28,7 +28,7 @@ Background comparison with Go modules, npm, and uv is in [the package-manager lo
 
 - Resolving dependencies between resources; the only closure in v1 is collection expansion.
 - Freezing Marketplace assessment or revocation policy.
-- Making filesystem-path registries immutable.
+- Making plain filesystem directory registries immutable.
 - Persisting cache locations or cache verification markers.
 - Supporting a second long-lived model in which Marketplace resolution is authoritative in both config and lockfiles.
 - Defining a lockfile merge driver. Conflicted generated files are regenerated after config conflicts are resolved.
@@ -55,9 +55,9 @@ Each configuration authority owns an adjacent lock:
 | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Repo committed |
 | `<repo/subdir>/.agents/config.local.yaml` | `<repo/subdir>/.agents/lock.local.yaml` | Repo personal |
 
-The repo lock is committed. The local lock is gitignored beside `config.local.yaml`. User locks remain machine-local. Organization config and lock are deployed together; consumer commands never rewrite either implicitly.
+The repo lock is committed. The local lock is gitignored beside `config.local.yaml`. User locks remain machine-local. An organization may deploy a lock beside its config; consumer commands never rewrite either implicitly.
 
-The organization config and lock form one trust unit. Before treating the installation as managed, the loader requires both paths to be regular files owned by a trusted system owner, rejects group/other write permission, and validates every existing ancestor from `/etc/agent-marketplace` without following symlinks. A missing, symlinked, wrongly owned, writable, or non-regular organization lock is a hard trust error, downgrades the pair from managed, and never falls back to a user shadow lock or mutable source resolution. These checks strengthen the current advisory organization-config diagnostics because the lock is authoritative execution input.
+When an organization lock exists, the organization config and lock form one trust unit. Before treating the lock as authoritative execution input, the loader requires both paths to be regular files owned by a trusted system owner, rejects group/other write permission, and validates every existing ancestor from `/etc/agent-marketplace` without following symlinks. A symlinked, wrongly owned, writable, non-regular, malformed, or stale organization lock is a hard trust error and never falls back to a user shadow lock. A missing organization lock is valid: consumers resolve the organization requirements without persisting a lock, while `lock --scope organization` remains available to administrators that want exact organization-owned resolutions.
 
 There is deliberately no committed snapshot of the complete effective environment. Such a file would absorb organization, user, and local state into the repository, vary between machines, disclose unrelated source identities, and conflict with the existing machine/project materialization split.
 
@@ -100,7 +100,7 @@ marketplaces:
 
 An optional `revision` on a Marketplace requirement is an exact constraint. Omission means that a compatible existing lock is retained by sync and may be advanced by update. Collection-generated leaf pins and `selected_by` edges are generated resolution state and therefore exist only in the lock.
 
-Local filesystem registries remain live and unlocked. Their paths and contents are not copied into lockfiles, and ordinary local edits do not make a lock stale. This matches the development-path behavior of Go, npm, and uv and avoids turning local authoring into a lock-update loop.
+Plain filesystem directory registries remain live and unlocked. Their paths and contents are not copied into lockfiles, and ordinary local edits do not make a lock stale. A hostless `file://` URL whose decoded path ends in `.git` is instead a supported remote Git registry and can be locked. This matches the development-path behavior of Go, npm, and uv without turning local directory authoring into a lock-update loop.
 
 ## Lock schema
 
@@ -163,7 +163,9 @@ marketplaces:
 
 `scope` is required, must be one of `organization`, `user`, `repo`, or `local`, and must match the config path that selected the lock; copying a valid lock into another scope is a hard mismatch.
 
-For Marketplace records, `revision` is the canonical content digest rather than a second alias for it. Every non-collection resource must have `direct: true`, one or more `selected_by` edges, or both. Every edge must resolve to an exact collection record in the same Marketplace entry. Collection records preserve exact direct member edges, including nested collections; cycles, missing records, and one coordinate resolving to conflicting revisions are invalid. Expanding each direct collection graph must produce exactly the non-collection records that name that root in `selected_by`, with no missing or extra leaf, and every non-direct collection record must be reachable from at least one direct root. Exact duplicate resources and edges are deduplicated deterministically. Mirror resources require `archive_digest` and forbid source-occurrence fields. Index-only resources require an algorithm-qualified `source_commit` and `source_manifest_digest` and forbid `archive_digest`. Collection records have no materialized archive. This shape supports mixed mirror/index-only leaves and direct-plus-collection selection without dual config authority.
+For Marketplace records, `revision` is the canonical content digest rather than a second alias for it. Every non-collection resource must have `direct: true`, one or more `selected_by` edges, or both. Every edge must resolve to an exact collection record in the same Marketplace entry. Collection records preserve exact direct member edges, including nested collections; cycles, missing records, and one coordinate resolving to conflicting revisions are invalid. Expanding each direct collection graph must produce exactly the non-collection records that name that root in `selected_by`, with no missing or extra leaf, and every non-direct collection record must be reachable from at least one direct root. Exact duplicate resources and edges are deduplicated deterministically. Mirror resources require `archive_digest` and forbid source-occurrence fields. Index-only resources require an algorithm-qualified `source_commit` and `source_manifest_digest` and forbid `archive_digest`. Collection records have no materialized archive.
+
+Marketplace endpoint instance IDs, Source IDs, kinds, names, and collection names are safe single segments: they must be non-empty, contain no leading or trailing whitespace, whitespace, control characters, `/`, `\\`, or the exact path components `.` and `..`. Collection validation bounds one Marketplace graph to 100,000 member edges, 250,000 expansion steps, and depth 100. Lock YAML is bounded to depth 100 and 100,000 nodes and rejects aliases, merge keys, duplicate fields, and conflict markers.
 
 ### Identity rules
 
@@ -171,7 +173,7 @@ Git records are grouped by secret-free canonical URL and declared ref because th
 
 Direct Git has no stable Source ID, so changing its canonical origin creates a different requirement. Lock identity uses a versioned canonicalizer shared by planner matching, serialization, acquisition, and immutable-cache keys; allowlist host/path normalization remains a separate policy operation and never defines source identity.
 
-The v1 canonicalizer accepts validated `http`, `https`, and `ssh` URLs plus `user@host:path` SCP-style SSH syntax. It trims surrounding whitespace; rejects controls, fragments, query strings, URL passwords, encoded separators, and dot-segment traversal; lowercases scheme and DNS host; removes default ports; cleans repeated path separators; and removes one trailing slash and one terminal `.git`. HTTP(S) user information is omitted as authentication data. SSH usernames are retained because they can change repository identity. An SSH URL remains `ssh://[user@]host[:port]/absolute/path`; SCP syntax becomes the distinct identity form `git+scp://user@host/relative/path` and is never equated with an SSH URL. HTTP, HTTPS, SSH, and SCP-style origins remain distinct. The lock never stores passwords, tokens, or config-only credential helpers. Equivalence and non-equivalence fixtures are normative and must be shared across lock matching and cache tests rather than copied into subsystem-specific tables.
+The v1 canonicalizer accepts validated `http`, `https`, and `ssh` URLs, hostless `file://` URLs, and `user@host:path` SCP-style SSH syntax. It trims surrounding whitespace; rejects controls, fragments, query strings, URL passwords, encoded separators, and dot-segment traversal; lowercases scheme and DNS host; removes default ports; cleans repeated path separators; and removes one trailing slash and one terminal `.git`. Hostless `file://` URLs are canonicalized as absolute file origins; configuration treats one whose decoded path ends in `.git` as a lockable Git registry, while a plain directory remains live and unlocked. HTTP(S) user information is omitted as authentication data. SSH usernames are retained because they can change repository identity. An SSH URL remains `ssh://[user@]host[:port]/absolute/path`; SCP syntax becomes the distinct identity form `git+scp://user@host/relative/path` and is never equated with an SSH URL. HTTP, HTTPS, SSH, SCP-style, and file origins remain distinct. The lock never stores passwords, tokens, or config-only credential helpers. Equivalence and non-equivalence fixtures are normative and must be shared across lock matching and cache tests rather than copied into subsystem-specific tables.
 
 Marketplace identity reuses the existing tuple:
 
@@ -196,7 +198,7 @@ The writer uses fixed struct field order and explicitly sorts:
 - Marketplace records by Source ID, kind, name, and revision;
 - collection edges and support-file paths lexically.
 
-Digests are canonical lowercase values. Artifact paths always use `/`. The writer avoids rewriting unchanged bytes and publishes changed files through validated temporary files and atomic rename. Lockfiles contain no credentials, cache paths, absolute local paths, verification markers, or transient policy decisions.
+Digests are canonical lowercase values. Artifact paths always use `/`. The writer avoids rewriting unchanged bytes and publishes changed files through validated temporary files and atomic rename. Lockfiles contain no credentials, cache paths, plain-directory paths, verification markers, or transient policy decisions. A lock may contain a canonical hostless `file://` origin when configuration identifies a Git registry by its `.git` suffix.
 
 ## Freshness and minimal reconciliation
 
@@ -241,12 +243,12 @@ Direct-Git targets use `--registry` with optional declared `--ref`, root `--path
 Normal sync:
 
 1. minimally reconciles writable locks;
-2. validates the externally managed organization lock without changing it;
+2. validates the externally managed organization lock when present without changing it;
 3. acquires and verifies exact locked content;
 4. applies effective selection;
 5. materializes.
 
-A missing writable lock is bootstrapped automatically. A missing or stale managed organization lock is a hard error with administrator remediation.
+A missing writable lock is bootstrapped automatically. A missing organization lock leaves that layer unlocked and is never created implicitly; a stale organization lock is a hard error with administrator remediation.
 
 `sync --locked` requires every lock to be present and fresh and performs no config or lock writes. It may use the network to acquire exact locked content.
 
@@ -311,7 +313,7 @@ Before a snapshot becomes trusted, acquisition verifies:
 
 The cache remains disposable. Deleting it has no effect on lock authority. Online synchronization can reconstruct it from exact identities; offline synchronization fails closed when the exact verified snapshot is absent.
 
-Cache writes and garbage collection require cross-process serialization. Snapshot publication uses temporary directories and rename so readers never observe a partially populated immutable entry.
+Cache writes and garbage collection require cross-process serialization. Snapshot publication uses temporary directories and rename so readers never observe a partially populated immutable entry. Exact Git cache lock handles are disposable files under the cache lock directory and are never lock authority.
 
 ## Marketplace acquisition and policy
 
@@ -334,7 +336,7 @@ Network and content verification complete before authoritative file mutation. A 
 7. releases advisory locks;
 8. begins materialization.
 
-Every CLI path that reads or writes these files participates in the same advisory-lock and recovery protocol. The journal permits the next invocation to complete or restore a process that exited between per-file renames. Recovery never guesses from timestamps and never treats malformed state as authority.
+Every CLI path that reads or writes these files participates in the same advisory-lock and recovery protocol. The journal permits the next invocation to complete or restore a process that exited between per-file renames. Recovery never guesses from timestamps and never treats malformed state as authority. Per-destination handles are named `.<basename>.dependencytxn.lock` beside the destination; repository `.agents/*.dependencytxn.lock` handles are transient and remain covered by the repository ignore rule rather than being treated as lockfiles.
 
 The dependency commit is the transaction boundary. Materialization is intentionally outside it: multiple harness roots cannot be made one filesystem transaction, and a valid lock should not be discarded because one target compiler or destination fails.
 
@@ -360,6 +362,7 @@ The implementation may accept the legacy config shape only as migration input. I
 
 Stable coded diagnostics distinguish at least:
 
+- `lock.missing`, `lock.stale`, `lock.trust`, and `lock.change-required` for missing, mismatched, untrusted, or would-change locks;
 - missing or filesystem-untrusted managed lock;
 - lock/config mismatch under `--locked`;
 - constrained exact requirement skipped by update;

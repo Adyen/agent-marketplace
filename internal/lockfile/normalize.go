@@ -3,6 +3,8 @@ package lockfile
 import (
 	"reflect"
 	"sort"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 func cloneDocument(in Document) Document {
@@ -71,7 +73,7 @@ func normalizeMarketplace(m *Marketplace) error {
 	if err != nil {
 		return err
 	}
-	if err = require(m.InstanceID, "instance_id"); err != nil {
+	if err = validateMarketplaceSegment("instance_id", m.InstanceID); err != nil {
 		return err
 	}
 	for i := range m.Collections {
@@ -161,9 +163,22 @@ func normalizeMarketplace(m *Marketplace) error {
 	return validateCollectionGraph(*m)
 }
 
+func validateMarketplaceSegment(label, value string) error {
+	if err := api.ValidateMarketplaceSegment(label, value); err != nil {
+		return coded(CodeInvalidDocument, "%s", err)
+	}
+	return nil
+}
+
 func requiredCoordinate(source, kind, name string) error {
-	if source == "" || kind == "" || name == "" {
-		return coded(CodeInvalidDocument, "incomplete Marketplace coordinate")
+	if err := validateMarketplaceSegment("source_id", source); err != nil {
+		return err
+	}
+	if !api.IsMarketplaceKind(kind) {
+		return coded(CodeInvalidDocument, "unsupported Marketplace kind %q", kind)
+	}
+	if err := validateMarketplaceSegment("name", name); err != nil {
+		return err
 	}
 	return nil
 }
@@ -192,12 +207,27 @@ func dedupeEdges(v []CollectionEdge) []CollectionEdge {
 	return out
 }
 
+const (
+	maxCollectionGraphEdges     = 100000
+	maxCollectionExpansionSteps = 250000
+	maxCollectionGraphDepth     = 100
+)
+
+type collectionClosure struct {
+	leaves map[string]struct{}
+}
+
 func validateCollectionGraph(m Marketplace) error {
 	collections := make(map[string]MarketplaceCollection, len(m.Collections))
-	coordinateRevision := map[string]Digest{}
+	coordinateRevision := make(map[string]Digest, len(m.Collections)+len(m.Resources))
+	graphEdges := 0
 	for _, c := range m.Collections {
-		k := collectionKey(c)
-		collections[k] = c
+		key := collectionKey(c)
+		collections[key] = c
+		graphEdges += len(c.Members)
+		if graphEdges > maxCollectionGraphEdges {
+			return coded(CodeInvalidDocument, "Marketplace collection graph exceeds edge limit")
+		}
 		coord := c.SourceID + "\x00collection\x00" + c.Name
 		if old, ok := coordinateRevision[coord]; ok && old != c.Revision {
 			return coded(CodeIdentityConflict, "collection coordinate has conflicting revisions")
@@ -213,106 +243,169 @@ func validateCollectionGraph(m Marketplace) error {
 		coordinateRevision[coord] = r.Revision
 		resources[resourceKey(r)] = r
 	}
-	cycleState := map[string]uint8{}
-	for _, collection := range m.Collections {
-		if err := detectCollectionCycle(collection, collections, cycleState); err != nil {
-			return err
-		}
+	closures, err := buildCollectionClosures(collections, resources)
+	if err != nil {
+		return err
 	}
-	reachable := map[string]bool{}
-	for _, root := range m.Collections {
+	collectionKeys := make([]string, 0, len(collections))
+	for key := range collections {
+		collectionKeys = append(collectionKeys, key)
+	}
+	sort.Strings(collectionKeys)
+	reachable := make(map[string]bool, len(collections))
+	actualSelected := make(map[string]map[string]struct{})
+	for _, rootKey := range collectionKeys {
+		root := collections[rootKey]
 		if !root.Direct {
 			continue
 		}
-		leaves := map[string]bool{}
-		visiting := map[string]bool{}
-		if err := expandCollection(root, collections, resources, visiting, reachable, leaves); err != nil {
-			return err
-		}
-		rootEdge := CollectionEdge{SourceID: root.SourceID, Name: root.Name, Revision: root.Revision}
-		for key, r := range resources {
-			selected := false
-			for _, edge := range r.SelectedBy {
-				if edge.SourceID == rootEdge.SourceID && edge.Name == rootEdge.Name && edge.Revision == rootEdge.Revision {
-					selected = true
-					break
+		rootKey = collectionKey(root)
+		queue := []string{rootKey}
+		reachable[rootKey] = true
+		for queueIndex := 0; queueIndex < len(queue); queueIndex++ {
+			key := queue[queueIndex]
+			for _, edge := range collections[key].Members {
+				if edge.Kind != "collection" {
+					continue
+				}
+				childKey := edge.SourceID + "\x00" + edge.Name + "\x00" + edge.Revision.String()
+				if !reachable[childKey] {
+					reachable[childKey] = true
+					queue = append(queue, childKey)
 				}
 			}
-			if selected != leaves[key] {
-				return coded(CodeInvalidDocument, "collection %s selected_by closure mismatch for %s", root.Name, r.Name)
+		}
+		for leaf := range closures[rootKey].leaves {
+			if actualSelected[leaf] == nil {
+				actualSelected[leaf] = make(map[string]struct{})
 			}
+			actualSelected[leaf][rootKey] = struct{}{}
 		}
 	}
-	for _, c := range m.Collections {
-		if !c.Direct && !reachable[collectionKey(c)] {
+	for _, key := range collectionKeys {
+		c := collections[key]
+		if !c.Direct && !reachable[key] {
 			return coded(CodeInvalidDocument, "non-direct collection %s is unreachable", c.Name)
 		}
 	}
-	for _, r := range m.Resources {
+	resourceKeys := make([]string, 0, len(resources))
+	for key := range resources {
+		resourceKeys = append(resourceKeys, key)
+	}
+	sort.Strings(resourceKeys)
+	for _, key := range resourceKeys {
+		r := resources[key]
+		expected := make(map[string]struct{}, len(r.SelectedBy))
 		for _, edge := range r.SelectedBy {
-			collection, ok := collections[edge.SourceID+"\x00"+edge.Name+"\x00"+edge.Revision.String()]
+			collectionKey := edge.SourceID + "\x00" + edge.Name + "\x00" + edge.Revision.String()
+			collection, ok := collections[collectionKey]
 			if !ok {
 				return coded(CodeInvalidDocument, "selected_by references missing collection")
 			}
 			if !collection.Direct {
 				return coded(CodeInvalidDocument, "selected_by must reference a direct collection root")
 			}
+			expected[collectionKey] = struct{}{}
+		}
+		actual := actualSelected[key]
+		if len(actual) != len(expected) {
+			return coded(CodeInvalidDocument, "resource %s selected_by closure mismatch", r.Name)
+		}
+		for root := range actual {
+			if _, ok := expected[root]; !ok {
+				return coded(CodeInvalidDocument, "resource %s selected_by closure mismatch", r.Name)
+			}
 		}
 	}
 	return nil
 }
 
-func detectCollectionCycle(collection MarketplaceCollection, collections map[string]MarketplaceCollection, state map[string]uint8) error {
-	key := collectionKey(collection)
-	if state[key] == 1 {
-		return coded(CodeInvalidDocument, "collection cycle at %s", collection.Name)
+func buildCollectionClosures(collections map[string]MarketplaceCollection, resources map[string]MarketplaceResource) (map[string]collectionClosure, error) {
+	closures := make(map[string]collectionClosure, len(collections))
+	state := make(map[string]uint8, len(collections))
+	type frame struct {
+		key  string
+		next int
 	}
-	if state[key] == 2 {
-		return nil
+	steps := 0
+	keys := make([]string, 0, len(collections))
+	for key := range collections {
+		keys = append(keys, key)
 	}
-	state[key] = 1
-	for _, edge := range collection.Members {
-		if edge.Kind != "collection" {
+	sort.Strings(keys)
+	for _, rootKey := range keys {
+		if state[rootKey] == 2 {
 			continue
 		}
-		childKey := edge.SourceID + "\x00" + edge.Name + "\x00" + edge.Revision.String()
-		child, ok := collections[childKey]
-		if !ok {
-			return coded(CodeInvalidDocument, "collection member references missing collection")
-		}
-		if err := detectCollectionCycle(child, collections, state); err != nil {
-			return err
+		state[rootKey] = 1
+		closures[rootKey] = collectionClosure{leaves: make(map[string]struct{})}
+		stack := []frame{{key: rootKey}}
+		for len(stack) > 0 {
+			if len(stack) > maxCollectionGraphDepth {
+				return nil, coded(CodeInvalidDocument, "Marketplace collection graph exceeds depth limit")
+			}
+			index := len(stack) - 1
+			current := &stack[index]
+			collection := collections[current.key]
+			if current.next == len(collection.Members) {
+				finishedKey := current.key
+				state[finishedKey] = 2
+				stack = stack[:index]
+				if index > 0 {
+					parentKey := stack[index-1].key
+					steps += mergeCollectionLeaves(closures[parentKey].leaves, closures[finishedKey].leaves)
+					if steps > maxCollectionExpansionSteps {
+						return nil, coded(CodeInvalidDocument, "Marketplace collection graph exceeds expansion limit")
+					}
+				}
+				continue
+			}
+			edge := collection.Members[current.next]
+			current.next++
+			if edge.Kind == "collection" {
+				childKey := edge.SourceID + "\x00" + edge.Name + "\x00" + edge.Revision.String()
+				if _, ok := collections[childKey]; !ok {
+					return nil, coded(CodeInvalidDocument, "collection member references missing collection")
+				}
+				switch state[childKey] {
+				case 1:
+					return nil, coded(CodeInvalidDocument, "collection cycle at %s", edge.Name)
+				case 0:
+					state[childKey] = 1
+					closures[childKey] = collectionClosure{leaves: make(map[string]struct{})}
+					stack = append(stack, frame{key: childKey})
+				default:
+					steps += mergeCollectionLeaves(closures[current.key].leaves, closures[childKey].leaves)
+					if steps > maxCollectionExpansionSteps {
+						return nil, coded(CodeInvalidDocument, "Marketplace collection graph exceeds expansion limit")
+					}
+				}
+				continue
+			}
+			resourceKey := edge.SourceID + "\x00" + edge.Kind + "\x00" + edge.Name + "\x00" + edge.Revision.String()
+			if _, ok := resources[resourceKey]; !ok {
+				return nil, coded(CodeInvalidDocument, "collection member references missing resource")
+			}
+			if _, ok := closures[current.key].leaves[resourceKey]; !ok {
+				closures[current.key].leaves[resourceKey] = struct{}{}
+				steps++
+				if steps > maxCollectionExpansionSteps {
+					return nil, coded(CodeInvalidDocument, "Marketplace collection graph exceeds expansion limit")
+				}
+			}
 		}
 	}
-	state[key] = 2
-	return nil
+	return closures, nil
 }
 
-func expandCollection(c MarketplaceCollection, collections map[string]MarketplaceCollection, resources map[string]MarketplaceResource, visiting, reachable, leaves map[string]bool) error {
-	key := collectionKey(c)
-	if visiting[key] {
-		return coded(CodeInvalidDocument, "collection cycle at %s", c.Name)
-	}
-	visiting[key] = true
-	reachable[key] = true
-	defer delete(visiting, key)
-	for _, e := range c.Members {
-		if e.Kind == "collection" {
-			childKey := e.SourceID + "\x00" + e.Name + "\x00" + e.Revision.String()
-			child, ok := collections[childKey]
-			if !ok {
-				return coded(CodeInvalidDocument, "collection member references missing collection")
-			}
-			if err := expandCollection(child, collections, resources, visiting, reachable, leaves); err != nil {
-				return err
-			}
+func mergeCollectionLeaves(dst, src map[string]struct{}) int {
+	added := 0
+	for key := range src {
+		if _, ok := dst[key]; ok {
 			continue
 		}
-		rkey := e.SourceID + "\x00" + e.Kind + "\x00" + e.Name + "\x00" + e.Revision.String()
-		if _, ok := resources[rkey]; !ok {
-			return coded(CodeInvalidDocument, "collection member references missing resource")
-		}
-		leaves[rkey] = true
+		dst[key] = struct{}{}
+		added++
 	}
-	return nil
+	return added
 }

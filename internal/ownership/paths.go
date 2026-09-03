@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -141,6 +142,58 @@ func RootKey(canonicalRoot string) string {
 func Digest(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func validateRelativePath(rel string) error {
+	if rel == "" || path.IsAbs(rel) || strings.Contains(rel, "\\") || path.Clean(rel) != rel || rel == "." || strings.HasPrefix(rel, "../") {
+		return fmt.Errorf("ownership: path %q must be an output-relative slash path", rel)
+	}
+	return nil
+}
+
+func canonicalFilePath(absFile string) (string, error) {
+	if !filepath.IsAbs(absFile) {
+		return "", fmt.Errorf("ownership: file path %q must be absolute", absFile)
+	}
+	canonicalDir, err := CanonicalRoot(filepath.Dir(absFile))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(canonicalDir, filepath.Base(absFile)), nil
+}
+
+func validateRegularFile(path string, allowAbsent bool) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if allowAbsent && os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("ownership: inspect %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("ownership: final path %s is a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("ownership: final path %s is not a regular file", path)
+	}
+	return nil
+}
+
+// ValidateAggregateFile verifies that an aggregate destination is under the
+// canonical target root and that its final component is safe to read or replace.
+func (s *Store) ValidateAggregateFile(rel, absFile string) error {
+	if err := validateRelativePath(rel); err != nil {
+		return err
+	}
+	canonical, err := canonicalFilePath(absFile)
+	if err != nil {
+		return err
+	}
+	relToRoot, err := filepath.Rel(s.canonicalRoot, canonical)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("ownership: %s is outside the canonical target root %s", absFile, s.canonicalRoot)
+	}
+	return validateRegularFile(absFile, true)
 }
 
 // fileSlug names the safety-backup directory for one canonical output file.

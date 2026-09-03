@@ -44,6 +44,16 @@ Effective merge order (low → high):
 
 Higher layers override lower layers where applicable.
 
+For remote registries and Marketplaces, each layer's acquisition requirement is
+resolved through its adjacent, scope-matching lock before these catalogs are
+merged. The lock does not introduce another selection-precedence layer: config
+still owns requirements and selectors, while the lock owns exact commits,
+revisions, integrity data, and collection closure. Repository `lock.yaml` is
+committed; personal-local `lock.local.yaml` is gitignored. Plain
+filesystem directory registries remain live and have no lock record. A hostless
+`file://` URL ending in `.git` is a supported remote Git registry and can have a
+lock record.
+
 Top-level target harnesses follow project-first precedence: `RepoCommitted`
 then `UserPersonal`, then `OrgMandatory`. A registry entry's `harnesses:`
 list narrows the effective target list for that entry.

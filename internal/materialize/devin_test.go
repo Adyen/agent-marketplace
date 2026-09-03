@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -240,6 +241,65 @@ func TestDevinUserHooksPatchConfigWithoutTouchingUnrelatedSettings(t *testing.T)
 	}
 	if after, err := os.Stat(configPath); err == nil && !after.ModTime().Equal(before.ModTime()) {
 		t.Fatalf("second run replaced config.json even though nothing changed")
+	}
+}
+
+func TestDevinAggregateNonRegularDestinationIsRejectedWithoutMutation(t *testing.T) {
+	for _, kind := range []string{"symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			repoRoot, _ := devinEnv(t)
+			root := devinProjectRoot(repoRoot)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			external := filepath.Join(t.TempDir(), "mcp.json")
+			const original = "{\"external\":true}\n"
+			if err := os.WriteFile(external, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			aggregate := filepath.Join(root, harness.DevinMcpConfigFile)
+			if kind == "symlink" {
+				if err := os.Symlink(external, aggregate); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			} else if err := os.Mkdir(aggregate, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
+				devinResolved("new-mcp", ir.NewMcpServer("new-mcp", "server", nil, nil, nil, ir.SourceRef{}), false),
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if _, ok := findDiag(report.Diags, diag.CodeMaterializeDevinAggregateWrite); !ok {
+				t.Fatalf("expected aggregate-write diagnostic, got %v", report.Diags)
+			}
+			if got, err := os.ReadFile(external); kind == "symlink" && (err != nil || string(got) != original) {
+				t.Fatalf("external symlink target changed: %q, %v", got, err)
+			}
+			info, err := os.Lstat(aggregate)
+			if err != nil {
+				t.Fatalf("aggregate destination disappeared: %v", err)
+			}
+			if kind == "symlink" && info.Mode()&os.ModeSymlink == 0 {
+				t.Fatal("aggregate symlink was replaced")
+			}
+			if kind == "directory" && !info.IsDir() {
+				t.Fatal("aggregate directory was replaced")
+			}
+
+			store, err := ownership.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(store.JournalFile()); !os.IsNotExist(err) {
+				t.Fatalf("non-regular rejection left a journal behind: %v", err)
+			}
+			if _, err := os.Lstat(store.StateFile()); !os.IsNotExist(err) {
+				t.Fatalf("non-regular rejection left ownership state behind: %v", err)
+			}
+		})
 	}
 }
 

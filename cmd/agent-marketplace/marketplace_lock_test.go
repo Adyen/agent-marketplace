@@ -95,6 +95,38 @@ func TestMarketplaceUpgradeRevisionAdvanceAndIdenticalRevisionFreshness(t *testi
 	}
 }
 
+func TestMergeMarketplaceEndpointCoalescesDirectAndNestedCollections(t *testing.T) {
+	digest := lockfile.Digest(testMarketplaceDigest)
+	childRevision := lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	member := lockfile.CollectionEdge{SourceID: "src", Kind: "skill", Name: "review", Revision: digest}
+	child := lockfile.MarketplaceCollection{SourceID: "sets", Name: "child", Revision: childRevision, Members: []lockfile.CollectionEdge{member}}
+	root := lockfile.MarketplaceCollection{SourceID: "sets", Name: "root", Revision: digest, Direct: true, Members: []lockfile.CollectionEdge{{SourceID: "sets", Kind: "collection", Name: "child", Revision: childRevision}}}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+	if err := mergeMarketplaceEndpoint(&doc, lockfile.Marketplace{URL: "https://market.example", InstanceID: "mp", Collections: []lockfile.MarketplaceCollection{child}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeMarketplaceEndpoint(&doc, lockfile.Marketplace{URL: "https://market.example", InstanceID: "mp", Collections: []lockfile.MarketplaceCollection{root, child}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Marketplaces) != 1 || len(doc.Marketplaces[0].Collections) != 2 {
+		t.Fatalf("merged collections = %#v", doc.Marketplaces)
+	}
+	for _, collection := range doc.Marketplaces[0].Collections {
+		if collection.Name == "child" && collection.Direct {
+			t.Fatal("nested child was incorrectly made direct")
+		}
+		if collection.Name == "root" && !collection.Direct {
+			t.Fatal("direct root lost direct selection")
+		}
+	}
+
+	conflict := root
+	conflict.Revision = childRevision
+	if err := mergeMarketplaceEndpoint(&doc, lockfile.Marketplace{URL: "https://market.example", InstanceID: "mp", Collections: []lockfile.MarketplaceCollection{conflict}}); err == nil || !strings.Contains(err.Error(), "conflicting Marketplace collection records") {
+		t.Fatalf("conflicting collection revision error = %v", err)
+	}
+}
+
 func TestMarketplaceIndexOnlyLockUsesTypedCommitAndRuntimeUsesRawCommit(t *testing.T) {
 	prepared := &marketplace.PreparedInstall{
 		Entry: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "mp"},

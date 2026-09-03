@@ -1,6 +1,7 @@
 /agent-marketplace
 /.agents/skills/
 /.agents/config.local.yaml
+/.agents/*.dependencytxn.lock
 /.claude
 /.codex
 /.devin

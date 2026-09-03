@@ -32,11 +32,56 @@ EOF_CONFIG
 
 agent-marketplace sync
 agent-marketplace status
-git add .agents/config.yaml
+git add .agents/config.yaml .agents/lock.yaml
 git commit -m "Add shared infrastructure skills"
 ```
 
 Factory output is generated at `.factory/skills/<name>/SKILL.md`. Other harnesses get their own native layouts when listed in the effective `harnesses:`.
+
+## Layer-owned lockfiles
+
+`sync` generates a deterministic `agent-marketplace-lock/v1` lock beside each
+configuration file that has remote requirements:
+
+| Configuration | Lockfile | Handling |
+|---|---|---|
+| `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | optional externally managed organization lock |
+| `~/.agents/config.yaml` | `~/.agents/lock.yaml` | machine-local |
+| `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | commit with the repo config |
+| `<dir>/.agents/config.local.yaml` | `<dir>/.agents/lock.local.yaml` | personal and gitignored |
+
+The lock records exact Git commits and source manifests, or exact Marketplace
+revisions and acquisition integrity. It is not a second configuration file:
+config remains the human-authored requirement, while the adjacent lock holds
+resolution state. Plain filesystem directory registries remain live and are not
+copied to a lock. A hostless `file://` URL ending in `.git` is a supported remote
+Git registry and is lockable like other Git sources. The repository ignore rule
+`/.agents/*.dependencytxn.lock` covers the short-lived per-destination
+transaction handles; these handles are not lockfiles and must not be committed.
+
+Normal `sync` minimally reconciles writable user, repo, and local locks. It
+retains compatible resolutions even when a branch or Marketplace has moved;
+use `agent-marketplace update` or `lock --upgrade` to seek newer resolutions.
+`sync --locked` requires fresh locks and never writes config or locks.
+`sync --check` checks lock freshness and materialized-output drift without
+changing authoritative files (online cache warming is allowed).
+`sync --offline` is fully non-networked and requires every exact remote object
+in a verified cache. `lock --check` checks whether lock files would change
+without writing them.
+
+The organization lock is optional for consumers. If it is missing, organization
+requirements are resolved live and no organization lock is created implicitly.
+When present, the config/lock pair must pass trusted-owner, permissions,
+regular-file, and safe-ancestor checks; a malformed, stale, symlinked, or
+untrusted lock is a hard error and never falls back to a user lock.
+Administrators create or refresh it explicitly with
+`agent-marketplace lock --scope organization`.
+
+Marketplace IDs and resource coordinates use safe single-segment values: they
+cannot be empty, contain whitespace or control characters, contain `/` or `\\`,
+or equal `.` or `..`. Collection locks allow nested collections but reject
+cycles, missing/conflicting records, and inconsistent selection edges; limits
+are 100,000 member edges, 250,000 expansion steps, and depth 100.
 
 ## Add Codex
 
@@ -198,9 +243,13 @@ agent-marketplace list
 agent-marketplace install <skill>
 agent-marketplace remove <skill>
 agent-marketplace sync
+agent-marketplace sync --locked
 agent-marketplace sync --check
+agent-marketplace sync --offline
+agent-marketplace lock --check
 agent-marketplace status
 agent-marketplace update
+agent-marketplace lock --upgrade
 agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair

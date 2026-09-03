@@ -739,8 +739,26 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 		_, ingestSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.catalog_ingest", nil)
 	}
 
-	// Phase 3: Discover skills in fetched registries.
-	discoverAll(&result, requests, lc.discover)
+	// Phase 3: Discover skills in fetched registries. Keep the read lease for
+	// the complete discovery pass so another process cannot collect a cache
+	// directory after fetching but before its contents are consumed.
+	hasRemoteRequest := false
+	for _, request := range requests {
+		if !request.entry.IsLocal() {
+			hasRemoteRequest = true
+			break
+		}
+	}
+	if hasRemoteRequest {
+		if _, lockErr := cache.WithCacheReadLock(func() (struct{}, error) {
+			discoverAll(&result, requests, lc.discover)
+			return struct{}{}, nil
+		}); lockErr != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("acquire registry cache read lease: %w", lockErr))
+		}
+	} else {
+		discoverAll(&result, requests, lc.discover)
+	}
 
 	if ingestSpan != (telemetry.Span{}) {
 		ingestSpan.SetAttributes(catalogIngestAttrs(result))
@@ -806,14 +824,16 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 				errs = append(errs, fmt.Errorf("open exact snapshot for registry %q (ref %q): %w", entry.URL, entry.Ref, err))
 				continue
 			}
-			catalogKey := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
-			entry.CatalogKey = catalogKey
-			cfg.Registries[i].CatalogKey = catalogKey
-			requests = append(requests, loadRequest{
-				entry: entry, catalogKey: catalogKey, basePath: snapshotPath,
-				catalogBasePath: cache.RegistryCachePath(entry.URL, entry.Ref),
-			})
-			continue
+			if snapshotPath != "" {
+				catalogKey := cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+				entry.CatalogKey = catalogKey
+				cfg.Registries[i].CatalogKey = catalogKey
+				requests = append(requests, loadRequest{
+					entry: entry, catalogKey: catalogKey, basePath: snapshotPath,
+					catalogBasePath: cache.RegistryCachePath(entry.URL, entry.Ref),
+				})
+				continue
+			}
 		}
 
 		// cachePath is the filesystem location for git clone/pull (shared by

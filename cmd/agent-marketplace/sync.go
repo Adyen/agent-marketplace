@@ -265,7 +265,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 
 func configuredSelectionLabels(ctx context.Context, repoRoot, localDir string) []string {
 	effective := config.LoadEffective(ctx, config.LoadEffectiveOptions{
-		RepoRoot: repoRoot, LocalConfigDir: localDir, AllowMissingOrganizationLock: true,
+		RepoRoot: repoRoot, LocalConfigDir: localDir,
 	})
 	seen := make(map[string]struct{})
 	for _, layer := range effective.PresentLayers() {

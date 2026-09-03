@@ -1,6 +1,7 @@
 package ownership
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -405,6 +406,118 @@ func TestRecoveryRefusesACorruptJournal(t *testing.T) {
 	}
 	if coded.Severity != diag.SeverityError {
 		t.Fatalf("severity = %v, want error", coded.Severity)
+	}
+}
+
+func TestRecoveryRefusesCorruptOwnershipStateWithoutMutation(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	st := f.store(WithCrasher(CrashAt(CrashAfterJournalRenamed)))
+	_, err := st.Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "g", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorGeneration: 0, ExpectPriorDigest: Digest([]byte(priorContent)),
+	})
+	if !errors.Is(err, ErrInjectedCrash) {
+		t.Fatalf("Apply error = %v, want an injected crash", err)
+	}
+	journalBefore, err := os.ReadFile(st.JournalFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.StateFile(), []byte("{corrupt state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(st.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = f.store().Recover()
+	if !errors.Is(err, ErrStateCorrupt) {
+		t.Fatalf("Recover error = %v, want ErrStateCorrupt", err)
+	}
+	if got, _ := f.readAggregate(); got != nextContent {
+		t.Fatalf("aggregate = %q, want published bytes unchanged", got)
+	}
+	if got, err := os.ReadFile(st.JournalFile()); err != nil || string(got) != string(journalBefore) {
+		t.Fatalf("journal changed during refused recovery: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(st.StateFile()); err != nil || string(got) != string(stateBefore) {
+		t.Fatalf("corrupt state changed during refused recovery: %q, %v", got, err)
+	}
+}
+
+func TestRecoveryRejectsMalformedJournalWithoutMutation(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare CrashPoint
+		tamper  func(*Journal, *fixture)
+	}{
+		{name: "file escapes root", tamper: func(j *Journal, _ *fixture) { j.File = "../outside.json" }},
+		{name: "absolute aggregate path", tamper: func(j *Journal, f *fixture) { j.AbsFile = filepath.Join(filepath.Dir(f.targetRoot), "outside.json") }},
+		{name: "staged path escapes aggregate directory", prepare: CrashAfterStagedWrite, tamper: func(j *Journal, f *fixture) {
+			j.StagedPath = filepath.Join(filepath.Dir(f.targetRoot), "outside-staged")
+		}},
+		{name: "backup path escapes safety area", tamper: func(j *Journal, f *fixture) {
+			j.BackupPath = filepath.Join(filepath.Dir(f.targetRoot), "outside-backup.bak")
+		}},
+		{name: "prior digest malformed", tamper: func(j *Journal, _ *fixture) { j.PriorDigest = "not-a-digest" }},
+		{name: "next digest malformed", tamper: func(j *Journal, _ *fixture) { j.NextDigest = "not-a-digest" }},
+		{name: "reason malformed", tamper: func(j *Journal, _ *fixture) { j.Reason = Reason("future-reason") }},
+		{name: "updated at malformed", tamper: func(j *Journal, _ *fixture) { j.UpdatedAt = "not-a-time" }},
+		{name: "next record missing", tamper: func(j *Journal, _ *fixture) { j.NextRecord = nil }},
+		{name: "next record file escapes root", tamper: func(j *Journal, _ *fixture) {
+			j.NextRecord.Files["../outside.json"] = FileState{ContentDigest: j.NextDigest}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.writeAggregate(priorContent)
+			prepare := tc.prepare
+			if prepare == "" {
+				prepare = CrashAfterJournalRenamed
+			}
+			st := f.store(WithCrasher(CrashAt(prepare)))
+			if _, err := st.Apply(Mutation{
+				Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+				Entries: []Entry{mcpEntry("generated", "g", `{"command":"new"}`)}, Reason: ReasonSync,
+				ExpectPriorGeneration: 0, ExpectPriorDigest: Digest([]byte(priorContent)),
+			}); !errors.Is(err, ErrInjectedCrash) {
+				t.Fatalf("Apply error = %v, want an injected crash", err)
+			}
+			journal, err := st.ReadJournal()
+			if err != nil || journal == nil {
+				t.Fatalf("ReadJournal before tampering: %v, %#v", err, journal)
+			}
+			originalStaged := journal.StagedPath
+			tc.tamper(journal, f)
+			data, err := json.Marshal(journal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(st.JournalFile(), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			journalBefore, err := os.ReadFile(st.JournalFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, recoverErr := f.store().Recover()
+			if !errors.Is(recoverErr, ErrStateCorrupt) && !errors.Is(recoverErr, ErrStateRootMismatch) {
+				t.Fatalf("Recover error = %v, want corrupt-journal refusal", recoverErr)
+			}
+			if got, _ := f.readAggregate(); got != priorContent && got != nextContent {
+				t.Fatalf("aggregate changed during refused recovery: %q", got)
+			}
+			if got, err := os.ReadFile(st.JournalFile()); err != nil || string(got) != string(journalBefore) {
+				t.Fatalf("journal changed during refused recovery: %q, %v", got, err)
+			}
+			if prepare == CrashAfterStagedWrite && !fileExists(t, originalStaged) {
+				t.Fatal("valid staged file was removed while refusing malformed journal")
+			}
+		})
 	}
 }
 
