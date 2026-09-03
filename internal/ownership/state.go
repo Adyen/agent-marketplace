@@ -249,25 +249,6 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 	return nil
 }
 
-// normalizeHookEntries recomputes the identity digest for every hook entry from
-// its canonical value digest. This is the lazy read-side migration from the old
-// lossy hook/v1 identity to the total hook/v2 identity: it makes records written
-// before the new algorithm valid on read without bumping the schema version.
-func normalizeHookEntries(rec *Record) {
-	if rec == nil || rec.Files == nil {
-		return
-	}
-	for rel, fs := range rec.Files {
-		for i := range fs.Entries {
-			if fs.Entries[i].Kind != KindHook {
-				continue
-			}
-			fs.Entries[i].IdentityDigest = HookIdentityDigest(fs.Entries[i].Container, fs.Entries[i].ValueDigest)
-		}
-		rec.Files[rel] = fs
-	}
-}
-
 // EverRecorded reports whether this canonical root has any durable trace of a
 // previous ownership generation: an ownership directory (created only when a
 // record, a journal, or a mandatory safety backup was written for it) or a
@@ -328,7 +309,6 @@ func (s *Store) Load() (*Record, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
 	}
-	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
 		code := diag.CodeOwnershipStateCorrupt
 		if errors.Is(err, ErrStateRootMismatch) {

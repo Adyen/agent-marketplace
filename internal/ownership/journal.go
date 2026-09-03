@@ -575,7 +575,6 @@ func (s *Store) ReadJournal() (*Journal, error) {
 	if err := json.Unmarshal(data, &j); err != nil {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), fmt.Errorf("%w: malformed journal JSON", ErrStateCorrupt))
 	}
-	normalizeHookEntries(j.NextRecord)
 	if err := s.validateJournal(&j); err != nil {
 		code := diag.CodeOwnershipStateCorrupt
 		if errors.Is(err, ErrStateRootMismatch) {

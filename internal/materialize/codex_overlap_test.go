@@ -17,7 +17,7 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-func TestRunCoalescesDisjointCodexWritesWhenRepoIsHome(t *testing.T) {
+func TestRunRejectsCodexWritesWhenRepoIsHome(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)
 	t.Setenv("CODEX_HOME", "")
@@ -30,15 +30,15 @@ func TestRunCoalescesDisjointCodexWritesWhenRepoIsHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireNoErrorDiags(t, report.Diags)
-	for _, name := range []string{"repo-reviewer.toml", "machine-reviewer.toml"} {
-		if _, err := os.Lstat(filepath.Join(repo, ".codex", "agents", name)); err != nil {
-			t.Errorf("coalesced Codex write %q missing: %v", name, err)
-		}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex root overlap diagnostic: %v", report.Diags)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("overlap preflight mutated the Codex destination: %v", err)
 	}
 }
 
-func TestRunCoalescesByteIdenticalCodexWritesOnce(t *testing.T) {
+func TestRunRejectsByteIdenticalCodexWritesAcrossAliasedScopes(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)
 	t.Setenv("CODEX_HOME", "")
@@ -55,21 +55,8 @@ func TestRunCoalescesByteIdenticalCodexWritesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireNoErrorDiags(t, report.Diags)
-
-	writes := 0
-	for _, root := range report.PerRoot {
-		if !strings.HasSuffix(filepath.ToSlash(root.OutDir), "/.codex/agents") {
-			continue
-		}
-		for _, path := range root.Written {
-			if filepath.ToSlash(path) == "reviewer.toml" {
-				writes++
-			}
-		}
-	}
-	if writes != 1 {
-		t.Fatalf("byte-identical destination write count = %d, want 1; report=%#v", writes, report.PerRoot)
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex root overlap diagnostic: %v", report.Diags)
 	}
 }
 
@@ -90,7 +77,7 @@ func TestRunRefusesConflictingCodexWritesBeforeMutation(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing %s diagnostic: %+v", diag.CodeMaterializeDestinationOverlap, report.Diags)
 	}
-	if !strings.Contains(d.Message, "reviewer.toml") || d.Hint == "" {
+	if d.Hint == "" {
 		t.Fatalf("overlap diagnostic is not actionable: %+v", d)
 	}
 	if _, err := os.Lstat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {
@@ -98,7 +85,27 @@ func TestRunRefusesConflictingCodexWritesBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestRunCoalescesOnlyTheEqualCodexPartition(t *testing.T) {
+func TestRunRejectsCustomCodexHomeOverlappingProjectPartition(t *testing.T) {
+	repo, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(repo, ".codex"))
+	selection := []resolver.ResolvedArtifact{
+		codexSubagent("repo-reviewer", "Review repository changes.", config.RepoCommitted),
+		codexSubagent("machine-reviewer", "Review machine changes.", config.UserPersonal),
+	}
+	report, err := Run(context.Background(), repo, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex cross-scope root overlap diagnostic: %v", report.Diags)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("overlap preflight mutated the Codex destination: %v", err)
+	}
+}
+
+func TestRunRejectsCodexPartitionRootsOverlappingAcrossScopes(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)
 	t.Setenv("CODEX_HOME", t.TempDir())
@@ -111,15 +118,12 @@ func TestRunCoalescesOnlyTheEqualCodexPartition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireNoErrorDiags(t, report.Diags)
-	for _, name := range []string{"repo-skill", "machine-skill"} {
-		if _, err := os.Lstat(filepath.Join(repo, ".agents", "skills", name)); err != nil {
-			t.Errorf("coalesced skill %q missing: %v", name, err)
-		}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex root overlap diagnostic: %v", report.Diags)
 	}
 }
 
-func TestRunAllowsDisjointCodexManagedPathsAtOneRoot(t *testing.T) {
+func TestRunRejectsOverlappingCodexMachineRoots(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".agents"))
@@ -132,14 +136,8 @@ func TestRunAllowsDisjointCodexManagedPathsAtOneRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireNoErrorDiags(t, report.Diags)
-	for _, path := range []string{
-		filepath.Join(home, ".agents", "skills", "demo"),
-		filepath.Join(home, ".agents", "agents", "reviewer.toml"),
-	} {
-		if _, err := os.Lstat(path); err != nil {
-			t.Errorf("disjoint same-root output %q missing: %v", path, err)
-		}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex root overlap diagnostic: %v", report.Diags)
 	}
 }
 
@@ -229,7 +227,7 @@ func TestCodexPreflightRefusesAncestorDesiredWrites(t *testing.T) {
 	}
 }
 
-func TestRunCoalescesCodexSharedAggregateEntries(t *testing.T) {
+func TestRunRejectsCodexSharedAggregateRootsAcrossScopes(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)
 	t.Setenv("CODEX_HOME", "")
@@ -247,20 +245,11 @@ func TestRunCoalescesCodexSharedAggregateEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireNoErrorDiags(t, report.Diags)
-	for path, wants := range map[string][]string{
-		filepath.Join(repo, ".codex", codexHooksFile): {"./repo-hook", "./machine-hook"},
-		filepath.Join(repo, ".codex", codexMCPFile):   {`mcp_servers."repo-mcp"`, `mcp_servers."machine-mcp"`},
-	} {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, want := range wants {
-			if !strings.Contains(string(raw), want) {
-				t.Errorf("coalesced aggregate %q lost %q:\n%s", path, want, raw)
-			}
-		}
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
+		t.Fatalf("missing Codex root overlap diagnostic: %v", report.Diags)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("overlap preflight mutated the Codex destination: %v", err)
 	}
 }
 
@@ -277,8 +266,7 @@ func TestRunRefusesConflictingCodexMCPBeforeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap)
-	if !ok || !strings.Contains(d.Message, "shared") {
+	if _, ok := findDiag(report.Diags, diag.CodeMaterializeDestinationOverlap); !ok {
 		t.Fatalf("missing actionable MCP overlap diagnostic: %+v", report.Diags)
 	}
 	if _, err := os.Lstat(filepath.Join(repo, ".codex")); !os.IsNotExist(err) {

@@ -979,8 +979,12 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			var err error
 			codexDestinations, err = harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
 			if err != nil {
-				slog.Error("Codex destination preflight failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.destination.error", "error", err)
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+				code := "materialize.destination.error"
+				if errors.Is(err, harness.ErrCodexDestinationOverlap) {
+					code = diag.CodeMaterializeDestinationOverlap
+				}
+				slog.Error("Codex destination preflight failed", "target", key.target, "machine_scope", key.machineScope, "code", code, "error", err)
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: code, Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
 				continue
 			}
 		}

@@ -261,7 +261,7 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		return lr, d
 	}
 
-	data, readErr := os.ReadFile(path)
+	data, readErr := readConfigFile(path)
 	if readErr != nil {
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
 		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
@@ -374,7 +374,7 @@ func loadEffectiveLocal(localDir, override string, overlays map[string][]byte) L
 
 func readEffectiveLayer(path string, overlays map[string][]byte) ([]byte, error) {
 	if data, ok := overlays[path]; ok {
-		return append([]byte(nil), data...), nil
+		return boundedConfigData(data)
 	}
 	current := filepath.Clean(path)
 	missing := []string{}
@@ -385,7 +385,7 @@ func readEffectiveLayer(path string, overlays map[string][]byte) ([]byte, error)
 				canonical = filepath.Join(canonical, missing[i])
 			}
 			if data, ok := overlays[canonical]; ok {
-				return append([]byte(nil), data...), nil
+				return boundedConfigData(data)
 			}
 			break
 		}
@@ -396,5 +396,5 @@ func readEffectiveLayer(path string, overlays map[string][]byte) ([]byte, error)
 		missing = append(missing, filepath.Base(current))
 		current = parent
 	}
-	return os.ReadFile(path)
+	return readConfigFile(path)
 }

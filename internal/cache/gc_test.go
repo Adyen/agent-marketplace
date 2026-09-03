@@ -2,18 +2,61 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+type cancelAfterChecksContext struct {
+	checks   atomic.Int32
+	cancelAt int32
+}
+
+func (c *cancelAfterChecksContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *cancelAfterChecksContext) Done() <-chan struct{}       { return nil }
+func (c *cancelAfterChecksContext) Err() error {
+	if c.checks.Add(1) >= c.cancelAt {
+		return context.Canceled
+	}
+	return nil
+}
+func (c *cancelAfterChecksContext) Value(any) any { return nil }
+
+func TestLegacyGarbageCollectHonorsCancellationBeforeEachRemoval(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	first := filepath.Join(CacheDir(), "first")
+	second := filepath.Join(CacheDir(), "second")
+	for _, path := range []string{first, second} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := &cancelAfterChecksContext{cancelAt: 5}
+	result, err := garbageCollectWithContext(ctx, false, &config.Config{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("legacy GC error = %v, want context.Canceled", err)
+	}
+	if len(result.Removed) != 1 || result.Removed[0] != first {
+		t.Fatalf("cancelled legacy GC removals = %v, want only %q", result.Removed, first)
+	}
+	if _, statErr := os.Stat(first); !os.IsNotExist(statErr) {
+		t.Fatalf("first candidate was not removed before cancellation: %v", statErr)
+	}
+	if _, statErr := os.Stat(second); statErr != nil {
+		t.Fatalf("cancellation did not stop before the second candidate: %v", statErr)
+	}
+}
 
 func TestGarbageCollectReturnsEmptyWhenCacheDirMissing(t *testing.T) {
 	homeDir := t.TempDir()

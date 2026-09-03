@@ -2,12 +2,34 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestLoadEffectiveRejectsOversizedConfigBeforeYAMLParsing(t *testing.T) {
+	dir := t.TempDir()
+	userPath := filepath.Join(dir, "user.yaml")
+	data := append([]byte("apiVersion: agent-marketplace/v3\n"), make([]byte, MaxEffectiveConfigSize)...)
+	if err := os.WriteFile(userPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+	})
+	if ec.User.Config != nil {
+		t.Fatal("oversized user config was parsed")
+	}
+	if len(ec.User.Errors) != 1 || !errors.Is(ec.User.Errors[0], ErrConfigTooLarge) {
+		t.Fatalf("user errors = %v, want one ErrConfigTooLarge", ec.User.Errors)
+	}
+}
 
 func TestLoadEffectiveReturnsOrganizationProvenance(t *testing.T) {
 	dir := t.TempDir()

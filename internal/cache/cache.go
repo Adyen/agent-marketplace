@@ -123,7 +123,14 @@ type GCResult struct {
 // and across processes sharing the cache root. The lock inode is persistent so
 // releasing a lock never creates an unlink/recreate race with another holder.
 func WithCacheMutationLock[T any](fn func() (T, error)) (T, error) {
-	return withContextCacheMutationLock(context.Background(), fn)
+	return WithCacheMutationLockWithContext(context.Background(), fn)
+}
+
+// WithCacheMutationLockWithContext serializes a cache mutation while honoring
+// cancellation before waiting for either the process-local or cross-process
+// lock.
+func WithCacheMutationLockWithContext[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	return withContextCacheMutationLock(ctx, fn)
 }
 
 func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, error)) (T, error) {
@@ -198,7 +205,7 @@ func GarbageCollectWithLocksAndContext(ctx context.Context, dryRun bool, locks [
 				return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
 			}
 		}
-		legacy, err := garbageCollect(dryRun, cfgs...)
+		legacy, err := garbageCollectWithContext(ctx, dryRun, cfgs...)
 		if err != nil {
 			return legacy, err
 		}
@@ -218,9 +225,19 @@ func GarbageCollectWithLocksAndContext(ctx context.Context, dryRun bool, locks [
 }
 
 func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	return garbageCollectWithContext(context.Background(), dryRun, cfgs...)
+}
+
+func garbageCollectWithContext(ctx context.Context, dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	result := GCResult{}
 	defer slices.Sort(result.Removed)
 
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if !hasEffectiveConfig(cfgs...) {
 		err := errors.New("cache garbage collection requires effective configuration")
 		slog.Warn("cache garbage collection failed closed", "reason", err)
@@ -248,6 +265,9 @@ func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -261,6 +281,9 @@ func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 		}
 
 		cachePath := filepath.Join(cacheRoot, entry.Name())
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if err := ValidateDirectoryAncestry(cacheRoot, cachePath); err != nil {
 			return result, fmt.Errorf("validate cache directory %q: %w", cachePath, err)
 		}
@@ -269,6 +292,9 @@ func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 			continue
 		}
 
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if err := os.RemoveAll(cachePath); err != nil {
 			return result, fmt.Errorf("remove cache directory %q: %w", cachePath, err)
 		}

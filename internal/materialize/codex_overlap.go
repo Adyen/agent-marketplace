@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -27,8 +28,8 @@ type codexManagedPath struct {
 	path      string
 }
 
-// preflightCodexDestinations resolves active Codex scopes and coalesces desired
-// state for physical partitions shared by repository and machine scope. It is
+// preflightCodexDestinations resolves active Codex scopes and rejects any
+// physical partition roots shared by repository and machine scope. It is
 // deliberately called before executeMaterializePlans performs its first mkdir.
 func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, modes config.MaterializationModes) (map[string]bool, *diag.Diagnostic) {
 	codex := hcc.Target(targetmeta.TargetCodex)
@@ -52,12 +53,18 @@ func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, mod
 		}
 		destinations, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
 		if err != nil {
+			code := "materialize.destination.error"
+			hint := "fix the repository, HOME, or CODEX_HOME path and retry; no destination was changed"
+			if errors.Is(err, harness.ErrCodexDestinationOverlap) {
+				code = diag.CodeMaterializeDestinationOverlap
+				hint = "move CODEX_HOME or the repository so Codex partition roots are disjoint"
+			}
 			d := diag.Diagnostic{
-				Code:     "materialize.destination.error",
+				Code:     code,
 				Severity: diag.SeverityError,
 				Target:   string(codex),
 				Message:  fmt.Sprintf("resolve Codex %s destinations before materialization: %v", codexScopeName(machineScope), err),
-				Hint:     "fix the repository, HOME, or CODEX_HOME path and retry; no destination was changed",
+				Hint:     hint,
 			}
 			slog.Error("Codex destination overlap preflight failed", "scope", codexScopeName(machineScope), "code", d.Code, "error", err)
 			return nil, &d
@@ -74,6 +81,10 @@ func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, mod
 		for _, destination := range resolved[machineScope] {
 			bindings = append(bindings, codexDestinationBinding{key: key, destination: destination})
 		}
+	}
+	if d := validateCodexDestinationRootIntersections(bindings); d != nil {
+		slog.Error("Codex destination overlap preflight refused root intersection", "code", d.Code, "error", d.Message)
+		return nil, d
 	}
 	if d := validateCodexManagedPathIntersections(bindings); d != nil {
 		slog.Error("Codex destination overlap preflight refused managed-path intersection", "code", d.Code, "error", d.Message)
@@ -139,6 +150,22 @@ func codexDestinationDiagnostic(message, hint string) diag.Diagnostic {
 		Message:  message,
 		Hint:     hint,
 	}
+}
+
+func validateCodexDestinationRootIntersections(bindings []codexDestinationBinding) *diag.Diagnostic {
+	for i := range bindings {
+		for j := i + 1; j < len(bindings); j++ {
+			a, b := bindings[i].destination, bindings[j].destination
+			if harness.CodexDestinationRootsOverlap(a.Root, b.Root) {
+				d := codexDestinationDiagnostic(
+					fmt.Sprintf("Codex destination roots %q (%s) and %q (%s) overlap or have an ancestor/descendant relationship", a.Root, a.ID, b.Root, b.ID),
+					"move CODEX_HOME or the repository so every Codex partition root is disjoint",
+				)
+				return &d
+			}
+		}
+	}
+	return nil
 }
 
 func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *diag.Diagnostic {

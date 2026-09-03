@@ -72,14 +72,14 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 
 	if dryRun {
 		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged)
-		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocks(true, locks)
+		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks)
 	} else {
 		if _, err := cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged); err != nil {
 			registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
-		} else if _, err := marketplaceCache.GarbageCollectWithLocks(true, locks); err != nil {
+		} else if _, err := marketplaceCache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks); err != nil {
 			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", err)
 		} else {
-			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocks(false, locks)
+			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks)
 			if marketplaceErr == nil {
 				registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks, effective.Merged)
 			}

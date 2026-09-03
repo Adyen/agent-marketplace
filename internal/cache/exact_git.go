@@ -322,6 +322,32 @@ func quarantineExactGitSnapshot(path string) error {
 	return nil
 }
 
+func syncExactGitDirectory(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open directory %s for fsync: %w", dir, err)
+	}
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if syncErr != nil {
+		return fmt.Errorf("fsync directory %s: %w", dir, syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close directory %s after fsync: %w", dir, closeErr)
+	}
+	return nil
+}
+
+func publishRenamedDirectory(stage, destination string, syncDir func(string) error) error {
+	if err := os.Rename(stage, destination); err != nil {
+		return fmt.Errorf("publish directory %s: %w", destination, err)
+	}
+	if err := syncDir(filepath.Dir(destination)); err != nil {
+		return fmt.Errorf("sync published directory parent %s: %w", filepath.Dir(destination), err)
+	}
+	return nil
+}
+
 func cloneExactGitObjectStoreWithContext(ctx context.Context, fetchURL, store string) error {
 	parent := filepath.Dir(store)
 	if err := prepareExactGitDirectory(parent); err != nil {
@@ -347,7 +373,7 @@ func cloneExactGitObjectStoreWithContext(ctx context.Context, fetchURL, store st
 	if err := exactGitContextErr(ctx); err != nil {
 		return err
 	}
-	if err := os.Rename(stage, store); err != nil {
+	if err := publishRenamedDirectory(stage, store, syncExactGitDirectory); err != nil {
 		return fmt.Errorf("publish git object store: %w", err)
 	}
 	return nil
@@ -425,7 +451,7 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 	if err := exactGitContextErr(ctx); err != nil {
 		return err
 	}
-	if err := os.Rename(stage, path); err != nil {
+	if err := publishRenamedDirectory(stage, path, syncExactGitDirectory); err != nil {
 		return fmt.Errorf("publish exact git snapshot: %w", err)
 	}
 	return nil
@@ -729,6 +755,12 @@ func AcquireExactGitNamespaceLease() (func(), error) {
 
 func AcquireExactGitNamespaceLeaseWithContext(ctx context.Context) (func(), error) {
 	return acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
+}
+
+// AcquireExactGitExclusiveNamespaceLeaseWithContext excludes both exact-cache
+// readers and lock publication while a caller revalidates shared reachability.
+func AcquireExactGitExclusiveNamespaceLeaseWithContext(ctx context.Context) (func(), error) {
+	return acquireExactGitFileLock(ctx, "namespace", unix.LOCK_EX)
 }
 
 func withExactGitLock(ctx context.Context, key string, fn func() error) error {

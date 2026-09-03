@@ -1,9 +1,11 @@
 package ownership
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -263,10 +265,57 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 	return s.syncDirectory(dir)
 }
 
+func validateBackupManifest(s *Store, rel string, manifest BackupManifest, raw []byte) error {
+	if manifest.Version != 1 {
+		return fmt.Errorf("unsupported backup manifest version")
+	}
+	if manifest.File != rel || manifest.RootKey != s.rootKey || manifest.CanonicalRoot != s.canonicalRoot {
+		return fmt.Errorf("backup manifest identity does not match target root and file")
+	}
+	if err := validateRelativePath(manifest.File); err != nil {
+		return fmt.Errorf("backup manifest file: %w", err)
+	}
+	if manifest.Generation == 0 && len(manifest.ManagedEntries) > 0 {
+		return fmt.Errorf("backup manifest generation is invalid")
+	}
+	switch manifest.Reason {
+	case ReasonSync, ReasonAdoption, ReasonOrphanRemoval, ReasonConflictReplace:
+	default:
+		return fmt.Errorf("backup manifest reason is invalid")
+	}
+	if manifest.PriorSize < 0 || int64(len(raw)) != manifest.PriorSize {
+		return fmt.Errorf("backup manifest prior size does not match raw backup bytes")
+	}
+	if manifest.PriorAbsent {
+		if manifest.PriorDigest != "" || len(raw) != 0 {
+			return fmt.Errorf("absent prior aggregate has digest or bytes")
+		}
+	} else {
+		if !digestPattern.MatchString(manifest.PriorDigest) || manifest.PriorDigest != Digest(raw) {
+			return fmt.Errorf("backup manifest prior digest does not match raw backup bytes")
+		}
+	}
+	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
+		return fmt.Errorf("backup manifest timestamp is invalid")
+	}
+	seen := make(map[string]struct{}, len(manifest.ManagedEntries))
+	for _, entry := range manifest.ManagedEntries {
+		if err := validateEntry(entry); err != nil {
+			return fmt.Errorf("backup manifest managed entry: %w", err)
+		}
+		key := entry.ID().mapKey()
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("backup manifest has duplicate managed entry identity")
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
+
 // SafetyBackups returns the retained backups for one canonical output file,
 // oldest first, each paired with its manifest. A backup whose manifest is
-// missing or unreadable is skipped: bytes without recorded provenance are not
-// evidence.
+// missing, unreadable, semantically invalid, or whose raw bytes do not match
+// the manifest is skipped: unverified bytes are not evidence.
 func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 	if err := validateRelativePath(rel); err != nil {
 		return nil, err
@@ -307,10 +356,19 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 			continue
 		}
 		var manifest BackupManifest
-		if err := json.Unmarshal(metaBytes, &manifest); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(metaBytes))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&manifest); err != nil {
 			continue
 		}
-		if manifest.Version != 1 || manifest.RootKey != s.rootKey || manifest.File != rel {
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if err := validateBackupManifest(s, rel, manifest, raw); err != nil {
 			continue
 		}
 		out = append(out, RetainedBackup{Path: path, Manifest: manifest})

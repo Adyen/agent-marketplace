@@ -968,3 +968,50 @@ func assertNoStagedFiles(t *testing.T, f *fixture) {
 func replaceOnce(s, old, replacement string) string {
 	return strings.Replace(s, old, replacement, 1)
 }
+
+func TestReadJournalRejectsForgedHookIdentityWithoutMutatingJournal(t *testing.T) {
+	f := newFixture(t)
+	f.rel = "hooks.v1.json"
+	f.absFile = filepath.Join(f.targetRoot, f.rel)
+	f.writeAggregate(`{"PreToolUse":[]}`)
+	entry := hookEntry("PreToolUse", "generated-hook", `{"command":"guard"}`)
+	st := f.store(WithCrasher(CrashAt(CrashAfterJournalPrepared)))
+	proof, _ := st.Proof(f.rel)
+	if _, err := st.Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(`{"PreToolUse":[{"command":"guard"}]}`),
+		Entries: []Entry{entry}, Reason: ReasonSync,
+		ExpectPriorGeneration: proof.Generation(), ExpectPriorDigest: Digest([]byte(`{"PreToolUse":[]}`)),
+	}); !errors.Is(err, ErrInjectedCrash) {
+		t.Fatalf("Apply error = %v, want injected crash", err)
+	}
+	before, err := os.ReadFile(st.JournalFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal Journal
+	if err := json.Unmarshal(before, &journal); err != nil {
+		t.Fatal(err)
+	}
+	journal.NextRecord.Files[f.rel] = FileState{
+		ContentDigest: journal.NextRecord.Files[f.rel].ContentDigest,
+		Entries:       []Entry{{Kind: KindHook, Container: entry.Container, IdentityDigest: Digest([]byte("forged identity")), ValueDigest: entry.ValueDigest, Resource: entry.Resource}},
+	}
+	tampered, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.JournalFile(), tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.ReadJournal(); !errors.Is(err, ErrStateCorrupt) {
+		t.Fatalf("ReadJournal error = %v, want corrupt journal", err)
+	}
+	got, err := os.ReadFile(st.JournalFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(tampered) {
+		t.Fatalf("ReadJournal mutated the forged journal: got %q, want %q", got, tampered)
+	}
+}

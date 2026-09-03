@@ -19,6 +19,36 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestPublishRenamedDirectorySyncsExactParentAndCleansStageOnSyncFailure(t *testing.T) {
+	parent := t.TempDir()
+	stage := filepath.Join(parent, "stage")
+	destination := filepath.Join(parent, "destination")
+	if err := os.Mkdir(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "HEAD"), []byte("ref"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("injected parent fsync failure")
+	var synced string
+	err := publishRenamedDirectory(stage, destination, func(dir string) error {
+		synced = dir
+		return injected
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("publishRenamedDirectory error = %v, want injected fsync error", err)
+	}
+	if synced != parent {
+		t.Fatalf("synced directory = %q, want exact destination parent %q", synced, parent)
+	}
+	if _, err := os.Stat(destination); err != nil {
+		t.Fatalf("destination after successful rename = %v", err)
+	}
+	if _, err := os.Lstat(stage); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging residue after fsync failure = %v", err)
+	}
+}
+
 func TestExactGitCacheIdentityUsesSharedCanonicalURLFixtures(t *testing.T) {
 	for _, tc := range testutil.CanonicalGitURLFixtures {
 		t.Run(tc.Name, func(t *testing.T) {

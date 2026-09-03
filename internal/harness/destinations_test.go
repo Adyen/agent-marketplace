@@ -246,6 +246,28 @@ func TestEveryPartitionedCompilerTargetHasResolvedDestinations(t *testing.T) {
 	}
 }
 
+func TestResolveDestinationsRejectsOverlappingCodexMachinePartitions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codex := hcc.Target(targetmeta.TargetCodex)
+	cases := []struct {
+		name string
+		root string
+	}{
+		{name: "duplicate", root: filepath.Join(home, ".agents")},
+		{name: "ancestor", root: home},
+		{name: "descendant", root: filepath.Join(home, ".agents", "nested")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CODEX_HOME", tc.root)
+			if _, err := ResolveDestinations(codex, true, t.TempDir()); err == nil {
+				t.Fatalf("ResolveDestinations accepted overlapping CODEX_HOME %q", tc.root)
+			}
+		})
+	}
+}
+
 func TestDestinationRouteArtifact(t *testing.T) {
 	d := Destination{Prefix: ".agents"}
 	if got, err := d.RouteArtifact(".agents/skills/demo/SKILL.md"); err != nil || got != "skills/demo/SKILL.md" {
