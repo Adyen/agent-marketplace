@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -511,6 +512,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) moveCursorByHalfPage(direction int) {
+	if len(m.flatItems) == 0 {
+		return
+	}
+	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
+	step := max(1, m.listVisibleHeight()/2)
+	listWidth, _ := paneWidths(m.width)
+	heights := m.listHeightOffsets(listWidth)
+	target := heights[m.cursor] + direction*step
+	if target <= 0 {
+		m.cursor = 0
+	} else if target >= heights[len(m.flatItems)] {
+		m.cursor = len(m.flatItems) - 1
+	} else {
+		candidate := sort.Search(len(m.flatItems), func(i int) bool {
+			return heights[i] > target
+		}) - 1
+		if direction > 0 {
+			candidate = max(m.cursor+1, candidate)
+		} else {
+			candidate = min(m.cursor-1, candidate)
+		}
+		m.cursor = min(max(0, candidate), len(m.flatItems)-1)
+	}
+	m.clampListOffset()
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Toast auto-expire check
 	if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
@@ -641,6 +669,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 			m.clampListOffset()
 		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageDown):
+		m.moveCursorByHalfPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageUp):
+		m.moveCursorByHalfPage(-1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
@@ -939,16 +975,16 @@ func (m Model) View() string {
 		m.helpViewport.Width = m.width
 		m.helpViewport.Height = max(1, m.height-1)
 		m.helpViewport.SetContent(renderHelp(m))
-		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ scroll · esc/? close · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/? close · Ctrl+C quit", m.width, m.height)
 	case paneErrors:
 		m.errorsViewport.Width = m.width
 		m.errorsViewport.Height = max(1, m.height-1)
 		m.errorsViewport.SetContent(renderErrors(m))
-		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ scroll · esc/e close · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
 		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneDetail:
-		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ scroll · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ or ctrl-d/u scroll · Ctrl+C quit", m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()

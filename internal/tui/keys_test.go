@@ -20,6 +20,8 @@ func TestKeyMapNavigationBindingsMatch(t *testing.T) {
 		{"up matches Up", keyNamed("up"), k.Up, true},
 		{"j matches Down", keyPress('j'), k.Down, true},
 		{"down matches Down", keyNamed("down"), k.Down, true},
+		{"ctrl+d matches HalfPageDown", tea.KeyMsg{Type: tea.KeyCtrlD}, k.HalfPageDown, true},
+		{"ctrl+u matches HalfPageUp", tea.KeyMsg{Type: tea.KeyCtrlU}, k.HalfPageUp, true},
 		{"g matches Top", keyPress('g'), k.Top, true},
 		{"G matches Bottom", keyPress('G'), k.Bottom, true},
 		{"tab matches NextTab", keyNamed("tab"), k.NextTab, true},
@@ -242,7 +244,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 	// Every binding should have non-empty help text.
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.Top, k.Bottom, k.NextTab, k.PrevTab,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
 		k.Tab1, k.Tab2, k.Tab3,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
@@ -269,7 +271,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 func TestKeyMapAllBindingsEnabled(t *testing.T) {
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.Top, k.Bottom, k.NextTab, k.PrevTab,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
 		k.Tab1, k.Tab2, k.Tab3,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,

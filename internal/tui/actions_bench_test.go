@@ -275,6 +275,28 @@ func BenchmarkClampListOffset(b *testing.B) {
 	})
 }
 
+func BenchmarkMoveCursorByHalfPage(b *testing.B) {
+	for _, test := range []struct {
+		name      string
+		direction int
+	}{
+		{name: "down", direction: 1},
+		{name: "up", direction: -1},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			m := benchmarkClampModel()
+			listWidth, _ := paneWidths(m.width)
+			m.listHeightOffsets(listWidth)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				m.cursor = i % len(m.flatItems)
+				m.moveCursorByHalfPage(test.direction)
+			}
+		})
+	}
+}
+
 func BenchmarkRenderBaseScreen(b *testing.B) {
 	r := mkRow("selected-resource-with-a-long-name", withProject, withRegistry("https://example.com/a/very/long/registry/location.git", "registry-with-a-long-name"))
 	r.Artifact.Path = "/a/very/long/cache/location/that/must-wrap/SKILL.md"

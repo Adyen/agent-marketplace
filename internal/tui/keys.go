@@ -10,12 +10,14 @@ import (
 // and the ? help overlay are driven from these bindings via help.Model.
 type keyMap struct {
 	// Navigation
-	Up      key.Binding
-	Down    key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	NextTab key.Binding
-	PrevTab key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	HalfPageDown key.Binding
+	HalfPageUp   key.Binding
+	Top          key.Binding
+	Bottom       key.Binding
+	NextTab      key.Binding
+	PrevTab      key.Binding
 
 	// Tab switching
 	Tab1 key.Binding
@@ -85,12 +87,14 @@ type keyMap struct {
 // defaultKeyMap is the default set of key bindings.
 var defaultKeyMap = keyMap{
 	// Navigation
-	Up:      key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("↑/k", "move up")),
-	Down:    key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("↓/j", "move down")),
-	Top:     key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "jump to top")),
-	Bottom:  key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "jump to bottom")),
-	NextTab: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
-	PrevTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("S-tab", "previous tab")),
+	Up:           key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("↑/k", "move up")),
+	Down:         key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("↓/j", "move down")),
+	HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half-page down")),
+	HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half-page up")),
+	Top:          key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "jump to top")),
+	Bottom:       key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "jump to bottom")),
+	NextTab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
+	PrevTab:      key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("S-tab", "previous tab")),
 
 	// Tab switching
 	Tab1: key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "Scope tab")),
@@ -179,7 +183,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // navigationBindings returns the navigation-related key bindings.
 func (k keyMap) navigationBindings() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
+	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
 }
 
 // actionBindings returns the action-related key bindings.

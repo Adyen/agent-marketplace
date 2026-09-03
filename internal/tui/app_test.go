@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -251,6 +252,28 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	out := updated.(Model).View()
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
+	}
+}
+
+func TestHalfPageNavigationMovesListSelection(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width = 80
+	m.height = 24
+	for i := 0; i < 20; i++ {
+		m.flatItems = append(m.flatItems, flatItem{Kind: flatArtifact, Row: mkRow(fmt.Sprintf("resource-%d", i), withGlobal)})
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+d moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = updated.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("ctrl+u moved cursor to %d, want 0", m.cursor)
 	}
 }
 
