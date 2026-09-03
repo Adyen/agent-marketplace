@@ -708,6 +708,11 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		catalogs = map[string][]catalog.Entry{}
 	}
 
+	// Collection propagation is an internal normalization step. Work on a
+	// deep-enough copy so appending selectors never changes the caller's
+	// configuration (or races another concurrent Resolve using it).
+	cfg = cloneConfigForResolve(cfg)
+
 	var localSelections resourceSelections
 	var localExcludes resourceSelections
 	var excludeAllKinds map[ir.ResourceKind]bool
@@ -749,7 +754,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	resolved = applyCrossLayerExcludes(resolved, cfg.Registries)
 
 	var localErrs []error
-	resolved, localErrs = applyLocalResources(resolved, localSelections, cfg, catalogs, ro.resources, targetSet)
+	resolved, localErrs = applyLocalResources(resolved, localSelections, localExcludes, excludeAllKinds, cfg, catalogs, ro.resources, targetSet)
 	errs = append(errs, localErrs...)
 	preExcludeResolved := append([]ResolvedArtifact(nil), resolved...)
 
@@ -823,6 +828,48 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 	}
 	slog.Debug("requirement validation end", "unmet", len(warnings))
 	return warnings
+}
+
+// cloneStringsForResolve preserves nil-vs-empty selector semantics while
+// isolating Resolve's private config copy from the caller.
+func cloneStringsForResolve(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func cloneSelectorForResolve(selector config.KindSelector) config.KindSelector {
+	selector.Include = cloneStringsForResolve(selector.Include)
+	selector.Exclude = cloneStringsForResolve(selector.Exclude)
+	return selector
+}
+
+func cloneConfigForResolve(cfg *config.Config) *config.Config {
+	cloned := *cfg
+	cloned.Collections = cloneSelectorForResolve(cfg.Collections)
+	cloned.Skills = cloneSelectorForResolve(cfg.Skills)
+	cloned.Commands = cloneSelectorForResolve(cfg.Commands)
+	cloned.Subagents = cloneSelectorForResolve(cfg.Subagents)
+	cloned.Hooks = cloneSelectorForResolve(cfg.Hooks)
+	cloned.MCP = cloneSelectorForResolve(cfg.MCP)
+	cloned.Tags = cloneStringsForResolve(cfg.Tags)
+	cloned.Harnesses = cloneStringsForResolve(cfg.Harnesses)
+	cloned.Registries = make([]config.RegistryEntry, len(cfg.Registries))
+	for i, entry := range cfg.Registries {
+		entry.Skills = cloneSelectorForResolve(entry.Skills)
+		entry.Commands = cloneSelectorForResolve(entry.Commands)
+		entry.Subagents = cloneSelectorForResolve(entry.Subagents)
+		entry.Hooks = cloneSelectorForResolve(entry.Hooks)
+		entry.MCP = cloneSelectorForResolve(entry.MCP)
+		entry.Collections = cloneSelectorForResolve(entry.Collections)
+		entry.Tags = cloneStringsForResolve(entry.Tags)
+		entry.Harnesses = cloneStringsForResolve(entry.Harnesses)
+		cloned.Registries[i] = entry
+	}
+	return &cloned
 }
 
 // propagateTopLevelCollections adds the top-level Collections.Include names
@@ -2234,7 +2281,51 @@ func entryExcludeAllKinds(entry config.RegistryEntry) map[ir.ResourceKind]bool {
 	return kinds
 }
 
-func applyLocalResources(resolved []ResolvedArtifact, localSelections resourceSelections, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
+type localOwnerCandidate struct {
+	entry      config.RegistryEntry
+	catalogKey string
+	resource   catalog.Entry
+	harnesses  []hcc.Target
+}
+
+func localCandidateArtifact(candidate localOwnerCandidate) ResolvedArtifact {
+	return ResolvedArtifact{
+		Entry:          candidate.resource,
+		RegistryURL:    candidate.entry.URL,
+		RegistryPath:   normalizedEntryPath(candidate.entry.Path),
+		Ref:            candidate.entry.Ref,
+		Source:         candidate.entry.Source,
+		FilePrecedence: candidate.entry.FilePrecedence,
+		Required:       candidate.entry.Required,
+		CatalogKey:     candidate.catalogKey,
+		Harnesses:      candidate.harnesses,
+	}
+}
+
+func localOwnerExcluded(candidate localOwnerCandidate, kind ir.ResourceKind, name string, cfg *config.Config, localExcludes resourceSelections, localExcludeAllKinds map[ir.ResourceKind]bool) bool {
+	if artifactShadowedByEntries(localCandidateArtifact(candidate), cfg.Registries) {
+		return true
+	}
+	selector := candidate.entry.SelectorForKind(kind)
+	if !candidate.entry.Required && (selector.ExcludeAll || slices.ContainsFunc(selector.Exclude, func(excluded string) bool {
+		return strings.TrimSpace(excluded) == name
+	})) {
+		return true
+	}
+	return localResourceExcluded(localExcludes, localExcludeAllKinds, kind, name, candidate.entry.Required, candidate.entry.Source)
+}
+
+func localCandidateSource(candidate localOwnerCandidate) config.Source {
+	// Local enablement creates a repo-personal selection only for optional
+	// repo-scoped owners. Required and machine-scoped policy must not be
+	// downgraded into the project scope.
+	if candidate.entry.Required || candidate.entry.Source.IsMachineScope() {
+		return candidate.entry.Source
+	}
+	return config.RepoPersonal
+}
+
+func applyLocalResources(resolved []ResolvedArtifact, localSelections, localExcludes resourceSelections, localExcludeAllKinds map[ir.ResourceKind]bool, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, targetSet []hcc.Target) ([]ResolvedArtifact, []error) {
 	if len(localSelections) == 0 {
 		return resolved, nil
 	}
@@ -2257,57 +2348,70 @@ func applyLocalResources(resolved []ResolvedArtifact, localSelections resourceSe
 		seen[selected] = struct{}{}
 
 		if idx, already := resolvedIndexByName[selected]; already {
-			// Explicit local enablement should keep the skill repo-scoped unless
-			// it is required, in which case required semantics win.
-			if !resolved[idx].Required {
+			// Explicit local enablement should keep optional repo resources
+			// repo-scoped, but must never downgrade machine or required policy.
+			if !resolved[idx].Required && !resolved[idx].Source.IsMachineScope() {
 				resolved[idx].Source = config.RepoPersonal
 			}
 			continue
 		}
 
-		var found *catalog.Entry
-		var foundEntry *config.RegistryEntry
+		var candidates []localOwnerCandidate
+		matched := false
 		for i := range cfg.Registries {
-			entry := &cfg.Registries[i]
+			entry := cfg.Registries[i]
 			cat, ok := catalogs[entry.CatalogKey]
 			if !ok {
 				continue
 			}
-			for j := range cat {
-				if cat[j].Kind == selected.kind && strings.TrimSpace(cat[j].Name) == selected.name {
-					e := cat[j]
-					found = &e
-					foundEntry = entry
-					break
+			for _, resource := range cat {
+				if resource.Kind != selected.kind || strings.TrimSpace(resource.Name) != selected.name {
+					continue
 				}
-			}
-			if found != nil {
-				break
+				matched = true
+				candidate := localOwnerCandidate{
+					entry:      entry,
+					catalogKey: entry.CatalogKey,
+					resource:   resource,
+					harnesses:  resolveEntryHarnesses(entry, targetSet),
+				}
+				if localOwnerExcluded(candidate, selected.kind, selected.name, cfg, localExcludes, localExcludeAllKinds) {
+					continue
+				}
+				if len(targetSet) > 0 && len(candidate.harnesses) == 0 {
+					appendEmptyHarnessError(entry, selected.kind, selected.name, targetSet, &errs)
+					continue
+				}
+				candidates = append(candidates, candidate)
 			}
 		}
 
-		if found == nil {
-			errs = append(errs, fmt.Errorf("%s %q enabled in local config is not present in any configured registry", skill.KindLabel(selected.kind), selected.name))
+		if len(candidates) == 0 {
+			if !matched {
+				errs = append(errs, fmt.Errorf("%s %q enabled in local config is not present in any configured registry", skill.KindLabel(selected.kind), selected.name))
+			}
 			continue
 		}
 
-		harnessTargets := resolveEntryHarnesses(*foundEntry, targetSet)
-		if len(targetSet) > 0 && len(harnessTargets) == 0 {
-			appendEmptyHarnessError(*foundEntry, selected.kind, selected.name, targetSet, &errs)
-			continue
+		// Required policy wins first, then source/file authority, then the
+		// stable config order. Do not let catalog map iteration affect binding.
+		chosen := candidates[0]
+		for _, candidate := range candidates[1:] {
+			if candidate.entry.Required != chosen.entry.Required {
+				if candidate.entry.Required {
+					chosen = candidate
+				}
+				continue
+			}
+			if precedence := config.CompareEntryPrecedence(candidate.entry.Source, candidate.entry.FilePrecedence, chosen.entry.Source, chosen.entry.FilePrecedence); precedence > 0 {
+				chosen = candidate
+			}
 		}
 
-		resolved = append(resolved, ResolvedArtifact{
-			Entry:          attachResource(*found, resources, foundEntry.CatalogKey),
-			RegistryURL:    foundEntry.URL,
-			RegistryPath:   normalizedEntryPath(foundEntry.Path),
-			Ref:            foundEntry.Ref,
-			Source:         config.RepoPersonal,
-			FilePrecedence: foundEntry.FilePrecedence,
-			Required:       false,
-			CatalogKey:     foundEntry.CatalogKey,
-			Harnesses:      harnessTargets,
-		})
+		chosen.resource = attachResource(chosen.resource, resources, chosen.catalogKey)
+		artifact := localCandidateArtifact(chosen)
+		artifact.Source = localCandidateSource(chosen)
+		resolved = append(resolved, artifact)
 		resolvedIndexByName[selected] = len(resolved) - 1
 	}
 

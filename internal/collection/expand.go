@@ -94,7 +94,7 @@ func Expand(selectedNames []string, available []Collection, existingEntries []co
 	syntheticMap := make(map[registryKey]kindNames)
 	syntheticSource := make(map[registryKey]config.Source)
 	syntheticCatalogKey := make(map[registryKey]string)
-	syntheticExclude := make(map[registryKey][]string)
+	syntheticURL := make(map[registryKey]string)
 	syntheticHarnesses := make(map[registryKey][]string)
 	syntheticSourceHarness := make(map[registryKey]string)
 
@@ -114,7 +114,7 @@ func Expand(selectedNames []string, available []Collection, existingEntries []co
 		viaLabel := "collection:" + col.Label()
 		visited := map[string]bool{}
 
-		resByReg, expandErrs := expandCollection(col, index, existingEntries, visited)
+		resByReg, authoredURLs, expandErrs := expandCollection(col, index, existingEntries, visited)
 		errs = append(errs, expandErrs...)
 
 		for rk, kinds := range resByReg {
@@ -128,8 +128,11 @@ func Expand(selectedNames []string, available []Collection, existingEntries []co
 			if _, ok := syntheticSource[rk]; !ok {
 				src := sourceForRegistry(rk.url, rk.ref, rk.path, existingEntries, col.SourceRegistryURL, col.SourceRef, col.SourcePath)
 				syntheticSource[rk] = src
+				syntheticURL[rk] = authoredURLs[rk]
+				if syntheticURL[rk] == "" {
+					syntheticURL[rk] = authoredURLForRegistry(rk.url, rk.ref, rk.path, existingEntries, col.SourceRegistryURL)
+				}
 				syntheticCatalogKey[rk] = catalogKeyForRegistry(rk.url, rk.ref, rk.path, existingEntries, col.SourceCatalogKey)
-				syntheticExclude[rk] = excludeForRegistryWithPath(rk.url, rk.ref, rk.path, existingEntries)
 				syntheticHarnesses[rk] = harnessesForRegistry(rk.url, rk.ref, rk.path, existingEntries)
 				syntheticSourceHarness[rk] = sourceHarnessForRegistry(rk.url, rk.ref, rk.path, existingEntries)
 			}
@@ -162,7 +165,7 @@ func Expand(selectedNames []string, available []Collection, existingEntries []co
 	for _, rk := range keys {
 		kinds := syntheticMap[rk]
 		entry := config.RegistryEntry{
-			URL:           rk.url,
+			URL:           syntheticURL[rk],
 			Ref:           rk.ref,
 			Path:          rk.path,
 			Source:        syntheticSource[rk],
@@ -197,21 +200,22 @@ func cloneVisited(visited map[string]bool) map[string]bool {
 
 // expandCollection recursively expands a single collection (following includes)
 // and returns a map of registryKey → (kind → names).
-func expandCollection(col *Collection, index map[string]*Collection, existingEntries []config.RegistryEntry, visited map[string]bool) (map[struct{ url, ref, path string }]map[ir.ResourceKind][]string, []error) {
+func expandCollection(col *Collection, index map[string]*Collection, existingEntries []config.RegistryEntry, visited map[string]bool) (map[struct{ url, ref, path string }]map[ir.ResourceKind][]string, map[struct{ url, ref, path string }]string, []error) {
 	key := strings.TrimSpace(col.Name)
 	if visited[key] {
-		return nil, []error{fmt.Errorf("collection cycle detected at %q", col.Label())}
+		return nil, nil, []error{fmt.Errorf("collection cycle detected at %q", col.Label())}
 	}
 	visited[key] = true
 
 	type rk = struct{ url, ref, path string }
 	type kindNames = map[ir.ResourceKind][]string
 	result := make(map[rk]kindNames)
+	authoredURLs := make(map[rk]string)
 	var errs []error
 
 	// processEntry adds a single resource entry to result, resolving its
 	// registry/ref/path and populating the correct kind bucket.
-	processEntry := func(name, kindStr, regURL, ref, skillPath string) {
+	processEntry := func(name, kindStr, regURL, ref, skillPath string, pathProvided bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return
@@ -224,13 +228,19 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 
 		regURL = strings.TrimSpace(regURL)
 		ref = strings.TrimSpace(ref)
+		// Normalize only the identity path. Keep pathProvided so an explicit
+		// root ("." or "./") does not inherit the collection's source path.
 		skillPath = normalizeRegistryPath(skillPath)
 
 		if regURL == "" {
-			// Use the collection's source registry.
-			regURL = col.SourceRegistryURL
-			ref = col.SourceRef
-			if skillPath == "" {
+			// Use the collection's source registry while preserving an explicit
+			// member ref. A member may intentionally select another configured
+			// ref of the same repository.
+			regURL = strings.TrimSpace(col.SourceRegistryURL)
+			if ref == "" {
+				ref = strings.TrimSpace(col.SourceRef)
+			}
+			if !pathProvided {
 				skillPath = normalizeRegistryPath(col.SourcePath)
 			}
 		} else if ref == "" {
@@ -248,21 +258,24 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 			}
 		}
 
-		k := rk{url: regURL, ref: ref, path: skillPath}
+		// Registry URL spelling is identity, not authored metadata: collapse
+		// equivalent `repo`/`repo.git` references into one synthetic source.
+		k := rk{url: config.NormalizeGitURL(regURL), ref: ref, path: skillPath}
 		if result[k] == nil {
 			result[k] = make(kindNames)
+			authoredURLs[k] = regURL
 		}
 		result[k][kind] = appendUnique(result[k][kind], []string{name})
 	}
 
 	// Process legacy skills: key.
 	for _, cs := range col.Skills {
-		processEntry(cs.Name, "", cs.Registry, cs.Ref, cs.Path)
+		processEntry(cs.Name, "", cs.Registry, cs.Ref, cs.Path, strings.TrimSpace(cs.Path) != "")
 	}
 
 	// Process general resources: key.
 	for _, ce := range col.Resources {
-		processEntry(ce.Name, ce.Kind, ce.Registry, ce.Ref, ce.Path)
+		processEntry(ce.Name, ce.Kind, ce.Registry, ce.Ref, ce.Path, strings.TrimSpace(ce.Path) != "")
 	}
 
 	// Expand includes recursively.
@@ -274,11 +287,12 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 		}
 
 		branchVisited := cloneVisited(visited)
-		subResult, subErrs := expandCollection(included, index, existingEntries, branchVisited)
+		subResult, subAuthoredURLs, subErrs := expandCollection(included, index, existingEntries, branchVisited)
 		errs = append(errs, subErrs...)
 		for k, kinds := range subResult {
 			if result[k] == nil {
 				result[k] = make(kindNames)
+				authoredURLs[k] = subAuthoredURLs[k]
 			}
 			for kind, names := range kinds {
 				result[k][kind] = appendUnique(result[k][kind], names)
@@ -286,7 +300,7 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 		}
 	}
 
-	return result, errs
+	return result, authoredURLs, errs
 }
 
 // parseKind maps a kind string from a CollectionEntry to an ir.ResourceKind.
@@ -330,6 +344,34 @@ func appendUnique(existing, add []string) []string {
 		}
 	}
 	return result
+}
+
+// authoredURLForRegistry returns the URL spelling from the configured source
+// while the caller's normalized URL remains the synthetic identity. This keeps
+// generated config metadata deterministic and preserves the author's spelling.
+func authoredURLForRegistry(url, ref, registryPath string, entries []config.RegistryEntry, fallbackURL string) string {
+	norm := config.NormalizeGitURL(url)
+	registryPath = normalizeRegistryPath(registryPath)
+	bestURL := ""
+	bestSource := config.SourceUnset
+	bestFile := 0
+	for _, entry := range entries {
+		if config.NormalizeGitURL(entry.URL) != norm || strings.TrimSpace(entry.Ref) != ref || normalizeRegistryPath(entry.Path) != registryPath {
+			continue
+		}
+		if bestURL == "" || config.CompareEntryPrecedence(entry.Source, entry.FilePrecedence, bestSource, bestFile) > 0 {
+			bestURL = strings.TrimSpace(entry.URL)
+			bestSource = entry.Source
+			bestFile = entry.FilePrecedence
+		}
+	}
+	if bestURL != "" {
+		return bestURL
+	}
+	if config.NormalizeGitURL(fallbackURL) == norm {
+		return strings.TrimSpace(fallbackURL)
+	}
+	return strings.TrimSpace(url)
 }
 
 func excludeForRegistry(url string, entries []config.RegistryEntry) []string {
