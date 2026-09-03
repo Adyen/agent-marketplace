@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -123,9 +123,21 @@ type GCResult struct {
 // and across processes sharing the cache root. The lock inode is persistent so
 // releasing a lock never creates an unlink/recreate race with another holder.
 func WithCacheMutationLock[T any](fn func() (T, error)) (T, error) {
-	cacheMutationMu.Lock()
-	defer cacheMutationMu.Unlock()
-	release, err := acquireCacheFileLock(lockfileExclusive)
+	return withContextCacheMutationLock(context.Background(), fn)
+}
+
+func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case cacheMutationMu <- struct{}{}:
+		defer func() { <-cacheMutationMu }()
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+	release, err := acquireCacheFileLockWithContext(ctx, lockfileExclusive)
 	if err != nil {
 		var zero T
 		return zero, err
@@ -153,7 +165,7 @@ func WithCacheMutation(fn func() error) error {
 	return err
 }
 
-var cacheMutationMu sync.Mutex
+var cacheMutationMu = make(chan struct{}, 1)
 
 func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 	return WithCacheMutationLock(func() (GCResult, error) {
@@ -161,10 +173,26 @@ func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 	})
 }
 
+// LockDocumentReader reloads the lock documents that determine exact-snapshot
+// reachability. It is called while the exact-cache namespace is exclusively
+// leased, so a coordinated lock publisher cannot race deletion.
+type LockDocumentReader func(context.Context) ([]lockfile.Document, error)
+
 func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*config.Config) (GCResult, error) {
+	return GarbageCollectWithLocksAndContext(context.Background(), dryRun, locks, nil, cfgs...)
+}
+
+// GarbageCollectWithLocksAndContext is the cancellation-aware exact-cache GC
+// entry point. reader, when supplied, is used to re-read lock documents after
+// taking the exact-cache exclusive namespace lock and immediately before any
+// snapshot deletion.
+func GarbageCollectWithLocksAndContext(ctx context.Context, dryRun bool, locks []lockfile.Document, reader LockDocumentReader, cfgs ...*config.Config) (GCResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	started := time.Now()
 	slog.Debug("registry cache garbage collection started", "dry_run", dryRun, "lock_layers", len(locks))
-	result, err := WithCacheMutationLock(func() (GCResult, error) {
+	result, err := withContextCacheMutationLock(ctx, func() (GCResult, error) {
 		for i := range locks {
 			if err := lockfile.Validate(locks[i]); err != nil {
 				return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
@@ -174,7 +202,7 @@ func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*co
 		if err != nil {
 			return legacy, err
 		}
-		exact, err := garbageCollectExactGit(dryRun, locks)
+		exact, err := garbageCollectExactGitWithContext(ctx, dryRun, locks, reader)
 		legacy.Removed = append(legacy.Removed, exact.Removed...)
 		slices.Sort(legacy.Removed)
 		return legacy, err

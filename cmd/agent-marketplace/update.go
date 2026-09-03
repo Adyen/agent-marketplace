@@ -57,13 +57,13 @@ func runUpdate(ctx context.Context, out io.Writer, bump bool, selected map[lockf
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
 			var warnings []error
-			exactOption, exactMarketplace, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
+			exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
 				upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, warningSink: &warnings,
 			})
 			if err != nil {
 				return pipeline.DependencyLockView{}, err
 			}
-			return pipeline.DependencyLockView{CatalogOption: exactOption, MarketplaceExactView: exactMarketplace, Warnings: warnings}, nil
+			return pipeline.DependencyLockView{CatalogOption: exactOption, MarketplaceExactView: exactMarketplace, ExactLockLease: exactLease, Warnings: warnings}, nil
 		},
 	}
 	if localDir != "" && localDir != repoRoot {

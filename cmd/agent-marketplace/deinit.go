@@ -122,16 +122,20 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	var resolvedArtifacts []resolver.ResolvedArtifact
 	switch scope {
 	case deinitScopeUser:
-		opts = append(opts, materialize.WithMachineScopeOnly())
+		// Resolve organization output before running either materialization or
+		// cache GC. An incomplete view must fail closed: an empty resolved set
+		// would otherwise look like proof that all organization-owned output and
+		// cache entries are safe to remove.
 		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
 		if err != nil {
-			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
-			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
+			slog.Error("deinit could not resolve organization-owned artifacts; refusing teardown", "error", err)
+			if _, werr := fmt.Fprintf(out, "error: could not resolve organization-owned artifacts; refusing teardown: %v\n", err); werr != nil {
 				return werr
 			}
-		} else {
-			resolvedArtifacts = orgArtifacts
+			return fmt.Errorf("resolving organization-owned artifacts: %w", err)
 		}
+		resolvedArtifacts = orgArtifacts
+		opts = append(opts, materialize.WithMachineScopeOnly())
 	case deinitScopeRepo, deinitScopeLocal:
 		opts = append(opts, materialize.WithRepoScopeOnly())
 	}
@@ -261,18 +265,36 @@ func removeEmptyDir(dir string) {
 // artifacts that a user-scoped deinit must preserve (organization and
 // mandatory policy output).
 //
-// It uses LoadModeCachedNoFetch so teardown never refreshes remote registries
-// or writes the cache (including during --dry-run). When no machine-wide target
-// harness set is configured, there is no org-owned output to preserve, so the
-// function returns an empty slice rather than defaulting artifacts to a target
-// the user never requested.
+// It uses the trusted exact Git lock view so teardown never refreshes mutable
+// refs or writes the Git cache. Marketplace resolution is explicitly
+// CachedNoFetch instead of status inspection: trusted local metadata
+// and verified artifact archives are decoded into IR resources so preserved
+// Marketplace output remains materializable. User-owned Marketplace pins are
+// omitted from this preservation view; their cache failures must not block org
+// preservation. Missing or unsafe Git paths and any missing/invalid org-owned
+// Marketplace cache remain hard failures. When no machine-wide target harness
+// set is configured, there is no org-owned output to preserve, so the function
+// returns an empty slice rather than defaulting artifacts to a target the user
+// never requested.
 func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+	localDir := config.FindLocalConfigDir()
+	exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true})
+	if err != nil {
+		return nil, err
+	}
+	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:         repoRoot,
-		LocalConfigDir:   config.FindLocalConfigDir(),
-		CatalogMode:      catalog.LoadModeCachedNoFetch,
-		RequireTargetSet: true,
-		SkipInventory:    true,
+		RepoRoot:             repoRoot,
+		LocalConfigDir:       localDir,
+		CatalogMode:          catalog.LoadModeInspect,
+		CatalogOption:        []catalog.LoadOption{exactOption},
+		RequireTargetSet:     true,
+		MarketplaceMode:      &marketplaceMode,
+		MarketplaceExactView: exactMarketplace,
+		ExactLockLease:       exactLease,
+		MarketplaceSourceFilter: func(source config.Source) bool {
+			return source == config.Organization
+		},
 	}
 	res := pipeline.Resolve(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
@@ -282,6 +304,9 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 			return nil, nil
 		}
 		return nil, errors.Join(res.Errors...)
+	}
+	if unresolved := organizationUnresolvedSelections(res); len(unresolved) > 0 {
+		return nil, errors.Join(unresolved...)
 	}
 	if len(res.TargetHarnesses) == 0 {
 		slog.Info("deinit: target harness set is empty; no organization-owned artifacts to preserve")
@@ -295,6 +320,39 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 	}
 	slog.Info("deinit: resolved organization-owned artifacts to preserve", "count", len(preserved))
 	return preserved, nil
+}
+
+// organizationUnresolvedSelections promotes soft unresolved selections from
+// organization registries to teardown-blocking errors. Resolve normally keeps
+// these as warnings because online sync can distinguish a removed resource
+// from a transient catalog failure; deinit cannot safely make that assumption
+// while deciding which organization output and caches to preserve.
+func organizationUnresolvedSelections(res pipeline.ResolveResult) []error {
+	if res.MergedCfg == nil {
+		return nil
+	}
+	var unresolved []error
+	for _, issue := range res.ResolveErrors {
+		var notFound *resolver.SelectedNotFoundError
+		if errors.As(issue, &notFound) && isOrganizationRegistry(res.MergedCfg, notFound.URL, notFound.Path, notFound.Ref) {
+			unresolved = append(unresolved, issue)
+			continue
+		}
+		var malformed *resolver.SelectedMalformedError
+		if errors.As(issue, &malformed) && isOrganizationRegistry(res.MergedCfg, malformed.URL, malformed.Path, malformed.Ref) {
+			unresolved = append(unresolved, issue)
+		}
+	}
+	return unresolved
+}
+
+func isOrganizationRegistry(cfg *config.Config, url, path, ref string) bool {
+	for _, entry := range cfg.Registries {
+		if entry.Source == config.Organization && entry.URL == url && entry.Path == path && entry.Ref == ref {
+			return true
+		}
+	}
+	return false
 }
 
 // preservedCacheConfig builds a minimal config containing the registries that

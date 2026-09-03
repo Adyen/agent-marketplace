@@ -45,7 +45,7 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 
 var (
 	prepareTUILocks = func(ctx context.Context, repoRoot, localDir string, mode lockMode) error {
-		_, _, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+		_, _, _, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 		return err
 	}
 	runTUIExactSync = pipeline.Sync

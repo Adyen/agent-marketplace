@@ -35,8 +35,13 @@ type Generation struct {
 type DesiredFile struct {
 	Path     string
 	Expected Generation
-	Bytes    []byte
-	Mode     fs.FileMode
+	// ExpectedMode is an optional compare-and-swap precondition for the
+	// destination's permission bits. Zero preserves compatibility with callers
+	// that predate mode-aware transactions; transaction participants that read
+	// an existing destination should provide its mode.
+	ExpectedMode fs.FileMode
+	Bytes        []byte
+	Mode         fs.FileMode
 }
 
 type Result struct {
@@ -136,6 +141,13 @@ func ReadGeneration(path string) (Generation, error) {
 	return Generation{Exists: true, Digest: Digest(raw)}, nil
 }
 
+// ReadGenerationAndMode reads the destination's content generation and
+// permission bits from the same inspected file state. It is intended for
+// callers that pass both pieces as a transaction precondition.
+func ReadGenerationAndMode(path string) (Generation, fs.FileMode, error) {
+	return inspectDestination(path)
+}
+
 func readRegularFile(path string, maxSize int64) ([]byte, fs.FileInfo, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -197,7 +209,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		if err != nil {
 			return Result{}, err
 		}
-		if current != file.Expected {
+		if current != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
 			return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
 		}
 		if current.Exists && current.Digest == Digest(file.Bytes) && mode == file.Mode {
@@ -400,6 +412,9 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 		files[i].Path = path
 		if err := validateGeneration(files[i].Expected); err != nil {
 			return nil, fmt.Errorf("dependency transaction: expected generation for %s: %w", path, err)
+		}
+		if files[i].ExpectedMode != files[i].ExpectedMode.Perm() {
+			return nil, fmt.Errorf("dependency transaction: invalid expected mode %o for %s", files[i].ExpectedMode, path)
 		}
 		if files[i].Mode != files[i].Mode.Perm() {
 			return nil, fmt.Errorf("dependency transaction: invalid mode %o for %s", files[i].Mode, path)

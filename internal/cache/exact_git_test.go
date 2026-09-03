@@ -82,6 +82,29 @@ func TestParseGitOID(t *testing.T) {
 	}
 }
 
+func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := exactGitBytesWithContext(ctx, "", "fetch")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("exact git error = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancelled exact git took %s", elapsed)
+	}
+	if _, err := os.Lstat(CacheDir()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled exact git left cache residue: %v", err)
+	}
+}
+
 func TestExactGitLifecycleCoexistenceAndOffline(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

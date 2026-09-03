@@ -69,6 +69,25 @@ func TestCommitRejectsConcurrentChangeWithoutResidue(t *testing.T) {
 	assertNoTransactionResidue(t, root, state)
 }
 
+func TestCommitRejectsConcurrentModeChangeWithExpectedMode(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("before"), 0o644)
+	expected := generation(t, path)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Commit(context.Background(), state, []DesiredFile{
+		{Path: path, Expected: expected, ExpectedMode: 0o644, Bytes: []byte("desired"), Mode: 0o644},
+	})
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("error = %v, want ErrGenerationConflict", err)
+	}
+	assertFile(t, path, "before", 0o600)
+	assertNoTransactionResidue(t, root, state)
+}
+
 func TestCommitRejectsSymlinkedDestinationAncestor(t *testing.T) {
 	root, state := testDirs(t)
 	external := t.TempDir()

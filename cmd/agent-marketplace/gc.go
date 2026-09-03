@@ -59,26 +59,29 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	if len(effective.PresentLayers()) == 0 {
 		return errors.New("gc requires at least one effective configuration layer")
 	}
-	locks, err := loadEffectiveLayerLocks(effective)
+	locks, err := loadEffectiveLayerLocks(ctx, effective)
 	if err != nil {
 		return err
+	}
+	readLocks := func(readCtx context.Context) ([]lockfile.Document, error) {
+		return loadEffectiveLayerLocks(readCtx, effective)
 	}
 
 	var registryErr, marketplaceErr error
 	marketplaceCache := marketplace.DefaultCache()
 
 	if dryRun {
-		registryResult, registryErr = cache.GarbageCollectWithLocks(true, locks, effective.Merged)
+		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged)
 		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocks(true, locks)
 	} else {
-		if _, err := cache.GarbageCollectWithLocks(true, locks, effective.Merged); err != nil {
+		if _, err := cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged); err != nil {
 			registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
 		} else if _, err := marketplaceCache.GarbageCollectWithLocks(true, locks); err != nil {
 			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", err)
 		} else {
 			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocks(false, locks)
 			if marketplaceErr == nil {
-				registryResult, registryErr = cache.GarbageCollectWithLocks(false, locks, effective.Merged)
+				registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks, effective.Merged)
 			}
 		}
 	}
@@ -109,9 +112,15 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	return errors.Join(registryErr, marketplaceErr)
 }
 
-func loadEffectiveLayerLocks(effective config.EffectiveConfig) ([]lockfile.Document, error) {
+func loadEffectiveLayerLocks(ctx context.Context, effective config.EffectiveConfig) ([]lockfile.Document, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var documents []lockfile.Document
 	for _, layer := range effective.PresentLayers() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		lockPath := layer.Source.LockPath(layer.Path)
 		scope, err := lockfile.ParseScope(layer.Source.LockScope())
 		if err != nil {

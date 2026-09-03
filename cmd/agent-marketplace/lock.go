@@ -591,24 +591,25 @@ func validateStagedConfigPathIdentity(edit pipeline.StagedConfigEdit) (string, e
 }
 
 func prepareExactLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (catalog.LoadOption, int, error) {
-	option, _, changed, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+	option, _, changed, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 	return option, changed, err
 }
 
 func reconcileCommandDependencies(ctx context.Context, repoRoot, localDir string, ignoreBlocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 	var warnings []error
-	option, marketplaceView, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings})
+	option, marketplaceView, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings})
 	if err != nil {
 		return pipeline.DependencyLockView{}, err
 	}
-	return pipeline.DependencyLockView{CatalogOption: option, MarketplaceExactView: marketplaceView, Warnings: warnings}, nil
+	return pipeline.DependencyLockView{CatalogOption: option, MarketplaceExactView: marketplaceView, ExactLockLease: lease, Warnings: warnings}, nil
 }
 
 type configTransactionSnapshot struct {
-	path       string
-	generation dependencytxn.Generation
-	bytes      []byte
-	mode       os.FileMode
+	path         string
+	generation   dependencytxn.Generation
+	expectedMode os.FileMode
+	bytes        []byte
+	mode         os.FileMode
 }
 
 func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]byte) (map[config.Source]configTransactionSnapshot, error) {
@@ -625,7 +626,7 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 			}
 			writablePaths[participantPath] = layer.Source
 		}
-		generation, err := dependencytxn.ReadGeneration(participantPath)
+		generation, expectedMode, err := dependencytxn.ReadGenerationAndMode(participantPath)
 		if err != nil {
 			return nil, err
 		}
@@ -636,13 +637,11 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 			if err != nil {
 				return nil, fmt.Errorf("read configuration transaction participant %s: %w", participantPath, err)
 			}
-			if info, statErr := os.Stat(participantPath); statErr == nil {
-				mode = info.Mode().Perm()
-			}
+			mode = expectedMode
 		} else if _, staged := overlays[participantPath]; !staged {
 			return nil, fmt.Errorf("configuration layer disappeared while loading: %s", layer.Path)
 		}
-		snapshots[layer.Source] = configTransactionSnapshot{path: participantPath, generation: generation, bytes: raw, mode: mode}
+		snapshots[layer.Source] = configTransactionSnapshot{path: participantPath, generation: generation, expectedMode: expectedMode, bytes: raw, mode: mode}
 	}
 	return snapshots, nil
 }
@@ -677,7 +676,9 @@ func loadStableEffective(ctx context.Context, options config.LoadEffectiveOption
 	return fresh, after, nil
 }
 
-func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, resultMarketplace marketplaceLockView, changed int, resultErr error) {
+type exactLockLeaseFunc func(context.Context) (func(), error)
+
+func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, resultMarketplace marketplaceLockView, changed int, resultLease exactLockLeaseFunc, resultErr error) {
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -694,20 +695,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 
 	stateDir, err := dependencyStateDir()
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	if err := recoverDependencyTransactions(ctx); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	overlays := make(map[string][]byte, len(mode.stagedConfigEdits))
 	stagedEdits := make(map[string]pipeline.StagedConfigEdit, len(mode.stagedConfigEdits))
 	for _, edit := range mode.stagedConfigEdits {
 		destination, err := validateStagedConfigPathIdentity(edit)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, 0, nil, err
 		}
 		if _, duplicate := stagedEdits[destination]; duplicate {
-			return nil, nil, 0, fmt.Errorf("%w: duplicate staged config destination %s", dependencytxn.ErrGenerationConflict, destination)
+			return nil, nil, 0, nil, fmt.Errorf("%w: duplicate staged config destination %s", dependencytxn.ErrGenerationConflict, destination)
 		}
 		edit.Path = destination
 		stagedEdits[destination] = edit
@@ -719,7 +720,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	consumed := make(map[string]int, len(stagedEdits))
 	for source, snapshot := range configSnapshots {
@@ -732,7 +733,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		consumed[snapshot.path]++
 		if snapshot.generation != edit.Expected {
-			return nil, nil, 0, fmt.Errorf("%w: staged config generation changed at %s", dependencytxn.ErrGenerationConflict, snapshot.path)
+			return nil, nil, 0, nil, fmt.Errorf("%w: staged config generation changed at %s", dependencytxn.ErrGenerationConflict, snapshot.path)
 		}
 		snapshot.generation = edit.Expected
 		if edit.Mode != 0 {
@@ -742,15 +743,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	for path := range stagedEdits {
 		if consumed[path] != 1 {
-			return nil, nil, 0, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
+			return nil, nil, 0, nil, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
 		}
 	}
 	if len(ec.Errors) > 0 && (!mode.ignoreBlocked || !config.OnlyRegistryURLBlockedErrors(ec.Errors)) {
-		return nil, nil, 0, errors.Join(ec.Errors...)
+		return nil, nil, 0, nil, errors.Join(ec.Errors...)
 	}
 	resolvedTargets, err := resolveUpgradeTargets(ec, mode)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	mode.upgradeSelection = resolvedTargets.selection
 	if mode.upgradeResult != nil {
@@ -759,6 +760,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 
 	set := exactLockSet{bySource: map[string]lockedGit{}, byIdentity: map[string][]lockedGit{}}
 	documents := map[config.Source]lockfile.Document{}
+	lockExpectations := map[string]dependencytxn.Generation{}
+	lockModes := map[string]os.FileMode{}
+	lockDesired := map[string][]byte{}
 	type snapshotJob struct {
 		source  config.Source
 		entries []config.RegistryEntry
@@ -798,7 +802,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		requestedLockPath := lockPath
 		lockPath, pathErr = rejectGeneratedLockSymlink(lockPath)
 		if pathErr != nil {
-			return nil, nil, changed, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
+			return nil, nil, changed, nil, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
 		}
 		selected := mode.selects == nil || mode.selects[scope]
 		current, generation, exists, loadErr := loadLayerLock(lockPath, scope)
@@ -806,7 +810,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if mode.upgrade && !selected {
 				continue
 			}
-			return nil, nil, changed, loadErr
+			return nil, nil, changed, nil, loadErr
+		}
+		if len(remote) > 0 || len(marketplaces) > 0 {
+			lockExpectations[lockPath] = generation
+			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
+			if stateErr != nil {
+				return nil, nil, changed, nil, stateErr
+			}
+			lockModes[lockPath] = currentMode
 		}
 		if len(remote) == 0 && len(marketplaces) == 0 && !exists {
 			continue
@@ -824,7 +836,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
 		if !exists && mode.locked {
-			return nil, nil, changed, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
+			return nil, nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 
 		operation := lockfile.OperationSync
@@ -833,18 +845,18 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		gitDesired, gitFresh := reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline)
 		if gitDesired.err != nil {
-			return nil, nil, changed, gitDesired.err
+			return nil, nil, changed, nil, gitDesired.err
 		}
 		mpStats := lockReconcileStats{}
 		mpDesired, mpFresh, err := reconcileMarketplaceDocument(ctx, scope, marketplaces, current, operation, mode.upgradeSelection, mode.offline, resolverMP, &mpStats)
 		if err != nil {
-			return nil, nil, changed, err
+			return nil, nil, changed, nil, err
 		}
 		doc := gitDesired.doc
 		doc.Marketplaces = mpDesired.Marketplaces
 		doc, err = lockfile.Normalize(doc)
 		if err != nil {
-			return nil, nil, changed, err
+			return nil, nil, changed, nil, err
 		}
 		fresh := exists && gitFresh && mpFresh
 
@@ -852,7 +864,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if !mode.locked && !mode.offline && !mode.check && selected && (!implicitOrg || mode.explicitOrganization) {
 			snapshot, ok := configSnapshots[layer.Source]
 			if !ok {
-				return nil, nil, changed, fmt.Errorf("missing configuration transaction participant for %s", layer.Path)
+				return nil, nil, changed, nil, fmt.Errorf("missing configuration transaction participant for %s", layer.Path)
 			}
 			raw := snapshot.bytes
 			if staged, ok := configDesired[layer.Source]; ok {
@@ -860,27 +872,28 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			migration, err = config.StageMarketplaceConfigMigration(raw)
 			if err != nil {
-				return nil, nil, changed, fmt.Errorf("stage Marketplace migration for %s: %w", layer.Path, err)
+				return nil, nil, changed, nil, fmt.Errorf("stage Marketplace migration for %s: %w", layer.Path, err)
 			}
 		}
 		if migration.MigrationNeeded {
 			if err := validateLegacyMarketplaceSeeds(marketplaces, doc); err != nil {
-				return nil, nil, changed, fmt.Errorf("validate Marketplace migration for %s: %w", layer.Path, err)
+				return nil, nil, changed, nil, fmt.Errorf("validate Marketplace migration for %s: %w", layer.Path, err)
 			}
 		}
 		layerChanged := !fresh || migration.MigrationNeeded
 		if layerChanged {
 			if mode.locked || implicitOrg && exists || !selected && !mode.upgrade {
-				return nil, nil, changed, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
+				return nil, nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
 			}
 			if !implicitOrg {
 				changed++
 				if !mode.check {
 					data, err := lockfile.Encode(doc)
 					if err != nil {
-						return nil, nil, changed, err
+						return nil, nil, changed, nil, err
 					}
-					desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, Bytes: data, Mode: 0o644})
+					lockDesired[lockPath] = data
+					desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
 					if migration.MigrationNeeded {
 						configDesired[layer.Source] = migration.SimplifiedConfig
 					}
@@ -897,7 +910,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	for _, job := range snapshots {
 		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.warningSink); err != nil {
-			return nil, nil, changed, err
+			return nil, nil, changed, nil, err
 		}
 	}
 	if !mode.check {
@@ -907,7 +920,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				continue
 			}
 			if data, staged := configDesired[layer.Source]; staged {
-				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: snapshot.path, Expected: snapshot.generation, Bytes: data, Mode: snapshot.mode})
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: snapshot.path, Expected: snapshot.generation, ExpectedMode: snapshot.expectedMode, Bytes: data, Mode: snapshot.mode})
 				delete(configSnapshots, layer.Source)
 			}
 		}
@@ -921,23 +934,31 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if !ok || !snapshot.generation.Exists {
 				continue
 			}
-			desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: snapshot.path, Expected: snapshot.generation, Bytes: snapshot.bytes, Mode: snapshot.mode})
+			desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: snapshot.path, Expected: snapshot.generation, ExpectedMode: snapshot.expectedMode, Bytes: snapshot.bytes, Mode: snapshot.mode})
 		}
 		for _, edit := range stagedEdits {
 			if _, err := validateStagedConfigPathIdentity(edit); err != nil {
-				return nil, nil, changed, err
+				return nil, nil, changed, nil, err
 			}
 		}
 		for _, file := range desiredFiles {
 			if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
-				return nil, nil, changed, fmt.Errorf("create dependency destination directory: %w", err)
+				return nil, nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
+		}
+		// Exact-cache GC re-reads lock documents while holding the namespace
+		// exclusive lease. Coordinate publication with its shared counterpart so
+		// a commit cannot complete between that re-read and deletion.
+		releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+		if err != nil {
+			return nil, nil, changed, nil, fmt.Errorf("acquire exact cache publication lease: %w", err)
 		}
 		commitStarted := time.Now()
 		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles)
+		releaseExactNamespace()
 		if err != nil {
 			slog.Error("lock transaction commit failed", "files", len(desiredFiles), "duration_ms", time.Since(commitStarted).Milliseconds(), "error", err)
-			return nil, nil, changed, fmt.Errorf("commit dependency config and locks: %w", err)
+			return nil, nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)
 		}
 		slog.Info("lock transaction commit completed", "files", len(desiredFiles), "changed", len(commitResult.Changed), "duration_ms", time.Since(commitStarted).Milliseconds())
 	} else {
@@ -947,12 +968,35 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		verificationStarted := time.Now()
 		if err := config.ValidateOrganizationTrustUnit(ec.Organization.Path, true, false); err != nil {
 			slog.Error("organization lock verification failed", "duration_ms", time.Since(verificationStarted).Milliseconds(), "error", err)
-			return nil, nil, changed, fmt.Errorf("verify resulting organization config and lock: %w", err)
+			return nil, nil, changed, nil, fmt.Errorf("verify resulting organization config and lock: %w", err)
 		}
 		slog.Info("organization lock verification completed", "duration_ms", time.Since(verificationStarted).Milliseconds())
 	}
+	for path, data := range lockDesired {
+		lockExpectations[path] = dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
+	}
+	validateExactLocks := func() error {
+		paths := make([]string, 0, len(lockExpectations))
+		for path := range lockExpectations {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			got, err := dependencytxn.ReadGeneration(path)
+			if err != nil {
+				return fmt.Errorf("read exact lock generation %s: %w", path, err)
+			}
+			if got != lockExpectations[path] {
+				return fmt.Errorf("%w: exact lock changed at %s", dependencytxn.ErrGenerationConflict, path)
+			}
+		}
+		return nil
+	}
 
 	option := catalog.WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+		if err := validateExactLocks(); err != nil {
+			return "", "", err
+		}
 		canonical, err := canonicalRegistryURL(entry.URL)
 		if err != nil {
 			return "", "", err
@@ -969,7 +1013,24 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
 	})
-	return option, exactMarketplaceView(documents), changed, nil
+	marketplaceView := func(input *config.Config) (*config.Config, error) {
+		if err := validateExactLocks(); err != nil {
+			return nil, err
+		}
+		return exactMarketplaceView(documents)(input)
+	}
+	resultLease = func(ctx context.Context) (func(), error) {
+		release, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateExactLocks(); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+	return option, marketplaceView, changed, resultLease, nil
 }
 
 type reconciledDocument struct {

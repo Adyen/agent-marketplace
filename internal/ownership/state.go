@@ -317,12 +317,12 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, err := os.ReadFile(s.StateFile())
+	data, err := readOwnershipFile(s.StateFile(), maxOwnershipMetadataSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 		}
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
 	}
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err != nil {
@@ -357,7 +357,7 @@ func (s *Store) commitRecord(rec *Record) error {
 	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
 		return fmt.Errorf("ownership: create state directory: %w", err)
 	}
-	return atomicWrite(s.StateFile(), data, 0o600)
+	return s.atomicWrite(s.StateFile(), data, 0o600)
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently

@@ -213,6 +213,34 @@ func TestCrashInjectionAtEveryBoundary(t *testing.T) {
 
 // A crash before the aggregate is published, followed by a user edit, must
 // abandon the staged generation and leave the user's bytes alone.
+func TestApplyRejectsConcurrentModeChangeWithExpectedPriorMode(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	if err := os.Chmod(f.absFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.store().Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "generated-server", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorDigest: Digest([]byte(priorContent)), ExpectPriorMode: 0o644,
+	})
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("Apply error = %v, want ErrGenerationConflict", err)
+	}
+	if got, present := f.readAggregate(); !present || got != priorContent {
+		t.Fatalf("aggregate changed on mode conflict: %q (present=%v)", got, present)
+	}
+	if info, statErr := os.Stat(f.absFile); statErr != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("aggregate mode after conflict = %v/%v, want 0600", info, statErr)
+	}
+	assertJournalPhase(t, f.store(), "")
+	if backups, backupErr := f.store().SafetyBackups(f.rel); backupErr != nil || len(backups) != 0 {
+		t.Fatalf("safety backups after mode conflict = %d/%v, want none", len(backups), backupErr)
+	}
+	assertNoStagedFiles(t, f)
+}
+
 func TestRecoveryAbandonsAStagedGenerationWhenTheAggregateChangedUnderneath(t *testing.T) {
 	f := newFixture(t)
 	f.writeAggregate(priorContent)
@@ -301,6 +329,142 @@ func TestRollbackOfAFirstWriteLeavesNoFile(t *testing.T) {
 	}
 	if backups[0].Manifest.PriorSize != 0 {
 		t.Fatalf("manifest PriorSize = %d, want 0", backups[0].Manifest.PriorSize)
+	}
+}
+
+// A directory fsync failure after the journal rename returns an error but keeps
+// the renamed journal so recovery can finish the published generation.
+func TestApplyRetainsJournalAndStagedFileAfterStagedDirectoryFsyncFailure(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	injected := errors.New("injected aggregate directory fsync failure")
+	failed := false
+	st := f.store(WithFsyncDir(func(dir string) error {
+		if dir == f.targetRoot && !failed {
+			failed = true
+			return injected
+		}
+		return fsyncDir(dir)
+	}))
+
+	_, err := st.Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "generated-server", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorDigest: Digest([]byte(priorContent)),
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("Apply error = %v, want injected staged-directory fsync failure", err)
+	}
+	if got, _ := f.readAggregate(); got != priorContent {
+		t.Fatalf("aggregate = %q, want pre-mutation bytes", got)
+	}
+	journal, err := st.ReadJournal()
+	if err != nil || journal == nil || journal.Phase != PhasePrepared {
+		t.Fatalf("journal = %#v, %v, want retained prepared evidence", journal, err)
+	}
+	if !fileExists(t, journal.StagedPath) {
+		t.Fatal("staged recovery file disappeared after its directory fsync failed")
+	}
+
+	st.syncDir = fsyncDir
+	outcomes, err := st.Recover()
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(outcomes) != 1 || outcomes[0].Action != ActionRolledBack {
+		t.Fatalf("recovery outcomes = %#v, want one rollback", outcomes)
+	}
+	assertJournalPhase(t, st, "")
+	assertNoStagedFiles(t, f)
+}
+
+func TestApplyRetainsJournalAfterJournalRenameFsyncFailure(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	injected := errors.New("injected journal directory fsync failure")
+	st := f.store()
+	recordSyncs := 0
+	st.syncDir = func(dir string) error {
+		if dir == st.recordDir() {
+			recordSyncs++
+			if recordSyncs == 2 {
+				return injected
+			}
+		}
+		return fsyncDir(dir)
+	}
+
+	_, err := st.Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "generated-server", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorDigest: Digest([]byte(priorContent)),
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("Apply error = %v, want injected journal fsync failure", err)
+	}
+	if got, _ := f.readAggregate(); got != nextContent {
+		t.Fatalf("aggregate = %q, want published bytes", got)
+	}
+	journal, err := st.ReadJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal == nil || journal.Phase != PhaseAggregateRenamed {
+		t.Fatalf("journal = %#v, want retained aggregate-renamed evidence", journal)
+	}
+	assertGeneration(t, st, 0)
+
+	st.syncDir = func(dir string) error {
+		if dir == st.recordDir() {
+			recordSyncs++
+		}
+		return fsyncDir(dir)
+	}
+	outcomes, err := st.Recover()
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(outcomes) != 1 || outcomes[0].Action != ActionRolledForward {
+		t.Fatalf("recovery outcomes = %#v, want one roll-forward", outcomes)
+	}
+	assertGeneration(t, st, 1)
+	assertJournalPhase(t, st, "")
+	if recordSyncs < 4 {
+		t.Fatalf("record directory syncs = %d, want journal and recovery syncs", recordSyncs)
+	}
+}
+
+func TestRollForwardRejectsUserEditAfterPublication(t *testing.T) {
+	f := newFixture(t)
+	f.writeAggregate(priorContent)
+	crashing := f.store(WithCrasher(CrashAt(CrashAfterJournalRenamed)))
+	proof, _ := crashing.Proof(f.rel)
+	if _, err := crashing.Apply(Mutation{
+		Rel: f.rel, AbsFile: f.absFile, NextBytes: []byte(nextContent),
+		Entries: []Entry{mcpEntry("generated", "generated-server", `{"command":"new"}`)}, Reason: ReasonSync,
+		ExpectPriorGeneration: proof.Generation(), ExpectPriorDigest: Digest([]byte(priorContent)),
+	}); !errors.Is(err, ErrInjectedCrash) {
+		t.Fatalf("Apply error = %v, want an injected crash", err)
+	}
+	const userEdit = "{\n  // edited after publication\n  \"mcpServers\": {}\n}\n"
+	f.writeAggregate(userEdit)
+
+	recovering := f.store()
+	_, err := recovering.Recover()
+	if !errors.Is(err, ErrForeignChange) {
+		t.Fatalf("Recover error = %v, want ErrForeignChange", err)
+	}
+	coded, ok := diag.AsCodedError(err)
+	if !ok || coded.Code != diag.CodeOwnershipForeignChange {
+		t.Fatalf("error = %v, want code %q", err, diag.CodeOwnershipForeignChange)
+	}
+	if got, _ := f.readAggregate(); got != userEdit {
+		t.Fatalf("aggregate = %q, want user edit preserved", got)
+	}
+	assertGeneration(t, recovering, 0)
+	journal, readErr := recovering.ReadJournal()
+	if readErr != nil || journal == nil {
+		t.Fatalf("journal = %#v, %v, want retained foreign-change evidence", journal, readErr)
 	}
 }
 

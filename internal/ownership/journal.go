@@ -29,8 +29,8 @@ const (
 	// decided by comparing the live file against the digests the journal
 	// RECORDED, never by inspecting what the entries look like.
 	PhasePrepared Phase = "prepared"
-	// PhaseAggregateRenamed means the patched aggregate is live and the matching
-	// ownership generation still has to be committed.
+	// PhaseAggregateRenamed means the patched aggregate is expected to be live;
+	// recovery verifies its recorded digest before committing ownership.
 	PhaseAggregateRenamed Phase = "aggregate-renamed"
 )
 
@@ -96,6 +96,11 @@ type Mutation struct {
 	// An empty string means "the file was absent when I read it". A non-empty
 	// string must be a sha256 digest produced by [Digest].
 	ExpectPriorDigest string
+
+	// ExpectPriorMode is an optional compare-and-swap precondition for the
+	// aggregate's permission bits. Zero preserves compatibility with callers
+	// that predate mode-aware ownership transactions.
+	ExpectPriorMode os.FileMode
 }
 
 // Result reports what one applied generation did.
@@ -141,12 +146,14 @@ var ErrGenerationConflict = errors.New(
 //
 // In addition to the lock, Apply checks a compare-and-swap precondition just
 // before renaming the aggregate: [Mutation.ExpectPriorGeneration] must still
-// equal the durable record's Generation and [Mutation.ExpectPriorDigest] must
-// still equal the live aggregate's Digest (or "" when the file was absent).
+// equal the durable record's Generation, [Mutation.ExpectPriorDigest] must
+// still equal the live aggregate's Digest (or "" when the file was absent),
+// and [Mutation.ExpectPriorMode], when provided, must equal its permission bits.
 // This is the backstop for the unserialized/degraded path and for external
 // writers that do not participate in the per-root lock. Zero values mean the
 // caller expects no record and an absent file, which is exactly the first-use
-// case; callers that read an existing file or record must populate both fields.
+// case; callers that read an existing file or record must populate the fields
+// they use.
 //
 // Acquisition is reentrant per Store, so a caller that already opened a section
 // around Recover plus several Apply calls only bumps a depth counter here. See
@@ -263,7 +270,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	if fi, statErr := os.Stat(m.AbsFile); statErr == nil {
 		mode = fi.Mode().Perm()
 	}
-	if err := writeStaged(journal.StagedPath, m.NextBytes, mode); err != nil {
+	if err := writeStaged(journal.StagedPath, m.NextBytes, mode, s.syncDirectory); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			// O_EXCL proves this attempt did not create the collided path. First
 			// durably disarm recovery, then clear only this attempt's journal and
@@ -307,7 +314,7 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 	if err := os.Rename(journal.StagedPath, m.AbsFile); err != nil {
 		return Result{}, fmt.Errorf("ownership: publish %s: %w", m.AbsFile, err)
 	}
-	if err := fsyncDir(filepath.Dir(m.AbsFile)); err != nil {
+	if err := s.syncDirectory(filepath.Dir(m.AbsFile)); err != nil {
 		return Result{}, err
 	}
 
@@ -328,9 +335,9 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		return Result{}, err
 	}
 
-	// STEP 5: journal phase "aggregate-renamed", fsynced. This is a pure
-	// narrowing of recovery's search: it lets recovery roll forward without
-	// having to trust a digest comparison.
+	// STEP 5: journal phase "aggregate-renamed", fsynced. This narrows recovery's
+	// search, while recovery still verifies the live aggregate against the
+	// recorded digest before committing ownership.
 	journal.Phase = PhaseAggregateRenamed
 	journal.UpdatedAt = s.now().UTC().Format(time.RFC3339Nano)
 	if err := s.writeJournal(journal); err != nil {
@@ -413,6 +420,20 @@ func (s *Store) assertPrecondition(m Mutation) error {
 		return fmt.Errorf("%w: expected prior digest %s, found %s",
 			ErrGenerationConflict, m.ExpectPriorDigest, liveDigest)
 	}
+	if m.ExpectPriorMode != 0 {
+		info, statErr := os.Stat(m.AbsFile)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				return fmt.Errorf("%w: expected prior mode %o, aggregate is absent",
+					ErrGenerationConflict, m.ExpectPriorMode)
+			}
+			return fmt.Errorf("ownership: stat %s for mode CAS precondition: %w", m.AbsFile, statErr)
+		}
+		if info.Mode().Perm() != m.ExpectPriorMode {
+			return fmt.Errorf("%w: expected prior mode %o, found %o",
+				ErrGenerationConflict, m.ExpectPriorMode, info.Mode().Perm())
+		}
+	}
 	return nil
 }
 
@@ -457,6 +478,9 @@ func validateMutation(m Mutation) error {
 	if m.ExpectPriorDigest != "" && !digestPattern.MatchString(m.ExpectPriorDigest) {
 		return fmt.Errorf("ownership: expect-prior-digest %q is not a sha256 digest", m.ExpectPriorDigest)
 	}
+	if m.ExpectPriorMode != m.ExpectPriorMode.Perm() {
+		return fmt.Errorf("ownership: invalid expect-prior-mode %o", m.ExpectPriorMode)
+	}
 	switch m.Reason {
 	case ReasonSync, ReasonAdoption:
 	case ReasonOrphanRemoval, ReasonConflictReplace:
@@ -489,7 +513,7 @@ func validStagedPath(staged, absFile string, generation uint64) bool {
 // writeStaged writes and fsyncs the replacement content. It is not atomicWrite:
 // the staging file IS the temp file, and it must survive a crash under a name the
 // journal recorded so recovery can find and delete it.
-func writeStaged(path string, data []byte, mode os.FileMode) error {
+func writeStaged(path string, data []byte, mode os.FileMode, syncDir func(string) error) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return fmt.Errorf("ownership: create staged file %s: %w", path, err)
@@ -510,7 +534,7 @@ func writeStaged(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("ownership: close staged file %s: %w", path, err)
 	}
-	return fsyncDir(filepath.Dir(path))
+	return syncDir(filepath.Dir(path))
 }
 
 func (s *Store) writeJournal(j *Journal) error {
@@ -518,7 +542,7 @@ func (s *Store) writeJournal(j *Journal) error {
 	if err != nil {
 		return fmt.Errorf("ownership: marshal journal: %w", err)
 	}
-	if err := atomicWrite(s.JournalFile(), append(data, '\n'), 0o600); err != nil {
+	if err := s.atomicWrite(s.JournalFile(), append(data, '\n'), 0o600); err != nil {
 		return err
 	}
 	slog.Debug("ownership journal written",
@@ -534,17 +558,18 @@ func (s *Store) clearJournal() error {
 	if err := remove(s.JournalFile()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ownership: clear journal: %w", err)
 	}
-	return fsyncDir(s.recordDir())
+	return s.syncDirectory(s.recordDir())
 }
 
 // ReadJournal returns the in-flight journal, or nil when there is none.
 func (s *Store) ReadJournal() (*Journal, error) {
-	data, err := os.ReadFile(s.JournalFile())
+	data, err := readOwnershipFile(s.JournalFile(), maxOwnershipMetadataSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("ownership: read journal: %w", err)
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
+			fmt.Errorf("%w: read journal: %w", ErrStateCorrupt, err))
 	}
 	var j Journal
 	if err := json.Unmarshal(data, &j); err != nil {
@@ -721,6 +746,9 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 
 	switch j.Phase {
 	case PhaseAggregateRenamed:
+		if err := s.verifyPublishedAggregate(j); err != nil {
+			return nil, err
+		}
 		return s.rollForward(j, current)
 	case PhasePrepared:
 		live, liveErr := os.ReadFile(j.AbsFile)
@@ -741,6 +769,18 @@ func (s *Store) recoverLocked() ([]RecoveryOutcome, error) {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(),
 			fmt.Errorf("%w: unknown journal phase %q", ErrStateCorrupt, j.Phase))
 	}
+}
+
+func (s *Store) verifyPublishedAggregate(j *Journal) error {
+	live, err := readOwnershipFile(j.AbsFile, 0)
+	if err != nil {
+		return coded(diag.CodeOwnershipStateCorrupt, s.JournalFile(), fmt.Errorf("%w: published aggregate is unsafe: %v", ErrStateCorrupt, err))
+	}
+	if Digest(live) != j.NextDigest {
+		return coded(diag.CodeOwnershipForeignChange, j.File,
+			fmt.Errorf("%w: published aggregate digest does not match journal", ErrForeignChange))
+	}
+	return nil
 }
 
 func (s *Store) rollForward(j *Journal, current *Record) ([]RecoveryOutcome, error) {

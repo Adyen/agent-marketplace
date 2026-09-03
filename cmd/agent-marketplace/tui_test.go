@@ -67,7 +67,7 @@ func TestTUIConfigMutationCommitsProjectConfigWithExactLock(t *testing.T) {
 	projectPath := config.ProjectConfigPath(repo)
 	writeConfig(t, projectPath, "\n")
 	t.Chdir(repo)
-	if _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{}); err != nil {
+	if _, _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{}); err != nil {
 		t.Fatalf("prepare initial locks: %v", err)
 	}
 	if err := runTUIConfigMutation(context.Background(), repo, func(mapper pipeline.ConfigPathMapper) error {

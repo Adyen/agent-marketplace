@@ -116,6 +116,9 @@ type Store struct {
 	// removeJournalFile overrides journal deletion for failure-path tests. It is
 	// nil in production, where clearJournal uses os.Remove.
 	removeJournalFile func(string) error
+	// syncDir overrides directory syncing for failure-path tests. It is nil in
+	// production, where syncDirectory uses fsyncDir.
+	syncDir func(string) error
 }
 
 // Option customizes a Store.
@@ -130,6 +133,16 @@ func WithStateRoot(dir string) Option {
 // WithCrasher installs a crash injector.
 func WithCrasher(c Crasher) Option {
 	return func(s *Store) { s.crasher = c }
+}
+
+// WithFsyncDir replaces directory syncing for tests that need to exercise a
+// failure after an on-disk rename. Production uses fsyncDir by default.
+func WithFsyncDir(syncDir func(string) error) Option {
+	return func(s *Store) {
+		if syncDir != nil {
+			s.syncDir = syncDir
+		}
+	}
 }
 
 // WithClock overrides the clock used for timestamps.
@@ -166,6 +179,7 @@ func Open(targetRoot string, opts ...Option) (*Store, error) {
 		now:           time.Now,
 		retain:        SafetyBackupRetention,
 		lockTimeout:   DefaultLockTimeout,
+		syncDir:       fsyncDir,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -222,10 +236,10 @@ func (s *Store) crash(point CrashPoint) error {
 	return s.crasher.Crash(point)
 }
 
-// atomicWrite writes data to path atomically and durably: a temp file in the
-// same directory, fsync of the file, rename, then fsync of the directory so the
-// rename itself survives a power loss.
-func atomicWrite(path string, data []byte, mode os.FileMode) error {
+// atomicWriteWithSync writes data to path atomically and durably: a temp file
+// in the same directory, fsync of the file, rename, then fsync of the directory
+// so the rename itself survives a power loss.
+func atomicWriteWithSync(path string, data []byte, mode os.FileMode, syncDir func(string) error) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
 	if err != nil {
@@ -256,6 +270,17 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("ownership: rename %s: %w", tmpName, err)
 	}
+	return syncDir(dir)
+}
+
+func (s *Store) atomicWrite(path string, data []byte, mode os.FileMode) error {
+	return atomicWriteWithSync(path, data, mode, s.syncDirectory)
+}
+
+func (s *Store) syncDirectory(dir string) error {
+	if s.syncDir != nil {
+		return s.syncDir(dir)
+	}
 	return fsyncDir(dir)
 }
 
@@ -265,10 +290,19 @@ func fsyncDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("ownership: open dir %s: %w", dir, err)
 	}
-	defer func() { _ = f.Close() }()
-	// Some filesystems refuse fsync on a directory. That is not a reason to
-	// fail the whole mutation: the rename is still ordered, we simply cannot
-	// prove it reached the platter.
-	_ = f.Sync()
-	return nil
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	if syncErr != nil {
+		syncErr = fmt.Errorf("ownership: fsync dir %s: %w", dir, syncErr)
+	}
+	if closeErr != nil {
+		closeErr = fmt.Errorf("ownership: close dir %s: %w", dir, closeErr)
+	}
+	if syncErr != nil && closeErr != nil {
+		return errors.Join(syncErr, closeErr)
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }

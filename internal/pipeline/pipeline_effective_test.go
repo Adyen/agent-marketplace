@@ -143,6 +143,39 @@ registries: []
 	}
 }
 
+func TestSyncRevalidatesExactLocksBeforeMaterialization(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	orgPath := filepath.Join(dir, "org.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+registries: []
+`)
+	concurrent := errors.New("exact lock changed concurrently")
+	called := false
+	result := Sync(context.Background(), ResolveOptions{
+		RepoRoot: dir,
+		NoBackup: true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: orgPath,
+			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
+			RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+			LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+		},
+		ExactLockLease: func(context.Context) (func(), error) {
+			called = true
+			return nil, concurrent
+		},
+	})
+	if !called {
+		t.Fatal("exact lock lease was not acquired before materialization")
+	}
+	if !errors.Is(errors.Join(result.Errors...), concurrent) {
+		t.Fatalf("sync errors = %v, want concurrent exact-lock error", result.Errors)
+	}
+}
+
 func TestSync_NoLegacyOrgFallbackUnmanaged(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

@@ -3,11 +3,13 @@
 package cache
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -18,6 +20,16 @@ const (
 )
 
 func acquireCacheFileLock(operation int) (func(), error) {
+	return acquireCacheFileLockWithContext(context.Background(), operation)
+}
+
+func acquireCacheFileLockWithContext(ctx context.Context, operation int) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cacheRoot := CacheDir()
 	lockPath := cacheRoot + ".mutation.lock"
 	parent := filepath.Dir(cacheRoot)
@@ -49,9 +61,37 @@ func acquireCacheFileLock(operation int) (func(), error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("secure cache mutation lock: %w", err)
 	}
-	if err := unix.Flock(fd, operation); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock cache mutation: %w", err)
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		err := unix.Flock(fd, operation|unix.LOCK_NB)
+		if err == nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				_ = unix.Flock(fd, unix.LOCK_UN)
+				_ = file.Close()
+				return nil, ctxErr
+			}
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock cache mutation: %w", err)
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	var once sync.Once
 	return func() {

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -412,6 +413,76 @@ func TestGarbageCollectWithLocksSeparatesCommitsFromSameSource(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("reachable exact Git state %q was removed: %v", path, err)
 		}
+	}
+}
+
+func TestGarbageCollectWithLocksRevalidatesReachabilityUnderExclusiveLease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	source := "https://git.example.com/catalog.git"
+	reachableOID, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanOID, err := ParseGitOID("sha1:" + strings.Repeat("2", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reachable := exactGitSnapshotPath(source, reachableOID)
+	orphan := exactGitSnapshotPath(source, orphanOID)
+	for _, path := range []string{reachable, orphan} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit, err := lockfile.ParseGitOID(reachableOID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: source, Ref: "main", Commit: commit}}}
+	entered := make(chan struct{})
+	releaseReader := make(chan struct{})
+	reader := func(ctx context.Context) ([]lockfile.Document, error) {
+		close(entered)
+		select {
+		case <-releaseReader:
+			return []lockfile.Document{doc}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := GarbageCollectWithLocksAndContext(context.Background(), false, nil, reader, &config.Config{})
+		gcDone <- err
+	}()
+	<-entered
+	publisherAcquired := make(chan struct{})
+	publisherDone := make(chan error, 1)
+	go func() {
+		release, err := AcquireExactGitNamespaceLeaseWithContext(context.Background())
+		if err == nil {
+			close(publisherAcquired)
+			release()
+		}
+		publisherDone <- err
+	}()
+	select {
+	case <-publisherAcquired:
+		t.Fatal("lock publisher acquired shared lease while GC revalidated reachability")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseReader)
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-publisherDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(reachable); err != nil {
+		t.Fatalf("revalidated reachable snapshot was removed: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan snapshot survived GC: %v", err)
 	}
 }
 

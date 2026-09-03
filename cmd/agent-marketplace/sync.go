@@ -16,6 +16,7 @@ import (
 
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -30,15 +31,37 @@ func newSyncCmd() *cobra.Command {
 	var strict bool
 	var pruneStale bool
 	var verbose bool
+	var offline bool
+	var locked bool
+	var allowRevoked []string
+	var policy resolver.MarketplaceRevocationPolicy
 
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync enabled skills into local skill directories",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if checkOnly {
-				return runSyncCheck(cmd.Context(), cmd.OutOrStdout())
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if offline && pruneStale {
+				return fmt.Errorf("--prune-stale cannot be used with --offline: cached snapshots must never drive destructive stale-selection pruning")
 			}
-			return runSync(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose)
+			if locked && pruneStale {
+				return fmt.Errorf("--prune-stale cannot be used with --locked: locked mode forbids config writes")
+			}
+			parsedPolicy, err := marketplace.NewRevocationOverridePolicy(allowRevoked)
+			if err != nil {
+				return fmt.Errorf("invalid --allow-revoked value: %w", err)
+			}
+			policy = parsedPolicy
+			if checkOnly && len(allowRevoked) > 0 {
+				return fmt.Errorf("--allow-revoked cannot be used with --check: revoked overrides are execution-only and checks must remain unhealthy")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			locked = locked || checkOnly || offline
+			if checkOnly {
+				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline, locked)
+			}
+			return runSync(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, policy, lockRunOptions{locked: locked})
 		},
 	}
 
@@ -47,33 +70,54 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
+	cmd.Flags().BoolVar(&locked, "locked", false, "Require fresh lock files and never update config or locks")
+	cmd.Flags().StringArrayVar(&allowRevoked, "allow-revoked", nil, "Allow one exact revoked Marketplace pin for this invocation: marketplace/source/kind/name@sha256:<64 lowercase hex>")
 
 	return cmd
 }
 
-func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool) error {
-	if err := config.EnsureGlobalConfig(); err != nil {
-		slog.Warn("failed to create global config skeleton", "error", err)
+type lockRunOptions struct {
+	locked bool
+}
+
+func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, policy resolver.MarketplaceRevocationPolicy, lockOpts ...lockRunOptions) error {
+	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	if !offline && !locked {
+		if err := config.EnsureGlobalConfig(); err != nil {
+			slog.Warn("failed to create global config skeleton", "error", err)
+		}
 	}
 
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, SkipInventory: pruneStale}
 	localDir := config.FindLocalConfigDir()
+	var lockWarnings []error
+	exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings})
+	if err != nil {
+		style := newSyncOutputStyle(out)
+		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
+			return errors.Join(err, summaryErr)
+		}
+		if pruneStale {
+			labels := configuredSelectionLabels(ctx, repoRoot, localDir)
+			kept := "configured selections"
+			if len(labels) > 0 {
+				kept = fmt.Sprintf("%d configured selection(s): %s", len(labels), strings.Join(labels, ", "))
+			}
+			if _, outputErr := fmt.Fprintf(out, "prune-stale skipped: the catalog could not be trusted this run (1 catalog/resolve error(s)), so %s were kept\n", kept); outputErr != nil {
+				return errors.Join(err, outputErr)
+			}
+		}
+		return err
+	}
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, MarketplaceRevocationPolicy: policy, CatalogOption: []pkgcatalog.LoadOption{exactOption}, MarketplaceExactView: exactMarketplace, ExactLockLease: exactLease}
+
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir
 		resolveOpts.LocalConfigDir = localDir
 	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
-	// A prune-capable pass suppresses Resolve's preliminary generation. If this
-	// pass does not mutate config, its already-computed resolution is final and
-	// must be recorded exactly once. A successful mutation disables this defer;
-	// the recursive non-pruning sync records the post-mutation generation.
-	recordComputedInventory := pruneStale
-	defer func() {
-		if recordComputedInventory {
-			pipeline.RecordResolvedInventory(ctx, syncResult.ResolveResult)
-		}
-	}()
+	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
 	malformedCount := syncResult.CatalogLoad.MalformedCount
 	mergedCfg := syncResult.MergedCfg
@@ -250,7 +294,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			// remove (collection-sourced, or a failed config edit) are still
 			// in the config — silently discarding the promotion the user
 			// asked for. Pinned by TestSyncPruneStaleStrictSurvivesTheReSync.
-			return runSync(ctx, out, noBackup, strict, false, verbose)
+			return runSync(ctx, out, noBackup, strict, false, verbose, offline, policy, lockRunOptions{locked: locked})
 		}
 	}
 
@@ -348,11 +392,17 @@ func printRemediations(out io.Writer, issues []error) error {
 	return nil
 }
 
-func runSyncCheck(ctx context.Context, out io.Writer) error {
+func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh}
-	resolveOpts.RequireTargetSet = true
+	isOffline := len(offline) > 0 && offline[0]
 	localDir := config.FindLocalConfigDir()
+	var lockWarnings []error
+	exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, warningSink: &lockWarnings})
+	if err != nil {
+		return err
+	}
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, MarketplaceExactView: exactMarketplace, ExactLockLease: exactLease}
+	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir
 		resolveOpts.LocalConfigDir = localDir

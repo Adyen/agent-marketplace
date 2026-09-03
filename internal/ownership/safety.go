@@ -196,7 +196,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	// The raw bytes are written even when the file was absent: a zero-byte .bak
 	// with PriorAbsent=true is what lets recovery and `doctor` distinguish "we
 	// created this file" from "we replaced an empty file".
-	if err := atomicWrite(backupPath, raw, 0o600); err != nil {
+	if err := s.atomicWrite(backupPath, raw, 0o600); err != nil {
 		return "", "", false, err
 	}
 	manifest := BackupManifest{
@@ -216,7 +216,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	if err != nil {
 		return "", "", false, fmt.Errorf("ownership: marshal backup manifest: %w", err)
 	}
-	if err := atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
+	if err := s.atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
 		return "", "", false, err
 	}
 	slog.Info("safety backup written",
@@ -260,7 +260,7 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 			return fmt.Errorf("ownership: prune safety backup manifest: %w", err)
 		}
 	}
-	return fsyncDir(dir)
+	return s.syncDirectory(dir)
 }
 
 // SafetyBackups returns the retained backups for one canonical output file,
@@ -302,7 +302,7 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 		if err := validateRegularFile(metaPath, false); err != nil {
 			return nil, err
 		}
-		metaBytes, err := os.ReadFile(metaPath)
+		metaBytes, err := readOwnershipFile(metaPath, maxOwnershipMetadataSize)
 		if err != nil {
 			continue
 		}
