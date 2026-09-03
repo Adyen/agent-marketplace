@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -347,9 +348,17 @@ func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.Resou
 func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.AssessedResourceRevision, error) {
 	args := []any{filter.Marketplace}
 	where := "rr.marketplace_id=? AND r.listed=1"
-	if filter.Registry != "" {
-		where += " AND (rr.registry_id=? OR r.slug=?)"
-		args = append(args, filter.Registry, filter.Registry)
+	registryValues := filter.RegistryValues()
+	registryClauses := make([]string, 0, len(registryValues))
+	for _, registry := range registryValues {
+		if registry == "" {
+			continue
+		}
+		registryClauses = append(registryClauses, "(rr.registry_id=? OR r.slug=?)")
+		args = append(args, registry, registry)
+	}
+	if len(registryClauses) > 0 {
+		where += " AND (" + strings.Join(registryClauses, " OR ") + ")"
 	}
 	if filter.Kind != "" {
 		where += " AND rr.kind=?"

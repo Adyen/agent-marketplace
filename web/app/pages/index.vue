@@ -53,7 +53,7 @@ const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
 const marketplaceCommand = computed(() => marketplaceInstallCommand(metadata.value?.canonical_url ?? ''))
 const apiEndpoint = computed(() => apiPath(config.public.apiBase, '/search'))
-const hasFilters = computed(() => Boolean(searchParams.value.q || searchParams.value.kind || searchParams.value.registry))
+const hasFilters = computed(() => Boolean(searchParams.value.q || searchParams.value.kind || searchParams.value.registry.length))
 
 /*
  * Withheld entries are the norm on this instance, not the exception, so the
@@ -71,7 +71,7 @@ const resultStatus = computed(() => {
   return `${results.value?.total ?? 0} resources available.`
 })
 
-watch(() => [draft.q, draft.registry], scheduleSearch)
+watch(() => [draft.q, draft.registry.join('\u0000')], scheduleSearch)
 watch(() => [draft.kind, draft.limit], applyDraft)
 onBeforeUnmount(() => clearTimeout(searchTimer))
 
@@ -93,6 +93,11 @@ function submitSearch() {
   clearTimeout(searchTimer)
   searchTimer = undefined
   void router.push({ query: toLocationQuery({ ...draft, offset: 0 }) })
+}
+
+function clearSearch() {
+  draft.q = ''
+  submitSearch()
 }
 
 function resetSearch() {
@@ -164,7 +169,11 @@ useHead({
           <form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end" role="search" @submit.prevent="submitSearch">
             <div class="min-w-0 flex-1">
               <label for="search-query" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Search</label>
-              <UInput id="search-query" v-model="draft.q" size="md" icon="i-lucide-search" placeholder="code review, deploy, database" autocomplete="off" class="w-full" />
+              <UInput id="search-query" v-model="draft.q" size="md" icon="i-lucide-search" placeholder="code review, deploy, database" autocomplete="off" :ui="{ trailing: 'pe-1' }" class="w-full">
+                <template v-if="draft.q" #trailing>
+                  <UButton type="button" color="neutral" variant="link" size="sm" icon="i-lucide-x" aria-label="Clear search" @click="clearSearch" />
+                </template>
+              </UInput>
             </div>
             <div class="w-full sm:w-44">
               <label for="search-kind" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Kind</label>
@@ -172,7 +181,7 @@ useHead({
             </div>
             <div class="w-full sm:w-44">
               <label for="search-registry" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Registry</label>
-              <UInputMenu id="search-registry" v-model="draft.registry" :items="registryOptions" mode="autocomplete" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
+              <UInputMenu id="search-registry" v-model="draft.registry" multiple :items="registryOptions" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
             </div>
             <UButton type="submit" size="md" color="primary" class="justify-center">Search</UButton>
           </form>

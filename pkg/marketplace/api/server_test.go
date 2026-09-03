@@ -232,6 +232,12 @@ func TestServerRoutes(t *testing.T) {
 		t.Fatalf("search missing review: %s", body)
 	}
 
+	resp = mustGet(t, public.URL+"/api/v1/search?registry=missing&registry=test-source")
+	body = mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"total":1`) || !strings.Contains(body, `"name":"review"`) {
+		t.Fatalf("multi-registry search status/body = %d/%s", resp.StatusCode, body)
+	}
+
 	resp = mustGet(t, public.URL+"/api/v1/registries")
 	body = mustRead(t, resp)
 	if resp.StatusCode != http.StatusOK {

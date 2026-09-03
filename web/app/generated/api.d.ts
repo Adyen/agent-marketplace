@@ -1057,7 +1057,7 @@ export interface operations {
                 limit?: number;
                 offset?: number;
                 q?: string;
-                registry?: string;
+                registry?: string[];
             };
             header?: never;
             path?: never;

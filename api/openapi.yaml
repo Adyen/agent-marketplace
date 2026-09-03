@@ -68,8 +68,12 @@ paths:
               - collection
         - in: query
           name: registry
+          style: form
+          explode: true
           schema:
-            type: string
+            type: array
+            items:
+              type: string
         - in: query
           name: q
           schema:
