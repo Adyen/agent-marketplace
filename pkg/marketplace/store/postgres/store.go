@@ -712,9 +712,17 @@ func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.Resou
 func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.AssessedResourceRevision, error) {
 	args := []any{string(filter.Marketplace)}
 	where := "rr.marketplace_id=$1 AND r.listed"
-	if filter.Registry != "" {
-		where += fmt.Sprintf(" AND (rr.registry_id=$%d OR r.slug=$%d)", len(args)+1, len(args)+2)
-		args = append(args, filter.Registry, filter.Registry)
+	registryValues := filter.RegistryValues()
+	registryClauses := make([]string, 0, len(registryValues))
+	for _, registry := range registryValues {
+		if registry == "" {
+			continue
+		}
+		registryClauses = append(registryClauses, fmt.Sprintf("(rr.registry_id=$%d OR r.slug=$%d)", len(args)+1, len(args)+2))
+		args = append(args, registry, registry)
+	}
+	if len(registryClauses) > 0 {
+		where += " AND (" + strings.Join(registryClauses, " OR ") + ")"
 	}
 	if filter.Kind != "" {
 		where += fmt.Sprintf(" AND rr.kind=$%d", len(args)+1)

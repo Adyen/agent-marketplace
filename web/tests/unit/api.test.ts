@@ -21,7 +21,7 @@ function revisionPayload(contentDigest: string, overrides: Record<string, unknow
 const params: SearchParams = {
   q: 'code review & deploy',
   kind: 'skill',
-  registry: 'team/tools',
+  registry: ['team/tools', 'community'],
   offset: 24,
   limit: 24,
 }
@@ -53,7 +53,7 @@ describe('Marketplace API URL handling', () => {
     expect(serializeSearchQuery(params)).toEqual({
       q: 'code review & deploy',
       kind: 'skill',
-      registry: 'team/tools',
+      registry: ['team/tools', 'community'],
       offset: 24,
       limit: 24,
     })
