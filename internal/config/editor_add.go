@@ -292,7 +292,22 @@ func EnsureRegistryWithDefaultInConfig(configPath, url, ref, path string) error 
 // already has exclude_all: true the file is left unchanged. Creates the file
 // and parent directories if they do not exist.
 func SetRegistryExcludeAllInConfig(configPath, url, ref, path string) error {
+	return setRegistryExcludeAllInConfig(configPath, url, ref, path, false)
+}
+
+// SetRegistryExcludeAllInConfigAtRef suppresses exactly one URL/path/ref
+// registry entry. Unlike the legacy helper, it never changes a sibling ref.
+func SetRegistryExcludeAllInConfigAtRef(configPath, url, ref, path string) error {
+	if strings.TrimSpace(ref) == "" {
+		return fmt.Errorf("registry ref is required")
+	}
+	return setRegistryExcludeAllInConfig(configPath, url, ref, path, true)
+}
+
+func setRegistryExcludeAllInConfig(configPath, url, ref, path string, requireRef bool) error {
 	url = strings.TrimSpace(url)
+	ref = strings.TrimSpace(ref)
+	path = strings.TrimSpace(path)
 	if url == "" {
 		return fmt.Errorf("registry url is required")
 	}
@@ -316,13 +331,19 @@ func SetRegistryExcludeAllInConfig(configPath, url, ref, path string) error {
 			if entryNode.Kind != yaml.MappingNode {
 				continue
 			}
-			urlNode := findRegistryURLNode(entryNode)
-			if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) {
-				continue
-			}
-			existingPath := yamlEntryPath(entryNode)
-			if strings.TrimSpace(path) != existingPath {
-				continue // same URL, different path — not a duplicate
+			if requireRef {
+				if !registryEntryMatchesExactURLPathRef(entryNode, url, path, ref) {
+					continue
+				}
+			} else {
+				urlNode := findRegistryURLNode(entryNode)
+				if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(url) {
+					continue
+				}
+				existingPath := yamlEntryPath(entryNode)
+				if path != existingPath {
+					continue // same URL, different path — not a duplicate
+				}
 			}
 			// Entry exists. Ensure exclude_all:true and remove contradictory
 			// selection fields (default + per-kind include lists), since

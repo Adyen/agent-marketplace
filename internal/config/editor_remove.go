@@ -883,8 +883,23 @@ func ValidateScopeBoundary(skillSource Source, targetScope Source) error {
 // the entry is not found. If removal leaves the registries: sequence empty,
 // the key is removed from the document.
 func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string) error {
+	return removeRegistryEntryFromConfig(configPath, registryURL, registryPath, "", false)
+}
+
+// RemoveRegistryEntryFromConfigAtRef removes exactly one URL/path/ref entry,
+// preserving sibling refs and their comments.
+func RemoveRegistryEntryFromConfigAtRef(configPath, registryURL, registryPath, registryRef string) error {
+	registryRef = strings.TrimSpace(registryRef)
+	if registryRef == "" {
+		return fmt.Errorf("registry ref is required")
+	}
+	return removeRegistryEntryFromConfig(configPath, registryURL, registryPath, registryRef, true)
+}
+
+func removeRegistryEntryFromConfig(configPath, registryURL, registryPath, registryRef string, requireRef bool) error {
 	registryURL = strings.TrimSpace(registryURL)
 	registryPath = strings.TrimSpace(registryPath)
+	registryRef = strings.TrimSpace(registryRef)
 	if registryURL == "" {
 		return fmt.Errorf("registry url is required")
 	}
@@ -912,7 +927,11 @@ func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string)
 			continue
 		}
 		entryURL, entryPath := entryURLAndPath(entryNode)
-		if NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && strings.TrimSpace(entryPath) == registryPath {
+		matches := NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && strings.TrimSpace(entryPath) == registryPath
+		if matches && requireRef {
+			matches = registryEntryMatchesExactURLPathRef(entryNode, registryURL, registryPath, registryRef)
+		}
+		if matches {
 			removed = true
 			continue
 		}

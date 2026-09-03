@@ -606,8 +606,8 @@ func TestResolveCollisionWarningNamesRefsForSameURLAndPath(t *testing.T) {
 	if !slices.Equal(warning.RunnersUp, wantRunnersUp) {
 		t.Fatalf("runners-up = %#v, want %#v", warning.RunnersUp, wantRunnersUp)
 	}
-	if got := warning.Remediation(); strings.Contains(got, "@v1.0") || !strings.Contains(got, "--from "+normalizedURL) {
-		t.Fatalf("remediation should use the URL/ref-independent CLI source: %q", got)
+	if got := warning.Remediation(); !strings.Contains(got, "--from "+normalizedURL) || !strings.Contains(got, "--ref v1.0") || strings.Contains(got, "@v1.0") {
+		t.Fatalf("remediation should retain the winning ref as a separate flag: %q", got)
 	}
 }
 
@@ -3499,6 +3499,21 @@ func TestCollectionCandidateAndMemberExclusionsRespectAuthority(t *testing.T) {
 	rootMember.Required = true
 	if collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{higherExclude}) {
 		t.Fatal("required collection member was excluded")
+	}
+}
+
+func TestResolveExcludeAllAtRefDoesNotBleedAcrossRefs(t *testing.T) {
+	main := ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "git@example.com:shared.git", RegistryPath: "skills", Ref: "main", Source: config.RepoCommitted, FilePrecedence: 1}
+	release := main
+	release.Ref = "release"
+	shadow := config.RegistryEntry{
+		URL: "git@example.com:shared.git", Path: "skills", Ref: "release",
+		Source: config.RepoCommitted, FilePrecedence: 2,
+		Skills: config.KindSelector{ExcludeAll: true},
+	}
+	got := applyCrossLayerExcludes([]ResolvedArtifact{main, release}, []config.RegistryEntry{shadow})
+	if len(got) != 1 || got[0].Ref != "main" {
+		t.Fatalf("resolved = %#v, want main ref preserved and release excluded", got)
 	}
 }
 

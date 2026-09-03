@@ -894,6 +894,45 @@ func TestNestedCollectionUsesWithResourcesFallback(t *testing.T) {
 	}
 }
 
+func TestExplicitPathMemberFiltersLocalExcludesAndHarnessesBeforePreference(t *testing.T) {
+	const memberURL = "git@example.com:member.git"
+	for _, tc := range []struct {
+		name      string
+		localExcl bool
+		userHarn  []string
+		targets   []hcc.Target
+	}{
+		{name: "local exclusion", localExcl: true, userHarn: []string{"factory"}},
+		{name: "incompatible repo owner", userHarn: []string{"factory"}, targets: []hcc.Target{hcc.TargetFactory}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			col := ir.NewCollection("root", "1.0.0", "root", []ir.CollectionMember{{Name: "bound", Kind: ir.KindSkill, Registry: memberURL, Path: "plugins"}}, nil, nil, ir.SourceRef{})
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: collectionsHost, Ref: "main", Collections: ks("root")},
+				{URL: memberURL, Ref: "main", Path: "plugins", Source: config.RepoCommitted, FilePrecedence: 2, Harnesses: []string{"cursor"}},
+				{URL: memberURL, Ref: "main", Path: "plugins", Source: config.UserPersonal, Harnesses: tc.userHarn},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "root", Resource: col}},
+				cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "bound"}},
+			}
+			var local *config.LocalConfig
+			if tc.localExcl {
+				local = &config.LocalConfig{Skills: kse(nil, []string{"bound"})}
+			}
+			resolved, errs := Resolve(cfg, catalogs, local, WithTargetHarnesses(tc.targets))
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors = %v", errs)
+			}
+			got := findResolved(resolved, "bound")
+			if got == nil || got.Source != config.UserPersonal {
+				t.Fatalf("bound member = %#v, want compatible machine owner", got)
+			}
+		})
+	}
+}
+
 func TestSharedNestedCollectionIsNotReportedAsCycle(t *testing.T) {
 	root := ir.NewCollection("root", "1.0.0", "root", nil, []string{"left", "right"}, nil, ir.SourceRef{})
 	left := ir.NewCollection("left", "1.0.0", "left", nil, []string{"shared"}, nil, ir.SourceRef{})

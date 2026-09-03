@@ -208,9 +208,15 @@ func (e *NameCollisionWarning) Remediation() string {
 	if len(e.RunnersUp) > 0 {
 		from := e.Winner
 		pathFlag := ""
+		refFlag := ""
 		// collisionSourceLabel appends " (path)" for same-URL different-path
 		// entries and " @ref" when refs are needed to distinguish sources.
-		// Extract the path for --path and use just the URL for --from.
+		// Strip display-only suffixes, but retain the winning ref as a real
+		// --ref argument so remediation cannot accidentally edit a sibling ref.
+		if idx := strings.LastIndex(from, " @"); idx >= 0 {
+			refFlag = " --ref " + from[idx+2:]
+			from = from[:idx]
+		}
 		if idx := strings.Index(from, " ("); idx >= 0 {
 			suffix := from[idx+2:]
 			if end := strings.Index(suffix, ")"); end >= 0 {
@@ -218,10 +224,7 @@ func (e *NameCollisionWarning) Remediation() string {
 			}
 			from = from[:idx]
 		}
-		if idx := strings.LastIndex(from, " @"); idx >= 0 {
-			from = from[:idx]
-		}
-		return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from %s%s'", e.Name, redact.URL(from), redact.URL(pathFlag))
+		return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from %s%s%s'", e.Name, redact.URL(from), redact.URL(pathFlag), refFlag)
 	}
 	return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from <url>'", e.Name)
 }
@@ -1161,7 +1164,28 @@ func expandMembersRecursive(
 			var chosen memberEntryCandidate
 			if requestedPath != "" {
 				atPath := candidatesAtPath(candidates, memberPath)
+				allAtPath := atPath
+				// A path pin identifies a set of candidate owners, not just a
+				// catalog path. Apply the same local exclusion and effective
+				// harness policy as path-less binding before choosing a winner.
+				atPath = filterCandidates(atPath, func(candidate memberEntryCandidate) bool {
+					return !localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, candidate.entry.Required, candidate.entry.Source)
+				})
+				if len(atPath) > 0 && len(targetSet) > 0 {
+					atPath = filterCandidates(atPath, func(candidate memberEntryCandidate) bool {
+						if len(effectiveMemberHarnesses(artifact.Harnesses, candidate.entry, true, targetSet)) == 0 {
+							appendEmptyHarnessError(candidate.entry, member.Kind, memberName, targetSet, errs)
+							return false
+						}
+						return true
+					})
+				}
 				if len(atPath) == 0 {
+					// A local exclusion or incompatible target deliberately
+					// removes this optional member; it is not a missing resource.
+					if len(allAtPath) > 0 {
+						continue
+					}
 					// The pin is an authoring detail of the collection, not of
 					// the consumer's config, so it is reported with the same
 					// severity as a path-less miss: soft unless any
@@ -1267,6 +1291,15 @@ func expandMembersRecursive(
 			if entry, _, found := findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath); found {
 				memberEntry = entry
 				memberEntryFound = true
+				// The member inherits the collection's registry location, but
+				// its effective identity must still carry the owning entry's
+				// ref/path so entry exclusions cannot bleed across refs.
+				memberRegistryURL = entry.URL
+				memberRegistryPath = normalizedEntryPath(entry.Path)
+				memberRef = entry.Ref
+				memberSource = entry.Source
+				memberFilePrecedence = entry.FilePrecedence
+				memberRequired = entry.Required
 			}
 		}
 
@@ -1558,8 +1591,7 @@ func candidatesNotScopedAway(candidates []memberEntryCandidate, kind ir.Resource
 		for _, shadow := range entries {
 			if entryCanShadow(shadow, candidate.entry.Source, candidate.entry.FilePrecedence) &&
 				shadow.SelectorForKind(kind).ExcludeAll &&
-				normalizedRegistryURL(shadow.URL) == normalizedRegistryURL(candidate.entry.URL) &&
-				pathScopeCovers(shadow.Path, candidate.entry.Path) {
+				registryIdentityMatches(shadow.URL, shadow.Path, shadow.Ref, candidate.entry.URL, candidate.entry.Path, candidate.entry.Ref) {
 				return false
 			}
 		}
@@ -2380,14 +2412,15 @@ func artifactShadowedByEntries(s ResolvedArtifact, entries []config.RegistryEntr
 			if ex.kind != s.Kind || strings.TrimSpace(ex.name) != s.Name {
 				continue
 			}
-			if entry.Source != s.Source ||
-				(normalizedRegistryURL(entry.URL) == normalizedRegistryURL(s.RegistryURL) && pathScopeCovers(entry.Path, s.RegistryPath)) {
+			if entry.Source != s.Source && normalizedRegistryURL(entry.URL) != normalizedRegistryURL(s.RegistryURL) {
+				return true
+			}
+			if registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) {
 				return true
 			}
 		}
 		if entry.SelectorForKind(s.Kind).ExcludeAll &&
-			normalizedRegistryURL(entry.URL) == normalizedRegistryURL(s.RegistryURL) &&
-			pathScopeCovers(entry.Path, s.RegistryPath) {
+			registryIdentityMatches(entry.URL, entry.Path, entry.Ref, s.RegistryURL, s.RegistryPath, s.Ref) {
 			return true
 		}
 	}
@@ -2403,8 +2436,7 @@ func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config
 	for _, entry := range entries {
 		sameFile := entry.Source == member.Source && entry.FilePrecedence == member.FilePrecedence
 		if (!sameFile && !entryCanShadow(entry, member.Source, member.FilePrecedence)) ||
-			normalizedRegistryURL(entry.URL) != normalizedRegistryURL(member.RegistryURL) ||
-			!pathScopeCovers(entry.Path, member.RegistryPath) {
+			!registryIdentityMatches(entry.URL, entry.Path, entry.Ref, member.RegistryURL, member.RegistryPath, member.Ref) {
 			continue
 		}
 		selector := entry.SelectorForKind(member.Kind)
@@ -3008,6 +3040,16 @@ func pathScopeCovers(scopePath, resourcePath string) bool {
 	scopePath = normalizedEntryPath(scopePath)
 	resourcePath = normalizedEntryPath(resourcePath)
 	return scopePath == resourcePath || isPathPrefix(scopePath, resourcePath)
+}
+
+// registryIdentityMatches keeps registry-entry exclusions scoped to the
+// requested URL/path/ref. An omitted ref remains a deliberate wildcard for
+// hand-authored legacy exclusions; shadow entries created for --ref always
+// carry a concrete ref and therefore cannot suppress sibling refs.
+func registryIdentityMatches(entryURL, entryPath, entryRef, targetURL, targetPath, targetRef string) bool {
+	return normalizedRegistryURL(entryURL) == normalizedRegistryURL(targetURL) &&
+		pathScopeCovers(entryPath, targetPath) &&
+		(strings.TrimSpace(entryRef) == "" || strings.TrimSpace(targetRef) == "" || strings.TrimSpace(entryRef) == strings.TrimSpace(targetRef))
 }
 
 // pathsDiffer reports whether any two occurrences in the set have different

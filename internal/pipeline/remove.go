@@ -244,15 +244,16 @@ func findCollectionRemovalSelection(repoRoot string, mergedCfg *config.Config, n
 		}
 	}
 
-	// Preserve top-level ownership for explicit scopes before checking merged
-	// registry selections, whose layer metadata is otherwise easy to lose.
+	// Preserve machine ownership so an explicit repo/local attempt can return a
+	// scope-boundary refusal. Never use another repo/local occurrence as a
+	// fallback: that would edit an ineffective scope and report success.
 	if specified {
 		for _, scope := range []Scope{ScopeUser, ScopeRepo, ScopeLocal} {
 			selection, err := collectionSelectionAtScope(repoRoot, scope, name, mergedCfg)
 			if err != nil {
 				return nil, "", err
 			}
-			if selection != nil && !selection.RegistryScoped {
+			if selection != nil && selection.Source.IsMachineScope() {
 				return selection, requested, nil
 			}
 		}
@@ -272,7 +273,7 @@ func findCollectionRemovalSelection(repoRoot string, mergedCfg *config.Config, n
 	if specified {
 		if mergedCfg != nil {
 			for _, entry := range mergedCfg.Registries {
-				if !collectionSelectedInEntry(entry, name) {
+				if !entry.Source.IsMachineScope() || !collectionSelectedInEntry(entry, name) {
 					continue
 				}
 				return &collectionRemovalSelection{
@@ -369,11 +370,36 @@ func collectionRequiredInConfig(cfg *config.Config, name string) bool {
 		return false
 	}
 	for _, entry := range cfg.Registries {
-		if entry.Required && collectionSelectedInEntry(entry, name) {
+		if !entry.Required {
+			continue
+		}
+		if collectionSelectedInEntry(entry, name) || requiredCollectionAutoSelects(entry) {
 			return true
 		}
 	}
 	return false
+}
+
+// requiredCollectionAutoSelects mirrors resolver selection policy for the
+// collection kind. Required providers select every kind when no explicit
+// include exists; a required tag provider can select the collection without an
+// include as well. Catalog resolution has already established that the named
+// collection is selected, so the tag presence is sufficient policy context
+// here.
+func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
+	collectionSelector := entry.SelectorForKind(ir.KindCollection)
+	if collectionSelector.ExcludeAll {
+		return false
+	}
+	if entry.Tags != nil {
+		return len(entry.Tags) > 0
+	}
+	for _, kind := range config.AllKinds {
+		if len(entry.SelectorForKind(kind).Include) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func removeOrExcludeCollection(configPath, name string) error {
@@ -550,72 +576,45 @@ func registryEntryInList(entries []config.RegistryEntry, url, path string) bool 
 	return false
 }
 
-func registryEntryInListAtRef(entries []config.RegistryEntry, url, path, ref string) bool {
-	for _, entry := range entries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != config.NormalizeGitURL(strings.TrimSpace(url)) {
-			continue
-		}
-		if strings.TrimSpace(entry.Path) != strings.TrimSpace(path) || strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
-			continue
-		}
-		return true
+// selectAdHocRegistryEntry resolves one configured entry for --from. An
+// omitted path or ref is a wildcard only while it identifies one logical
+// location; distinct paths or refs are ambiguous and fail closed.
+func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool, error) {
+	if cfg == nil {
+		return config.RegistryEntry{}, false, nil
 	}
-	return false
+	var matches []config.RegistryEntry
+	for _, entry := range cfg.Registries {
+		if adHocRegistryEntryMatches(entry, url, path, ref) {
+			matches = append(matches, entry)
+		}
+	}
+	if len(matches) == 0 {
+		return config.RegistryEntry{}, false, nil
+	}
+	first := matches[0]
+	for _, entry := range matches[1:] {
+		if strings.TrimSpace(entry.Path) != strings.TrimSpace(first.Path) || strings.TrimSpace(entry.Ref) != strings.TrimSpace(first.Ref) {
+			return config.RegistryEntry{}, false, fmt.Errorf("registry %q matches multiple entries; use --path and --ref to disambiguate", url)
+		}
+	}
+	return first, true, nil
 }
 
-func registryEntryCount(entries []config.RegistryEntry, url, path string) int {
+func adHocRegistryEntryMatches(entry config.RegistryEntry, url, path, ref string) bool {
+	return config.NormalizeGitURL(strings.TrimSpace(entry.URL)) == config.NormalizeGitURL(strings.TrimSpace(url)) &&
+		(strings.TrimSpace(path) == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path)) &&
+		(strings.TrimSpace(ref) == "" || strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref))
+}
+
+func countAdHocRegistryEntries(entries []config.RegistryEntry, url, path, ref string) int {
 	count := 0
-	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(url))
 	for _, entry := range entries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
-			continue
+		if adHocRegistryEntryMatches(entry, url, path, ref) {
+			count++
 		}
-		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
-			continue
-		}
-		count++
 	}
 	return count
-}
-
-// findRegistryInMerged finds a registry entry in the merged config matching
-// url (normalized) and path. When path is empty it matches any entry with the
-// URL (URL-only match). It returns the matched entry (carrying its Source
-// layer) so callers can validate scope boundaries.
-func findRegistryInMerged(cfg *config.Config, url, path string) (config.RegistryEntry, bool) {
-	if cfg == nil {
-		return config.RegistryEntry{}, false
-	}
-	nu := config.NormalizeGitURL(strings.TrimSpace(url))
-	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != nu {
-			continue
-		}
-		if path == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path) {
-			return entry, true
-		}
-	}
-	return config.RegistryEntry{}, false
-}
-
-func findRegistryInMergedAtRef(cfg *config.Config, url, path, ref string) (config.RegistryEntry, bool) {
-	if cfg == nil {
-		return config.RegistryEntry{}, false
-	}
-	nu := config.NormalizeGitURL(strings.TrimSpace(url))
-	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != nu {
-			continue
-		}
-		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
-			continue
-		}
-		if strings.TrimSpace(ref) != "" && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
-			continue
-		}
-		return entry, true
-	}
-	return config.RegistryEntry{}, false
 }
 
 // validateRegistryScopeBoundary rejects suppressing a machine-scope registry
@@ -639,11 +638,10 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 }
 
 // resolvedResourceByNameInScope narrows a same-kind name lookup to the
-// requested installation scope before checking ambiguity. Machine and repo
-// occurrences are intentionally retained by the resolver, so a plain name
-// lookup can now find two valid artifacts. An explicit --scope identifies the
-// occurrence the user intends to edit; if that scope has no match, retain the
-// unfiltered set so existing scope-boundary errors remain actionable.
+// requested installation scope before checking ambiguity. An explicit scope
+// with no occurrence is not allowed to fall through to a different scope. The
+// sole exception is a machine-owned occurrence targeted from repo/local scope,
+// which is retained so ValidateScopeBoundary can return the actionable refusal.
 func resolvedResourceByNameInScope(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, cfg *config.Config, scope Scope, scopeSpecified bool) (*resolver.ResolvedArtifact, error) {
 	matches := resourceMatches(resolved, name, kind, hasKind)
 	if scopeSpecified {
@@ -653,8 +651,27 @@ func resolvedResourceByNameInScope(resolved []resolver.ResolvedArtifact, name st
 				scoped = append(scoped, match)
 			}
 		}
+		if len(scoped) == 0 && scope == ScopeLocal {
+			// Local scope is an effective exclusion layer for committed repo
+			// resources and collection members, without editing their owning
+			// selection. Do not mix this fallback with a real local occurrence:
+			// an explicit local occurrence must remain the only target.
+			for _, match := range matches {
+				if match.Source == config.RepoCommitted || (match.Via != "" && !match.Source.IsMachineScope()) {
+					scoped = append(scoped, match)
+				}
+			}
+		}
 		if len(scoped) > 0 {
 			matches = scoped
+		} else {
+			machineBoundary := scope == ScopeRepo || scope == ScopeLocal
+			for _, match := range matches {
+				if machineBoundary && match.Source.IsMachineScope() {
+					return resolveResourceMatches([]resolver.ResolvedArtifact{match}, name, cfg)
+				}
+			}
+			return nil, nil
 		}
 	}
 	return resolveResourceMatches(matches, name, cfg)
@@ -815,8 +832,17 @@ func owningRegistryEntry(cfg *config.Config, m resolver.ResolvedArtifact) (url, 
 // the same entry), an error is returned so the caller asks for --kind rather
 // than silently disabling an arbitrary kind.
 func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, url, path string) (*resolver.ResolvedArtifact, error) {
+	return resolvedResourceInRegistryWithRef(resolved, name, kind, hasKind, url, path, "", false)
+}
+
+func resolvedResourceInRegistryAtRef(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, url, path, ref string) (*resolver.ResolvedArtifact, error) {
+	return resolvedResourceInRegistryWithRef(resolved, name, kind, hasKind, url, path, ref, true)
+}
+
+func resolvedResourceInRegistryWithRef(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, url, path, ref string, requireRef bool) (*resolver.ResolvedArtifact, error) {
 	nu := config.NormalizeGitURL(strings.TrimSpace(url))
 	wantPath := strings.TrimSpace(path)
+	wantRef := strings.TrimSpace(ref)
 	var matches []resolver.ResolvedArtifact
 	for i := range resolved {
 		candidate := resolved[i]
@@ -827,6 +853,9 @@ func resolvedResourceInRegistry(resolved []resolver.ResolvedArtifact, name strin
 			continue
 		}
 		if config.NormalizeGitURL(strings.TrimSpace(candidate.RegistryURL)) != nu {
+			continue
+		}
+		if requireRef && strings.TrimSpace(candidate.Ref) != wantRef {
 			continue
 		}
 		if !registryPathOwns(wantPath, candidate.RegistryPath) {
@@ -977,20 +1006,35 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", configPath, err)
 	}
-	entryInTarget := cfg != nil && registryEntryInList(cfg.Registries, fromURL, fromPath)
-
-	// The merged config finds entries defined by includes or lower layers.
+	// The merged config finds entries defined by includes or lower layers. A
+	// missing --path/--ref may identify one entry, but never silently selects
+	// among distinct paths or refs.
 	mergedCfg, _, err := loadRemoveConfig(ctx, repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	// A matching entry outside the target root must remain suppressed.
-	mergedEntry, entryInMerged := findRegistryInMerged(mergedCfg, fromURL, fromPath)
+	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef)
+	if err != nil {
+		return nil, err
+	}
 	var rootEntries []config.RegistryEntry
 	if cfg != nil {
 		rootEntries = cfg.Registries
 	}
-	requiresShadow := entryInMerged && registryEntryCount(mergedCfg.Registries, fromURL, fromPath) > registryEntryCount(rootEntries, fromURL, fromPath)
+	targetEntry, entryInTarget, err := selectAdHocRegistryEntry(&config.Config{Registries: rootEntries}, fromURL, fromPath, fromRef)
+	if err != nil {
+		return nil, err
+	}
+	// If --path was omitted, carry the uniquely selected entry's path into all
+	// mutations. This is especially important for URL-only removal of a local
+	// path alias and prevents a root entry from being edited instead.
+	selectedPath := fromPath
+	if selectedPath == "" && entryInMerged {
+		selectedPath = strings.TrimSpace(mergedEntry.Path)
+	} else if selectedPath == "" && entryInTarget {
+		selectedPath = strings.TrimSpace(targetEntry.Path)
+	}
+	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef)
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef
@@ -1005,7 +1049,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			if err := validateRegistryScopeBoundary(mergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
 			}
-			if err := config.SetRegistryExcludeAllInConfig(configPath, fromURL, shadowRef, fromPath); err != nil {
+			var setErr error
+			if strings.TrimSpace(shadowRef) != "" {
+				setErr = config.SetRegistryExcludeAllInConfigAtRef(configPath, fromURL, shadowRef, selectedPath)
+			} else {
+				setErr = config.SetRegistryExcludeAllInConfig(configPath, fromURL, shadowRef, selectedPath)
+			}
+			if err := setErr; err != nil {
 				return nil, fmt.Errorf("exclude registry in %s config: %w", opts.Scope, err)
 			}
 			if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
@@ -1016,7 +1066,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		// Registry is defined at this scope (and not inherited from below):
 		// deleting the entry fully removes it.
 		if entryInTarget {
-			if err := config.RemoveRegistryEntryFromConfig(configPath, fromURL, fromPath); err != nil {
+			var removeErr error
+			if strings.TrimSpace(fromRef) != "" {
+				removeErr = config.RemoveRegistryEntryFromConfigAtRef(configPath, fromURL, selectedPath, fromRef)
+			} else {
+				removeErr = config.RemoveRegistryEntryFromConfig(configPath, fromURL, selectedPath)
+			}
+			if err := removeErr; err != nil {
 				return nil, fmt.Errorf("remove registry entry from %s config: %w", opts.Scope, err)
 			}
 			if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
@@ -1024,7 +1080,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 			}
 			return &RemoveResult{RemovedRegistry: true}, nil
 		}
-		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config; nothing to remove", fromURL, fromPath)
+		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config; nothing to remove", fromURL, selectedPath)
 	}
 
 	// With a name: remove the resource from the --from registry entry. The
@@ -1035,10 +1091,14 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, fmt.Errorf("registry entry for %q (path=%q) not found in any config", fromURL, fromPath)
 	}
 
-	// Scope a named --from collection to the selected URL/path/ref entry.
-	collectionEntryInTarget := cfg != nil && registryEntryInListAtRef(cfg.Registries, fromURL, fromPath, fromRef)
-	collectionMergedEntry, collectionEntryInMerged := findRegistryInMergedAtRef(mergedCfg, fromURL, fromPath, fromRef)
-	if collectionInstalledInRegistry(mergedCfg, name, fromURL, fromPath, fromRef) {
+	// Scope a named --from collection to the one selected URL/path/ref entry.
+	// The entry lookup above has already failed closed on ambiguous paths/refs.
+	collectionEntryInTarget := entryInTarget
+	collectionMergedEntry, collectionEntryInMerged := mergedEntry, entryInMerged
+	if collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
+		if collectionMergedEntry.Required || collectionRequiredInConfig(mergedCfg, name) {
+			return nil, fmt.Errorf("collection %q is required and cannot be removed", name)
+		}
 		if !collectionEntryInTarget && collectionEntryInMerged {
 			if err := validateRegistryScopeBoundary(collectionMergedEntry.Source, opts.Scope, fromURL); err != nil {
 				return nil, err
@@ -1048,7 +1108,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		if collectionEntryInMerged && strings.TrimSpace(collectionMergedEntry.Ref) != "" {
 			collectionShadowRef = collectionMergedEntry.Ref
 		}
-		if err := disableCollectionInRegistry(configPath, fromURL, fromPath, collectionShadowRef, name); err != nil {
+		if err := disableCollectionInRegistry(configPath, fromURL, selectedPath, collectionShadowRef, name); err != nil {
 			return nil, err
 		}
 		if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
@@ -1067,7 +1127,12 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
-	target, err := resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, fromPath)
+	var target *resolver.ResolvedArtifact
+	if strings.TrimSpace(fromRef) != "" {
+		target, err = resolvedResourceInRegistryAtRef(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath, fromRef)
+	} else {
+		target, err = resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1098,7 +1163,13 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// Remove the resource from the specific registry entry. shadowRef ensures a
 	// newly created shadow entry (cross-layer case) passes ref-required
 	// validation for git registries.
-	if err := config.DisableResourceWithShadowFallback(configPath, fromURL, fromPath, shadowRef, resolvedKind, name); err != nil {
+	var disableErr error
+	if strings.TrimSpace(shadowRef) != "" {
+		disableErr = config.DisableResourceWithShadowFallbackAtRef(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
+	} else {
+		disableErr = config.DisableResourceWithShadowFallback(configPath, fromURL, selectedPath, shadowRef, resolvedKind, name)
+	}
+	if err := disableErr; err != nil {
 		return nil, err
 	}
 
@@ -1106,30 +1177,6 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil
-}
-
-func collectionInstalledInRegistry(cfg *config.Config, name, registryURL, registryPath, registryRef string) bool {
-	if cfg == nil {
-		return false
-	}
-	normalizedURL := config.NormalizeGitURL(strings.TrimSpace(registryURL))
-	for _, entry := range cfg.Registries {
-		if config.NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
-			continue
-		}
-		if registryPath != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(registryPath) {
-			continue
-		}
-		if strings.TrimSpace(registryRef) != "" && strings.TrimSpace(entry.Ref) != strings.TrimSpace(registryRef) {
-			continue
-		}
-		for _, selected := range entry.Collections.Include {
-			if strings.TrimSpace(selected) == name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // enrichRemoveError wraps config-level disambiguation errors with an
