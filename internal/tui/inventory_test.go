@@ -279,7 +279,7 @@ func TestQAInventoryHasStableOrderedIDs(t *testing.T) {
 			name: "actions",
 			got:  actionIDStrings(inventory.Actions),
 			want: []string{
-				"up", "down", "top", "bottom", "next-tab", "prev-tab",
+				"up", "down", "half-page-down", "half-page-up", "page-down", "page-up", "top", "bottom", "next-tab", "prev-tab",
 				"tab-scope", "tab-registry", "tab-status", "search", "clear",
 				"enter", "space", "collapse", "expand", "reload", "sync",
 				"update", "harness", "edit-config", "fold-prefix", "fold-toggle",
