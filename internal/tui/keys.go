@@ -14,6 +14,8 @@ type keyMap struct {
 	Down         key.Binding
 	HalfPageDown key.Binding
 	HalfPageUp   key.Binding
+	PageDown     key.Binding
+	PageUp       key.Binding
 	Top          key.Binding
 	Bottom       key.Binding
 	NextTab      key.Binding
@@ -91,8 +93,10 @@ var defaultKeyMap = keyMap{
 	Down:         key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("↓/j", "move down")),
 	HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half-page down")),
 	HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half-page up")),
-	Top:          key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "jump to top")),
-	Bottom:       key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "jump to bottom")),
+	PageDown:     key.NewBinding(key.WithKeys("f", "ctrl+f", "pgdown"), key.WithHelp("f/ctrl+f/pgdn", "page down")),
+	PageUp:       key.NewBinding(key.WithKeys("b", "ctrl+b", "pgup"), key.WithHelp("b/ctrl+b/pgup", "page up")),
+	Top:          key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g/home", "jump to top")),
+	Bottom:       key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G/end", "jump to bottom")),
 	NextTab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
 	PrevTab:      key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("S-tab", "previous tab")),
 
@@ -183,7 +187,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // navigationBindings returns the navigation-related key bindings.
 func (k keyMap) navigationBindings() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
+	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
 }
 
 // actionBindings returns the action-related key bindings.

@@ -260,7 +260,7 @@ func TestHalfPageNavigationMovesListSelection(t *testing.T) {
 	m.loading = false
 	m.width = 80
 	m.height = 24
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 40; i++ {
 		m.flatItems = append(m.flatItems, flatItem{Kind: flatArtifact, Row: mkRow(fmt.Sprintf("resource-%d", i), withGlobal)})
 	}
 
@@ -270,10 +270,28 @@ func TestHalfPageNavigationMovesListSelection(t *testing.T) {
 		t.Fatalf("ctrl+d moved cursor to %d, want 10", m.cursor)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	if m.cursor != 31 {
+		t.Fatalf("f moved cursor to %d, want 31", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+b moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(Model)
+	if m.cursor != 39 {
+		t.Fatalf("end moved cursor to %d, want 39", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
 	m = updated.(Model)
 	if m.cursor != 0 {
-		t.Fatalf("ctrl+u moved cursor to %d, want 0", m.cursor)
+		t.Fatalf("home moved cursor to %d, want 0", m.cursor)
 	}
 }
 

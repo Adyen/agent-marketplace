@@ -513,14 +513,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) moveCursorByHalfPage(direction int) {
+	m.moveCursorByRows(direction, max(1, m.listVisibleHeight()/2))
+}
+
+func (m *Model) moveCursorByPage(direction int) {
+	m.moveCursorByRows(direction, m.listVisibleHeight())
+}
+
+func (m *Model) moveCursorByRows(direction, step int) {
 	if len(m.flatItems) == 0 {
 		return
 	}
 	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
-	step := max(1, m.listVisibleHeight()/2)
 	listWidth, _ := paneWidths(m.width)
 	heights := m.listHeightOffsets(listWidth)
-	target := heights[m.cursor] + direction*step
+	target := heights[m.cursor] + direction*max(1, step)
 	if target <= 0 {
 		m.cursor = 0
 	} else if target >= heights[len(m.flatItems)] {
@@ -537,6 +544,18 @@ func (m *Model) moveCursorByHalfPage(direction int) {
 		m.cursor = min(max(0, candidate), len(m.flatItems)-1)
 	}
 	m.clampListOffset()
+}
+
+func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) bool {
+	if key.Matches(msg, m.keys.PageDown) {
+		viewport.PageDown()
+		return true
+	}
+	if key.Matches(msg, m.keys.PageUp) {
+		viewport.PageUp()
+		return true
+	}
+	return false
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -575,6 +594,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.helpViewport.GotoBottom()
 			return m, nil
 		}
+		if m.handleViewportPageKey(msg, &m.helpViewport) {
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.helpViewport, cmd = m.helpViewport.Update(msg)
 		return m, cmd
@@ -594,6 +616,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.Bottom) {
 			m.errorsViewport.GotoBottom()
+			return m, nil
+		}
+		if m.handleViewportPageKey(msg, &m.errorsViewport) {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -677,6 +702,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.HalfPageUp):
 		m.moveCursorByHalfPage(-1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.moveCursorByPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.moveCursorByPage(-1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
@@ -892,6 +925,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
 	// wheel) to the viewport, which handles scroll offset and clamping.
 	m.detailStickyBottom = false
+	if m.handleViewportPageKey(msg, &m.detailViewport) {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
