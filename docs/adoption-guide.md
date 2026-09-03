@@ -152,8 +152,7 @@ At a higher-precedence layer (e.g. `config.local.yaml`), `exclude_all` on a regi
 ## Install by collection
 
 ```bash
-agent-marketplace list --collections
-agent-marketplace list --collection platform-onboarding
+agent-marketplace list --kind collection
 agent-marketplace install platform-onboarding
 ```
 
@@ -177,7 +176,7 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Required skills cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
 
 ## Daily commands
 

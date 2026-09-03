@@ -119,8 +119,9 @@ Non-skill resources use their own harness-native layouts:
    are **not** separate skills — they are supplementary assets.
 4. Directories named `node_modules`, `.git`, `.cache`, `test`,
    `tests`, `__tests__` are skipped.
-5. Hidden directories (dot-prefix) are skipped unless the path escapes
-   upward (e.g. `../other-registry`).
+5. Hidden directories (dot-prefix) are skipped. Registry paths containing
+   parent traversal (`..`) are rejected rather than used to escape the
+   configured registry root.
 
 **Do not** nest skill directories inside other skill directories and
 expect them to be independently discovered. Use a flat or shallow

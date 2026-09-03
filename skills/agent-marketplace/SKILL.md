@@ -246,7 +246,7 @@ registries:
 ```
 
 - **`required: true`** resources always materialize and cannot be excluded.
-- **`default: true`** resources auto-select but can be excluded by higher-precedence config.
+- **`default: true`** resources auto-select; higher-precedence config can exclude repo-scoped resources, while repo and local excludes cannot suppress machine-scoped resources.
 
 ### Local config: `.agents/config.local.yaml`
 
@@ -256,7 +256,9 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-Local config is gitignored and per-checkout. `sync` adds `.agents/config.local.yaml` to `.gitignore` when the file exists.
+Local config is gitignored and per-checkout. Its excludes apply only to
+non-required repo-scoped resources; machine-scoped resources remain immune.
+`sync` adds `.agents/config.local.yaml` to `.gitignore` when the file exists.
 
 ## Resource Prerequisites
 

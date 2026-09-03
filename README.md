@@ -150,9 +150,10 @@ excluded by any layer (see below).
 How it works from a user's point of view:
 
 - The CLI reads every layer that exists, then **merges** them. The result is one
-  effective set of registries and resources. When a resource is both selected
-  and excluded across layers, the more specific layer (repo, then personal) wins
-  — except `required: true` resources, which no layer can exclude.
+  effective set of registries and resources. When a repo-scoped resource is both
+  selected and excluded across layers, the more specific layer (repo, then
+  personal) wins — except `required: true` resources, which no layer can exclude.
+  Machine-scoped resources are not suppressed by repo or checkout-local excludes.
 - **Machine-wide** layers materialize into your home harness root (e.g.
   `~/.factory/`); **repo** layers materialize into `<repo>/.factory/`. The two
   are complementary — a resource can exist at both scopes without conflict.
@@ -271,9 +272,8 @@ registries:
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
   This is how org-wide security standards are enforced.
-- **`default: true`** — every resource is selected automatically, but any
-  higher-precedence layer (e.g. your repo-personal file) can exclude individual
-  ones.
+- **`default: true`** — every resource is selected automatically. A higher-
+  precedence layer can exclude individual repo-scoped resources.
 - **Neither** — resources are only selected when explicitly listed in an
   `include` or matched by `tags`.
 
@@ -282,8 +282,8 @@ registries:
 The gitignored local file (`.agents/config.local.yaml`) is your per-repo
 personal layer. It supports **three** things:
 
-1. **Top-level excludes** — suppress a non-required resource by name, no matter
-   which registry provides it:
+1. **Top-level excludes** — suppress a non-required, repo-scoped resource by
+   name, no matter which eligible registry provides it:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored — personal)
@@ -324,9 +324,9 @@ agent-marketplace sync   # re-materialize with your local registry included
 Or equivalently, write the `registries:` block by hand and then `sync`.
 
 **Note:** Top-level selectors in local config are applied *globally* (across all
-registries), unlike `registries:`-scoped selectors which only affect the entry
-they're on. Use `registries:`-scoped selectors when you want precise control;
-use top-level `exclude` as a broad veto.
+eligible repo-scoped registries), unlike `registries:`-scoped selectors which
+only affect the entry they're on. Use `registries:`-scoped selectors when you
+want precise control; use top-level `exclude` as a broad repo-checkout veto.
 
 After editing any config layer by hand, run `agent-marketplace sync` to
 reconcile the generated files, or `agent-marketplace sync --check` to verify
@@ -607,9 +607,10 @@ agent-marketplace remove platform-onboarding         # remove the whole bundle
 
 Instead of a Git URL, a registry entry can point at a local directory — handy
 for developing or testing resources before publishing them. A URL is treated as
-a local path when it starts with `/`, `~/`, `./`, or `../` (or is `.`/`..`) and
-does **not** end in `.git`. A `ref` on such an entry is simply ignored rather
-than making it remote:
+a local path when it is `.`, starts with `./`, `/`, or `~/`, and does **not**
+end in `.git`. Parent traversal (`..` or a path containing a `..` component) is
+rejected. A `ref` on an accepted local directory is simply ignored rather than
+making it remote:
 
 ```yaml
 registries:

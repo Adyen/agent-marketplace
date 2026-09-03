@@ -31,7 +31,7 @@ Loading the owning layer fails if any include is missing, unreadable, malformed,
 
 The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. Removing an include-owned named resource or collection records an exclusion in the selected root; whole-registry `remove --from` writes a registry-level `exclude_all` shadow there. The included file remains unchanged, and normal scope boundaries still apply.
 
-When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Editors and removals use the same interpretation. During resolver matching, equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
+When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Config editors and removals preserve this alias-versus-subdirectory interpretation; use the authored URL/path spelling when targeting an entry. Resolver matching is separate: equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
 
 ## Layer order
 
@@ -82,8 +82,11 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 
 ## Exclude precedence
 
-- Excludes from higher-precedence layers suppress lower-layer non-required resources.
-- `config.local.yaml` per-kind excludes are the strongest personal opt-out for non-required resources.
+- Excludes from higher-precedence layers suppress lower-layer non-required
+  resources when the source-scope boundary permits it; repo and checkout-local
+  excludes do not suppress machine-scoped resources.
+- `config.local.yaml` per-kind excludes are the strongest personal opt-out for
+  non-required repo-scoped resources.
 - `required: true` resources cannot be excluded by any layer.
 
 ## Collection precedence
@@ -139,7 +142,7 @@ needed. `kind` defaults to `skill`.
 - If the same resource name (within the same kind) is selected from multiple different registries, resolution emits a soft warning, chooses one deterministic winner, and continues materializing the resource. The winner is selected by `required: true`, then higher config source/file precedence, then alphabetically first normalized registry URL; if those criteria tie, stable config order wins.
 - Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If the same normalized URL and path are used at multiple refs, every non-empty ref label also includes `@<ref>` so the participants remain distinguishable. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
 - Same normalized URL+ref entries whose paths overlap by whole path components (for example, `teams/dev` and `teams/dev/eng`) are treated as one physical source rather than a name collision. The more-specific path wins when both provide a name. Overlapping entries in different scopes are complementary and remain separate so both scopes can materialize.
-- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; use the config's exact registry selection when refs must be controlled separately. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; use the config's exact URL/path spelling when targeting an entry and control refs through the config selection. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples
 

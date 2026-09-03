@@ -230,11 +230,13 @@ resource editor helpers (`AddResourceToRegistryInConfig`,
 `DisableResourceInRegistryInConfig`, `AddResourceToConfig`) so skills,
 commands, subagents, hooks, and MCP servers stay aligned.
 
-### Required registries ignore local excludes
+### Required registries and machine scope ignore local excludes
 
 `required: true` global registries sync all their resources to the
 configured machine-scope harness roots regardless of repo/local config.
-The resolver enforces this; never add a bypass.
+Repo and checkout-local excludes apply only to non-required repo-scoped
+resources; machine-scoped resources are immune. The resolver enforces this;
+never add a bypass.
 
 ### Name collisions resolve deterministically
 

@@ -855,15 +855,11 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		}
 	}
 
-	// Build a set of unconditional top-level and local/personal exclusions.
-	// Registry exclusions retain their authority metadata and are evaluated at
-	// the member binding below.
+	// Evaluate local exclusions after binding members to their owning registry;
+	// flattening them here would suppress optional machine-scope members.
 	excludedResources := make(map[string]struct{})
 	for _, name := range cfg.Collections.Exclude {
 		excludedResources[ViaMapKey(ir.KindCollection, strings.TrimSpace(name))] = struct{}{}
-	}
-	for _, ex := range localExcludes {
-		excludedResources[ViaMapKey(ex.kind, strings.TrimSpace(ex.name))] = struct{}{}
 	}
 
 	// Index catalog entries by (kind, name) for each catalog key so we can
@@ -937,7 +933,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 
 		// Expand members recursively (handles Includes via depth-first walk).
 		visited := map[string]struct{}{irCol.Label(): {}}
-		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
+		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
 	}
 
 	return out, suppressResolvedMemberMisses(errs, directResolved)
@@ -1089,6 +1085,7 @@ func expandMembersRecursive(
 	allCollectionsByName map[string][]collectionCandidate,
 	directResolved map[string]struct{},
 	excludedResources map[string]struct{},
+	localExcludes resourceSelections,
 	collectionExcludeAll bool,
 	localExcludeAllKinds map[ir.ResourceKind]bool,
 	visited map[string]struct{},
@@ -1302,6 +1299,9 @@ func expandMembersRecursive(
 		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
 			continue
 		}
+		if localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, memberRequired, memberSource) {
+			continue
+		}
 
 		// Mark as resolved to prevent duplicates from other collections.
 		directResolved[memberKey] = struct{}{}
@@ -1380,11 +1380,11 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		if collectionDefinitionExcluded(includedArtifact, excludedResources, collectionExcludeAll, localExcludeAllKinds, cfg.Registries) {
+		if collectionDefinitionExcluded(includedArtifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries) {
 			slog.Debug("nested collection skipped: excluded", "collection", irCol.Label(), "via", viaLabel)
 			continue
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
 }
 
@@ -2071,6 +2071,24 @@ func localResourceExcludes(localCfg *config.LocalConfig) resourceSelections {
 	return excludes
 }
 
+// localResourceExcluded applies local exclusions after owner binding, while
+// preserving machine-scope and required resources.
+func localResourceExcluded(excludes resourceSelections, excludeAllKinds map[ir.ResourceKind]bool, kind ir.ResourceKind, name string, required bool, source config.Source) bool {
+	if required || source.IsMachineScope() {
+		return false
+	}
+	if excludeAllKinds[kind] {
+		return true
+	}
+	selected := resourceSelection{kind: kind, name: strings.TrimSpace(name)}
+	for _, excluded := range excludes {
+		if excluded == selected {
+			return true
+		}
+	}
+	return false
+}
+
 // localExcludeAllKinds returns the set of kinds for which the local config
 // has ExcludeAll=true at the top level (e.g. skills.exclude_all: true).
 func localExcludeAllKinds(localCfg *config.LocalConfig) map[ir.ResourceKind]bool {
@@ -2357,14 +2375,17 @@ func collectionMemberShadowedByEntries(member ResolvedArtifact, entries []config
 
 // collectionDefinitionExcluded prevents an included definition from bypassing
 // collection exclusions before its members are expanded.
-func collectionDefinitionExcluded(collection ResolvedArtifact, excludedResources map[string]struct{}, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) bool {
+func collectionDefinitionExcluded(collection ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) bool {
 	if collection.Required {
 		return false
 	}
 	if _, excluded := excludedResources[ViaMapKey(ir.KindCollection, collection.Name)]; excluded {
 		return true
 	}
-	if collectionExcludeAll || (localExcludeAllKinds[ir.KindCollection] && !collection.Source.IsMachineScope()) {
+	if localResourceExcluded(localExcludes, localExcludeAllKinds, ir.KindCollection, collection.Name, collection.Required, collection.Source) {
+		return true
+	}
+	if collectionExcludeAll {
 		return true
 	}
 	return collectionMemberShadowedByEntries(collection, entries)

@@ -382,6 +382,45 @@ func TestExpandDetectsCycles(t *testing.T) {
 	}
 }
 
+func TestExpandSharedDAGIncludeIsNotReportedAsCycle(t *testing.T) {
+	shared := Collection{
+		Name:              "shared",
+		Skills:            []CollectionSkill{{Name: "shared-skill"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	left := Collection{
+		Name:              "left",
+		Includes:          []CollectionInclude{{Name: "shared"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	right := Collection{
+		Name:              "right",
+		Includes:          []CollectionInclude{{Name: "shared"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	root := Collection{
+		Name:              "root",
+		Includes:          []CollectionInclude{{Name: "left"}, {Name: "right"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{{URL: "git@example.com:core.git", Ref: "main"}}
+
+	res, errs := Expand([]string{"root"}, []Collection{root, left, right, shared}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("expected shared DAG to expand without errors, got %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 {
+		t.Fatalf("expected one synthetic registry entry, got %#v", res.SyntheticEntries)
+	}
+	if got := res.SyntheticEntries[0].Skills.Include; !reflect.DeepEqual(got, []string{"shared-skill"}) {
+		t.Fatalf("expected shared skill from both branches to deduplicate, got %#v", got)
+	}
+}
+
 func TestExpandMultipleCollectionsMergeOntoSingleSynthEntry(t *testing.T) {
 	a := Collection{
 		Name:              "a",

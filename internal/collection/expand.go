@@ -169,6 +169,16 @@ func Expand(selectedNames []string, available []Collection, existingEntries []co
 	return result, errs
 }
 
+// cloneVisited gives each include branch its own ancestry, so shared DAG nodes
+// are valid while repeats on one ancestry path remain cycle errors.
+func cloneVisited(visited map[string]bool) map[string]bool {
+	branch := make(map[string]bool, len(visited))
+	for seen := range visited {
+		branch[seen] = true
+	}
+	return branch
+}
+
 // expandCollection recursively expands a single collection (following includes)
 // and returns a map of registryKey → (kind → names).
 func expandCollection(col *Collection, index map[string]*Collection, existingEntries []config.RegistryEntry, visited map[string]bool) (map[struct{ url, ref, path string }]map[ir.ResourceKind][]string, []error) {
@@ -247,7 +257,8 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 			continue
 		}
 
-		subResult, subErrs := expandCollection(included, index, existingEntries, visited)
+		branchVisited := cloneVisited(visited)
+		subResult, subErrs := expandCollection(included, index, existingEntries, branchVisited)
 		errs = append(errs, subErrs...)
 		for k, kinds := range subResult {
 			if result[k] == nil {

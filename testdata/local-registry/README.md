@@ -30,7 +30,6 @@ Then:
 
 ```sh
 agent-marketplace sync
-agent-marketplace list --collections
-agent-marketplace list --collection agent-marketplace-tools
+agent-marketplace list --kind collection
 agent-marketplace status
 ```

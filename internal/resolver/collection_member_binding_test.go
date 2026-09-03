@@ -151,6 +151,47 @@ func TestRequiredNestedCollectionIgnoresCollectionExclusion(t *testing.T) {
 	}
 }
 
+func TestLocalExcludesDoNotSuppressMachineScopedCollectionMembers(t *testing.T) {
+	for _, source := range []config.Source{config.Organization, config.UserPersonal} {
+		t.Run(source.String(), func(t *testing.T) {
+			const machineURL = "git@example.com:machine.git"
+			nested := ir.NewCollection("nested", "1.0.0", "nested", []ir.CollectionMember{{Name: "machine-nested", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			root := ir.NewCollection("root", "1.0.0", "root", []ir.CollectionMember{{Name: "machine-direct", Kind: ir.KindSkill, Registry: machineURL}}, []string{"nested"}, nil, ir.SourceRef{})
+
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: collectionsHost, Ref: "main", Source: config.RepoCommitted, Collections: ks("root")},
+				{URL: machineURL, Ref: "main", Source: source},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+				cfg.Registries[1].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "nested", Resource: nested},
+					{Kind: ir.KindSkill, Name: "machine-direct"},
+					{Kind: ir.KindSkill, Name: "machine-nested"},
+				},
+			}
+
+			resolved, errs := Resolve(cfg, catalogs, &config.LocalConfig{
+				Skills:      kse(nil, []string{"machine-direct", "machine-nested"}),
+				Collections: kse(nil, []string{"nested"}),
+			})
+			if len(errs) != 0 {
+				t.Fatalf("expected no errors, got %v", errs)
+			}
+			for _, name := range []string{"machine-direct", "machine-nested"} {
+				member := findResolved(resolved, name)
+				if member == nil {
+					t.Fatalf("local excludes suppressed machine-scope collection member %q: %#v", name, resolved)
+				}
+				if member.Source != source {
+					t.Fatalf("member %q source = %v, want %v", name, member.Source, source)
+				}
+			}
+		})
+	}
+}
+
 func TestEquivalentRegistryPathsDeduplicateAsOnePhysicalSource(t *testing.T) {
 	const registryURL = "git@example.com:shared.git"
 	cfg := &config.Config{Registries: []config.RegistryEntry{
