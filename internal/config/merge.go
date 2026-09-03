@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -251,9 +252,25 @@ func RegistrySelectionKey(entry RegistryEntry, index int) string {
 // Strips trailing ".git" suffix and trailing slashes so that equivalent URLs
 // (e.g. "git@host:repo" and "git@host:repo.git") are treated as the same.
 func NormalizeGitURL(url string) string {
-	u := strings.TrimRight(url, "/")
+	u := strings.TrimRight(strings.TrimSpace(url), "/")
 	u = strings.TrimSuffix(u, ".git")
 	return u
+}
+
+// NormalizeRegistryPath normalizes a slash-separated registry subdirectory for
+// identity comparisons. Registry paths are artifact paths, rather than host
+// filesystem paths, so path.Clean is used after converting mixed separators.
+// The empty path and "." both identify the registry root.
+func NormalizeRegistryPath(registryPath string) string {
+	p := strings.TrimSpace(strings.ReplaceAll(registryPath, "\\", "/"))
+	if p == "" {
+		return ""
+	}
+	p = path.Clean(p)
+	if p == "." {
+		return ""
+	}
+	return p
 }
 
 // appendUniqueStrings appends strings from src to dst, skipping duplicates.

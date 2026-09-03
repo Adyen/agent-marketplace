@@ -309,7 +309,9 @@ func collectionSelectionAtPath(configPath string, source config.Source, name str
 
 	if hasTopLevelCollectionSelection(cfg, name) {
 		return &collectionRemovalSelection{
-			Source:   source,
+			Source: source,
+			// A top-level selection has no provider identity, so only explicit
+			// required collection selections can be attributed safely.
 			Required: collectionRequiredInConfig(mergedCfg, name),
 		}, nil
 	}
@@ -321,9 +323,11 @@ func collectionSelectionAtPath(configPath string, source config.Source, name str
 		if entrySource == config.SourceUnset {
 			entrySource = source
 		}
+		selectedEntry := entry
+		selectedEntry.Source = entrySource
 		return &collectionRemovalSelection{
 			Source:         entrySource,
-			Required:       entry.Required || collectionRequiredInConfig(mergedCfg, name),
+			Required:       collectionRequiredInRegistry(mergedCfg, name, selectedEntry),
 			RegistryScoped: true,
 			RegistryURL:    entry.URL,
 			RegistryPath:   entry.Path,
@@ -365,34 +369,71 @@ func collectionSelectedInEntry(entry config.RegistryEntry, name string) bool {
 	return false
 }
 
+// collectionRequiredInConfig checks only explicit required collection
+// selections. Provider-wide policy needs the selected registry identity and is
+// handled by collectionRequiredInRegistry.
 func collectionRequiredInConfig(cfg *config.Config, name string) bool {
 	if cfg == nil {
 		return false
 	}
 	for _, entry := range cfg.Registries {
-		if !entry.Required {
-			continue
-		}
-		if collectionSelectedInEntry(entry, name) || requiredCollectionAutoSelects(entry) {
+		if entry.Required && collectionSelectedInEntry(entry, name) {
 			return true
 		}
 	}
 	return false
 }
 
+// collectionRequiredInRegistry applies required policy only to the registry
+// entry that actually provides the selected collection. A required provider at
+// another URL/path/ref/source must not make an optional collection immutable.
+// Tag policy uses actual collection tags when callers have catalog context.
+// Without that context, a non-empty required tag policy remains protected
+// conservatively so an unknown collection cannot bypass required immunity.
+func collectionRequiredInRegistry(cfg *config.Config, name string, selected config.RegistryEntry, collectionTags ...[]string) bool {
+	if selected.Required {
+		return true
+	}
+	if cfg == nil {
+		return false
+	}
+	tagsProvided := len(collectionTags) > 0
+	var tags []string
+	if tagsProvided {
+		tags = collectionTags[0]
+	}
+	for _, entry := range cfg.Registries {
+		if !entry.Required || !registryEntriesShareIdentity(entry, selected) {
+			continue
+		}
+		if collectionSelectedInEntry(entry, name) || requiredCollectionAutoSelects(entry) {
+			return true
+		}
+		if len(entry.Tags) > 0 && (!tagsProvided || config.HasMatchingTag(tags, entry.Tags)) {
+			return true
+		}
+	}
+	return false
+}
+
+func registryEntriesShareIdentity(a, b config.RegistryEntry) bool {
+	return config.NormalizeGitURL(a.URL) == config.NormalizeGitURL(b.URL) &&
+		config.NormalizeRegistryPath(a.Path) == config.NormalizeRegistryPath(b.Path) &&
+		strings.TrimSpace(a.Ref) == strings.TrimSpace(b.Ref) &&
+		a.Source == b.Source
+}
+
 // requiredCollectionAutoSelects mirrors resolver selection policy for the
 // collection kind. Required providers select every kind when no explicit
-// include exists; a required tag provider can select the collection without an
-// include as well. Catalog resolution has already established that the named
-// collection is selected, so the tag presence is sufficient policy context
-// here.
+// include exists; tag providers are intentionally excluded because matching
+// requires the collection's catalog metadata.
 func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
 	collectionSelector := entry.SelectorForKind(ir.KindCollection)
 	if collectionSelector.ExcludeAll {
 		return false
 	}
 	if entry.Tags != nil {
-		return len(entry.Tags) > 0
+		return false
 	}
 	for _, kind := range config.AllKinds {
 		if len(entry.SelectorForKind(kind).Include) > 0 {
@@ -567,9 +608,9 @@ func scopedConfigPath(repoRoot string, scope Scope) (string, error) {
 // registryEntryInList reports whether the list contains an entry that exactly
 // matches url and path (the same exact-match rule the editor uses when writing
 // to a specific scope's config).
-func registryEntryInList(entries []config.RegistryEntry, url, path string) bool {
+func registryEntryInList(entries []config.RegistryEntry, url, registryPath string) bool {
 	for _, entry := range entries {
-		if strings.TrimSpace(entry.URL) == url && strings.TrimSpace(entry.Path) == path {
+		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) && config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath) {
 			return true
 		}
 	}
@@ -594,16 +635,17 @@ func selectAdHocRegistryEntry(cfg *config.Config, url, path, ref string) (config
 	}
 	first := matches[0]
 	for _, entry := range matches[1:] {
-		if strings.TrimSpace(entry.Path) != strings.TrimSpace(first.Path) || strings.TrimSpace(entry.Ref) != strings.TrimSpace(first.Ref) {
+		if config.NormalizeRegistryPath(entry.Path) != config.NormalizeRegistryPath(first.Path) || strings.TrimSpace(entry.Ref) != strings.TrimSpace(first.Ref) {
 			return config.RegistryEntry{}, false, fmt.Errorf("registry %q matches multiple entries; use --path and --ref to disambiguate", url)
 		}
 	}
 	return first, true, nil
 }
 
-func adHocRegistryEntryMatches(entry config.RegistryEntry, url, path, ref string) bool {
-	return config.NormalizeGitURL(strings.TrimSpace(entry.URL)) == config.NormalizeGitURL(strings.TrimSpace(url)) &&
-		(strings.TrimSpace(path) == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path)) &&
+func adHocRegistryEntryMatches(entry config.RegistryEntry, url, registryPath, ref string) bool {
+	pathOmitted := strings.TrimSpace(registryPath) == ""
+	return config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) &&
+		(pathOmitted || config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath)) &&
 		(strings.TrimSpace(ref) == "" || strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref))
 }
 
@@ -880,11 +922,11 @@ func resolvedResourceInRegistryWithRef(resolved []resolver.ResolvedArtifact, nam
 // than the configured entry path (e.g. entry "teams/pm/plugins" discovers
 // "teams/pm/plugins/pm-data-analytics"). Mirrors localRegistryEntryExists.
 func registryPathOwns(entryPath, artifactPath string) bool {
-	ep := strings.TrimSpace(entryPath)
+	ep := config.NormalizeRegistryPath(entryPath)
 	if ep == "" {
 		return true
 	}
-	ap := strings.TrimSpace(artifactPath)
+	ap := config.NormalizeRegistryPath(artifactPath)
 	return ap == ep || strings.HasPrefix(ap, ep+"/")
 }
 
@@ -949,12 +991,12 @@ func stringListContains(values []string, wanted string) bool {
 // include list or the top-level kind selector.
 func localRegistryEntryExists(localCfg *config.LocalConfig, registryURL, registryPath string) bool {
 	for _, entry := range localCfg.Registries {
-		if strings.TrimSpace(entry.URL) != strings.TrimSpace(registryURL) {
+		if config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(registryURL) {
 			continue
 		}
 		if registryPath != "" {
-			ep := strings.TrimSpace(entry.Path)
-			rp := strings.TrimSpace(registryPath)
+			ep := config.NormalizeRegistryPath(entry.Path)
+			rp := config.NormalizeRegistryPath(registryPath)
 			// The resolved artifact's RegistryPath may include a sub-bundle
 			// directory below the entry's configured Path (e.g. entry.Path="plugins"
 			// but RegistryPath="plugins/personal"). Use prefix match so that
@@ -1096,7 +1138,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	collectionEntryInTarget := entryInTarget
 	collectionMergedEntry, collectionEntryInMerged := mergedEntry, entryInMerged
 	if collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
-		if collectionMergedEntry.Required || collectionRequiredInConfig(mergedCfg, name) {
+		if collectionRequiredInRegistry(mergedCfg, name, collectionMergedEntry) {
 			return nil, fmt.Errorf("collection %q is required and cannot be removed", name)
 		}
 		if !collectionEntryInTarget && collectionEntryInMerged {

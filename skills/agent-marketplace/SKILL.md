@@ -169,11 +169,13 @@ agent-marketplace tui                          # Browse and edit selections inte
 
 For `remove --from`, pass the registry URL and use the entry's authored
 `--path` spelling to narrow a named removal to a configured subdirectory and
-its discovered descendants. Omitting `--path` allows URL-only matching across
-paths; use it for whole-registry
-removal when one URL has multiple path entries. `--scope` chooses the config
-root and defaults to `repo` for `--from`; any diagnostic `@ref` suffix is
-only a label, not part of the URL.
+its discovered descendants. Omitting `--path` or `--ref` is only unambiguous
+when the URL identifies one logical configured location; distinct paths or
+refs require the corresponding flag. Use `--path` (and `--ref` when needed)
+for whole-registry removal when one URL has multiple entries. Equivalent
+normalized URL/path spellings identify the same entry. `--scope` chooses the
+config root and defaults to `repo` for `--from`; any diagnostic `@ref` suffix is
+only a label, not part of the URL—pass the ref separately when targeting it.
 
 `status` prints a **HARNESS TARGETS** table: one row per effective harness with its capabilities (`compile`, `ingest`, `convert`, `tui`) and both its repo and machine roots. A harness name the CLI does not recognize is still listed, so a typo shows up instead of being silently dropped.
 
@@ -271,7 +273,10 @@ non-required repo-scoped resources; machine-scoped resources remain immune.
 When the same kind and name is enabled at machine and repo scope, an unscoped
 `remove` reports the ambiguity instead of choosing a copy. Use
 `remove --scope user` or `remove --scope repo` to remove only that occurrence;
-the other scope remains enabled. `--scope local` targets checkout-local
+the other scope remains enabled. An explicit scope never falls back to another
+scope when that scope has no occurrence; it reports that the resource is not
+enabled, while a machine-owned occurrence targeted from repo/local scope
+produces a boundary error. `--scope local` targets checkout-local
 selections/excludes and cannot bypass the machine/repo boundary. Required
 resources cannot be removed from any scope.
 

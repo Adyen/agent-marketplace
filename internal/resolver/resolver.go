@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path"
 	"slices"
 	"strings"
 	"time"
@@ -1065,6 +1064,46 @@ func chooseNestedCollection(candidates []collectionCandidate, parent ResolvedArt
 	return chosen, true
 }
 
+// nestedCollectionArtifact carries a candidate definition's owner metadata into
+// exclusion checks and recursive expansion. Without this step, an excluded
+// higher-authority duplicate can win before its exclusion is noticed.
+func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArtifact) ResolvedArtifact {
+	artifact := ResolvedArtifact{
+		Entry:          candidate.entry,
+		RegistryURL:    parent.RegistryURL,
+		RegistryPath:   parent.RegistryPath,
+		Ref:            parent.Ref,
+		Source:         parent.Source,
+		FilePrecedence: parent.FilePrecedence,
+		Required:       parent.Required,
+		CatalogKey:     candidate.catalogKey,
+		Harnesses:      parent.Harnesses,
+	}
+	if candidate.ownerFound {
+		artifact.RegistryURL = candidate.owner.URL
+		artifact.RegistryPath = normalizedEntryPath(candidate.owner.Path)
+		artifact.Ref = candidate.owner.Ref
+		artifact.Source = candidate.owner.Source
+		artifact.FilePrecedence = candidate.owner.FilePrecedence
+		artifact.Required = candidate.owner.Required
+	}
+	return artifact
+}
+
+// chooseNestedCollectionEligible filters definitions before applying authority
+// ordering. Required definitions remain immune because
+// collectionDefinitionExcluded preserves required artifacts.
+func chooseNestedCollectionEligible(candidates []collectionCandidate, parent ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) (collectionCandidate, bool) {
+	eligible := make([]collectionCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if collectionDefinitionExcluded(nestedCollectionArtifact(candidate, parent), excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, entries) {
+			continue
+		}
+		eligible = append(eligible, candidate)
+	}
+	return chooseNestedCollection(eligible, parent)
+}
+
 // cloneVisitedWith extends a collection's include ancestry for one branch.
 // Keeping a separate map per branch allows a shared DAG node to expand once
 // under each sibling while still detecting cycles along either path.
@@ -1401,8 +1440,14 @@ func expandMembersRecursive(
 		}
 		branchVisited := cloneVisitedWith(visited, name)
 
-		includedEntry, found := chooseNestedCollection(allCollectionsByName[name], artifact)
+		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries)
 		if !found {
+			// A known definition may have been excluded in every eligible
+			// location. That is an intentional no-op, not a missing include.
+			if len(allCollectionsByName[name]) > 0 {
+				slog.Debug("nested collection skipped: all definitions excluded", "collection", name, "via", viaLabel)
+				continue
+			}
 			*errs = append(*errs, fmt.Errorf("collection %q: includes %q which was not found in configured registries", col.Label(), name))
 			continue
 		}
@@ -1414,24 +1459,8 @@ func expandMembersRecursive(
 		}
 
 		includedViaLabel := viaLabel + " > " + "collection:" + irCol.Label()
-		includedArtifact := ResolvedArtifact{
-			Entry:          includedEntry.entry,
-			RegistryURL:    artifact.RegistryURL,
-			RegistryPath:   artifact.RegistryPath,
-			Ref:            artifact.Ref,
-			Source:         artifact.Source,
-			FilePrecedence: artifact.FilePrecedence,
-			Required:       artifact.Required,
-			CatalogKey:     includedEntry.catalogKey,
-			Harnesses:      artifact.Harnesses,
-		}
+		includedArtifact := nestedCollectionArtifact(includedEntry, artifact)
 		if includedEntry.ownerFound {
-			includedArtifact.RegistryURL = includedEntry.owner.URL
-			includedArtifact.RegistryPath = normalizedEntryPath(includedEntry.owner.Path)
-			includedArtifact.Ref = includedEntry.owner.Ref
-			includedArtifact.Source = includedEntry.owner.Source
-			includedArtifact.FilePrecedence = includedEntry.owner.FilePrecedence
-			includedArtifact.Required = includedEntry.owner.Required
 			ownerHarnesses := resolveEntryHarnesses(includedEntry.owner, targetSet)
 			if artifact.Harnesses != nil {
 				// A nested owner can narrow, never widen, the effective harnesses
@@ -1445,10 +1474,6 @@ func expandMembersRecursive(
 			} else {
 				includedArtifact.Harnesses = ownerHarnesses
 			}
-		}
-		if collectionDefinitionExcluded(includedArtifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries) {
-			slog.Debug("nested collection skipped: excluded", "collection", irCol.Label(), "via", viaLabel)
-			continue
 		}
 		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
 	}
@@ -1619,15 +1644,7 @@ func preferRequired(candidates []memberEntryCandidate) memberEntryCandidate {
 
 // normalizedEntryPath returns one comparison form for registry subdirectories.
 func normalizedEntryPath(p string) string {
-	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
-	if p == "" {
-		return ""
-	}
-	p = path.Clean(p)
-	if p == "." {
-		return ""
-	}
-	return p
+	return config.NormalizeRegistryPath(p)
 }
 
 // candidatesAtPath narrows candidates to those configured at exactly path.

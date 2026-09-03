@@ -834,6 +834,39 @@ func TestChooseNestedCollectionRequiredCandidateWins(t *testing.T) {
 	}
 }
 
+func TestNestedCollectionExcludedWinnerFallsBackToEligibleDuplicate(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	highInner := ir.NewCollection("inner", "2.0.0", "higher authority but excluded", []ir.CollectionMember{{Name: "fallback-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	lowInner := ir.NewCollection("inner", "1.0.0", "lower eligible", []ir.CollectionMember{{Name: "fallback-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Source: config.RepoCommitted, Collections: ks("outer")},
+		{URL: "git@example.com:high", Ref: "main", Path: "bundles/high", Source: config.RepoPersonal, Collections: config.KindSelector{Exclude: []string{"inner"}}},
+		{URL: "git@example.com:low", Ref: "main", Path: "bundles/low", Source: config.RepoCommitted},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "inner", Resource: highInner}},
+		cfg.Registries[2].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: lowInner},
+			{Kind: ir.KindSkill, Name: "fallback-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	got := findResolved(resolved, "fallback-skill")
+	if got == nil {
+		t.Fatalf("lower eligible duplicate did not expand: %#v", resolved)
+	}
+	if got.RegistryURL != "git@example.com:low" || got.RegistryPath != "bundles/low" {
+		t.Fatalf("expanded duplicate metadata = %s/%s, want lower eligible definition", got.RegistryURL, got.RegistryPath)
+	}
+}
+
 func TestNestedCollectionHarnessesCannotWidenParent(t *testing.T) {
 	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
 	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})

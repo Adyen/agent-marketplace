@@ -98,7 +98,11 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   machine-scoped occurrence and `remove --scope repo` selects the committed
   repo occurrence; the other scope remains enabled. If the selected scope has
   multiple providers, add `--from`/`--path` (and `--kind` when needed).
-  `--scope local` selects a checkout-local occurrence or exclusion.
+  `--scope local` selects a checkout-local occurrence or exclusion. An
+  explicit scope never falls back to another scope when that scope has no
+  occurrence; it reports that the resource is not enabled, except that a
+  machine-owned occurrence is retained to return the actionable scope-boundary
+  refusal when targeted from repo or local scope.
 - Explicit scope does not bypass authority boundaries. Repo and local config
   cannot suppress a machine-scoped resource; use `--scope user`. Required
   resources remain immune to removal and exclusion at every scope. When no
@@ -108,12 +112,15 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   config is instead recorded as a checkout-local exclusion. Use `--scope repo`
   when you intend to edit committed repo config.
 - With `--from`, `--scope` chooses the config root to edit and defaults to
-  `repo`. The URL identifies the registry; `--path` narrows a named removal
-  to a configured subdirectory and descendants, while omitting it allows
-  URL-only matching across paths. For whole-registry removal, provide
-  `--path` when the same URL has multiple path entries. Diagnostic `@ref`
-  suffixes are labels only; pass the URL and optional `--ref`/`--path` as
-  separate flags.
+  `repo`. The URL, path, and ref identify the configured registry entry;
+  `--path` narrows a named removal to a configured subdirectory and its
+  discovered descendants. Omitting `--path` or `--ref` is only unambiguous
+  when the URL identifies one logical configured location; distinct paths or
+  refs require the corresponding flag. For whole-registry removal, provide
+  `--path` (and `--ref` when needed) when the same URL has multiple entries.
+  Diagnostic `@ref` suffixes are labels only; pass the URL, path, and ref as
+  separate flags. The authored URL/path spelling is recommended, although
+  equivalent normalized URL/path spellings identify the same entry.
 
 Collection removal uses a separate lookup because expansion drops the
 collection artifact. Without `--scope`, it checks repo, local, then user roots;
@@ -186,7 +193,7 @@ needed. `kind` defaults to `skill`.
 - If the same resource name (within the same kind) is selected from multiple different registries, resolution emits a soft warning, chooses one deterministic winner, and continues materializing the resource. The winner is selected by `required: true`, then higher config source/file precedence, then alphabetically first normalized registry URL; if those criteria tie, stable config order wins.
 - Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If the same normalized URL and path are used at multiple refs, every non-empty ref label also includes `@<ref>` so the participants remain distinguishable. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
 - Same normalized URL+ref entries whose paths overlap by whole path components (for example, `teams/dev` and `teams/dev/eng`) are treated as one physical source rather than a name collision. The more-specific path wins when both provide a name. Overlapping entries in different scopes are complementary and remain separate so both scopes can materialize.
-- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; use the config's exact URL/path spelling when targeting an entry and control refs through the config selection. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` and/or `--ref <ref>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; pass the URL, path, and ref as separate flags, using the config's authored URL/path spelling when targeting an entry. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples
 

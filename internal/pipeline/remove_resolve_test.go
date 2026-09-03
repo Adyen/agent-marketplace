@@ -235,6 +235,27 @@ func TestResolvedResourceInRegistry_NoMatch(t *testing.T) {
 	}
 }
 
+func TestAdHocPathMatchingNormalizesIdentityButRejectsDescendantEntry(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:  "git@example.com:infra.git",
+		Ref:  "main",
+		Path: "./foo//bar/",
+	}}}
+	entry, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo\\bar", "main")
+	if err != nil || !found || entry.Path != "./foo//bar/" {
+		t.Fatalf("normalized exact path lookup = (%#v, %v, %v), want matching entry", entry, found, err)
+	}
+	if _, found, err := selectAdHocRegistryEntry(cfg, "git@example.com:infra", "foo/bar/child", "main"); err != nil || found {
+		t.Fatalf("descendant path matched configured parent: found=%v err=%v", found, err)
+	}
+
+	resolved := []resolver.ResolvedArtifact{artifact(ir.KindSkill, "nested", "git@example.com:infra", "foo\\bar\\child", config.RepoCommitted)}
+	got, err := resolvedResourceInRegistry(resolved, "nested", ir.KindSkill, true, "git@example.com:infra.git", "./foo//bar/")
+	if err != nil || got == nil {
+		t.Fatalf("named resource subtree lookup = (%#v, %v), want descendant resource", got, err)
+	}
+}
+
 // The resolver records the discovered sub-bundle path on an artifact, which can
 // be deeper than the configured entry path. A --path naming the entry must
 // still own artifacts materialized from beneath it.
@@ -701,24 +722,40 @@ func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
 	}
 }
 
-func TestCollectionRequiredInConfigRecognizesImplicitRequiredSelection(t *testing.T) {
-	cases := []struct {
-		name  string
-		entry config.RegistryEntry
-		want  bool
-	}{
-		{name: "required auto-select-all", entry: config.RegistryEntry{Required: true}, want: true},
-		{name: "required tag-selected", entry: config.RegistryEntry{Required: true, Tags: []string{"security"}}, want: true},
-		{name: "required explicit other kind only", entry: config.RegistryEntry{Required: true, Skills: config.KindSelector{Include: []string{"skill-only"}}}, want: false},
-		{name: "optional auto-select-all", entry: config.RegistryEntry{Default: true}, want: false},
+func TestCollectionRequiredInConfigScopesRequirednessToProvider(t *testing.T) {
+	// Without a provider identity, only an explicit required collection include
+	// can be attributed safely. A required auto/tag provider must not make an
+	// unrelated optional collection immutable.
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "git@example.com:required", Ref: "main", Required: true},
+		{URL: "git@example.com:required", Ref: "main", Required: true, Tags: []string{"security"}},
+		{URL: "git@example.com:other", Ref: "main", Required: true, Collections: config.KindSelector{Include: []string{"bundle"}}},
+	}}
+	if collectionRequiredInConfig(cfg, "bundle") != true {
+		t.Fatal("explicit required collection selection should remain required")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := collectionRequiredInConfig(&config.Config{Registries: []config.RegistryEntry{tc.entry}}, "bundle")
-			if got != tc.want {
-				t.Fatalf("collectionRequiredInConfig = %v, want %v", got, tc.want)
-			}
-		})
+
+	selected := config.RegistryEntry{URL: "git@example.com:optional", Ref: "main", Source: config.RepoCommitted}
+	if collectionRequiredInRegistry(cfg, "bundle", selected) {
+		t.Fatal("required policy from an unrelated provider made optional collection immutable")
+	}
+
+	requiredAuto := selected
+	requiredAuto.Required = true
+	if !collectionRequiredInRegistry(&config.Config{Registries: []config.RegistryEntry{requiredAuto}}, "bundle", selected) {
+		t.Fatal("selected required provider must remain required")
+	}
+
+	requiredTags := config.RegistryEntry{URL: selected.URL, Ref: selected.Ref, Source: selected.Source, Required: true, Tags: []string{"security"}}
+	tagCfg := &config.Config{Registries: []config.RegistryEntry{requiredTags}}
+	if !collectionRequiredInRegistry(tagCfg, "bundle", selected) {
+		t.Fatal("tag policy without collection catalog tags must preserve required immunity")
+	}
+	if !collectionRequiredInRegistry(tagCfg, "bundle", selected, []string{"security", "audit"}) {
+		t.Fatal("matching collection catalog tags must preserve required policy")
+	}
+	if collectionRequiredInRegistry(tagCfg, "bundle", selected, []string{"docs"}) {
+		t.Fatal("non-matching collection catalog tags must not preserve required policy")
 	}
 }
 

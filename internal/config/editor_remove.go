@@ -134,12 +134,12 @@ func matchingRegistryCount(cfg *Config, url, path string) int {
 	}
 	count := 0
 	normalizedURL := NormalizeGitURL(strings.TrimSpace(url))
-	trimmedPath := strings.TrimSpace(path)
+	normalizedPath := NormalizeRegistryPath(path)
 	for _, entry := range cfg.Registries {
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
 			continue
 		}
-		if strings.TrimSpace(entry.Path) == trimmedPath {
+		if NormalizeRegistryPath(entry.Path) == normalizedPath {
 			count++
 		}
 	}
@@ -253,8 +253,8 @@ func findNormalizedURLAndPathWithRef(cfg *Config, url, registryPath, ref string,
 		if requireRef && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
 			continue
 		}
-		entryPath := strings.TrimSpace(entry.Path)
-		if registryPath != "" && entryPath == registryPath {
+		entryPath := NormalizeRegistryPath(entry.Path)
+		if registryPath != "" && entryPath == NormalizeRegistryPath(registryPath) {
 			return strings.TrimSpace(entry.URL), entryPath
 		}
 		if registryPath == "" && entryPath == "" {
@@ -298,7 +298,7 @@ func registryExistsInConfigWithRef(cfg *Config, url, path, ref string, requireRe
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(strings.TrimSpace(url)) {
 			continue
 		}
-		if path != "" && strings.TrimSpace(entry.Path) != strings.TrimSpace(path) {
+		if strings.TrimSpace(path) != "" && NormalizeRegistryPath(entry.Path) != NormalizeRegistryPath(path) {
 			continue
 		}
 		if requireRef && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
@@ -345,8 +345,10 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(registryURL) {
 			continue
 		}
-		// When registryPath is specified, also match on entry.Path.
-		if registryPath != "" && strings.TrimSpace(entry.Path) != registryPath {
+		// When registryPath is specified, match the configured entry path
+		// exactly after normalizing separators and dot segments. A requested
+		// descendant must not silently target its configured parent.
+		if registryPath != "" && NormalizeRegistryPath(entry.Path) != NormalizeRegistryPath(registryPath) {
 			continue
 		}
 		entryResources := entryResourcesForKind(entry, kind)
@@ -665,10 +667,10 @@ func removeValuesFromTopLevelSubSequence(configPath, topKey, subKey string, valu
 
 // removeValueFromRegistrySubSequence removes a value from a sub-key
 // (e.g. "exclude") under a kind key (e.g. "skills") within a specific registry entry.
-// When registryPath is non-empty, it matches on both URL and path
-// (composite key). When registryPath is empty, it matches on URL only.
-// If multiple entries share the same URL and no path is specified, a
-// disambiguation error lists the available paths.
+// When registryPath is non-empty, it matches the URL and normalized path
+// exactly (composite key); a descendant path never targets its parent. When
+// registryPath is empty, it matches on URL only. If multiple entries share the
+// same URL and no path is specified, a disambiguation error lists the paths.
 func removeValueFromRegistrySubSequence(configPath, registryURL, registryPath, topKey, subKey, value string) error {
 	return removeValuesFromRegistrySubSequence(configPath, registryURL, registryPath, topKey, subKey, []string{value})
 }
@@ -732,9 +734,6 @@ func removeValuesFromRegistrySubSequence(configPath, registryURL, registryPath, 
 		}
 		matchingEntries = append(matchingEntries, entryNode)
 	}
-	// Prefer exact-path entry when multiple entries match via prefix.
-	matchingEntries = preferExactPathMatch(matchingEntries, registryPath)
-
 	switch len(matchingEntries) {
 	case 0:
 		return nil
@@ -927,7 +926,7 @@ func removeRegistryEntryFromConfig(configPath, registryURL, registryPath, regist
 			continue
 		}
 		entryURL, entryPath := entryURLAndPath(entryNode)
-		matches := NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && strings.TrimSpace(entryPath) == registryPath
+		matches := NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && NormalizeRegistryPath(entryPath) == NormalizeRegistryPath(registryPath)
 		if matches && requireRef {
 			matches = registryEntryMatchesExactURLPathRef(entryNode, registryURL, registryPath, registryRef)
 		}

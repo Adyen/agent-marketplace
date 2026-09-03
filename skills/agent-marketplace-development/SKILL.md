@@ -200,13 +200,14 @@ Preserve these invariants:
 
 These are load-bearing. Every PR must preserve them.
 
-### Three-layer precedence (most → least specific)
+### Four-layer precedence (most → least specific)
 
 1. `.agents/config.local.yaml` (gitignored personal overrides; only
    kind-specific resource lists and `exclude` are meaningful).
 2. `.agents/config.yaml` (committed repo config).
-3. `~/.agents/config.yaml` (IT-managed global; `required: true`
-   registries are org-mandatory).
+3. `~/.agents/config.yaml` (user-personal machine config).
+4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
+   `required: true` registries are org-mandatory).
 
 ### Attribute inheritance: specific wins over default
 
@@ -249,8 +250,8 @@ winner and returns a soft warning; it does not fail sync. It chooses by
 normalized URL; complete ties use stable config order. Warnings list every
 registry/path participant, including same-registry paths deduplicated for
 materialization. When the same URL/path is present at multiple refs, labels also
-include `@<ref>`; remediation strips that display-only suffix and uses the URL
-(and `--path` when needed). Use per-registry kind-specific lists, `exclude`, or
+include `@<ref>`; remediation strips that display-only suffix and uses the URL,
+`--path`, and `--ref` when needed. Use per-registry kind-specific lists, `exclude`, or
 removal of the current winner to change the result. Same URL+ref parent/child
 paths are merged as one physical source and the deeper path wins an overlap;
 cross-scope overlaps remain complementary. The same name may exist in different

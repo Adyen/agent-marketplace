@@ -1958,7 +1958,7 @@ registries:
 	// ("plugins/personal") entry, the parent's path is a prefix of the child's.
 	// A first-match-on-prefix scan would write to the parent even though the
 	// caller asked for the exact child path. The parent is listed FIRST so the
-	// prefix match would win without preferExactPathMatch.
+	// prefix match would win without exact path filtering.
 	t.Run("prefers_exact_child_path_over_parent_prefix", func(t *testing.T) {
 		configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 		mustMkdirAll(t, filepath.Dir(configPath))

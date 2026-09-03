@@ -682,6 +682,11 @@ agent-marketplace tui                            Launch the interactive browser 
 - `list --from` is browse-only and never writes to any config file.
 - GitLab/GitHub web URLs are auto-parsed; explicit `--ref`/`--path` override the
   inferred values.
+- For `remove --from`, URL, path, and ref identify the configured entry. An
+  omitted `--path` or `--ref` is unambiguous only when the URL identifies one
+  logical location; distinct paths or refs require the corresponding flag.
+  Named removals with `--path` include discovered descendants, while an
+  equivalent normalized URL/path spelling is accepted.
 - Every ad-hoc URL is validated against the `allowed_registries` policy before
   any network fetch or config write.
 
