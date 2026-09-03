@@ -167,6 +167,14 @@ agent-marketplace doctor --repair --yes        # Adopt exact matches without pro
 agent-marketplace tui                          # Browse and edit selections interactively (H = harnesses)
 ```
 
+For `remove --from`, pass the registry URL and use the entry's authored
+`--path` spelling to narrow a named removal to a configured subdirectory and
+its discovered descendants. Omitting `--path` allows URL-only matching across
+paths; use it for whole-registry
+removal when one URL has multiple path entries. `--scope` chooses the config
+root and defaults to `repo` for `--from`; any diagnostic `@ref` suffix is
+only a label, not part of the URL.
+
 `status` prints a **HARNESS TARGETS** table: one row per effective harness with its capabilities (`compile`, `ingest`, `convert`, `tui`) and both its repo and machine roots. A harness name the CLI does not recognize is still listed, so a typo shows up instead of being silently dropped.
 
 ## `doctor` and `doctor --repair`
@@ -226,7 +234,7 @@ tags:
 - **`source_harness`** is optional per registry entry; empty means autodetect.
 - **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
 - **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
-- **Nested collections** are resolved from configured registry ownership. Once selected, the nested owner's URL, path, ref, and required policy flow to its recursively expanded members. Its effective harness targets inherit from the containing collection unless the owner explicitly narrows them; it cannot widen the parent's targets, and an explicit empty list opts out. Shared nested collections are valid across sibling include branches; only a repeated ancestor on one branch is a cycle.
+- **Nested collections** are resolved from configured registry ownership. The legacy `skills:` member list and typed `resources:` list are both supported and merged. Once selected, the nested owner's URL, path, ref, and required policy flow to its recursively expanded members. Its effective harness targets inherit from the containing collection unless the owner explicitly narrows them; it cannot widen the parent's targets, and an explicit empty list opts out. Shared nested collections are valid across sibling include branches; only a repeated ancestor on one branch is a cycle.
 - **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
 - **Local registries** can use `/absolute`, `~/home-relative`, or `./relative` paths with no `ref`. Relative paths must remain inside the directory containing the local config.
 
@@ -259,6 +267,13 @@ skills:
 Local config is gitignored and per-checkout. Its excludes apply only to
 non-required repo-scoped resources; machine-scoped resources remain immune.
 `sync` adds `.agents/config.local.yaml` to `.gitignore` when the file exists.
+
+When the same kind and name is enabled at machine and repo scope, an unscoped
+`remove` reports the ambiguity instead of choosing a copy. Use
+`remove --scope user` or `remove --scope repo` to remove only that occurrence;
+the other scope remains enabled. `--scope local` targets checkout-local
+selections/excludes and cannot bypass the machine/repo boundary. Required
+resources cannot be removed from any scope.
 
 ## Resource Prerequisites
 

@@ -63,6 +63,35 @@ func TestResolvedResourceByName_SameKindMultipleLayers(t *testing.T) {
 	}
 }
 
+func TestResolvedResourceByNameInScopeSelectsMatchingLayerBeforeAmbiguity(t *testing.T) {
+	resolved := []resolver.ResolvedArtifact{
+		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins", config.UserPersonal),
+		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins", config.RepoCommitted),
+		artifact(ir.KindSkill, "sql-queries", "awesome-ai", "teams/pm/plugins", config.RepoPersonal),
+	}
+
+	tests := []struct {
+		name  string
+		scope Scope
+		want  config.Source
+	}{
+		{name: "user", scope: ScopeUser, want: config.UserPersonal},
+		{name: "repo", scope: ScopeRepo, want: config.RepoCommitted},
+		{name: "local", scope: ScopeLocal, want: config.RepoPersonal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolvedResourceByNameInScope(resolved, "sql-queries", ir.KindSkill, true, nil, tt.scope, true)
+			if err != nil {
+				t.Fatalf("unexpected ambiguity for --scope %s: %v", tt.scope, err)
+			}
+			if got == nil || got.Source != tt.want {
+				t.Fatalf("scope %s selected %#v, want source %v", tt.scope, got, tt.want)
+			}
+		})
+	}
+}
+
 // The suggested --path must be the configured (raw) entry path, not the deeper
 // discovered sub-bundle path recorded on the artifact — otherwise the user is
 // sent to a --path that matches no config entry ("not found in any config").

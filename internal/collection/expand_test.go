@@ -118,6 +118,40 @@ func TestExpandSingleCollectionUsesSourceRegistry(t *testing.T) {
 	}
 }
 
+func TestExpandCanonicalizesEquivalentMemberPathsIntoOneSyntheticEntry(t *testing.T) {
+	col := Collection{
+		Name: "paths",
+		Skills: []CollectionSkill{
+			{Name: "skill-a", Registry: "git@example.com:core.git", Ref: "main", Path: "foo"},
+			{Name: "skill-b", Registry: "git@example.com:core.git", Ref: "main", Path: "./foo/"},
+		},
+		SourceRegistryURL: "git@example.com:collections.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{{
+		URL:        "git@example.com:core.git",
+		Ref:        "main",
+		Path:       "foo",
+		Source:     config.UserPersonal,
+		CatalogKey: "/cache/core",
+	}}
+
+	res, errs := Expand([]string{"paths"}, []Collection{col}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 {
+		t.Fatalf("equivalent member paths should produce one synthetic source, got %#v", res.SyntheticEntries)
+	}
+	entry := res.SyntheticEntries[0]
+	if entry.Path != "foo" {
+		t.Fatalf("synthetic path = %q, want canonical foo", entry.Path)
+	}
+	if !reflect.DeepEqual(entry.Skills.Include, []string{"skill-a", "skill-b"}) {
+		t.Fatalf("synthetic skills = %#v, want both members", entry.Skills.Include)
+	}
+}
+
 func TestExpandDirectlyConfiguredSkillsAreNotAnnotated(t *testing.T) {
 	col := Collection{
 		Name:              "core",

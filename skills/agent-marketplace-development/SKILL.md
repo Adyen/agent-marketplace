@@ -102,7 +102,10 @@ belong in `cmd/agent-marketplace/` or `internal/tui/`.
 - Nested collection ownership is selected from configured registry metadata,
   not catalog/cache-key iteration order. Required policy and config
   source/file precedence win; ties prefer the containing URL/ref/path and then
-  stable URL/path ordering.
+  stable URL/path ordering. Registry subpaths are slash-separated artifact
+  paths: equivalent spellings (such as `./foo/`, repeated separators, or
+  backslashes) share one identity, while config editors retain authored
+  URL/path spelling.
 - Nested collection harnesses inherit the containing collection's effective
   targets, and an explicitly configured nested list is intersected with them.
   A nested owner can narrow but never widen its parent; explicit empty remains
@@ -370,6 +373,15 @@ exposes `newFooCmd() *cobra.Command`. `main.go` registers them.
 | `status` | no | no |
 | `gc` | no | no (cleans cache) |
 | `tui` (or bare invocation on TTY) | yes (via modal) | on demand (`s`) |
+
+`remove` keeps machine- and repo-scoped occurrences distinct. If both copies
+are enabled, an unscoped same-kind removal is ambiguous; an explicit
+`--scope user`, `--scope repo`, or `--scope local` selects the corresponding
+occurrence without suppressing the others. Repo/local scopes must not be used
+to suppress machine resources, and required resources are never removable.
+For `remove --from`, `--scope` selects the config root (repo by default),
+`--path` narrows URL matching to an entry/subtree, and any `@ref` in a
+collision label is diagnostic text rather than part of the URL.
 
 ### Shape of a good CLI command
 

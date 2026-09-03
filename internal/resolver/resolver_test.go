@@ -933,12 +933,16 @@ func TestResolveDeduplicatePrefersHigherPrecedence(t *testing.T) {
 		t.Fatalf("expected no errors for deduplicated same registry, got %v", errs)
 	}
 
-	if len(got) != 1 {
-		t.Fatalf("expected 1 deduplicated skill, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("expected machine and repo occurrences to remain scope-separated, got %d", len(got))
 	}
-
-	if got[0].IsGlobal() {
-		t.Fatalf("expected repo occurrence to win by higher precedence, got machine-scoped (URL=%s)", got[0].RegistryURL)
+	var machine, repoScoped bool
+	for _, artifact := range got {
+		machine = machine || artifact.IsGlobal()
+		repoScoped = repoScoped || !artifact.IsGlobal()
+	}
+	if !machine || !repoScoped {
+		t.Fatalf("expected one machine and one repo occurrence, got %+v", got)
 	}
 }
 
@@ -968,14 +972,22 @@ func TestResolveDeduplicateKeepsRequiredOccurrence(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("expected no errors for deduplicated same registry, got %v", errs)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 deduplicated skill, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("expected machine and repo occurrences to remain scope-separated, got %d", len(got))
 	}
-	if !got[0].Required {
-		t.Fatalf("expected required occurrence to win deduplication")
+	var requiredMachine, repoScoped bool
+	for _, artifact := range got {
+		if artifact.IsGlobal() {
+			requiredMachine = artifact.Required
+		} else {
+			repoScoped = true
+		}
 	}
-	if !got[0].IsGlobal() {
-		t.Fatalf("expected required machine-scope occurrence to remain machine-scoped")
+	if !requiredMachine {
+		t.Fatalf("expected required machine-scope occurrence to remain required: %+v", got)
+	}
+	if !repoScoped {
+		t.Fatalf("expected repo-scope occurrence to remain materialized: %+v", got)
 	}
 }
 
@@ -1916,6 +1928,22 @@ func TestResolveDeduplicateIsDeterministicAcrossRuns(t *testing.T) {
 					i, j, errs[j].Error(), firstErrs[j].Error())
 			}
 		}
+	}
+}
+
+func TestDeduplicateOverlappingPathsPreferDepthBeforeAuthority(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "parent", Ref: "main", Source: config.Organization, CatalogKey: "parent"}, url: url, order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "parent/child", Ref: "main", Source: config.UserPersonal, CatalogKey: "child"}, url: url, order: 1},
+	}
+
+	got := deduplicateOccurrences(occurrences)
+	if len(got) != 1 {
+		t.Fatalf("expected one same-scope overlapping occurrence, got %#v", got)
+	}
+	if got[0].resolved.RegistryPath != "parent/child" {
+		t.Fatalf("deeper path must beat higher-authority parent, got %q", got[0].resolved.RegistryPath)
 	}
 }
 

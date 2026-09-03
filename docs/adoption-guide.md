@@ -178,6 +178,16 @@ skills:
 
 `agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
 
+When a non-required resource is enabled in both machine and repo scopes,
+`remove` without `--scope` reports the ambiguity. Use `remove --scope user` or
+`remove --scope repo` to remove only the selected occurrence; the other scope
+remains enabled. `--scope local` is for checkout-local selections/excludes, and
+cannot bypass the machine/repo boundary. An unscoped removal with one
+unambiguous occurrence infers its effective layer (machine resources use user
+config), except that a repo-scoped auto-selected resource that is not explicitly
+selected by committed repo config is recorded as a checkout-local exclusion.
+Use `--scope repo` to edit committed repo config.
+
 ## Daily commands
 
 ```bash
@@ -217,7 +227,7 @@ agent-marketplace remove vm-lifecycle --from git@gitlab.example.com:example-org/
 agent-marketplace remove --from git@gitlab.example.com:example-org/infra-skills
 ```
 
-Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `list --from` is browse-only. `remove --from` without a name deletes an entry from the selected root. If the entry comes from an included file or a lower layer, the command writes an `exclude_all` shadow in the selected root instead. The source file remains unchanged, and normal scope boundaries still apply.
+Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `list --from` is browse-only. `remove --from` without a name deletes an entry from the selected root (repo by default). If the entry comes from an included file or a lower layer, the command writes an `exclude_all` shadow in the selected root instead. For named removal, the URL identifies the registry and `--path` narrows matching to a configured subdirectory and its discovered descendants; use the entry's authored path spelling, or omit it for URL-only matching across paths. Diagnostic `@ref` labels are display-only: pass the URL and optional `--ref`/`--path` separately. The source file remains unchanged, and normal scope boundaries still apply.
 
 ## How sync works
 

@@ -118,7 +118,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	}
 	resolved := resolvedResult.Resolved
 
-	target, err := resolvedResourceByName(resolved, name, opts.Kind, opts.HasKind, mergedCfg)
+	target, err := resolvedResourceByNameInScope(resolved, name, opts.Kind, opts.HasKind, mergedCfg, opts.Scope, opts.ScopeSpecified)
 	if err != nil {
 		return nil, err
 	}
@@ -414,6 +414,32 @@ func validateRegistryScopeBoundary(source config.Source, scope Scope, url string
 }
 
 func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, cfg *config.Config) (*resolver.ResolvedArtifact, error) {
+	return resolveResourceMatches(resourceMatches(resolved, name, kind, hasKind), name, cfg)
+}
+
+// resolvedResourceByNameInScope narrows a same-kind name lookup to the
+// requested installation scope before checking ambiguity. Machine and repo
+// occurrences are intentionally retained by the resolver, so a plain name
+// lookup can now find two valid artifacts. An explicit --scope identifies the
+// occurrence the user intends to edit; if that scope has no match, retain the
+// unfiltered set so existing scope-boundary errors remain actionable.
+func resolvedResourceByNameInScope(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool, cfg *config.Config, scope Scope, scopeSpecified bool) (*resolver.ResolvedArtifact, error) {
+	matches := resourceMatches(resolved, name, kind, hasKind)
+	if scopeSpecified {
+		scoped := make([]resolver.ResolvedArtifact, 0, len(matches))
+		for _, match := range matches {
+			if sourceMatchesRemoveScope(match.Source, scope) {
+				scoped = append(scoped, match)
+			}
+		}
+		if len(scoped) > 0 {
+			matches = scoped
+		}
+	}
+	return resolveResourceMatches(matches, name, cfg)
+}
+
+func resourceMatches(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool) []resolver.ResolvedArtifact {
 	var matches []resolver.ResolvedArtifact
 	for _, candidate := range resolved {
 		if candidate.Name != name {
@@ -424,6 +450,10 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 		}
 		matches = append(matches, candidate)
 	}
+	return matches
+}
+
+func resolveResourceMatches(matches []resolver.ResolvedArtifact, name string, cfg *config.Config) (*resolver.ResolvedArtifact, error) {
 	if len(matches) == 0 {
 		return nil, nil
 	}
@@ -441,6 +471,17 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 		return nil, fmt.Errorf("resource %q is ambiguous across kinds (%s); rerun with --kind", name, strings.Join(labels, ", "))
 	}
 	return nil, ambiguousRegistryError(name, matches, cfg)
+}
+
+func sourceMatchesRemoveScope(source config.Source, scope Scope) bool {
+	switch scope {
+	case ScopeUser:
+		return source.IsMachineScope()
+	case ScopeLocal:
+		return source == config.RepoPersonal
+	default:
+		return source == config.RepoCommitted || source == config.SourceUnset
+	}
 }
 
 // distinctKindLabels returns the sorted, de-duplicated set of kind labels

@@ -1183,7 +1183,19 @@ func expandMembersRecursive(
 				// order, so an unrelated entry for the same monorepo can never
 				// absorb the reference.
 				containing := candidatesContaining(candidates, catalogIndex, sel)
+				// Local excludes are evaluated against the candidate owner before
+				// selection. Otherwise an excluded optional repo owner can win
+				// over a compatible machine owner and make the member disappear.
+				allContaining := containing
+				containing = filterCandidates(containing, func(candidate memberEntryCandidate) bool {
+					return !localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, candidate.entry.Required, candidate.entry.Source)
+				})
 				if len(containing) == 0 {
+					// A local exclusion deliberately removes this optional member;
+					// it is not a missing resource and must not produce a diagnostic.
+					if len(allContaining) > 0 {
+						continue
+					}
 					*errs = append(*errs, &SelectedNotFoundError{
 						Kind:           member.Kind,
 						Name:           memberName,
@@ -1194,6 +1206,20 @@ func expandMembersRecursive(
 						CandidatePaths: candidateLocationLabels(candidates),
 					})
 					continue
+				}
+				if len(targetSet) > 0 {
+					compatible := make([]memberEntryCandidate, 0, len(containing))
+					for _, candidate := range containing {
+						if len(effectiveMemberHarnesses(artifact.Harnesses, candidate.entry, true, targetSet)) == 0 {
+							appendEmptyHarnessError(candidate.entry, member.Kind, memberName, targetSet, errs)
+							continue
+						}
+						compatible = append(compatible, candidate)
+					}
+					if len(compatible) == 0 {
+						continue
+					}
+					containing = compatible
 				}
 				chosen = preferRequired(containing)
 				if distinctLocations(containing) > 1 {
@@ -1244,15 +1270,7 @@ func expandMembersRecursive(
 		// Compute effective harnesses for the member. Inherit from the parent
 		// collection when the member's entry has no per-entry harnesses, and
 		// intersect with the machine-wide target set when one is configured.
-		memberTargets := resolveEntryHarnesses(memberEntry, targetSet)
-		var memberHarnesses []hcc.Target
-		if len(targetSet) == 0 && (!memberEntryFound || memberEntry.Harnesses == nil) {
-			memberHarnesses = artifact.Harnesses
-		} else if artifact.Harnesses != nil {
-			memberHarnesses = intersectTargets(memberTargets, artifact.Harnesses)
-		} else {
-			memberHarnesses = memberTargets
-		}
+		memberHarnesses := effectiveMemberHarnesses(artifact.Harnesses, memberEntry, memberEntryFound, targetSet)
 		if len(targetSet) > 0 && len(memberHarnesses) == 0 {
 			if memberEntryFound {
 				appendEmptyHarnessError(memberEntry, member.Kind, memberName, targetSet, errs)
@@ -1968,6 +1986,20 @@ func intersectTargets(a, b []hcc.Target) []hcc.Target {
 	return out
 }
 
+// effectiveMemberHarnesses applies the same inheritance and target intersection
+// used for a resolved collection member. Keeping this calculation reusable lets
+// path-less binding reject owners that cannot materialize before owner selection.
+func effectiveMemberHarnesses(parentHarnesses []hcc.Target, entry config.RegistryEntry, entryFound bool, targetSet []hcc.Target) []hcc.Target {
+	entryHarnesses := resolveEntryHarnesses(entry, targetSet)
+	if len(targetSet) == 0 && (!entryFound || entry.Harnesses == nil) {
+		return parentHarnesses
+	}
+	if parentHarnesses != nil {
+		return intersectTargets(entryHarnesses, parentHarnesses)
+	}
+	return entryHarnesses
+}
+
 // formatTargets returns a comma-separated string representation of targets.
 func formatTargets(targets []hcc.Target) string {
 	if len(targets) == 0 {
@@ -2586,14 +2618,11 @@ func hasExplicitSelection(entry config.RegistryEntry) bool {
 	return entry.Tags != nil
 }
 
-// deduplicateOccurrences merges occurrences that come from the same logical
-// registry source. Two entries are considered the same source when:
-//   - They share the same CatalogKey (identical cache/local path), OR
-//   - They are both git registries whose normalized URLs match and refs match
-//     (handles the .git suffix difference, e.g. repo vs repo.git).
-//
-// When duplicates exist, the global occurrence wins.
-// Only genuinely different registries remain for collision detection.
+// deduplicateOccurrences merges occurrences from the same logical registry
+// source within one installation scope. Same-URL/ref entries with overlapping
+// paths are merged; unrelated paths and machine/repo scopes remain distinct.
+// Within a merged group, required policy, path specificity, and config
+// precedence choose the surviving occurrence.
 func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 	if len(occurrences) < 2 {
 		return occurrences
@@ -2604,13 +2633,16 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		normalizedURL string
 		ref           string
 		path          string // registry sub-path, keeps different-path entries separate
+		machineScope  bool   // machine and repo occurrences materialize separately
 	}
 
 	byKey := make(map[logicalKey][]skillOccurrence, len(occurrences))
 	for _, occ := range occurrences {
 		// Use CatalogKey as primary identity, but also group by
 		// normalized URL+ref+path for git registries that differ only by .git suffix.
-		lk := logicalKey{catalogKey: occ.resolved.CatalogKey}
+		// Scope is part of identity: identical physical locations in machine and
+		// repo scopes are complementary outputs, not duplicates.
+		lk := logicalKey{catalogKey: occ.resolved.CatalogKey, machineScope: occ.resolved.Source.IsMachineScope()}
 		if !occ.resolved.IsLocal() {
 			lk.normalizedURL = normalizedRegistryURL(occ.url)
 			lk.ref = strings.TrimSpace(occ.resolved.Ref)
@@ -2632,6 +2664,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		normalizedURL string
 		ref           string
 		path          string
+		machineScope  bool
 	}
 	compareLogicalKeys := func(a, b logicalKey) int {
 		if a.catalogKey != b.catalogKey {
@@ -2643,7 +2676,16 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		if a.ref != b.ref {
 			return strings.Compare(a.ref, b.ref)
 		}
-		return strings.Compare(a.path, b.path)
+		if a.path != b.path {
+			return strings.Compare(a.path, b.path)
+		}
+		if a.machineScope != b.machineScope {
+			if a.machineScope {
+				return 1
+			}
+			return -1
+		}
+		return 0
 	}
 	compareNormKeys := func(a, b normKey) int {
 		if a.normalizedURL != b.normalizedURL {
@@ -2652,14 +2694,23 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		if a.ref != b.ref {
 			return strings.Compare(a.ref, b.ref)
 		}
-		return strings.Compare(a.path, b.path)
+		if a.path != b.path {
+			return strings.Compare(a.path, b.path)
+		}
+		if a.machineScope != b.machineScope {
+			if a.machineScope {
+				return 1
+			}
+			return -1
+		}
+		return 0
 	}
 	normGroups := make(map[normKey][]logicalKey)
 	for lk := range byKey {
 		if lk.normalizedURL == "" {
 			continue
 		}
-		nk := normKey{normalizedURL: lk.normalizedURL, ref: lk.ref, path: lk.path}
+		nk := normKey{normalizedURL: lk.normalizedURL, ref: lk.ref, path: lk.path, machineScope: lk.machineScope}
 		normGroups[nk] = append(normGroups[nk], lk)
 	}
 
@@ -2809,22 +2860,22 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 				winner = occ
 				continue
 			}
-			if occ.resolved.Required == winner.resolved.Required &&
-				config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) > 0 {
-				winner = occ
-				continue
-			}
-			// Overlapping-path tiebreaker: when same URL+ref
-			// and one path is a prefix of the other, the more-specific
-			// (longer) path wins because it explicitly targets the
-			// sub-directory and its selectors/policy are more precise.
-			if occ.resolved.Required == winner.resolved.Required &&
-				config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) == 0 &&
-				normalizedRegistryURL(occ.url) == normalizedRegistryURL(winner.url) &&
-				strings.TrimSpace(occ.resolved.Ref) == strings.TrimSpace(winner.resolved.Ref) {
-				if isPathPrefix(normalizedEntryPath(winner.resolved.RegistryPath), normalizedEntryPath(occ.resolved.RegistryPath)) {
-					// winner is parent, occ is child → child wins
+			if occ.resolved.Required == winner.resolved.Required {
+				// For a same-scope physical overlap, specificity is policy's
+				// second tie-breaker: a child path wins over its parent even
+				// when the parent came from a higher-authority config layer.
+				// This preserves the documented deeper-path-wins behavior.
+				specificity := compareOverlappingPathSpecificity(occ, winner)
+				if specificity > 0 {
 					winner = occ
+					continue
+				}
+				if specificity < 0 {
+					continue
+				}
+				if config.CompareEntryPrecedence(occ.resolved.Source, occ.resolved.FilePrecedence, winner.resolved.Source, winner.resolved.FilePrecedence) > 0 {
+					winner = occ
+					continue
 				}
 			}
 		}
@@ -2909,6 +2960,26 @@ func isPathPrefix(parent, child string) bool {
 	// "teams/dev" is a prefix of "teams/dev/eng" (next char is '/'),
 	// but "teams/dev" is NOT a prefix of "teams/dev-tools" (next char is '-').
 	return len(child) > len(parent) && child[len(parent)] == '/'
+}
+
+// compareOverlappingPathSpecificity reports whether a is the deeper member of
+// a same-URL/ref overlapping pair. It returns 1 when a is the child, -1 when
+// b is the child, and 0 for unrelated or equal paths.
+func compareOverlappingPathSpecificity(a, b skillOccurrence) int {
+	if a.resolved.Source.IsMachineScope() != b.resolved.Source.IsMachineScope() ||
+		normalizedRegistryURL(a.url) != normalizedRegistryURL(b.url) ||
+		strings.TrimSpace(a.resolved.Ref) != strings.TrimSpace(b.resolved.Ref) {
+		return 0
+	}
+	aPath := normalizedEntryPath(a.resolved.RegistryPath)
+	bPath := normalizedEntryPath(b.resolved.RegistryPath)
+	if isPathPrefix(bPath, aPath) {
+		return 1
+	}
+	if isPathPrefix(aPath, bPath) {
+		return -1
+	}
+	return 0
 }
 
 // pathScopeCovers reports whether a registry entry rooted at scopePath governs

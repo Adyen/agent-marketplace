@@ -89,9 +89,38 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   non-required repo-scoped resources.
 - `required: true` resources cannot be excluded by any layer.
 
+## Removal scope
+
+- Resolution keeps machine- and repo-scoped occurrences separate because they
+  materialize to different roots. If the same kind and name is enabled at both
+  scopes, an unscoped `remove` is ambiguous rather than silently removing one
+  copy. For a non-required resource, `remove --scope user` selects the
+  machine-scoped occurrence and `remove --scope repo` selects the committed
+  repo occurrence; the other scope remains enabled. If the selected scope has
+  multiple providers, add `--from`/`--path` (and `--kind` when needed).
+  `--scope local` selects a checkout-local occurrence or exclusion.
+- Explicit scope does not bypass authority boundaries. Repo and local config
+  cannot suppress a machine-scoped resource; use `--scope user`. Required
+  resources remain immune to removal and exclusion at every scope. When no
+  scope is given and there is only one unambiguous occurrence, removal infers
+  its effective layer (machine scope maps to user config); a repo-scoped
+  auto-selected resource that is not explicitly selected by the committed repo
+  config is instead recorded as a checkout-local exclusion. Use `--scope repo`
+  when you intend to edit committed repo config.
+- With `--from`, `--scope` chooses the config root to edit and defaults to
+  `repo`. The URL identifies the registry; `--path` narrows a named removal
+  to a configured subdirectory and descendants, while omitting it allows
+  URL-only matching across paths. For whole-registry removal, provide
+  `--path` when the same URL has multiple path entries. Diagnostic `@ref`
+  suffixes are labels only; pass the URL and optional `--ref`/`--path` as
+  separate flags.
+
 ## Collection precedence
 
-- Collections expand into synthetic registry entries before resolution.
+- Collections expand into synthetic registry entries before resolution. The
+  legacy `skills:` member list and the typed `resources:` list are both
+  supported and merged; nested includes form a DAG, so a shared child is valid
+  across sibling branches while an ancestor repeated on one branch is a cycle.
 - Removing a collection member writes a per-kind `exclude` in the active scope (collection stays installed).
 - If a resource is both direct-selected and collection-provided, direct selection takes precedence for conflict handling and `Via` annotation.
 - A member that names a `registry:` with a `path:` binds to the configured entry at exactly that path. If the repository is configured but not at that path, the warning names both the path the collection asked for and the paths that *are* configured.

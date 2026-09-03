@@ -53,8 +53,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
-- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; refuses required resources
-- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry
+- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; explicit scope selects the machine/repo/local occurrence and preserves other scopes; refuses required resources and machine removal from repo/local scope
+- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry; `--path` narrows URL matching to an entry/subtree and `--scope` defaults to repo
 - `agent-marketplace sync` — deterministic materialization based on merged config
 - `agent-marketplace sync --check` — check drift without reconciling; exits 1 if out of sync
 - `agent-marketplace update` / `update --bump` — pull latest for pinned refs
