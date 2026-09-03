@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestKeyMapNavigationBindingsMatch(t *testing.T) {
@@ -20,8 +22,18 @@ func TestKeyMapNavigationBindingsMatch(t *testing.T) {
 		{"up matches Up", keyNamed("up"), k.Up, true},
 		{"j matches Down", keyPress('j'), k.Down, true},
 		{"down matches Down", keyNamed("down"), k.Down, true},
+		{"ctrl+d matches HalfPageDown", tea.KeyMsg{Type: tea.KeyCtrlD}, k.HalfPageDown, true},
+		{"ctrl+u matches HalfPageUp", tea.KeyMsg{Type: tea.KeyCtrlU}, k.HalfPageUp, true},
+		{"f matches PageDown", keyPress('f'), k.PageDown, true},
+		{"ctrl+f matches PageDown", tea.KeyMsg{Type: tea.KeyCtrlF}, k.PageDown, true},
+		{"pgdown matches PageDown", tea.KeyMsg{Type: tea.KeyPgDown}, k.PageDown, true},
+		{"b matches PageUp", keyPress('b'), k.PageUp, true},
+		{"ctrl+b matches PageUp", tea.KeyMsg{Type: tea.KeyCtrlB}, k.PageUp, true},
+		{"pgup matches PageUp", tea.KeyMsg{Type: tea.KeyPgUp}, k.PageUp, true},
 		{"g matches Top", keyPress('g'), k.Top, true},
+		{"home matches Top", tea.KeyMsg{Type: tea.KeyHome}, k.Top, true},
 		{"G matches Bottom", keyPress('G'), k.Bottom, true},
+		{"end matches Bottom", tea.KeyMsg{Type: tea.KeyEnd}, k.Bottom, true},
 		{"tab matches NextTab", keyNamed("tab"), k.NextTab, true},
 		{"shift+tab matches PrevTab", keyNamed("shift+tab"), k.PrevTab, true},
 		{"1 matches Tab1", keyPress('1'), k.Tab1, true},
@@ -238,11 +250,30 @@ func TestKeyMapFullHelpReturnsGroups(t *testing.T) {
 	}
 }
 
+func TestHelpKeepsLongNavigationAliasesTogether(t *testing.T) {
+	output := ansi.Strip(renderHelp(NewModel("/repo", "/home")))
+	for _, want := range []string{
+		"f/ctrl+f/pgdn  page down",
+		"b/ctrl+b/pgup  page up",
+	} {
+		found := false
+		for _, line := range strings.Split(output, "\n") {
+			if strings.Contains(line, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("help entry %q was wrapped or missing:\n%s", want, output)
+		}
+	}
+}
+
 func TestKeyMapHelpTextConsistency(t *testing.T) {
 	// Every binding should have non-empty help text.
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.Top, k.Bottom, k.NextTab, k.PrevTab,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
 		k.Tab1, k.Tab2, k.Tab3,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
@@ -269,7 +300,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 func TestKeyMapAllBindingsEnabled(t *testing.T) {
 	k := defaultKeyMap
 	allBindings := []key.Binding{
-		k.Up, k.Down, k.Top, k.Bottom, k.NextTab, k.PrevTab,
+		k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.NextTab, k.PrevTab,
 		k.Tab1, k.Tab2, k.Tab3,
 		k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand,
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,

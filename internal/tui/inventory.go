@@ -27,6 +27,10 @@ const (
 const (
 	ActionUp                ActionID = "up"
 	ActionDown              ActionID = "down"
+	ActionHalfPageDown      ActionID = "half-page-down"
+	ActionHalfPageUp        ActionID = "half-page-up"
+	ActionPageDown          ActionID = "page-down"
+	ActionPageUp            ActionID = "page-up"
 	ActionTop               ActionID = "top"
 	ActionBottom            ActionID = "bottom"
 	ActionNextTab           ActionID = "next-tab"
@@ -175,6 +179,10 @@ func qaActionRegistrations(keys *keyMap) []qaActionRegistration {
 	return []qaActionRegistration{
 		{id: ActionUp, binding: &keys.Up},
 		{id: ActionDown, binding: &keys.Down},
+		{id: ActionHalfPageDown, binding: &keys.HalfPageDown},
+		{id: ActionHalfPageUp, binding: &keys.HalfPageUp},
+		{id: ActionPageDown, binding: &keys.PageDown},
+		{id: ActionPageUp, binding: &keys.PageUp},
 		{id: ActionTop, binding: &keys.Top},
 		{id: ActionBottom, binding: &keys.Bottom},
 		{id: ActionNextTab, binding: &keys.NextTab},
