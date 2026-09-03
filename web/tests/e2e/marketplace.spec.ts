@@ -115,7 +115,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(card.getByText(hostileDescription, { exact: true })).toBeVisible()
     await expect(card.locator('script')).toHaveCount(0)
     await expect(card.locator('[onerror]')).toHaveCount(0)
-    await expect(card.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveAttribute('href', /\/s\/team-tools\/skill\/secure-review$/)
+    await expect(card.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveAttribute('href', /\/r\/team-tools\/skill\/secure-review$/)
   })
 
   test('keeps browser routes Nuxt-owned while the API remains API-only', async ({ page, request }) => {
@@ -135,7 +135,7 @@ test.describe('Marketplace browser discovery', () => {
     await page.goto('/')
     await page.getByRole('link', { name: 'team-tools/secure-review', exact: true }).click()
 
-    await expect(page).toHaveURL(/\/s\/team-tools\/skill\/secure-review$/)
+    await expect(page).toHaveURL(/\/r\/team-tools\/skill\/secure-review$/)
     await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()

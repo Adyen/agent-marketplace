@@ -75,7 +75,7 @@ func benchRepo(b *testing.B) string {
 	}
 
 	cmds := [][]string{
-		{"git", "init", "-q"},
+		{"git", "init", "-q", "--initial-branch=main"},
 		{"git", "config", "user.email", "bench@example.com"},
 		{"git", "config", "user.name", "Bench"},
 		{"git", "config", "uploadpack.allowFilter", "true"},

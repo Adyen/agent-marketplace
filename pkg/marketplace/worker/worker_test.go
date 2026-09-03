@@ -456,7 +456,7 @@ func createTestRepo(tb testing.TB) (string, func()) {
 	write(".agents/collections/default/COLLECTION.yaml", "name: default\ndescription: Default collection\nresources:\n  - name: review\n    kind: skill\n  - name: lint\n    kind: command\n")
 
 	cmds := [][]string{
-		{"git", "init", "-q"},
+		{"git", "init", "-q", "--initial-branch=main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
 		{"git", "add", "."},
