@@ -603,8 +603,6 @@ agent-marketplace remove vm-lifecycle                # exclude one member, keep 
 agent-marketplace remove platform-onboarding         # remove the whole bundle
 ```
 
----
-
 ## Local-path registries
 
 Instead of a Git URL, a registry entry can point at a local directory — handy

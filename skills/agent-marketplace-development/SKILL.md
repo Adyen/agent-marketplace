@@ -93,6 +93,22 @@ name collision behavior — is shared. Fixes at the `internal/*` layer
 fix both surfaces at once. Features that only make sense in one surface
 belong in `cmd/agent-marketplace/` or `internal/tui/`.
 
+### Resolver invariants
+
+- `resolver.Resolve` may receive catalog entries whose `Resource` is nil through
+  legacy discovery. When the caller has the corresponding IR map, pass it via
+  `resolver.WithResources`; resolution attaches those resources before nested
+  collection expansion so materialization does not lose the definition.
+- Nested collection ownership is selected from configured registry metadata,
+  not catalog/cache-key iteration order. Required policy and config
+  source/file precedence win; ties prefer the containing URL/ref/path and then
+  stable URL/path ordering.
+- Nested collection harnesses inherit the containing collection's effective
+  targets, and an explicitly configured nested list is intersected with them.
+  A nested owner can narrow but never widen its parent; explicit empty remains
+  an opt-out. Include ancestry is branch-local, so shared DAG nodes are valid
+  while an ancestor repeated on one branch is a cycle.
+
 ## Materialization Invariants
 
 `internal/materialize` is the authoritative v2 sync/drift engine. It
@@ -223,14 +239,17 @@ The resolver enforces this; never add a bypass.
 ### Name collisions resolve deterministically
 
 If two registries expose the same resource kind and name, `Resolve` selects a
-winner and returns a soft warning. It chooses by `required: true`, config
-source/file precedence, then alphabetically first normalized URL; complete ties
-use stable config order. Warnings list
-every registry/path participant, including same-registry paths deduplicated for
-materialization. Use per-registry kind-specific lists, `exclude`, or removal of
-the current winner to change the result. When the registry has multiple paths,
-pass the desired `--path` explicitly to `remove`. The same name may exist in
-different kinds; CLI install/remove paths must ask for `--kind` when needed.
+winner and returns a soft warning; it does not fail sync. It chooses by
+`required: true`, config source/file precedence, then alphabetically first
+normalized URL; complete ties use stable config order. Warnings list every
+registry/path participant, including same-registry paths deduplicated for
+materialization. When the same URL/path is present at multiple refs, labels also
+include `@<ref>`; remediation strips that display-only suffix and uses the URL
+(and `--path` when needed). Use per-registry kind-specific lists, `exclude`, or
+removal of the current winner to change the result. Same URL+ref parent/child
+paths are merged as one physical source and the deeper path wins an overlap;
+cross-scope overlaps remain complementary. The same name may exist in different
+kinds; CLI install/remove paths must ask for `--kind` when needed.
 `cmd/install.go` mirrors this behavior for `install --all`.
 
 ### Config editing preserves comments

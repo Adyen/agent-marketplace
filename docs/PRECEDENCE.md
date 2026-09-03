@@ -103,7 +103,8 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
   - If more than one distinct location contains it, the ambiguity is reported as a warning and the first location — preferring a `required: true` one — is used. Pin a `path:` on the member to make it explicit.
 - Nested collection definitions use configured registry ownership, not catalog or cache-key order. For duplicates, `required: true` wins, followed by config source/file precedence.
   - If authority ties, the resolver prefers an owner matching the parent URL/ref/path, then uses stable URL/path order.
-  - Recursively expanded members inherit the selected URL, path, ref, harness targets, and required policy, intersected with the effective target set.
+  - Recursively expanded members inherit the selected URL, path, ref, and required policy. Harness targets are inherited when the nested owner leaves them unset; an explicit nested-owner list can only narrow the containing collection's targets, and is intersected with the effective target set. An explicit empty list remains an opt-out.
+  - Include ancestry is branch-local: a collection shared by sibling include branches is valid and may be expanded under each branch, while an ancestor repeated along one branch is reported as a cycle. Members are still deduplicated by the normal direct/collection resolution rules.
 
 ## Resource prerequisites
 
@@ -135,8 +136,9 @@ needed. `kind` defaults to `skill`.
 ## Name collisions and ambiguity
 
 - If the same resource name (within the same kind) is selected from multiple different registries, resolution emits a soft warning, chooses one deterministic winner, and continues materializing the resource. The winner is selected by `required: true`, then higher config source/file precedence, then alphabetically first normalized registry URL; if those criteria tie, stable config order wins.
-- Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
-- To change a winner, exclude it with `agent-marketplace remove <name> --from <winning-registry>` or make selection registry-specific. If the winning registry has multiple configured paths, pass the desired `--path <path>` explicitly; grouped sync output does not add a path-specific flag. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If the same normalized URL and path are used at multiple refs, every non-empty ref label also includes `@<ref>` so the participants remain distinguishable. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
+- Same normalized URL+ref entries whose paths overlap by whole path components (for example, `teams/dev` and `teams/dev/eng`) are treated as one physical source rather than a name collision. The more-specific path wins when both provide a name. Overlapping entries in different scopes are complementary and remain separate so both scopes can materialize.
+- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; use the config's exact registry selection when refs must be controlled separately. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples
 

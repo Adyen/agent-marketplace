@@ -2,11 +2,14 @@ package resolver
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -672,5 +675,91 @@ func TestChooseNestedCollectionRequiredCandidateWins(t *testing.T) {
 	}
 	if !chosen.owner.Required {
 		t.Fatal("chosen duplicate owner is not marked required")
+	}
+}
+
+func TestNestedCollectionHarnessesCannotWidenParent(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer"), Harnesses: []string{"claude", "factory"}},
+		{URL: "git@example.com:nested.git", Ref: "main", Collections: ks(), Harnesses: []string{"factory", "gemini"}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory, hcc.TargetGemini}))
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	nested := findResolved(resolved, "nested-skill")
+	if nested == nil {
+		t.Fatalf("nested skill was not expanded: %#v", resolved)
+	}
+	want := []hcc.Target{hcc.TargetFactory}
+	if !slices.Equal(nested.Harnesses, want) {
+		t.Fatalf("nested harnesses = %v, want %v", nested.Harnesses, want)
+	}
+}
+
+func TestNestedCollectionUsesWithResourcesFallback(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: "git@example.com:nested.git", Ref: "main"},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner"},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+	resources := map[string]map[string]ir.Resource{
+		cfg.Registries[1].CatalogKey: {
+			skill.ResourceKey(ir.KindCollection, "inner"): inner,
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithResources(resources))
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	if nested := findResolved(resolved, "nested-skill"); nested == nil {
+		t.Fatalf("nested skill was not expanded through resource fallback: %#v", resolved)
+	}
+}
+
+func TestSharedNestedCollectionIsNotReportedAsCycle(t *testing.T) {
+	root := ir.NewCollection("root", "1.0.0", "root", nil, []string{"left", "right"}, nil, ir.SourceRef{})
+	left := ir.NewCollection("left", "1.0.0", "left", nil, []string{"shared"}, nil, ir.SourceRef{})
+	right := ir.NewCollection("right", "1.0.0", "right", nil, []string{"shared"}, nil, ir.SourceRef{})
+	shared := ir.NewCollection("shared", "1.0.0", "shared", []ir.CollectionMember{{Name: "shared-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: collectionsHost, Ref: "main", Collections: ks("root")}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {
+		{Kind: ir.KindCollection, Name: "root", Resource: root},
+		{Kind: ir.KindCollection, Name: "left", Resource: left},
+		{Kind: ir.KindCollection, Name: "right", Resource: right},
+		{Kind: ir.KindCollection, Name: "shared", Resource: shared},
+		{Kind: ir.KindSkill, Name: "shared-skill"},
+	}}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "cycle detected") {
+			t.Fatalf("shared DAG node was reported as a cycle: %v", err)
+		}
+	}
+	if nested := findResolved(resolved, "shared-skill"); nested == nil {
+		t.Fatalf("shared nested skill was not expanded: %#v", resolved)
 	}
 }

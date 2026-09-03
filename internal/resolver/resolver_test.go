@@ -575,6 +575,42 @@ func TestResolveSameURLDifferentRefsIsCollision(t *testing.T) {
 	}
 }
 
+func TestResolveCollisionWarningNamesRefsForSameURLAndPath(t *testing.T) {
+	const url = "git@example.com:registry.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "v1.0", Path: "skills", Skills: ks("shared")},
+		{URL: url, Ref: "v2.0", Path: "skills", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	entry := catalog.Entry{Name: "shared", Path: "/cache/shared"}
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {entry},
+		cfg.Registries[1].CatalogKey: {entry},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	normalizedURL := config.NormalizeGitURL(url)
+	if warning.Winner != normalizedURL+" (skills) @v1.0" {
+		t.Fatalf("winner = %q, want URL, path, and ref", warning.Winner)
+	}
+	wantRunnersUp := []string{normalizedURL + " (skills) @v2.0"}
+	if !slices.Equal(warning.RunnersUp, wantRunnersUp) {
+		t.Fatalf("runners-up = %#v, want %#v", warning.RunnersUp, wantRunnersUp)
+	}
+	if got := warning.Remediation(); strings.Contains(got, "@v1.0") || !strings.Contains(got, "--from "+normalizedURL) {
+		t.Fatalf("remediation should use the URL/ref-independent CLI source: %q", got)
+	}
+}
+
 func TestResolveSameURLSameRefDeduplicates(t *testing.T) {
 	// Same URL and same ref produce the same catalog key, so dedup applies.
 	cfg := &config.Config{
@@ -1880,6 +1916,33 @@ func TestResolveDeduplicateIsDeterministicAcrossRuns(t *testing.T) {
 					i, j, errs[j].Error(), firstErrs[j].Error())
 			}
 		}
+	}
+}
+
+func TestDeduplicateOverlappingPathsIsDeterministic(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root"}, url: url, order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "root/a", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root-a"}, url: url, order: 1},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "root/a/b", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root-b"}, url: url, order: 2},
+	}
+
+	var first []skillOccurrence
+	for i := 0; i < 100; i++ {
+		got := deduplicateOccurrences(occurrences)
+		if len(got) != 1 {
+			t.Fatalf("run %d: got %d occurrences, want one", i, len(got))
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("run %d differs from first result: %#v vs %#v", i, got, first)
+		}
+	}
+	if first[0].resolved.RegistryPath != "root/a/b" {
+		t.Fatalf("surviving path = %q, want deepest overlapping path", first[0].resolved.RegistryPath)
 	}
 }
 

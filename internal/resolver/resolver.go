@@ -210,12 +210,16 @@ func (e *NameCollisionWarning) Remediation() string {
 		from := e.Winner
 		pathFlag := ""
 		// collisionSourceLabel appends " (path)" for same-URL different-path
-		// entries; extract the path for --path and use just the URL for --from.
+		// entries and " @ref" when refs are needed to distinguish sources.
+		// Extract the path for --path and use just the URL for --from.
 		if idx := strings.Index(from, " ("); idx >= 0 {
 			suffix := from[idx+2:]
 			if end := strings.Index(suffix, ")"); end >= 0 {
 				pathFlag = " --path " + suffix[:end]
 			}
+			from = from[:idx]
+		}
+		if idx := strings.LastIndex(from, " @"); idx >= 0 {
 			from = from[:idx]
 		}
 		return fmt.Sprintf("to prefer a different source, exclude the winner: 'agent-marketplace remove %q --from %s%s'", e.Name, redact.URL(from), redact.URL(pathFlag))
@@ -1060,6 +1064,18 @@ func chooseNestedCollection(candidates []collectionCandidate, parent ResolvedArt
 	return chosen, true
 }
 
+// cloneVisitedWith extends a collection's include ancestry for one branch.
+// Keeping a separate map per branch allows a shared DAG node to expand once
+// under each sibling while still detecting cycles along either path.
+func cloneVisitedWith(visited map[string]struct{}, name string) map[string]struct{} {
+	branch := make(map[string]struct{}, len(visited)+1)
+	for seen := range visited {
+		branch[seen] = struct{}{}
+	}
+	branch[name] = struct{}{}
+	return branch
+}
+
 // expandMembersRecursive walks the members of a collection and appends resolved
 // artifacts for each. When a collection includes other collections (via
 // ir.Collection.Includes), those are expanded recursively with cycle detection.
@@ -1310,12 +1326,13 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Cycle detection.
+		// Cycle detection is path-local: a collection shared by sibling branches
+		// is valid, while an include repeated along one branch is a cycle.
 		if _, seen := visited[name]; seen {
 			*errs = append(*errs, fmt.Errorf("collection %q: cycle detected including %q", col.Label(), name))
 			continue
 		}
-		visited[name] = struct{}{}
+		branchVisited := cloneVisitedWith(visited, name)
 
 		includedEntry, found := chooseNestedCollection(allCollectionsByName[name], artifact)
 		if !found {
@@ -1323,6 +1340,7 @@ func expandMembersRecursive(
 			continue
 		}
 
+		includedEntry.entry = attachResource(includedEntry.entry, resources, includedEntry.catalogKey)
 		irCol, ok := includedEntry.entry.Resource.(*ir.Collection)
 		if !ok || irCol == nil {
 			continue
@@ -1330,7 +1348,7 @@ func expandMembersRecursive(
 
 		includedViaLabel := viaLabel + " > " + "collection:" + irCol.Label()
 		includedArtifact := ResolvedArtifact{
-			Entry:          attachResource(includedEntry.entry, resources, includedEntry.catalogKey),
+			Entry:          includedEntry.entry,
 			RegistryURL:    artifact.RegistryURL,
 			RegistryPath:   artifact.RegistryPath,
 			Ref:            artifact.Ref,
@@ -1347,12 +1365,21 @@ func expandMembersRecursive(
 			includedArtifact.Source = includedEntry.owner.Source
 			includedArtifact.FilePrecedence = includedEntry.owner.FilePrecedence
 			includedArtifact.Required = includedEntry.owner.Required
-			includedArtifact.Harnesses = resolveEntryHarnesses(includedEntry.owner, targetSet)
-			if len(targetSet) == 0 && includedEntry.owner.Harnesses == nil {
-				includedArtifact.Harnesses = artifact.Harnesses
+			ownerHarnesses := resolveEntryHarnesses(includedEntry.owner, targetSet)
+			if artifact.Harnesses != nil {
+				// A nested owner can narrow, never widen, the effective harnesses
+				// selected by its containing collection. A nil owner list means
+				// inherit; an explicitly empty list remains an opt-out.
+				if ownerHarnesses == nil {
+					includedArtifact.Harnesses = artifact.Harnesses
+				} else {
+					includedArtifact.Harnesses = intersectTargets(ownerHarnesses, artifact.Harnesses)
+				}
+			} else {
+				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, visited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, branchVisited, out, errs, targetSet)
 	}
 }
 
@@ -1821,7 +1848,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			warning := &NameCollisionWarning{
 				Kind:   winner.resolved.Kind,
 				Name:   winner.resolved.Name,
-				Winner: collisionSourceLabel(winner),
+				Winner: collisionSourceLabel(winner, collisionLabelsNeedRef(occurrences)),
 				// Report original occurrences, including deduplicated paths.
 				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
 			}
@@ -1850,7 +1877,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 					warning := &NameCollisionWarning{
 						Kind:      winner.resolved.Kind,
 						Name:      winner.resolved.Name,
-						Winner:    collisionSourceLabel(winner),
+						Winner:    collisionSourceLabel(winner, collisionLabelsNeedRef(group)),
 						RunnersUp: collisionRunnersUpByPath(group, winner),
 					}
 					slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
@@ -1869,7 +1896,7 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			warning := &NameCollisionWarning{
 				Kind:   winner.resolved.Kind,
 				Name:   winner.resolved.Name,
-				Winner: collisionSourceLabel(winner),
+				Winner: collisionSourceLabel(winner, collisionLabelsNeedRef(occurrences)),
 				// Include paths deduplicated for materialization.
 				RunnersUp: collisionRunnersUpByPath(occurrences, winner),
 			}
@@ -2570,6 +2597,27 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		ref           string
 		path          string
 	}
+	compareLogicalKeys := func(a, b logicalKey) int {
+		if a.catalogKey != b.catalogKey {
+			return strings.Compare(a.catalogKey, b.catalogKey)
+		}
+		if a.normalizedURL != b.normalizedURL {
+			return strings.Compare(a.normalizedURL, b.normalizedURL)
+		}
+		if a.ref != b.ref {
+			return strings.Compare(a.ref, b.ref)
+		}
+		return strings.Compare(a.path, b.path)
+	}
+	compareNormKeys := func(a, b normKey) int {
+		if a.normalizedURL != b.normalizedURL {
+			return strings.Compare(a.normalizedURL, b.normalizedURL)
+		}
+		if a.ref != b.ref {
+			return strings.Compare(a.ref, b.ref)
+		}
+		return strings.Compare(a.path, b.path)
+	}
 	normGroups := make(map[normKey][]logicalKey)
 	for lk := range byKey {
 		if lk.normalizedURL == "" {
@@ -2579,23 +2627,19 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		normGroups[nk] = append(normGroups[nk], lk)
 	}
 
-	for nk, keys := range normGroups {
+	// Sort map-derived groups before merging so the surviving logical key and
+	// occurrence order do not vary between Resolve calls.
+	normKeys := make([]normKey, 0, len(normGroups))
+	for nk := range normGroups {
+		normKeys = append(normKeys, nk)
+	}
+	slices.SortFunc(normKeys, compareNormKeys)
+	for _, nk := range normKeys {
+		keys := normGroups[nk]
 		if len(keys) < 2 {
 			continue
 		}
-		// Sort keys to ensure deterministic merge target selection.
-		// Without this, map iteration order makes keys[0] non-deterministic,
-		// causing the surviving CatalogKey to vary across runs and producing
-		// different symlink targets on each sync (oscillating Installed count).
-		slices.SortFunc(keys, func(a, b logicalKey) int {
-			if a.catalogKey != b.catalogKey {
-				return strings.Compare(a.catalogKey, b.catalogKey)
-			}
-			if a.normalizedURL != b.normalizedURL {
-				return strings.Compare(a.normalizedURL, b.normalizedURL)
-			}
-			return strings.Compare(a.path, b.path)
-		})
+		slices.SortFunc(keys, compareLogicalKeys)
 		normGroups[nk] = keys
 		// Merge all occurrences from these keys into the first key's group.
 		target := keys[0]
@@ -2631,10 +2675,22 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		urk := urlRefKey{normalizedURL: lk.normalizedURL, ref: lk.ref}
 		urlRefGroups[urk] = append(urlRefGroups[urk], lk)
 	}
-	for _, lks := range urlRefGroups {
+	urlRefKeys := make([]urlRefKey, 0, len(urlRefGroups))
+	for key := range urlRefGroups {
+		urlRefKeys = append(urlRefKeys, key)
+	}
+	slices.SortFunc(urlRefKeys, func(a, b urlRefKey) int {
+		if a.normalizedURL != b.normalizedURL {
+			return strings.Compare(a.normalizedURL, b.normalizedURL)
+		}
+		return strings.Compare(a.ref, b.ref)
+	})
+	for _, urlRef := range urlRefKeys {
+		lks := urlRefGroups[urlRef]
 		if len(lks) < 2 {
 			continue
 		}
+		slices.SortFunc(lks, compareLogicalKeys)
 		// For each pair, check if one path is a component-wise prefix of the other.
 		// Only merge same-scope overlapping paths; cross-scope pairs are kept separate
 		// (they are complementary installation targets, not duplicates).
@@ -2676,6 +2732,15 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 				mergePairs = append(mergePairs, [2]logicalKey{parent, child})
 			}
 		}
+		// Sort pair application as well as candidate discovery. This matters for
+		// transitive overlaps (root, root/a, root/a/b): map iteration must not
+		// choose which intermediate group survives.
+		slices.SortFunc(mergePairs, func(a, b [2]logicalKey) int {
+			if cmp := compareLogicalKeys(a[0], b[0]); cmp != 0 {
+				return cmp
+			}
+			return compareLogicalKeys(a[1], b[1])
+		})
 		// Apply merges: parent occurrences are absorbed into the child group.
 		// Within each merged group, pick the child occurrence as winner
 		// (more-specific path takes precedence).
@@ -2697,15 +2762,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 	for lk := range byKey {
 		sortedKeys = append(sortedKeys, lk)
 	}
-	slices.SortFunc(sortedKeys, func(a, b logicalKey) int {
-		if a.catalogKey != b.catalogKey {
-			return strings.Compare(a.catalogKey, b.catalogKey)
-		}
-		if a.normalizedURL != b.normalizedURL {
-			return strings.Compare(a.normalizedURL, b.normalizedURL)
-		}
-		return strings.Compare(a.path, b.path)
-	})
+	slices.SortFunc(sortedKeys, compareLogicalKeys)
 
 	deduped := make([]skillOccurrence, 0, len(byKey))
 	for _, lk := range sortedKeys {
@@ -2831,9 +2888,7 @@ func pathScopeCovers(scopePath, resourcePath string) bool {
 }
 
 // pathsDiffer reports whether any two occurrences in the set have different
-// RegistryPath values. When true, the occurrences come from different
-// sub-directories of the same registry and are distinct resources, not
-// duplicates — even if they share the same URL, ref, and scope.
+// RegistryPath values.
 func pathsDiffer(occurrences []skillOccurrence) bool {
 	if len(occurrences) < 2 {
 		return false
@@ -2894,26 +2949,47 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 	return winner
 }
 
+// collisionLabelsNeedRef reports whether URL and path alone would collapse two
+// collision participants. Refs are intentionally omitted for the common case,
+// but become part of every label when one URL/path is used at multiple refs.
+func collisionLabelsNeedRef(occurrences []skillOccurrence) bool {
+	refsByLocation := make(map[string]string, len(occurrences))
+	for _, occ := range occurrences {
+		location := config.NormalizeGitURL(occ.url) + "\x00" + strings.TrimSpace(occ.resolved.RegistryPath)
+		ref := strings.TrimSpace(occ.resolved.Ref)
+		if previous, ok := refsByLocation[location]; ok && previous != ref {
+			return true
+		}
+		refsByLocation[location] = ref
+	}
+	return false
+}
+
 // collisionSourceLabel returns a human-readable label for a collision
 // participant that includes the registry path when set, so that
-// same-URL-different-path entries are distinguishable in the warning.
-func collisionSourceLabel(occ skillOccurrence) string {
+// same-URL-different-path entries are distinguishable in the warning. Include
+// refs when the same URL/path is configured at multiple refs.
+func collisionSourceLabel(occ skillOccurrence, includeRef bool) string {
 	label := config.NormalizeGitURL(occ.url)
 	if occ.resolved.RegistryPath != "" {
 		label += " (" + occ.resolved.RegistryPath + ")"
 	}
+	if includeRef && strings.TrimSpace(occ.resolved.Ref) != "" {
+		label += " @" + strings.TrimSpace(occ.resolved.Ref)
+	}
 	return label
 }
 
-// collisionRunnersUpByPath returns source labels (URL + path) of all
-// occurrences except the winner, for same-URL-different-path collisions
-// where the URL alone is insufficient to tell entries apart.
+// collisionRunnersUpByPath returns source labels (URL + path + ref when
+// needed) of all occurrences except the winner, for collisions where the URL
+// alone is insufficient to tell entries apart.
 func collisionRunnersUpByPath(occurrences []skillOccurrence, winner skillOccurrence) []string {
-	winnerLabel := collisionSourceLabel(winner)
+	includeRef := collisionLabelsNeedRef(occurrences)
+	winnerLabel := collisionSourceLabel(winner, includeRef)
 	var runnersUp []string
 	seen := make(map[string]struct{})
 	for _, occ := range occurrences {
-		label := collisionSourceLabel(occ)
+		label := collisionSourceLabel(occ, includeRef)
 		if label == winnerLabel {
 			continue
 		}

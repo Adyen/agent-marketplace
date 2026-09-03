@@ -159,7 +159,7 @@ agent-marketplace sync --check                 # Check drift without writing
 agent-marketplace status                       # Show resources, HARNESS TARGETS, refs, cache, drift
 agent-marketplace update                       # Refresh registry caches
 agent-marketplace update --bump                # Bump pinned refs when newer refs exist
-agent-marketplace migrate --harnesses factory  # Rewrite v2 configs to v3
+agent-marketplace migrate --harnesses factory  # Remediate structural config issues
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
 agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery
@@ -226,6 +226,7 @@ tags:
 - **`source_harness`** is optional per registry entry; empty means autodetect.
 - **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
 - **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
+- **Nested collections** are resolved from configured registry ownership. Once selected, the nested owner's URL, path, ref, and required policy flow to its recursively expanded members. Its effective harness targets inherit from the containing collection unless the owner explicitly narrows them; it cannot widen the parent's targets, and an explicit empty list opts out. Shared nested collections are valid across sibling include branches; only a repeated ancestor on one branch is a cycle.
 - **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
 - **Local registries** can use `/absolute`, `~/home-relative`, or `./relative` paths with no `ref`. Relative paths must remain inside the directory containing the local config.
 
@@ -314,7 +315,8 @@ repo intentionally tracks generated harness files.
 ## Gotchas
 
 - **No selection means no output** — a registry with no kind-specific selections, `tags`, `collections`, `required`, or `default` only contributes to `list`.
-- **Name collisions fail sync** — same-kind resources from multiple registries fail; resolve by narrowing per-registry selections, adding `exclude`, or removing one source.
+- **Name collisions are resolved deterministically** — same-kind resources from different registries produce a warning; the resolver chooses one winner using required policy, config precedence, normalized URL, and stable order. Same-URL+ref parent/child paths are merged as one physical source, with the deeper path winning overlapping names; non-overlapping same-scope paths remain visible but only one can materialize for that target.
+- **Collision labels may include refs** — when the same URL/path appears at multiple refs, warnings append `@<ref>` to non-empty refs to distinguish participants. The remediation command uses the URL and, when needed, an explicit `--path` rather than copying that display suffix.
 - **Ambiguous cross-kind names need `--kind`** — if a skill and command share a name, rerun `install` or `remove` with `--kind`.
 - **Prerequisites are advisory** — unmet prerequisites never change selection, and explicit excludes remain in force. Resources from a `required: true` registry cannot be excluded, so they satisfy matching prerequisites.
 - **Collection-level `requires` is ignored** — collections expand into members before prerequisite validation.
