@@ -71,6 +71,9 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new telemetry: %v", err)
 	}
+	if !tel.TracingEnabled() {
+		t.Fatal("detailed telemetry should enable tracing")
+	}
 
 	tel.CommandCounter().Add(ctx, 1, map[string]string{
 		string(tmcfg.ResourceAttrCommandName): "test",
@@ -122,7 +125,7 @@ func TestTelemetryOffDoesNotCreateProviders(t *testing.T) {
 		t.Fatalf("shutdown off: %v", err)
 	}
 
-	if tel.mp != nil || tel.tp != nil {
+	if tel.mp != nil || tel.communityMP != nil || tel.inventoryMP != nil || tel.tp != nil {
 		t.Fatalf("providers should not be created when level is off")
 	}
 }
@@ -150,6 +153,9 @@ func TestCounterAndHistogramDoNotLeakSDKTypes(t *testing.T) {
 	tel, err := New(context.Background(), state, nil)
 	if err != nil {
 		t.Fatalf("new: %v", err)
+	}
+	if tel.TracingEnabled() {
+		t.Fatal("basic telemetry should not enable tracing")
 	}
 	defer func() {
 		if err := tel.Shutdown(context.Background()); err != nil {

@@ -278,11 +278,17 @@ func TestScopedToggleAddsWhenDisabledRemovesWhenEnabled(t *testing.T) {
 	if !act.enable {
 		t.Fatalf("scopeGlobal on project-only skill should enable")
 	}
+	if act.disablesResource() {
+		t.Fatal("enabling a global selection should not disable the resource")
+	}
 
 	r2 := mkRow("x", withGlobal, withProject)
 	act = scopedToggleAction(r2, scopeGlobal)
 	if act.enable {
 		t.Fatalf("scopeGlobal on globally-enabled skill should disable")
+	}
+	if !act.disablesResource() {
+		t.Fatal("removing a global selection should disable the resource")
 	}
 
 	// Exclude toggle: if not excluded → add; if excluded → remove.
@@ -291,11 +297,17 @@ func TestScopedToggleAddsWhenDisabledRemovesWhenEnabled(t *testing.T) {
 	if !act.enable {
 		t.Fatalf("scopeLocalExclude on non-excluded skill should add exclude")
 	}
+	if !act.disablesResource() {
+		t.Fatal("adding a local exclusion should disable the resource")
+	}
 
 	r4 := mkRow("x", withProject, withExcluded)
 	act = scopedToggleAction(r4, scopeLocalExclude)
 	if act.enable {
 		t.Fatalf("scopeLocalExclude on excluded skill should remove exclude")
+	}
+	if act.disablesResource() {
+		t.Fatal("removing a local exclusion should not disable the resource")
 	}
 }
 

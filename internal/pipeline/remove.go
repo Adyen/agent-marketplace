@@ -112,7 +112,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
 	}
 
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot})
+	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
@@ -736,7 +736,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: true})
+	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: true, SkipInventory: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}

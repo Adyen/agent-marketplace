@@ -250,10 +250,10 @@ func resolvePrimaryEndpoint(orgTC, userTC *tmcfg.TelemetryConfig, projectEndpoin
 func resolveRetentionPolicy(primarySource string, orgTC, userTC *tmcfg.TelemetryConfig, projectRetentionURL string) (string, error) {
 	switch primarySource {
 	case sourceOrganization:
-		if orgTC.RetentionPolicy == "" {
-			return "", fmt.Errorf("retention_policy is required when organization endpoint is the primary route")
+		if orgTC.RetentionPolicy != "" {
+			return orgTC.RetentionPolicy, nil
 		}
-		return orgTC.RetentionPolicy, nil
+		return projectRetentionURL, nil
 	case sourceUser:
 		if userTC.RetentionPolicy != "" {
 			return userTC.RetentionPolicy, nil

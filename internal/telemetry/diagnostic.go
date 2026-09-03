@@ -161,6 +161,10 @@ func (t *Telemetry) setupDiagnostic(ctx context.Context, res *otelresource.Resou
 	if err != nil {
 		return fmt.Errorf("create diagnostic histogram: %w", err)
 	}
+	inventorySnapshot, inventoryRegistry, inventoryResource, inventoryOmissions, err := newInventoryInstruments(mp)
+	if err != nil {
+		return fmt.Errorf("create diagnostic inventory instruments: %w", err)
+	}
 
 	spanExp := &diagnosticSpanExporter{}
 	tp := sdktrace.NewTracerProvider(
@@ -172,6 +176,10 @@ func (t *Telemetry) setupDiagnostic(ctx context.Context, res *otelresource.Resou
 	t.tp = tp
 	t.counter = counter
 	t.hist = hist
+	t.inventorySnapshotGauge = inventorySnapshot
+	t.inventoryRegistryGauge = inventoryRegistry
+	t.inventoryResourceGauge = inventoryResource
+	t.inventoryOmissionCounter = inventoryOmissions
 	t.tracer = tp.Tracer("agent_marketplace")
 	t.diagnosticManualReader = manualReader
 	t.diagnosticSpanExporter = spanExp

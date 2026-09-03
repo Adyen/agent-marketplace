@@ -24,7 +24,7 @@ const (
 
 	SchemaVersion = "1"
 	SchemaMajor   = 1
-	SchemaMinor   = 0
+	SchemaMinor   = 1
 )
 
 // ResourceAttribute names a telemetry resource attribute that is allowed in the
@@ -43,14 +43,75 @@ const (
 	ResourceAttrInstallationID ResourceAttribute = "installation.id"
 )
 
-// MetricInstrument names the v1 basic instruments.
+// MetricInstrument names the telemetry schema instruments.
 type MetricInstrument string
 
 const (
-	MetricNamespace                      = "agent_marketplace"
-	CommandCounterName  MetricInstrument = MetricNamespace + ".command.invocations"
-	CommandDurationName MetricInstrument = MetricNamespace + ".command.duration_ms"
+	MetricNamespace                         = "agent_marketplace"
+	CommandCounterName     MetricInstrument = MetricNamespace + ".command.invocations"
+	CommandDurationName    MetricInstrument = MetricNamespace + ".command.duration_ms"
+	InventorySnapshotName  MetricInstrument = MetricNamespace + ".config.snapshot"
+	InventoryRegistryName  MetricInstrument = MetricNamespace + ".config.registry"
+	InventoryResourceName  MetricInstrument = MetricNamespace + ".config.resource"
+	InventoryOmissionsName MetricInstrument = MetricNamespace + ".config.inventory_omissions"
 )
+
+// MetricAttribute names an allowlisted metric instrument attribute.
+type MetricAttribute string
+
+const (
+	MetricAttrConfigFingerprint MetricAttribute = "config.fingerprint"
+	MetricAttrHarnesses         MetricAttribute = "harnesses"
+	MetricAttrHarnessScope      MetricAttribute = "harness.scope"
+	MetricAttrRegistryCount     MetricAttribute = "registry.count"
+	MetricAttrResourceCount     MetricAttribute = "resource.count"
+	MetricAttrRegistryID        MetricAttribute = "registry.id"
+	MetricAttrRegistryLocation  MetricAttribute = "registry.location"
+	MetricAttrRegistryPath      MetricAttribute = "registry.path"
+	MetricAttrRegistryRef       MetricAttribute = "registry.ref"
+	MetricAttrConfigScope       MetricAttribute = "config.scope"
+	MetricAttrRegistryRequired  MetricAttribute = "registry.required"
+	MetricAttrRegistryDefault   MetricAttribute = "registry.default"
+	MetricAttrResourceKind      MetricAttribute = "resource.kind"
+	MetricAttrResourceName      MetricAttribute = "resource.name"
+	MetricAttrResourceRequired  MetricAttribute = "resource.required"
+	MetricAttrOmissionReason    MetricAttribute = "reason"
+)
+
+var InventorySnapshotAttributes = []MetricAttribute{
+	MetricAttrConfigFingerprint,
+	MetricAttrHarnesses,
+	MetricAttrHarnessScope,
+	MetricAttrRegistryCount,
+	MetricAttrResourceCount,
+}
+
+var InventoryRegistryAttributes = []MetricAttribute{
+	MetricAttrConfigFingerprint,
+	MetricAttrRegistryID,
+	MetricAttrRegistryLocation,
+	MetricAttrRegistryPath,
+	MetricAttrRegistryRef,
+	MetricAttrConfigScope,
+	MetricAttrRegistryRequired,
+	MetricAttrRegistryDefault,
+}
+
+var InventoryOmissionAttributes = []MetricAttribute{
+	MetricAttrOmissionReason,
+}
+
+var InventoryResourceAttributes = []MetricAttribute{
+	MetricAttrConfigFingerprint,
+	MetricAttrRegistryID,
+	MetricAttrRegistryLocation,
+	MetricAttrRegistryPath,
+	MetricAttrRegistryRef,
+	MetricAttrResourceKind,
+	MetricAttrResourceName,
+	MetricAttrConfigScope,
+	MetricAttrResourceRequired,
+}
 
 // MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
 // only dimensions that may be attached to the command counter and duration
@@ -159,9 +220,6 @@ func Validate(tc *TelemetryConfig, layer string) []error {
 	}
 	if err := validateRetentionPolicy(tc.RetentionPolicy); err != nil {
 		errs = append(errs, err)
-	}
-	if layer == "organization" && tc.Endpoint != "" && tc.RetentionPolicy == "" {
-		errs = append(errs, fmt.Errorf("retention_policy is required when an organization endpoint is configured"))
 	}
 	if err := validateCAFile(tc.CAFile); err != nil {
 		errs = append(errs, err)

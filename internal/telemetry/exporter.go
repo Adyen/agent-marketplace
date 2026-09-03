@@ -283,6 +283,10 @@ func buildSignalEndpoint(endpoint, signal string) (string, error) {
 }
 
 func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string, headers map[string]string) (sdkmetric.Exporter, error) {
+	return buildMetricExporterWithTemporality(ctx, live, endpoint, headers, sdkmetric.DefaultTemporalitySelector)
+}
+
+func buildMetricExporterWithTemporality(ctx context.Context, live *http.Client, endpoint string, headers map[string]string, temporality sdkmetric.TemporalitySelector) (sdkmetric.Exporter, error) {
 	slog.Debug("building metric exporter", "endpoint", endpoint)
 
 	ep, err := buildSignalEndpoint(endpoint, queueSubdirMetrics)
@@ -298,7 +302,7 @@ func buildMetricExporter(ctx context.Context, live *http.Client, endpoint string
 		otlpmetrichttp.WithCompression(otlpmetrichttp.NoCompression),
 		otlpmetrichttp.WithRetry(otlpmetrichttp.RetryConfig{Enabled: false}),
 		otlpmetrichttp.WithTimeout(30*time.Second),
-		otlpmetrichttp.WithTemporalitySelector(sdkmetric.DefaultTemporalitySelector),
+		otlpmetrichttp.WithTemporalitySelector(temporality),
 		otlpmetrichttp.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
 	if err != nil {
