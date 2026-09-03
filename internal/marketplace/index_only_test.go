@@ -44,7 +44,7 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "docs", "support.txt"), []byte("support material\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-q", "-m", "initial"}} {
+	for _, args := range [][]string{{"init", "-q", "--initial-branch=main"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-q", "-m", "initial"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -168,7 +168,7 @@ func TestIndexOnlyResolverRejectsPostReingestionManifestMismatch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "docs", "support.txt"), []byte("first support\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-q", "-m", "first"}} {
+	for _, args := range [][]string{{"init", "-q", "--initial-branch=main"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-q", "-m", "first"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

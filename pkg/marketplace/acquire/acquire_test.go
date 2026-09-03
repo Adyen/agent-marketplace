@@ -481,7 +481,7 @@ func createGitRepo(t *testing.T, files map[string]string) string {
 	}
 
 	for _, c := range [][]string{
-		{"git", "init", "-q"},
+		{"git", "init", "-q", "--initial-branch=main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
 	} {

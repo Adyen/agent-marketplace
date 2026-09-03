@@ -803,7 +803,7 @@ resources:
 	}
 
 	cmds := [][]string{
-		{"git", "init", "-q"},
+		{"git", "init", "-q", "--initial-branch=main"},
 		{"git", "config", "user.email", "test@example.com"},
 		{"git", "config", "user.name", "Test"},
 		{"git", "add", "."},
