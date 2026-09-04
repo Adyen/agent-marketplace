@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -320,6 +321,23 @@ func TestReindex(t *testing.T) {
 	_, err = meta.GetRegistryOccurrence(ctx, store.RegistryID(cfg.Registries[0].ID), commit)
 	if err != nil {
 		t.Fatalf("GetRegistryOccurrence: %v", err)
+	}
+}
+
+func TestReindexUnknownRegistryDoesNotCreateMarketplace(t *testing.T) {
+	ctx := context.Background()
+	repoDir, cleanup := createTestRepo(t)
+	defer cleanup()
+	cfg := createTestConfig(t, repoDir)
+	meta, blobs := openTestStores(t)
+	defer func() { _ = meta.Close() }()
+
+	err := Reindex(ctx, Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}, cfg, "missing")
+	if err == nil {
+		t.Fatal("Reindex unexpectedly accepted an unknown registry")
+	}
+	if _, err := meta.GetMarketplace(ctx, store.MarketplaceID(cfg.Instance.ID)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Marketplace state error = %v, want %v", err, store.ErrNotFound)
 	}
 }
 
