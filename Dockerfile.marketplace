@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 
 FROM ${ALPINE_RUNTIME_IMAGE} AS api
 RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
-    && apk add --no-cache ca-certificates \
+    && apk add --no-cache ca-certificates wget \
     && mkdir -p /var/lib/agent-marketplace /tmp \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
 WORKDIR /app
@@ -30,7 +30,7 @@ CMD ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "api"]
 
 FROM ${ALPINE_RUNTIME_IMAGE} AS worker
 RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
-    && apk add --no-cache ca-certificates git \
+    && apk add --no-cache ca-certificates git wget \
     && mkdir -p /var/lib/agent-marketplace /tmp \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
 WORKDIR /app
