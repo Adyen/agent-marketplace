@@ -45,16 +45,17 @@ func TestQAScreenInventoryCoversEveryPaneExactlyOnce(t *testing.T) {
 		}
 	}
 	wantByPane := map[pane]ScreenID{
-		paneList:            "catalog",
-		paneDetail:          "detail",
-		paneHelp:            "help",
-		paneErrors:          "diagnostics",
-		paneConfirm:         "quit-confirmation",
-		paneToggleModal:     "resource-toggle",
-		paneInitModal:       "first-run",
-		paneMigrationModal:  "migration",
-		paneHarnessModal:    "harness-selection",
-		paneEditConfigModal: "edit-config",
+		paneList:               "catalog",
+		paneDetail:             "detail",
+		paneHelp:               "help",
+		paneErrors:             "diagnostics",
+		paneConfirm:            "quit-confirmation",
+		paneToggleModal:        "resource-toggle",
+		paneInitModal:          "first-run",
+		paneMigrationModal:     "migration",
+		paneHarnessModal:       "harness-selection",
+		paneEditConfigModal:    "edit-config",
+		paneMarketplaceConsent: "marketplace-consent",
 	}
 	if !reflect.DeepEqual(byPane, wantByPane) {
 		t.Errorf("pane screen registrations = %v, want %v", byPane, wantByPane)
@@ -272,7 +273,7 @@ func TestQAInventoryHasStableOrderedIDs(t *testing.T) {
 			want: []string{
 				"catalog", "detail", "help", "diagnostics", "quit-confirmation",
 				"resource-toggle", "first-run", "migration", "harness-selection",
-				"edit-config", "resize-required",
+				"edit-config", "marketplace-consent", "resize-required",
 			},
 		},
 		{

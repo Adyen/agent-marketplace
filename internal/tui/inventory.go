@@ -11,17 +11,18 @@ type StateID string
 const QAInventorySchemaVersion = 1
 
 const (
-	ScreenCatalog          ScreenID = "catalog"
-	ScreenDetail           ScreenID = "detail"
-	ScreenHelp             ScreenID = "help"
-	ScreenDiagnostics      ScreenID = "diagnostics"
-	ScreenQuitConfirmation ScreenID = "quit-confirmation"
-	ScreenResourceToggle   ScreenID = "resource-toggle"
-	ScreenFirstRun         ScreenID = "first-run"
-	ScreenMigration        ScreenID = "migration"
-	ScreenHarnessSelection ScreenID = "harness-selection"
-	ScreenEditConfig       ScreenID = "edit-config"
-	ScreenResizeRequired   ScreenID = "resize-required"
+	ScreenCatalog            ScreenID = "catalog"
+	ScreenDetail             ScreenID = "detail"
+	ScreenHelp               ScreenID = "help"
+	ScreenDiagnostics        ScreenID = "diagnostics"
+	ScreenQuitConfirmation   ScreenID = "quit-confirmation"
+	ScreenResourceToggle     ScreenID = "resource-toggle"
+	ScreenFirstRun           ScreenID = "first-run"
+	ScreenMigration          ScreenID = "migration"
+	ScreenHarnessSelection   ScreenID = "harness-selection"
+	ScreenEditConfig         ScreenID = "edit-config"
+	ScreenMarketplaceConsent ScreenID = "marketplace-consent"
+	ScreenResizeRequired     ScreenID = "resize-required"
 )
 
 const (
@@ -172,6 +173,7 @@ func qaScreenRegistrations() []qaScreenRegistration {
 		{pane: paneMigrationModal, id: ScreenMigration},
 		{pane: paneHarnessModal, id: ScreenHarnessSelection},
 		{pane: paneEditConfigModal, id: ScreenEditConfig},
+		{pane: paneMarketplaceConsent, id: ScreenMarketplaceConsent},
 	}
 }
 
