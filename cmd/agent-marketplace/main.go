@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
@@ -96,9 +95,7 @@ func newRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return withExactCacheLease(func() error {
-						return runProductionTUI(cmd.Context(), repoRoot, homeDir)
-					})
+					return runProductionTUI(cmd.Context(), repoRoot, homeDir)
 				}
 			}
 
@@ -145,17 +142,6 @@ func commandNeedsDependencyRecovery(cmd *cobra.Command) bool {
 	default:
 		return false
 	}
-}
-
-var acquireExactCacheLease = cache.AcquireExactGitNamespaceLease
-
-func withExactCacheLease(run func() error) error {
-	release, err := acquireExactCacheLease()
-	if err != nil {
-		return fmt.Errorf("acquire exact cache lease: %w", err)
-	}
-	defer release()
-	return run()
 }
 
 func validateStartupTargetRegistrations() error {

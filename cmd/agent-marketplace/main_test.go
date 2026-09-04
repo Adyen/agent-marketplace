@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,23 +14,6 @@ import (
 )
 
 var testMainHome string
-
-func TestExactCacheLeaseCoversCommandFailure(t *testing.T) {
-	original := acquireExactCacheLease
-	released := false
-	acquireExactCacheLease = func() (func(), error) {
-		return func() { released = true }, nil
-	}
-	t.Cleanup(func() { acquireExactCacheLease = original })
-
-	bodyErr := errors.New("command failed")
-	if err := withExactCacheLease(func() error { return bodyErr }); !errors.Is(err, bodyErr) {
-		t.Fatalf("withExactCacheLease error = %v, want command failure", err)
-	}
-	if !released {
-		t.Fatal("exact cache lease was not released after command failure")
-	}
-}
 
 func TestMain(m *testing.M) {
 	// Use a visible stderr logger for TestMain diagnostics. Command tests

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -400,6 +401,16 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	if err != nil {
 		return err
 	}
+	// Resolve and dry-run materialization consume paths inside immutable exact
+	// snapshots. Hold the lease across both operations and mark the context so
+	// snapshot opens do not attempt a nested namespace acquisition.
+	releaseExactLocks, err := exactLease(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire and revalidate exact locks before sync check: %w", err)
+	}
+	defer releaseExactLocks()
+	ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+
 	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease}
 	resolveOpts.RequireTargetSet = true
 	if localDir != "" && localDir != repoRoot {
