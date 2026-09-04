@@ -38,6 +38,8 @@ Snapshot diagnostics and operation diagnostics have separate lifecycles. An acce
 
 Hard configuration, catalog, resolution, dry-run, or materialization errors make drift unavailable or failed, never `in sync`. Rows produced by a hard-failed snapshot remain inspectable but cannot initiate config mutation until a healthy snapshot is accepted.
 
+Automatic snapshot loads, reloads, and refreshes consume each valid configured Git layer from its exact lock snapshot. They do not advance a lock or replace locked inventory merely because a mutable ref moved. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved snapshot while it is still being consumed.
+
 TUI update uses the shared sync pipeline and applies an authoritative post-operation snapshot. Copy distinguishes refresh, materialization, and state-reload failures; success is shown only when the pipeline and resulting snapshot are healthy.
 
 ## Exit and terminal lifecycle

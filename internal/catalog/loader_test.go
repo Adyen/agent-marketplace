@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -2004,6 +2005,66 @@ metadata:
 		if !found {
 			t.Errorf("expected test-skill in catalog")
 		}
+	}
+}
+
+func TestExactSnapshotDiscoveryDoesNotAcquireLegacyCacheLease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prepareExactLease, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepareExactLease()
+
+	legacyLeaseHeld := make(chan struct{})
+	releaseLegacyLease := make(chan struct{})
+	legacyLeaseDone := make(chan error, 1)
+	go func() {
+		_, lockErr := cache.WithCacheMutationLock(func() (struct{}, error) {
+			close(legacyLeaseHeld)
+			<-releaseLegacyLease
+			return struct{}{}, nil
+		})
+		legacyLeaseDone <- lockErr
+	}()
+	<-legacyLeaseHeld
+
+	discovered := make(chan struct{}, 1)
+	loadDone := make(chan LoadResult, 1)
+	repoRoot, snapshotRoot := t.TempDir(), t.TempDir()
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: "https://example.invalid/exact.git", Ref: "main"}}}
+	go func() {
+		loadDone <- LoadRegistries(cfg, repoRoot, LoadModeInspect,
+			WithExactSnapshots(func(config.RegistryEntry) (string, string, error) {
+				return snapshotRoot, "exact-snapshot", nil
+			}),
+			WithDiscoverFunc(func(string, string) (LoadedCatalog, error) {
+				discovered <- struct{}{}
+				return LoadedCatalog{}, nil
+			}),
+		)
+	}()
+
+	var result LoadResult
+	select {
+	case result = <-loadDone:
+	case <-time.After(time.Second):
+		close(releaseLegacyLease)
+		<-loadDone
+		<-legacyLeaseDone
+		t.Fatal("exact snapshot discovery blocked on the legacy mutable-cache lease")
+	}
+	close(releaseLegacyLease)
+	if err := <-legacyLeaseDone; err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Errors) > 0 {
+		t.Fatalf("exact snapshot discovery errors: %v", result.Errors)
+	}
+	select {
+	case <-discovered:
+	default:
+		t.Fatal("exact snapshot was not discovered")
 	}
 }
 

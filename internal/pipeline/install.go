@@ -265,7 +265,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	// Configured installs select only from the exact inventory represented by
 	// the current layer locks. A mutable ref may have advanced since the lock
 	// was written, but that must not make unreviewed resources installable.
-	exactView := exactLockViewWithContext(ctx, ec)
+	ctx, exactView := exactLockViewWithContext(ctx, ec)
 	if len(exactView.errors) > 0 && !onlyMissingInstallLocks(exactView.errors) {
 		exactView.release()
 		return nil, errors.Join(exactView.errors...)

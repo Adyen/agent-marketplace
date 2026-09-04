@@ -100,14 +100,17 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
+var runStatusMaterialize = materialize.Run
+
 func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	repoRoot := config.FindRepoRoot()
 
-	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		RepoRoot:           repoRoot,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -138,7 +141,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	var dryRunReport *materialize.Report
 	if len(result.Errors) == 0 && err == nil {
 		var dryRunErr error
-		dryRunReport, dryRunErr = materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 		if dryRunErr != nil {
 			slog.Warn("status drift check failed", "error", dryRunErr)
 			materializeErrs = append(materializeErrs, dryRunErr)

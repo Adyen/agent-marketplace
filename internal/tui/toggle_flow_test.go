@@ -835,14 +835,19 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 
-	// Global config has a git registry with one skill selected.
+	// Global config has a local registry with one skill selected. This test
+	// exercises scope toggling; exact remote refresh behavior is covered
+	// separately.
+	globalRegistry := filepath.Join(repoRoot, "global-skills")
+	if err := os.MkdirAll(filepath.Join(globalRegistry, "skills"), 0o755); err != nil {
+		t.Fatalf("mkdir global registry: %v", err)
+	}
 	homeAgentsDir := filepath.Join(homeDir, ".agents")
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
 	globalConfig := v2Header + `registries:
-  - url: git@example.com:global-skills.git
-    ref: main
+  - url: ` + globalRegistry + `
     path: skills
     skills:
       - global-tool

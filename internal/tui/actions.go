@@ -138,10 +138,16 @@ func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation r
 }
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
-	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		RepoRoot:      repoRoot,
 		CatalogMode:   tuiCatalogLoadMode(mode),
 		SkipInventory: true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: config.OrganizationConfigPath(),
+			GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
+			RepoPath:         config.ProjectConfigPath(repoRoot),
+			LocalPath:        config.LocalConfigPath(repoRoot),
+		},
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
@@ -152,8 +158,9 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			catalog.WithCloneOrPull(cloneOrPull),
 			catalog.WithDiscoverFunc(discoverCatalog),
 		},
-		ReadOnlyExactLocks: mode == catalogLoadCached,
+		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 
 	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),

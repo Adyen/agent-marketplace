@@ -747,7 +747,9 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	hasRemoteRequest := false
 	hasExactRequest := false
 	for _, request := range requests {
-		if !request.entry.IsLocal() {
+		// Exact snapshots have no fetch job and are protected by the exact
+		// namespace lease, not the mutable-cache lease.
+		if request.job != nil {
 			hasRemoteRequest = true
 		}
 		if request.catalogBasePath != "" {

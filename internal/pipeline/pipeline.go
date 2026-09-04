@@ -226,7 +226,21 @@ func filterBlockedRegistryErrors(errs []error) []error {
 	return filtered
 }
 
+// ResolveWithExactLockLease keeps the single read-only exact-cache lease used
+// by resolution alive until release is called. It is intended for callers that
+// consume resolved snapshot paths after Resolve returns.
+func ResolveWithExactLockLease(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
+	return resolve(ctx, opts)
+}
+
 func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
+	result, release := resolve(ctx, opts)
+	release()
+	return result
+}
+
+func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
+	releaseExactLease := func() {}
 	start := time.Now()
 	if opts.Offline {
 		opts.CatalogMode = catalog.LoadModeInspect
@@ -269,7 +283,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 
 	if ctx.Err() != nil {
 		result.Errors = []error{ctx.Err()}
-		return result
+		return result, releaseExactLease
 	}
 	var ec config.EffectiveConfig
 
@@ -317,9 +331,10 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			errs = append(errs, err)
 		}
 		ec = config.EffectiveConfig{
-			Organization: config.LayerResult{Source: config.Organization, Config: orgCfg},
-			User:         config.LayerResult{Source: config.UserPersonal, Config: globalCfg},
-			Repo:         config.LayerResult{Source: config.RepoCommitted, Config: repoCfg},
+			Organization: config.LayerResult{Source: config.Organization, Path: opts.EffectiveOpts.OrganizationPath, Config: orgCfg},
+			User:         config.LayerResult{Source: config.UserPersonal, Path: opts.EffectiveOpts.GlobalPath, Config: globalCfg},
+			Repo:         config.LayerResult{Source: config.RepoCommitted, Path: opts.EffectiveOpts.RepoPath, Config: repoCfg},
+			LocalLayer:   config.LayerResult{Source: config.RepoPersonal, Path: opts.EffectiveOpts.LocalPath, Local: localCfg},
 			Local:        localCfg,
 			Errors:       errs,
 		}
@@ -362,14 +377,14 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
-		return result
+		return result, releaseExactLease
 	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
-		return result
+		return result, releaseExactLease
 	}
 
 	var mergedCfg *config.Config
@@ -414,7 +429,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			if len(ec.Errors) > 0 {
 				result.ConfigErrors = ec.Errors
 				result.Errors = ec.Errors
-				return result
+				return result, releaseExactLease
 			}
 		}
 	}
@@ -423,7 +438,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	if modeErr != nil {
 		result.ConfigErrors = append(result.ConfigErrors, modeErr)
 		result.Errors = append(result.Errors, modeErr)
-		return result
+		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
 	slog.Debug("config layers merged",
@@ -442,8 +457,8 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	catalogOpts := opts.CatalogOption
 	var readOnlyView readOnlyExactView
 	if opts.ReadOnlyExactLocks {
-		readOnlyView = exactLockViewWithContext(ctx, ec)
-		defer readOnlyView.release()
+		ctx, readOnlyView = exactLockViewWithContext(ctx, ec)
+		releaseExactLease = readOnlyView.release
 		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
 		result.LockMetadata = readOnlyView.gitMetadata
 	}
@@ -496,7 +511,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		selectionSpan.End()
 	}
 	result.Errors = errs
-	return result
+	return result, releaseExactLease
 }
 
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {

@@ -175,7 +175,7 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	entry := config.RegistryEntry{URL: canonical, Ref: "HEAD", Source: config.RepoCommitted}
 	cfg := &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{entry}}
 	ec := config.EffectiveConfig{Repo: config.LayerResult{Source: config.RepoCommitted, Path: configPath, Config: cfg}, Merged: cfg}
-	view := exactLockViewWithContext(context.Background(), ec)
+	_, view := exactLockViewWithContext(context.Background(), ec)
 	defer view.release()
 	if len(view.errors) > 0 {
 		t.Fatal(errors.Join(view.errors...))

@@ -2,16 +2,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
@@ -92,6 +96,53 @@ registries:
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", needle, output)
 		}
+	}
+}
+
+func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "status-gc.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "keeper")
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills: [keeper]
+`)
+	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
+
+	entered := make(chan struct{})
+	resume := make(chan struct{})
+	previous := runStatusMaterialize
+	runStatusMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+		close(entered)
+		<-resume
+		return previous(ctx, root, artifacts, opts...)
+	}
+	t.Cleanup(func() { runStatusMaterialize = previous })
+
+	statusDone := make(chan error, 1)
+	go func() { statusDone <- runStatus(context.Background(), &bytes.Buffer{}, time.Now()) }()
+	<-entered
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		gcDone <- err
+	}()
+	select {
+	case err := <-gcDone:
+		t.Fatalf("GC completed while status consumed exact snapshot: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(resume)
+	if err := <-statusDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
 	}
 }
 
