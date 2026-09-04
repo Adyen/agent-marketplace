@@ -9,9 +9,9 @@ Contract sources apply in this order:
 1. Repository security and configuration rules.
 2. Current normative product documentation, including this contract.
 3. Behavioral tests through public TUI, pipeline, and materialization paths.
-4. QA captures and snapshots, which are evidence and never define intended behavior by themselves.
+4. Direct real-terminal QA reports, which are evidence and never define intended behavior by themselves.
 
-Initial baseline discovery is non-blocking. Enforcement may begin only after every Critical or High defect in a required flow is fixed; such defects are never accepted as expected snapshots.
+Initial baseline discovery is non-blocking. Enforcement may begin only after every Critical or High defect in a required flow is fixed; such defects are never accepted as expected behavior.
 
 Severity follows user impact:
 

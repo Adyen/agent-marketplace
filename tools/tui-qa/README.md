@@ -1,25 +1,29 @@
 # TUI Real-Usage Tests
 
-This package uses `@microsoft/tui-test` to launch and operate the real `agent-marketplace` binary in a PTY. Scenario files send the same keys a user sends and assert visible behavior plus the relevant filesystem outcome.
+This package uses `@microsoft/tui-test` to launch and operate the real `agent-marketplace` binary in a PTY. Journey files send canonical user inputs and assert semantic visible outcomes plus the relevant filesystem result.
 
 ## Test ownership
 
 - Go tests own TUI model state, asynchronous behavior, rendering contracts, and terminal-guard details.
 - Go E2E tests own configuration, resource, scope, collision, ownership, harness-target, and materialization matrices.
-- This package owns direct user interaction: navigation, search, help, resize, quit/signals, and one local-toggle-to-sync journey.
+- This package owns direct user interaction through a real PTY.
 
 ## Journeys
 
-`tests/terminal-core.spec.ts` covers four real-PTY journeys:
+Each interaction contract has its own file:
 
-1. bare 80x24 launch, tabs, search, help, resize, and `q`;
-2. explicit 50x12 launch and Ctrl+C;
-3. active SIGTERM;
-4. local resource toggle and sync with exact config and output assertions.
+1. `tests/launch-browse-inspect.spec.ts` launches bare, browses all tabs, opens details, returns, and quits.
+2. `tests/search-and-select.spec.ts` searches with a positive match and disappearing distractor.
+3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, and verifies config and materialization.
+4. `tests/help-and-return.spec.ts` opens help and returns to the same selection.
+5. `tests/resize-and-recover.spec.ts` enters the minimum-size gate, blocks a toggle, and recovers at exactly 50x12.
+6. `tests/ctrl-c-hard-exit.spec.ts` performs a bounded Ctrl+C hard exit.
+7. `tests/sigterm-hard-exit.spec.ts` terminates the launcher-published target PID and verifies it is gone.
+8. `tests/non-tty.test.ts` checks the two non-TTY entrypoints in a registry-free process sandbox.
 
-`tests/non-tty.test.ts` covers the fifth journey: bare non-TTY help and prompt explicit-TUI failure.
+Every PTY journey receives a fresh temporary HOME, XDG roots, workspace, temporary directory, and local bare Git registry from lifecycle hooks. The registry contains a project-selected and pre-synced `beta-skill` plus an available `alpha-skill`. Test discovery does not create fixtures. The test binary uses the existing `e2e` build tag only to redirect the fixed organization-config path into the fixture.
 
-Every journey receives a fresh temporary HOME, XDG roots, workspace, and local bare Git registry. The test binary uses the existing `e2e` build tag only to redirect the fixed organization-config path into that fixture.
+Every state-changing input is followed by a causal visible assertion before the next input. Ordinary UI and process barriers use five-second bounds; Git and materialization barriers use thirty-second bounds. The suite runs with one worker, zero retries, and identical timeout behavior locally and in CI.
 
 ## Commands
 
@@ -31,17 +35,6 @@ make tui-qa-check
 make tui-qa
 ```
 
-`make tui-qa-check` typechecks the direct tests and verifies the PTY adapter is installed. `make tui-qa` builds the test binary and runs all five journeys once with one worker and no retry.
+`make tui-qa-check` typechecks the journeys and verifies the PTY adapter. `make tui-qa` builds the e2e-tagged test binary and runs all eight journeys once. Failures use the test runner's console report and current terminal screen; the suite does not write snapshots or traces.
 
-## Artifacts and privacy
-
-Sanitized snapshots are written below `.local/agent-marketplace/qa/tui/<run-id>/snapshots`. Raw PTY traces stay under the ignored artifact root and are not uploaded by CI.
-
-Optional local values may be exported directly or loaded from `.envrc.local`, which is gitignored:
-
-- `AM_TUI_QA_RUN_ID` selects the artifact subdirectory.
-- `AM_TUI_QA_ARTIFACT_DIR` overrides the artifact root.
-- `AM_TUI_QA_BINARY` selects an already-built test binary.
-- `AM_TUI_QA_PRIVATE_VALUES` is a newline-separated list that must not appear in tracked QA files or written snapshots.
-
-The default suite requires no organization-specific image, certificate, registry, or infrastructure path.
+`AM_TUI_QA_BINARY` may select an already-built test binary. `AM_TUI_QA_REPO_ROOT` may select its repository root. The default suite requires no direnv or organization-specific image, certificate, registry, or infrastructure path.
