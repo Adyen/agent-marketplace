@@ -135,7 +135,7 @@ const createFixture = (name: string): Fixture => {
 
     const betaSkill = path.join(repo, ".factory", "skills", "beta-skill");
     if (!fs.lstatSync(betaSkill).isSymbolicLink()) throw new Error("fixture beta-skill is not a symlink");
-    if (fs.existsSync(path.join(repo, ".factory", "skills", "alpha-skill"))) throw new Error("fixture alpha-skill was unexpectedly materialized");
+    if (fs.lstatSync(path.join(repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false })) throw new Error("fixture alpha-skill was unexpectedly materialized");
 
     const launcher = path.join(root, "launch-agent-marketplace");
     const pidFile = path.join(root, "target.pid");

@@ -22,7 +22,7 @@ test("local toggle reaches pending state before sync", async ({ terminal }) => {
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("~ in sync")).toBeVisible();
   });
-  assert.equal(fs.existsSync(generatedSkill), false);
+  assert.equal(fs.lstatSync(generatedSkill, { throwIfNoEntry: false }), undefined);
 
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
@@ -40,7 +40,7 @@ test("local toggle reaches pending state before sync", async ({ terminal }) => {
     await expect(terminal.getByText("~ 1 out of sync")).toBeVisible();
   });
   assert.equal(fs.readFileSync(localConfig, "utf8"), fixture.expectedLocalConfig);
-  assert.equal(fs.existsSync(generatedSkill), false);
+  assert.equal(fs.lstatSync(generatedSkill, { throwIfNoEntry: false }), undefined);
 
   await step("sync pending alpha-skill", () => terminal.write("s"), async () => {
     await expect(terminal.getByText("Sync complete")).toBeVisible({ timeout: 30_000 });
