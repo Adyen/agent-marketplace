@@ -2,7 +2,6 @@ package collection
 
 import (
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 
@@ -32,21 +31,6 @@ type ExpandResult struct {
 // skill "build" and a command "build" would otherwise share a key.
 func ViaMapKey(kind ir.ResourceKind, name string) string {
 	return kind.String() + ":" + strings.TrimSpace(name)
-}
-
-// normalizeRegistryPath canonicalizes slash-separated registry subpaths for
-// synthetic-source identity. Registry paths are artifact paths, not host paths;
-// use path.Clean so foo, ./foo, and foo/ share one key on every Unix host.
-func normalizeRegistryPath(value string) string {
-	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
-	if value == "" {
-		return ""
-	}
-	cleaned := path.Clean(value)
-	if cleaned == "." {
-		return ""
-	}
-	return cleaned
 }
 
 // Expand resolves each selected collection name against the available discovered
@@ -230,7 +214,7 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 		ref = strings.TrimSpace(ref)
 		// Normalize only the identity path. Keep pathProvided so an explicit
 		// root ("." or "./") does not inherit the collection's source path.
-		skillPath = normalizeRegistryPath(skillPath)
+		skillPath = config.NormalizeRegistryPath(skillPath)
 
 		if regURL == "" {
 			// Use the collection's source registry while preserving an explicit
@@ -241,7 +225,7 @@ func expandCollection(col *Collection, index map[string]*Collection, existingEnt
 				ref = strings.TrimSpace(col.SourceRef)
 			}
 			if !pathProvided {
-				skillPath = normalizeRegistryPath(col.SourcePath)
+				skillPath = config.NormalizeRegistryPath(col.SourcePath)
 			}
 		} else if ref == "" {
 			configured := findConfiguredRef(regURL, existingEntries)
@@ -351,12 +335,12 @@ func appendUnique(existing, add []string) []string {
 // generated config metadata deterministic and preserves the author's spelling.
 func authoredURLForRegistry(url, ref, registryPath string, entries []config.RegistryEntry, fallbackURL string) string {
 	norm := config.NormalizeGitURL(url)
-	registryPath = normalizeRegistryPath(registryPath)
+	registryPath = config.NormalizeRegistryPath(registryPath)
 	bestURL := ""
 	bestSource := config.SourceUnset
 	bestFile := 0
 	for _, entry := range entries {
-		if config.NormalizeGitURL(entry.URL) != norm || strings.TrimSpace(entry.Ref) != ref || normalizeRegistryPath(entry.Path) != registryPath {
+		if config.NormalizeGitURL(entry.URL) != norm || strings.TrimSpace(entry.Ref) != ref || config.NormalizeRegistryPath(entry.Path) != registryPath {
 			continue
 		}
 		if bestURL == "" || config.CompareEntryPrecedence(entry.Source, entry.FilePrecedence, bestSource, bestFile) > 0 {
@@ -388,11 +372,11 @@ func excludeForRegistry(url string, entries []config.RegistryEntry) []string {
 // matching (url, ref, path). Falls back to (url, ref) matching when path is
 // empty. Used by Expand for path-specific synthetic entries.
 func excludeForRegistryWithPath(url, ref, path string, entries []config.RegistryEntry) []string {
-	path = normalizeRegistryPath(path)
+	path = config.NormalizeRegistryPath(path)
 	norm := config.NormalizeGitURL(url)
 	// Prefer exact (url, ref, path) match first.
 	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && normalizeRegistryPath(e.Path) == normalizeRegistryPath(path) {
+		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(path) {
 			return append([]string(nil), e.AllExcludes()...)
 		}
 	}
@@ -431,13 +415,13 @@ func isLocalRegistry(registryURL string, entries []config.RegistryEntry) bool {
 }
 
 func sourceForRegistry(url, ref, path string, entries []config.RegistryEntry, fallbackURL, fallbackRef, fallbackPath string) config.Source {
-	path = normalizeRegistryPath(path)
-	fallbackPath = normalizeRegistryPath(fallbackPath)
+	path = config.NormalizeRegistryPath(path)
+	fallbackPath = config.NormalizeRegistryPath(fallbackPath)
 	norm := config.NormalizeGitURL(url)
 	best := config.SourceUnset
 	// Prefer exact (url, ref, path) match first.
 	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && normalizeRegistryPath(e.Path) == normalizeRegistryPath(path) {
+		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(path) {
 			if e.Source.Precedence() > best.Precedence() {
 				best = e.Source
 			}
@@ -466,7 +450,7 @@ func sourceForRegistry(url, ref, path string, entries []config.RegistryEntry, fa
 		// fallbackPath is empty.
 		normFallback := config.NormalizeGitURL(fallbackURL)
 		for _, e := range entries {
-			if config.NormalizeGitURL(e.URL) == normFallback && e.Ref == fallbackRef && normalizeRegistryPath(e.Path) == normalizeRegistryPath(fallbackPath) {
+			if config.NormalizeGitURL(e.URL) == normFallback && e.Ref == fallbackRef && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(fallbackPath) {
 				if e.Source.Precedence() > best.Precedence() {
 					best = e.Source
 				}
@@ -488,7 +472,7 @@ func sourceForRegistry(url, ref, path string, entries []config.RegistryEntry, fa
 		// Match by path first, then fall back when fallbackPath is empty.
 		normFallback := config.NormalizeGitURL(fallbackURL)
 		for _, e := range entries {
-			if config.NormalizeGitURL(e.URL) == normFallback && e.Ref == fallbackRef && normalizeRegistryPath(e.Path) == normalizeRegistryPath(fallbackPath) {
+			if config.NormalizeGitURL(e.URL) == normFallback && e.Ref == fallbackRef && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(fallbackPath) {
 				if e.Source.Precedence() > best.Precedence() {
 					best = e.Source
 				}
@@ -509,10 +493,10 @@ func sourceForRegistry(url, ref, path string, entries []config.RegistryEntry, fa
 }
 
 func catalogKeyForRegistry(url, ref, path string, entries []config.RegistryEntry, fallbackCatalogKey string) string {
-	path = normalizeRegistryPath(path)
+	path = config.NormalizeRegistryPath(path)
 	norm := config.NormalizeGitURL(url)
 	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && normalizeRegistryPath(e.Path) == normalizeRegistryPath(path) && e.CatalogKey != "" {
+		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(path) && e.CatalogKey != "" {
 			return e.CatalogKey
 		}
 	}
@@ -529,11 +513,11 @@ func catalogKeyForRegistry(url, ref, path string, entries []config.RegistryEntry
 }
 
 func harnessesForRegistry(url, ref, path string, entries []config.RegistryEntry) []string {
-	path = normalizeRegistryPath(path)
+	path = config.NormalizeRegistryPath(path)
 	norm := config.NormalizeGitURL(url)
 	// Prefer exact (url, ref, path) match first.
 	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && normalizeRegistryPath(e.Path) == normalizeRegistryPath(path) {
+		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(path) {
 			return append([]string(nil), e.Harnesses...)
 		}
 	}
@@ -549,11 +533,11 @@ func harnessesForRegistry(url, ref, path string, entries []config.RegistryEntry)
 }
 
 func sourceHarnessForRegistry(url, ref, path string, entries []config.RegistryEntry) string {
-	path = normalizeRegistryPath(path)
+	path = config.NormalizeRegistryPath(path)
 	norm := config.NormalizeGitURL(url)
 	// Prefer exact (url, ref, path) match first.
 	for _, e := range entries {
-		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && normalizeRegistryPath(e.Path) == normalizeRegistryPath(path) {
+		if config.NormalizeGitURL(e.URL) == norm && e.Ref == ref && config.NormalizeRegistryPath(e.Path) == config.NormalizeRegistryPath(path) {
 			return e.SourceHarness
 		}
 	}
