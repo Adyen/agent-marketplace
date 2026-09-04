@@ -76,7 +76,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 - No resource dependency mechanism (tags and collections are partial workarounds)
 
-Run QA-only driver and contract self-tests with `make tui-qa-check`, trusted native invariant QA with `make tui-qa`, and the canonical Linux-contained baseline with `make tui-qa-contained`.
+Run direct real-terminal test typechecking with `make tui-qa-check` and all five real-TUI usage journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
 ## E2E Test Suite
 

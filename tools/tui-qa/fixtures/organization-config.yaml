@@ -1,4 +1,0 @@
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries: []
