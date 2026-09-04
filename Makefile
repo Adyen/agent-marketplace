@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -126,6 +126,26 @@ tui-qa-contained:
 	@command -v npm >/dev/null || { echo "ERROR: npm is required for contained TUI QA" >&2; exit 1; }
 	@command -v go >/dev/null || { echo "ERROR: go is required for contained TUI QA" >&2; exit 1; }
 	AM_TUI_QA_RUN_CLASS="$${AM_TUI_QA_RUN_CLASS:-baseline}" tools/tui-qa/run-container.sh
+
+# Website.
+#
+# The site is the landing page only. Its harness table and TUI frame
+# (site/.vitepress/data/) are checked-in fixtures: no target in this build
+# regenerates or verifies them, so they are kept in step with
+# pkg/harness-compilation/target by hand. Generation, and the drift check that
+# makes it trustworthy, land with the documentation work.
+SITE_DIR := site
+
+# Requires Node (see $(SITE_DIR)/package.json); no Go toolchain needed.
+site-dev:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website development" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install && pnpm run dev
+
+# SITE_BASE selects the deployment base path, e.g. SITE_BASE=/agent-marketplace/
+# for a GitHub Pages project site. Defaults to "/".
+site-build:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website builds" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).
