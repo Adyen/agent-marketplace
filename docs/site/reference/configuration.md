@@ -1,8 +1,8 @@
 # Repository configuration reference
 
-The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources.
+The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
 
-Agent Marketplace treats the configuration as the source of truth. After editing it, run `agent-marketplace sync` to reconcile generated harness files, or `agent-marketplace sync --check` to report drift without changing files.
+Agent Marketplace treats the configuration as the source of truth. After editing the selected root file, run `agent-marketplace sync` to reconcile generated harness files, or `agent-marketplace sync --check` to report drift without changing files.
 
 ## File location and scope
 
@@ -19,7 +19,32 @@ Other configuration layers use related schemas:
 | Repository | `<repo>/.agents/config.yaml` | Shared project targets and resources |
 | Repository personal | `<repo>/.agents/config.local.yaml` | Gitignored choices for one checkout |
 
-This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope.
+This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
+
+## `include`
+
+`include` composes local YAML files into the configuration layer that declares it. It accepts one path or an ordered list of paths:
+
+```yaml
+apiVersion: agent-marketplace/v2
+include: profiles/company.yaml
+```
+
+Use a sequence when including more than one fragment:
+
+```yaml
+include:
+  - profiles/company.yaml
+  - profiles/payments-team.yaml
+```
+
+Relative paths resolve from the directory containing the file that declares them. Absolute paths are also accepted. Includes are recursive, so an included fragment may include other fragments. The same file contributes only at its first position when reached more than once; canonical paths are used for this check. Glob patterns and remote URLs are not supported.
+
+Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](../../../docs/PRECEDENCE.md) for the complete merge rules.
+
+The loader rejects a layer when an include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion`, but they must use fields allowed by the layer that includes them. A regular organization, user, or repository root still requires `apiVersion: agent-marketplace/v2` (or the accepted `agent-marketplace/v3` compatibility alias); a local root may omit it.
+
+The CLI reads included content when calculating effective configuration. Configuration-editing commands modify only the selected root file; they do not rewrite included fragments. Removing an include-owned resource records the exclusion in the selected root, leaving the included file unchanged.
 
 ## Example
 
@@ -60,6 +85,7 @@ Unknown top-level fields are rejected.
 
 | Field | Type | Required | Description |
 |---|---|---:|---|
+| `include` | path or list of paths | no | Local YAML fragments composed into this configuration layer. Relative paths resolve from the declaring file; absolute paths are accepted. |
 | `apiVersion` | string | yes | Configuration schema. Use `agent-marketplace/v2`. |
 | `harnesses` | list of strings | no | Repository target harnesses. When omitted or empty, targets come from user configuration, then organization configuration. |
 | `registries` | list of registry entries | no | Git repositories or local directories that provide resources. |

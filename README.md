@@ -150,9 +150,10 @@ excluded by any layer (see below).
 How it works from a user's point of view:
 
 - The CLI reads every layer that exists, then **merges** them. The result is one
-  effective set of registries and resources. When a resource is both selected
-  and excluded across layers, the more specific layer (repo, then personal) wins
-  — except `required: true` resources, which no layer can exclude.
+  effective set of registries and resources. When a repo-scoped resource is both
+  selected and excluded across layers, the more specific layer (repo, then
+  personal) wins — except `required: true` resources, which no layer can exclude.
+  Machine-scoped resources are not suppressed by repo or checkout-local excludes.
 - **Machine-wide** layers materialize into your home harness root (e.g.
   `~/.factory/`); **repo** layers materialize into `<repo>/.factory/`. The two
   are complementary — a resource can exist at both scopes without conflict.
@@ -271,9 +272,8 @@ registries:
 
 - **`required: true`** — mandatory; immune to every `exclude` at every layer.
   This is how org-wide security standards are enforced.
-- **`default: true`** — every resource is selected automatically, but any
-  higher-precedence layer (e.g. your repo-personal file) can exclude individual
-  ones.
+- **`default: true`** — every resource is selected automatically. A higher-
+  precedence layer can exclude individual repo-scoped resources.
 - **Neither** — resources are only selected when explicitly listed in an
   `include` or matched by `tags`.
 
@@ -282,8 +282,8 @@ registries:
 The gitignored local file (`.agents/config.local.yaml`) is your per-repo
 personal layer. It supports **three** things:
 
-1. **Top-level excludes** — suppress a non-required resource by name, no matter
-   which registry provides it:
+1. **Top-level excludes** — suppress a non-required, repo-scoped resource by
+   name, no matter which eligible registry provides it:
 
 ```yaml
 # .agents/config.local.yaml  (gitignored — personal)
@@ -324,9 +324,9 @@ agent-marketplace sync   # re-materialize with your local registry included
 Or equivalently, write the `registries:` block by hand and then `sync`.
 
 **Note:** Top-level selectors in local config are applied *globally* (across all
-registries), unlike `registries:`-scoped selectors which only affect the entry
-they're on. Use `registries:`-scoped selectors when you want precise control;
-use top-level `exclude` as a broad veto.
+eligible repo-scoped registries), unlike `registries:`-scoped selectors which
+only affect the entry they're on. Use `registries:`-scoped selectors when you
+want precise control; use top-level `exclude` as a broad repo-checkout veto.
 
 After editing any config layer by hand, run `agent-marketplace sync` to
 reconcile the generated files, or `agent-marketplace sync --check` to verify
@@ -603,15 +603,14 @@ agent-marketplace remove vm-lifecycle                # exclude one member, keep 
 agent-marketplace remove platform-onboarding         # remove the whole bundle
 ```
 
----
-
 ## Local-path registries
 
 Instead of a Git URL, a registry entry can point at a local directory — handy
 for developing or testing resources before publishing them. A URL is treated as
-a local path when it starts with `/`, `~/`, `./`, or `../` (or is `.`/`..`) and
-does **not** end in `.git`. A `ref` on such an entry is simply ignored rather
-than making it remote:
+a local path when it is `.`, starts with `./`, `/`, or `~/`, and does **not**
+end in `.git`. Parent traversal (`..` or a path containing a `..` component) is
+rejected. A `ref` on an accepted local directory is simply ignored rather than
+making it remote:
 
 ```yaml
 registries:
@@ -621,6 +620,17 @@ registries:
       include: [my-custom-skill]
 ```
 
+For a local-path registry, `path` may also be used as the registry location when
+`url` is omitted:
+
+```yaml
+registries:
+  - path: /tmp/local-skills    # `path` is the URL/location alias here
+    skills:
+      include: [my-custom-skill]
+```
+
+When `url` is present, `path` instead means a subdirectory within that registry.
 Local registries are read directly from disk (no clone or fetch), are excluded
 from `update`, and show `local` as their cache freshness in `status`.
 
@@ -642,8 +652,8 @@ agent-marketplace install --tag <tag>                       Install everything m
 agent-marketplace install --all [--registry <url>]          Install every discovered resource
 agent-marketplace install ... --scope {user,repo,local}     Choose which config layer to write
 
-agent-marketplace remove <name> --from <url>     Remove/exclude a resource from a registry entry
-agent-marketplace remove --from <url>            Remove an entire ad-hoc registry entry
+agent-marketplace remove <name> --from <url> [--path <dir>]  Remove/exclude a resource from a registry entry
+agent-marketplace remove --from <url> [--path <dir>]         Remove an entire ad-hoc registry entry
 agent-marketplace remove <collection>            Remove a collection reference
 agent-marketplace remove ... --scope {user,repo,local}      Choose which config layer to edit
 
@@ -672,6 +682,11 @@ agent-marketplace tui                            Launch the interactive browser 
 - `list --from` is browse-only and never writes to any config file.
 - GitLab/GitHub web URLs are auto-parsed; explicit `--ref`/`--path` override the
   inferred values.
+- For `remove --from`, URL, path, and ref identify the configured entry. An
+  omitted `--path` or `--ref` is unambiguous only when the URL identifies one
+  logical location; distinct paths or refs require the corresponding flag.
+  Named removals with `--path` include discovered descendants, while an
+  equivalent normalized URL/path spelling is accepted.
 - Every ad-hoc URL is validated against the `allowed_registries` policy before
   any network fetch or config write.
 
@@ -734,12 +749,13 @@ make e2e       # run the end-to-end suite (see below)
 ### E2E tests
 
 The `e2e/` directory contains end-to-end tests that run the built binary in
-isolated temp-directory sandboxes. They are **local-only** (CI runners cannot
-clone git registries) and optionally run inside Docker for host isolation.
+isolated temp-directory sandboxes. Registry fixtures are local bare Git
+repositories reached through `file://` URLs, so the full suite runs directly on
+Ubuntu in CI. Local runs use Docker by default for additional host isolation.
 
 ```bash
-make e2e                    # runs inside Docker (isolated from host env)
-E2E_SKIP_DOCKER=1 make e2e  # run directly on the host
+make e2e                    # run locally inside Docker
+E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
 E2E_PARALLEL=1 make e2e     # serial execution for debugging (default 4)
 ```
 

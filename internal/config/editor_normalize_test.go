@@ -310,6 +310,75 @@ registries:
 	}
 }
 
+func TestRegistryPathIdentityNormalizesSeparatorsAndDotSegments(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "dot and repeated separators", path: "./foo//bar/", want: "foo/bar"},
+		{name: "mixed separators", path: `foo\bar`, want: "foo/bar"},
+		{name: "root", path: ".", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NormalizeRegistryPath(tc.path); got != tc.want {
+				t.Fatalf("NormalizeRegistryPath(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAddSkillsToRegistryRejectsRequestedDescendantOfConfiguredParent(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+registries:
+  - url: git@example.com:infra
+    ref: main
+    path: foo
+    skills:
+      include:
+        - parent-skill
+`))
+
+	if err := AddSkillsToRegistryInConfig(configPath, "git@example.com:infra", "foo/bar", []string{"child-skill"}); err == nil {
+		t.Fatal("requested descendant path unexpectedly matched configured parent")
+	}
+	cfg, err := loadConfig(configPath, true)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Registries) != 1 || cfg.Registries[0].Path != "foo" || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"parent-skill"}) {
+		t.Fatalf("configured parent changed after descendant request: %#v", cfg.Registries)
+	}
+}
+
+func TestRemoveRegistryEntryRejectsDescendantOfConfiguredParent(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(configPath))
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
+harnesses:
+  - factory
+registries:
+  - url: git@example.com:infra
+    ref: main
+    path: foo
+`))
+	if err := RemoveRegistryEntryFromConfig(configPath, "git@example.com:infra.git", "foo/bar"); err != nil {
+		t.Fatalf("RemoveRegistryEntryFromConfig: %v", err)
+	}
+	cfg, err := loadConfig(configPath, true)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Registries) != 1 || cfg.Registries[0].Path != "foo" {
+		t.Fatalf("parent entry was removed by descendant request: %#v", cfg.Registries)
+	}
+}
+
 // Combined E2E: EnsureRegistry + AddResourceToExactRegistryEntry against
 // a repo URL whose normalized form already exists in config, with an
 // existing top-level skills selector. Must not produce a spurious

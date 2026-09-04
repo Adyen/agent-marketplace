@@ -119,8 +119,9 @@ Non-skill resources use their own harness-native layouts:
    are **not** separate skills — they are supplementary assets.
 4. Directories named `node_modules`, `.git`, `.cache`, `test`,
    `tests`, `__tests__` are skipped.
-5. Hidden directories (dot-prefix) are skipped unless the path escapes
-   upward (e.g. `../other-registry`).
+5. Hidden directories (dot-prefix) are skipped. Registry paths containing
+   parent traversal (`..`) are rejected rather than used to escape the
+   configured registry root.
 
 **Do not** nest skill directories inside other skill directories and
 expect them to be independently discovered. Use a flat or shallow
@@ -178,8 +179,8 @@ Malformed frontmatter causes the skill to surface as "malformed" in
 - The directory name and frontmatter `name:` should match. When they
   differ, frontmatter wins for deduplication but directory name is used
   for `install` and `sync` unless frontmatter is parsed successfully.
-- Avoid names that collide across registries; same-name skills from
-  different registries cause sync errors in the consumer.
+- Avoid names that collide across registries; the consumer warns and picks
+  one deterministic winner.
 
 ### Description best practices
 
@@ -458,7 +459,7 @@ git add .agents/config.yaml .gitignore
 | Nesting skills inside skills | Inner skill not discovered | Keep skills at the same depth under `path` |
 | Missing `---` delimiters | Skill shows as "malformed" | Add opening and closing `---` lines |
 | `name:` with spaces or capitals | Install by name fails, inconsistent display | Use kebab-case: `my-skill` |
-| Same `name:` in two registries | Sync fails with collision error | Rename one, or narrow per-registry selections |
+| Same `name:` in two registries | Sync warns and picks one deterministic winner | Rename one or narrow per-registry selections |
 | Description too vague | Agents don't activate the skill when they should | Include when-to-use triggers and specific error conditions |
 | Tag duplication with name | `install --tag vm-lifecycle` is redundant | Tags should group; names already identify |
 | No CODEOWNERS | Anyone can merge skill changes | Add CODEOWNERS to enforce review |
