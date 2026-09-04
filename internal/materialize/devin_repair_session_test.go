@@ -48,7 +48,7 @@ import (
 // 1. The section boundary of each mutator
 // ---------------------------------------------------------------------------
 
-// repairLockCounts is what devinRepairLockHook observes for one action.
+// repairLockCounts is what repairLockHook observes for one action.
 type repairLockCounts struct {
 	mu        sync.Mutex
 	acquired  int
@@ -87,8 +87,8 @@ func (c *repairLockCounts) snapshot() (acquired, reentered, released, maxDepth i
 func installRepairLockCounter(t *testing.T) *repairLockCounts {
 	t.Helper()
 	counts := &repairLockCounts{}
-	devinRepairLockHook = counts.observe
-	t.Cleanup(func() { devinRepairLockHook = nil })
+	repairLockHook = counts.observe
+	t.Cleanup(func() { repairLockHook = nil })
 	return counts
 }
 
@@ -243,7 +243,7 @@ func TestDevinRepairRefusesAnUnreplaceableConflictWithoutTakingTheLock(t *testin
 	if len(candidates) != 1 {
 		t.Fatalf("ownership nominated %d hook candidates, want 1", len(candidates))
 	}
-	store, err := ownership.Open(root, ownership.WithLockObserver(observeDevinRepairLock))
+	store, err := ownership.Open(root, ownership.WithLockObserver(observeRepairLock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,8 +338,8 @@ func TestDevinRepairCrossProcessChild(t *testing.T) {
 	}
 	repoRoot := os.Getenv(devinRepairXProcRepoEnv)
 	witness := &sectionWitness{path: os.Getenv(devinRepairXProcWitnessEnv)}
-	devinLockAcquisitionHook = witness.observe
-	devinRepairLockHook = witness.observe
+	ownedAggregateLockAcquisitionHook = witness.observe
+	repairLockHook = witness.observe
 
 	selection := []resolver.ResolvedArtifact{
 		devinResolved("aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),

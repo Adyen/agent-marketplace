@@ -1,0 +1,6 @@
+packages:
+  - .
+
+allowBuilds:
+  '@swc/core@1.15.47': true
+  'node-pty@1.2.0-beta.11': true

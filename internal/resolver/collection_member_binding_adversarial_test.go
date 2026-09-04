@@ -8,6 +8,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -66,6 +67,65 @@ func TestPathLessMemberPrefersRequiredContainingEntry(t *testing.T) {
 	}
 	if got.RegistryPath != "teams/security/plugins/devsecops" {
 		t.Fatalf("expected the org-mandated location to win over config order, got %q", got.RegistryPath)
+	}
+}
+
+// TestPathLessMemberSkipsLocallyExcludedRepoOwner verifies that owner filtering
+// happens before precedence selection: a repo-local exclusion cannot hide a
+// compatible machine-scope owner of the same physical repository.
+func TestPathLessMemberSkipsLocallyExcludedRepoOwner(t *testing.T) {
+	member := ir.CollectionMember{Name: "efficient-go", Kind: ir.KindSkill, Registry: monorepoURL}
+	cfg, catalogs := buildMemberCase(t, goToolsCollection(member), []memberFixture{
+		{url: monorepoURL, path: "repo/tools", names: []string{"efficient-go"}},
+		{url: monorepoURL, path: "machine/tools", names: []string{"efficient-go"}},
+	})
+	cfg.Registries[1].Source = config.RepoPersonal
+	cfg.Registries[2].Source = config.UserPersonal
+	setCatalogKeys(cfg)
+
+	resolved, errs := Resolve(cfg, catalogs, &config.LocalConfig{
+		Skills: kse(nil, []string{"efficient-go"}),
+	})
+	if len(errs) != 0 {
+		t.Fatalf("expected local exclusion to be a no-op for the machine owner, got %v", errs)
+	}
+	got := findResolved(resolved, "efficient-go")
+	if got == nil {
+		t.Fatalf("expected efficient-go from the machine owner, got %+v", resolved)
+	}
+	if got.Source != config.UserPersonal || got.RegistryPath != "machine/tools" {
+		t.Fatalf("expected compatible machine owner, got source=%v path=%q", got.Source, got.RegistryPath)
+	}
+}
+
+// TestPathLessMemberChoosesHarnessCompatibleOwner verifies harness filtering is
+// applied before authority selection, while an incompatible required org owner
+// still emits its hard policy diagnostic.
+func TestPathLessMemberChoosesHarnessCompatibleOwner(t *testing.T) {
+	member := ir.CollectionMember{Name: "efficient-go", Kind: ir.KindSkill, Registry: monorepoURL}
+	cfg, catalogs := buildMemberCase(t, goToolsCollection(member), []memberFixture{
+		{url: monorepoURL, path: "org/tools", required: true, names: []string{"efficient-go"}},
+		{url: monorepoURL, path: "machine/tools", names: []string{"efficient-go"}},
+	})
+	cfg.Registries[1].Source = config.Organization
+	cfg.Registries[1].Harnesses = []string{"claude"}
+	cfg.Registries[2].Source = config.UserPersonal
+	cfg.Registries[2].Harnesses = []string{"factory"}
+	setCatalogKeys(cfg)
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.Target("factory")}))
+	got := findResolved(resolved, "efficient-go")
+	if got == nil || got.RegistryPath != "machine/tools" {
+		t.Fatalf("expected harness-compatible machine owner, got %+v (errs=%v)", got, errs)
+	}
+	var incompatible *IncompatibleOrganizationRequirement
+	for _, err := range errs {
+		if errors.As(err, &incompatible) {
+			break
+		}
+	}
+	if incompatible == nil {
+		t.Fatalf("expected incompatible required organization diagnostic, got %v", errs)
 	}
 }
 

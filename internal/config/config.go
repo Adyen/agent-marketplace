@@ -39,6 +39,19 @@ const (
 // Higher values override lower values.
 func (s Source) Precedence() int { return int(s) }
 
+// CompareEntryPrecedence compares two entries by layer and then file order.
+// It returns zero when they have equal authority. File order is ignored if
+// either file value is zero, preserving behavior for configs without includes.
+func CompareEntryPrecedence(aSource Source, aFile int, bSource Source, bFile int) int {
+	if aSource.Precedence() != bSource.Precedence() {
+		return aSource.Precedence() - bSource.Precedence()
+	}
+	if aFile == 0 || bFile == 0 {
+		return 0
+	}
+	return aFile - bFile
+}
+
 // IsMachineScope reports whether skills from this source are installed at
 // the user-wide scope rather than the per-repo scope.
 // SourceUnset (zero value) is treated as repo-scoped.
@@ -290,7 +303,35 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+type IncludePaths []string
+
+func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" {
+			return nil
+		}
+		var path string
+		if err := value.Decode(&path); err != nil {
+			return err
+		}
+		*p = IncludePaths{path}
+		return nil
+	case yaml.SequenceNode:
+		var paths []string
+		if err := value.Decode(&paths); err != nil {
+			return err
+		}
+		*p = paths
+		return nil
+	default:
+		return fmt.Errorf("include must be a path or sequence of paths")
+	}
+}
+
 type Config struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is the schema version sentinel. The canonical version is
 	// "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
 	// compatibility alias. v1 configs have no apiVersion field and are
@@ -379,6 +420,8 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 }
 
 type LocalConfig struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
 	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
@@ -482,6 +525,11 @@ type RegistryEntry struct {
 	// Source identifies which configuration layer this entry originated from.
 	// Set during merge; not serialized in YAML.
 	Source Source `yaml:"-"`
+
+	// FilePrecedence orders registry entries from files composed into one layer.
+	// Higher values have higher precedence. Zero retains equal-source behavior
+	// for configs without includes.
+	FilePrecedence int `yaml:"-"`
 
 	// CatalogKey is the key used to look up this registry's skill catalog in
 	// the catalogs map. For git registries it is the cache path; for local
@@ -625,6 +673,75 @@ func (e RegistryEntry) IsLocal() bool {
 	// Absolute and home-relative paths without .git suffix are local
 	// directories. Ref is optional (and ignored) for these entries.
 	return u[0] == '/' || strings.HasPrefix(u, "~/")
+}
+
+// IsRepoRelativeLocal reports whether the registry URL is a local filesystem
+// path that is relative to a project root (e.g. "./plugins/foo" or ".").
+// Such URLs are valid in repo and local configs, where they resolve against the
+// current repo root, but they are meaningless in the user-personal (global)
+// config layer because they have no stable meaning outside the repo that
+// contains them.
+func (e RegistryEntry) IsRepoRelativeLocal() bool {
+	u := strings.TrimSpace(e.URL)
+	return u == "." || u == ".." || strings.HasPrefix(u, "./") || strings.HasPrefix(u, "../")
+}
+
+// GlobalRelativeRegistryError is returned when an operation attempts to write a
+// repo-relative local registry URL into the user-personal (machine-wide) config
+// layer. Such URLs are only meaningful within the repo that defined them.
+type GlobalRelativeRegistryError struct {
+	URL string
+}
+
+func (e *GlobalRelativeRegistryError) Error() string {
+	if e == nil {
+		return "cannot write repo-relative registry to the global config"
+	}
+	return fmt.Sprintf("cannot write repo-relative registry %q to the global config; use an absolute path or a git remote", e.URL)
+}
+
+func ValidateGlobalRegistryWrite(entries ...RegistryEntry) error {
+	for _, entry := range entries {
+		if entry.IsRepoRelativeLocal() {
+			return &GlobalRelativeRegistryError{URL: entry.URL}
+		}
+	}
+	return nil
+}
+
+func validateRegistryWrite(configPath string, entries ...RegistryEntry) error {
+	if !isGlobalConfigPath(configPath) {
+		return nil
+	}
+	return ValidateGlobalRegistryWrite(entries...)
+}
+
+func ValidateRegistryPath(path string) error {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return nil
+	}
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("path must be relative, got absolute %q", p)
+	}
+	if cleaned := filepath.Clean(p); cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must not escape the registry root, got %q", p)
+	}
+	return nil
+}
+
+func ValidateLocalRegistryPath(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("local registry path does not exist: %s", path)
+	}
+	if err != nil {
+		return fmt.Errorf("stat local registry path %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("local registry path is not a directory: %s", path)
+	}
+	return nil
 }
 
 // urlContainsPathTraversal reports whether a registry URL contains a ".." path
@@ -813,12 +930,8 @@ func validateRegistryEntries(registries []RegistryEntry) []error {
 			errs = append(errs, fmt.Errorf("registries[%d].url must not contain '..' path components", i))
 		}
 
-		if p := strings.TrimSpace(registry.Path); p != "" {
-			if filepath.IsAbs(p) {
-				errs = append(errs, fmt.Errorf("registries[%d].path must be relative, got absolute %q", i, p))
-			} else if cleaned := filepath.Clean(p); cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-				errs = append(errs, fmt.Errorf("registries[%d].path must not escape the registry root, got %q", i, p))
-			}
+		if err := ValidateRegistryPath(registry.Path); err != nil {
+			errs = append(errs, fmt.Errorf("registries[%d].%w", i, err))
 		}
 	}
 	return errs

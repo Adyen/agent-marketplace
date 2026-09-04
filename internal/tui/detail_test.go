@@ -224,7 +224,7 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 
 	out := renderDetailFullContent(row{
 		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-	})
+	}, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)
@@ -451,14 +451,14 @@ func TestDetailViewportResizesOnWindowResize(t *testing.T) {
 	if m2.detailViewport.Width != 120 {
 		t.Fatalf("viewport width should be 120 after resize, got %d", m2.detailViewport.Width)
 	}
-	if m2.detailViewport.Height != 40 {
-		t.Fatalf("viewport height should be 40 after resize, got %d", m2.detailViewport.Height)
+	if m2.detailViewport.Height != 39 {
+		t.Fatalf("viewport height should reserve the footer row: got %d, want 39", m2.detailViewport.Height)
 	}
 }
 
 func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
-	m.rows = []row{mkRow("audit", withProject, withHarnesses("factory", "cursor"), withRegistry("sec.git", "security"))}
+	m.rows = []row{mkRow("audit", withProject, withHarnesses("codex"), withRegistry("sec.git", "security"))}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 	for i, it := range m.flatItems {
@@ -469,7 +469,7 @@ func TestRenderDetailShowsHarnessesForEnabledSkill(t *testing.T) {
 	}
 
 	out := renderDetail(m)
-	for _, want := range []string{"Targets:", "factory, cursor"} {
+	for _, want := range []string{"Targets:", "Codex"} {
 		if !contains(out, want) {
 			t.Fatalf("detail missing %q:\n%s", want, out)
 		}
@@ -489,7 +489,7 @@ func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 	}
 
 	out := renderDetail(m)
-	for _, want := range []string{"Would target:", "factory"} {
+	for _, want := range []string{"Would target:", "Factory Droid"} {
 		if !contains(out, want) {
 			t.Fatalf("detail missing %q:\n%s", want, out)
 		}

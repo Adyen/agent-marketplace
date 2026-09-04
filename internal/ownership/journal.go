@@ -1,6 +1,7 @@
 package ownership
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,6 +264,18 @@ func (s *Store) applyLocked(m Mutation) (Result, error) {
 		mode = fi.Mode().Perm()
 	}
 	if err := writeStaged(journal.StagedPath, m.NextBytes, mode); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			// O_EXCL proves this attempt did not create the collided path. First
+			// durably disarm recovery, then clear only this attempt's journal and
+			// backup. If journal deletion fails, a later Recover still has no path
+			// it could unlink.
+			failed := *journal
+			failed.StagedPath = ""
+			if journalErr := s.writeJournal(&failed); journalErr != nil {
+				return Result{}, errors.Join(err, fmt.Errorf("ownership: disarm collided staged path: %w", journalErr))
+			}
+			s.cleanupAfterCASFailure(&failed, backupPath)
+		}
 		return Result{}, err
 	}
 
@@ -473,14 +486,14 @@ func (s *Store) ensureUnderRoot(absFile string) error {
 }
 
 func stagedPathFor(absFile string, generation uint64) string {
-	return fmt.Sprintf("%s.am-staged-%d", absFile, generation)
+	return fmt.Sprintf("%s.am-staged-%d-%s", absFile, generation, rand.Text())
 }
 
 // writeStaged writes and fsyncs the replacement content. It is not atomicWrite:
 // the staging file IS the temp file, and it must survive a crash under a name the
 // journal recorded so recovery can find and delete it.
 func writeStaged(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return fmt.Errorf("ownership: create staged file %s: %w", path, err)
 	}
@@ -517,7 +530,11 @@ func (s *Store) writeJournal(j *Journal) error {
 }
 
 func (s *Store) clearJournal() error {
-	if err := os.Remove(s.JournalFile()); err != nil && !os.IsNotExist(err) {
+	remove := os.Remove
+	if s.removeJournalFile != nil {
+		remove = s.removeJournalFile
+	}
+	if err := remove(s.JournalFile()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ownership: clear journal: %w", err)
 	}
 	return fsyncDir(s.recordDir())

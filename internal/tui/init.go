@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/harness"
 )
 
 // initModalState holds the first-run harness-selection UI. It mirrors the
@@ -25,7 +26,7 @@ type initModalState struct {
 // newInitModalState detects installed harnesses under homeDir and returns a
 // modal state with those harnesses pre-selected.
 func newInitModalState(homeDir string) (initModalState, error) {
-	detected, err := config.DetectInstalledHarnessesInHome(homeDir)
+	detected, err := harness.DetectInstalled(homeDir)
 	if err != nil {
 		return initModalState{}, err
 	}
@@ -47,16 +48,32 @@ func renderInitModal(m Model) string {
 	cursorStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
+	compact := compactTerminalLayout(m)
+	modalStyle := compactModalStyle(styleHarnessModal, m)
+	optionStart, optionEnd := 0, len(knownHarnessOptions)
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n\n")
-	b.WriteString("Select the harnesses agent-marketplace should materialize into.\n")
-	if modal.detected {
-		b.WriteString("Detected installation roots are pre-selected.\n\n")
+	if compact {
+		contentRows := max(1, m.height-modalStyle.GetVerticalFrameSize())
+		visibleOptions := max(1, contentRows-3)
+		optionStart, optionEnd = harnessOptionWindow(len(knownHarnessOptions), modal.cursor, visibleOptions)
+		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n")
+		if modal.detected {
+			b.WriteString("Detected targets are pre-selected.\n")
+		} else {
+			b.WriteString("No installed targets detected.\n")
+		}
 	} else {
-		b.WriteString("No harness installation roots were detected.\n\n")
+		b.WriteString(titleStyle.Render("Initialize target harnesses") + "\n\n")
+		b.WriteString("Select the harnesses agent-marketplace should materialize into.\n")
+		if modal.detected {
+			b.WriteString("Detected installation roots are pre-selected.\n\n")
+		} else {
+			b.WriteString("No harness installation roots were detected.\n\n")
+		}
 	}
 
-	for i, opt := range knownHarnessOptions {
+	for i := optionStart; i < optionEnd; i++ {
+		opt := knownHarnessOptions[i]
 		cursor := "  "
 		if i == modal.cursor {
 			cursor = cursorStyle.Render("> ")
@@ -69,17 +86,19 @@ func renderInitModal(m Model) string {
 	}
 
 	unknown := unknownSelectedHarnesses(modal.selected)
-	if len(unknown) > 0 {
+	if len(unknown) > 0 && !compact {
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "  Other selected: %s\n", strings.Join(unknown, ", "))
+		fmt.Fprintf(&b, "  Other selected: %s\n", sanitizeTerminalData(strings.Join(unknown, ", "), terminalSingleLine))
 	}
 
-	b.WriteString("\n")
-	b.WriteString("  " + keyStyle.Render("[space]") + " toggle  ")
+	if !compact {
+		b.WriteString("\n  ")
+	}
+	b.WriteString(keyStyle.Render("[space]") + " toggle  ")
 	b.WriteString(keyStyle.Render("[enter]") + " save  ")
 	b.WriteString(keyStyle.Render("[esc]") + " cancel")
 
-	return styleHarnessModal.Render(b.String())
+	return modalStyle.Render(b.String())
 }
 
 func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -114,8 +133,12 @@ func (m Model) handleInitModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "select at least one harness", duration: 2 * time.Second}
 			}
 		}
+		operation, ok := m.beginOperation(operationTargets)
+		if !ok {
+			return m, operationBlockedCmd()
+		}
 		m.pane = paneList
-		return m, runInitSaveCmd(harnesses)
+		return m, correlateOperation(runInitSaveCmd(harnesses), operation, false)
 	}
 	return m, nil
 }

@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -45,6 +48,8 @@ func NewModel(repoRoot, homeDir string) Model {
 		spinner:        sp,
 		searchInput:    si,
 		detailViewport: viewport.New(80, 24),
+		helpViewport:   viewport.New(80, 23),
+		errorsViewport: viewport.New(80, 23),
 		keys:           defaultKeyMap,
 		help:           newHelpModel(),
 	}
@@ -58,6 +63,9 @@ func NewModel(repoRoot, homeDir string) Model {
 		m.initModal = initModal
 		m.pane = paneInitModal
 	}
+	// Bubble Tea schedules the initial snapshot through Init. Reserve its
+	// generation here so the resulting command and this model share identity.
+	m.beginRequest(requestSnapshot)
 	return m
 }
 
@@ -127,21 +135,67 @@ func (m *Model) switchTab(t tab) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+	return tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick)
+}
+
+func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
+	assessment := msg.driftAssessment
+	if assessment == driftUnknown {
+		if len(msg.errs) > 0 || len(diagnosticErrors(msg.diagnostics)) > 0 {
+			assessment = driftFailed
+		} else {
+			assessment = driftReady
+		}
+	}
+	m.driftAssessment = assessment
+	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
+	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+}
+
+func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
+	selection := m.selectionKeyForRebuild()
+	selectionAfterDisable := m.selectionAfterDisable
+	m.selectionAfterDisable = ""
+	m.rows = msg.rows
+	m.driftReport = msg.driftReport
+	m.mergedCfg = msg.mergedCfg
+	m.resolved = msg.resolved
+	m.localExcludes = msg.localExcludes
+	m.globalHarnesses = msg.globalHarnesses
+	m.projectHarnesses = msg.projectHarnesses
+	m.recomputeView()
+	if !m.restoreSelectionKey(selectionAfterDisable) {
+		m.restoreSelectionAfterRebuild(selection)
+	}
+	if msg.inventoryResult != nil {
+		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
+	}
+	recordConfigSnapshotSpans(m.ctx, msg)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		oldWidth, oldHeight := m.width, m.height
+		detailAtBottom := m.pane == paneDetail && m.detailViewport.AtBottom()
 		m.width = msg.Width
 		m.height = msg.Height
 		m.detailViewport.Width = msg.Width
-		m.detailViewport.Height = msg.Height
+		m.detailViewport.Height = max(1, msg.Height-1)
+		m.helpViewport.Width = msg.Width
+		m.helpViewport.Height = max(1, msg.Height-1)
+		m.errorsViewport.Width = msg.Width
+		m.errorsViewport.Height = max(1, msg.Height-1)
 		m.clampListOffset()
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
+		if !m.belowMinimumTerminal() && m.pane == paneDetail && msg.Width != m.detailRenderWidth {
+			if rerender := m.rerenderDetailAtWidth(msg.Width); rerender != nil {
+				m.detailStickyBottom = detailAtBottom
+				return m, rerender
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -158,93 +212,79 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if m.pane == paneDetail {
-			var cmd tea.Cmd
-			m.detailViewport, cmd = m.detailViewport.Update(msg)
-			return m, cmd
+		if m.belowMinimumTerminal() {
+			return m, nil
 		}
-		return m, nil
+		var cmd tea.Cmd
+		switch m.pane {
+		case paneDetail:
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+		case paneHelp:
+			m.helpViewport.SetContent(renderHelp(m))
+			m.helpViewport, cmd = m.helpViewport.Update(msg)
+		case paneErrors:
+			m.errorsViewport.SetContent(renderErrors(m))
+			m.errorsViewport, cmd = m.errorsViewport.Update(msg)
+		}
+		return m, cmd
 
 	case snapshotLoadedMsg:
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
+			return m, nil
+		}
 		m.loading = false
+		m.applySnapshotStatus(msg)
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
-			m.warnings = msg.warnings
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
-			m.warnings = msg.warnings
+		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
-			m.refreshToken = 0
 			return m, nil
 		}
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
+		m.applySnapshotData(msg)
 		if msg.refreshAfterLoad {
 			m.refreshing = true
-			m.nextRefreshToken++
-			m.refreshToken = m.nextRefreshToken
-			return m, tea.Batch(refreshSnapshot(m.ctx, m.repoRoot, m.homeDir, m.refreshToken), m.spinner.Tick)
+			generation := m.beginRequest(requestSnapshot)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 		}
 		m.refreshing = false
-		m.refreshToken = 0
 		return m, nil
 
 	case refreshLoadedMsg:
-		if msg.refreshToken != m.refreshToken {
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		if msg.pendingMigration.hasConfigs() {
-			m.errs = msg.errs
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			return m, nil
 		}
-		if msg.mergedCfg == nil && len(msg.errs) > 0 {
-			m.errs = append(m.errs, msg.errs...)
+		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			return m, nil
 		}
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
+		m.applySnapshotData(msg.snapshotLoadedMsg)
 		return m, nil
 
 	case reloadMsg:
+		snapshot := snapshotLoadedMsg(msg)
+		if !m.acceptsRequest(requestSnapshot, snapshot.generation) {
+			// Update may have changed disk after a newer snapshot started. Its
+			// stale delivery cannot be applied, so schedule a current snapshot
+			// rather than leaving either result as authoritative.
+			m.syncing = false
+			generation := m.beginRequest(requestSnapshot)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		}
 		m.loading = false
 		m.syncing = false
 		m.refreshing = false
-		m.refreshToken = 0
-		m.rows = msg.rows
-		m.driftReport = msg.driftReport
-		m.errs = msg.errs
-		m.warnings = msg.warnings
-		m.mergedCfg = msg.mergedCfg
-		m.resolved = msg.resolved
-		m.localExcludes = msg.localExcludes
-		m.globalHarnesses = msg.globalHarnesses
-		m.projectHarnesses = msg.projectHarnesses
-		m.recomputeView()
+		m.applySnapshotStatus(snapshot)
+		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
 		return m, toastExpiryCmd(2 * time.Second)
@@ -264,8 +304,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case configWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.finishOperation(msg.operation)
+			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 			m.pendingExcludeAction = nil
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
@@ -284,47 +328,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
+		if msg.selectNext {
+			m.selectionAfterDisable = m.nextRowSelectionKey()
+		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
-		if msg.enabled && m.pendingExcludeAction != nil {
+		if !msg.followUp && msg.enabled && m.pendingExcludeAction != nil {
 			act := *m.pendingExcludeAction
 			m.pendingExcludeAction = nil
-			exclCmd := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act)
-			// Re-load snapshot to reflect the config change, then
-			// the exclude cmd runs concurrently.
-			return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), exclCmd, toastExpiryCmd(2*time.Second))
+			if followUp := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act); followUp != nil {
+				exclCmd := correlateOperation(followUp, msg.operation, true)
+				return m, tea.Batch(exclCmd, toastExpiryCmd(2*time.Second))
+			}
 		}
 		m.pendingExcludeAction = nil
-		// Re-load snapshot to reflect the config change
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		m.finishOperation(msg.operation)
+		m.recordOperationSuccess(operationMutation)
+		// Re-load snapshot to reflect the config change.
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case harnessWrittenMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationTargets, diagnosticMutation, msg.err)
 			m.toast = fmt.Sprintf("error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "harness", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationTargets)
 		m.toast = fmt.Sprintf("Saved %s harnesses", msg.scopeLabel)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case syncDoneMsg:
 		m.syncing = false
 		m.refreshing = false
-		m.refreshToken = 0
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationSync, diagnosticSync, msg.err)
 			m.toast = fmt.Sprintf("sync error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("sync failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
+			m.recordOperationSuccess(operationSync)
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -337,22 +391,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
 		}
-		// Re-load to pick up on-disk changes
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(5*time.Second))
+		// Re-load to pick up on-disk changes.
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(5*time.Second))
 
 	case updateDoneMsg:
+		if !m.acceptsRequest(requestSnapshot, msg.generation) {
+			// A failed update can still leave partial on-disk effects. Re-read
+			// them under a new generation without applying this stale outcome.
+			m.syncing = false
+			generation := m.beginRequest(requestSnapshot)
+			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
+		}
 		m.syncing = false
+		if msg.snapshot.generation != 0 {
+			m.applySnapshotStatus(msg.snapshot)
+			m.applySnapshotData(msg.snapshot)
+		}
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.
 		m.quitAfterSync = false
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationUpdate, diagnosticUpdate, msg.err)
 			m.toast = fmt.Sprintf("update error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		} else {
+			m.recordOperationSuccess(operationUpdate)
 			m.toast = "Update complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -360,36 +427,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case migrationDoneMsg:
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationMigration, diagnosticMigration, msg.err)
 			m.toast = fmt.Sprintf("migration error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("migration failed", "count", msg.count, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "migrate", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationMigration)
 		m.toast = fmt.Sprintf("Migrated %d config file(s)", msg.count)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.migrationPrompt = migrationPrompt{}
-		return m, tea.Batch(loadSnapshot(m.ctx, m.repoRoot, m.homeDir), toastExpiryCmd(2*time.Second))
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
 	case editConfigPathMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
 		if msg.err != nil {
-			m.errs = append(m.errs, msg.err)
+			m.recordOperationFailure(operationEditor, diagnosticEditor, msg.err)
 			m.toast = fmt.Sprintf("editor error: %v", msg.err)
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("config editor result handled", "path", msg.path, "reload", false, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "edit_config", msg.err)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
+		m.recordOperationSuccess(operationEditor)
 		slog.Debug("config editor result handled", "path", msg.path, "reload", true)
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case detailContentMsg:
-		// The background glamour render completed; fill the viewport.
-		if m.pane == paneDetail {
-			m.detailViewport.SetContent(msg.content)
-			m.detailViewport.GotoTop()
+		if m.pane != paneDetail || !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
 		}
+		if msg.width > 0 && msg.width != m.width {
+			if rerender := m.rerenderDetailAtWidth(m.width); rerender != nil {
+				return m, rerender
+			}
+		}
+		renderedWidth := msg.width
+		if renderedWidth == 0 {
+			renderedWidth = m.width
+		}
+		m.detailRenderWidth = renderedWidth
+		if msg.keepScroll {
+			offset := m.detailViewport.YOffset
+			stickyBottom := m.detailStickyBottom || m.detailViewport.AtBottom()
+			m.detailStickyBottom = false
+			m.detailViewport.SetContent(msg.content)
+			if stickyBottom {
+				m.detailViewport.GotoBottom()
+			} else {
+				m.detailViewport.SetYOffset(offset)
+			}
+			return m, nil
+		}
+		m.detailStickyBottom = false
+		m.detailViewport.SetContent(msg.content)
+		m.detailViewport.GotoTop()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -414,6 +512,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) moveCursorByHalfPage(direction int) {
+	m.moveCursorByRows(direction, max(1, m.listVisibleHeight()/2))
+}
+
+func (m *Model) moveCursorByPage(direction int) {
+	m.moveCursorByRows(direction, m.listVisibleHeight())
+}
+
+func (m *Model) moveCursorByRows(direction, step int) {
+	if len(m.flatItems) == 0 {
+		return
+	}
+	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
+	listWidth, _ := paneWidths(m.width)
+	heights := m.listHeightOffsets(listWidth)
+	target := heights[m.cursor] + direction*max(1, step)
+	if target <= 0 {
+		m.cursor = 0
+	} else if target >= heights[len(m.flatItems)] {
+		m.cursor = len(m.flatItems) - 1
+	} else {
+		candidate := sort.Search(len(m.flatItems), func(i int) bool {
+			return heights[i] > target
+		}) - 1
+		if direction > 0 {
+			candidate = max(m.cursor+1, candidate)
+		} else {
+			candidate = min(m.cursor-1, candidate)
+		}
+		m.cursor = min(max(0, candidate), len(m.flatItems)-1)
+	}
+	m.clampListOffset()
+}
+
+func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) bool {
+	if key.Matches(msg, m.keys.PageDown) {
+		viewport.PageDown()
+		return true
+	}
+	if key.Matches(msg, m.keys.PageUp) {
+		viewport.PageUp()
+		return true
+	}
+	return false
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Toast auto-expire check
 	if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
@@ -427,6 +571,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	if m.belowMinimumTerminal() {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 
 	// Overlays take priority
 	switch m.pane {
@@ -435,7 +585,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		m.helpViewport.SetContent(renderHelp(m))
+		if key.Matches(msg, m.keys.Top) {
+			m.helpViewport.GotoTop()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Bottom) {
+			m.helpViewport.GotoBottom()
+			return m, nil
+		}
+		if m.handleViewportPageKey(msg, &m.helpViewport) {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.helpViewport, cmd = m.helpViewport.Update(msg)
+		return m, cmd
 
 	case paneDetail:
 		return m.handleDetailKey(msg)
@@ -445,7 +609,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pane = paneList
 			return m, nil
 		}
-		return m, nil
+		m.errorsViewport.SetContent(renderErrors(m))
+		if key.Matches(msg, m.keys.Top) {
+			m.errorsViewport.GotoTop()
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Bottom) {
+			m.errorsViewport.GotoBottom()
+			return m, nil
+		}
+		if m.handleViewportPageKey(msg, &m.errorsViewport) {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.errorsViewport, cmd = m.errorsViewport.Update(msg)
+		return m, cmd
 
 	case paneConfirm:
 		return m.handleConfirmKey(msg)
@@ -518,6 +696,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.HalfPageDown):
+		m.moveCursorByHalfPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageUp):
+		m.moveCursorByHalfPage(-1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.moveCursorByPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.moveCursorByPage(-1)
+		return m, nil
+
 	case key.Matches(msg, m.keys.Top):
 		m.cursor = 0
 		m.clampListOffset()
@@ -561,9 +755,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if r, ok := m.selectedRow(); ok {
+			generation := m.beginRequest(requestDetail)
 			m.enterDetailPane()
 			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			return m, loadDetailContent(r)
+			return m, loadDetailContent(r, generation, m.width, false)
 		}
 		return m, nil
 
@@ -586,8 +781,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Reload):
 		m.refreshing = false
-		m.refreshToken = 0
-		return m, loadSnapshot(m.ctx, m.repoRoot, m.homeDir)
+		generation := m.beginRequest(requestSnapshot)
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case key.Matches(msg, m.keys.Tab1):
 		m.switchTab(tabScope)
@@ -620,8 +815,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		m.refreshing = false
-		m.refreshToken = 0
 		// Space on a section header: toggle fold.
 		if _, ok := m.selectedSectionPath(); ok {
 			m.toggleFoldAtCursor()
@@ -631,6 +824,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Space on a skill row: open the toggle modal so the user picks
 		// which config file to write.
+		if m.rowsStale {
+			return m, func() tea.Msg {
+				return toastMsg{text: "reload before changing broken state", duration: 2 * time.Second}
+			}
+		}
 		r, ok := m.selectedRow()
 		if !ok {
 			return m, nil
@@ -651,14 +849,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.syncing {
 			return m, nil
 		}
-		if m.driftReport.InSync() {
+		if m.driftAssessment == driftReady && m.driftReport.InSync() {
 			recordActionSpan(m.ctx, "sync", map[string]string{"skipped": "in_sync"})
 			return m, func() tea.Msg {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		// Sync does not allocate a snapshot generation until syncDoneMsg
+		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
@@ -668,10 +867,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = false
-		m.refreshToken = 0
+		generation := m.beginRequest(requestSnapshot)
 		m.syncing = true
 		recordActionSpan(m.ctx, "update", nil)
-		return m, tea.Batch(runUpdateCmd(m.ctx, m.repoRoot, m.homeDir), m.spinner.Tick)
+		return m, tea.Batch(runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -709,18 +908,26 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
+		m.detailKey = ""
+		m.cancelRequest(requestDetail)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
 		m.detailViewport.GotoTop()
+		m.detailStickyBottom = false
 		return m, nil
 
 	case key.Matches(msg, m.keys.Bottom):
 		m.detailViewport.GotoBottom()
+		m.detailStickyBottom = false
 		return m, nil
 	}
 	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
 	// wheel) to the viewport, which handles scroll offset and clamping.
+	m.detailStickyBottom = false
+	if m.handleViewportPageKey(msg, &m.detailViewport) {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
@@ -732,16 +939,31 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // block on file I/O or markdown rendering.
 func (m *Model) enterDetailPane() {
 	m.pane = paneDetail
+	if r, ok := m.selectedRow(); ok {
+		m.detailKey = rowKey(r)
+	} else {
+		m.detailKey = ""
+	}
 
-	// Compute full-screen viewport dimensions (no header/footer in detail
-	// overlay — the viewport fills the terminal).
 	m.detailViewport.Width = m.width
-	m.detailViewport.Height = m.height
-
-	// Show a placeholder immediately; the real content arrives via
-	// detailContentMsg.
+	m.detailViewport.Height = max(1, m.height-1)
+	m.detailRenderWidth = m.width
+	m.detailStickyBottom = false
 	m.detailViewport.SetContent("Loading…")
 	m.detailViewport.GotoTop()
+}
+
+func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
+	if m.detailKey == "" {
+		return nil
+	}
+	for _, r := range m.rows {
+		if rowKey(r) == m.detailKey && r.Artifact.Path != "" {
+			generation := m.beginRequest(requestDetail)
+			return loadDetailContent(r, generation, width, true)
+		}
+	}
+	return nil
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -779,16 +1001,26 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.belowMinimumTerminal() {
+		return renderResizeRequired(m)
+	}
+
 	// Full-screen overlays.
 	switch m.pane {
 	case paneHelp:
-		return renderHelp(m)
+		m.helpViewport.Width = m.width
+		m.helpViewport.Height = max(1, m.height-1)
+		m.helpViewport.SetContent(renderHelp(m))
+		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/? close · Ctrl+C quit", m.width, m.height)
 	case paneErrors:
-		return renderErrors(m)
+		m.errorsViewport.Width = m.width
+		m.errorsViewport.Height = max(1, m.height-1)
+		m.errorsViewport.SetContent(renderErrors(m))
+		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
-		return renderConfirm(m)
+		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneDetail:
-		return m.detailViewport.View()
+		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ or ctrl-d/u scroll · Ctrl+C quit", m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()
@@ -899,7 +1131,7 @@ func paneWidths(totalWidth int) (listWidth, detailWidth int) {
 }
 
 func renderHeader(m Model) string {
-	repoName := filepathBase(m.repoRoot)
+	repoName := sanitizeTerminalData(filepathBase(m.repoRoot), terminalSingleLine)
 	title := styleHeader.Render(fmt.Sprintf(" agent-marketplace — %s ", repoName))
 	return title
 }
@@ -993,41 +1225,46 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string) error {
-	// Initialise the glamour renderer while we still own the terminal
-	// (before tea.WithAltScreen swaps to the alt buffer).  WithAutoStyle
-	// sends an OSC 11 query to detect dark/light background; inside
-	// alt-screen the response is swallowed, causing a 5 s timeout.
+	applyTerminalBackground()
 	initRenderer()
 
-	m := NewModel(repoRoot, homeDir)
-	m.ctx = ctxOrBackground(ctx)
-
-	tel := telemetry.TelemetryFromContext(m.ctx)
+	model := NewModel(repoRoot, homeDir)
+	model.ctx = ctxOrBackground(ctx)
+	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {
-		m.ctx, m.sessionSpan = tel.StartSpan(m.ctx, "agent_marketplace.tui.session", nil)
+		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
+	defer model.sessionSpan.End()
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	finalModel, err := p.Run()
+	seedTerminalSize(&model, os.Stdout)
+	restoreLogs := logging.BeginTerminalSession()
+	defer restoreLogs()
 
-	m.sessionSpan.End()
+	return runTUIModel(model, defaultTUIProgramOptions()...)
+}
 
-	// An interrupt (e.g. external SIGINT) is a legitimate exit path,
-	// not an error worth reporting to the user.
-	if errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled) {
-		slog.Debug("tui exited via interrupt", "err", err)
+func defaultTUIProgramOptions() []tea.ProgramOption {
+	return []tea.ProgramOption{tea.WithAltScreen()}
+}
+
+func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {
+	return runWithTerminalGuard(defaultTerminalIO(), func() (tea.Model, error) {
+		return tea.NewProgram(model, options...).Run()
+	})
+}
+
+func finishTUIRun(finalModel tea.Model, err error) error {
+	if errors.Is(err, tea.ErrInterrupted) {
+		slog.Debug("tui exited via interrupt")
 		return nil
 	}
 	if err != nil {
-		slog.Error("tui exited with error", "err", err)
-		return err
+		slog.Error("tui exited with error", "interrupted", false)
+		return sanitizeReturnedError(err)
 	}
-	// Surface sync errors from the sync+quit flow so failed syncs don't
-	// exit cleanly. The error was already shown as a toast in the TUI;
-	// propagating it lets the caller (cobra) print it to stderr.
 	if fm, ok := finalModel.(Model); ok && fm.syncQuitErr != nil {
-		slog.Error("tui sync+quit reported sync error", "err", fm.syncQuitErr)
-		return fm.syncQuitErr
+		slog.Error("tui sync+quit reported sync error")
+		return sanitizeReturnedError(fm.syncQuitErr)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,9 +48,10 @@ func TestToggleLocalUpdatesBadgeAndGlyph(t *testing.T) {
 	}
 
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{updatedRow},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{updatedRow},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
@@ -98,9 +100,10 @@ func TestToggleProjectOffUpdatesBadgeAndGlyph(t *testing.T) {
 
 	updatedRow := mkRow("audit", withAvailable, withRegistry("sec.git", "security"))
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{updatedRow},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{updatedRow},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
@@ -584,9 +587,10 @@ func TestToggleMovesSkillBetweenSections(t *testing.T) {
 	}
 
 	snapMsg := snapshotLoadedMsg{
-		rows:      []row{globalRow, updatedDeploy},
-		mergedCfg: &config.Config{},
-		resolved:  []resolver.ResolvedArtifact{},
+		generation: 1,
+		rows:       []row{globalRow, updatedDeploy},
+		mergedCfg:  &config.Config{},
+		resolved:   []resolver.ResolvedArtifact{},
 	}
 
 	mi, _ := m.Update(snapMsg)
@@ -620,6 +624,52 @@ func TestToggleMovesSkillBetweenSections(t *testing.T) {
 	}
 	if !contains(out, "L") {
 		t.Fatalf("rendered list should contain L badge after toggle, got:\n%s", out)
+	}
+}
+
+func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		disabled      string
+		disabledIndex int
+		want          string
+	}{
+		{name: "next resource", disabled: "bravo", disabledIndex: 1, want: "charlie"},
+		{name: "previous resource at end", disabled: "charlie", disabledIndex: 2, want: "bravo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			alpha := mkRow("alpha", withProject)
+			bravo := mkRow("bravo", withProject)
+			charlie := mkRow("charlie", withProject)
+			m := NewModel("/repo", "/home")
+			m.loading = false
+			m.rows = []row{alpha, bravo, charlie}
+			m.filteredRows = m.rows
+			m.rebuildFlatItems()
+			for i, item := range m.flatItems {
+				if item.Kind == flatArtifact && item.Row.Artifact.Name == tc.disabled {
+					m.cursor = i
+					break
+				}
+			}
+
+			operation, ok := m.beginOperation(operationMutation)
+			if !ok {
+				t.Fatal("mutation operation was not accepted")
+			}
+			updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: tc.disabled, selectNext: true})
+			m = updated.(Model)
+			generation := m.requests.active(requestSnapshot)
+			after := []row{alpha, bravo, charlie}
+			after[tc.disabledIndex] = mkRow(tc.disabled, withAvailable)
+			updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: after})
+			m = updated.(Model)
+
+			selected, ok := m.selectedRow()
+			if !ok || selected.Artifact.Name != tc.want {
+				t.Fatalf("selection after disabling %s = %#v, ok=%v; want %s", tc.disabled, selected, ok, tc.want)
+			}
+		})
 	}
 }
 
@@ -917,15 +967,22 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Global config: default:true registry with smith in the catalog.
+	// Use an absolute local path (not a repo-relative one) so the catalog
+	// loader can stat the directory; repo-relative URLs are meaningless in
+	// the user-personal (global) config.
+	globalSkillsDir := filepath.Join(t.TempDir(), "global-skills")
+	if err := os.MkdirAll(filepath.Join(globalSkillsDir, "skills"), 0o755); err != nil {
+		t.Fatalf("mkdir global skills: %v", err)
+	}
 	homeAgentsDir := filepath.Join(homeDir, ".agents")
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + `registries:
-  - url: ./global-skills
+	globalConfig := v2Header + fmt.Sprintf(`registries:
+  - url: %s
     path: skills
     default: true
-`
+`, globalSkillsDir)
 	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
@@ -962,7 +1019,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 
 	// Step 1: Disable smith at global scope — adds to exclude.
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	if err := config.DisableSkillInRegistryInConfig(globalPath, "./global-skills", "", "smith"); err != nil {
+	if err := config.DisableSkillInRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
 		t.Fatalf("disable smith: %v", err)
 	}
 
@@ -985,7 +1042,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Step 2: Re-enable smith at global scope — adds to include, must clean up exclude.
-	if err := config.AddSkillToRegistryInConfig(globalPath, "./global-skills", "", "smith"); err != nil {
+	if err := config.AddSkillToRegistryInConfig(globalPath, globalSkillsDir, "", "smith"); err != nil {
 		t.Fatalf("re-enable smith: %v", err)
 	}
 
@@ -1013,7 +1070,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	for _, e := range cfg.Registries {
-		if e.URL == "./global-skills" {
+		if e.URL == globalSkillsDir {
 			for _, ex := range e.Skills.Exclude {
 				if ex == "smith" {
 					t.Fatalf("smith should NOT be in exclude after re-enable, got Exclude=%v", e.Skills.Exclude)

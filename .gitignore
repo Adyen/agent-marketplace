@@ -12,6 +12,8 @@
 .DS_Store
 /dist/
 /.tmp/
+/.local/
+/openspec/changes/
 /.windsurf/
 /.devin/skills/
 /.devin/hooks.v1.json
@@ -28,3 +30,8 @@ e2e/e2e-report.json
 
 # IDEA
 /.idea/
+
+# Website
+/site/node_modules/
+/site/.vitepress/dist/
+/site/.vitepress/cache/

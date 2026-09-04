@@ -22,32 +22,54 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	otelresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
-	maxShutdownFlush      = 500 * time.Millisecond
-	preExportDrainTimeout = 250 * time.Millisecond
+	maxShutdownFlush               = 500 * time.Millisecond
+	preExportDrainTimeout          = 250 * time.Millisecond
+	inventoryExportTimeout         = 250 * time.Millisecond
+	inventoryShutdownExportTimeout = 200 * time.Millisecond
+	inventoryQueueCapacity         = 32
+	traceBatchTimeout              = time.Second
 )
 
 // Telemetry is the runtime telemetry handle. It exposes only small wrapper
 // types so callers do not depend directly on OpenTelemetry SDK types.
 type Telemetry struct {
-	state              TelemetryState
-	id                 string
-	queue              *Queue
-	mp                 *sdkmetric.MeterProvider
-	tp                 *sdktrace.TracerProvider
-	counter            otelmetric.Int64Counter
-	hist               otelmetric.Int64Histogram
-	tracer             oteltrace.Tracer
-	sendClients        map[string]*http.Client
-	logger             *slog.Logger
-	allowedMetricAttrs map[string]struct{}
-	failurePath        string
-	failureMu          sync.Mutex
+	state                    TelemetryState
+	id                       string
+	queue                    *Queue
+	mp                       *sdkmetric.MeterProvider
+	communityMP              *sdkmetric.MeterProvider
+	inventoryMP              *sdkmetric.MeterProvider
+	tp                       *sdktrace.TracerProvider
+	counter                  otelmetric.Int64Counter
+	communityCounter         otelmetric.Int64Counter
+	hist                     otelmetric.Int64Histogram
+	communityHist            otelmetric.Int64Histogram
+	inventorySnapshotGauge   otelmetric.Int64Gauge
+	inventoryRegistryGauge   otelmetric.Int64Gauge
+	inventoryResourceGauge   otelmetric.Int64Gauge
+	inventoryOmissionCounter otelmetric.Int64Counter
+	inventoryQueue           chan inventoryObservation
+	inventoryDone            chan struct{}
+	inventoryCancel          context.CancelFunc
+	inventoryMu              sync.Mutex
+	inventoryStopped         bool
+	lastInventoryObservedAt  int64
+	tracer                   oteltrace.Tracer
+	sendClients              map[string]*http.Client
+	logger                   *slog.Logger
+	allowedMetricAttrs       map[string]struct{}
+	failurePath              string
+	failureMu                sync.Mutex
+	shutdownMu               sync.Mutex
+	shutdownStarted          bool
+	shutdownDone             chan struct{}
 
 	// lastFailure holds a *error so the concrete type stored in the Value is
 	// always consistent regardless of the dynamic error type.
@@ -75,40 +97,44 @@ func WithDiagnostic(enabled bool) NewOption {
 
 // Counter is a thin wrapper around an OpenTelemetry int64 counter.
 type Counter struct {
-	c       otelmetric.Int64Counter
-	allowed map[string]struct{}
+	instruments []otelmetric.Int64Counter
+	allowed     map[string]struct{}
 }
 
 // Add records n increments with the supplied string attributes.
 func (c Counter) Add(ctx context.Context, n int64, attrs map[string]string) {
-	if c.c == nil {
-		return
-	}
 	filtered := filteredAttrsToKeyValues(attrs, c.allowed)
-	if len(filtered) == 0 {
-		c.c.Add(ctx, n)
-		return
+	for _, instrument := range c.instruments {
+		if instrument == nil {
+			continue
+		}
+		if len(filtered) == 0 {
+			instrument.Add(ctx, n)
+			continue
+		}
+		instrument.Add(ctx, n, otelmetric.WithAttributes(filtered...))
 	}
-	c.c.Add(ctx, n, otelmetric.WithAttributes(filtered...))
 }
 
-// Histogram is a thin wrapper around an OpenTelemetry int64 histogram.
+// Histogram is a thin wrapper around OpenTelemetry int64 histograms.
 type Histogram struct {
-	h       otelmetric.Int64Histogram
-	allowed map[string]struct{}
+	instruments []otelmetric.Int64Histogram
+	allowed     map[string]struct{}
 }
 
 // Record records value milliseconds with the supplied string attributes.
 func (h Histogram) Record(ctx context.Context, ms int64, attrs map[string]string) {
-	if h.h == nil {
-		return
-	}
 	filtered := filteredAttrsToKeyValues(attrs, h.allowed)
-	if len(filtered) == 0 {
-		h.h.Record(ctx, ms)
-		return
+	for _, instrument := range h.instruments {
+		if instrument == nil {
+			continue
+		}
+		if len(filtered) == 0 {
+			instrument.Record(ctx, ms)
+			continue
+		}
+		instrument.Record(ctx, ms, otelmetric.WithAttributes(filtered...))
 	}
-	h.h.Record(ctx, ms, otelmetric.WithAttributes(filtered...))
 }
 
 // Span is a thin wrapper around an OpenTelemetry span.
@@ -219,9 +245,12 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		return t, nil
 	}
 
+	// Exporter cache keys include the endpoint and signal, so independent routes
+	// cannot attach one exporter instance to multiple readers.
 	cache := newExporterCache()
 
 	var primaryMetricExp sdkmetric.Exporter
+	var primaryInventoryMetricExp sdkmetric.Exporter
 	var primaryTraceExp sdktrace.SpanExporter
 	var communityMetricExp sdkmetric.Exporter
 
@@ -251,6 +280,18 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		}
 
 		if state.EffectiveLevel == tmcfg.LevelDetailed {
+			live, sender, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", queueSubdirMetrics, t.recordFailure, t.queue)
+			if err != nil {
+				return nil, fmt.Errorf("build primary inventory route: %w", err)
+			}
+			primaryInventoryMetricExp, err = buildMetricExporterWithTemporality(ctx, live, state.PrimaryEndpoint, primaryHeaders, func(sdkmetric.InstrumentKind) metricdata.Temporality {
+				return metricdata.DeltaTemporality
+			})
+			if err != nil {
+				return nil, fmt.Errorf("build primary inventory metric exporter: %w", err)
+			}
+			t.sendClients["primary"] = sender
+
 			tKey := cacheKeyFor(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, queueSubdirTraces)
 			tExp, _, err := cache.traceExporter(ctx, tKey, func() (sdktrace.SpanExporter, *http.Client, error) {
 				live, send, err := buildRouteClients(state.PrimaryEndpoint, primaryHeaders, state.PrimaryCAFile, state.PrimaryAllowInsecure, "primary", queueSubdirTraces, t.recordFailure, t.queue)
@@ -299,42 +340,30 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		}
 	}
 
-	if primaryMetricExp != nil || communityMetricExp != nil {
-		opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
-		if primaryMetricExp != nil {
-			opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(primaryMetricExp,
-				sdkmetric.WithInterval(24*time.Hour),
-				sdkmetric.WithTimeout(30*time.Second),
-			)))
-		}
-		if communityMetricExp != nil {
-			opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(communityMetricExp,
-				sdkmetric.WithInterval(24*time.Hour),
-				sdkmetric.WithTimeout(30*time.Second),
-			)))
-		}
-		t.mp = sdkmetric.NewMeterProvider(opts...)
-
-		meter := t.mp.Meter("agent_marketplace")
-		t.counter, err = meter.Int64Counter(
-			"agent_marketplace.command.invocations",
-			otelmetric.WithUnit("{invocation}"),
-			otelmetric.WithDescription("Command invocations"),
-		)
+	if primaryMetricExp != nil {
+		t.mp = newMetricProvider(res, primaryMetricExp)
+		t.counter, t.hist, err = newCommandInstruments(t.mp)
 		if err != nil {
-			logger.Error("failed to create command counter", "error", err)
-			return nil, fmt.Errorf("create command counter: %w", err)
+			logger.Error("failed to create primary command instruments", "error", err)
+			return nil, fmt.Errorf("create primary command instruments: %w", err)
 		}
+	}
 
-		t.hist, err = meter.Int64Histogram(
-			"agent_marketplace.command.duration_ms",
-			otelmetric.WithUnit("ms"),
-			otelmetric.WithDescription("Command duration in milliseconds"),
-			otelmetric.WithExplicitBucketBoundaries(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
-		)
+	if primaryInventoryMetricExp != nil {
+		t.inventoryMP = newInventoryMetricProvider(res, primaryInventoryMetricExp)
+		t.inventorySnapshotGauge, t.inventoryRegistryGauge, t.inventoryResourceGauge, t.inventoryOmissionCounter, err = newInventoryInstruments(t.inventoryMP)
 		if err != nil {
-			logger.Error("failed to create command duration histogram", "error", err)
-			return nil, fmt.Errorf("create command duration histogram: %w", err)
+			logger.Error("failed to create inventory instruments", "error", err)
+			return nil, fmt.Errorf("create inventory instruments: %w", err)
+		}
+	}
+
+	if communityMetricExp != nil {
+		t.communityMP = newMetricProvider(res, communityMetricExp)
+		t.communityCounter, t.communityHist, err = newCommandInstruments(t.communityMP)
+		if err != nil {
+			logger.Error("failed to create community command instruments", "error", err)
+			return nil, fmt.Errorf("create community command instruments: %w", err)
 		}
 	}
 
@@ -342,7 +371,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		tpOpts := []sdktrace.TracerProviderOption{
 			sdktrace.WithResource(res),
 			sdktrace.WithBatcher(primaryTraceExp,
-				sdktrace.WithBatchTimeout(24*time.Hour),
+				sdktrace.WithBatchTimeout(traceBatchTimeout),
 				sdktrace.WithExportTimeout(30*time.Second),
 			),
 		}
@@ -350,9 +379,86 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 		t.tracer = t.tp.Tracer("agent_marketplace")
 	}
 
+	// Activation is last so constructor failures cannot leave a worker behind.
+	if t.inventoryMP != nil {
+		t.startInventoryWorker()
+	}
+
 	logger.Info("telemetry runtime built", "effective_level", state.EffectiveLevel, "primary_endpoint", state.PrimaryEndpoint != "", "community_enabled", state.CommunityReportingEnabled)
 
 	return t, nil
+}
+
+func newMetricProvider(res *otelresource.Resource, exporter sdkmetric.Exporter, additional ...sdkmetric.Option) *sdkmetric.MeterProvider {
+	reader := sdkmetric.NewPeriodicReader(exporter,
+		sdkmetric.WithInterval(24*time.Hour),
+		sdkmetric.WithTimeout(30*time.Second),
+	)
+	opts := []sdkmetric.Option{sdkmetric.WithResource(res), sdkmetric.WithReader(reader)}
+	return sdkmetric.NewMeterProvider(append(opts, additional...)...)
+}
+
+func newInventoryMetricProvider(res *otelresource.Resource, exporter sdkmetric.Exporter) *sdkmetric.MeterProvider {
+	return newMetricProvider(res, exporter, sdkmetric.WithCardinalityLimit(InventoryCardinalityLimit))
+}
+
+func newCommandInstruments(provider *sdkmetric.MeterProvider) (otelmetric.Int64Counter, otelmetric.Int64Histogram, error) {
+	meter := provider.Meter("agent_marketplace")
+	counter, err := meter.Int64Counter(
+		string(tmcfg.CommandCounterName),
+		otelmetric.WithUnit("{invocation}"),
+		otelmetric.WithDescription("Command invocations"),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create command counter: %w", err)
+	}
+	histogram, err := meter.Int64Histogram(
+		string(tmcfg.CommandDurationName),
+		otelmetric.WithUnit("ms"),
+		otelmetric.WithDescription("Command duration in milliseconds"),
+		otelmetric.WithExplicitBucketBoundaries(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create command duration histogram: %w", err)
+	}
+	return counter, histogram, nil
+}
+
+func newInventoryInstruments(provider *sdkmetric.MeterProvider) (otelmetric.Int64Gauge, otelmetric.Int64Gauge, otelmetric.Int64Gauge, otelmetric.Int64Counter, error) {
+	meter := provider.Meter("agent_marketplace")
+	snapshot, err := meter.Int64Gauge(
+		string(tmcfg.InventorySnapshotName),
+		otelmetric.WithUnit("{snapshot}"),
+		otelmetric.WithDescription("Observed effective configuration snapshot; value is its Unix-microsecond observation ordering key"),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create inventory snapshot gauge: %w", err)
+	}
+	registry, err := meter.Int64Gauge(
+		string(tmcfg.InventoryRegistryName),
+		otelmetric.WithUnit("{registry}"),
+		otelmetric.WithDescription("Registry in an effective configuration snapshot"),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create inventory registry gauge: %w", err)
+	}
+	resource, err := meter.Int64Gauge(
+		string(tmcfg.InventoryResourceName),
+		otelmetric.WithUnit("{resource}"),
+		otelmetric.WithDescription("Enabled resource in an effective configuration snapshot"),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create inventory resource gauge: %w", err)
+	}
+	omissions, err := meter.Int64Counter(
+		string(tmcfg.InventoryOmissionsName),
+		otelmetric.WithUnit("{omission}"),
+		otelmetric.WithDescription("Inventory snapshots omitted before export"),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create inventory omission counter: %w", err)
+	}
+	return snapshot, registry, resource, omissions, nil
 }
 
 // Shutdown drains any queued payloads, then flushes trace and metric providers
@@ -363,30 +469,61 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	t.logger.Debug("shutting down telemetry")
-	flushCtx, cancel := context.WithTimeout(ctx, maxShutdownFlush)
-	defer cancel()
+	t.shutdownMu.Lock()
+	if t.shutdownStarted {
+		done := t.shutdownDone
+		t.shutdownMu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		return nil
+	}
+	t.shutdownStarted = true
+	t.shutdownDone = make(chan struct{})
+	done := t.shutdownDone
+	t.shutdownMu.Unlock()
+	defer close(done)
 
+	t.logger.Debug("shutting down telemetry")
+
+	// Queue replay has its own deadline so it cannot consume any provider's
+	// opportunity to export or enqueue its current in-memory data.
 	if t.queue != nil {
-		if err := t.drain(flushCtx); err != nil {
+		drainCtx, drainCancel := context.WithTimeout(ctx, preExportDrainTimeout)
+		if err := t.drain(drainCtx); err != nil {
 			slog.Error("telemetry drain failed during shutdown", "error", err)
 			t.recordFailure(err)
 		}
+		drainCancel()
 	}
 
+	providerCtx, providerCancel := context.WithTimeout(ctx, maxShutdownFlush)
+	defer providerCancel()
+	var providers sync.WaitGroup
+	shutdown := func(name string, fn func(context.Context) error) {
+		providers.Add(1)
+		go func() {
+			defer providers.Done()
+			if err := fn(providerCtx); err != nil {
+				slog.Error("telemetry provider shutdown failed", "provider", name, "error", err)
+				t.recordFailure(err)
+			}
+		}()
+	}
 	if t.tp != nil {
-		if err := t.tp.Shutdown(flushCtx); err != nil {
-			slog.Error("telemetry trace provider shutdown failed", "error", err)
-			t.recordFailure(err)
-		}
+		shutdown("trace", t.tp.Shutdown)
 	}
-
 	if t.mp != nil {
-		if err := t.mp.Shutdown(flushCtx); err != nil {
-			slog.Error("telemetry metric provider shutdown failed", "error", err)
-			t.recordFailure(err)
-		}
+		shutdown("primary_metrics", t.mp.Shutdown)
 	}
+	if t.communityMP != nil {
+		shutdown("community_metrics", t.communityMP.Shutdown)
+	}
+	if t.inventoryMP != nil {
+		shutdown("inventory_metrics", t.shutdownInventoryProvider)
+	}
+	providers.Wait()
 
 	t.logger.Debug("telemetry shutdown complete")
 	return nil
@@ -395,13 +532,17 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 // CommandCounter returns the command invocation counter.
 func (t *Telemetry) CommandCounter() Counter {
 	t.logger.Debug("returning command counter")
-	return Counter{c: t.counter, allowed: t.allowedMetricAttrs}
+	return Counter{instruments: []otelmetric.Int64Counter{t.counter, t.communityCounter}, allowed: t.allowedMetricAttrs}
 }
 
 // CommandDuration returns the command duration histogram.
 func (t *Telemetry) CommandDuration() Histogram {
 	t.logger.Debug("returning command duration histogram")
-	return Histogram{h: t.hist, allowed: t.allowedMetricAttrs}
+	return Histogram{instruments: []otelmetric.Int64Histogram{t.hist, t.communityHist}, allowed: t.allowedMetricAttrs}
+}
+
+func (t *Telemetry) TracingEnabled() bool {
+	return t != nil && t.tracer != nil
 }
 
 // StartSpan starts a new lifecycle span. Attributes are supplied as a plain

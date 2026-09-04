@@ -20,6 +20,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 type Loaders struct {
@@ -45,6 +46,9 @@ type ResolveOptions struct {
 	// validation as non-fatal. Used by the remove path so a previously-allowed
 	// registry can still be removed after the policy is tightened.
 	IgnoreBlockedRegistries bool
+	// SkipInventory suppresses recording for internal pre-mutation lookups. The
+	// post-mutation Resolve performed by sync remains the reported generation.
+	SkipInventory bool
 }
 
 type ResolveResult struct {
@@ -242,6 +246,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			"resolve_errors", len(result.ResolveErrors),
 			"errors", len(result.Errors),
 		)
+		if tel != nil && !opts.SkipInventory {
+			recordResolvedInventory(ctx, result)
+		}
 		if resolveSpan != (telemetry.Span{}) {
 			resolveSpan.SetAttributes(resolveResultAttrs(result, time.Since(start)))
 			resolveSpan.End()
@@ -572,14 +579,20 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 				MaxPerDay: backupCfg.MaxPerDay,
 			}
 			managed := CollectManagedPaths(resolved.Resolved)
-			if len(managed) > 0 {
+			codexPartitions, codexErr := CollectCodexBackupPartitions(resolved.Resolved)
+			if codexErr != nil {
+				result.addMaterializeError(fmt.Errorf("backup: %w", codexErr))
+				return result
+			}
+			if len(managed) > 0 || len(codexPartitions) > 0 {
 				var backupSpan telemetry.Span
 				if tel != nil {
 					_, backupSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.backup", map[string]string{
-						"target.count": strconv.Itoa(len(managed)),
+						"target.count":          strconv.Itoa(len(managed)),
+						"codex.partition.count": strconv.Itoa(len(codexPartitions)),
 					})
 				}
-				slog.Debug("creating harness backups", "targets", len(managed))
+				slog.Debug("creating harness backups", "targets", len(managed), "codex_partitions", len(codexPartitions))
 				if err := backup.Create(managed); err != nil {
 					if backupSpan != (telemetry.Span{}) {
 						backupSpan.SetAttributes(map[string]string{"error": "true"})
@@ -587,6 +600,16 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 					}
 					result.addMaterializeError(fmt.Errorf("backup: %w", err))
 					return result
+				}
+				if len(codexPartitions) > 0 {
+					if _, err := backup.CreateCodexSet(codexPartitions); err != nil {
+						if backupSpan != (telemetry.Span{}) {
+							backupSpan.SetAttributes(map[string]string{"error": "true"})
+							backupSpan.End()
+						}
+						result.addMaterializeError(fmt.Errorf("backup: %w", err))
+						return result
+					}
 				}
 				slog.Debug("rotating harness backups", "max_days", bCfg.MaxDays, "max_per_day", bCfg.MaxPerDay)
 				if err := backup.Rotate(bCfg); err != nil {
@@ -668,6 +691,9 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 
 	result := make(map[hcc.Target]backup.ManagedPaths, len(seen))
 	for t := range seen {
+		if t == hcc.Target(targetmeta.TargetCodex) {
+			continue
+		}
 		root, ok := harness.MachineRoot(t)
 		if !ok {
 			continue
@@ -707,6 +733,53 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths}
 	}
 	return result
+}
+
+// CollectCodexBackupPartitions resolves the two native machine roots as one
+// logical backup set. An empty partition is retained so publication and restore
+// can prove that both roots participated in the same operation.
+func CollectCodexBackupPartitions(resolved []resolver.ResolvedArtifact) ([]backup.CodexPartition, error) {
+	codex := hcc.Target(targetmeta.TargetCodex)
+	selected := false
+	for _, resource := range resolved {
+		if !resource.Source.IsMachineScope() {
+			continue
+		}
+		for _, target := range resource.Harnesses {
+			selected = selected || target == codex
+		}
+	}
+	partitions, err := CodexBackupPartitions()
+	if err != nil {
+		return nil, err
+	}
+	if selected {
+		return partitions, nil
+	}
+	for _, partition := range partitions {
+		if len(partition.RelPaths) > 0 {
+			return partitions, nil
+		}
+	}
+	return nil, nil
+}
+
+// CodexBackupPartitions resolves the current native machine destinations.
+func CodexBackupPartitions() ([]backup.CodexPartition, error) {
+	codex := hcc.Target(targetmeta.TargetCodex)
+	destinations, err := harness.ResolveDestinations(codex, true, ".")
+	if err != nil {
+		return nil, err
+	}
+	managed, err := materialize.CodexMachineManagedPaths(".")
+	if err != nil {
+		return nil, err
+	}
+	partitions := make([]backup.CodexPartition, 0, len(destinations))
+	for _, destination := range destinations {
+		partitions = append(partitions, backup.CodexPartition{ID: destination.ID, Root: destination.Root, RelPaths: managed[destination.ID]})
+	}
+	return partitions, nil
 }
 
 // coveredByAncestor reports whether rel is the same path as, or lives beneath,

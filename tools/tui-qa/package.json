@@ -1,0 +1,22 @@
+{
+  "name": "@adyen/agent-marketplace-tui-qa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Direct real-terminal usage tests for the agent-marketplace TUI.",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm typecheck && tui-test --help",
+    "qa": "pnpm build && node --test dist/tests/non-tty.test.js && tui-test && node --test dist/tests/privacy.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@microsoft/tui-test": "0.0.4",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

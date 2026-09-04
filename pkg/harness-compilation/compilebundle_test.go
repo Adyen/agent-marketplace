@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
 
 // Minimal Claude-plugin fixture for CompileBundle tests.
@@ -39,6 +40,19 @@ var testPluginFS = fstest.MapFS{
 	".mcp.json": &fstest.MapFile{
 		Data: []byte(`{"mcpServers":{"my-server":{"command":"npx","args":["-y","my-mcp"]}}}`),
 	},
+}
+
+func TestCompileBundleFromIRWarnsWhenDroppingNativeCodexModelAndEffort(t *testing.T) {
+	resource := ir.NewSubagent("reviewer", "Review", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
+	resource.Ext.Codex = &ext.Codex{Model: "gpt-native", ReasoningEffort: "xhigh"}
+
+	result, err := compileBundleFromIR(&ingest.Bundle{Resources: []ir.Resource{resource}}, TargetClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Artifacts) == 0 || !diag.HasCode(result.Diagnostics, diag.CodeSubagentCodexModelDropped) || !diag.HasCode(result.Diagnostics, diag.CodeSubagentCodexEffortDropped) || diag.HasErrors(result.Diagnostics) {
+		t.Fatalf("compileBundleFromIR() = %#v, want artifacts plus native model and effort warnings", result)
+	}
 }
 
 // TestCompileBundle_ContinuesAfterCompilerErrorAndSuppressesArtifacts pins the

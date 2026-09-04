@@ -118,6 +118,40 @@ func TestExpandSingleCollectionUsesSourceRegistry(t *testing.T) {
 	}
 }
 
+func TestExpandCanonicalizesEquivalentMemberPathsIntoOneSyntheticEntry(t *testing.T) {
+	col := Collection{
+		Name: "paths",
+		Skills: []CollectionSkill{
+			{Name: "skill-a", Registry: "git@example.com:core.git", Ref: "main", Path: "foo"},
+			{Name: "skill-b", Registry: "git@example.com:core.git", Ref: "main", Path: "./foo/"},
+		},
+		SourceRegistryURL: "git@example.com:collections.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{{
+		URL:        "git@example.com:core.git",
+		Ref:        "main",
+		Path:       "foo",
+		Source:     config.UserPersonal,
+		CatalogKey: "/cache/core",
+	}}
+
+	res, errs := Expand([]string{"paths"}, []Collection{col}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 {
+		t.Fatalf("equivalent member paths should produce one synthetic source, got %#v", res.SyntheticEntries)
+	}
+	entry := res.SyntheticEntries[0]
+	if entry.Path != "foo" {
+		t.Fatalf("synthetic path = %q, want canonical foo", entry.Path)
+	}
+	if !reflect.DeepEqual(entry.Skills.Include, []string{"skill-a", "skill-b"}) {
+		t.Fatalf("synthetic skills = %#v, want both members", entry.Skills.Include)
+	}
+}
+
 func TestExpandDirectlyConfiguredSkillsAreNotAnnotated(t *testing.T) {
 	col := Collection{
 		Name:              "core",
@@ -379,6 +413,45 @@ func TestExpandDetectsCycles(t *testing.T) {
 	}
 	if !foundCycle {
 		t.Fatalf("expected a 'cycle' error in %v", errs)
+	}
+}
+
+func TestExpandSharedDAGIncludeIsNotReportedAsCycle(t *testing.T) {
+	shared := Collection{
+		Name:              "shared",
+		Skills:            []CollectionSkill{{Name: "shared-skill"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	left := Collection{
+		Name:              "left",
+		Includes:          []CollectionInclude{{Name: "shared"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	right := Collection{
+		Name:              "right",
+		Includes:          []CollectionInclude{{Name: "shared"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	root := Collection{
+		Name:              "root",
+		Includes:          []CollectionInclude{{Name: "left"}, {Name: "right"}},
+		SourceRegistryURL: "git@example.com:core.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{{URL: "git@example.com:core.git", Ref: "main"}}
+
+	res, errs := Expand([]string{"root"}, []Collection{root, left, right, shared}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("expected shared DAG to expand without errors, got %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 {
+		t.Fatalf("expected one synthetic registry entry, got %#v", res.SyntheticEntries)
+	}
+	if got := res.SyntheticEntries[0].Skills.Include; !reflect.DeepEqual(got, []string{"shared-skill"}) {
+		t.Fatalf("expected shared skill from both branches to deduplicate, got %#v", got)
 	}
 }
 
@@ -1366,5 +1439,93 @@ func TestExpandDirectlyConfiguredSkillDoesNotSuppressCommandVia(t *testing.T) {
 	// Command "build" is only from collection → should be annotated
 	if res.ViaMap["command:build"] != "collection:dev" {
 		t.Fatalf("ViaMap[command:build] = %q, want collection:dev", res.ViaMap["command:build"])
+	}
+}
+
+func TestExpandLegacyExplicitRootDoesNotInheritSourcePath(t *testing.T) {
+	col := Collection{
+		Name: "roots",
+		Skills: []CollectionSkill{
+			{Name: "inherited"},
+			{Name: "rooted", Path: "./"},
+		},
+		SourceRegistryURL: "git@example.com:repo.git",
+		SourceRef:         "main",
+		SourcePath:        "skills",
+	}
+	existing := []config.RegistryEntry{
+		{URL: "git@example.com:repo.git", Ref: "main", Path: "skills", CatalogKey: "/cache/repo:skills"},
+		{URL: "git@example.com:repo.git", Ref: "main", CatalogKey: "/cache/repo"},
+	}
+
+	res, errs := Expand([]string{"roots"}, []Collection{col}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(res.SyntheticEntries) != 2 {
+		t.Fatalf("expected separate inherited and explicit-root sources, got %#v", res.SyntheticEntries)
+	}
+	inherited := lookupSynth(t, res.SyntheticEntries, "git@example.com:repo.git", "skills")
+	if !reflect.DeepEqual(inherited.Skills.Include, []string{"inherited"}) {
+		t.Fatalf("inherited skills = %#v", inherited.Skills.Include)
+	}
+	root := lookupSynth(t, res.SyntheticEntries, "git@example.com:repo.git")
+	if !reflect.DeepEqual(root.Skills.Include, []string{"rooted"}) {
+		t.Fatalf("explicit-root skills = %#v", root.Skills.Include)
+	}
+}
+
+func TestExpandLegacyMemberRefIsPreservedWhenRegistryOmitted(t *testing.T) {
+	col := Collection{
+		Name:              "refs",
+		Skills:            []CollectionSkill{{Name: "next-only", Ref: "next"}},
+		SourceRegistryURL: "git@example.com:repo.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{
+		{URL: "git@example.com:repo.git", Ref: "main", CatalogKey: "/cache/repo-main"},
+		{URL: "git@example.com:repo.git", Ref: "next", CatalogKey: "/cache/repo-next"},
+	}
+
+	res, errs := Expand([]string{"refs"}, []Collection{col}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 || res.SyntheticEntries[0].Ref != "next" {
+		t.Fatalf("explicit member ref was not preserved: %#v", res.SyntheticEntries)
+	}
+	if res.SyntheticEntries[0].CatalogKey != "/cache/repo-next" {
+		t.Fatalf("expected next-ref catalog key, got %q", res.SyntheticEntries[0].CatalogKey)
+	}
+}
+
+func TestExpandLegacyEquivalentURLSpellingsShareSyntheticIdentity(t *testing.T) {
+	col := Collection{
+		Name: "urls",
+		Skills: []CollectionSkill{
+			{Name: "without-suffix", Registry: "git@example.com:repo"},
+			{Name: "with-suffix", Registry: "git@example.com:repo.git"},
+		},
+		SourceRegistryURL: "git@example.com:collections.git",
+		SourceRef:         "main",
+	}
+	existing := []config.RegistryEntry{{
+		URL:        "git@example.com:repo.git",
+		Ref:        "main",
+		CatalogKey: "/cache/repo",
+	}}
+
+	res, errs := Expand([]string{"urls"}, []Collection{col}, existing)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if len(res.SyntheticEntries) != 1 {
+		t.Fatalf("equivalent URL spellings should share one source, got %#v", res.SyntheticEntries)
+	}
+	if !reflect.DeepEqual(res.SyntheticEntries[0].Skills.Include, []string{"without-suffix", "with-suffix"}) {
+		t.Fatalf("merged skills = %#v", res.SyntheticEntries[0].Skills.Include)
+	}
+	if res.SyntheticEntries[0].URL != "git@example.com:repo" {
+		t.Fatalf("expected first authored URL spelling to be preserved, got %q", res.SyntheticEntries[0].URL)
 	}
 }

@@ -59,7 +59,7 @@ func conflictPreviewFor(t *testing.T, repoRoot string, selection []resolver.Reso
 // With a total hook identity, ValueConflictCandidates cannot nominate a real
 // hook conflict because different values produce different identities. The
 // candidate is constructed artificially here by re-using the same identity with
-// different value digests, and the test verifies that devinConflictReplaceable
+// different value digests, and the test verifies that the JSON repair adapter
 // still rejects it.
 func TestAdversarialConflictReplaceRefusesNonMcpAggregatesAndHooks(t *testing.T) {
 	hookID := ownership.EntryID{
@@ -73,10 +73,10 @@ func TestAdversarialConflictReplaceRefusesNonMcpAggregatesAndHooks(t *testing.T)
 	if len(hookCandidates) != 1 {
 		t.Fatalf("ownership nominated %d hook candidates, want 1 (the fence is what must reject it, not the nominator)", len(hookCandidates))
 	}
-	if devinConflictReplaceable(harness.DevinProjectHooksFile, hookID) {
+	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinProjectHooksFile)}).replaceable(hookID) {
 		t.Fatal("a hook was declared replaceable; the MCP-only replace fence must reject hooks")
 	}
-	if devinConflictReplaceable(harness.DevinUserConfigFile, hookID) {
+	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinUserConfigFile)}).replaceable(hookID) {
 		t.Fatal("a hook in config.json was declared replaceable")
 	}
 
@@ -87,11 +87,11 @@ func TestAdversarialConflictReplaceRefusesNonMcpAggregatesAndHooks(t *testing.T)
 		IdentityDigest: ownership.McpIdentityDigest("server"),
 	}
 	for _, rel := range []string{harness.DevinProjectHooksFile, harness.DevinUserConfigFile} {
-		if devinConflictReplaceable(rel, mcpID) {
+		if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(rel)}).replaceable(mcpID) {
 			t.Fatalf("an mcp-server identity was declared replaceable in %q", rel)
 		}
 	}
-	if devinConflictReplaceable(harness.DevinMcpConfigFile, ownership.EntryID{
+	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinMcpConfigFile)}).replaceable(ownership.EntryID{
 		Kind: ownership.KindMcpServer, Container: "mcpServers", Key: "",
 		IdentityDigest: ownership.McpIdentityDigest("")}) {
 		t.Fatal("an empty MCP key was declared replaceable")
@@ -471,11 +471,12 @@ func mcpEntryFromBytes(t *testing.T, raw []byte, key, resource string) ownership
 	if err != nil {
 		t.Fatal(err)
 	}
-	container, _, err := devinContainerNode(doc, harness.DevinMcpConfigFile)
+	file := devinOwnedJSONFile(harness.DevinMcpConfigFile)
+	container, _, err := ownedJSONContainerNode(doc, file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries, err := devinExistingEntries(harness.DevinMcpConfigFile, container)
+	entries, err := ownedJSONExistingEntries(file, container)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +498,7 @@ func mcpEntryFromBytes(t *testing.T, raw []byte, key, resource string) ownership
 }
 
 // TestAdversarialUnsafeMcpKeyFailsClosedWithoutTouchingTheFile attacks the
-// fence's own predicate: devinConflictReplaceable admits ANY non-empty key,
+// fence's own predicate: the keyed JSON adapter admits any non-empty key,
 // while internal/ownership only accepts a key matching its non-secret token
 // shape. A key with a space therefore reaches ReplaceConflict and is rejected
 // by ownership.Apply — which must happen BEFORE the mandatory backup, so a
@@ -588,7 +589,7 @@ func TestAdversarialRepeatedConflictReplaceIsIdempotent(t *testing.T) {
 // exclude each other in the kernel rather than sharing a reentrant Store (one
 // Store shared by two goroutines is explicitly NOT mutual exclusion between
 // them; see ownership.Store.Lock).
-func concurrentConflictReplaceFixture(t *testing.T) (*ownership.Store, *devinAggregateState, string) {
+func concurrentConflictReplaceFixture(t *testing.T) (*ownership.Store, *ownedJSONRepairState, string) {
 	t.Helper()
 	repoRoot, _ := devinEnv(t)
 	body := "{\n  \"mcpServers\": {\n" +
@@ -623,7 +624,9 @@ func concurrentConflictReplaceFixture(t *testing.T) (*ownership.Store, *devinAgg
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, diags := readDevinAggregateState(store, outputKey{target: hcc.TargetDevin, machineScope: false}, outDir, harness.DevinMcpConfigFile)
+	state, diags := readOwnedJSONRepairState(store,
+		outputKey{target: hcc.TargetDevin, machineScope: false}, outDir,
+		devinOwnedJSONFile(harness.DevinMcpConfigFile), devinOwnedJSONOptions())
 	if state == nil {
 		t.Fatalf("the aggregate no longer parses after two concurrent repairs: %v", diags)
 	}
@@ -640,10 +643,10 @@ func TestAdversarialConcurrentConflictReplacesKeepUserBytesRecoverable(t *testin
 
 	byID := make(map[string]ownership.EntryValue, len(state.existingValues))
 	for _, e := range state.existingValues {
-		byID[devinIDKey(e.ID)] = e
+		byID[ownedAggregateIDKey(e.ID)] = e
 	}
 	for _, id := range state.proof.OwnedIDs() {
-		if _, present := byID[devinIDKey(id)]; !present {
+		if _, present := byID[ownedAggregateIDKey(id)]; !present {
 			t.Fatalf("ownership claims %q, which is not in the aggregate at all", id.Key)
 		}
 	}
@@ -716,10 +719,10 @@ func TestAdversarialConcurrentConflictReplacesForgeOwnership(t *testing.T) {
 	_, state, _ := concurrentConflictReplaceFixture(t)
 	byID := make(map[string]ownership.EntryValue, len(state.existingValues))
 	for _, e := range state.existingValues {
-		byID[devinIDKey(e.ID)] = e
+		byID[ownedAggregateIDKey(e.ID)] = e
 	}
 	for _, id := range state.proof.OwnedIDs() {
-		existing, present := byID[devinIDKey(id)]
+		existing, present := byID[ownedAggregateIDKey(id)]
 		if !present {
 			t.Fatalf("ownership claims %q, which is absent from the aggregate entirely", id.Key)
 		}

@@ -167,6 +167,8 @@ func TestRenderInitModalIncludesHints(t *testing.T) {
 		"esc",
 		"factory",
 		"claude",
+		"Devin CLI",
+		"Codex",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("init modal missing %q in output:\n%s", want, out)
@@ -192,8 +194,26 @@ func TestNewInitModalStatePreselectsDetectedHarnesses(t *testing.T) {
 	}
 }
 
+func TestNewInitModalStatePreselectsResolvedCodexHome(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := newInitModalState(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.selected["codex"] {
+		t.Fatalf("resolved CODEX_HOME was not pre-selected: %v", state.selected)
+	}
+}
+
 func TestNewInitModalStateIsEmptyWithNoDetections(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CODEX_HOME", "")
 
 	state, err := newInitModalState(home)
 	if err != nil {
@@ -201,6 +221,9 @@ func TestNewInitModalStateIsEmptyWithNoDetections(t *testing.T) {
 	}
 	if len(selectedHarnessIDs(state.selected)) != 0 {
 		t.Fatalf("expected no pre-selected harnesses, got %v", state.selected)
+	}
+	if state.selected["codex"] {
+		t.Fatal("Codex must remain unchecked when no install root is detected")
 	}
 }
 

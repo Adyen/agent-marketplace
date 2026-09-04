@@ -1,0 +1,5 @@
+name = 'demo-agent'
+description = 'Demo agent for golden testing'
+model = 'sonnet'
+model_reasoning_effort = 'high'
+developer_instructions = "You are a demo agent. Execute tasks with high reasoning effort.\n"

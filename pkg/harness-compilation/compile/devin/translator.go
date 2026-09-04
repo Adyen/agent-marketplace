@@ -51,6 +51,12 @@ func (c Compiler) Translate(r ir.Resource) ([]artifact.Artifact, []diag.Diagnost
 // Compile start/completion logging for every target and kind is already emitted
 // by compile.Compile, so this translator only logs its own mapping decisions.
 func (c Compiler) TranslateWithOptions(r ir.Resource, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	return compile.GuardNativeCodexTranslation(r, c.Target(), func(r ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+		return c.translateWithOptions(r, opts)
+	})
+}
+
+func (Compiler) translateWithOptions(r ir.Resource, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	kind, name, err := ir.ValidateResource(r)
 	if err != nil {
 		return nil, nil, err

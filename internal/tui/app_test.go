@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,6 +13,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
+
+func TestDefaultTUIProgramOptionsLeaveMouseSelectionToTerminal(t *testing.T) {
+	var output bytes.Buffer
+	options := append(defaultTUIProgramOptions(), tea.WithInput(nil), tea.WithOutput(&output))
+	if _, err := tea.NewProgram(guardProbeModel{}, options...).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "\x1b[?1049h") {
+		t.Fatalf("TUI did not enter the alternate screen: %q", got)
+	}
+	for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
+		if strings.Contains(got, sequence) {
+			t.Fatalf("TUI enabled mouse tracking with %q, preventing native text selection", sequence)
+		}
+	}
+}
 
 func TestRowGlyphEnabled(t *testing.T) {
 	r := row{IsAvailable: false}
@@ -112,7 +132,9 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		rows:         []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		refreshing:   true,
-		refreshToken: 1,
+		requests:     requestState{next: 1, snapshot: 1},
+		width:        80,
+		height:       24,
 		keys:         defaultKeyMap,
 		help:         newHelpModel(),
 	}
@@ -123,16 +145,14 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 	}
 
 	gotModel := updatedModel.(Model)
-	if gotModel.refreshToken != 0 {
-		t.Fatalf("expected reload to invalidate pending refresh token, got %d", gotModel.refreshToken)
+	if got := gotModel.requests.active(requestSnapshot); got != 2 {
+		t.Fatalf("active snapshot generation = %d, want 2", got)
 	}
 
-	stale := refreshLoadedMsg{
-		snapshotLoadedMsg: snapshotLoadedMsg{
-			rows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
-		},
-		refreshToken: 1,
-	}
+	stale := refreshLoadedMsg{snapshotLoadedMsg: snapshotLoadedMsg{
+		generation: 1,
+		rows:       []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "stale-state"}}}},
+	}}
 
 	nextModel, _ := gotModel.Update(stale)
 	finalModel := nextModel.(Model)
@@ -168,7 +188,7 @@ func TestDownKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.width = 50
-	m.height = 8
+	m.height = 12
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 5), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -195,8 +215,8 @@ func TestNavigationKeepsSelectionVisibleFromLoadedSnapshot(t *testing.T) {
 		mkRow("omega", withGlobal),
 	}
 	m := NewModel(t.TempDir(), t.TempDir())
-	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 9})
-	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{rows: rows})
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+	loaded, _ := resized.(Model).Update(snapshotLoadedMsg{generation: 1, rows: rows})
 	m = loaded.(Model)
 	if out := visibleListPane(m.View(), 20); !strings.Contains(out, "alpha") || strings.Contains(out, "omega") {
 		t.Fatalf("initial view did not start at the top of the list:\n%s", ansi.Strip(m.View()))
@@ -219,7 +239,7 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.width = 100
-	m.height = 8
+	m.height = 20
 	m.flatItems = []flatItem{
 		{Kind: flatSection, SectionTitle: strings.Repeat("long-section-title-", 4), SectionCount: 2},
 		{Kind: flatArtifact, Row: mkRow("first", withGlobal)},
@@ -228,10 +248,50 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	m.cursor = 2
 	m.clampListOffset()
 
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 8})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
 	out := updated.(Model).View()
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
+	}
+}
+
+func TestHalfPageNavigationMovesListSelection(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width = 80
+	m.height = 24
+	for i := 0; i < 40; i++ {
+		m.flatItems = append(m.flatItems, flatItem{Kind: flatArtifact, Row: mkRow(fmt.Sprintf("resource-%d", i), withGlobal)})
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+d moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	if m.cursor != 31 {
+		t.Fatalf("f moved cursor to %d, want 31", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+b moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(Model)
+	if m.cursor != 39 {
+		t.Fatalf("end moved cursor to %d, want 39", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("home moved cursor to %d, want 0", m.cursor)
 	}
 }
 
@@ -265,8 +325,8 @@ func TestViewFitsTerminalChrome(t *testing.T) {
 					t.Fatalf("View() produced a %d-column line for a %d-column terminal: %q", width, tc.width, line)
 				}
 			}
-			if tc.height >= 2 && !strings.Contains(out, "~ in sync") {
-				t.Fatalf("View() omitted the persistent footer from a %d-line terminal: %q", tc.height, out)
+			if tc.height >= 2 && !strings.Contains(out, "q quit") {
+				t.Fatalf("view omitted quit guidance from a %d-line terminal: %q", tc.height, out)
 			}
 		})
 	}

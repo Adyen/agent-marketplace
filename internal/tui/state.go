@@ -15,6 +15,14 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
+type driftAssessment uint8
+
+const (
+	driftUnknown driftAssessment = iota
+	driftReady
+	driftFailed
+)
+
 type pane int
 
 const (
@@ -154,14 +162,16 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane             pane
-	driftReport      materialize.DriftReport
-	errs             []error
-	warnings         []error
-	syncing          bool
-	refreshing       bool
-	refreshToken     int
-	nextRefreshToken int
+	pane            pane
+	driftReport     materialize.DriftReport
+	driftAssessment driftAssessment
+	diagnostics     diagnosticStore
+	errs            []error
+	warnings        []error
+	syncing         bool
+	refreshing      bool
+	requests        requestState
+	rowsStale       bool
 
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config
@@ -197,11 +207,13 @@ type Model struct {
 	modalSkill   row
 	harnessModal harnessModalState
 	initModal    initModalState
+	operations   operationState
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
 	// Set when enabling a colliding resource; cleared on configWrittenMsg.
-	pendingExcludeAction *toggleAction
+	pendingExcludeAction  *toggleAction
+	selectionAfterDisable string
 
 	migrationPrompt migrationPrompt
 
@@ -210,6 +222,15 @@ type Model struct {
 	spinner spinner.Model
 
 	detailViewport viewport.Model
+	helpViewport   viewport.Model
+	errorsViewport viewport.Model
+
+	// detailKey is the stable row identity of the resource whose full detail
+	// pane is open. It keeps an accepted snapshot rebuild anchored to the same
+	// resource even when rows are inserted or reordered.
+	detailKey          string
+	detailRenderWidth  int
+	detailStickyBottom bool
 
 	toast    string
 	toastExp time.Time

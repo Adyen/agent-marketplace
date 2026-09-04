@@ -25,24 +25,58 @@ import (
 // it is required for git registries so the entry passes validation and
 // shares the same cache as the original entry.
 func DisableResourceWithShadowFallback(configPath, registryURL, registryPath, ref string, kind ir.ResourceKind, name string) error {
+	return disableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, false, kind, name)
+}
+
+// DisableResourceWithShadowFallbackAtRef disables a resource on a URL/path/ref entry.
+func DisableResourceWithShadowFallbackAtRef(configPath, registryURL, registryPath, ref string, kind ir.ResourceKind, name string) error {
+	return disableResourceWithShadowFallback(configPath, registryURL, registryPath, ref, true, kind, name)
+}
+
+func disableResourceWithShadowFallback(configPath, registryURL, registryPath, ref string, requireRef bool, kind ir.ResourceKind, name string) error {
 	registryURL = strings.TrimSpace(registryURL)
 	registryPath = strings.TrimSpace(registryPath)
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("load config %q: %w", configPath, err)
 	}
 	if cfg == nil {
 		// Config doesn't exist or is empty — create a shadow entry.
-		if err := EnsureRegistryWithPathsInConfig(configPath, registryURL, ref, registryPath); err != nil {
+		ensureRegistry := EnsureRegistryWithPathsInConfig
+		if requireRef {
+			ensureRegistry = EnsureRegistryWithPathsAtRefInConfig
+		}
+		if err := ensureRegistry(configPath, registryURL, ref, registryPath); err != nil {
 			return fmt.Errorf("ensure shadow registry entry: %w", err)
+		}
+		if requireRef {
+			return DisableResourceInRegistryInConfigAtRef(configPath, registryURL, registryPath, ref, kind, name)
 		}
 		return AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, kind, name)
 	}
 
-	// Try exact URL+path match first. When the registry exists with the
-	// exact URL and path, use the standard disable path.
-	if registryExistsInConfig(cfg, registryURL, registryPath) {
+	// Try exact URL+path+ref match first when the caller supplied a known ref.
+	// This is deliberately separate from the legacy URL/path matching so other
+	// resource removal callers retain their existing ambiguity semantics.
+	if requireRef {
+		if registryExistsInConfigAtRef(cfg, registryURL, registryPath, ref) {
+			// An omitted path retains the legacy URL-only behavior only when it
+			// identifies one entry at this ref. Multiple paths are ambiguous and
+			// must not be resolved by file order.
+			if registryPath == "" {
+				if countEntriesByURLAndRef(cfg, registryURL, ref) > 1 {
+					return fmt.Errorf("update config %q: registry %q at ref %q matches multiple entries; use --path to disambiguate", configPath, registryURL, ref)
+				}
+				if actualURL, actualPath := findNormalizedURLAndPathAtRef(cfg, registryURL, registryPath, ref); actualURL != "" {
+					return DisableResourceInRegistryInConfigAtRef(configPath, actualURL, actualPath, ref, kind, name)
+				}
+			}
+			return DisableResourceInRegistryInConfigAtRef(configPath, registryURL, registryPath, ref, kind, name)
+		}
+	} else if registryExistsInConfig(cfg, registryURL, registryPath) {
+		// Try exact URL+path match first. When the registry exists with the
+		// exact URL and path, use the standard disable path.
 		// If registryPath is empty (URL-only match), there might be
 		// multiple entries with the same URL. In that case, the
 		// URL-only DisableResourceInRegistryInConfig would fail with
@@ -63,7 +97,11 @@ func DisableResourceWithShadowFallback(configPath, registryURL, registryPath, re
 	// config may have the same registry with a slightly different URL
 	// (e.g. with/without .git suffix). In that case, add the exclude
 	// to the existing entry rather than creating a duplicate entry.
-	if existingURL, existingPath := findNormalizedURLAndPath(cfg, registryURL, registryPath); existingURL != "" {
+	if requireRef {
+		if existingURL, existingPath := findNormalizedURLAndPathAtRef(cfg, registryURL, registryPath, ref); existingURL != "" {
+			return DisableResourceInRegistryInConfigAtRef(configPath, existingURL, existingPath, ref, kind, name)
+		}
+	} else if existingURL, existingPath := findNormalizedURLAndPath(cfg, registryURL, registryPath); existingURL != "" {
 		// Same ambiguity issue: if there are multiple entries with the
 		// same normalized URL and no path constraint, find the one that
 		// actually selects this resource.
@@ -77,18 +115,68 @@ func DisableResourceWithShadowFallback(configPath, registryURL, registryPath, re
 	}
 
 	// No entry in the target config at all. Create a shadow entry.
-	if err := EnsureRegistryWithPathsInConfig(configPath, registryURL, ref, registryPath); err != nil {
+	ensureRegistry := EnsureRegistryWithPathsInConfig
+	if requireRef {
+		ensureRegistry = EnsureRegistryWithPathsAtRefInConfig
+	}
+	if err := ensureRegistry(configPath, registryURL, ref, registryPath); err != nil {
 		return fmt.Errorf("ensure shadow registry entry: %w", err)
+	}
+	if requireRef {
+		return DisableResourceInRegistryInConfigAtRef(configPath, registryURL, registryPath, ref, kind, name)
 	}
 	return AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath, kind, name)
 }
 
-// countEntriesByURL counts registry entries with the given URL (after
-// normalization, so .git-suffixed and bare forms are treated as equivalent).
+func matchingRegistryCount(cfg *Config, url, path string) int {
+	if cfg == nil {
+		return 0
+	}
+	count := 0
+	normalizedURL := NormalizeGitURL(strings.TrimSpace(url))
+	normalizedPath := NormalizeRegistryPath(path)
+	for _, entry := range cfg.Registries {
+		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != normalizedURL {
+			continue
+		}
+		if NormalizeRegistryPath(entry.Path) == normalizedPath {
+			count++
+		}
+	}
+	return count
+}
+
+func hasIncludedRegistryDefinition(configPath string, root *Config, url, path string) (bool, error) {
+	if root == nil || len(root.Include) == 0 {
+		return false, nil
+	}
+	expanded, err := LoadConfigFromPath(configPath)
+	if err != nil {
+		return false, err
+	}
+	return matchingRegistryCount(expanded, url, path) > matchingRegistryCount(root, url, path), nil
+}
+
 func countEntriesByURL(cfg *Config, url string) int {
 	count := 0
 	for _, entry := range cfg.Registries {
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) == NormalizeGitURL(url) {
+			count++
+		}
+	}
+	return count
+}
+
+func countEntriesByURLAndRef(cfg *Config, url, ref string) int {
+	if cfg == nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range cfg.Registries {
+		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(strings.TrimSpace(url)) {
+			continue
+		}
+		if strings.TrimSpace(entry.Ref) == strings.TrimSpace(ref) {
 			count++
 		}
 	}
@@ -116,28 +204,43 @@ func findEntrySelectingResource(cfg *Config, url string, kind ir.ResourceKind, n
 	return "", ""
 }
 
-// disableExactEntry removes a resource from the include list of a specific
-// entry (by exact URL+path) and adds it to the exclude list. This is
-// equivalent to DisableResourceInRegistryInConfig but uses exact-entry
-// matching to avoid "matches multiple entries" errors.
+// disableExactEntry removes a resource from one exact URL/path entry.
 func disableExactEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, name string) error {
+	return disableExactEntryWithRef(configPath, registryURL, registryPath, "", false, kind, name)
+}
+
+func disableExactEntryAtRef(configPath, registryURL, registryPath, ref string, kind ir.ResourceKind, name string) error {
+	return disableExactEntryWithRef(configPath, registryURL, registryPath, ref, true, kind, name)
+}
+
+func disableExactEntryWithRef(configPath, registryURL, registryPath, ref string, requireRef bool, kind ir.ResourceKind, name string) error {
 	// Remove from include.
-	if err := removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath, kind, "include", []string{name}); err != nil {
+	var err error
+	if requireRef {
+		err = removeValuesFromExactRegistryEntryAtRef(configPath, registryURL, registryPath, ref, kind, "include", []string{name})
+	} else {
+		err = removeValuesFromExactRegistryEntry(configPath, registryURL, registryPath, kind, "include", []string{name})
+	}
+	if err != nil {
 		return fmt.Errorf("remove from include: %w", err)
 	}
 	// Add to exclude (always, to prevent re-selection by default/required/tags).
+	if requireRef {
+		return addValuesToExactRegistryEntryAtRef(configPath, registryURL, registryPath, ref, kind, "exclude", []string{name})
+	}
 	return addKindExcludeToExactEntry(configPath, registryURL, registryPath, kind, name)
 }
 
-// findNormalizedURLAndPath searches the config for a registry entry whose
-// normalized URL matches the given URL (per NormalizeGitURL, which strips
-// trailing .git and slashes). Returns the actual (URL, path) pair from the
-// matching entry, or ("", "") if none found.
-//
-// When registryPath is non-empty, prefers entries with the same path.
-// When registryPath is empty, prefers entries with no path (root), which
-// avoids ambiguity when multiple entries share a URL but differ by path.
+// findNormalizedURLAndPath finds a matching normalized URL/path entry.
 func findNormalizedURLAndPath(cfg *Config, url, registryPath string) (string, string) {
+	return findNormalizedURLAndPathWithRef(cfg, url, registryPath, "", false)
+}
+
+func findNormalizedURLAndPathAtRef(cfg *Config, url, registryPath, ref string) (string, string) {
+	return findNormalizedURLAndPathWithRef(cfg, url, registryPath, ref, true)
+}
+
+func findNormalizedURLAndPathWithRef(cfg *Config, url, registryPath, ref string, requireRef bool) (string, string) {
 	norm := NormalizeGitURL(url)
 
 	// First pass: look for normalized-URL match with matching path.
@@ -147,8 +250,11 @@ func findNormalizedURLAndPath(cfg *Config, url, registryPath string) (string, st
 		if NormalizeGitURL(entry.URL) != norm {
 			continue
 		}
-		entryPath := strings.TrimSpace(entry.Path)
-		if registryPath != "" && entryPath == registryPath {
+		if requireRef && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
+			continue
+		}
+		entryPath := NormalizeRegistryPath(entry.Path)
+		if registryPath != "" && entryPath == NormalizeRegistryPath(registryPath) {
 			return strings.TrimSpace(entry.URL), entryPath
 		}
 		if registryPath == "" && entryPath == "" {
@@ -171,11 +277,7 @@ func findNormalizedURLAndPath(cfg *Config, url, registryPath string) (string, st
 	return fallbackURL, fallbackPath
 }
 
-// addKindExcludeToExactEntry adds a per-kind exclude to a specific registry
-// entry identified by exact URL and path. Unlike AddKindExcludeToRegistryInConfig,
-// when path is empty this matches only entries with no path (root entries),
-// avoiding "matches multiple entries" errors when the same URL has entries
-// at different paths.
+// addKindExcludeToExactEntry adds a per-kind exclude to one registry entry.
 func addKindExcludeToExactEntry(configPath, registryURL, registryPath string, kind ir.ResourceKind, name string) error {
 	return addValuesToExactRegistryEntry(configPath, registryURL, registryPath, kind, "exclude", []string{name})
 }
@@ -184,13 +286,25 @@ func addKindExcludeToExactEntry(configPath, registryURL, registryPath string, ki
 // (and optionally path) exists in the config. When path is empty, any entry
 // with the matching URL qualifies (URL-only match).
 func registryExistsInConfig(cfg *Config, url, path string) bool {
+	return registryExistsInConfigWithRef(cfg, url, path, "", false)
+}
+
+func registryExistsInConfigAtRef(cfg *Config, url, path, ref string) bool {
+	return registryExistsInConfigWithRef(cfg, url, path, ref, true)
+}
+
+func registryExistsInConfigWithRef(cfg *Config, url, path, ref string, requireRef bool) bool {
 	for _, entry := range cfg.Registries {
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(strings.TrimSpace(url)) {
 			continue
 		}
-		if path == "" || strings.TrimSpace(entry.Path) == strings.TrimSpace(path) {
-			return true
+		if strings.TrimSpace(path) != "" && NormalizeRegistryPath(entry.Path) != NormalizeRegistryPath(path) {
+			continue
 		}
+		if requireRef && strings.TrimSpace(entry.Ref) != strings.TrimSpace(ref) {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -217,7 +331,7 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		return fmt.Errorf("%s name is required", skill.KindLabel(kind))
 	}
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -231,19 +345,24 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		if NormalizeGitURL(strings.TrimSpace(entry.URL)) != NormalizeGitURL(registryURL) {
 			continue
 		}
-		// When registryPath is specified, also match on entry.Path.
-		if registryPath != "" && strings.TrimSpace(entry.Path) != registryPath {
+		// When registryPath is specified, match the configured entry path
+		// exactly after normalizing separators and dot segments. A requested
+		// descendant must not silently target its configured parent.
+		if registryPath != "" && NormalizeRegistryPath(entry.Path) != NormalizeRegistryPath(registryPath) {
 			continue
 		}
 		entryResources := entryResourcesForKind(entry, kind)
 		if entryResources != nil && stringSliceContains(entryResources, name) {
+			includedDefinition, err := hasIncludedRegistryDefinition(configPath, cfg, registryURL, entry.Path)
+			if err != nil {
+				return err
+			}
 			if err := RemoveResourceFromRegistryInConfig(configPath, registryURL, entry.Path, kind, name); err != nil {
 				return err
 			}
-			// If the entry has default:true, required:true, or tags that would
-			// re-select the resource after include removal, also add to exclude
-			// so the disable takes effect in a single press.
-			if entry.Default || entry.Required || len(entry.Tags) > 0 {
+			// Retain an exclusion when policy or a lower included definition
+			// could re-select the resource after removing the root include.
+			if entry.Default || entry.Required || len(entry.Tags) > 0 || includedDefinition {
 				return AddKindExcludeToRegistryInConfig(configPath, registryURL, entry.Path, kind, name)
 			}
 			return nil
@@ -251,6 +370,24 @@ func DisableResourceInRegistryInConfig(configPath, registryURL, registryPath str
 		return AddKindExcludeToRegistryInConfig(configPath, registryURL, entry.Path, kind, name)
 	}
 	return fmt.Errorf("registry %q not found in config", registryURL)
+}
+
+// DisableResourceInRegistryInConfigAtRef disables a resource on a URL/path/ref entry.
+func DisableResourceInRegistryInConfigAtRef(configPath, registryURL, registryPath, registryRef string, kind ir.ResourceKind, name string) error {
+	registryURL = strings.TrimSpace(registryURL)
+	registryPath = strings.TrimSpace(registryPath)
+	registryRef = strings.TrimSpace(registryRef)
+	if registryURL == "" {
+		return fmt.Errorf("registry url is required")
+	}
+	if registryRef == "" {
+		return fmt.Errorf("registry ref is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%s name is required", skill.KindLabel(kind))
+	}
+	return disableExactEntryAtRef(configPath, registryURL, registryPath, registryRef, kind, name)
 }
 
 func AddKindExcludeToRegistryInConfig(configPath, registryURL, registryPath string, kind ir.ResourceKind, name string) error {
@@ -294,7 +431,7 @@ func RemoveAllKindExcludesFromRegistryEntries(configPath string, kind ir.Resourc
 		return fmt.Errorf("unsupported resource kind %q", skill.KindLabel(kind))
 	}
 
-	cfg, err := LoadConfigFromPath(configPath)
+	cfg, err := LoadRootConfigFromPath(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -530,10 +667,10 @@ func removeValuesFromTopLevelSubSequence(configPath, topKey, subKey string, valu
 
 // removeValueFromRegistrySubSequence removes a value from a sub-key
 // (e.g. "exclude") under a kind key (e.g. "skills") within a specific registry entry.
-// When registryPath is non-empty, it matches on both URL and path
-// (composite key). When registryPath is empty, it matches on URL only.
-// If multiple entries share the same URL and no path is specified, a
-// disambiguation error lists the available paths.
+// When registryPath is non-empty, it matches the URL and normalized path
+// exactly (composite key); a descendant path never targets its parent. When
+// registryPath is empty, it matches on URL only. If multiple entries share the
+// same URL and no path is specified, a disambiguation error lists the paths.
 func removeValueFromRegistrySubSequence(configPath, registryURL, registryPath, topKey, subKey, value string) error {
 	return removeValuesFromRegistrySubSequence(configPath, registryURL, registryPath, topKey, subKey, []string{value})
 }
@@ -597,9 +734,6 @@ func removeValuesFromRegistrySubSequence(configPath, registryURL, registryPath, 
 		}
 		matchingEntries = append(matchingEntries, entryNode)
 	}
-	// Prefer exact-path entry when multiple entries match via prefix.
-	matchingEntries = preferExactPathMatch(matchingEntries, registryPath)
-
 	switch len(matchingEntries) {
 	case 0:
 		return nil
@@ -748,8 +882,23 @@ func ValidateScopeBoundary(skillSource Source, targetScope Source) error {
 // the entry is not found. If removal leaves the registries: sequence empty,
 // the key is removed from the document.
 func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string) error {
+	return removeRegistryEntryFromConfig(configPath, registryURL, registryPath, "", false)
+}
+
+// RemoveRegistryEntryFromConfigAtRef removes exactly one URL/path/ref entry,
+// preserving sibling refs and their comments.
+func RemoveRegistryEntryFromConfigAtRef(configPath, registryURL, registryPath, registryRef string) error {
+	registryRef = strings.TrimSpace(registryRef)
+	if registryRef == "" {
+		return fmt.Errorf("registry ref is required")
+	}
+	return removeRegistryEntryFromConfig(configPath, registryURL, registryPath, registryRef, true)
+}
+
+func removeRegistryEntryFromConfig(configPath, registryURL, registryPath, registryRef string, requireRef bool) error {
 	registryURL = strings.TrimSpace(registryURL)
 	registryPath = strings.TrimSpace(registryPath)
+	registryRef = strings.TrimSpace(registryRef)
 	if registryURL == "" {
 		return fmt.Errorf("registry url is required")
 	}
@@ -777,7 +926,11 @@ func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string)
 			continue
 		}
 		entryURL, entryPath := entryURLAndPath(entryNode)
-		if NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && strings.TrimSpace(entryPath) == registryPath {
+		matches := NormalizeGitURL(strings.TrimSpace(entryURL)) == NormalizeGitURL(registryURL) && NormalizeRegistryPath(entryPath) == NormalizeRegistryPath(registryPath)
+		if matches && requireRef {
+			matches = registryEntryMatchesExactURLPathRef(entryNode, registryURL, registryPath, registryRef)
+		}
+		if matches {
 			removed = true
 			continue
 		}
@@ -814,8 +967,10 @@ func RemoveRegistryEntryFromConfig(configPath, registryURL, registryPath string)
 func entryURLAndPath(entryNode *yaml.Node) (string, string) {
 	urlNode := findMappingValue(entryNode, "url")
 	url := ""
-	if urlNode != nil {
+	if urlNode != nil && strings.TrimSpace(urlNode.Value) != "" {
 		url = strings.TrimSpace(urlNode.Value)
+	} else if pathNode := findMappingValue(entryNode, "path"); pathNode != nil {
+		url = strings.TrimSpace(pathNode.Value)
 	}
 	return url, yamlEntryPath(entryNode)
 }

@@ -12,6 +12,7 @@ package harnesscompile
 // declaration/registration boundary; target_registry_test.go enforces it.
 import (
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/claude"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/cursor"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/devin"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/factory"
@@ -19,6 +20,7 @@ import (
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/windsurf"
 
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/codex"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/cursor"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/devin"
 	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/factory"
