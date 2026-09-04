@@ -72,19 +72,13 @@ func CloneOrPull(url, ref string) (string, error) {
 }
 
 func checkoutResolvedRef(repoDir, ref string) error {
-	if !gitRefExists(repoDir, "refs/remotes/origin/"+ref) {
-		slog.Debug("checking out direct git ref", "repo_dir", repoDir, "ref", ref)
-		return runGit(repoDir, "checkout", "--force", ref)
+	slog.Debug("checking out remote git ref", "repo_dir", repoDir, "ref", ref)
+	if err := runGit(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref); err == nil {
+		return nil
 	}
 
-	slog.Debug("checking out remote git ref", "repo_dir", repoDir, "ref", ref)
-	return runGit(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref)
-}
-
-func gitRefExists(repoDir, ref string) bool {
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
-	cmd.Dir = repoDir
-	return cmd.Run() == nil
+	slog.Debug("checking out direct git ref", "repo_dir", repoDir, "ref", ref)
+	return runGit(repoDir, "checkout", "--force", ref)
 }
 
 func dirExists(path string) (bool, error) {
