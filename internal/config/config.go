@@ -39,6 +39,19 @@ const (
 // Higher values override lower values.
 func (s Source) Precedence() int { return int(s) }
 
+// CompareEntryPrecedence compares two entries by layer and then file order.
+// It returns zero when they have equal authority. File order is ignored if
+// either file value is zero, preserving behavior for configs without includes.
+func CompareEntryPrecedence(aSource Source, aFile int, bSource Source, bFile int) int {
+	if aSource.Precedence() != bSource.Precedence() {
+		return aSource.Precedence() - bSource.Precedence()
+	}
+	if aFile == 0 || bFile == 0 {
+		return 0
+	}
+	return aFile - bFile
+}
+
 // IsMachineScope reports whether skills from this source are installed at
 // the user-wide scope rather than the per-repo scope.
 // SourceUnset (zero value) is treated as repo-scoped.
@@ -290,7 +303,35 @@ type LoggingConfig struct {
 	Compress   *bool   `yaml:"compress,omitempty"`
 }
 
+type IncludePaths []string
+
+func (p *IncludePaths) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" {
+			return nil
+		}
+		var path string
+		if err := value.Decode(&path); err != nil {
+			return err
+		}
+		*p = IncludePaths{path}
+		return nil
+	case yaml.SequenceNode:
+		var paths []string
+		if err := value.Decode(&paths); err != nil {
+			return err
+		}
+		*p = paths
+		return nil
+	default:
+		return fmt.Errorf("include must be a path or sequence of paths")
+	}
+}
+
 type Config struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is the schema version sentinel. The canonical version is
 	// "agent-marketplace/v2"; "agent-marketplace/v3" is retained as a
 	// compatibility alias. v1 configs have no apiVersion field and are
@@ -379,6 +420,8 @@ func (c *Config) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, bool) {
 }
 
 type LocalConfig struct {
+	Include IncludePaths `yaml:"include,omitempty"`
+
 	// APIVersion is an optional schema-version sentinel. Local configs
 	// (config.local.yaml) are generated without it, but users may add
 	// "agent-marketplace/v2" or "agent-marketplace/v3" by hand (or copy it
@@ -482,6 +525,11 @@ type RegistryEntry struct {
 	// Source identifies which configuration layer this entry originated from.
 	// Set during merge; not serialized in YAML.
 	Source Source `yaml:"-"`
+
+	// FilePrecedence orders registry entries from files composed into one layer.
+	// Higher values have higher precedence. Zero retains equal-source behavior
+	// for configs without includes.
+	FilePrecedence int `yaml:"-"`
 
 	// CatalogKey is the key used to look up this registry's skill catalog in
 	// the catalogs map. For git registries it is the cache path; for local

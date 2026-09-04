@@ -2,11 +2,14 @@ package resolver
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -94,6 +97,124 @@ func findResolved(resolved []ResolvedArtifact, name string) *ResolvedArtifact {
 		}
 	}
 	return nil
+}
+
+func TestNestedCollectionExclusionDoesNotBypassCollectionPolicy(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: monorepoURL, Ref: "main", Path: "bundles/inner", Collections: config.KindSelector{ExcludeAll: true}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if got := findResolved(resolved, "nested-skill"); got != nil {
+		t.Fatalf("excluded nested collection bypassed its collection exclusion: %#v", got)
+	}
+	for _, err := range errs {
+		if IsSelectedNotFound(err) {
+			t.Fatalf("collection exclusion should be a no-op, not a missing-resource error: %v", err)
+		}
+	}
+}
+
+func TestRequiredNestedCollectionIgnoresCollectionExclusion(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: monorepoURL, Ref: "main", Path: "bundles/inner", Required: true, Skills: ks("required-direct"), Collections: config.KindSelector{ExcludeAll: true}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+			{Kind: ir.KindSkill, Name: "required-direct"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if got := findResolved(resolved, "nested-skill"); got == nil || !got.Required {
+		t.Fatalf("required nested collection must survive collection exclusion, got %#v (errs=%v)", got, errs)
+	}
+}
+
+func TestLocalExcludesDoNotSuppressMachineScopedCollectionMembers(t *testing.T) {
+	for _, source := range []config.Source{config.Organization, config.UserPersonal} {
+		t.Run(source.String(), func(t *testing.T) {
+			const machineURL = "git@example.com:machine.git"
+			nested := ir.NewCollection("nested", "1.0.0", "nested", []ir.CollectionMember{{Name: "machine-nested", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			root := ir.NewCollection("root", "1.0.0", "root", []ir.CollectionMember{{Name: "machine-direct", Kind: ir.KindSkill, Registry: machineURL}}, []string{"nested"}, nil, ir.SourceRef{})
+
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: collectionsHost, Ref: "main", Source: config.RepoCommitted, Collections: ks("root")},
+				{URL: machineURL, Ref: "main", Source: source},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+				cfg.Registries[1].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "nested", Resource: nested},
+					{Kind: ir.KindSkill, Name: "machine-direct"},
+					{Kind: ir.KindSkill, Name: "machine-nested"},
+				},
+			}
+
+			resolved, errs := Resolve(cfg, catalogs, &config.LocalConfig{
+				Skills:      kse(nil, []string{"machine-direct", "machine-nested"}),
+				Collections: kse(nil, []string{"nested"}),
+			})
+			if len(errs) != 0 {
+				t.Fatalf("expected no errors, got %v", errs)
+			}
+			for _, name := range []string{"machine-direct", "machine-nested"} {
+				member := findResolved(resolved, name)
+				if member == nil {
+					t.Fatalf("local excludes suppressed machine-scope collection member %q: %#v", name, resolved)
+				}
+				if member.Source != source {
+					t.Fatalf("member %q source = %v, want %v", name, member.Source, source)
+				}
+			}
+		})
+	}
+}
+
+func TestEquivalentRegistryPathsDeduplicateAsOnePhysicalSource(t *testing.T) {
+	const registryURL = "git@example.com:shared.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: registryURL, Ref: "main", Path: "foo", Skills: ks("shared")},
+		{URL: registryURL, Ref: "main", Path: "./foo/", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 {
+		t.Fatalf("equivalent registry paths should produce one artifact, got %#v", resolved)
+	}
+	if resolved[0].RegistryPath != "foo" {
+		t.Fatalf("resolved path identity = %q, want canonical foo", resolved[0].RegistryPath)
+	}
+	for _, err := range errs {
+		if IsNameCollision(err) {
+			t.Fatalf("equivalent registry paths must not produce a collision warning: %v", err)
+		}
+	}
 }
 
 // TestPathLessMemberBindsToContainingEntry pins the core rule: with several
@@ -340,6 +461,44 @@ func TestExplicitPathMemberBindsToThatPath(t *testing.T) {
 	}
 }
 
+func TestExplicitPathMemberWithoutRefReportsRefAmbiguity(t *testing.T) {
+	col := goToolsCollection(ir.CollectionMember{
+		Name:     "efficient-go",
+		Kind:     ir.KindSkill,
+		Registry: monorepoURL,
+		Path:     "teams/development/plugins/dev-language-guides",
+	})
+	cfg, catalogs := buildMemberCase(t, col, []memberFixture{
+		{url: monorepoURL, path: "teams/development/plugins/dev-language-guides", ref: "main", names: []string{"efficient-go"}},
+		{url: monorepoURL, path: "teams/development/plugins/dev-language-guides", ref: "next", names: []string{"efficient-go"}},
+	})
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	var warning *AmbiguousCollectionMemberWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected ambiguity warning for an unqualified ref, got: %v", errs)
+	}
+	if warning.Path != "teams/development/plugins/dev-language-guides" {
+		t.Fatalf("warning path = %q, want explicit member path", warning.Path)
+	}
+	for _, want := range []string{"teams/development/plugins/dev-language-guides@main", "teams/development/plugins/dev-language-guides@next"} {
+		if !slices.Contains(warning.Candidates, want) {
+			t.Fatalf("candidates = %#v, want %q", warning.Candidates, want)
+		}
+	}
+	if !strings.Contains(warning.Error(), "without a ref") {
+		t.Fatalf("warning should identify missing ref: %s", warning)
+	}
+	if got := findResolved(resolved, "efficient-go"); got == nil {
+		t.Fatal("ambiguous member was not deterministically resolved")
+	}
+}
+
 // TestExplicitPathMemberUnknownPathNamesConfiguredPaths keeps a pinned path
 // diagnosable: when no entry uses it, the error names the paths that are
 // configured rather than claiming the repository is absent entirely.
@@ -550,5 +709,285 @@ func TestPathLessMemberRequiredWhenAnyCandidateIsRequired(t *testing.T) {
 				t.Fatalf("Required=%v, want %v", snf.Required, tc.wantRequired)
 			}
 		})
+	}
+}
+
+func TestNestedCollectionDefinitionUsesConfiguredOwnerAndAuthority(t *testing.T) {
+	tests := []struct {
+		name         string
+		memberName   string
+		ownerA       config.Source
+		ownerB       config.Source
+		wantURL      string
+		wantPath     string
+		wantRef      string
+		wantSource   config.Source
+		wantRequired bool
+	}{
+		{
+			name:         "parent owner wins equal authority",
+			memberName:   "member-a",
+			wantURL:      "git@example.com:collections-a",
+			wantPath:     "bundles/a",
+			wantRef:      "main",
+			wantRequired: false,
+		},
+		{
+			name:         "higher config authority wins",
+			memberName:   "member-b",
+			ownerA:       config.UserPersonal,
+			ownerB:       config.RepoCommitted,
+			wantURL:      "git@example.com:collections-b",
+			wantPath:     "bundles/b",
+			wantRef:      "next",
+			wantSource:   config.RepoCommitted,
+			wantRequired: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			innerA := ir.NewCollection("inner", "1.0.0", "A", []ir.CollectionMember{{Name: tc.memberName, Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			innerB := ir.NewCollection("inner", "2.0.0", "B", []ir.CollectionMember{{Name: tc.memberName, Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+			outer := ir.NewCollection("outer", "1.0.0", "Outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "git@example.com:collections-a", Ref: "main", Path: "bundles/a", Source: tc.ownerA, Collections: ks("outer")},
+				{URL: "git@example.com:collections-b", Ref: "next", Path: "bundles/b", Source: tc.ownerB},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "outer", Resource: outer},
+					{Kind: ir.KindCollection, Name: "inner", Resource: innerA},
+					{Kind: ir.KindSkill, Name: tc.memberName},
+				},
+				cfg.Registries[1].CatalogKey: {
+					{Kind: ir.KindCollection, Name: "inner", Resource: innerB},
+					{Kind: ir.KindSkill, Name: tc.memberName},
+				},
+			}
+
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors = %v", errs)
+			}
+			got := findResolved(resolved, tc.memberName)
+			if got == nil {
+				t.Fatalf("member %q was not expanded: %#v", tc.memberName, resolved)
+			}
+			if got.RegistryURL != tc.wantURL || got.RegistryPath != tc.wantPath || got.Ref != tc.wantRef || got.Source != tc.wantSource {
+				t.Fatalf("member metadata = %s/%s@%s source=%s, want %s/%s@%s source=%s", got.RegistryURL, got.RegistryPath, got.Ref, got.Source, tc.wantURL, tc.wantPath, tc.wantRef, tc.wantSource)
+			}
+			if got.Required != tc.wantRequired {
+				t.Fatalf("member Required = %v, want %v", got.Required, tc.wantRequired)
+			}
+			if got.Via == "" {
+				t.Fatalf("member %q was directly resolved instead of expanded from the selected nested collection", tc.memberName)
+			}
+		})
+	}
+}
+
+// TestChooseNestedCollectionRequiredCandidateWins isolates required-policy
+// precedence from Resolve's direct-selection behavior. A required duplicate
+// definition must win even when the non-required definition appears first.
+func TestChooseNestedCollectionRequiredCandidateWins(t *testing.T) {
+	nonRequiredDefinition := ir.NewCollection("duplicate", "1.0.0", "non-required", nil, nil, nil, ir.SourceRef{})
+	requiredDefinition := ir.NewCollection("duplicate", "2.0.0", "required", nil, nil, nil, ir.SourceRef{})
+
+	candidates := []collectionCandidate{
+		{
+			entry:      catalog.Entry{Kind: ir.KindCollection, Name: "duplicate", Resource: nonRequiredDefinition},
+			catalogKey: "catalog-a",
+			owner: config.RegistryEntry{
+				URL:  "git@example.com:collections-a",
+				Ref:  "main",
+				Path: "bundles/a",
+			},
+			ownerFound: true,
+		},
+		{
+			entry:      catalog.Entry{Kind: ir.KindCollection, Name: "duplicate", Resource: requiredDefinition},
+			catalogKey: "catalog-b",
+			owner: config.RegistryEntry{
+				URL:      "git@example.com:collections-b",
+				Ref:      "next",
+				Path:     "bundles/b",
+				Required: true,
+			},
+			ownerFound: true,
+		},
+	}
+
+	chosen, ok := chooseNestedCollection(candidates, ResolvedArtifact{RegistryURL: "git@example.com:collections-a", Ref: "main", RegistryPath: "bundles/a"})
+	if !ok {
+		t.Fatal("chooseNestedCollection() found no duplicate definition")
+	}
+	if chosen.entry.Resource != requiredDefinition {
+		t.Fatalf("chosen definition = %v, want required duplicate", chosen.entry.Resource)
+	}
+	if chosen.owner.URL != "git@example.com:collections-b" || chosen.owner.Path != "bundles/b" || chosen.owner.Ref != "next" {
+		t.Fatalf("chosen owner = %s/%s@%s, want git@example.com:collections-b/bundles/b@next", chosen.owner.URL, chosen.owner.Path, chosen.owner.Ref)
+	}
+	if !chosen.owner.Required {
+		t.Fatal("chosen duplicate owner is not marked required")
+	}
+}
+
+func TestNestedCollectionExcludedWinnerFallsBackToEligibleDuplicate(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	highInner := ir.NewCollection("inner", "2.0.0", "higher authority but excluded", []ir.CollectionMember{{Name: "fallback-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	lowInner := ir.NewCollection("inner", "1.0.0", "lower eligible", []ir.CollectionMember{{Name: "fallback-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Source: config.RepoCommitted, Collections: ks("outer")},
+		{URL: "git@example.com:high", Ref: "main", Path: "bundles/high", Source: config.RepoPersonal, Collections: config.KindSelector{Exclude: []string{"inner"}}},
+		{URL: "git@example.com:low", Ref: "main", Path: "bundles/low", Source: config.RepoCommitted},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "inner", Resource: highInner}},
+		cfg.Registries[2].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: lowInner},
+			{Kind: ir.KindSkill, Name: "fallback-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	got := findResolved(resolved, "fallback-skill")
+	if got == nil {
+		t.Fatalf("lower eligible duplicate did not expand: %#v", resolved)
+	}
+	if got.RegistryURL != "git@example.com:low" || got.RegistryPath != "bundles/low" {
+		t.Fatalf("expanded duplicate metadata = %s/%s, want lower eligible definition", got.RegistryURL, got.RegistryPath)
+	}
+}
+
+func TestNestedCollectionHarnessesCannotWidenParent(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer"), Harnesses: []string{"claude", "factory"}},
+		{URL: "git@example.com:nested.git", Ref: "main", Collections: ks(), Harnesses: []string{"factory", "gemini"}},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner", Resource: inner},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory, hcc.TargetGemini}))
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	nested := findResolved(resolved, "nested-skill")
+	if nested == nil {
+		t.Fatalf("nested skill was not expanded: %#v", resolved)
+	}
+	want := []hcc.Target{hcc.TargetFactory}
+	if !slices.Equal(nested.Harnesses, want) {
+		t.Fatalf("nested harnesses = %v, want %v", nested.Harnesses, want)
+	}
+}
+
+func TestNestedCollectionUsesWithResourcesFallback(t *testing.T) {
+	outer := ir.NewCollection("outer", "1.0.0", "outer", nil, []string{"inner"}, nil, ir.SourceRef{})
+	inner := ir.NewCollection("inner", "1.0.0", "inner", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: collectionsHost, Ref: "main", Collections: ks("outer")},
+		{URL: "git@example.com:nested.git", Ref: "main"},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "outer", Resource: outer}},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "inner"},
+			{Kind: ir.KindSkill, Name: "nested-skill"},
+		},
+	}
+	resources := map[string]map[string]ir.Resource{
+		cfg.Registries[1].CatalogKey: {
+			skill.ResourceKey(ir.KindCollection, "inner"): inner,
+		},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithResources(resources))
+	if len(errs) != 0 {
+		t.Fatalf("Resolve errors = %v", errs)
+	}
+	if nested := findResolved(resolved, "nested-skill"); nested == nil {
+		t.Fatalf("nested skill was not expanded through resource fallback: %#v", resolved)
+	}
+}
+
+func TestExplicitPathMemberFiltersLocalExcludesAndHarnessesBeforePreference(t *testing.T) {
+	const memberURL = "git@example.com:member.git"
+	for _, tc := range []struct {
+		name      string
+		localExcl bool
+		userHarn  []string
+		targets   []hcc.Target
+	}{
+		{name: "local exclusion", localExcl: true, userHarn: []string{"factory"}},
+		{name: "incompatible repo owner", userHarn: []string{"factory"}, targets: []hcc.Target{hcc.TargetFactory}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			col := ir.NewCollection("root", "1.0.0", "root", []ir.CollectionMember{{Name: "bound", Kind: ir.KindSkill, Registry: memberURL, Path: "plugins"}}, nil, nil, ir.SourceRef{})
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: collectionsHost, Ref: "main", Collections: ks("root")},
+				{URL: memberURL, Ref: "main", Path: "plugins", Source: config.RepoCommitted, FilePrecedence: 2, Harnesses: []string{"cursor"}},
+				{URL: memberURL, Ref: "main", Path: "plugins", Source: config.UserPersonal, Harnesses: tc.userHarn},
+			}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				cfg.Registries[0].CatalogKey: {{Kind: ir.KindCollection, Name: "root", Resource: col}},
+				cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "bound"}},
+			}
+			var local *config.LocalConfig
+			if tc.localExcl {
+				local = &config.LocalConfig{Skills: kse(nil, []string{"bound"})}
+			}
+			resolved, errs := Resolve(cfg, catalogs, local, WithTargetHarnesses(tc.targets))
+			if len(errs) != 0 {
+				t.Fatalf("Resolve errors = %v", errs)
+			}
+			got := findResolved(resolved, "bound")
+			if got == nil || got.Source != config.UserPersonal {
+				t.Fatalf("bound member = %#v, want compatible machine owner", got)
+			}
+		})
+	}
+}
+
+func TestSharedNestedCollectionIsNotReportedAsCycle(t *testing.T) {
+	root := ir.NewCollection("root", "1.0.0", "root", nil, []string{"left", "right"}, nil, ir.SourceRef{})
+	left := ir.NewCollection("left", "1.0.0", "left", nil, []string{"shared"}, nil, ir.SourceRef{})
+	right := ir.NewCollection("right", "1.0.0", "right", nil, []string{"shared"}, nil, ir.SourceRef{})
+	shared := ir.NewCollection("shared", "1.0.0", "shared", []ir.CollectionMember{{Name: "shared-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: collectionsHost, Ref: "main", Collections: ks("root")}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: {
+		{Kind: ir.KindCollection, Name: "root", Resource: root},
+		{Kind: ir.KindCollection, Name: "left", Resource: left},
+		{Kind: ir.KindCollection, Name: "right", Resource: right},
+		{Kind: ir.KindCollection, Name: "shared", Resource: shared},
+		{Kind: ir.KindSkill, Name: "shared-skill"},
+	}}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "cycle detected") {
+			t.Fatalf("shared DAG node was reported as a cycle: %v", err)
+		}
+	}
+	if nested := findResolved(resolved, "shared-skill"); nested == nil {
+		t.Fatalf("shared nested skill was not expanded: %#v", resolved)
 	}
 }

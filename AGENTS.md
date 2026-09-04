@@ -7,7 +7,7 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 ## Core Concept
 
 - **Registry repos** contain agent resources (skill directories with `SKILL.md`, commands, subagents, hooks, MCP server definitions). Content is ingested through `harness-compilation` so resources can be authored in any harness layout and compiled into any target harness.
-- The CLI reads **layered configs**: external organization (`/etc/agent-marketplace/config.yaml`), user-personal (`~/.agents/config.yaml`), repo committed (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`, gitignored). The canonical schema is v2; v3 remains an accepted compatibility alias. v1 configs (no `apiVersion`) are rejected by the loader, and `agent-marketplace migrate` performs structural remediation without forcing a schema rewrite.
+- The CLI reads **layered configs**: external organization (`/etc/agent-marketplace/config.yaml`), user-personal (`~/.agents/config.yaml`), repo committed (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`, gitignored). Every layer supports recursive local-file `include`; included fragments merge below their containing file, while CLI edits remain rooted in the selected config file. The canonical schema is v2; v3 remains an accepted compatibility alias. Regular roots reject v1 configs (no `apiVersion`), included fragments and local roots may omit it, and `agent-marketplace migrate` performs structural remediation without forcing a schema rewrite. See [the precedence reference](./docs/PRECEDENCE.md) for include syntax, validation, and merge order.
 - Target harnesses are resolved from the project config when it declares top-level `harnesses:`, then from the user-personal config, with organization as fallback. Registry entries may further narrow their targets.
 - Each registry entry can declare `harnesses:` to narrow its targets; the entry's list is intersected with the effective target set.
 - Catalog-only commands (`list`) work without a configured target set and warn; target-dependent commands (`sync`) require a configured set and exit with an error if missing.
@@ -27,8 +27,10 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 | Multi-resource kinds (skill/command/subagent/hook/mcp) | Full IR fidelity; same selection/exclude UX across all kinds |
 | Tags in `metadata.tags` | Uses the spec's extension point; no deviation |
 | Attribute inheritance (specific wins) | Per-registry-entry overrides top-level defaults |
-| Name collisions across registries refuse sync | Prevents silent overwrites when independent registries provide the same resource |
-| Same-URL different-path collisions emit warning | User deliberately configured both entries; keep all for visibility but warn that only one materializes per scope |
+| Name collisions across registries resolve deterministically with a warning | Keeps one materializable winner visible; required policy, config precedence, normalized URL, and stable config order determine the winner; labels include `@ref` when URL/path alone is ambiguous |
+| Same-URL overlapping paths merge deterministically | Same-URL+ref paths that are component-wise parent/child describe one physical source; required policy wins first, then the deepest path wins equal-policy overlaps, while different scopes remain complementary |
+| Same-URL different-path collisions emit warning | Non-overlapping paths remain visible; keep all occurrences for visibility but warn that only one materializes per scope |
+| Nested collections preserve branch-local ancestry | Shared DAG includes are valid and expand per branch; only an ancestor repeated on the same include path is a cycle |
 | `required:true` registries immune to all excludes | Enforces org-wide security standards |
 | `--from` ad-hoc registry operations on install/remove/list | Zero-config onboarding: browse, install, and remove resources from any registry URL without editing config files first |
 | `.gitignored` generated harness output | Config is committed; generated files are ephemeral on disk |
@@ -51,8 +53,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
-- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; refuses required resources
-- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry
+- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; explicit scope selects the machine/repo/local occurrence and preserves other scopes; refuses required resources and machine removal from repo/local scope
+- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry; `--path` narrows URL matching to an entry/subtree and `--scope` defaults to repo
 - `agent-marketplace sync` — deterministic materialization based on merged config
 - `agent-marketplace sync --check` — check drift without reconciling; exits 1 if out of sync
 - `agent-marketplace update` / `update --bump` — pull latest for pinned refs

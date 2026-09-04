@@ -147,13 +147,12 @@ registries:
     exclude_all: true
 ```
 
-At a higher-precedence layer (e.g. `config.local.yaml`), `exclude_all` on a registry entry is scoped by URL -- it only suppresses resources from the same registry at lower layers. Top-level `skills.exclude_all: true` in `config.local.yaml` excludes all repo-scoped skills regardless of registry.
+At a higher-precedence layer (e.g. `config.local.yaml`), `exclude_all` on a registry entry is scoped by URL and path subtree -- it suppresses resources from the same registry at lower layers only when the resource is at the same path or a component-wise descendant of the excluding entry (a root entry covers subpaths; sibling paths remain independent). A concrete ref further limits the shadow to that ref; an omitted ref remains a wildcard for legacy exclusions. Top-level `skills.exclude_all: true` in `config.local.yaml` excludes all repo-scoped skills regardless of registry.
 
 ## Install by collection
 
 ```bash
-agent-marketplace list --collections
-agent-marketplace list --collection platform-onboarding
+agent-marketplace list --kind collection
 agent-marketplace install platform-onboarding
 ```
 
@@ -165,7 +164,7 @@ collections:
     - platform-onboarding
 ```
 
-Removing a collection member keeps the bundle and writes an `exclude`; removing the collection name removes the whole bundle reference.
+Removing a collection member keeps the bundle and writes an `exclude`. Removing the collection name deletes the selection from the selected root, or writes a collection exclusion in the root when an included file owns it.
 
 ## Personal overrides
 
@@ -177,7 +176,20 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Required skills cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
+
+When a non-required resource is enabled in both machine and repo scopes,
+`remove` without `--scope` reports the ambiguity. Use `remove --scope user` or
+`remove --scope repo` to remove only the selected occurrence; the other scope
+remains enabled. An explicit scope never falls back to another scope when that
+scope has no occurrence; it reports that the resource is not enabled (and a
+machine-owned occurrence targeted from repo/local scope produces a boundary
+error). `--scope local` is for checkout-local selections/excludes, and cannot
+bypass the machine/repo boundary. An unscoped removal with one unambiguous
+occurrence infers its effective layer (machine resources use user config),
+except that a repo-scoped auto-selected resource that is not explicitly selected
+by committed repo config is recorded as a checkout-local exclusion. Use
+`--scope repo` to edit committed repo config.
 
 ## Daily commands
 
@@ -214,11 +226,11 @@ agent-marketplace install --from git@gitlab.example.com:example-org/infra-skills
 # Remove a specific resource from that registry
 agent-marketplace remove vm-lifecycle --from git@gitlab.example.com:example-org/infra-skills
 
-# Remove the entire ad-hoc registry entry (all resources + the entry)
+# Remove the entire ad-hoc registry at this scope
 agent-marketplace remove --from git@gitlab.example.com:example-org/infra-skills
 ```
 
-Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `remove --from` without a name removes the entire entry; `list --from` is browse-only.
+Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompatible with `--tag`/`--all`; `list --from` is browse-only. `remove --from` without a name deletes an entry from the selected root (repo by default). If the entry comes from an included file or a lower layer, the command writes an `exclude_all` shadow in the selected root instead. For named removal, the URL, path, and ref identify the configured registry entry; `--path` narrows matching to a configured subdirectory and its discovered descendants. Omitting `--path` or `--ref` is only unambiguous when the URL identifies one logical configured location; distinct paths or refs require the corresponding flag. Use the entry's authored path spelling when possible; equivalent normalized URL/path spellings also identify it. Diagnostic `@ref` labels are display-only: pass URL, path, and ref as separate flags. The source file remains unchanged, and normal scope boundaries still apply.
 
 ## How sync works
 

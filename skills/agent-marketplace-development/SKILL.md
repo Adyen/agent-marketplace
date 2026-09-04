@@ -93,6 +93,25 @@ name collision behavior — is shared. Fixes at the `internal/*` layer
 fix both surfaces at once. Features that only make sense in one surface
 belong in `cmd/agent-marketplace/` or `internal/tui/`.
 
+### Resolver invariants
+
+- `resolver.Resolve` may receive catalog entries whose `Resource` is nil through
+  legacy discovery. When the caller has the corresponding IR map, pass it via
+  `resolver.WithResources`; resolution attaches those resources before nested
+  collection expansion so materialization does not lose the definition.
+- Nested collection ownership is selected from configured registry metadata,
+  not catalog/cache-key iteration order. Required policy and config
+  source/file precedence win; ties prefer the containing URL/ref/path and then
+  stable URL/path ordering. Registry subpaths are slash-separated artifact
+  paths: equivalent spellings (such as `./foo/`, repeated separators, or
+  backslashes) share one identity, while config editors retain authored
+  URL/path spelling.
+- Nested collection harnesses inherit the containing collection's effective
+  targets, and an explicitly configured nested list is intersected with them.
+  A nested owner can narrow but never widen its parent; explicit empty remains
+  an opt-out. Include ancestry is branch-local, so shared DAG nodes are valid
+  while an ancestor repeated on one branch is a cycle.
+
 ## Materialization Invariants
 
 `internal/materialize` is the authoritative v2 sync/drift engine. It
@@ -181,13 +200,14 @@ Preserve these invariants:
 
 These are load-bearing. Every PR must preserve them.
 
-### Three-layer precedence (most → least specific)
+### Four-layer precedence (most → least specific)
 
 1. `.agents/config.local.yaml` (gitignored personal overrides; only
    kind-specific resource lists and `exclude` are meaningful).
 2. `.agents/config.yaml` (committed repo config).
-3. `~/.agents/config.yaml` (IT-managed global; `required: true`
-   registries are org-mandatory).
+3. `~/.agents/config.yaml` (user-personal machine config).
+4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
+   `required: true` registries are org-mandatory).
 
 ### Attribute inheritance: specific wins over default
 
@@ -214,20 +234,29 @@ resource editor helpers (`AddResourceToRegistryInConfig`,
 `DisableResourceInRegistryInConfig`, `AddResourceToConfig`) so skills,
 commands, subagents, hooks, and MCP servers stay aligned.
 
-### Required registries ignore local excludes
+### Required registries and machine scope ignore local excludes
 
 `required: true` global registries sync all their resources to the
 configured machine-scope harness roots regardless of repo/local config.
-The resolver enforces this; never add a bypass.
+Repo and checkout-local excludes apply only to non-required repo-scoped
+resources; machine-scoped resources are immune. The resolver enforces this;
+never add a bypass.
 
-### Name collisions refuse sync
+### Name collisions resolve deterministically
 
-If two registries expose the same resource kind and name, `Resolve`
-returns an error. Resolve via per-registry kind-specific lists,
-`exclude`, or removing a source. The same name may exist in different
-kinds; CLI install/remove paths must ask for `--kind` when that makes a
-name ambiguous. `cmd/install.go` mirrors collision behavior for
-`install --all`.
+If two registries expose the same resource kind and name, `Resolve` selects a
+winner and returns a soft warning; it does not fail sync. It chooses by
+`required: true`, config source/file precedence, then alphabetically first
+normalized URL; complete ties use stable config order. Warnings list every
+registry/path participant, including same-registry paths deduplicated for
+materialization. When the same URL/path is present at multiple refs, labels also
+include `@<ref>`; remediation strips that display-only suffix and uses the URL,
+`--path`, and `--ref` when needed. Use per-registry kind-specific lists, `exclude`, or
+removal of the current winner to change the result. Same URL+ref parent/child
+paths are merged as one physical source and the deeper path wins an overlap;
+cross-scope overlaps remain complementary. The same name may exist in different
+kinds; CLI install/remove paths must ask for `--kind` when needed.
+`cmd/install.go` mirrors this behavior for `install --all`.
 
 ### Config editing preserves comments
 
@@ -345,6 +374,15 @@ exposes `newFooCmd() *cobra.Command`. `main.go` registers them.
 | `status` | no | no |
 | `gc` | no | no (cleans cache) |
 | `tui` (or bare invocation on TTY) | yes (via modal) | on demand (`s`) |
+
+`remove` keeps machine- and repo-scoped occurrences distinct. If both copies
+are enabled, an unscoped same-kind removal is ambiguous; an explicit
+`--scope user`, `--scope repo`, or `--scope local` selects the corresponding
+occurrence without suppressing the others. Repo/local scopes must not be used
+to suppress machine resources, and required resources are never removable.
+For `remove --from`, `--scope` selects the config root (repo by default),
+`--path` narrows URL matching to an entry/subtree, and any `@ref` in a
+collision label is diagnostic text rather than part of the URL.
 
 ### Shape of a good CLI command
 

@@ -1,8 +1,8 @@
 # Command-line reference
 
-The `agent-marketplace` command reads layered configuration, discovers registry resources, and materializes those resources into harness-native layouts. This page defines the command hierarchy, arguments, flags, output contracts, and exit statuses.
+The `agent-marketplace` command reads layered configuration, including local files named by each layer's `include` field, discovers registry resources, and materializes those resources into harness-native layouts. This page defines the command hierarchy, arguments, flags, output contracts, and exit statuses.
 
-For configuration fields and precedence, see the [repository configuration reference](configuration.md).
+For configuration fields, include syntax, and precedence, see the [repository configuration reference](configuration.md).
 
 ## Command syntax
 

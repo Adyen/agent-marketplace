@@ -4,7 +4,34 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-Organization, user, and committed repository configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` files use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. The loader rejects v1 configs (no `apiVersion`) in the regular config layers. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+Organization, user, and committed repository root configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but they must use the same per-layer fields as the root that includes them. The loader still rejects a regular root with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+
+## Config includes
+
+All four config layers accept `include` as one local path or an ordered list of local paths:
+
+```yaml
+apiVersion: agent-marketplace/v2
+include: profiles/company.yaml
+```
+
+Use a sequence when order matters:
+
+```yaml
+include:
+  - profiles/company.yaml
+  - profiles/payments-team.yaml
+```
+
+Relative paths resolve from the directory containing the file that declares them; absolute paths are accepted. Includes are recursive. Files are identified by canonical path, so the same file reached more than once, including through a symlink or normalized relative path, contributes only at its first position. Glob patterns and remote URLs are not supported.
+
+Each included fragment has lower precedence than the file containing it. For a list, the first fragment is merged first, later fragments merge over earlier ones, and the containing file merges last. Recursive includes follow the same rule. Merging continues to use field-specific rules; `include` does not turn every field into a simple replacement. For top-level collection selectors and local resource selectors, later files decide conflicts for the same name. Within one file, `exclude` wins over `include`. Once any contributing file sets `exclude_all: true`, it remains true.
+
+Loading the owning layer fails if any include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion` as described above; this exception does not relax validation for a regular root.
+
+The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. Removing an include-owned named resource or collection records an exclusion in the selected root; whole-registry `remove --from` writes a registry-level `exclude_all` shadow there. The included file remains unchanged, and normal scope boundaries still apply.
+
+When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Config editors and removals preserve this alias-versus-subdirectory interpretation; use the authored URL/path spelling when targeting an entry. Resolver matching is separate: equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
 
 ## Layer order
 
@@ -23,7 +50,7 @@ list narrows the effective target list for that entry.
 
 ## Registry allowlist
 
-`allowed_registries` is a first-authority setting: the first layer in precedence order that declares it (org, then user, then repo) fixes the allowlist for the whole effective config. Lower layers cannot broaden or override it, and `config.local.yaml` is not allowed to declare `allowed_registries`.
+`allowed_registries` is a first-authority setting. The first layer in merge order that declares it (org, then user, then repo) fixes the allowlist for the effective config. Within that layer, the earliest declaration in include order wins; later includes and the containing root cannot relax it. Later layers cannot broaden or override it, and `config.local.yaml` cannot declare it.
 
 - When `allowed_registries` is omitted (or `nil`) in every layer, no allowlist is configured and all remote registry origins are permitted.
 - When `allowed_registries` is explicitly set to an empty list (`allowed_registries: []`), all remote registries are denied.
@@ -33,8 +60,8 @@ list narrows the effective target list for that entry.
 
 For each registry entry, selection works per resource kind:
 
-- top-level `skills/commands/subagents/hooks/mcp/tags/exclude` in that config are defaults for entries that do not set their own values
-- if entry sets its own kind-specific list (e.g. `skills`), entry values replace (not merge with) top-level defaults for that entry and kind
+- top-level kind selectors and `tags` provide defaults for registry entries that omit those values. Defaults in later files cascade to registries from earlier includes; the last declaration wins
+- an entry's own selector list or `tags` value, including an explicit empty list, replaces the inherited default rather than merging with it. Once inherited or set, `exclude_all: true` remains true
 - selected names = union of:
   - auto-select all when `(required || default) && no kind-specific selections && tags == nil`
   - explicit per-kind selections (`skills`, `commands`, `subagents`, `hooks`, `mcp`)
@@ -49,19 +76,73 @@ For each registry entry, selection works per resource kind:
 - **Per-kind** (`skills.exclude_all: true`): excludes all resources of that kind from the registry entry. Other kinds (commands, subagents, etc.) are unaffected.
 - **Registry-level** (`exclude_all: true` on the entry): sugar that sets `exclude_all: true` on all per-kind selectors, excluding everything from that registry.
 
-At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by registry URL**: it only suppresses resources from the same registry at lower-precedence layers, preventing cross-registry bleed. Top-level `skills.exclude_all: true` in `config.local.yaml` applies to all repo-scoped (non-required, non-machine-scope) resources of that kind.
+At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by registry URL and path subtree**: it suppresses resources from the same registry at lower-precedence layers only when the excluding path is the same or a component-wise parent (a root entry covers all subpaths, while sibling paths remain independent), preventing cross-registry or sibling-path bleed. A concrete `ref` further limits the shadow to that ref; an omitted ref remains a wildcard for legacy exclusions. Top-level `skills.exclude_all: true` in `config.local.yaml` applies to all repo-scoped (non-required, non-machine-scope) resources of that kind.
 
 `required: true` resources are immune to `exclude_all` at any layer.
 
 ## Exclude precedence
 
-- Excludes from higher-precedence layers suppress lower-layer non-required resources.
-- `config.local.yaml` per-kind excludes are the strongest personal opt-out for non-required resources.
+- Excludes from higher-precedence layers suppress lower-layer non-required
+  resources when the source-scope boundary permits it; repo and checkout-local
+  excludes do not suppress machine-scoped resources.
+- `config.local.yaml` per-kind excludes are the strongest personal opt-out for
+  non-required repo-scoped resources.
 - `required: true` resources cannot be excluded by any layer.
+
+## Removal scope
+
+- Resolution keeps machine- and repo-scoped occurrences separate because they
+  materialize to different roots. If the same kind and name is enabled at both
+  scopes, an unscoped `remove` is ambiguous rather than silently removing one
+  copy. For a non-required resource, `remove --scope user` selects the
+  machine-scoped occurrence and `remove --scope repo` selects the committed
+  repo occurrence; the other scope remains enabled. If the selected scope has
+  multiple providers, add `--from`/`--path` (and `--kind` when needed).
+  `--scope local` selects a checkout-local occurrence or exclusion. An
+  explicit scope never falls back to another scope when that scope has no
+  occurrence; it reports that the resource is not enabled, except that a
+  machine-owned occurrence is retained to return the actionable scope-boundary
+  refusal when targeted from repo or local scope.
+- Explicit scope does not bypass authority boundaries. Repo and local config
+  cannot suppress a machine-scoped resource; use `--scope user`. Required
+  resources remain immune to removal and exclusion at every scope. When no
+  scope is given and there is only one unambiguous occurrence, removal infers
+  its effective layer (machine scope maps to user config); a repo-scoped
+  auto-selected resource that is not explicitly selected by the committed repo
+  config is instead recorded as a checkout-local exclusion. Use `--scope repo`
+  when you intend to edit committed repo config.
+- With `--from`, `--scope` chooses the config root to edit and defaults to
+  `repo`. The URL, path, and ref identify the configured registry entry;
+  `--path` narrows a named removal to a configured subdirectory and its
+  discovered descendants. Omitting `--path` or `--ref` is only unambiguous
+  when the URL identifies one logical configured location; distinct paths or
+  refs require the corresponding flag. For whole-registry removal, provide
+  `--path` (and `--ref` when needed) when the same URL has multiple entries.
+  Diagnostic `@ref` suffixes are labels only; pass the URL, path, and ref as
+  separate flags. The authored URL/path spelling is recommended, although
+  equivalent normalized URL/path spellings identify the same entry.
+
+Collection removal uses a separate lookup because expansion drops the
+collection artifact. Without `--scope`, it checks repo, local, then user roots;
+`--scope user|repo|local` selects a root. Top-level selections are removed or
+shadowed there. Organization-only selections infer user scope when unscoped,
+while explicit repo/local scope fails the authority check. Registry-scoped
+selections match URL, path, and supplied `ref`; path-only local aliases stay
+registry-scoped. Required collections and machine-managed collections cannot be
+removed from any scope or from repo/local scope, respectively. The include tree
+is validated before a top-level edit.
+
+A member with `path` but no `ref` binds deterministically when that path is
+unique. If multiple refs provide it, the resolver warns with each `path@ref`
+candidate and the chosen location. Path-less members retain repository-wide
+lookup and candidate-path diagnostics.
 
 ## Collection precedence
 
-- Collections expand into synthetic registry entries before resolution.
+- Collections expand into synthetic registry entries before resolution. The
+  legacy `skills:` member list and the typed `resources:` list are both
+  supported and merged; nested includes form a DAG, so a shared child is valid
+  across sibling branches while an ancestor repeated on one branch is a cycle.
 - Removing a collection member writes a per-kind `exclude` in the active scope (collection stays installed).
 - If a resource is both direct-selected and collection-provided, direct selection takes precedence for conflict handling and `Via` annotation.
 - A member that names a `registry:` with a `path:` binds to the configured entry at exactly that path. If the repository is configured but not at that path, the warning names both the path the collection asked for and the paths that *are* configured.
@@ -73,9 +154,12 @@ At a higher-precedence layer, `exclude_all` on a registry entry is **scoped by r
 - A member that names a `registry:` **without** a `path:` means "this repository, wherever the resource actually is": it binds to whichever configured entry for that repository actually contains the member, independent of config order and of a `.git` suffix difference. This matters for monorepos, where recursive discovery and org team profiles can both contribute many entries at different paths for one URL.
   - If no configured entry contains it, the warning names every path searched instead of blaming one, and does not claim an upstream removal.
   - Such an unbindable member is a hard (sync-failing) error as soon as **any** configured *location* for that repository is `required: true`, and a soft warning otherwise. Required-ness is judged per location, not per config entry, so two spellings of one location (with and without `.git`) are one location.
-    - This rule used to require **every** location to be `required: true`. That was bypassable: `required: true` exists to enforce org-wide security standards, and adding a non-required entry for the same repository at a different path in `.agents/config.local.yaml` — gitignored and personal — downgraded an org-mandated hard failure to a warning. A severity a personal config layer can soften is not enforcement, so the quantifier is `any`.
-    - The accepted cost is escalation: one `required: true` entry anywhere in a monorepo makes an *unbindable* member of that repository a hard failure, even when the mandated subdirectory is unrelated to the member. It is bounded to members that bind nowhere — a member that binds to some location is unaffected, and so is every member of a repository with no required entry — and the remedy is visible in the message: pin a `path:` on the member, or configure a registry entry for the subdirectory that provides it.
-  - If more than one distinct location contains it, the ambiguity is reported as a warning and the first location — preferring a `required: true` one — is used. Pin a `path:` on the member to make it explicit.
+  - If more than one distinct location contains it, the ambiguity is reported as a warning and the winner is chosen by `required: true`, then config source/file precedence, then config order. Pin a `path:` on the member to make it explicit.
+- Nested collection definitions use configured registry ownership, not catalog or cache-key order. For duplicates, `required: true` wins, followed by config source/file precedence.
+  - If authority ties, the resolver prefers an owner matching the parent URL/ref/path, then uses stable URL/path order.
+  - Recursively expanded members inherit the selected URL, path, ref, and required policy. Harness targets are inherited when the nested owner leaves them unset; an explicit nested-owner list can only narrow the containing collection's targets, and is intersected with the effective target set. An explicit empty list remains an opt-out.
+  - Before recursion, nested collection definitions obey the same exclusions as direct members: collection-name excludes, top-level/local `collections.exclude_all`, and higher-authority per-registry or registry-level `exclude_all` suppress the definition and all of its members. A `required: true` nested owner remains immune.
+  - Include ancestry is branch-local: a collection shared by sibling include branches is valid and may be expanded under each branch, while an ancestor repeated along one branch is reported as a cycle. Members are still deduplicated by the normal direct/collection resolution rules.
 
 ## Resource prerequisites
 
@@ -106,10 +190,10 @@ needed. `kind` defaults to `skill`.
 
 ## Name collisions and ambiguity
 
-- If the same resource name (within the same kind) is selected from multiple different registries, resolution errors.
-- The CLI does not auto-pick a winner across different registries.
-- Resolve ambiguity by making selection registry-specific (e.g. per-entry `skills`), or by excluding one source.
-- The same name may exist across different kinds (e.g. a skill named `deploy` and a command named `deploy`). Use `--kind skill|command|subagent|hook|mcp` to disambiguate.
+- If the same resource name (within the same kind) is selected from multiple different registries, resolution emits a soft warning, chooses one deterministic winner, and continues materializing the resource. The winner is selected by `required: true`, then higher config source/file precedence, then alphabetically first normalized registry URL; if those criteria tie, stable config order wins.
+- Collision warnings name the winner and every distinct registry/path participant, including paths that were otherwise deduplicated for materialization. If the same normalized URL and path are used at multiple refs, every non-empty ref label also includes `@<ref>` so the participants remain distinguishable. If same-registry entries at different paths share a scope, all occurrences are retained for visibility but only one can materialize in that scope; a warning identifies the chosen path and the other paths. Machine- and repo-scoped occurrences may both remain because they materialize to different directories.
+- Same normalized URL+ref entries whose paths overlap by whole path components (for example, `teams/dev` and `teams/dev/eng`) are treated as one physical source rather than a name collision. Required policy wins first; among entries with equal required status, the more-specific path wins when both provide a name. Overlapping entries in different scopes are complementary and remain separate so both scopes can materialize.
+- Collision remediation removes the display-only path/ref suffix from the source label. It uses `agent-marketplace remove <name> --from <url>` and adds `--path <path>` and/or `--ref <ref>` when needed. The `@<ref>` suffix is diagnostic labeling, not part of the URL passed to `--from`; pass the URL, path, and ref as separate flags, using the config's authored URL/path spelling when targeting an entry. If the same name exists across different kinds (e.g. a skill named `deploy` and a command named `deploy`), use `--kind skill|command|subagent|hook|mcp` to disambiguate.
 
 ## Practical examples
 

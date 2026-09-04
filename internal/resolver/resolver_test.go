@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -574,6 +575,100 @@ func TestResolveSameURLDifferentRefsIsCollision(t *testing.T) {
 	}
 }
 
+func TestResolveCollisionWarningNamesRefsForSameURLAndPath(t *testing.T) {
+	const url = "git@example.com:registry.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "v1.0", Path: "skills", Skills: ks("shared")},
+		{URL: url, Ref: "v2.0", Path: "skills", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	entry := catalog.Entry{Name: "shared", Path: "/cache/shared"}
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {entry},
+		cfg.Registries[1].CatalogKey: {entry},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	normalizedURL := config.NormalizeGitURL(url)
+	if warning.Winner != normalizedURL+" (skills) @v1.0" {
+		t.Fatalf("winner = %q, want URL, path, and ref", warning.Winner)
+	}
+	wantRunnersUp := []string{normalizedURL + " (skills) @v2.0"}
+	if !slices.Equal(warning.RunnersUp, wantRunnersUp) {
+		t.Fatalf("runners-up = %#v, want %#v", warning.RunnersUp, wantRunnersUp)
+	}
+	if got := warning.Remediation(); !strings.Contains(got, "--from "+normalizedURL) || !strings.Contains(got, "--ref v1.0") || strings.Contains(got, "@v1.0") {
+		t.Fatalf("remediation should retain the winning ref as a separate flag: %q", got)
+	}
+}
+
+func TestNameCollisionWarningRemediationPreservesStructuredPathAndRef(t *testing.T) {
+	const (
+		url  = "git@example.com:registry.git"
+		path = "team (prod) @v1"
+		ref  = "feature) @fast path"
+	)
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: ref, Path: path, Skills: ks("shared")},
+		{URL: url, Ref: "other", Path: path, Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Name: "shared", Path: "/cache/first/shared"}},
+		cfg.Registries[1].CatalogKey: {{Name: "shared", Path: "/cache/second/shared"}},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	if warning.WinnerURL != url || warning.WinnerPath != path || warning.WinnerRef != ref {
+		t.Fatalf("structured winner location = (%q, %q, %q), want (%q, %q, %q)", warning.WinnerURL, warning.WinnerPath, warning.WinnerRef, url, path, ref)
+	}
+	remediation := warning.Remediation()
+	for _, want := range []string{
+		"--from " + url,
+		"--path 'team (prod) @v1'",
+		"--ref 'feature) @fast path'",
+	} {
+		if !strings.Contains(remediation, want) {
+			t.Fatalf("remediation = %q, want %q", remediation, want)
+		}
+	}
+}
+
+func TestNameCollisionWarningRemediationQuotesApostrophesForPOSIXShell(t *testing.T) {
+	warning := &NameCollisionWarning{
+		Name:       "owner's skill",
+		Winner:     "https://example.com/registry.git",
+		RunnersUp:  []string{"https://example.com/other.git"},
+		WinnerURL:  "https://example.com/registry.git",
+		WinnerPath: "team's skills",
+		WinnerRef:  "feature's branch",
+	}
+
+	remediation := warning.Remediation()
+	const want = `to prefer a different source, exclude the winner: agent-marketplace remove 'owner'\''s skill' --from https://example.com/registry.git --path 'team'\''s skills' --ref 'feature'\''s branch'`
+	if remediation != want {
+		t.Fatalf("Remediation() = %q, want %q", remediation, want)
+	}
+}
+
 func TestResolveSameURLSameRefDeduplicates(t *testing.T) {
 	// Same URL and same ref produce the same catalog key, so dedup applies.
 	cfg := &config.Config{
@@ -607,6 +702,45 @@ func TestResolveSameURLSameRefDeduplicates(t *testing.T) {
 	}
 	if !names["shared-skill"] || !names["extra"] {
 		t.Fatalf("expected shared-skill and extra, got %v", got)
+	}
+}
+
+func TestResolveCollisionWarningNamesEveryPathAndRegistry(t *testing.T) {
+	const sharedURL = "git@example.com:shared.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: sharedURL, Ref: "main", Path: "teams/a", Skills: ks("shared")},
+		{URL: sharedURL, Ref: "main", Path: "teams/b", Skills: ks("shared")},
+		{URL: "git@example.com:other.git", Ref: "main", Path: "teams/c", Skills: ks("shared")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Name: "shared", Path: "/cache/a/shared"}},
+		cfg.Registries[1].CatalogKey: {{Name: "shared", Path: "/cache/b/shared"}},
+		cfg.Registries[2].CatalogKey: {{Name: "shared", Path: "/cache/c/shared"}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].Name != "shared" {
+		t.Fatalf("expected one deterministic materialized winner, got %#v", resolved)
+	}
+	var warning *NameCollisionWarning
+	for _, err := range errs {
+		if errors.As(err, &warning) {
+			break
+		}
+	}
+	if warning == nil {
+		t.Fatalf("expected collision warning, got %v", errs)
+	}
+	if warning.Winner != "git@example.com:other (teams/c)" {
+		t.Fatalf("warning winner = %q, want the alphabetically first normalized URL", warning.Winner)
+	}
+	wantRunnersUp := []string{
+		"git@example.com:shared (teams/a)",
+		"git@example.com:shared (teams/b)",
+	}
+	if !slices.Equal(warning.RunnersUp, wantRunnersUp) {
+		t.Fatalf("warning runners-up = %#v, want %#v", warning.RunnersUp, wantRunnersUp)
 	}
 }
 
@@ -857,12 +991,16 @@ func TestResolveDeduplicatePrefersHigherPrecedence(t *testing.T) {
 		t.Fatalf("expected no errors for deduplicated same registry, got %v", errs)
 	}
 
-	if len(got) != 1 {
-		t.Fatalf("expected 1 deduplicated skill, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("expected machine and repo occurrences to remain scope-separated, got %d", len(got))
 	}
-
-	if got[0].IsGlobal() {
-		t.Fatalf("expected repo occurrence to win by higher precedence, got machine-scoped (URL=%s)", got[0].RegistryURL)
+	var machine, repoScoped bool
+	for _, artifact := range got {
+		machine = machine || artifact.IsGlobal()
+		repoScoped = repoScoped || !artifact.IsGlobal()
+	}
+	if !machine || !repoScoped {
+		t.Fatalf("expected one machine and one repo occurrence, got %+v", got)
 	}
 }
 
@@ -892,14 +1030,22 @@ func TestResolveDeduplicateKeepsRequiredOccurrence(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("expected no errors for deduplicated same registry, got %v", errs)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 deduplicated skill, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("expected machine and repo occurrences to remain scope-separated, got %d", len(got))
 	}
-	if !got[0].Required {
-		t.Fatalf("expected required occurrence to win deduplication")
+	var requiredMachine, repoScoped bool
+	for _, artifact := range got {
+		if artifact.IsGlobal() {
+			requiredMachine = artifact.Required
+		} else {
+			repoScoped = true
+		}
 	}
-	if !got[0].IsGlobal() {
-		t.Fatalf("expected required machine-scope occurrence to remain machine-scoped")
+	if !requiredMachine {
+		t.Fatalf("expected required machine-scope occurrence to remain required: %+v", got)
+	}
+	if !repoScoped {
+		t.Fatalf("expected repo-scope occurrence to remain materialized: %+v", got)
 	}
 }
 
@@ -1840,6 +1986,49 @@ func TestResolveDeduplicateIsDeterministicAcrossRuns(t *testing.T) {
 					i, j, errs[j].Error(), firstErrs[j].Error())
 			}
 		}
+	}
+}
+
+func TestDeduplicateOverlappingPathsPreferDepthBeforeAuthority(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "parent", Ref: "main", Source: config.Organization, CatalogKey: "parent"}, url: url, order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "parent/child", Ref: "main", Source: config.UserPersonal, CatalogKey: "child"}, url: url, order: 1},
+	}
+
+	got := deduplicateOccurrences(occurrences)
+	if len(got) != 1 {
+		t.Fatalf("expected one same-scope overlapping occurrence, got %#v", got)
+	}
+	if got[0].resolved.RegistryPath != "parent/child" {
+		t.Fatalf("deeper path must beat higher-authority parent, got %q", got[0].resolved.RegistryPath)
+	}
+}
+
+func TestDeduplicateOverlappingPathsIsDeterministic(t *testing.T) {
+	const url = "git@example.com:shared.git"
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root"}, url: url, order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "root/a", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root-a"}, url: url, order: 1},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: url, RegistryPath: "root/a/b", Ref: "main", Source: config.RepoCommitted, CatalogKey: "root-b"}, url: url, order: 2},
+	}
+
+	var first []skillOccurrence
+	for i := 0; i < 100; i++ {
+		got := deduplicateOccurrences(occurrences)
+		if len(got) != 1 {
+			t.Fatalf("run %d: got %d occurrences, want one", i, len(got))
+		}
+		if i == 0 {
+			first = got
+			continue
+		}
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("run %d differs from first result: %#v vs %#v", i, got, first)
+		}
+	}
+	if first[0].resolved.RegistryPath != "root/a/b" {
+		t.Fatalf("surviving path = %q, want deepest overlapping path", first[0].resolved.RegistryPath)
 	}
 }
 
@@ -3261,6 +3450,128 @@ func TestResolvePerRegistryExcludeAllSugarCrossLayer(t *testing.T) {
 	// Review resources should remain.
 	if !names["review-skill"] {
 		t.Fatal("expected review-skill to survive (ExcludeAll scoped by URL)")
+	}
+}
+
+func TestApplyCrossLayerExcludesUsesFilePrecedenceWithinLayer(t *testing.T) {
+	for _, source := range []config.Source{config.RepoCommitted, config.UserPersonal} {
+		t.Run(source.String(), func(t *testing.T) {
+			artifact := ResolvedArtifact{
+				Entry:          catalog.Entry{Kind: ir.KindSkill, Name: "included-skill"},
+				RegistryURL:    "git@example.com:team.git",
+				Source:         source,
+				FilePrecedence: 1,
+			}
+			shadow := config.RegistryEntry{
+				URL:            "git@example.com:team.git",
+				Source:         source,
+				FilePrecedence: 2,
+				Skills:         config.KindSelector{Exclude: []string{"included-skill"}},
+			}
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 0 {
+				t.Fatalf("later file did not suppress earlier artifact: %#v", got)
+			}
+
+			shadow.FilePrecedence = artifact.FilePrecedence
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 1 {
+				t.Fatalf("same file suppressed artifact: %#v", got)
+			}
+
+			shadow.FilePrecedence = 0
+			artifact.FilePrecedence = 0
+			if got := applyCrossLayerExcludes([]ResolvedArtifact{artifact}, []config.RegistryEntry{shadow}); len(got) != 1 {
+				t.Fatalf("zero file precedence suppressed artifact: %#v", got)
+			}
+		})
+	}
+}
+
+func TestResolveSkipsShadowedMissingSelectionsBeforeNotFound(t *testing.T) {
+	for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCollection} {
+		t.Run(kind.String(), func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{
+				{URL: "registry", CatalogKey: "catalog", Source: config.RepoCommitted, FilePrecedence: 1},
+				{URL: "registry", CatalogKey: "catalog", Source: config.RepoCommitted, FilePrecedence: 2},
+			}}
+			cfg.Registries[0].SelectorForKindPtr(kind).Include = []string{"missing"}
+			cfg.Registries[1].SelectorForKindPtr(kind).Exclude = []string{"missing"}
+			catalogs := map[string][]catalog.Entry{"catalog": {}}
+			unshadowed := *cfg
+			unshadowed.Registries = cfg.Registries[:1]
+			if _, errs := Resolve(&unshadowed, catalogs, nil); len(errs) == 0 {
+				t.Fatal("unshadowed missing selection did not report an error")
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 0 || len(resolved) != 0 {
+				t.Fatalf("resolved=%#v errors=%v, want shadowed missing selection skipped", resolved, errs)
+			}
+		})
+	}
+}
+
+func TestDeduplicateOccurrencesPrefersLaterFileMetadata(t *testing.T) {
+	occurrences := []skillOccurrence{
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 1, CatalogKey: "included"}, url: "registry", order: 0},
+		{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 2, CatalogKey: "root"}, url: "registry", order: 1},
+	}
+	got := deduplicateOccurrences(occurrences)
+	if len(got) != 1 || got[0].resolved.CatalogKey != "root" {
+		t.Fatalf("deduplicated = %#v, want later root metadata", got)
+	}
+}
+
+func TestShadowedCollisionOccurrenceFallsBackWithoutWarning(t *testing.T) {
+	selection := resourceSelection{kind: ir.KindSkill, name: "shared"}
+	byName := map[resourceSelection][]skillOccurrence{
+		selection: {
+			{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "shadowed", Source: config.RepoCommitted, FilePrecedence: 1}, url: "shadowed", order: 0},
+			{resolved: ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "active", Source: config.RepoCommitted, FilePrecedence: 1}, url: "active", order: 1},
+		},
+	}
+	shadow := config.RegistryEntry{URL: "shadowed", Source: config.RepoCommitted, FilePrecedence: 2, Skills: config.KindSelector{ExcludeAll: true}}
+	filterShadowedOccurrences(byName, []config.RegistryEntry{shadow})
+	winners, warnings := pickWinners(byName)
+	if len(warnings) != 0 || len(winners) != 1 || winners[0].resolved.RegistryURL != "active" {
+		t.Fatalf("winners=%#v warnings=%v, want active fallback without collision", winners, warnings)
+	}
+}
+
+func TestCollectionCandidateAndMemberExclusionsRespectAuthority(t *testing.T) {
+	included := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 1}
+	shadow := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 2, Skills: config.KindSelector{ExcludeAll: true}}
+	candidates := []memberEntryCandidate{{entry: included, catalogKey: "included"}}
+	if got := candidatesNotScopedAway(candidates, ir.KindSkill, []config.RegistryEntry{included, shadow}); len(got) != 0 {
+		t.Fatalf("shadowed collection candidate remained eligible: %#v", got)
+	}
+
+	rootMember := ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "member"}, RegistryURL: "registry", Source: config.RepoCommitted, FilePrecedence: 2}
+	lowerExclude := config.RegistryEntry{URL: "registry", Source: config.RepoCommitted, FilePrecedence: 1, Skills: config.KindSelector{Exclude: []string{"member"}}}
+	if collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{lowerExclude}) {
+		t.Fatal("lower included fragment excluded a root-selected collection member")
+	}
+	higherExclude := lowerExclude
+	higherExclude.FilePrecedence = 3
+	if !collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{higherExclude}) {
+		t.Fatal("higher-authority exclusion did not suppress collection member")
+	}
+	rootMember.Required = true
+	if collectionMemberShadowedByEntries(rootMember, []config.RegistryEntry{higherExclude}) {
+		t.Fatal("required collection member was excluded")
+	}
+}
+
+func TestResolveExcludeAllAtRefDoesNotBleedAcrossRefs(t *testing.T) {
+	main := ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "git@example.com:shared.git", RegistryPath: "skills", Ref: "main", Source: config.RepoCommitted, FilePrecedence: 1}
+	release := main
+	release.Ref = "release"
+	shadow := config.RegistryEntry{
+		URL: "git@example.com:shared.git", Path: "skills", Ref: "release",
+		Source: config.RepoCommitted, FilePrecedence: 2,
+		Skills: config.KindSelector{ExcludeAll: true},
+	}
+	got := applyCrossLayerExcludes([]ResolvedArtifact{main, release}, []config.RegistryEntry{shadow})
+	if len(got) != 1 || got[0].Ref != "main" {
+		t.Fatalf("resolved = %#v, want main ref preserved and release excluded", got)
 	}
 }
 
