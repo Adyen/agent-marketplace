@@ -1,0 +1,59 @@
+name: TUI QA Stress
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  stress:
+    name: Linux 20x
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: tools/tui-qa/.node-version
+
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install exact TUI QA dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: tools/tui-qa
+
+      - name: Build real TUI test binary
+        run: CGO_ENABLED=0 go build -tags e2e -ldflags "-X main.version=tui-qa-${GITHUB_SHA}" -o "$RUNNER_TEMP/agent-marketplace-tui-qa" ./cmd/agent-marketplace
+
+      - name: Compile TUI QA journeys
+        run: pnpm build
+        working-directory: tools/tui-qa
+
+      - name: Run complete journey suite 20 times
+        env:
+          AM_TUI_QA_REPO_ROOT: ${{ github.workspace }}
+          AM_TUI_QA_BINARY: ${{ runner.temp }}/agent-marketplace-tui-qa
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 20); do
+            echo "TUI QA stress iteration ${iteration}/20"
+            pnpm qa:compiled
+          done
+        working-directory: tools/tui-qa
