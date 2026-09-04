@@ -396,7 +396,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, offline ...bool) error {
 	isOffline := len(offline) > 0 && offline[0]
 	localDir := config.FindLocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, warningSink: &lockWarnings})
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true, offline: isOffline, check: true, warningSink: &lockWarnings})
 	if err != nil {
 		return err
 	}

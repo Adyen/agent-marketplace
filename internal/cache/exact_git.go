@@ -170,42 +170,55 @@ func OpenExactGitReadOnly(canonicalSource string, oid GitOID) (string, error) {
 // OpenExactGitReadOnlyWithContext validates an exact snapshot while holding a
 // shared exact-cache namespace lease. The lease ends when this function
 // returns; callers that need to consume the snapshot after validation should
-// use WithExactGitReadOnly instead.
+// use LeaseExactGitReadOnlyWithContext or WithExactGitReadOnly instead.
 func OpenExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string, oid GitOID) (string, error) {
-	if err := exactGitContextErr(ctx); err != nil {
-		return "", err
-	}
-	if err := validateCanonicalSource(canonicalSource); err != nil {
-		return "", err
-	}
-	if err := validateGitOID(oid); err != nil {
-		return "", err
-	}
-	path := exactGitSnapshotPath(canonicalSource, oid)
-	if err := exactGitContextErr(ctx); err != nil {
-		return "", err
-	}
-	// Avoid creating read-only lock state for a snapshot that is not present.
-	// Once a snapshot exists, acquire the namespace lease before the definitive
-	// validation so GC cannot remove it during verification.
-	if err := requireExactGitSnapshot(path, oid); err != nil {
-		return "", err
-	}
-	if err := exactGitContextErr(ctx); err != nil {
-		return "", err
-	}
-	release, err := acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
+	path, release, err := LeaseExactGitReadOnlyWithContext(ctx, canonicalSource, oid)
 	if err != nil {
 		return "", err
 	}
-	defer release()
+	release()
+	return path, nil
+}
+
+// LeaseExactGitReadOnlyWithContext validates an exact snapshot and returns its
+// path with a shared namespace lease. The caller must release the lease after
+// every filesystem consumer has finished with the snapshot.
+func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string, oid GitOID) (string, func(), error) {
 	if err := exactGitContextErr(ctx); err != nil {
-		return "", err
+		return "", nil, err
+	}
+	if err := validateCanonicalSource(canonicalSource); err != nil {
+		return "", nil, err
+	}
+	if err := validateGitOID(oid); err != nil {
+		return "", nil, err
+	}
+	path := exactGitSnapshotPath(canonicalSource, oid)
+	if err := exactGitContextErr(ctx); err != nil {
+		return "", nil, err
+	}
+	// Avoid creating read-only lock state for a snapshot that is not present.
+	// Once a snapshot exists, acquire the namespace lease before the definitive
+	// validation so GC cannot remove it during verification or later use.
+	if err := requireExactGitSnapshot(path, oid); err != nil {
+		return "", nil, err
+	}
+	if err := exactGitContextErr(ctx); err != nil {
+		return "", nil, err
+	}
+	release, err := acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := exactGitContextErr(ctx); err != nil {
+		release()
+		return "", nil, err
 	}
 	if err := openExactGitPathWithContext(ctx, path, oid); err != nil {
-		return "", err
+		release()
+		return "", nil, err
 	}
-	return path, nil
+	return path, release, nil
 }
 
 // WithExactGitReadOnly verifies an exact snapshot and runs consume while the
@@ -215,37 +228,15 @@ func WithExactGitReadOnly(ctx context.Context, canonicalSource string, oid GitOI
 	if consume == nil {
 		return errors.New("exact git read-only consumer is required")
 	}
+	path, release, err := LeaseExactGitReadOnlyWithContext(ctx, canonicalSource, oid)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := exactGitContextErr(ctx); err != nil {
 		return err
 	}
-	if err := validateCanonicalSource(canonicalSource); err != nil {
-		return err
-	}
-	if err := validateGitOID(oid); err != nil {
-		return err
-	}
-	path := exactGitSnapshotPath(canonicalSource, oid)
-	if err := exactGitContextErr(ctx); err != nil {
-		return err
-	}
-	if err := requireExactGitSnapshot(path, oid); err != nil {
-		return err
-	}
-	if err := exactGitContextErr(ctx); err != nil {
-		return err
-	}
-	return withExactGitFileLock(ctx, "namespace", unix.LOCK_SH, func() error {
-		if err := exactGitContextErr(ctx); err != nil {
-			return err
-		}
-		if err := openExactGitPathWithContext(ctx, path, oid); err != nil {
-			return err
-		}
-		if err := exactGitContextErr(ctx); err != nil {
-			return err
-		}
-		return consume(path)
-	})
+	return consume(path)
 }
 
 func requireExactGitSnapshot(path string, oid GitOID) error {

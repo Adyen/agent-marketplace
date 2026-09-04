@@ -266,13 +266,23 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 	// the current layer locks. A mutable ref may have advanced since the lock
 	// was written, but that must not make unreviewed resources installable.
 	exactView := exactLockViewWithContext(ctx, ec)
-	var discoveryOptions []catalog.LoadOption
-	if len(exactView.errors) == 0 {
-		discoveryOptions = append(discoveryOptions, exactView.catalogOption)
-	} else if !onlyMissingInstallLocks(exactView.errors) {
+	if len(exactView.errors) > 0 && !onlyMissingInstallLocks(exactView.errors) {
+		exactView.release()
 		return nil, errors.Join(exactView.errors...)
 	}
+	// Keep every available layer pinned to its exact inventory. Only an entry
+	// whose own layer lock is missing may bootstrap from its mutable ref.
+	installExactSnapshot := catalog.ExactSnapshotFunc(func(entry config.RegistryEntry) (string, string, error) {
+		snapshot, identity, snapshotErr := exactView.exactSnapshot(entry)
+		var lockErr *LockViewError
+		if errors.As(snapshotErr, &lockErr) && lockErr.Code == "lock.missing" {
+			return "", "", nil
+		}
+		return snapshot, identity, snapshotErr
+	})
+	discoveryOptions := []catalog.LoadOption{catalog.WithExactSnapshots(installExactSnapshot)}
 	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir, discoveryOptions...)
+	exactView.release()
 	if err != nil {
 		return nil, err
 	}

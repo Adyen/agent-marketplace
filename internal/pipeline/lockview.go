@@ -50,6 +50,7 @@ type readOnlyExactView struct {
 	exactSnapshot catalog.ExactSnapshotFunc
 	gitMetadata   []LockMetadata
 	errors        []error
+	release       func()
 }
 
 func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) readOnlyExactView {
@@ -57,6 +58,12 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) re
 	byIdentity := make(map[string][]readOnlyLockedGit)
 	var metadata []LockMetadata
 	var viewErrors []error
+	var releases []func()
+	releaseAll := func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
 
 	for _, layer := range ec.PresentLayers() {
 		registries := readOnlyRemoteEntries(layer)
@@ -93,7 +100,11 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) re
 			errorCode := "lock.snapshot-unavailable"
 			openErr := parseErr
 			if openErr == nil {
-				snapshot, openErr = cache.OpenExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+				var release func()
+				snapshot, release, openErr = cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+				if openErr == nil {
+					releases = append(releases, release)
+				}
 			}
 			if openErr == nil {
 				for _, root := range registry.Roots {
@@ -142,7 +153,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) re
 		}
 		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
 	})
-	return readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors}
+	return readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, release: releaseAll}
 }
 
 func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {

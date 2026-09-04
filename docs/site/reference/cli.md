@@ -127,6 +127,8 @@ Installed frontend-design locally
 
 Collection installation prints `Installed collection <name> <scope-label>`. Unmet resource prerequisites are reported as warnings and do not install prerequisite resources automatically.
 
+For configured registries, discovery stays on the exact inventory of every layer that already has a valid lock. A registry may bootstrap from its mutable ref only when its own configuration layer has no lock; a missing lock in one layer does not make another layer's post-lock content installable.
+
 ## `remove`
 
 Removes an explicit selection or records an exclusion, then synchronizes materialized output. Required organization resources cannot be removed or excluded.
@@ -173,6 +175,8 @@ agent-marketplace lock [resource ...] [flags]
 
 Resource names and the registry targeting flags require `--upgrade`; names also require `--registry` and `--kind`. A resource-level upgrade expands to its containing Git source because the commit is the atomic acquisition unit.
 
+`lock --check` inspects existing config, lock, and exact-snapshot bytes without transaction recovery, remote resolution, or cache population. A fresh lock whose exact snapshot is absent from a cold cache reports `lock.snapshot-unavailable`; a stale or missing lock reports the required change without fetching it.
+
 The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace locking is not part of this foundation.
 
 ## `sync`
@@ -199,7 +203,7 @@ Normal synchronization prints counts for installed, removed, malformed, and fail
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` does not reconcile files or locks. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
+With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, caches, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
 
 ## `update`
 

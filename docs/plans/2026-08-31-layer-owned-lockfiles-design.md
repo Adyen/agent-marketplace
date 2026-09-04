@@ -87,7 +87,8 @@ Config edits and lock reconciliation use a dependency transaction with validated
 - `lock --upgrade` advances all or selected Git requirements.
 - `sync` uses locked exact snapshots and minimally reconciles writable stale locks.
 - `sync --locked` refuses missing or stale required locks.
-- `sync --check` reports dependency or materialization drift without mutation.
+- `sync --check` and `lock --check` diagnose only from existing config, lock, exact-cache, and output bytes. They do not recover transactions, resolve mutable refs, fetch or populate a cold cache, create state roots, or reconcile dependencies and output; a required cold snapshot fails as unavailable.
+- configured install discovery keeps every valid layer on its exact inventory and permits mutable bootstrap only for an entry whose own layer lock is missing.
 - `update` advances Git locks, with `--bump` first changing eligible configured refs through the same transaction.
 - read-only `list`, `status`, and deinit planning consume exact lock views without reconciliation.
 - `status` reports each layer's exact Git lock state and distinguishes lock failures from materialization drift.
@@ -98,7 +99,7 @@ Config edits and lock reconciliation use a dependency transaction with validated
 
 Lock YAML uses strict bounded decoding: aliases, merge keys, duplicate or unknown fields, multiple documents, excessive depth or nodes, and conflict markers are rejected. URLs, OIDs, digests, roots, resources, and support paths are validated before use. Output ordering is explicit and duplicate identities are rejected or deterministically deduplicated where the schema permits it.
 
-Writers compare desired bytes before publishing, use same-directory temporary files and atomic rename, and preserve modes. All destructive paths fail closed. Lockfiles contain no credentials, cache paths, plain-directory paths, verification markers, or transient policy decisions.
+Writers compare desired bytes before publishing, use same-directory temporary files and atomic rename, and preserve modes. Exact-snapshot readers hold a shared namespace lease through catalog filesystem consumption; garbage collection takes the exclusive counterpart, so it cannot delete a verified snapshot between validation and use. Lock publication uses the shared lease across transaction commit so collection cannot race a newly active commit after its final lock reread. All destructive paths fail closed. Lockfiles contain no credentials, cache paths, plain-directory paths, verification markers, or transient policy decisions.
 
 ## Verification
 

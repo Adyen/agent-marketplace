@@ -576,8 +576,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if err := recoverDependencyTransactions(ctx); err != nil {
-		return nil, 0, nil, err
+	if !mode.check {
+		if err := recoverDependencyTransactions(ctx); err != nil {
+			return nil, 0, nil, err
+		}
 	}
 	overlays := make(map[string][]byte, len(mode.stagedConfigEdits))
 	stagedEdits := make(map[string]pipeline.StagedConfigEdit, len(mode.stagedConfigEdits))
@@ -713,6 +715,18 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if !exists && mode.locked {
 			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
+		if mode.check {
+			fresh := exists && current != nil && unselectedLayerIsFresh(scope, remote, *current)
+			if !fresh {
+				if mode.locked {
+					return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
+				}
+				changed++
+				continue
+			}
+			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
+			continue
+		}
 
 		operation := lockfile.OperationSync
 		if mode.upgrade && selected && !implicitOrg {
@@ -730,14 +744,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			if !implicitOrg {
 				changed++
-				if !mode.check {
-					data, err := lockfile.Encode(doc)
-					if err != nil {
-						return nil, changed, nil, err
-					}
-					lockDesired[lockPath] = data
-					desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
+				data, err := lockfile.Encode(doc)
+				if err != nil {
+					return nil, changed, nil, err
 				}
+				lockDesired[lockPath] = data
+				desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
 			}
 		}
 		layerChangedCount := 0
@@ -748,7 +760,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
 	}
 	for _, job := range snapshots {
-		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.warningSink); err != nil {
+		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.check, mode.warningSink); err != nil {
 			return nil, changed, nil, err
 		}
 	}
@@ -1048,7 +1060,7 @@ func projectLockedRoots(roots []lockfile.GitRoot, entries []config.RegistryEntry
 	return projected, true
 }
 
-func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline bool, warningSink *[]error) (resultErr error) {
+func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline, readOnly bool, warningSink *[]error) (resultErr error) {
 	started := time.Now()
 	verified := 0
 	defer func() {
@@ -1073,7 +1085,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		if err != nil {
 			return err
 		}
-		if !offline {
+		if !offline && !readOnly {
 			if _, err := cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID); err != nil {
 				return &lockLifecycleError{Code: "lock.snapshot-unavailable", Err: err}
 			}
