@@ -121,6 +121,50 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 
 	switch level {
 	case tmcfg.LevelDetailed, tmcfg.LevelDiagnostic:
+		const previewFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		p.Metrics = append(p.Metrics,
+			PreviewMetric{
+				Name: string(tmcfg.InventorySnapshotName), Description: "Observed effective configuration snapshot; value is its Unix-microsecond observation ordering key", Unit: "{snapshot}", Value: int64(1770000000000000),
+				Attributes: map[string]string{
+					string(tmcfg.MetricAttrConfigFingerprint): previewFingerprint,
+					string(tmcfg.MetricAttrHarnesses):         "factory,devin",
+					string(tmcfg.MetricAttrHarnessScope):      "repo",
+					string(tmcfg.MetricAttrRegistryCount):     "1",
+					string(tmcfg.MetricAttrResourceCount):     "2",
+				},
+			},
+			PreviewMetric{
+				Name: string(tmcfg.InventoryRegistryName), Description: "Registry in an effective configuration snapshot", Unit: "{registry}", Value: 1,
+				Attributes: map[string]string{
+					string(tmcfg.MetricAttrConfigFingerprint): previewFingerprint,
+					string(tmcfg.MetricAttrRegistryID):        "git.example.com/team/resources",
+					string(tmcfg.MetricAttrRegistryLocation):  "https://git.example.com/team/resources.git",
+					string(tmcfg.MetricAttrRegistryRef):       "main",
+					string(tmcfg.MetricAttrConfigScope):       "user",
+					string(tmcfg.MetricAttrRegistryRequired):  "false",
+					string(tmcfg.MetricAttrRegistryDefault):   "true",
+				},
+			},
+			PreviewMetric{
+				Name: string(tmcfg.InventoryResourceName), Description: "Enabled resource in an effective configuration snapshot", Unit: "{resource}", Value: 1,
+				Attributes: map[string]string{
+					string(tmcfg.MetricAttrConfigFingerprint): previewFingerprint,
+					string(tmcfg.MetricAttrRegistryID):        "git.example.com/team/resources",
+					string(tmcfg.MetricAttrRegistryLocation):  "https://git.example.com/team/resources.git",
+					string(tmcfg.MetricAttrRegistryRef):       "main",
+					string(tmcfg.MetricAttrResourceKind):      "skill",
+					string(tmcfg.MetricAttrResourceName):      "code-review",
+					string(tmcfg.MetricAttrConfigScope):       "user",
+					string(tmcfg.MetricAttrResourceRequired):  "false",
+				},
+			},
+			PreviewMetric{
+				Name: string(tmcfg.InventoryOmissionsName), Description: "Inventory snapshots omitted before export", Unit: "{omission}", Value: 1,
+				Attributes: map[string]string{
+					string(tmcfg.MetricAttrOmissionReason): string(InventoryOmissionTooLarge),
+				},
+			},
+		)
 		p.Spans = []PreviewSpan{
 			{
 				Name: "agent_marketplace.command",
@@ -130,9 +174,29 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 				},
 			},
 			{
-				Name: "agent_marketplace.config.load",
+				Name: "agent_marketplace.tui.config",
 				Attributes: map[string]string{
-					"config.scope": "user",
+					"harnesses":      "factory,devin",
+					"harness.scope":  "repo",
+					"registry.count": "1",
+					"resource.count": "2",
+				},
+			},
+			{
+				Name: "agent_marketplace.tui.config_registry",
+				Attributes: map[string]string{
+					"registry.location": "https://git.example.com/team/resources.git",
+					"registry.ref":      "main",
+					"config.scope":      "user",
+				},
+			},
+			{
+				Name: "agent_marketplace.tui.config_resources",
+				Attributes: map[string]string{
+					"resource.kind":     "skill",
+					"resource.names":    `["code-review","smith"]`,
+					"registry.location": "https://git.example.com/team/resources.git",
+					"config.scope":      "user",
 				},
 			},
 		}

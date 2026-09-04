@@ -9,6 +9,7 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 )
@@ -489,12 +490,12 @@ func TestMarkerMergeTargetsAreNotAggregateProtected(t *testing.T) {
 			}
 		}
 	}
-	// Devin is the only ownership-reconciled target, and that — not SymlinkOnly,
-	// which Devin also happens to be the only holder of — is what the fence keys
-	// off (bead agent-marketplace-5exj.29).
+	// Devin and the privately staged Codex target reconcile aggregates through
+	// durable ownership rather than in-file markers.
+	codex := hcc.Target(targetmeta.TargetCodex)
 	for target, info := range harness.TargetInfoMap {
-		if info.OwnershipReconciledAggregates != (target == hcc.TargetDevin) {
-			t.Fatalf("OwnershipReconciledAggregates(%s) = %v; the five marker-merge targets above assume Devin is the only one",
+		if info.OwnershipReconciledAggregates != (target == hcc.TargetDevin || target == codex) {
+			t.Fatalf("OwnershipReconciledAggregates(%s) = %v; only Devin and Codex should bypass marker merging",
 				target, info.OwnershipReconciledAggregates)
 		}
 	}

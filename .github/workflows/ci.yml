@@ -6,9 +6,7 @@ on:
       - main
     tags:
       - '*'
-  pull_request:
-    branches:
-      - main
+  pull_request: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -62,6 +60,211 @@ jobs:
       - name: Run tests
         run: make test
 
+  tui-qa:
+    name: TUI QA Driver
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: tools/tui-qa/.node-version
+
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install exact TUI QA dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: tools/tui-qa
+
+      - name: Build real TUI test binary
+        run: CGO_ENABLED=0 go build -tags e2e -ldflags "-X main.version=tui-qa-${GITHUB_SHA}" -o "$RUNNER_TEMP/agent-marketplace-tui-qa" ./cmd/agent-marketplace
+
+      - name: Run direct TUI usage tests
+        env:
+          AM_TUI_QA_REPO_ROOT: ${{ github.workspace }}
+          AM_TUI_QA_BINARY: ${{ runner.temp }}/agent-marketplace-tui-qa
+          AM_TUI_QA_ARTIFACT_DIR: ${{ runner.temp }}/agent-marketplace-tui-qa-artifacts
+          AM_TUI_QA_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: pnpm qa
+        working-directory: tools/tui-qa
+
+      - name: Upload sanitized TUI snapshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tui-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agent-marketplace-tui-qa-artifacts/snapshots/
+          if-no-files-found: warn
+          retention-days: 7
+
+  e2e:
+    name: E2E (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      E2E_SKIP_DOCKER: "1"
+      E2E_PARALLEL: "4"
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            e2e/go.sum
+
+      - name: Run E2E tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/e2e-artifacts"
+          E2E_REPORT="$RUNNER_TEMP/e2e-artifacts/e2e-report.json" \
+            make e2e 2>&1 | tee "$RUNNER_TEMP/e2e-artifacts/go-test.log"
+
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-${{ runner.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  benchmark:
+    name: Benchmark
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation
+      BENCHMARK_PATTERN: Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge)$
+      BENCHSTAT_VERSION: v0.0.0-20260709024250-82a0b07e230d
+      GOMAXPROCS: 2
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: benchmark-base
+          persist-credentials: false
+
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: benchmark-head
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: benchmark-head/go.mod
+          cache-dependency-path: |
+            benchmark-base/go.sum
+            benchmark-head/go.sum
+
+      - name: Install benchstat
+        working-directory: benchmark-head
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Benchmark base
+        working-directory: benchmark-base
+        run: |
+          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-base.txt"; then
+            cat "$GITHUB_WORKSPACE/benchmark-base.txt"
+            exit 1
+          fi
+
+      - name: Benchmark pull request
+        working-directory: benchmark-head
+        run: |
+          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-head.txt"; then
+            cat "$GITHUB_WORKSPACE/benchmark-head.txt"
+            exit 1
+          fi
+
+      - name: Build benchmark report
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-base.txt > benchmark-base-clean.txt
+          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-head.txt > benchmark-head-clean.txt
+          benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt | tee benchmark-stat.txt
+          awk '
+            BEGIN { change["sec/op"] = change["B/op"] = change["allocs/op"] = "n/a" }
+            /sec\/op.*vs base/ { unit = "sec/op" }
+            /B\/op.*vs base/ { unit = "B/op" }
+            /allocs\/op.*vs base/ { unit = "allocs/op" }
+            /^geomean/ && unit != "" { change[unit] = $NF }
+            END {
+              printf "- Geomean: **%s sec/op**\n", change["sec/op"]
+              printf "- **%s B/op**\n", change["B/op"]
+              printf "- **%s allocs/op**\n", change["allocs/op"]
+            }
+          ' benchmark-stat.txt > benchmark-summary.txt
+          {
+            echo '<!-- agent-marketplace-benchmark-results -->'
+            echo '## Benchmark comparison'
+            echo
+            echo "Compared \`${BASE_SHA:0:12}\` (base) with \`${HEAD_SHA:0:12}\` (pull request) on the same runner."
+            echo
+            cat benchmark-summary.txt
+            echo
+            echo '<details><summary>Full benchstat output</summary>'
+            echo
+            head -n 400 benchmark-stat.txt | sed 's/^/    /'
+            echo
+            echo '</details>'
+            echo
+            echo '_Informational only; benchmark changes do not fail CI._'
+          } > benchmark-comment.md
+          cat benchmark-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update pull request comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          marker='<!-- agent-marketplace-benchmark-results -->'
+          comment_id=$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq "map(select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\")))) | first | .id // empty")
+          if [ -n "$comment_id" ]; then
+            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" --input -
+          else
+            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --input -
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -112,7 +315,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, test, lint, govulncheck]
+    needs: [build, test, e2e, lint, govulncheck]
     if: startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 15
     permissions:

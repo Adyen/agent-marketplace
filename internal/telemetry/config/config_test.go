@@ -162,19 +162,17 @@ func TestValidateEndpointForDeliveryRejectsUnresolvedHostname(t *testing.T) {
 	}
 }
 
-func TestValidateOrganizationRequiresRetention(t *testing.T) {
+func TestValidateOrganizationAllowsDefaultRetention(t *testing.T) {
 	tc := &TelemetryConfig{
 		Level:    LevelBasic,
 		Endpoint: "https://otel.example.com",
 	}
-	errs := Validate(tc, "organization")
-	if len(errs) == 0 {
-		t.Fatalf("expected organization endpoint to require retention_policy")
+	if errs := Validate(tc, "organization"); len(errs) > 0 {
+		t.Fatalf("expected organization endpoint without retention policy to use the default, got %v", errs)
 	}
 
 	tc.RetentionPolicy = "https://example.com/telemetry-retention"
-	errs = Validate(tc, "organization")
-	if len(errs) > 0 {
+	if errs := Validate(tc, "organization"); len(errs) > 0 {
 		t.Fatalf("expected valid org telemetry with retention policy, got %v", errs)
 	}
 }
@@ -373,8 +371,8 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 	if SchemaVersion != "1" {
 		t.Fatalf("SchemaVersion = %q, want 1", SchemaVersion)
 	}
-	if SchemaMajor != 1 || SchemaMinor != 0 {
-		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/0", SchemaMajor, SchemaMinor)
+	if SchemaMajor != 1 || SchemaMinor != 1 {
+		t.Fatalf("SchemaMajor/Minor = %d/%d, want 1/1", SchemaMajor, SchemaMinor)
 	}
 	want := []ResourceAttribute{
 		ResourceAttrCommandName,
@@ -398,5 +396,14 @@ func TestSchemaVersionAndAllowlist(t *testing.T) {
 	}
 	if CommandDurationName != MetricNamespace+".command.duration_ms" {
 		t.Fatalf("CommandDurationName = %q", CommandDurationName)
+	}
+	if InventorySnapshotName != MetricNamespace+".config.snapshot" ||
+		InventoryRegistryName != MetricNamespace+".config.registry" ||
+		InventoryResourceName != MetricNamespace+".config.resource" ||
+		InventoryOmissionsName != MetricNamespace+".config.inventory_omissions" {
+		t.Fatalf("inventory instrument names = %q, %q, %q, %q", InventorySnapshotName, InventoryRegistryName, InventoryResourceName, InventoryOmissionsName)
+	}
+	if len(InventorySnapshotAttributes) != 5 || len(InventoryRegistryAttributes) != 8 || len(InventoryResourceAttributes) != 9 || len(InventoryOmissionAttributes) != 1 {
+		t.Fatalf("inventory allowlist lengths = %d/%d/%d/%d", len(InventorySnapshotAttributes), len(InventoryRegistryAttributes), len(InventoryResourceAttributes), len(InventoryOmissionAttributes))
 	}
 }

@@ -38,6 +38,8 @@ Then skim:
 - `internal/config/merge.go` — `Merge(global, repo)` and
   `resolveInheritedList` (the "specific wins over default" rule).
 - `internal/resolver/resolver.go` — selects which resources are enabled.
+- `internal/harness/destinations.go` — resolves single-root and Codex
+  partitioned destinations for repo and machine scopes.
 - `internal/tui/state.go` — `Model` and `row` shape used by the TUI.
 
 ## Build, Test, Lint
@@ -91,6 +93,25 @@ name collision behavior — is shared. Fixes at the `internal/*` layer
 fix both surfaces at once. Features that only make sense in one surface
 belong in `cmd/agent-marketplace/` or `internal/tui/`.
 
+### Resolver invariants
+
+- `resolver.Resolve` may receive catalog entries whose `Resource` is nil through
+  legacy discovery. When the caller has the corresponding IR map, pass it via
+  `resolver.WithResources`; resolution attaches those resources before nested
+  collection expansion so materialization does not lose the definition.
+- Nested collection ownership is selected from configured registry metadata,
+  not catalog/cache-key iteration order. Required policy and config
+  source/file precedence win; ties prefer the containing URL/ref/path and then
+  stable URL/path ordering. Registry subpaths are slash-separated artifact
+  paths: equivalent spellings (such as `./foo/`, repeated separators, or
+  backslashes) share one identity, while config editors retain authored
+  URL/path spelling.
+- Nested collection harnesses inherit the containing collection's effective
+  targets, and an explicitly configured nested list is intersected with them.
+  A nested owner can narrow but never widen its parent; explicit empty remains
+  an opt-out. Include ancestry is branch-local, so shared DAG nodes are valid
+  while an ancestor repeated on one branch is a cycle.
+
 ## Materialization Invariants
 
 `internal/materialize` is the authoritative v2 sync/drift engine. It
@@ -100,29 +121,30 @@ target roots for repo and machine scopes.
 
 Preserve these invariants:
 
-- **Skills are links, not copies.** Harness skill entries should be
-  symlinks to files/directories under `~/.cache/agent-marketplace`, so
-  target installs reflect cache state and bundled skill assets are not
-  silently dropped.
+- **Skills link by default; file mode copies.** Default-mode harness skill
+  entries are symlinks to files/directories under
+  `~/.cache/agent-marketplace`. File mode writes regular files/trees for
+  targets that support it; Devin deliberately refuses file mode.
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
   harness' native files instead of skill symlinks. The exception is
   declared, never hard-coded: `harness.TargetInfo.SkillDirKinds` names
-  the kinds that take the directory-symlink path instead. Devin sets it
-  for `ir.KindCommand`, because a Devin command *is* a skill directory
-  (`skills/<name>/SKILL.md` carrying `x-agent-marketplace-kind:
-  command`), which also gives it the same prune coverage as a skill.
+  the kinds that take the skill-directory path instead. Devin and Codex set it
+  for `ir.KindCommand`, because their commands are skill directories containing
+  `SKILL.md` with `x-agent-marketplace-kind: command`. Default mode links those
+  directories; Codex file mode writes them as regular trees, while Devin
+  refuses file mode.
 - **No harness-specific skill-link allowlists.** Decide whether a
   resource is a skill by the compiled/source artifact shape, the
   resource kind, and declarative `harness.TargetInfo` metadata — not by
   hard-coded target names like Claude, Factory, Cursor, Windsurf,
-  Gemini, or Devin.
+  Gemini, Devin, or Codex.
 - **`AggregateFiles` must match what the compilers emit.**
   `harness.TargetInfo.AggregateFiles` is the single source of truth for
   which files a target merges into, per scope; both materialization
   routing and `pipeline.CollectManagedPaths` (safety backup coverage)
-  read it. All six targets declare it, and the declaration is not
+  read it. All seven targets declare it, and the declaration is not
   editorial: it must equal "every compiled artifact with
   `MergeWithExisting == true`, at the output-root-relative path the
   planner writes it to, in that scope".
@@ -131,19 +153,24 @@ Preserve these invariants:
   either direction — never satisfy it by restating a list. An
   undeclared aggregate is a file mutated with no safety backup.
 - **Shared aggregate files are ownership-reconciled, not
-  marker-merged.** Targets that reconcile aggregates through ownership —
-  currently only Devin, which declares
-  `harness.TargetInfo.OwnershipReconciledAggregates` and is fenced out of
+  marker-merged.** Devin and Codex declare
+  `harness.TargetInfo.OwnershipReconciledAggregates` and are fenced out of
   the marker-strip prune walk by `aggregateProtectedPaths` on that field
-  alone — go through `internal/ownership` plus
-  `pkg/harness-compilation/jsonc`, in the sequence the `ownership`
-  package doc names (`Open`, `Recover` once before any mutation,
-  `Proof`, `Classify`, patch, `Apply`). Never inject a `_managed_by`
-  marker into such a file and never infer ownership from its bytes:
-  ownership is proven from durable state under
-  `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state must
-  fail closed (every entry unmanaged; preserve everything, prune
+  alone. They go through `internal/ownership` plus their format-preserving
+  JSONC/TOML patchers, in the sequence the `ownership` package doc names
+  (`Open`, `Recover` once before any mutation, `Proof`, `Classify`, patch,
+  `Apply`). Never inject a `_managed_by` marker into such a file and never
+  infer ownership from its bytes: ownership is proven from durable state
+  under `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state
+  must fail closed (every entry unmanaged; preserve everything, prune
   nothing).
+- **Codex has two resolved destinations per scope.** Repo output splits
+  between `<repo>/.agents` and `<repo>/.codex`; machine output splits
+  between `~/.agents` and an absolute `$CODEX_HOME` (default `~/.codex`).
+  Route artifacts by their `.agents`/`.codex` prefix through
+  `ResolveDestinations`; never flatten Codex into one root or let a repo
+  symlink escape the repository. `.agents/skills` alone is not Codex
+  installation evidence.
 - **Symlink-only targets refuse file mode.** A target that sets
   `harness.TargetInfo.SymlinkOnly` (Devin) rejects
   `config.MaterializationModeFile` with
@@ -173,13 +200,14 @@ Preserve these invariants:
 
 These are load-bearing. Every PR must preserve them.
 
-### Three-layer precedence (most → least specific)
+### Four-layer precedence (most → least specific)
 
 1. `.agents/config.local.yaml` (gitignored personal overrides; only
    kind-specific resource lists and `exclude` are meaningful).
 2. `.agents/config.yaml` (committed repo config).
-3. `~/.agents/config.yaml` (IT-managed global; `required: true`
-   registries are org-mandatory).
+3. `~/.agents/config.yaml` (user-personal machine config).
+4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
+   `required: true` registries are org-mandatory).
 
 ### Attribute inheritance: specific wins over default
 
@@ -206,20 +234,29 @@ resource editor helpers (`AddResourceToRegistryInConfig`,
 `DisableResourceInRegistryInConfig`, `AddResourceToConfig`) so skills,
 commands, subagents, hooks, and MCP servers stay aligned.
 
-### Required registries ignore local excludes
+### Required registries and machine scope ignore local excludes
 
 `required: true` global registries sync all their resources to the
 configured machine-scope harness roots regardless of repo/local config.
-The resolver enforces this; never add a bypass.
+Repo and checkout-local excludes apply only to non-required repo-scoped
+resources; machine-scoped resources are immune. The resolver enforces this;
+never add a bypass.
 
-### Name collisions refuse sync
+### Name collisions resolve deterministically
 
-If two registries expose the same resource kind and name, `Resolve`
-returns an error. Resolve via per-registry kind-specific lists,
-`exclude`, or removing a source. The same name may exist in different
-kinds; CLI install/remove paths must ask for `--kind` when that makes a
-name ambiguous. `cmd/install.go` mirrors collision behavior for
-`install --all`.
+If two registries expose the same resource kind and name, `Resolve` selects a
+winner and returns a soft warning; it does not fail sync. It chooses by
+`required: true`, config source/file precedence, then alphabetically first
+normalized URL; complete ties use stable config order. Warnings list every
+registry/path participant, including same-registry paths deduplicated for
+materialization. When the same URL/path is present at multiple refs, labels also
+include `@<ref>`; remediation strips that display-only suffix and uses the URL,
+`--path`, and `--ref` when needed. Use per-registry kind-specific lists, `exclude`, or
+removal of the current winner to change the result. Same URL+ref parent/child
+paths are merged as one physical source and the deeper path wins an overlap;
+cross-scope overlaps remain complementary. The same name may exist in different
+kinds; CLI install/remove paths must ask for `--kind` when needed.
+`cmd/install.go` mirrors this behavior for `install --all`.
 
 ### Config editing preserves comments
 
@@ -337,6 +374,15 @@ exposes `newFooCmd() *cobra.Command`. `main.go` registers them.
 | `status` | no | no |
 | `gc` | no | no (cleans cache) |
 | `tui` (or bare invocation on TTY) | yes (via modal) | on demand (`s`) |
+
+`remove` keeps machine- and repo-scoped occurrences distinct. If both copies
+are enabled, an unscoped same-kind removal is ambiguous; an explicit
+`--scope user`, `--scope repo`, or `--scope local` selects the corresponding
+occurrence without suppressing the others. Repo/local scopes must not be used
+to suppress machine resources, and required resources are never removable.
+For `remove --from`, `--scope` selects the config root (repo by default),
+`--path` narrows URL matching to an entry/subtree, and any `@ref` in a
+collision label is diagnostic text rather than part of the URL.
 
 ### Shape of a good CLI command
 

@@ -27,14 +27,18 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/codex"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -63,6 +67,8 @@ var bufPool = sync.Pool{
 
 type materializePlan struct {
 	outDir       string
+	root         string
+	rootID       string
 	artifacts    []artifact.Artifact
 	mode         hcc.WriteMode
 	prune        bool
@@ -111,6 +117,7 @@ type Report struct {
 type TargetReport struct {
 	Target       hcc.Target
 	MachineScope bool
+	RootID       string
 	OutDir       string
 	Written      []string
 	Skipped      []string
@@ -127,8 +134,10 @@ type portableManifest struct {
 }
 
 type portableManifestEntry struct {
-	Target string `yaml:"target"`
-	Path   string `yaml:"path"`
+	Target  string `yaml:"target"`
+	Path    string `yaml:"path"`
+	RootID  string `yaml:"root_id,omitempty"`
+	RootKey string `yaml:"root_key,omitempty"`
 	// Digest is the SHA-256 digest of the exact file or tree materialized at
 	// Path. Empty values are legacy entries from manifests written before
 	// content ownership was tracked.
@@ -136,8 +145,10 @@ type portableManifestEntry struct {
 }
 
 type portableState struct {
-	path    string
-	entries map[string]portableManifestEntry
+	path         string
+	repoRoot     string
+	machineScope bool
+	entries      map[string]portableManifestEntry
 }
 
 type portableSyncContext struct {
@@ -167,7 +178,7 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 	if err != nil {
 		return nil, err
 	}
-	state := &portableState{path: path, entries: make(map[string]portableManifestEntry)}
+	state := &portableState{path: path, repoRoot: repoRoot, machineScope: machineScope, entries: make(map[string]portableManifestEntry)}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return state, nil
@@ -195,12 +206,28 @@ func loadPortableState(repoRoot string, machineScope bool) (*portableState, erro
 
 func (s *portableState) entry(target hcc.Target, path string) (portableManifestEntry, bool) {
 	entry, ok := s.entries[portableManifestKey(target, path)]
+	if ok && target == hcc.Target(targetmeta.TargetCodex) && !s.matchesCodexRoot(entry) {
+		return portableManifestEntry{}, false
+	}
 	return entry, ok
 }
 
 func (s *portableState) add(target hcc.Target, path, digest string) {
 	path = filepath.ToSlash(filepath.Clean(path))
-	s.entries[portableManifestKey(target, path)] = portableManifestEntry{Target: string(target), Path: path, Digest: digest}
+	entry := portableManifestEntry{Target: string(target), Path: path, Digest: digest}
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		key := outputKey{target: target, machineScope: s.machineScope}
+		if id, root, _, err := portableEntryDestination(key, "", s.repoRoot, path); err == nil {
+			entry.RootID, entry.RootKey = id, ownership.RootKey(root)
+		}
+	}
+	s.entries[portableManifestKey(target, path)] = entry
+}
+
+func (s *portableState) matchesCodexRoot(entry portableManifestEntry) bool {
+	key := outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: s.machineScope}
+	id, root, _, err := portableEntryDestination(key, "", s.repoRoot, entry.Path)
+	return err == nil && entry.RootID == id && entry.RootKey == ownership.RootKey(root)
 }
 
 func (s *portableState) remove(target hcc.Target, path string) {
@@ -413,11 +440,22 @@ type compilePhaseResult struct {
 	// for artifacts that remain in result.Artifacts (not extracted into skillLinks).
 	// Used to generate rich collision hints in syncArtifactLinks.
 	artifactMeta map[outputKey]map[string]skillLink
-	// devinAggregates holds the desired Devin shared-aggregate entries per
-	// output key. They are removed from result.Artifacts during compilation so
-	// the generic merge path never writes or marker-merges a Devin aggregate;
-	// see internal/materialize/devin.go for why that path is unusable here.
-	devinAggregates map[outputKey]*devinAggregateWork
+	// These format-specific maps remain visible to target-local repair and Codex
+	// destination-overlap preflight. Normal compilation and execution reach them
+	// only through ownedAggregateHandler.
+	devinAggregates map[outputKey]*ownedJSONAggregateWork
+	codexAggregates map[outputKey]*ownedJSONAggregateWork
+	codexMCP        map[outputKey][]codexMCPEntry
+	codexMCPBlocked map[outputKey]bool
+}
+
+func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
+	return ownedAggregateState{
+		devin:           r.devinAggregates,
+		codex:           r.codexAggregates,
+		codexMCP:        r.codexMCP,
+		codexMCPBlocked: r.codexMCPBlocked,
+	}
 }
 
 // Run compiles and materializes the given resolved skills into their
@@ -547,7 +585,7 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 	roots := harness.MakeInstallRoots()
 	for _, entry := range state.entries {
 		target := hcc.Target(entry.Target)
-		if _, ok := roots[target]; ok {
+		if _, ok := roots[target]; ok || target == hcc.Target(targetmeta.TargetCodex) {
 			allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 		}
 	}
@@ -569,6 +607,43 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			allOutputs[outputKey{target: target, machineScope: true}] = true
 		}
 	}
+	codex := hcc.Target(targetmeta.TargetCodex)
+	for _, machineScope := range []bool{false, true} {
+		destinations, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
+		if err != nil {
+			continue
+		}
+		for _, destination := range destinations {
+			// Shared native partitions are not installation markers, but durable
+			// managed-link evidence must still revive their output key for prune.
+			if !destination.InstallationEvidence {
+				if destinationHasManagedSymlink(destination, machineScope) {
+					allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
+					break
+				}
+				continue
+			}
+			if outputDirExists(destination.Root) {
+				allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
+				break
+			}
+		}
+	}
+}
+
+func destinationHasManagedSymlink(destination harness.Destination, machineScope bool) bool {
+	for _, component := range destination.Info.ComponentsForScope(machineScope) {
+		entries, err := os.ReadDir(filepath.Join(destination.Root, component))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if isManagedSymlink(filepath.Join(destination.Root, component, entry.Name())) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sameOutputDir reports whether two output directory paths refer to the same
@@ -610,37 +685,49 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	byTarget := make(map[outputKey]*targetWork)
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
-	devinAggregates := make(map[outputKey]*devinAggregateWork)
+	devinAggregates := make(map[outputKey]*ownedJSONAggregateWork)
+	codexAggregates := make(map[outputKey]*ownedJSONAggregateWork)
+	codexMCP := make(map[outputKey][]codexMCPEntry)
+	codexMCPBlocked := make(map[outputKey]bool)
+	ownedAggregates := ownedAggregateState{
+		devin:           devinAggregates,
+		codex:           codexAggregates,
+		codexMCP:        codexMCP,
+		codexMCPBlocked: codexMCPBlocked,
+	}
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
+		aggregateHandler := ownedAggregateHandlerFor(w.target)
 		compileOptions := []hcc.Option{}
+		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
+			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
+		}
 		// Resources that emit merge-with-existing JSON fragments must carry the
 		// ownership marker so materialization merges into (rather than clobbers)
 		// any pre-existing file. Skills and subagents contribute entries to the
 		// plugin manifest (.factory-plugin/.claude-plugin plugin.json), which is
 		// merged per-entry just like mcp.json and hooks.json.
 		//
-		// Devin is deliberately excluded. Its aggregates are reconciled against
-		// the durable ownership store instead, and an in-file `_managed_by`
-		// marker there would be exactly the heuristic ownership inference the
-		// promoted plan forbids — plus a member Devin would forward to its hook
-		// runtime. See internal/materialize/devin.go.
-		if w.target != hcc.TargetDevin {
+		// Ownership-reconciled targets are deliberately excluded. An in-file
+		// `_managed_by` marker would turn file contents into proof of ownership,
+		// exactly the heuristic the durable ownership store exists to avoid.
+		info, knownTarget := harness.TargetInfoMap[w.target]
+		if !knownTarget || !info.OwnershipReconciledAggregates {
 			switch w.skill.Resource.Kind() {
 			case ir.KindMcpServer, ir.KindHook, ir.KindSkill, ir.KindSubagent:
 				compileOptions = append(compileOptions, hcc.WithManagedBy("_managed_by", "agent-marketplace"))
 			}
 		} else if w.machineScope {
-			// Scope selects the Devin hook aggregate: project scope writes
-			// hooks.v1.json, user scope patches config.json#hooks. The default is
-			// ScopeProject, so only the machine-scope pass has to say so.
+			// Ownership-backed compilers use ScopeUser to select their native
+			// machine aggregate layout. ScopeProject is the default, so only the
+			// machine-scope pass has to say so.
 			compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 		}
 		result, err := hcc.Compile(w.skill.Resource, w.target, compileOptions...)
 		if err != nil {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			allDiags = append(allDiags, diag.Diagnostic{
 				Code:     "materialize.compile.error",
 				Severity: diag.SeverityError,
@@ -653,14 +740,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 		if result == nil {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			continue
 		}
 
 		result.Artifacts = append([]artifact.Artifact(nil), result.Artifacts...)
 		if diag.HasErrors(result.Diagnostics) {
 			blocked.blockResource(key, w)
-			markDevinAggregateIncomplete(devinAggregates, key, w)
+			markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
 			tw := byTarget[key]
 			if tw == nil {
 				tw = &targetWork{}
@@ -671,33 +758,17 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 		resourceKind := w.skill.Resource.Kind()
 
-		// Devin shared-aggregate fragments leave the generic artifact pipeline
-		// here, before any plan can see them.
-		if w.target == hcc.TargetDevin {
-			rest, aggregateEntries, aggregateErr := splitDevinAggregateArtifacts(result.Artifacts, w.machineScope, w.skill.Name)
+		// Ownership-reconciled fragments leave the generic artifact pipeline
+		// before any marker-merge or whole-file plan can see them.
+		if aggregateHandler != nil {
+			rest, aggregateErr := aggregateHandler.extract(ownedAggregates, key, result.Artifacts, w.skill.Name)
 			if aggregateErr != nil {
 				blocked.blockResource(key, w)
-				markDevinAggregateIncomplete(devinAggregates, key, w)
-				allDiags = append(allDiags, diag.Diagnostic{
-					Code:     diag.CodeMaterializeDevinAggregateMalformed,
-					Severity: diag.SeverityError,
-					Target:   string(w.target),
-					Resource: w.skill.Name,
-					Message:  fmt.Sprintf("compiled Devin aggregate fragment for resource %q could not be read: %v", w.skill.Name, aggregateErr),
-				})
+				markOwnedAggregateIncomplete(aggregateHandler, ownedAggregates, key, w)
+				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
 			}
 			result.Artifacts = rest
-			if len(aggregateEntries) > 0 {
-				aggregate := devinAggregates[key]
-				if aggregate == nil {
-					aggregate = &devinAggregateWork{}
-					devinAggregates[key] = aggregate
-				}
-				for _, entry := range aggregateEntries {
-					aggregate.add(entry)
-				}
-			}
 		}
 
 		// For hooks, expand ${DROID_PLUGIN_ROOT} to a relative path.
@@ -823,7 +894,26 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		blocked:         blocked,
 		artifactMeta:    artifactMeta,
 		devinAggregates: devinAggregates,
+		codexAggregates: codexAggregates,
+		codexMCP:        codexMCP,
+		codexMCPBlocked: codexMCPBlocked,
 	}
+}
+
+func sourceBundleRoot(resource resolver.ResolvedArtifact) string {
+	source := filepath.Clean(filepath.FromSlash(compilepkg.SourceOf(resource.Resource).File))
+	if source == "." || filepath.IsAbs(source) || source == ".." || strings.HasPrefix(source, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	path := filepath.Clean(resource.Path)
+	root := path
+	for range strings.Split(source, string(os.PathSeparator)) {
+		root = filepath.Dir(root)
+	}
+	if filepath.Clean(filepath.Join(root, source)) != path {
+		return ""
+	}
+	return root
 }
 
 // usesSkillDir reports whether a resource kind materializes as a skill DIRECTORY
@@ -838,37 +928,29 @@ func usesSkillDir(target hcc.Target, kind ir.ResourceKind) bool {
 	return info.UsesSkillDir(kind)
 }
 
-// markDevinAggregateIncomplete records that a SKIPPED resource would have
-// contributed to a Devin aggregate file, so pruning is suppressed for exactly
-// that file. A skipped resource produces no artifacts, so the files it would
-// have written are derived from its kind and scope instead.
-func markDevinAggregateIncomplete(aggregates map[outputKey]*devinAggregateWork, key outputKey, w skillTarget) {
-	if key.target != hcc.TargetDevin || w.skill.Resource == nil {
+// markOwnedAggregateIncomplete records that a skipped resource may have
+// contributed to one of its target's shared files. The concrete handler keeps
+// suppression at the narrowest format-specific file boundary.
+func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggregateState, key outputKey, w skillTarget) {
+	if handler == nil || w.skill.Resource == nil {
 		return
 	}
-	rels := devinAggregateRels(w.skill.Resource.Kind(), key.machineScope)
-	if len(rels) == 0 {
-		return
-	}
-	aggregate := aggregates[key]
-	if aggregate == nil {
-		aggregate = &devinAggregateWork{}
-		aggregates[key] = aggregate
-	}
-	for _, rel := range rels {
-		aggregate.markIncomplete(rel)
-	}
+	handler.markIncomplete(state, key, w.skill.Resource.Kind())
 }
 
 // executeMaterializePlans writes compiled artifacts to disk and syncs skill links.
 //
-// ctx is carried for one reason: reconcileDevinAggregates opens a per-canonical-root
-// critical section, and a contended acquisition must abandon its wait when the run
-// is cancelled instead of ignoring Ctrl-C for the whole lock timeout.
+// ctx reaches the owned-aggregate handlers because their per-canonical-root
+// critical sections must abandon a contended wait when the run is cancelled.
 func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResult, dryRun bool, repoRoot string, modes config.MaterializationModes) *Report {
 	report := &Report{
 		PerTarget: make(map[hcc.Target]TargetReport),
 		Diags:     compileResult.allDiags,
+	}
+	coalescedCodexPartitions, preflightDiag := preflightCodexDestinations(&compileResult, repoRoot, modes)
+	if preflightDiag != nil {
+		report.Diags = append(report.Diags, *preflightDiag)
+		return report
 	}
 
 	// Sort output keys for deterministic PerRoot ordering.
@@ -891,7 +973,18 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 
 	for _, key := range sortedOutputs {
 		roots, ok := harness.MakeInstallRoots()[key.target]
-		if !ok {
+		isCodex := key.target == hcc.Target(targetmeta.TargetCodex)
+		var codexDestinations []harness.Destination
+		if isCodex {
+			var err error
+			codexDestinations, err = harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+			if err != nil {
+				slog.Error("Codex destination preflight failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.destination.error", "error", err)
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
+				continue
+			}
+		}
+		if !ok && !isCodex {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.target.unknown",
 				Severity: diag.SeverityError,
@@ -900,7 +993,17 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			})
 			continue
 		}
-		outDir := roots.For(key.machineScope, repoRoot)
+		outDir := repoRoot
+		if !isCodex {
+			outDir = roots.For(key.machineScope, repoRoot)
+		} else if key.machineScope {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: "resolve home directory for Codex destinations"})
+				continue
+			}
+			outDir = home
+		}
 
 		if !dryRun {
 			if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -959,15 +1062,17 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
-		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot)
-		report = reconcileDevinAggregates(ctx, report, key, outDir, compileResult.devinAggregates[key], dryRun)
+		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
+		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
+			report = aggregateHandler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, codexDestinations, dryRun)
+		}
 	}
 
 	return report
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool) *Report {
 	state, stateErr := loadPortableState(repoRoot, key.machineScope)
 	if stateErr != nil {
 		slog.Error("materialize manifest load failed", "target", key.target, "machine_scope", key.machineScope, "error", stateErr)
@@ -994,7 +1099,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	for _, plan := range plans {
 		regularArtifacts, mergeArtifacts := splitMergeArtifacts(plan.artifacts)
 		if mode == config.MaterializationModeFile {
-			rel, err := filepath.Rel(outDir, plan.outDir)
+			planRoot := outDir
+			if plan.root != "" {
+				planRoot = plan.root
+			}
+			rel, err := filepath.Rel(planRoot, plan.outDir)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.mkdir.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("unsafe portable output directory %s", plan.outDir)})
 				continue
@@ -1003,7 +1112,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			if !dryRun {
 				validate = ensurePortableOutputDir
 			}
-			if _, err := validate(outDir, rel); err != nil {
+			if _, err := validate(planRoot, rel); err != nil {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code:     "materialize.mkdir.error",
 					Severity: diag.SeverityError,
@@ -1025,7 +1134,14 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			}
 		}
 
-		cacheDir := cachedPlanDir(key.target, key.machineScope, outDir, plan.reportPrefix, plan.artifacts)
+		cacheMachineScope, cacheOutDir := key.machineScope, outDir
+		if key.target == hcc.Target(targetmeta.TargetCodex) && coalescedCodexPartitions[codexPlanPartitionKey(plan)] {
+			// A coalesced physical partition must also have one cache target;
+			// otherwise identical repo/machine bytes produce different symlink
+			// targets and rewrite the destination twice.
+			cacheMachineScope, cacheOutDir = false, plan.root
+		}
+		cacheDir := cachedPlanDir(key.target, cacheMachineScope, cacheOutDir, plan.reportPrefix, plan.artifacts)
 		if matErr := prepareArtifactLinkCache(cacheDir, regularArtifacts, dryRun); matErr != nil {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.write.error",
@@ -1106,6 +1222,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		tr := TargetReport{
 			Target:       key.target,
 			MachineScope: key.machineScope,
+			RootID:       plan.rootID,
 			OutDir:       writeReport.OutDir,
 			Written:      writeReport.Written,
 			Skipped:      writeReport.Skipped,
@@ -1113,7 +1230,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		}
 		report.PerRoot = append(report.PerRoot, tr)
 		rootReport := tr
-		rootReport.OutDir = outDir
+		if key.target != hcc.Target(targetmeta.TargetCodex) {
+			rootReport.OutDir = outDir
+		}
 		rootReport.Written = prefixReportPaths(plan.reportPrefix, writeReport.Written)
 		rootReport.Skipped = prefixReportPaths(plan.reportPrefix, writeReport.Skipped)
 		rootReport.Removed = prefixReportPaths(plan.reportPrefix, writeReport.Removed)
@@ -1154,7 +1273,9 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	var pruneDiags []diag.Diagnostic
 	// Root-level managed merge files belong to no component, so only the
 	// wildcard block reaches them.
-	if !componentBlocked(blocked, "") {
+	if key.target == hcc.Target(targetmeta.TargetCodex) {
+		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
+	} else if !componentBlocked(blocked, "") {
 		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, aggregateProtectedPaths(key.target, key.machineScope))
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
@@ -1247,11 +1368,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 		report = prunePortableStaleSymlinks(report, key, outDir, portableCleanupDirs, fileDesired, dryRun)
 	}
 
-	portableReport := &hcc.WriteReport{OutDir: outDir}
+	var portableReports []TargetReport
 	var portableDiags []diag.Diagnostic
 	var portableErr error
 	if !anyBlocked(blocked) {
-		portableReport, portableDiags, portableErr = prunePortableEntries(state, key.target, outDir, fileDesired, dryRun)
+		portableReports, portableDiags, portableErr = prunePortableEntries(state, key, outDir, repoRoot, fileDesired, dryRun)
 	}
 	if portableErr != nil {
 		slog.Error("materialize manifest prune failed", "target", key.target, "machine_scope", key.machineScope, "error", portableErr)
@@ -1261,8 +1382,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 			portableDiags[i].Target = string(key.target)
 		}
 		report.Diags = append(report.Diags, portableDiags...)
-		if len(portableReport.Removed) > 0 {
-			tr := TargetReport{Target: key.target, MachineScope: key.machineScope, OutDir: outDir, Removed: portableReport.Removed}
+		for _, tr := range portableReports {
 			report.PerRoot = append(report.PerRoot, tr)
 			report.PerTarget[key.target] = mergeTargetReports(report.PerTarget[key.target], tr)
 		}
@@ -1337,6 +1457,9 @@ func partitionFileCopyLinks(target hcc.Target, links []skillLink) (symlinkLinks,
 func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix string, tr TargetReport, err error, errFormat string) *Report {
 	tr.Target = key.target
 	tr.MachineScope = key.machineScope
+	if tr.RootID == "" {
+		tr.RootID = codexRootIDForPrefix(key, reportPrefix)
+	}
 	if err != nil {
 		report.Diags = append(report.Diags, diag.Diagnostic{
 			Code:     "materialize.write.error",
@@ -1362,7 +1485,31 @@ func appendGroupReport(report *Report, key outputKey, outDir, reportPrefix strin
 	return report
 }
 
+func codexRootIDForPrefix(key outputKey, rel string) string {
+	if key.target != hcc.Target(targetmeta.TargetCodex) {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	suffix := ""
+	switch {
+	case rel == ".agents" || strings.HasPrefix(rel, ".agents/"):
+		suffix = "agents"
+	case rel == ".codex" || strings.HasPrefix(rel, ".codex/"):
+		suffix = "codex"
+	default:
+		return ""
+	}
+	scope := "repo"
+	if key.machineScope {
+		scope = "machine"
+	}
+	return scope + "-" + suffix
+}
+
 func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
+	if target == hcc.Target(targetmeta.TargetCodex) {
+		return codexMaterializePlans(outDir, artifacts, linkedSkills, machineScope)
+	}
 	info, ok := harness.TargetInfoMap[target]
 	if !ok {
 		return subtreeMaterializePlans(outDir, artifacts, generatedComponents(target), artifactRootPrefix(target), noPruneComponents(target, linkedSkills))
@@ -1371,6 +1518,39 @@ func materializePlans(target hcc.Target, outDir string, artifacts []artifact.Art
 		return windsurfMaterializePlans(outDir, artifacts, machineScope, noPruneComponents(target, linkedSkills))
 	}
 	return subtreeMaterializePlans(outDir, artifacts, info.Components, info.ArtifactRootPrefix, noPruneComponents(target, linkedSkills))
+}
+
+func codexMaterializePlans(repoRoot string, artifacts []artifact.Artifact, linkedSkills map[string]bool, machineScope bool) []materializePlan {
+	destinations, err := harness.ResolveDestinations(hcc.Target(targetmeta.TargetCodex), machineScope, repoRoot)
+	if err != nil {
+		slog.Error("resolve Codex materialization destinations", "code", "materialize.destination.error", "error", err)
+		return nil
+	}
+	var plans []materializePlan
+	for _, destination := range destinations {
+		var routed []artifact.Artifact
+		prefix := strings.TrimSuffix(filepath.ToSlash(destination.Prefix), "/") + "/"
+		for _, candidate := range artifacts {
+			if !strings.HasPrefix(filepath.ToSlash(candidate.Path), prefix) {
+				continue
+			}
+			rel, routeErr := destination.RouteArtifact(candidate.Path)
+			if routeErr != nil {
+				slog.Error("route Codex artifact", "code", "materialize.destination.error", "destination", destination.ID, "error", routeErr)
+				continue
+			}
+			candidate.Path = rel
+			routed = append(routed, candidate)
+		}
+		destinationPlans := subtreeMaterializePlans(destination.Root, routed, destination.Info.Components, destination.Info.ArtifactRootPrefix, noPruneComponents(hcc.Target(targetmeta.TargetCodex), linkedSkills))
+		for i := range destinationPlans {
+			destinationPlans[i].root = destination.Root
+			destinationPlans[i].rootID = destination.ID
+			destinationPlans[i].reportPrefix = filepath.ToSlash(filepath.Join(destination.Prefix, destinationPlans[i].reportPrefix))
+		}
+		plans = append(plans, destinationPlans...)
+	}
+	return plans
 }
 
 func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, components []string, rootPrefix string, noPrune map[string]bool) []materializePlan {
@@ -1788,14 +1968,7 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 	}
 	components := make(map[string]bool, len(groups))
 	for installDirRel := range groups {
-		rel := installDirRel
-		// Windsurf repo-scope uses ".windsurf/skills"; strip the prefix so the
-		// component name ("skills") matches what windsurfMaterializePlans uses.
-		if strings.HasPrefix(rel, windsurfDir+"/") {
-			rel = strings.TrimPrefix(rel, windsurfDir+"/")
-		}
-		component, _, _ := strings.Cut(rel, "/")
-		components[component] = true
+		components[componentName(installDirRel)] = true
 	}
 	return components
 }
@@ -1929,7 +2102,7 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 // carries on pruning every other file in the root. It used to return the error
 // out of the WalkDir callback, so a single refused file aborted the walk and
 // silently left every not-yet-visited sibling un-pruned. That mirrors what
-// devinAggregateWork.incomplete already does for Devin's aggregates and what
+// ownedJSONAggregateWork.incomplete already does for Devin's aggregates and what
 // the plan calls for: "Aggregate updates are atomic per file, not per target"
 // and "Malformed destination JSON blocks that file only."
 //
@@ -2640,31 +2813,38 @@ func portableSkillCollision(dst string, link skillLink) diag.Diagnostic {
 	return diag.Diagnostic{Code: "materialize.collision.user-owned", Severity: diag.SeverityWarning, Resource: link.resourceName, Message: collisionRemoveHint(dst, link.name, link)}
 }
 
-func prunePortableEntries(state *portableState, target hcc.Target, outDir string, desired map[string]bool, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic, error) {
-	report := &hcc.WriteReport{OutDir: outDir}
+func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot string, desired map[string]bool, dryRun bool) ([]TargetReport, []diag.Diagnostic, error) {
+	reports := make(map[string]*TargetReport)
 	var diags []diag.Diagnostic
 	keys := make([]string, 0, len(state.entries))
 	for key := range state.entries {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	for _, key := range keys {
-		entry := state.entries[key]
-		if entry.Target != string(target) || desired[entry.Path] {
+	for _, stateKey := range keys {
+		entry := state.entries[stateKey]
+		if entry.Target != string(key.target) || desired[entry.Path] {
 			continue
 		}
-		path, err := portableOutputPath(outDir, entry.Path)
+		if key.target == hcc.Target(targetmeta.TargetCodex) && !state.matchesCodexRoot(entry) {
+			continue
+		}
+		rootID, root, rel, err := portableEntryDestination(key, outDir, repoRoot, entry.Path)
 		if err != nil {
-			return report, diags, err
+			return nil, diags, err
+		}
+		path, err := portableOutputPath(root, rel)
+		if err != nil {
+			return nil, diags, err
 		}
 		_, err = os.Lstat(path)
 		if err != nil && !os.IsNotExist(err) {
-			return report, diags, err
+			return nil, diags, err
 		}
 		if err == nil {
 			currentDigest, digestErr := portablePathDigest(path)
 			if digestErr != nil {
-				return report, diags, digestErr
+				return nil, diags, digestErr
 			}
 			if entry.Digest == "" || currentDigest != entry.Digest {
 				diags = append(diags, diag.Diagnostic{
@@ -2677,15 +2857,47 @@ func prunePortableEntries(state *portableState, target hcc.Target, outDir string
 		}
 		if !dryRun {
 			if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
-				return report, diags, err
+				return nil, diags, err
 			}
-			cleanEmptyPortableArtifactDirs(outDir, filepath.Dir(filepath.FromSlash(entry.Path)))
-			delete(state.entries, key)
+			cleanEmptyPortableArtifactDirs(root, filepath.Dir(filepath.FromSlash(rel)))
+			delete(state.entries, stateKey)
 		}
-		report.Removed = append(report.Removed, entry.Path)
+		report := reports[root]
+		if report == nil {
+			report = &TargetReport{Target: key.target, MachineScope: key.machineScope, RootID: rootID, OutDir: root}
+			reports[root] = report
+		}
+		report.Removed = append(report.Removed, rel)
 	}
-	sort.Strings(report.Removed)
-	return report, diags, nil
+	roots := make([]string, 0, len(reports))
+	for root := range reports {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	out := make([]TargetReport, 0, len(roots))
+	for _, root := range roots {
+		sort.Strings(reports[root].Removed)
+		out = append(out, *reports[root])
+	}
+	return out, diags, nil
+}
+
+func portableEntryDestination(key outputKey, outDir, repoRoot, entryPath string) (string, string, string, error) {
+	if key.target != hcc.Target(targetmeta.TargetCodex) {
+		return "default", outDir, entryPath, nil
+	}
+	destinations, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+	if err != nil {
+		return "", "", "", err
+	}
+	entryPath = filepath.ToSlash(entryPath)
+	for _, destination := range destinations {
+		prefix := strings.TrimSuffix(filepath.ToSlash(destination.Prefix), "/") + "/"
+		if rel, ok := strings.CutPrefix(entryPath, prefix); ok {
+			return destination.ID, destination.Root, rel, nil
+		}
+	}
+	return "", "", "", fmt.Errorf("portable Codex path %q is outside native destinations", entryPath)
 }
 
 // prunePortableStaleSymlinks removes cache-backed symlinks left behind after a
@@ -3738,6 +3950,69 @@ func isManagedSymlink(path string) bool {
 		return false
 	}
 	return strings.HasPrefix(target, cache.CacheDir()+string(os.PathSeparator))
+}
+
+// CodexMachineManagedPaths returns existing, evidenced machine output grouped
+// by native destination ID. It deliberately never returns a whole component
+// directory: configured backup/restore must not capture handwritten siblings.
+func CodexMachineManagedPaths(repoRoot string) (map[string][]string, error) {
+	target := hcc.Target(targetmeta.TargetCodex)
+	destinations, err := harness.ResolveDestinations(target, true, repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[string]map[string]bool, len(destinations))
+	for _, destination := range destinations {
+		paths[destination.ID] = make(map[string]bool)
+		for _, component := range destination.Info.ComponentsForScope(true) {
+			entries, err := os.ReadDir(filepath.Join(destination.Root, component))
+			if err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+			for _, entry := range entries {
+				rel := filepath.Join(component, entry.Name())
+				if isManagedSymlink(filepath.Join(destination.Root, rel)) {
+					paths[destination.ID][filepath.ToSlash(rel)] = true
+				}
+			}
+		}
+		store, err := ownership.Open(destination.Root)
+		if err != nil {
+			return nil, err
+		}
+		for _, rel := range destination.Info.AggregateFilesForScope(true) {
+			proof, err := store.Proof(rel)
+			if err == nil && proof.OwnedCount() > 0 {
+				paths[destination.ID][filepath.ToSlash(rel)] = true
+			}
+		}
+	}
+	state, err := loadPortableState(repoRoot, true)
+	if err != nil {
+		return nil, err
+	}
+	key := outputKey{target: target, machineScope: true}
+	for _, entry := range state.entries {
+		if entry.Target != string(target) {
+			continue
+		}
+		if !state.matchesCodexRoot(entry) {
+			continue
+		}
+		id, _, rel, err := portableEntryDestination(key, "", repoRoot, entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		paths[id][filepath.ToSlash(rel)] = true
+	}
+	result := make(map[string][]string, len(paths))
+	for id, set := range paths {
+		for rel := range set {
+			result[id] = append(result[id], rel)
+		}
+		sort.Strings(result[id])
+	}
+	return result, nil
 }
 
 func (r *Report) TargetReports() []TargetReport {

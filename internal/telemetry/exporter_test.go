@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	amconfig "github.com/Adyen/agent-marketplace/internal/config"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -256,6 +257,66 @@ func TestCommunityNotFolded(t *testing.T) {
 	}
 	if communityMetrics.Load() != 1 {
 		t.Fatalf("expected one community metric export, got %d", communityMetrics.Load())
+	}
+}
+
+func TestShutdownGivesStalledPrimaryAndCommunityFairOpportunity(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	primaryStarted := make(chan struct{})
+	var primaryOnce sync.Once
+	primarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/metrics" {
+			primaryOnce.Do(func() { close(primaryStarted) })
+			time.Sleep(700 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer primarySrv.Close()
+
+	var communityMetrics atomic.Int32
+	communitySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/metrics" {
+			communityMetrics.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer communitySrv.Close()
+
+	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+		Level:              tmcfg.LevelBasic,
+		Endpoint:           primarySrv.URL,
+		CommunityReporting: boolPtr(true),
+	}}
+	state, err := ResolveTelemetryConfig(nil, user, communitySrv.URL, "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("new telemetry: %v", err)
+	}
+	tel.CommandCounter().Add(context.Background(), 1, nil)
+
+	started := time.Now()
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("shutdown took %v, want bounded concurrent shutdown", elapsed)
+	}
+	select {
+	case <-primaryStarted:
+	default:
+		t.Fatal("stalled primary route was not attempted")
+	}
+	if communityMetrics.Load() != 1 {
+		t.Fatalf("community exports = %d, want 1 despite stalled primary", communityMetrics.Load())
+	}
+	if tel.queue.Count() == 0 {
+		t.Fatal("stalled primary export was not queued")
 	}
 }
 

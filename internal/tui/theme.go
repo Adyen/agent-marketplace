@@ -83,7 +83,7 @@ var (
 	// Full help overlay styles (driven by help.Model)
 	helpFullKeyStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "#A6A000", Dark: "#A6E22E"}).
-				Width(8)
+				Width(13)
 	helpFullDescStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "#1A1A1A", Dark: "#F8F8F2"})
 	helpFullSepStyle = lipgloss.NewStyle().

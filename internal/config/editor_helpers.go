@@ -725,6 +725,22 @@ func yamlEntryPath(entryNode *yaml.Node) string {
 	return ""
 }
 
+// registryEntryMatchesExactURLPathRef matches one URL/path/ref YAML entry.
+func registryEntryMatchesExactURLPathRef(entryNode *yaml.Node, registryURL, registryPath, registryRef string) bool {
+	if entryNode == nil || entryNode.Kind != yaml.MappingNode {
+		return false
+	}
+	urlNode := findRegistryURLNode(entryNode)
+	if urlNode == nil || NormalizeGitURL(strings.TrimSpace(urlNode.Value)) != NormalizeGitURL(strings.TrimSpace(registryURL)) {
+		return false
+	}
+	refNode := findMappingValue(entryNode, "ref")
+	if refNode == nil || strings.TrimSpace(refNode.Value) != strings.TrimSpace(registryRef) {
+		return false
+	}
+	return NormalizeRegistryPath(yamlEntryPath(entryNode)) == NormalizeRegistryPath(registryPath)
+}
+
 // pathLabel returns a human-readable label for a registry path value,
 // using "(root)" for the empty-string root path.
 func pathLabel(p string) string {
@@ -734,41 +750,11 @@ func pathLabel(p string) string {
 	return p
 }
 
-// registryPathMatches reports whether a resolved artifact's registryPath
-// corresponds to a config entry's path. The resolved artifact may carry a
-// sub-bundle path below the entry's configured path (e.g. entry has
-// path="plugins" but the artifact has registryPath="plugins/personal"),
-// so this uses prefix matching rather than exact equality. Both the exact
-// match and a trailing-slash prefix match are accepted.
-func registryPathMatches(entryPath, artifactPath string) bool {
-	ep := strings.TrimSpace(entryPath)
-	ap := strings.TrimSpace(artifactPath)
-	if ep == ap {
-		return true
-	}
-	if ep != "" && strings.HasPrefix(ap, ep+"/") {
-		return true
-	}
-	return false
-}
-
-// preferExactPathMatch narrows a set of YAML entry nodes to only those whose
-// path exactly matches registryPath, when more than one entry matched via
-// prefix (registryPathMatches). If no exact match exists the original slice is
-// returned unchanged so the caller can still fall back to prefix semantics.
-// When registryPath is empty the slice is returned as-is.
-func preferExactPathMatch(entries []*yaml.Node, registryPath string) []*yaml.Node {
-	if registryPath == "" || len(entries) <= 1 {
-		return entries
-	}
-	var exact []*yaml.Node
-	for _, e := range entries {
-		if strings.TrimSpace(yamlEntryPath(e)) == registryPath {
-			exact = append(exact, e)
-		}
-	}
-	if len(exact) > 0 {
-		return exact
-	}
-	return entries
+// registryPathMatches reports whether a requested --path identifies the
+// configured registry entry. Ad-hoc editor operations deliberately require
+// identity equality: a requested descendant must not silently mutate its
+// configured parent. Callers that remove a named resource can separately use
+// the resolver's subtree lookup against the selected (raw) entry path.
+func registryPathMatches(entryPath, requestedPath string) bool {
+	return NormalizeRegistryPath(entryPath) == NormalizeRegistryPath(requestedPath)
 }

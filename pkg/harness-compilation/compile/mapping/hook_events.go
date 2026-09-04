@@ -20,6 +20,11 @@ type hookEventEntry struct {
 //
 // Events that have no equivalent in a target map to "" (unmappable), and
 // the caller should emit a hook.<target>.event-unmappable diagnostic.
+//
+// Codex provenance for every Codex cell below: verified 2026-08-19 against
+// https://developers.openai.com/codex/hooks. Cells use only event names the
+// official event reference documents; Notification and Devin's differently
+// timed PostCompaction event remain explicitly unmappable.
 var hookEventTable = []hookEventEntry{
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
 	{Claude: "PreToolUse", Targets: map[Target]string{
@@ -29,6 +34,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // resolved by matcher via windsurfPreToolEvent()
 		TargetGemini:   "BeforeTool",
 		TargetDevin:    "PreToolUse", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
+		TargetCodex:    "PreToolUse",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -39,6 +45,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: Windsurf has no post-tool hooks
 		TargetGemini:   "AfterTool",
 		TargetDevin:    "PostToolUse", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
+		TargetCodex:    "PostToolUse",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -49,6 +56,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "pre_user_prompt",
 		TargetGemini:   "BeforeAgent",
 		TargetDevin:    "UserPromptSubmit", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
+		TargetCodex:    "UserPromptSubmit",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -59,6 +67,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "post_cascade_response",
 		TargetGemini:   "",     // unmappable: no Gemini equivalent in v0
 		TargetDevin:    "Stop", // Devin: bundled 3000.3 docs; 3000.3.27 probe pending.
+		TargetCodex:    "Stop",
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0, Windsurf Cascade docs
@@ -69,6 +78,18 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "post_cascade_response",
 		TargetGemini:   "", // unmappable: no Gemini equivalent in v0
 		TargetDevin:    "", // unmappable: Devin documents no subagent-stop event
+		TargetCodex:    "", // same name, but no direct Claude-to-Codex lifecycle equivalent
+	}},
+
+	// Codex-only event; other targets have no documented equivalent.
+	{Claude: "SubagentStart", Targets: map[Target]string{
+		TargetClaude:   "",
+		TargetFactory:  "",
+		TargetCursor:   "",
+		TargetWindsurf: "",
+		TargetGemini:   "",
+		TargetDevin:    "",
+		TargetCodex:    "", // native Codex only; no cross-harness equivalent
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -79,6 +100,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: no Windsurf equivalent
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "", // unmappable: Devin documents no notification event
+		TargetCodex:    "", // unmappable: Codex documents no notification event
 	}},
 
 	// Last verified: 2026-04-24 against Claude Code v1.0
@@ -91,6 +113,19 @@ var hookEventTable = []hookEventEntry{
 		// unmappable: Devin documents PostCompaction (after), which is a
 		// semantic inversion of PreCompact (before); never map them together.
 		TargetDevin: "",
+		TargetCodex: "", // same name, but no direct Claude-to-Codex lifecycle equivalent
+	}},
+
+	// PostCompact is a Codex event that runs after compaction. It is distinct
+	// from both Claude's PreCompact and Devin's PostCompaction spellings.
+	{Claude: "PostCompact", Targets: map[Target]string{
+		TargetClaude:   "",
+		TargetFactory:  "",
+		TargetCursor:   "",
+		TargetWindsurf: "",
+		TargetGemini:   "",
+		TargetDevin:    "",
+		TargetCodex:    "", // native Codex only; no cross-harness equivalent
 	}},
 
 	// Devin-documented events. Devin cells: bundled 3000.3 documentation
@@ -104,6 +139,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: no Windsurf equivalent
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "PermissionRequest",
+		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
 	}},
 
 	{Claude: "SessionStart", Targets: map[Target]string{
@@ -113,6 +149,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: no Windsurf equivalent
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionStart",
+		TargetCodex:    "SessionStart",
 	}},
 
 	{Claude: "SessionEnd", Targets: map[Target]string{
@@ -122,6 +159,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: no Windsurf equivalent
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "SessionEnd",
+		TargetCodex:    "", // same name, but no direct Devin-to-Codex lifecycle equivalent
 	}},
 
 	// PostCompaction is a Devin event that runs after compaction. It is not the
@@ -134,6 +172,7 @@ var hookEventTable = []hookEventEntry{
 		TargetWindsurf: "", // unmappable: no Windsurf equivalent
 		TargetGemini:   "", // unmappable: no Gemini equivalent
 		TargetDevin:    "PostCompaction",
+		TargetCodex:    "", // unmappable: Codex's event is PostCompact, not PostCompaction
 	}},
 }
 
@@ -247,6 +286,20 @@ var devinReverseTable = []reverseHookEntry{
 	{"PostCompaction", "PostCompaction", ""},
 }
 
+var codexReverseTable = []reverseHookEntry{
+	{"PreToolUse", "PreToolUse", ""},
+	{"PermissionRequest", "PermissionRequest", ""},
+	{"PostToolUse", "PostToolUse", ""},
+	{"PreCompact", "PreCompact", ""},
+	{"PostCompact", "PostCompact", ""},
+	{"UserPromptSubmit", "UserPromptSubmit", ""},
+	{"SubagentStop", "SubagentStop", ""},
+	{"SubagentStart", "SubagentStart", ""},
+	{"Stop", "Stop", ""},
+	{"SessionStart", "SessionStart", ""},
+	{"SessionEnd", "SessionEnd", ""},
+}
+
 // windsurfReverseTable maps Windsurf events back to Claude events.
 var windsurfReverseTable = []reverseHookEntry{
 	{"pre_read_code", "PreToolUse", "Read"},
@@ -276,6 +329,12 @@ func ReverseHookEvent(targetEvent string, target Target) (claudeEvent string, ma
 				return entry.ClaudeEvent, entry.Matcher, true
 			}
 		}
+	case TargetCodex:
+		for _, entry := range codexReverseTable {
+			if entry.TargetEvent == targetEvent {
+				return entry.ClaudeEvent, entry.Matcher, true
+			}
+		}
 	case TargetWindsurf:
 		for _, entry := range windsurfReverseTable {
 			if entry.TargetEvent == targetEvent {
@@ -295,4 +354,16 @@ func ReverseHookEvent(targetEvent string, target Target) (claudeEvent string, ma
 		}
 	}
 	return "", "", false
+}
+
+// NativeCodexHookEvent maps only the Codex lifecycles with a documented
+// cross-harness counterpart. Equal event names are not evidence of equal
+// payload or timing semantics.
+func NativeCodexHookEvent(event, matcher string, target Target) (string, bool) {
+	switch event {
+	case "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SessionStart":
+		return HookEvent(event, matcher, target)
+	default:
+		return "", false
+	}
 }

@@ -23,17 +23,24 @@ import (
 )
 
 type snapshotLoadedMsg struct {
+	generation           requestGeneration
 	rows                 []row
 	driftReport          materialize.DriftReport
+	driftAssessment      driftAssessment
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
+	configuredRegistries []config.RegistryEntry
+	inventoryResult      *pipeline.ResolveResult
 	materializationModes config.MaterializationModes
 	localExcludes        []string
 	globalHarnesses      []string
 	projectHarnesses     []string
+	targetHarnesses      []hcc.Target
+	targetHarnessSource  config.Source
 	errs                 []error
 	warnings             []error
+	diagnostics          []tuiDiagnostic
 	refreshAfterLoad     bool
 	pendingMigration     migrationPrompt
 }
@@ -41,7 +48,6 @@ type snapshotLoadedMsg struct {
 type reloadMsg snapshotLoadedMsg
 type refreshLoadedMsg struct {
 	snapshotLoadedMsg
-	refreshToken int
 }
 
 type toastMsg struct {
@@ -60,24 +66,39 @@ func toastExpiryCmd(d time.Duration) tea.Cmd {
 }
 
 type configWrittenMsg struct {
-	skillName string
-	enabled   bool
-	err       error
+	operation  operationID
+	followUp   bool
+	skillName  string
+	enabled    bool
+	selectNext bool
+	err        error
 }
 
 type syncDoneMsg struct {
 	err error
 }
 
+const (
+	updateStageRefresh         = "refresh"
+	updateStageMaterialization = "materialization"
+	updateStageReload          = "state reload"
+)
+
 type updateDoneMsg struct {
-	err error
+	generation requestGeneration
+	snapshot   snapshotLoadedMsg
+	stage      string
+	err        error
 }
 
 // detailContentMsg carries the glamour-rendered SKILL.md content for the
 // full-screen detail view. Produced by loadDetailContent (async tea.Cmd)
 // and consumed in Update to populate the viewport.
 type detailContentMsg struct {
-	content string
+	generation requestGeneration
+	content    string
+	width      int
+	keepScroll bool
 }
 
 type catalogLoadMode int
@@ -88,34 +109,38 @@ const (
 )
 
 var (
-	loadOrgConfig    = config.LoadOrganizationConfig
-	loadGlobalConfig = config.LoadGlobalConfig
-	loadRepoConfig   = config.LoadRepoConfig
-	loadLocalConfig  = config.LoadLocalConfig
-	cloneOrPull      = cache.CloneOrPull
-	discoverCatalog  = catalog.Discover
+	loadOrgConfig         = config.LoadOrganizationConfig
+	loadGlobalConfig      = config.LoadGlobalConfig
+	loadRepoConfig        = config.LoadRepoConfig
+	loadLocalConfig       = config.LoadLocalConfig
+	cloneOrPull           = cache.CloneOrPull
+	discoverCatalog       = catalog.Discover
+	runMaterialize        = materialize.Run
+	runPipelineSync       = pipeline.Sync
+	readSnapshotForUpdate = readSnapshot
 )
 
-func loadSnapshot(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+func loadSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadCached)
+		snapshot.generation = generation
+		return snapshot
 	}
 }
 
-func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, refreshToken int) tea.Cmd {
+func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		return refreshLoadedMsg{
-			snapshotLoadedMsg: readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh),
-			refreshToken:      refreshToken,
-		}
+		snapshot := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
+		snapshot.generation = generation
+		return refreshLoadedMsg{snapshotLoadedMsg: snapshot}
 	}
 }
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
-	var catalogOverlapWarnings []error
 	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		RepoRoot:    repoRoot,
-		CatalogMode: tuiCatalogLoadMode(mode),
+		RepoRoot:      repoRoot,
+		CatalogMode:   tuiCatalogLoadMode(mode),
+		SkipInventory: true,
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
@@ -128,85 +153,102 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		},
 	})
 
-	// v2 is canonical and v3 is a compatibility alias; schema versions do not
-	// trigger a migration prompt in the TUI.
-	pendingMigration := pendingMigrationFor(repoRoot, homeDir)
-
-	if len(resolvedResult.ConfigErrors) > 0 {
-		return snapshotLoadedMsg{errs: resolvedResult.ConfigErrors}
-	}
-	if len(resolvedResult.CatalogErrors) > 0 {
-		// Separate overlap warnings from hard errors.
-		var hardErrs []error
-		var overlapWarnings []error
-		for _, err := range resolvedResult.CatalogErrors {
-			if catalog.IsOverlapWarning(err) {
-				overlapWarnings = append(overlapWarnings, err)
-			} else {
-				hardErrs = append(hardErrs, err)
-			}
-		}
-		if len(hardErrs) > 0 {
-			return snapshotLoadedMsg{errs: hardErrs, warnings: overlapWarnings, pendingMigration: pendingMigration}
-		}
-		// No hard errors; carry overlap warnings forward to the final warnings.
-		// Store them in a temp var since `warnings` is declared below.
-		catalogOverlapWarnings = overlapWarnings
-	}
-
-	// Use materialize dry-run to compute drift instead of drift.Compute.
-	var resolvedNames []string
-	for _, r := range resolvedResult.Resolved {
-		resolvedNames = append(resolvedNames, skill.ResourceKey(r.Kind, r.Name))
-	}
-	dryRunReport, _ := materialize.Run(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
-	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
-
-	rows := buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
-
-	var errs []error
-	var warnings []error
-
-	// Surface overlap warnings from catalog loading.
-	warnings = append(warnings, catalogOverlapWarnings...)
-
-	// Surface malformed skills as warnings in the errors overlay so the
-	// user can see them when pressing 'e' without scrolling to the bottom
-	// of the scope tree.
-	for _, m := range resolvedResult.CatalogLoad.Malformed {
-		warnings = append(warnings, fmt.Errorf("malformed skill %q (%s): %w", m.DirName, m.Path, m.Error))
-	}
-
-	for _, err := range resolvedResult.ResolveErrors {
-		if resolver.IsSoftSelectedNotFound(err) {
-			warnings = append(warnings, err)
-			continue
-		}
-		if resolver.IsNameCollision(err) {
-			warnings = append(warnings, err)
-			continue
-		}
-		if resolver.IsWarning(err) {
-			continue
-		}
-		errs = append(errs, err)
-	}
-
-	return snapshotLoadedMsg{
-		rows:                 rows,
-		driftReport:          driftReport,
+	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
 		resolved:             resolvedResult.Resolved,
 		mergedCfg:            resolvedResult.LoadedCfg,
+		inventoryResult:      &resolvedResult,
 		materializationModes: resolvedResult.MaterializationModes,
 		localExcludes:        localExcludes(resolvedResult.LocalCfg),
 		globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
 		projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
-		errs:                 errs,
-		warnings:             warnings,
-		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
-		pendingMigration:     pendingMigration,
+		targetHarnesses:      resolvedResult.TargetHarnesses,
+		targetHarnessSource:  resolvedResult.TargetHarnessSource,
+		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
+		driftAssessment:      driftFailed,
 	}
+	if resolvedResult.MergedCfg != nil {
+		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
+	}
+
+	var diagnostics []tuiDiagnostic
+	diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticConfig, resolvedResult.Warnings...)
+	if len(resolvedResult.ConfigErrors) > 0 {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticConfig, resolvedResult.ConfigErrors...)
+		base.diagnostics = deduplicateDiagnostics(diagnostics)
+		base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+		base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+		return base
+	}
+
+	var catalogOverlapWarnings []error
+	if len(resolvedResult.CatalogErrors) > 0 {
+		var hardErrs []error
+		for _, err := range resolvedResult.CatalogErrors {
+			if catalog.IsOverlapWarning(err) {
+				catalogOverlapWarnings = append(catalogOverlapWarnings, err)
+			} else {
+				hardErrs = append(hardErrs, err)
+			}
+		}
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, catalogOverlapWarnings...)
+		if len(hardErrs) > 0 {
+			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticCatalog, hardErrs...)
+			base.diagnostics = deduplicateDiagnostics(diagnostics)
+			base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+			base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+			return base
+		}
+	}
+
+	var resolvedNames []string
+	for _, resolved := range resolvedResult.Resolved {
+		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
+	}
+	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
+	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
+	driftState := driftReady
+	if dryRunReport == nil || dryRunErr != nil {
+		driftState = driftFailed
+	}
+
+	for _, malformed := range resolvedResult.CatalogLoad.Malformed {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticCatalog, fmt.Errorf("malformed skill %q (%s): %w", malformed.DirName, malformed.Path, malformed.Error))
+	}
+	for _, err := range resolvedResult.ResolveErrors {
+		if isSoftResolutionIssue(err) {
+			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticWarning, diagnosticResolution, err)
+		} else {
+			diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticResolution, err)
+			driftState = driftFailed
+		}
+	}
+	if dryRunReport != nil {
+		for _, diagnostic := range dryRunReport.Diags {
+			severity := diagnosticWarning
+			if diagnostic.IsError() {
+				severity = diagnosticError
+				driftState = driftFailed
+			}
+			diagnostics = appendSnapshotDiagnostics(diagnostics, severity, diagnosticMaterialization, pipeline.PromoteDiagnostic(diagnostic))
+		}
+	}
+	if dryRunErr != nil {
+		diagnostics = appendSnapshotDiagnostics(diagnostics, diagnosticError, diagnosticMaterialization, dryRunErr)
+	}
+
+	base.rows = buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	base.driftReport = driftReport
+	base.driftAssessment = driftState
+	base.diagnostics = deduplicateDiagnostics(diagnostics)
+	base.errs = diagnosticValues(base.diagnostics, diagnosticError)
+	base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
+	base.refreshAfterLoad = resolvedResult.CatalogLoad.RefreshAfterLoad
+	return base
+}
+
+func isSoftResolutionIssue(err error) bool {
+	return resolver.IsSoftSelectedNotFound(err) || resolver.IsSoftSelectedMalformed(err) || resolver.IsNameCollision(err) || resolver.IsWarning(err)
 }
 
 func configHarnesses(cfg *config.Config) []string {
@@ -731,9 +773,30 @@ func ReadSkillMarkdown(path string) (string, error) {
 // loadDetailContent reads and glamour-renders a skill's SKILL.md in a
 // background goroutine so the TUI can transition to the detail pane
 // immediately without blocking on file I/O or markdown rendering.
-func loadDetailContent(r row) tea.Cmd {
+func loadDetailContent(r row, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
 	return func() tea.Msg {
-		return detailContentMsg{content: renderDetailFullContent(r)}
+		return detailContentMsg{
+			generation: generation,
+			content:    renderDetailFullContent(r, width),
+			width:      width,
+			keepScroll: keepScroll,
+		}
+	}
+}
+
+func tuiPipelineOptions(repoRoot string) pipeline.ResolveOptions {
+	return pipeline.ResolveOptions{
+		RepoRoot: repoRoot,
+		Loaders: pipeline.Loaders{
+			Org:    loadOrgConfig,
+			Global: loadGlobalConfig,
+			Repo:   loadRepoConfig,
+			Local:  loadLocalConfig,
+		},
+		CatalogOption: []catalog.LoadOption{
+			catalog.WithCloneOrPull(cloneOrPull),
+			catalog.WithDiscoverFunc(discoverCatalog),
+		},
 	}
 }
 
@@ -742,50 +805,39 @@ func loadDetailContent(r row) tea.Cmd {
 // avoid real I/O when inspecting command composition in assertions.
 var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 	return func() tea.Msg {
-		result := pipeline.Sync(ctx, pipeline.ResolveOptions{
-			RepoRoot: repoRoot,
-			Loaders: pipeline.Loaders{
-				Org:    loadOrgConfig,
-				Global: loadGlobalConfig,
-				Repo:   loadRepoConfig,
-				Local:  loadLocalConfig,
-			},
-			CatalogOption: []catalog.LoadOption{
-				catalog.WithCloneOrPull(cloneOrPull),
-				catalog.WithDiscoverFunc(discoverCatalog),
-			},
-		})
+		result := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
 	}
 }
 
-// runUpdateCmd reloads catalogs (clone/pull), materializes refreshed resources, and reloads state.
-func runUpdateCmd(ctx context.Context, repoRoot, homeDir string) tea.Cmd {
+func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		snap := readSnapshot(ctx, repoRoot, homeDir, catalogLoadRefresh)
-		if snap.mergedCfg == nil && len(snap.errs) > 0 {
-			return updateDoneMsg{err: errors.Join(snap.errs...)}
+		syncResult := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
+		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		current.generation = generation
+		for _, warning := range syncResult.Warnings {
+			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
 		}
-		report, err := materialize.Run(ctx, repoRoot, snap.resolved, materialize.WithMaterializationModes(snap.materializationModes))
-		var errs []error
-		errs = append(errs, snap.errs...)
-		errs = append(errs, promoteReportErrors(report)...)
-		if err != nil {
-			errs = append(errs, err)
+		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
+		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
+		current.warnings = diagnosticValues(current.diagnostics, diagnosticWarning)
+
+		result := updateDoneMsg{
+			generation: generation,
+			snapshot:   current,
+			stage:      updateStageMaterialization,
 		}
-		if len(errs) > 0 {
-			return updateDoneMsg{err: errors.Join(errs...)}
+		switch {
+		case len(syncResult.CatalogTrustErrors) > 0:
+			result.stage = updateStageRefresh
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, errors.Join(syncResult.CatalogTrustErrors...))
+		case len(syncResult.MaterializeErrors) > 0:
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, errors.Join(syncResult.MaterializeErrors...))
+		case len(diagnosticErrors(current.diagnostics)) > 0:
+			result.stage = updateStageReload
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, errors.Join(diagnosticErrors(current.diagnostics)...))
 		}
-		// Preserve warning-level diagnostics so the TUI can display them and
-		// tests can observe that a warning-only update really did emit a warning.
-		if report != nil {
-			for _, d := range report.Diags {
-				if !d.IsError() {
-					snap.warnings = append(snap.warnings, pipeline.PromoteDiagnostic(d))
-				}
-			}
-		}
-		return reloadMsg(snap)
+		return result
 	}
 }
 

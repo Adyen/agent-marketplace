@@ -656,7 +656,7 @@ func TestDevinErroringHookPostponesPruneForThatFileOnly(t *testing.T) {
 	// so build a resource-level hook failure instead: a nil-resource hook cannot
 	// be constructed, so use a hook whose kind errors is not available. Instead
 	// simulate the skip directly at the reconciler level.
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	work.markIncomplete(harness.DevinProjectHooksFile)
 	key := outputKey{target: hcc.TargetDevin, machineScope: false}
 	report := &Report{PerTarget: map[hcc.Target]TargetReport{}}

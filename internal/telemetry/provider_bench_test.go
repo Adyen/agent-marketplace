@@ -2,10 +2,12 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -158,6 +160,60 @@ func BenchmarkHistogramRecord(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tel.CommandDuration().Record(ctx, 50, attrs)
+	}
+}
+
+func BenchmarkRecordInventory(b *testing.B) {
+	defer benchDiscardLogs()()
+
+	dir := b.TempDir()
+	b.Setenv("XDG_STATE_HOME", dir)
+	srv := benchServer()
+	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	tel, err := New(context.Background(), state, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		b.StopTimer()
+		_ = tel.Shutdown(context.Background())
+	}()
+
+	snapshot := InventorySnapshot{
+		Fingerprint:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Harnesses:    "claude,codex,devin,factory",
+		HarnessScope: "repo",
+		Registries:   make([]InventoryRegistry, 10),
+		Resources:    make([]InventoryResource, 100),
+	}
+	for i := range snapshot.Registries {
+		snapshot.Registries[i] = InventoryRegistry{
+			ID: fmt.Sprintf("github.com/example/registry-%d", i), Location: fmt.Sprintf("https://github.com/example/registry-%d", i),
+			Ref: "main", ConfigScope: "user", Default: true,
+		}
+	}
+	for i := range snapshot.Resources {
+		registry := snapshot.Registries[i%len(snapshot.Registries)]
+		snapshot.Resources[i] = InventoryResource{
+			RegistryID: registry.ID, RegistryLocation: registry.Location, RegistryRef: "main",
+			Kind: "skill", Name: fmt.Sprintf("resource-%d", i), ConfigScope: "repo",
+		}
+	}
+
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Keep this an accepted-observation benchmark rather than measuring the
+		// bounded queue-full fallback after the producer outruns local OTLP.
+		for len(tel.inventoryQueue) >= inventoryQueueCapacity/2 {
+			runtime.Gosched()
+		}
+		tel.RecordInventory(ctx, snapshot)
 	}
 }
 

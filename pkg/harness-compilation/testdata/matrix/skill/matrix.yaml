@@ -219,3 +219,98 @@ cells:
       allowedLosses:
         - description
         - triggers
+    - from: claude
+      to: codex
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+    - from: cursor
+      to: codex
+      class: cross
+      diagnostics:
+        - compile.codex.field-dropped
+      allowedLosses:
+        - triggers
+    - from: devin
+      to: codex
+      class: cross
+      diagnostics:
+        - compile.codex.field-dropped
+        - ingest.devin.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: factory
+      to: codex
+      class: cross
+      diagnostics:
+        - compile.codex.field-dropped
+      allowedLosses:
+        - triggers
+    - from: gemini
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: windsurf
+      to: codex
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: codex
+      to: claude
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: codex
+      to: cursor
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: codex
+      to: devin
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: codex
+      to: factory
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+    - from: codex
+      to: gemini
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: codex
+      to: windsurf
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+    - from: codex
+      to: codex
+      class: identity
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers

@@ -324,7 +324,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		arg := strings.TrimSpace(opts.Args[0])
 		// Detect collection install.
 		if col := collection.Find(discoveredCollections, arg); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
+			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 			if err != nil {
 				return nil, err
 			}
@@ -370,6 +370,11 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, fmt.Errorf("%s %q was found but no providing registry entry could be identified", skill.KindLabel(match.kind), resourceName)
 			}
 		} else {
+			// Repo-relative local registries are project-local and cannot be
+			// shadowed into the user-personal (global) config.
+			if err := validateRegistryWriteScope(opts.Scope, *entry); err != nil {
+				return nil, err
+			}
 			// Always write the include scoped to the providing registry entry,
 			// creating a shadow entry in the target scope's config when the
 			// registry is only defined at a lower layer. Keeping every selection
@@ -392,7 +397,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
-	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries)
+	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -415,9 +420,17 @@ func resourceIdentities(kind ir.ResourceKind, names []string) []resourceIdentity
 	return resources
 }
 
-func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry) ([]resourceIdentity, error) {
+func collectionInstallResources(name string, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
 	expanded, expandErrs := collection.Expand([]string{name}, available, registries)
 	if err := errors.Join(expandErrs...); err != nil {
+		return nil, err
+	}
+	providerEntries := make([]config.RegistryEntry, 0, len(expanded.SyntheticEntries)+1)
+	if col := collection.Find(available, name); col != nil {
+		providerEntries = append(providerEntries, config.RegistryEntry{URL: col.SourceRegistryURL})
+	}
+	providerEntries = append(providerEntries, expanded.SyntheticEntries...)
+	if err := validateRegistryWriteScope(scope, providerEntries...); err != nil {
 		return nil, err
 	}
 	var resources []resourceIdentity
@@ -429,13 +442,13 @@ func collectionInstallResources(name string, available []collection.Collection, 
 	return resources, nil
 }
 
-func expandInstalledCollectionResources(installed []resourceIdentity, available []collection.Collection, registries []config.RegistryEntry) ([]resourceIdentity, error) {
+func expandInstalledCollectionResources(installed []resourceIdentity, available []collection.Collection, registries []config.RegistryEntry, scope Scope) ([]resourceIdentity, error) {
 	expanded := slices.Clone(installed)
 	for _, resource := range installed {
 		if resource.kind != ir.KindCollection {
 			continue
 		}
-		members, err := collectionInstallResources(resource.name, available, registries)
+		members, err := collectionInstallResources(resource.name, available, registries, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -736,6 +749,17 @@ func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wante
 	return nil
 }
 
+func validateRegistryWriteScope(scope Scope, entries ...config.RegistryEntry) error {
+	if scope != ScopeUser {
+		return nil
+	}
+	if err := config.ValidateGlobalRegistryWrite(entries...); err != nil {
+		slog.Warn("install rejected registry write", "scope", scope, "error", err)
+		return err
+	}
+	return nil
+}
+
 // InstallScopeLabel returns a human-readable label for the install scope.
 func InstallScopeLabel(scope Scope) string {
 	switch scope {
@@ -786,6 +810,35 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
 		return nil, err
+	}
+	if err := config.ValidateRegistryPath(syntheticEntry.Path); err != nil {
+		slog.Warn("install rejected invalid registry path", "error", err)
+		return nil, err
+	}
+
+	// Repo-relative local registries are project-local and cannot be written to
+	// the user-personal (global) config.
+	if err := validateRegistryWriteScope(opts.Scope, syntheticEntry); err != nil {
+		return nil, err
+	}
+
+	// For local filesystem registries, verify the path exists before writing
+	// the registry entry to the config, so a typo fails fast instead of
+	// leaving a broken entry behind.
+	if syntheticEntry.IsLocal() {
+		baseDir := repoRoot
+		if opts.LocalConfigDir != "" {
+			baseDir = opts.LocalConfigDir
+		}
+		localPath, err := syntheticEntry.ResolveLocalPath(baseDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve local registry path: %w", err)
+		}
+		bundlePath := syntheticEntry.BundlePath(localPath)
+		if err := config.ValidateLocalRegistryPath(bundlePath); err != nil {
+			slog.Warn("install rejected local registry path", "path", bundlePath, "error", err)
+			return nil, err
+		}
 	}
 
 	// Persist the registry entry to the target config scope.
@@ -847,7 +900,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 		// Check collections.
 		if col := collection.Find(discoveredCollections, resourceName); col != nil {
-			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries)
+			collectionResources, err := collectionInstallResources(col.Name, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 			if err != nil {
 				return nil, err
 			}
@@ -964,7 +1017,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err := config.EnsureRegistryWithDefaultInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("set default on registry in %s config: %w", opts.Scope, err)
 	}
-	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries)
+	installedResources, err = expandInstalledCollectionResources(installedResources, discoveredCollections, discoveryCfg.Registries, opts.Scope)
 	if err != nil {
 		return nil, err
 	}

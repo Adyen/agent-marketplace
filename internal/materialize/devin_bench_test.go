@@ -33,9 +33,9 @@ func devinBenchEnv(b *testing.B) string {
 
 // devinBenchWork compiles n hooks and n MCP servers into desired aggregate work,
 // so the measurement covers the reconciler rather than the compilers.
-func devinBenchWork(b *testing.B, n int, machineScope bool) *devinAggregateWork {
+func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateWork {
 	b.Helper()
-	work := &devinAggregateWork{}
+	work := &ownedJSONAggregateWork{}
 	opts := []hcc.Option{}
 	if machineScope {
 		opts = append(opts, hcc.WithScope(hcc.ScopeUser))
@@ -125,7 +125,7 @@ func BenchmarkDevinHookIdentity(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := devinHookIdentity("PostToolUse", rule); err != nil {
+		if _, err := ownedJSONHookIdentity("PostToolUse", rule); err != nil {
 			b.Fatal(err)
 		}
 	}

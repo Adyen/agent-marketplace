@@ -57,13 +57,23 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	}
 
 	repoRoot := config.FindRepoRoot()
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup}
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, SkipInventory: pruneStale}
 	localDir := config.FindLocalConfigDir()
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir
 		resolveOpts.LocalConfigDir = localDir
 	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
+	// A prune-capable pass suppresses Resolve's preliminary generation. If this
+	// pass does not mutate config, its already-computed resolution is final and
+	// must be recorded exactly once. A successful mutation disables this defer;
+	// the recursive non-pruning sync records the post-mutation generation.
+	recordComputedInventory := pruneStale
+	defer func() {
+		if recordComputedInventory {
+			pipeline.RecordResolvedInventory(ctx, syncResult.ResolveResult)
+		}
+	}()
 	errs := syncResult.Errors
 	malformedCount := syncResult.CatalogLoad.MalformedCount
 	mergedCfg := syncResult.MergedCfg
@@ -112,9 +122,8 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	// agent-marketplace-oc2r those repeats printed verbatim. dedupIssues keys on
 	// DedupKey() where available, which for a promoted materialize diagnostic
 	// INCLUDES the resource and its source location, so repeats collapse while
-	// the same message from different resources stays on its own line.
-	// Deduplicating here — before the summary line — also keeps the reported
-	// count equal to the number of lines the user is about to read.
+	// the same message from different resources remains a distinct counted issue.
+	// Presentation grouping happens later and never changes this count.
 	errs = dedupIssues(errs)
 
 	totalWritten := 0
@@ -124,7 +133,8 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 		totalRemoved = report.TotalRemoved()
 	}
 
-	if _, err := fmt.Fprintf(out, "Installed %d, Removed %d, Malformed %d, Errors %d\n", totalWritten, totalRemoved, malformedCount, len(errs)); err != nil {
+	style := newSyncOutputStyle(out)
+	if err := writeSyncSummary(out, style, totalWritten, totalRemoved, malformedCount, len(errs)); err != nil {
 		return err
 	}
 
@@ -133,7 +143,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	// verbose output lists every affected file under each directory.
 	if report != nil && (totalWritten > 0 || totalRemoved > 0) {
 		if verbose {
-			if err := printOutputDirDetail(out, report); err != nil {
+			if err := printOutputDirDetail(out, report, false); err != nil {
 				return err
 			}
 		} else if dirs := activeOutputDirs(report); len(dirs) > 0 {
@@ -146,30 +156,41 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	// Under verbose, list malformed resources with their path and parse error
 	// so the user can fix them without re-running `status`.
 	//
-	// Default output stays a bare count on purpose
+	// Default output suppresses per-resource parse details on purpose
 	// (TestSyncCommandIncludesMalformedSkillsInSummary pins that suppression),
 	// but a count with no way to act on it is what let a dropped resource look
 	// like a deletion for so long — so name the command that explains it.
 	if malformedCount > 0 {
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
 		if verbose {
 			if err := printMalformedDetail(out, syncResult.CatalogLoad.Malformed); err != nil {
 				return err
 			}
-		} else if err := printMalformedHint(out, malformedCount); err != nil {
+		} else if err := printMalformedHint(out, malformedCount, style.warningPrefix()); err != nil {
 			return err
 		}
 	}
 
 	// Print actionable hint when no skills are selected but registries are configured
 	if resolvedCount == 0 && mergedCfg != nil && len(mergedCfg.Registries) > 0 {
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
 		configSources := describeConfigSources(syncResult.OrgCfg, syncResult.GlobalCfg, syncResult.RepoCfg)
 		if _, err := fmt.Fprintf(out, "No skills selected from %s. Add skills or tags to your config, or set required: true on a registry.\n", configSources); err != nil {
 			return err
 		}
 	}
 
-	if err := writeGroupedWarnings(out, syncResult.Warnings, verbose); err != nil {
-		return err
+	if len(syncResult.Warnings) > 0 {
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+		if err := writeSyncWarnings(out, syncResult.Warnings, verbose, style.warningPrefix()); err != nil {
+			return err
+		}
 	}
 
 	// Prune stale selections once the CATALOG is trustworthy — not once the run
@@ -199,6 +220,7 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 			return errors.Join(allErrs...)
 		}
 		if pruned > 0 {
+			recordComputedInventory = false
 			slog.Info("sync stale selections pruned; starting re-sync",
 				"repo_root", repoRoot,
 				"count", pruned,
@@ -236,17 +258,10 @@ func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pru
 	if len(errs) == 0 {
 		return nil
 	}
-
-	// Print remediation hints for errors (mirrors the warning loop above).
-	// Error messages themselves are printed by the CLI framework; we add
-	// hints here for strict-mode promoted warnings, hard errors like
-	// NameCollisionError, and promoted materialize diagnostics, whose
-	// compiler-authored Hint reaches the user through the same interface.
-	if err := printRemediations(out, errs); err != nil {
+	if _, err := fmt.Fprintln(out); err != nil {
 		return err
 	}
-
-	return errors.Join(errs...)
+	return newSyncCommandError(errs, true, "error:")
 }
 
 // dedupIssues drops later occurrences of the same underlying problem while
@@ -416,6 +431,9 @@ func writeSyncCheckSummary(out io.Writer, report *materialize.Report, errorRows 
 		if _, err := fmt.Fprintln(out); err != nil {
 			return err
 		}
+		if err := printOutputDirDetail(out, report, true); err != nil {
+			return err
+		}
 	}
 
 	for _, d := range errorDiags {
@@ -489,8 +507,9 @@ func activeOutputDirs(report *materialize.Report) []string {
 }
 
 // printOutputDirDetail lists every written and removed file under each affected
-// output directory, used for verbose sync output.
-func printOutputDirDetail(out io.Writer, report *materialize.Report) error {
+// output directory. Check mode includes destination IDs so split-root targets
+// identify both the affected named root and artifact.
+func printOutputDirDetail(out io.Writer, report *materialize.Report, nameRoots bool) error {
 	homeDir, _ := os.UserHomeDir()
 	type entry struct {
 		written []string
@@ -503,6 +522,9 @@ func printOutputDirDetail(out io.Writer, report *materialize.Report) error {
 			continue
 		}
 		dir := abbreviateHome(tr.OutDir, homeDir)
+		if nameRoots && tr.RootID != "" {
+			dir = fmt.Sprintf("%s (%s)", tr.RootID, dir)
+		}
 		e, ok := agg[dir]
 		if !ok {
 			e = &entry{}
@@ -552,14 +574,15 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 // a non-zero malformed count. Malformed resources are dropped from the catalog,
 // so the count is the only signal that a selection may be unresolvable for a
 // reason the tool already knows precisely.
-func printMalformedHint(out io.Writer, malformedCount int) error {
+func printMalformedHint(out io.Writer, malformedCount int, prefix string) error {
 	subject := "resource was"
 	if malformedCount != 1 {
 		subject = "resources were"
 	}
-	_, err := fmt.Fprintf(out,
-		"  → %d %s dropped from the catalog after failing validation; run 'agent-marketplace sync --verbose' (or 'agent-marketplace status') to see the file and the parse error\n",
-		malformedCount, subject)
+	if _, err := fmt.Fprintf(out, "%s %d %s dropped from the catalog after failing validation\n", prefix, malformedCount, subject); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out, "  → agent-marketplace sync --verbose (or agent-marketplace status)")
 	return err
 }
 

@@ -23,3 +23,15 @@ updates:
     labels:
       - dependencies
       - go
+
+  - package-ecosystem: npm
+    directory: /tools/tui-qa
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    cooldown:
+      default-days: 21
+    labels:
+      - dependencies
+      - ci

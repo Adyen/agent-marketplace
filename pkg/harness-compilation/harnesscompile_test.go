@@ -172,6 +172,19 @@ func TestConvert_AllRegisteredSources(t *testing.T) {
 	}
 }
 
+func TestConvertExplicitCodexReadsSharedSkillWithoutCodexMarker(t *testing.T) {
+	src := fstest.MapFS{
+		".agents/skills/demo/SKILL.md": {Data: []byte("---\nname: demo\ndescription: Demo\n---\nBody\n")},
+	}
+	result, err := Convert(src, HarnessCodex, HarnessCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Path != ".agents/skills/demo/SKILL.md" {
+		t.Fatalf("Convert(Codex→Codex) artifacts = %#v, want explicit shared skill", result.Artifacts)
+	}
+}
+
 func TestConvert_WindsurfRepoRootToFactory_ProducesArtifacts(t *testing.T) {
 	src := fstest.MapFS{
 		".windsurf/skills/my-skill/SKILL.md": &fstest.MapFile{

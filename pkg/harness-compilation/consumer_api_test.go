@@ -11,6 +11,8 @@
 package harnesscompile_test
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -34,6 +36,12 @@ func claudeSourceFS() fstest.MapFS {
 // assertRootResourceTypes is a compile-time assertion that the root package
 // exposes a name for every type the documented loaders return.
 func assertRootResourceTypes(*hcc.Skill, *hcc.Command, *hcc.Subagent, *hcc.Hook, *hcc.McpServer) {}
+
+func TestRootPackageExposesCodexAliases(t *testing.T) {
+	if hcc.TargetCodex != "codex" || hcc.HarnessCodex != hcc.TargetCodex {
+		t.Fatalf("Codex aliases = %q, %q", hcc.TargetCodex, hcc.HarnessCodex)
+	}
+}
 
 // TestRootLoadersMatchDocumentedContract exercises the documented root-level
 // Load* API and feeds each loaded resource through Compile for every declared
@@ -130,8 +138,29 @@ func TestRootPackageCompilesAndMaterializesWithoutBlankImports(t *testing.T) {
 				}
 				return
 			}
-			report, err := hcc.Materialize(result, filepath.Join(outRoot, string(target)),
+			outDir := filepath.Join(outRoot, string(target))
+			report, err := hcc.Materialize(result, outDir,
 				hcc.WithWriteMode(hcc.WriteModeSync))
+			requiresExternalReconciliation := false
+			for _, candidate := range result.Artifacts {
+				if candidate.ExternalReconciliationRequired {
+					requiresExternalReconciliation = true
+					break
+				}
+			}
+			if requiresExternalReconciliation {
+				if !errors.Is(err, hcc.ErrExternalReconciliationRequired) {
+					t.Fatalf("hcc.Materialize(%s) error = %v, want %v", target, err, hcc.ErrExternalReconciliationRequired)
+				}
+				entries, readErr := os.ReadDir(outDir)
+				if readErr != nil && !os.IsNotExist(readErr) {
+					t.Fatalf("read refused materialization directory: %v", readErr)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("hcc.Materialize(%s) wrote %d entries before refusing external reconciliation", target, len(entries))
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("hcc.Materialize(%s): %v", target, err)
 			}
@@ -161,6 +190,9 @@ func TestRootPackageIngestsEveryDeclaredSource(t *testing.T) {
 		// well as IngestBundle. The direct `~/.config/devin` shape deliberately
 		// fails that assertion, which is covered in ingest/devin.
 		hcc.HarnessDevin: {".devin/skills/demo-skill/SKILL.md": {Data: []byte("---\nname: demo-skill\ndescription: Demo skill\n---\nDo the thing\n")}},
+		hcc.HarnessCodex: {
+			".codex/agents/demo-agent.toml": {Data: []byte("name = 'demo-agent'\ndescription = 'Demo agent'\ndeveloper_instructions = 'Review the thing'\n")},
+		},
 	}
 
 	for _, definition := range hcc.TargetDefinitions() {
