@@ -747,12 +747,6 @@ func AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx context.Context) (func
 	return acquireExactGitReadOnlyFileLock(ctx, "namespace", unix.LOCK_SH)
 }
 
-// AcquireExactGitExclusiveNamespaceLeaseWithContext excludes both exact-cache
-// readers and lock publication while a caller revalidates shared reachability.
-func AcquireExactGitExclusiveNamespaceLeaseWithContext(ctx context.Context) (func(), error) {
-	return acquireExactGitFileLock(ctx, "namespace", unix.LOCK_EX)
-}
-
 func withExactGitLock(ctx context.Context, key string, fn func() error) error {
 	return withExactGitFileLock(ctx, "namespace", unix.LOCK_SH, func() error {
 		return withExactGitKeyLock(ctx, key, fn)
@@ -1057,10 +1051,10 @@ func snapshotKey(canonicalSource string, oid GitOID) string {
 }
 
 func garbageCollectExactGit(dryRun bool, locks []lockfile.Document) (GCResult, error) {
-	return garbageCollectExactGitWithContext(context.Background(), dryRun, locks, nil)
+	return garbageCollectExactGitWithContext(context.Background(), dryRun, locks)
 }
 
-func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks []lockfile.Document, reader LockDocumentReader) (result GCResult, resultErr error) {
+func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks []lockfile.Document) (result GCResult, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1077,79 +1071,80 @@ func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks [
 		slog.Debug("exact git cache garbage collection completed", attrs...)
 	}()
 	resultErr = withExactGitExclusiveLock(ctx, func() error {
-		if reader != nil {
-			var err error
-			locks, err = reader(ctx)
-			if err != nil {
-				return fmt.Errorf("re-read exact git reachability locks: %w", err)
-			}
-		}
-		reachable = make(map[string]struct{})
-		for i, doc := range locks {
-			if err := lockfile.Validate(doc); err != nil {
-				return fmt.Errorf("validate exact git reachability lock %d: %w", i, err)
-			}
-			for _, registry := range doc.Registries {
-				oid, err := ParseGitOID(registry.Commit.String())
-				if err != nil {
-					return err
-				}
-				reachable[snapshotKey(registry.URL, oid)] = struct{}{}
-			}
-		}
-		if err := exactGitContextErr(ctx); err != nil {
-			return err
-		}
-		roots := []struct {
-			path      string
-			stage     string
-			snapshots bool
-		}{
-			{path: filepath.Join(exactGitRoot(), "objects"), stage: ".objects-stage-"},
-			{path: filepath.Join(exactGitRoot(), "snapshots"), stage: ".snapshot-stage-", snapshots: true},
-		}
-		for _, root := range roots {
-			exists, err := validateExactGitDirectory(root.path)
-			if err != nil {
-				return fmt.Errorf("validate exact git GC root %q: %w", root.path, err)
-			}
-			if !exists {
-				continue
-			}
-			entries, err := os.ReadDir(root.path)
-			if err != nil {
-				return fmt.Errorf("read exact git GC root %q: %w", root.path, err)
-			}
-			for _, entry := range entries {
-				if err := exactGitContextErr(ctx); err != nil {
-					return err
-				}
-				_, retained := reachable[entry.Name()]
-				removable := strings.HasPrefix(entry.Name(), root.stage) || root.snapshots && len(entry.Name()) == sha256.Size*2 && isHex(entry.Name()) && !retained
-				if !removable {
-					continue
-				}
-				candidate := filepath.Join(root.path, entry.Name())
-				info, err := os.Lstat(candidate)
-				if err != nil {
-					return fmt.Errorf("inspect exact git GC candidate %q: %w", candidate, err)
-				}
-				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-					return fmt.Errorf("exact git GC candidate %q is not a trusted directory", candidate)
-				}
-				if err := ValidateDirectoryAncestry(exactGitRoot(), candidate); err != nil {
-					return fmt.Errorf("validate exact git GC candidate %q: %w", candidate, err)
-				}
-				if !dryRun {
-					if err := os.RemoveAll(candidate); err != nil {
-						return fmt.Errorf("remove exact git GC candidate %q: %w", candidate, err)
-					}
-				}
-				result.Removed = append(result.Removed, candidate)
-			}
-		}
-		return nil
+		var err error
+		result, reachable, err = garbageCollectExactGitUnderLease(ctx, dryRun, locks)
+		return err
 	})
 	slices.Sort(result.Removed)
 	return result, resultErr
+}
+
+// garbageCollectExactGitUnderLease derives reachability and removes candidates
+// while the caller holds the exclusive exact-cache namespace lease.
+func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []lockfile.Document) (result GCResult, reachable map[string]struct{}, resultErr error) {
+	reachable = make(map[string]struct{})
+	for i, doc := range locks {
+		if err := lockfile.Validate(doc); err != nil {
+			return result, reachable, fmt.Errorf("validate exact git reachability lock %d: %w", i, err)
+		}
+		for _, registry := range doc.Registries {
+			oid, err := ParseGitOID(registry.Commit.String())
+			if err != nil {
+				return result, reachable, err
+			}
+			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
+		}
+	}
+	if err := exactGitContextErr(ctx); err != nil {
+		return result, reachable, err
+	}
+	roots := []struct {
+		path      string
+		stage     string
+		snapshots bool
+	}{
+		{path: filepath.Join(exactGitRoot(), "objects"), stage: ".objects-stage-"},
+		{path: filepath.Join(exactGitRoot(), "snapshots"), stage: ".snapshot-stage-", snapshots: true},
+	}
+	for _, root := range roots {
+		exists, err := validateExactGitDirectory(root.path)
+		if err != nil {
+			return result, reachable, fmt.Errorf("validate exact git GC root %q: %w", root.path, err)
+		}
+		if !exists {
+			continue
+		}
+		entries, err := os.ReadDir(root.path)
+		if err != nil {
+			return result, reachable, fmt.Errorf("read exact git GC root %q: %w", root.path, err)
+		}
+		for _, entry := range entries {
+			if err := exactGitContextErr(ctx); err != nil {
+				return result, reachable, err
+			}
+			_, retained := reachable[entry.Name()]
+			removable := strings.HasPrefix(entry.Name(), root.stage) || root.snapshots && len(entry.Name()) == sha256.Size*2 && isHex(entry.Name()) && !retained
+			if !removable {
+				continue
+			}
+			candidate := filepath.Join(root.path, entry.Name())
+			info, err := os.Lstat(candidate)
+			if err != nil {
+				return result, reachable, fmt.Errorf("inspect exact git GC candidate %q: %w", candidate, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return result, reachable, fmt.Errorf("exact git GC candidate %q is not a trusted directory", candidate)
+			}
+			if err := ValidateDirectoryAncestry(exactGitRoot(), candidate); err != nil {
+				return result, reachable, fmt.Errorf("validate exact git GC candidate %q: %w", candidate, err)
+			}
+			if !dryRun {
+				if err := os.RemoveAll(candidate); err != nil {
+					return result, reachable, fmt.Errorf("remove exact git GC candidate %q: %w", candidate, err)
+				}
+			}
+			result.Removed = append(result.Removed, candidate)
+		}
+	}
+	return result, reachable, nil
 }

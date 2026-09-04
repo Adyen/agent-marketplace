@@ -50,28 +50,32 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	if err := recoverDependencyTransactions(ctx); err != nil {
 		return err
 	}
-	effective := config.LoadEffective(ctx, config.LoadEffectiveOptions{})
-	if len(effective.Errors) > 0 {
-		return errors.Join(effective.Errors...)
+	loadOptions := config.LoadEffectiveOptions{
+		RepoRoot:       config.FindRepoRoot(),
+		LocalConfigDir: config.FindLocalConfigDir(),
 	}
-	if len(effective.PresentLayers()) == 0 {
-		return errors.New("gc requires at least one effective configuration layer")
-	}
-	locks, err := loadEffectiveLayerLocks(ctx, effective)
-	if err != nil {
-		return err
-	}
-	readLocks := func(readCtx context.Context) ([]lockfile.Document, error) {
-		return loadEffectiveLayerLocks(readCtx, effective)
+	readReachability := func(readCtx context.Context) (cache.GCReachability, error) {
+		effective := config.LoadEffective(readCtx, loadOptions)
+		if len(effective.Errors) > 0 {
+			return cache.GCReachability{}, errors.Join(effective.Errors...)
+		}
+		if len(effective.PresentLayers()) == 0 {
+			return cache.GCReachability{}, errors.New("gc requires at least one effective configuration layer")
+		}
+		locks, err := loadEffectiveLayerLocks(readCtx, effective)
+		if err != nil {
+			return cache.GCReachability{}, err
+		}
+		return cache.GCReachability{Locks: locks, Configs: []*config.Config{effective.Merged}}, nil
 	}
 
 	var registryErr error
 	if dryRun {
-		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged)
-	} else if _, err := cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged); err != nil {
+		registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability)
+	} else if _, err := cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability); err != nil {
 		registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
 	} else {
-		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks, effective.Merged)
+		registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, false, readReachability)
 	}
 
 	action := "Removed"

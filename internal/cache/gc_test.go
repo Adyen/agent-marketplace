@@ -425,7 +425,7 @@ func TestGarbageCollectWithLocksSeparatesCommitsFromSameSource(t *testing.T) {
 	}
 }
 
-func TestGarbageCollectWithLocksRevalidatesReachabilityUnderExclusiveLease(t *testing.T) {
+func TestGarbageCollectReloadsReachabilityUnderExclusiveLease(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	source := "https://git.example.com/catalog.git"
 	reachableOID, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
@@ -450,18 +450,18 @@ func TestGarbageCollectWithLocksRevalidatesReachabilityUnderExclusiveLease(t *te
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: source, Ref: "main", Commit: commit}}}
 	entered := make(chan struct{})
 	releaseReader := make(chan struct{})
-	reader := func(ctx context.Context) ([]lockfile.Document, error) {
+	reader := func(ctx context.Context) (GCReachability, error) {
 		close(entered)
 		select {
 		case <-releaseReader:
-			return []lockfile.Document{doc}, nil
+			return GCReachability{Locks: []lockfile.Document{doc}, Configs: []*config.Config{{}}}, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return GCReachability{}, ctx.Err()
 		}
 	}
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := GarbageCollectWithLocksAndContext(context.Background(), false, nil, reader, &config.Config{})
+		_, err := GarbageCollectWithReachabilityAndContext(context.Background(), false, reader)
 		gcDone <- err
 	}()
 	<-entered
@@ -491,6 +491,80 @@ func TestGarbageCollectWithLocksRevalidatesReachabilityUnderExclusiveLease(t *te
 		t.Fatalf("revalidated reachable snapshot was removed: %v", err)
 	}
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan snapshot survived GC: %v", err)
+	}
+}
+
+func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	source := "https://git.example.com/new-layer.git"
+	newOID, err := ParseGitOID("sha1:" + strings.Repeat("3", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanOID, err := ParseGitOID("sha1:" + strings.Repeat("4", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSnapshot := exactGitSnapshotPath(source, newOID)
+	orphanSnapshot := exactGitSnapshotPath(source, orphanOID)
+	activeLegacy := filepath.Join(CacheDir(), HashURL(source), "main")
+	for _, path := range []string{newSnapshot, orphanSnapshot, activeLegacy} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit, err := lockfile.ParseGitOID(newOID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLayerLock := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: source, Ref: "main", Commit: commit}}}
+
+	// This shared lease represents config-plus-lock publication. GC may start,
+	// but it cannot load its authoritative inventory until publication closes.
+	releasePublication, err := AcquireExactGitNamespaceLeaseWithContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicationLeaseHeld := true
+	defer func() {
+		if publicationLeaseHeld {
+			releasePublication()
+		}
+	}()
+	started := make(chan struct{})
+	readerEntered := make(chan struct{})
+	gcDone := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := GarbageCollectWithReachabilityAndContext(context.Background(), false, func(context.Context) (GCReachability, error) {
+			close(readerEntered)
+			return GCReachability{Locks: []lockfile.Document{newLayerLock}, Configs: []*config.Config{{Registries: []config.RegistryEntry{{URL: source, Ref: "main"}}}}}, nil
+		})
+		gcDone <- err
+	}()
+	<-started
+	select {
+	case <-readerEntered:
+		t.Fatal("GC reloaded reachability before concurrent publication completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releasePublication()
+	publicationLeaseHeld = false
+	select {
+	case <-readerEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("GC never reloaded reachability after concurrent publication")
+	}
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{newSnapshot, activeLegacy} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("newly published layer reachability %q was removed: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(orphanSnapshot); !os.IsNotExist(err) {
 		t.Fatalf("orphan snapshot survived GC: %v", err)
 	}
 }

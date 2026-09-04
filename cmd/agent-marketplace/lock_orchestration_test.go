@@ -7,10 +7,89 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func TestSyncCheckExactConsumerLeasePreventsSnapshotDeletion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	origin, working := createBareRepoWithWorkingClone(t, "check-contention.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "seed")
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+harnesses: [factory]
+registries:
+  - url: `+origin+`
+    ref: main
+`)
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("seed exact lock: %v\n%s", err, output)
+	}
+
+	_, _, checkLease, err := prepareRuntimeLocks(context.Background(), repo, "", lockMode{locked: true, check: true})
+	if err != nil {
+		t.Fatalf("prepare sync check: %v", err)
+	}
+	release, err := checkLease(context.Background())
+	if err != nil {
+		t.Fatalf("acquire sync check lease: %v", err)
+	}
+	leaseHeld := true
+	defer func() {
+		if leaseHeld {
+			release()
+		}
+	}()
+
+	snapshotRoot := filepath.Join(cache.CacheDir(), "exact-git", "snapshots")
+	entries, err := os.ReadDir(snapshotRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("exact snapshot count = %d, want one deletion candidate", len(entries))
+	}
+	snapshot := filepath.Join(snapshotRoot, entries[0].Name())
+	started := make(chan struct{})
+	gcDone := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := cache.GarbageCollectWithReachabilityAndContext(context.Background(), false, func(context.Context) (cache.GCReachability, error) {
+			return cache.GCReachability{Configs: []*config.Config{{}}}, nil
+		})
+		gcDone <- err
+	}()
+	<-started
+	select {
+	case err := <-gcDone:
+		t.Fatalf("GC completed while exact consumer held its lease: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := os.Stat(snapshot); err != nil {
+		t.Fatalf("GC deleted snapshot while exact consumer held its lease: %v", err)
+	}
+
+	release()
+	leaseHeld = false
+	select {
+	case err := <-gcDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GC did not resume after exact consumer released its lease")
+	}
+	if _, err := os.Stat(snapshot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreachable snapshot survived GC: %v", err)
+	}
+}
 
 func TestSyncLocalRegistryDoesNotCreateLock(t *testing.T) {
 	home := t.TempDir()

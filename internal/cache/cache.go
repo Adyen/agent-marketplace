@@ -179,41 +179,63 @@ func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 	})
 }
 
-// LockDocumentReader reloads the lock documents that determine exact-snapshot
-// reachability. It is called while the exact-cache namespace is exclusively
-// leased, so a coordinated lock publisher cannot race deletion.
-type LockDocumentReader func(context.Context) ([]lockfile.Document, error)
-
-func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*config.Config) (GCResult, error) {
-	return GarbageCollectWithLocksAndContext(context.Background(), dryRun, locks, nil, cfgs...)
+// GCReachability is the complete configuration and lock inventory that keeps
+// legacy cache entries and immutable exact snapshots reachable.
+type GCReachability struct {
+	Locks   []lockfile.Document
+	Configs []*config.Config
 }
 
-// GarbageCollectWithLocksAndContext is the cancellation-aware exact-cache GC
-// entry point. reader, when supplied, is used to re-read lock documents after
-// taking the exact-cache exclusive namespace lock and immediately before any
-// snapshot deletion.
-func GarbageCollectWithLocksAndContext(ctx context.Context, dryRun bool, locks []lockfile.Document, reader LockDocumentReader, cfgs ...*config.Config) (GCResult, error) {
+// GCReachabilityReader reloads the complete inventory while GC holds the
+// exclusive exact-cache namespace lease.
+type GCReachabilityReader func(context.Context) (GCReachability, error)
+
+func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*config.Config) (GCResult, error) {
+	return GarbageCollectWithReachabilityAndContext(context.Background(), dryRun, func(context.Context) (GCReachability, error) {
+		return GCReachability{Locks: locks, Configs: cfgs}, nil
+	})
+}
+
+// GarbageCollectWithReachabilityAndContext reloads both configuration and lock
+// reachability under one exclusive namespace lease before deriving either set.
+// This closes the gap where a newly published config layer and its lock could be
+// omitted from a GC inventory captured before publication.
+func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, reader GCReachabilityReader) (GCResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if reader == nil {
+		return GCResult{}, errors.New("cache garbage collection reachability reader is required")
+	}
 	started := time.Now()
-	slog.Debug("registry cache garbage collection started", "dry_run", dryRun, "lock_layers", len(locks))
+	slog.Debug("registry cache garbage collection started", "dry_run", dryRun)
+	var lockLayers int
 	result, err := withContextCacheMutationLock(ctx, func() (GCResult, error) {
-		for i := range locks {
-			if err := lockfile.Validate(locks[i]); err != nil {
-				return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
+		var result GCResult
+		err := withExactGitExclusiveLock(ctx, func() error {
+			reachability, err := reader(ctx)
+			if err != nil {
+				return fmt.Errorf("reload cache garbage collection reachability: %w", err)
 			}
-		}
-		legacy, err := garbageCollectWithContext(ctx, dryRun, cfgs...)
-		if err != nil {
-			return legacy, err
-		}
-		exact, err := garbageCollectExactGitWithContext(ctx, dryRun, locks, reader)
-		legacy.Removed = append(legacy.Removed, exact.Removed...)
-		slices.Sort(legacy.Removed)
-		return legacy, err
+			lockLayers = len(reachability.Locks)
+			for i := range reachability.Locks {
+				if err := lockfile.Validate(reachability.Locks[i]); err != nil {
+					return fmt.Errorf("validate layer lock %d: %w", i, err)
+				}
+			}
+			legacy, err := garbageCollectWithContext(ctx, dryRun, reachability.Configs...)
+			if err != nil {
+				return err
+			}
+			exact, _, err := garbageCollectExactGitUnderLease(ctx, dryRun, reachability.Locks)
+			legacy.Removed = append(legacy.Removed, exact.Removed...)
+			slices.Sort(legacy.Removed)
+			result = legacy
+			return err
+		})
+		return result, err
 	})
-	attrs := []any{"dry_run", dryRun, "lock_layers", len(locks), "removed", len(result.Removed), "duration_ms", time.Since(started).Milliseconds()}
+	attrs := []any{"dry_run", dryRun, "lock_layers", lockLayers, "removed", len(result.Removed), "duration_ms", time.Since(started).Milliseconds()}
 	if err != nil {
 		attrs = append(attrs, "error", err)
 		slog.Error("registry cache garbage collection failed", attrs...)

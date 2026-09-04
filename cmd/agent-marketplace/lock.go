@@ -864,8 +864,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
 	})
+	hasExactConsumers := len(set.bySource) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
-		release, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+		if !hasExactConsumers {
+			return func() {}, nil
+		}
+		var (
+			release func()
+			err     error
+		)
+		if mode.check {
+			release, err = cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		} else {
+			release, err = cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+		}
 		if err != nil {
 			return nil, err
 		}
