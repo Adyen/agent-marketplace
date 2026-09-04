@@ -106,6 +106,19 @@ jobs:
         run: pnpm qa
         working-directory: tools/tui-qa
 
+  tui-qa-required:
+    name: TUI QA Driver
+    if: always()
+    needs: tui-qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require all TUI QA platforms
+        env:
+          TUI_QA_RESULT: ${{ needs.tui-qa.result }}
+        run: test "$TUI_QA_RESULT" = success
+
   e2e:
     name: E2E (Ubuntu)
     runs-on: ubuntu-latest

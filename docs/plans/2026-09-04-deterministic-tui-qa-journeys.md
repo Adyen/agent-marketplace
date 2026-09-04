@@ -133,6 +133,7 @@ In one minimal process test:
 - `make tui-qa-check` typechecks and verifies the PTY adapter.
 - `make tui-qa` builds the e2e-tagged binary and runs all eight journeys once.
 - Run the normal TUI QA job as a `ubuntu-latest` / `macos-latest` matrix on every pull request and every `main` update, with `fail-fast: false`.
+- Retain an aggregate check named `TUI QA Driver` that succeeds only after both matrix legs succeed, preserving the existing required status context.
 - Do not change branch protection, repository rules, or `release.needs`.
 - Add a separate scheduled and manually dispatchable Linux workflow. Build/install once, then run the complete compiled journey suite 20 consecutive times, sequentially, with zero retries; stop on the first failure and use console output only.
 
