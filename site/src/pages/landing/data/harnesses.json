@@ -1,0 +1,434 @@
+{
+  "_warning": "FIXTURE. Captured from the binary, but nothing in this build regenerates or verifies it: keep it in step with pkg/harness-compilation/target by hand until generation lands.",
+  "_source": "pkg/harness-compilation/target (targets) and probed compilation (matrix)",
+  "targets": [
+    {
+      "id": "factory",
+      "label": "Factory Droid",
+      "repoRoots": [
+        ".factory"
+      ],
+      "machineRoots": [
+        "~/.factory"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "repoRoots": [
+        ".claude"
+      ],
+      "machineRoots": [
+        "~/.claude"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "cursor",
+      "label": "Cursor",
+      "repoRoots": [
+        ".cursor"
+      ],
+      "machineRoots": [
+        "~/.cursor"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "windsurf",
+      "label": "Windsurf",
+      "repoRoots": [
+        "./ (repository root)"
+      ],
+      "machineRoots": [
+        "~/.codeium/windsurf"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "repoRoots": [
+        ".gemini"
+      ],
+      "machineRoots": [
+        "~/.gemini"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "devin",
+      "label": "Devin CLI",
+      "repoRoots": [
+        ".devin"
+      ],
+      "machineRoots": [
+        "~/.config/devin"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "repoRoots": [
+        ".agents",
+        ".codex"
+      ],
+      "machineRoots": [
+        "~/.agents",
+        "$CODEX_HOME or ~/.codex"
+      ],
+      "capabilities": {
+        "compile": true,
+        "ingest": true,
+        "convert": true,
+        "tui": true
+      }
+    }
+  ],
+  "kinds": [
+    {
+      "id": "skill",
+      "label": "Skill",
+      "selectable": true,
+      "experimental": false
+    },
+    {
+      "id": "command",
+      "label": "Command",
+      "selectable": true,
+      "experimental": false
+    },
+    {
+      "id": "subagent",
+      "label": "Subagent",
+      "selectable": true,
+      "experimental": false
+    },
+    {
+      "id": "mcp",
+      "label": "MCP server",
+      "selectable": true,
+      "experimental": false
+    },
+    {
+      "id": "hook",
+      "label": "Hook",
+      "selectable": true,
+      "experimental": true,
+      "note": "Materializes end-to-end, but output fidelity is not finalized."
+    },
+    {
+      "id": "rule",
+      "label": "Rule",
+      "selectable": false,
+      "experimental": false,
+      "note": "Not a marketplace-selectable kind; shown because layouts carry rules."
+    }
+  ],
+  "matrix": {
+    "command": {
+      "claude": {
+        "status": "native",
+        "paths": [
+          "commands/example.md"
+        ]
+      },
+      "codex": {
+        "status": "as-skill",
+        "paths": [
+          ".agents/skills/example/SKILL.md"
+        ]
+      },
+      "cursor": {
+        "status": "native",
+        "paths": [
+          "commands/example.md"
+        ]
+      },
+      "devin": {
+        "status": "as-skill",
+        "paths": [
+          "skills/example/SKILL.md"
+        ]
+      },
+      "factory": {
+        "status": "native",
+        "paths": [
+          "commands/example.md"
+        ]
+      },
+      "gemini": {
+        "status": "native",
+        "paths": [
+          "commands/example.toml"
+        ]
+      },
+      "windsurf": {
+        "status": "native",
+        "paths": [
+          ".windsurf/workflows/example.md"
+        ]
+      }
+    },
+    "hook": {
+      "claude": {
+        "status": "shared",
+        "paths": [
+          "hooks/hooks.json"
+        ]
+      },
+      "codex": {
+        "status": "shared",
+        "paths": [
+          ".codex/hooks.json"
+        ]
+      },
+      "cursor": {
+        "status": "shared",
+        "paths": [
+          "hooks/hooks.json"
+        ]
+      },
+      "devin": {
+        "status": "shared",
+        "paths": [
+          "hooks.v1.json"
+        ]
+      },
+      "factory": {
+        "status": "shared",
+        "paths": [
+          "hooks/hooks.json"
+        ]
+      },
+      "gemini": {
+        "status": "shared",
+        "paths": [
+          ".gemini/settings.json"
+        ]
+      },
+      "windsurf": {
+        "status": "native",
+        "paths": [
+          ".windsurf/hooks/pre_user_prompt.json"
+        ]
+      }
+    },
+    "mcp": {
+      "claude": {
+        "status": "shared",
+        "paths": [
+          ".mcp.json"
+        ]
+      },
+      "codex": {
+        "status": "shared",
+        "paths": [
+          ".codex/config.toml"
+        ]
+      },
+      "cursor": {
+        "status": "shared",
+        "paths": [
+          "mcp.json"
+        ]
+      },
+      "devin": {
+        "status": "shared",
+        "paths": [
+          "mcp_config.json"
+        ]
+      },
+      "factory": {
+        "status": "shared",
+        "paths": [
+          "mcp.json"
+        ]
+      },
+      "gemini": {
+        "status": "shared",
+        "paths": [
+          "gemini-extension.json"
+        ]
+      },
+      "windsurf": {
+        "status": "shared",
+        "paths": [
+          ".windsurf/mcp_config.json"
+        ]
+      }
+    },
+    "rule": {
+      "claude": {
+        "status": "none",
+        "codes": [
+          "rule.claude.no-primitive"
+        ]
+      },
+      "codex": {
+        "status": "none",
+        "codes": [
+          "rule.codex.unsupported"
+        ]
+      },
+      "cursor": {
+        "status": "native",
+        "paths": [
+          "rules/example.mdc"
+        ]
+      },
+      "devin": {
+        "status": "none",
+        "codes": [
+          "rule.devin.unsupported"
+        ]
+      },
+      "factory": {
+        "status": "native",
+        "paths": [
+          "rules/example.md"
+        ],
+        "codes": [
+          "rule.factory.metadata-dropped"
+        ]
+      },
+      "gemini": {
+        "status": "none",
+        "codes": [
+          "rule.gemini.no-primitive"
+        ]
+      },
+      "windsurf": {
+        "status": "native",
+        "paths": [
+          ".windsurf/rules/example.mdc"
+        ]
+      }
+    },
+    "skill": {
+      "claude": {
+        "status": "native",
+        "paths": [
+          ".claude-plugin/plugin.json",
+          "skills/example/SKILL.md"
+        ]
+      },
+      "codex": {
+        "status": "native",
+        "paths": [
+          ".agents/skills/example/SKILL.md"
+        ]
+      },
+      "cursor": {
+        "status": "native",
+        "paths": [
+          "skills/example/SKILL.md"
+        ]
+      },
+      "devin": {
+        "status": "native",
+        "paths": [
+          "skills/example/SKILL.md"
+        ]
+      },
+      "factory": {
+        "status": "native",
+        "paths": [
+          "skills/example/SKILL.md"
+        ]
+      },
+      "gemini": {
+        "status": "native",
+        "paths": [
+          ".gemini/skills/example/SKILL.md"
+        ]
+      },
+      "windsurf": {
+        "status": "native",
+        "paths": [
+          ".windsurf/skills/example/SKILL.md"
+        ]
+      }
+    },
+    "subagent": {
+      "claude": {
+        "status": "native",
+        "paths": [
+          ".claude-plugin/plugin.json",
+          "agents/example.md"
+        ]
+      },
+      "codex": {
+        "status": "native",
+        "paths": [
+          ".codex/agents/example.toml"
+        ]
+      },
+      "cursor": {
+        "status": "native",
+        "paths": [
+          "agents/example.md"
+        ]
+      },
+      "devin": {
+        "status": "native",
+        "paths": [
+          "agents/example.md"
+        ],
+        "codes": [
+          "subagent.devin.model-default"
+        ]
+      },
+      "factory": {
+        "status": "native",
+        "paths": [
+          "droids/example.md"
+        ]
+      },
+      "gemini": {
+        "status": "native",
+        "paths": [
+          ".gemini/agents/example.md"
+        ]
+      },
+      "windsurf": {
+        "status": "none",
+        "codes": [
+          "subagent.windsurf.no-primitive"
+        ]
+      }
+    }
+  }
+}

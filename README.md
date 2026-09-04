@@ -749,12 +749,13 @@ make e2e       # run the end-to-end suite (see below)
 ### E2E tests
 
 The `e2e/` directory contains end-to-end tests that run the built binary in
-isolated temp-directory sandboxes. They are **local-only** (CI runners cannot
-clone git registries) and optionally run inside Docker for host isolation.
+isolated temp-directory sandboxes. Registry fixtures are local bare Git
+repositories reached through `file://` URLs, so the full suite runs directly on
+Ubuntu in CI. Local runs use Docker by default for additional host isolation.
 
 ```bash
-make e2e                    # runs inside Docker (isolated from host env)
-E2E_SKIP_DOCKER=1 make e2e  # run directly on the host
+make e2e                    # run locally inside Docker
+E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
 E2E_PARALLEL=1 make e2e     # serial execution for debugging (default 4)
 ```
 

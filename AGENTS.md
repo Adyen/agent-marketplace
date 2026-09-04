@@ -78,7 +78,88 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 - No resource dependency mechanism (tags and collections are partial workarounds)
 
-Run QA-only driver and contract self-tests with `make tui-qa-check`, trusted native invariant QA with `make tui-qa`, and the canonical Linux-contained baseline with `make tui-qa-contained`.
+Run direct real-terminal test typechecking with `make tui-qa-check` and all five real-TUI usage journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
+
+## E2E Test Suite
+
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.
+
+There are **two types** of E2E tests:
+
+1. **Declarative (table-driven)** — defined as `TestCase` structs in `e2e/table_test.go`. These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
+2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as running commands from a non-default working directory or skipping git repo initialization.
+
+### Running
+
+```bash
+make e2e                    # run locally inside Docker
+E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
+E2E_PARALLEL=8 make e2e     # control concurrency (default 4, set to 1 for serial)
+```
+
+### Architecture
+
+- **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. The binary runs as a subprocess with `HOME` overridden so it never touches the host filesystem.
+- **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
+- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.
+
+### When to add a test
+
+Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
+- Adding a new CLI command or flag that should be validated end-to-end
+- Fixing a bug that involves config merging, materialization, precedence, or collision handling
+- Changing resource selection/exclusion semantics (`required`, `default`, `tags`, `exclude`)
+
+Add a standalone test function in a separate file when:
+- The test needs non-standard setup (e.g. no git repo, custom working directory)
+- The test uses `RunAMFrom` or other framework features not exposed through the `Steps` model
+
+Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
+
+## Performance & Benchmarking Policy
+
+This project treats performance as **data-driven, not narrative-driven**. Optimizations and
+refactors that touch hot paths must be accompanied by benchmarks; "it feels faster" is
+not acceptable evidence.
+
+**During every implementation cycle:**
+
+1. **Spot a hot path → write a benchmark.** Any code that runs on a user-visible latency
+   path (each keystroke, every `sync`, every `status`, every `Resolve`, every `DiscoverSkills`
+   invocation) earns a `func Benchmark…(b *testing.B)` in the same package the first time
+   it is modified. No silent hot paths.
+2. **Measure before you change.** Capture a baseline with
+   `go test -run '^$' -bench '^BenchmarkFoo$' -benchtime 2s -count 5 -benchmem | tee before.txt`
+   *before* the optimization lands. Without a baseline the change is unverifiable.
+3. **Measure after.** Re-run the same command into `after.txt` and diff with
+   `benchstat before.txt after.txt`. Post the delta (ns/op, B/op, allocs/op) in the PR
+   description or commit message; no delta ⇒ not merged.
+4. **Regression guard.** The benchmark stays in the tree. Anyone who later regresses the
+   hot path will see it in CI or when running `make bench` locally.
+5. **Micro-benchmarks live next to the code.** Name the file `*_bench_test.go` so it is
+   discoverable and can be excluded from `go test` wall-clock budgets when needed.
+
+**Review the `efficient-go` skill** (`~/.factory/skills/efficient-go/SKILL.md`) for the
+Three Rs method (Reduce / Reuse / Recycle allocations), pre-allocation patterns, and
+`sync.Pool` guidance when proposing a performance change.
+
+## Logging Policy
+
+The CLI configures a process-wide `slog` logger before any subcommand runs
+(see `cmd/agent-marketplace/main.go`). **Instrument new features and changes
+with structured logs** via the standard `slog` default logger (`slog.Info`,
+`slog.Debug`, `slog.Error`, ...) — at minimum log meaningful start/end,
+decisions, and error paths.
+
+- **Defaults live in code.** The `Default*` constants in
+  `internal/config/config.go` are the single source of truth for the logging
+  runtime (`internal/logging`). Keep them there.
+- **Do not seed a `logging:` block into the generated config skeleton.** The
+  skeleton carries only required global fields (`apiVersion`, `harnesses`);
+  logging is opt-in override only. Users override via `~/.agents/config.yaml`
+  (`logging:`) or `AGENT_MARKETPLACE_*` env vars. Precedence is
+  **env var > config file > code default**.
+- Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
 
 ## File Layout
 
@@ -91,7 +172,7 @@ agent-marketplace/
 │   ├── adoption-guide.md         ← v3 onboarding guide
 │   ├── PRECEDENCE.md             ← selection & precedence reference
 │   └── plans/                    ← phased implementation plans
-├── e2e/              ← declarative E2E test suite (local-only; see CODING_STANDARDS.md)
+├── e2e/              ← declarative E2E test suite (required Ubuntu CI; Docker locally)
 ├── internal/
 │   ├── config/        ← config model, loader, merge, editor, migration
 │   ├── catalog/       ← wraps harness-compilation IngestBundle

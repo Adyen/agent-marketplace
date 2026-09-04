@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-tests/
 .tui-test/
 .local/
 test-results/

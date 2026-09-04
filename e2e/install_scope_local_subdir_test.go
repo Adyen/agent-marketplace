@@ -61,7 +61,7 @@ func TestInstallScopeLocalFromSubdirRejectsParentRelativeFrom(t *testing.T) {
 
 	r := env.RunAMFrom("/workspace/subdir", "install", "--from", "../registry", "--scope", "local")
 	env.AssertExitCode(r, 1)
-	env.AssertOutputContains(r, "must not contain '..' path components")
+	env.AssertOutputContains(r, "resolves outside the base directory")
 	env.AssertFileAbsent("/workspace/subdir/.factory/skills/parent-skill")
 }
 

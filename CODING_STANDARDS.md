@@ -32,7 +32,7 @@ Read this document for every code change. It defines the review criteria and imp
 
 ### E2E test suite
 
-The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Tests do **not** run in CI (CI runners cannot clone git registries); they are local-only, optionally run inside a Docker container for host isolation.
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the suite runs directly on Ubuntu in CI; local runs use Docker by default for additional host isolation.
 
 There are **two types** of E2E tests:
 
@@ -65,6 +65,12 @@ Add a standalone test function in a separate file when:
 - The test uses `RunAMFrom` or other framework features not exposed through the `Steps` model
 
 Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
+
+### TUI test ownership
+
+Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns a small set of direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
+
+TUI QA commands must run without direnv or organization-specific infrastructure. Optional local values may come from the environment or ignored `.envrc.local`; tracked files and emitted snapshots must not contain organization-specific image, certificate, registry, or infrastructure identifiers.
 
 ## Errors and observability
 

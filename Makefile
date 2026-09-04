@@ -9,7 +9,7 @@ CMD := ./cmd/agent-marketplace
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa tui-qa-contained $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e devin-probe tui-qa-check tui-qa site-dev site-build $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -113,19 +113,41 @@ devin-probe:
 	@AGENT_MARKETPLACE_DEVIN_PROBES=1 DEVIN_PROBE_REQUIRE=$(DEVIN_PROBE_REQUIRE) \
 		$(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
 
+TUI_QA_PNPM_VERSION := 11.20.0
+TUI_QA_DEFAULT_RUN_ID := tui-qa-$(shell date -u +%Y%m%dT%H%M%SZ)-$(shell sh -c 'echo $$$$')
+TUI_QA_RUN_ID ?= $(TUI_QA_DEFAULT_RUN_ID)
+TUI_QA_BINARY := $(CURDIR)/.local/agent-marketplace/bin/agent-marketplace-tui-qa
+TUI_QA_ARTIFACT_DIR ?= $(CURDIR)/.local/agent-marketplace/qa/tui/$(TUI_QA_RUN_ID)
+
 tui-qa-check:
-	cd tools/tui-qa && npm run check
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA" >&2; exit 1; }
+	@actual="$$(pnpm --version)"; [ "$$actual" = "$(TUI_QA_PNPM_VERSION)" ] || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA; found $$actual" >&2; exit 1; }
+	cd tools/tui-qa && pnpm check
 
-tui-qa:
-	@command -v npm >/dev/null || { echo "ERROR: npm is required for TUI QA" >&2; exit 1; }
-	@command -v go >/dev/null || { echo "ERROR: go is required for TUI QA" >&2; exit 1; }
-	cd tools/tui-qa && AM_TUI_QA_RUN_CLASS="$${AM_TUI_QA_RUN_CLASS:-baseline}" npm run qa
+tui-qa: tui-qa-check
+	@mkdir -p "$(dir $(TUI_QA_BINARY))" "$(TUI_QA_ARTIFACT_DIR)"
+	CGO_ENABLED=0 $(GO) build -tags e2e $(LDFLAGS) -o "$(TUI_QA_BINARY)" $(CMD)
+	cd tools/tui-qa && AM_TUI_QA_REPO_ROOT="$(CURDIR)" AM_TUI_QA_BINARY="$(TUI_QA_BINARY)" AM_TUI_QA_ARTIFACT_DIR="$(TUI_QA_ARTIFACT_DIR)" AM_TUI_QA_RUN_ID="$(TUI_QA_RUN_ID)" pnpm qa
 
-tui-qa-contained:
-	@command -v docker >/dev/null || { echo "ERROR: Docker is required for contained TUI QA" >&2; exit 1; }
-	@command -v npm >/dev/null || { echo "ERROR: npm is required for contained TUI QA" >&2; exit 1; }
-	@command -v go >/dev/null || { echo "ERROR: go is required for contained TUI QA" >&2; exit 1; }
-	AM_TUI_QA_RUN_CLASS="$${AM_TUI_QA_RUN_CLASS:-baseline}" tools/tui-qa/run-container.sh
+# Website.
+#
+# The site is the landing page only. Its harness table and TUI frame
+# (site/.vitepress/data/) are checked-in fixtures: no target in this build
+# regenerates or verifies them, so they are kept in step with
+# pkg/harness-compilation/target by hand. Generation, and the drift check that
+# makes it trustworthy, land with the documentation work.
+SITE_DIR := site
+
+# Requires Node (see $(SITE_DIR)/package.json); no Go toolchain needed.
+site-dev:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website development" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install && pnpm run dev
+
+# SITE_BASE selects the deployment base path, e.g. SITE_BASE=/agent-marketplace/
+# for a GitHub Pages project site. Defaults to "/".
+site-build:
+	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for website builds" >&2; exit 1; }
+	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).
