@@ -306,15 +306,15 @@ func loadRegistryForJob(ctx context.Context, deps Deps, id string) (store.Regist
 // Reindex performs a one-shot durable enqueue of the requested registry and
 // processes refresh jobs until the requested registry's refresh is complete.
 func Reindex(ctx context.Context, deps Deps, cfg config.Config, registrySlugOrID string) error {
+	cfgRegistry, ok := registryBySlugOrID(cfg, registrySlugOrID)
+	if !ok {
+		return fmt.Errorf("registry %q not found in config", registrySlugOrID)
+	}
+
 	if deps.Marketplace.ID == "" {
 		if err := EnsureMarketplace(ctx, &deps); err != nil {
 			return err
 		}
-	}
-
-	cfgRegistry, ok := registryBySlugOrID(cfg, registrySlugOrID)
-	if !ok {
-		return fmt.Errorf("registry %q not found in config", registrySlugOrID)
 	}
 
 	existing, err := deps.MetadataStore.GetRegistry(ctx, store.RegistryID(cfgRegistry.ID))
