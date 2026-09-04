@@ -231,6 +231,56 @@ func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
 	}
 }
 
+func TestRenderDetailFullShowsAllSkillBundleFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Review\n\nReview the change.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "check.sh"), []byte("#!/bin/sh\necho checked\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# Notes\n\nKeep this nearby.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := renderDetailFullContent(row{
+		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review", Path: filepath.Join(dir, "SKILL.md")}},
+	}, 80)
+	stripped := ansi.Strip(out)
+	for _, want := range []string{"SKILL.md", "Review the change.", "notes.md", "Keep this nearby.", "scripts/check.sh", "echo checked"} {
+		if !contains(stripped, want) {
+			t.Fatalf("full bundle view missing %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Index(stripped, "SKILL.md") > strings.Index(stripped, "notes.md") || strings.Index(stripped, "notes.md") > strings.Index(stripped, "scripts/check.sh") {
+		t.Fatalf("bundle files are not rendered in deterministic order:\n%s", stripped)
+	}
+}
+
+func TestDetailBundleSkipsSymlinkedFiles(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("must not be shown"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Safe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "secret.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	out := renderDetailFullContent(row{
+		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "safe", Path: dir}},
+	}, 80)
+	if contains(ansi.Strip(out), "must not be shown") {
+		t.Fatalf("bundle view followed a symlink outside the resource:\n%s", ansi.Strip(out))
+	}
+}
+
 // --- Viewport scroll tests ---
 
 func TestDetailViewportScrollsDownWithJ(t *testing.T) {

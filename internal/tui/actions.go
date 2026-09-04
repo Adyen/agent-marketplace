@@ -91,7 +91,7 @@ type updateDoneMsg struct {
 	err        error
 }
 
-// detailContentMsg carries the glamour-rendered SKILL.md content for the
+// detailContentMsg carries the glamour-rendered resource content for the
 // full-screen detail view. Produced by loadDetailContent (async tea.Cmd)
 // and consumed in Update to populate the viewport.
 type detailContentMsg struct {
@@ -99,6 +99,7 @@ type detailContentMsg struct {
 	content    string
 	width      int
 	keepScroll bool
+	path       string
 }
 
 type catalogLoadMode int
