@@ -65,6 +65,13 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	return act
 }
 
+func (a toggleAction) disablesResource() bool {
+	if a.scope == scopeLocalExclude {
+		return a.enable
+	}
+	return !a.enable
+}
+
 // runScopedToggle returns a Cmd that writes the toggle to the appropriate
 // config file and emits a configWrittenMsg on completion. The existing
 // configWrittenMsg handler in Update() re-loads the snapshot, which picks
@@ -85,6 +92,19 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 			if pathErr != nil {
 				err = pathErr
 				break
+			}
+			// Repo-relative local paths are valid in repo/local configs but
+			// meaningless machine-wide; refuse to write them to the user
+			// (global) config when enabling. Disabling an existing broken entry
+			// is still allowed so users can clean it up.
+			if act.enable {
+				if policyErr := config.ValidateGlobalRegistryWrite(config.RegistryEntry{URL: act.registryURL}); policyErr != nil {
+					return configWrittenMsg{
+						skillName: act.skillName,
+						enabled:   false,
+						err:       policyErr,
+					}
+				}
 			}
 			if act.enable {
 				if err := config.EnsureRegistryWithPathsInConfig(globalPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
@@ -172,9 +192,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 			}
 		}
 		return configWrittenMsg{
-			skillName: act.skillName,
-			enabled:   act.enable,
-			err:       err,
+			skillName:  act.skillName,
+			enabled:    act.enable,
+			selectNext: act.disablesResource(),
+			err:        err,
 		}
 	}
 }
@@ -215,6 +236,18 @@ func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction
 			configPath = config.ProjectConfigPath(repoRoot)
 		default:
 			return nil
+		}
+		if act.scope == scopeGlobal {
+			entries := make([]config.RegistryEntry, 0, len(competing))
+			for _, url := range competing {
+				entries = append(entries, config.RegistryEntry{URL: url})
+			}
+			// Competing repo-relative local registries cannot be shadowed into
+			// the user (global) config; reject them to avoid leaking a
+			// project-local path machine-wide.
+			if err := config.ValidateGlobalRegistryWrite(entries...); err != nil {
+				return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
+			}
 		}
 		for _, url := range competing {
 			meta, ok := competingMeta[url]
@@ -379,6 +412,19 @@ func competingRegistryURLs(rows []row, kind ir.ResourceKind, name, ownURL string
 	return urls
 }
 
+func validateToggleRegistryWrite(rows []row, errs []error, act toggleAction) error {
+	if act.scope != scopeGlobal || !act.enable {
+		return nil
+	}
+	entries := []config.RegistryEntry{{URL: act.registryURL}}
+	if hasCollisionError(errs, act.kind, act.skillName) {
+		for _, url := range competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL) {
+			entries = append(entries, config.RegistryEntry{URL: url})
+		}
+	}
+	return config.ValidateGlobalRegistryWrite(entries...)
+}
+
 func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	operation, ok := m.beginOperation(operationMutation)
 	if !ok {
@@ -386,7 +432,12 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	}
 	m.pane = paneList
 	recordToggleActionSpan(m.ctx, act, m.modalSkill.Artifact.Kind)
-	if act.enable && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+	if err := validateToggleRegistryWrite(m.rows, m.errs, act); err != nil {
+		return m, correlateOperation(func() tea.Msg {
+			return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
+		}, operation, false)
+	}
+	if act.enable && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
 	return m, correlateOperation(runScopedToggle(m.repoRoot, act), operation, false)

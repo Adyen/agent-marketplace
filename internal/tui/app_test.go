@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,6 +13,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	ansi "github.com/charmbracelet/x/ansi"
 )
+
+func TestDefaultTUIProgramOptionsLeaveMouseSelectionToTerminal(t *testing.T) {
+	var output bytes.Buffer
+	options := append(defaultTUIProgramOptions(), tea.WithInput(nil), tea.WithOutput(&output))
+	if _, err := tea.NewProgram(guardProbeModel{}, options...).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "\x1b[?1049h") {
+		t.Fatalf("TUI did not enter the alternate screen: %q", got)
+	}
+	for _, sequence := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
+		if strings.Contains(got, sequence) {
+			t.Fatalf("TUI enabled mouse tracking with %q, preventing native text selection", sequence)
+		}
+	}
+}
 
 func TestRowGlyphEnabled(t *testing.T) {
 	r := row{IsAvailable: false}
@@ -232,6 +252,46 @@ func TestResizeKeepsSelectedResourceVisibleWithWrappedRows(t *testing.T) {
 	out := updated.(Model).View()
 	if !strings.Contains(visibleListPane(out, 20), "selected") {
 		t.Fatalf("selected resource is outside the visible list pane after resize:\n%s", ansi.Strip(out))
+	}
+}
+
+func TestHalfPageNavigationMovesListSelection(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width = 80
+	m.height = 24
+	for i := 0; i < 40; i++ {
+		m.flatItems = append(m.flatItems, flatItem{Kind: flatArtifact, Row: mkRow(fmt.Sprintf("resource-%d", i), withGlobal)})
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+d moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	if m.cursor != 31 {
+		t.Fatalf("f moved cursor to %d, want 31", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(Model)
+	if m.cursor != 10 {
+		t.Fatalf("ctrl+b moved cursor to %d, want 10", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(Model)
+	if m.cursor != 39 {
+		t.Fatalf("end moved cursor to %d, want 39", m.cursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(Model)
+	if m.cursor != 0 {
+		t.Fatalf("home moved cursor to %d, want 0", m.cursor)
 	}
 }
 

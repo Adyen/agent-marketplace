@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -152,6 +154,8 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
+	selectionAfterDisable := m.selectionAfterDisable
+	m.selectionAfterDisable = ""
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
@@ -160,7 +164,13 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
 	m.recomputeView()
-	m.restoreSelectionAfterRebuild(selection)
+	if !m.restoreSelectionKey(selectionAfterDisable) {
+		m.restoreSelectionAfterRebuild(selection)
+	}
+	if msg.inventoryResult != nil {
+		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
+	}
+	recordConfigSnapshotSpans(m.ctx, msg)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -318,6 +328,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
+		if msg.selectNext {
+			m.selectionAfterDisable = m.nextRowSelectionKey()
+		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
 		if !msg.followUp && msg.enabled && m.pendingExcludeAction != nil {
@@ -325,8 +338,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingExcludeAction = nil
 			if followUp := excludeCompetingRegistriesCmd(m.repoRoot, m.rows, act); followUp != nil {
 				exclCmd := correlateOperation(followUp, msg.operation, true)
-				generation := m.beginRequest(requestSnapshot)
-				return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), exclCmd, toastExpiryCmd(2*time.Second))
+				return m, tea.Batch(exclCmd, toastExpiryCmd(2*time.Second))
 			}
 		}
 		m.pendingExcludeAction = nil
@@ -500,6 +512,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) moveCursorByHalfPage(direction int) {
+	m.moveCursorByRows(direction, max(1, m.listVisibleHeight()/2))
+}
+
+func (m *Model) moveCursorByPage(direction int) {
+	m.moveCursorByRows(direction, m.listVisibleHeight())
+}
+
+func (m *Model) moveCursorByRows(direction, step int) {
+	if len(m.flatItems) == 0 {
+		return
+	}
+	m.cursor = min(max(0, m.cursor), len(m.flatItems)-1)
+	listWidth, _ := paneWidths(m.width)
+	heights := m.listHeightOffsets(listWidth)
+	target := heights[m.cursor] + direction*max(1, step)
+	if target <= 0 {
+		m.cursor = 0
+	} else if target >= heights[len(m.flatItems)] {
+		m.cursor = len(m.flatItems) - 1
+	} else {
+		candidate := sort.Search(len(m.flatItems), func(i int) bool {
+			return heights[i] > target
+		}) - 1
+		if direction > 0 {
+			candidate = max(m.cursor+1, candidate)
+		} else {
+			candidate = min(m.cursor-1, candidate)
+		}
+		m.cursor = min(max(0, candidate), len(m.flatItems)-1)
+	}
+	m.clampListOffset()
+}
+
+func (m Model) handleViewportPageKey(msg tea.KeyMsg, viewport *viewport.Model) bool {
+	if key.Matches(msg, m.keys.PageDown) {
+		viewport.PageDown()
+		return true
+	}
+	if key.Matches(msg, m.keys.PageUp) {
+		viewport.PageUp()
+		return true
+	}
+	return false
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Toast auto-expire check
 	if !m.toastExp.IsZero() && time.Now().After(m.toastExp) {
@@ -536,6 +594,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.helpViewport.GotoBottom()
 			return m, nil
 		}
+		if m.handleViewportPageKey(msg, &m.helpViewport) {
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.helpViewport, cmd = m.helpViewport.Update(msg)
 		return m, cmd
@@ -555,6 +616,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.Bottom) {
 			m.errorsViewport.GotoBottom()
+			return m, nil
+		}
+		if m.handleViewportPageKey(msg, &m.errorsViewport) {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -630,6 +694,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 			m.clampListOffset()
 		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageDown):
+		m.moveCursorByHalfPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageUp):
+		m.moveCursorByHalfPage(-1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.moveCursorByPage(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.moveCursorByPage(-1)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Top):
@@ -845,6 +925,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
 	// wheel) to the viewport, which handles scroll offset and clamping.
 	m.detailStickyBottom = false
+	if m.handleViewportPageKey(msg, &m.detailViewport) {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
@@ -928,16 +1011,16 @@ func (m Model) View() string {
 		m.helpViewport.Width = m.width
 		m.helpViewport.Height = max(1, m.height-1)
 		m.helpViewport.SetContent(renderHelp(m))
-		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ scroll · esc/? close · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.helpViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/? close · Ctrl+C quit", m.width, m.height)
 	case paneErrors:
 		m.errorsViewport.Width = m.width
 		m.errorsViewport.Height = max(1, m.height-1)
 		m.errorsViewport.SetContent(renderErrors(m))
-		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ scroll · esc/e close · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
 		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
 	case paneDetail:
-		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ scroll · Ctrl+C quit", m.width, m.height)
+		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ or ctrl-d/u scroll · Ctrl+C quit", m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()
@@ -1157,7 +1240,11 @@ func Run(ctx context.Context, repoRoot, homeDir string) error {
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	return runTUIModel(model, defaultTUIProgramOptions()...)
+}
+
+func defaultTUIProgramOptions() []tea.ProgramOption {
+	return []tea.ProgramOption{tea.WithAltScreen()}
 }
 
 func runTUIModel(model tea.Model, options ...tea.ProgramOption) error {

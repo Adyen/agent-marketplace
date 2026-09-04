@@ -26,7 +26,7 @@ Replaceable detail rendering and snapshot-producing load, reload, refresh, and u
 
 Rejected stale completions do not change the active pane, input focus, selected resource, detail content, rows, cached configuration, drift state, or success and error state. Because an update may already have changed disk before its state delivery becomes stale, a stale update result schedules a new authoritative snapshot instead of applying either stale outcome.
 
-Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered.
+Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered. After disabling a resource, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
 
 ## Mutation operations
 
@@ -52,7 +52,9 @@ While the alternate screen is active, structured logs continue to the managed lo
 
 The supported minimum is **50 columns by 12 rows**. At or above that size, the active core view or modal stays within physical bounds and keeps its required action, confirmation, quit, and recovery keys visible. Help and diagnostics are scrollable with persistent offsets.
 
-Below either minimum dimension, the TUI displays only a bounded resize-required state. Normal keyboard and mouse workflow input is suspended; `q` and Ctrl+C remain available. Returning to a supported size restores the prior workflow state.
+Below either minimum dimension, the TUI displays only a bounded resize-required state. Normal keyboard workflow input is suspended; `q` and Ctrl+C remain available. Returning to a supported size restores the prior workflow state.
+
+The TUI does not enable terminal mouse tracking. Drag selection remains terminal-owned so rendered text can be copied natively; scrolling and navigation use the documented keyboard bindings.
 
 Registry metadata, paths, diagnostics, config values, Markdown-derived text, and returned errors are untrusted terminal data. C0, DEL, C1, ESC, carriage return, tab, unsupported structural newlines, invalid UTF-8, Unicode line separators, and bidi formatting controls render as visible escapes. Markdown is sanitized before entity decoding can turn encoded values into terminal controls. Printable Unicode, including combining and double-width characters, remains readable.
 

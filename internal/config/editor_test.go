@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -567,6 +568,39 @@ registries:
 	}
 	if len(cfg.Registries) != 1 {
 		t.Fatalf("expected 1 registry (idempotent), got %d", len(cfg.Registries))
+	}
+}
+
+func TestEnsureRegistryWithPathsInConfigRejectsRepoRelativeGlobalWrite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatalf("GlobalConfigPath: %v", err)
+	}
+
+	err = EnsureRegistryWithPathsInConfig(configPath, "./relative.git", "main", "skills")
+	if _, ok := err.(*GlobalRelativeRegistryError); !ok {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", err, err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("global config was written: %v", err)
+	}
+}
+
+func TestDisableResourceWithShadowFallbackRejectsRepoRelativeGlobalWrite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath, err := GlobalConfigPath()
+	if err != nil {
+		t.Fatalf("GlobalConfigPath: %v", err)
+	}
+
+	err = DisableResourceWithShadowFallback(configPath, "./relative", "", "", ir.KindSkill, "audit")
+	var globalRelativeErr *GlobalRelativeRegistryError
+	if !errors.As(err, &globalRelativeErr) {
+		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", err, err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("global config was written: %v", err)
 	}
 }
 

@@ -39,21 +39,6 @@ jobs:
       - name: Build binary
         run: make build
 
-  container:
-    name: Build telemetry receiver container
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build container
-        run: docker build --file Dockerfile.telemetry-receiver --tag agent-marketplace-telemetry-receiver:ci .
-
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -85,7 +70,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -101,6 +93,29 @@ jobs:
       - name: Run TUI QA driver self-tests
         run: npm run check
         working-directory: tools/tui-qa
+
+      - name: Run contained TUI QA validation
+        env:
+          TUI_QA_BASE_IMAGE: node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+          TUI_QA_BASE_FLAVOR: debian-node
+        run: AM_TUI_QA_RUN_ID="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" AM_TUI_QA_RUN_CLASS=pr tools/tui-qa/run-container.sh
+
+      - name: Validate contained TUI QA result
+        run: jq -e '.schemaVersion == 1 and .runClass == "pr" and .certifying == true and .finalStatus == "PASS" and .exitCode == 0 and ([.flows[] | select(.required) | .status] | all(. == "PASS"))' ".local/agent-marketplace/qa/tui/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/artifacts/results.json" >/dev/null
+
+      - name: Upload sanitized TUI QA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tui-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/results.json
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/report.md
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/build-identity.json
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/containment-selftest.txt
+            .local/agent-marketplace/qa/tui/ci-${{ github.run_id }}-${{ github.run_attempt }}/artifacts/flows
+          if-no-files-found: warn
+          retention-days: 7
 
   lint:
     name: Lint

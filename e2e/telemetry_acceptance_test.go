@@ -22,10 +22,10 @@ type capturedRequest struct {
 type telemetryServer struct {
 	*httptest.Server
 
-	mu           sync.Mutex
-	requests     []capturedRequest
-	count        atomic.Int32
-	failFirstN   atomic.Int32
+	mu         sync.Mutex
+	requests   []capturedRequest
+	count      atomic.Int32
+	failFirstN atomic.Int32
 }
 
 func newTelemetryServer(t *testing.T) *telemetryServer {
@@ -289,11 +289,10 @@ harnesses:
   - factory
 telemetry:
   level: basic
+  endpoint: ` + srv.URL + `
 `)
 
-	status := env.RunAMWithEnv(map[string]string{
-		"AGENT_MARKETPLACE_TELEMETRY_ENDPOINT": srv.URL,
-	}, "telemetry", "status")
+	status := env.RunAM("telemetry", "status")
 	if status.ExitCode != 0 {
 		t.Fatalf("telemetry status should exit 0, got %d:\n%s", status.ExitCode, status.Combined)
 	}
@@ -304,9 +303,7 @@ telemetry:
 		t.Fatalf("expected organization-enforced basic level, got:\n%s", status.Combined)
 	}
 
-	r := env.RunAMWithEnv(map[string]string{
-		"AGENT_MARKETPLACE_TELEMETRY_ENDPOINT": srv.URL,
-	}, "list")
+	r := env.RunAM("list")
 	if r.ExitCode != 0 {
 		t.Fatalf("list should exit 0, got %d:\n%s", r.ExitCode, r.Combined)
 	}

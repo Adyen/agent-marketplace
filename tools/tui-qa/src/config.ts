@@ -102,7 +102,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): WorkbenchConfi
     runId,
     runClass: readRunClass(env.AM_TUI_QA_RUN_CLASS),
     repoRoot,
-    binary: path.resolve(repoRoot, env.AM_TUI_QA_BINARY?.trim() || ".local/agent-marketplace/bin/agent-marketplace"),
+    binary: path.resolve(repoRoot, env.AM_TUI_QA_BINARY?.trim() || path.join(".local", "agent-marketplace", "bin", `agent-marketplace-${runId}`)),
     artifactDir,
     reportPath: artifactPath("AM_TUI_QA_REPORT_PATH", env.AM_TUI_QA_REPORT_PATH, path.join(artifactDir, "report.md"), artifactDir),
     resultsPath: artifactPath("AM_TUI_QA_RESULTS_PATH", env.AM_TUI_QA_RESULTS_PATH, path.join(artifactDir, "results.json"), artifactDir),

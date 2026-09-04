@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type AnySchema, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-export const SCHEMA_FILES = ["coverage-index.v1.json", "exploratory-supplement.v1.json", "results.v1.json"] as const;
+export const SCHEMA_FILES = ["code-inventory.v1.json", "coverage-index.v1.json", "exploratory-supplement.v1.json", "results.v1.json"] as const;
 export type SchemaFile = (typeof SCHEMA_FILES)[number];
 
 export const schemaDirectory = (): string => {

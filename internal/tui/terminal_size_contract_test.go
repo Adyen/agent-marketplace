@@ -71,7 +71,18 @@ func TestHelpAndErrorsScrollAtSupportedMinimum(t *testing.T) {
 	m.height = 12
 	m.pane = paneHelp
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = updated.(Model)
+	if m.helpViewport.YOffset == 0 {
+		t.Fatal("ctrl+f did not page help overlay down")
+	}
+	pageOffset := m.helpViewport.YOffset
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	m = updated.(Model)
+	if m.helpViewport.YOffset >= pageOffset {
+		t.Fatalf("ctrl+b did not page help overlay up: before=%d after=%d", pageOffset, m.helpViewport.YOffset)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
 	m = updated.(Model)
 	if m.helpViewport.YOffset == 0 {
 		t.Fatal("help overlay did not scroll")

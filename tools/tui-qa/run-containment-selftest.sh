@@ -7,7 +7,7 @@ if [ -z "$image" ]; then
   exit 2
 fi
 
-root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+root_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/tui-qa-containment.XXXXXX")
 trap 'rm -rf -- "$tmp_root"' EXIT HUP INT TERM
 mkdir -p "$tmp_root/artifacts"

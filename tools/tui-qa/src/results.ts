@@ -219,9 +219,13 @@ const productRestorationComplete = (attempt: AttemptRecord): boolean =>
     attempt.productRestoration.bracketedPasteDisabled
   ].every((status) => status === "PASS");
 
-const harnessRecoveryComplete = (attempt: AttemptRecord): boolean =>
-  [attempt.harnessRecovery.canonical, attempt.harnessRecovery.echo, attempt.harnessRecovery.noDescendants]
-    .every((status) => status === "PASS");
+const harnessRecoveryComplete = (attempt: AttemptRecord, driver: FlowRecord["driver"]): boolean => {
+  if (attempt.harnessRecovery.noDescendants !== "PASS") return false;
+  const terminalStatuses = [attempt.harnessRecovery.canonical, attempt.harnessRecovery.echo];
+  return driver === "pty"
+    ? terminalStatuses.every((status) => status === "PASS")
+    : terminalStatuses.every((status) => status === "PASS" || status === "NOT_APPLICABLE");
+};
 
 const firstUnsanitizedString = (value: unknown, location = "$"): string | undefined => {
   if (typeof value === "string") return sanitizeMultiline(value) === value ? undefined : location;
@@ -306,8 +310,9 @@ export const validateResults = (value: unknown): string[] => {
     if (flow.status === "PASS" && (flow.attempts.length !== 1 || flow.attempts[0].status !== "PASS")) {
       problems.push(`flow ${flow.flowId}: PASS requires one passing attempt`);
     }
-    if (flow.status === "FAIL" && (flow.attempts.length === 0 || flow.attempts.at(-1)?.status !== "FAIL")) {
-      problems.push(`flow ${flow.flowId}: FAIL requires a final failed attempt`);
+    if (flow.status === "FAIL" &&
+        (!flow.attempts.some((attempt) => attempt.status === "FAIL") || flow.attempts.at(-1)?.status === "PASS")) {
+      problems.push(`flow ${flow.flowId}: FAIL requires a failed attempt and a non-passing final attempt`);
     }
     if ((flow.status === "SKIP" || flow.status === "NOT_APPLICABLE") && flow.attempts.length !== 0) {
       problems.push(`flow ${flow.flowId}: ${flow.status} cannot contain executed attempts`);
@@ -331,13 +336,16 @@ export const validateResults = (value: unknown): string[] => {
       if (attempt.productRestoration.complete !== productRestorationComplete(attempt)) {
         problems.push(`flow ${flow.flowId}: product restoration summary disagrees with checks`);
       }
-      if (attempt.harnessRecovery.complete !== harnessRecoveryComplete(attempt)) {
+      if (attempt.harnessRecovery.complete !== harnessRecoveryComplete(attempt, flow.driver)) {
         problems.push(`flow ${flow.flowId}: harness recovery summary disagrees with checks`);
       }
-      if ((flow.status === "PASS" || flow.status === "FLAKY") && !attempt.harnessRecovery.complete) {
-        problems.push(`flow ${flow.flowId}: passing result requires complete harness recovery for every attempt`);
+      if (flow.status === "PASS" && !attempt.harnessRecovery.complete) {
+        problems.push(`flow ${flow.flowId}: passing result requires complete harness recovery`);
       }
-      if (flow.kind !== "detector" && attempt.status === "PASS" && !attempt.productRestoration.complete) {
+      if (flow.status === "FLAKY" && attempt.status === "PASS" && !attempt.harnessRecovery.complete) {
+        problems.push(`flow ${flow.flowId}: passing retry requires complete harness recovery`);
+      }
+      if (flow.kind !== "detector" && flow.driver === "pty" && attempt.status === "PASS" && !attempt.productRestoration.complete) {
         problems.push(`flow ${flow.flowId}: passing product attempt requires complete product restoration`);
       }
       if (flow.kind === "detector" && attempt.status === "PASS" && attempt.observedFailureClass !== flow.expectedFailureClass) {

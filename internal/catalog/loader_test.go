@@ -1634,6 +1634,72 @@ metadata:
 	}
 }
 
+func TestLoadRegistries_MissingLocalPathReportsClearError(t *testing.T) {
+	repoRoot := t.TempDir()
+	missing := filepath.Join(repoRoot, "missing-dir")
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{{
+			URL:    "./missing-dir",
+			Source: config.RepoCommitted,
+		}},
+	}
+
+	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
+	if len(result.Errors) != 1 {
+		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
+	}
+	want := fmt.Sprintf("local registry path does not exist: %s", missing)
+	if !strings.Contains(result.Errors[0].Error(), want) {
+		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	}
+	if len(result.Catalogs) != 0 {
+		t.Fatalf("expected no catalogs for missing local path, got %d", len(result.Catalogs))
+	}
+}
+
+func TestLoadRegistries_MissingLocalPathSkippedInCachedNoFetch(t *testing.T) {
+	repoRoot := t.TempDir()
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{{
+			URL:    "./missing-dir",
+			Source: config.RepoCommitted,
+		}},
+	}
+
+	result := LoadRegistries(cfg, repoRoot, LoadModeCachedNoFetch)
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors in CachedNoFetch mode, got %v", result.Errors)
+	}
+	if len(result.Catalogs) != 0 {
+		t.Fatalf("expected no catalogs when skipping missing local path, got %d", len(result.Catalogs))
+	}
+}
+
+func TestLoadRegistries_LocalPathFileReportsNotDir(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "not-a-dir"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{{
+			URL:    "./not-a-dir",
+			Source: config.RepoCommitted,
+		}},
+	}
+
+	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
+	if len(result.Errors) != 1 {
+		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
+	}
+	want := "local registry path is not a directory:"
+	if !strings.Contains(result.Errors[0].Error(), want) {
+		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

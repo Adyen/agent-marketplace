@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
 func newDeinitCmd() *cobra.Command {
@@ -222,6 +223,19 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 				dir := filepath.Dir(path)
 				removeEmptyDir(dir)
 			}
+
+			if telemetry.InventoryEnabled(ctx) {
+				// Report the effective post-purge configuration from cache only. This
+				// lookup is telemetry best effort: resolution errors neither add output
+				// nor change the successful teardown's exit status.
+				finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+					RepoRoot:       repoRoot,
+					LocalConfigDir: config.FindLocalConfigDir(),
+					CatalogMode:    catalog.LoadModeCachedNoFetch,
+					SkipInventory:  true,
+				})
+				pipeline.RecordResolvedInventory(ctx, finalResult)
+			}
 		}
 	}
 
@@ -272,6 +286,7 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 		LocalConfigDir:   config.FindLocalConfigDir(),
 		CatalogMode:      catalog.LoadModeCachedNoFetch,
 		RequireTargetSet: true,
+		SkipInventory:    true,
 	}
 	res := pipeline.Resolve(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
