@@ -153,6 +153,118 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  benchmark:
+    name: Benchmark
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation
+      BENCHMARK_PATTERN: Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge)$
+      BENCHSTAT_VERSION: v0.0.0-20260709024250-82a0b07e230d
+      GOMAXPROCS: 2
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: benchmark-base
+          persist-credentials: false
+
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: benchmark-head
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: benchmark-head/go.mod
+          cache-dependency-path: |
+            benchmark-base/go.sum
+            benchmark-head/go.sum
+
+      - name: Install benchstat
+        working-directory: benchmark-head
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Benchmark base
+        working-directory: benchmark-base
+        run: |
+          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-base.txt"; then
+            cat "$GITHUB_WORKSPACE/benchmark-base.txt"
+            exit 1
+          fi
+
+      - name: Benchmark pull request
+        working-directory: benchmark-head
+        run: |
+          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-head.txt"; then
+            cat "$GITHUB_WORKSPACE/benchmark-head.txt"
+            exit 1
+          fi
+
+      - name: Build benchmark report
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-base.txt > benchmark-base-clean.txt
+          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-head.txt > benchmark-head-clean.txt
+          benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt | tee benchmark-stat.txt
+          awk '
+            BEGIN { change["sec/op"] = change["B/op"] = change["allocs/op"] = "n/a" }
+            /sec\/op.*vs base/ { unit = "sec/op" }
+            /B\/op.*vs base/ { unit = "B/op" }
+            /allocs\/op.*vs base/ { unit = "allocs/op" }
+            /^geomean/ && unit != "" { change[unit] = $NF }
+            END {
+              printf "- Geomean: **%s sec/op**\n", change["sec/op"]
+              printf "- **%s B/op**\n", change["B/op"]
+              printf "- **%s allocs/op**\n", change["allocs/op"]
+            }
+          ' benchmark-stat.txt > benchmark-summary.txt
+          {
+            echo '<!-- agent-marketplace-benchmark-results -->'
+            echo '## Benchmark comparison'
+            echo
+            echo "Compared \`${BASE_SHA:0:12}\` (base) with \`${HEAD_SHA:0:12}\` (pull request) on the same runner."
+            echo
+            cat benchmark-summary.txt
+            echo
+            echo '<details><summary>Full benchstat output</summary>'
+            echo
+            head -n 400 benchmark-stat.txt | sed 's/^/    /'
+            echo
+            echo '</details>'
+            echo
+            echo '_Informational only; benchmark changes do not fail CI._'
+          } > benchmark-comment.md
+          cat benchmark-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update pull request comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          marker='<!-- agent-marketplace-benchmark-results -->'
+          comment_id=$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq "map(select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\")))) | first | .id // empty")
+          if [ -n "$comment_id" ]; then
+            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" --input -
+          else
+            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --input -
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
