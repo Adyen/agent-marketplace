@@ -135,11 +135,20 @@ registry is provided, all configured registries are reindexed.`,
 				slog.Error("reindex failed", "reason", "--config is required")
 				return fmt.Errorf("--config is required")
 			}
+			if len(args) > 1 {
+				slog.Error("reindex failed", "reason", "too many arguments")
+				return errors.New("accepts at most one registry slug or id")
+			}
 
 			cfg, err := mpconfig.LoadConfig(cfgPath)
 			if err != nil {
 				slog.Error("reindex failed", "reason", "load operator config", "error", err)
 				return fmt.Errorf("load operator config: %w", err)
+			}
+			if len(args) == 1 && !hasRegistry(cfg, args[0]) {
+				err := fmt.Errorf("registry %q not found in config", args[0])
+				slog.Error("reindex failed", "registry", args[0], "error", err)
+				return err
 			}
 
 			ctx := cmd.Context()
@@ -165,6 +174,7 @@ registry is provided, all configured registries are reindexed.`,
 			ctx, cancel := context.WithTimeout(ctx, time.Hour)
 			defer cancel()
 
+			var reindexErrs []error
 			switch len(args) {
 			case 0:
 				for _, registry := range cfg.Registries {
@@ -175,7 +185,7 @@ registry is provided, all configured registries are reindexed.`,
 					slog.Info("reindexing registry", "registry", registry.ID, "slug_or_id", slugOrID)
 					if err := worker.Reindex(ctx, deps, cfg, slugOrID); err != nil {
 						slog.Error("reindex failed", "registry", registry.ID, "error", err)
-						return fmt.Errorf("reindex registry %q: %w", registry.ID, err)
+						reindexErrs = append(reindexErrs, fmt.Errorf("reindex registry %q: %w", registry.ID, err))
 					}
 				}
 			case 1:
@@ -191,6 +201,9 @@ registry is provided, all configured registries are reindexed.`,
 
 			if err := meta.ReadyCheck(ctx, blobs); err != nil {
 				slog.Error("reindex failed", "reason", "ready check", "error", err)
+				reindexErrs = append(reindexErrs, err)
+			}
+			if err := errors.Join(reindexErrs...); err != nil {
 				return err
 			}
 			slog.Info("reindex complete", "registries", len(cfg.Registries))
@@ -202,4 +215,13 @@ registry is provided, all configured registries are reindexed.`,
 	_ = cmd.MarkFlagRequired("config")
 
 	return cmd
+}
+
+func hasRegistry(cfg mpconfig.Config, slugOrID string) bool {
+	for _, registry := range cfg.Registries {
+		if registry.ID == slugOrID || registry.Slug == slugOrID {
+			return true
+		}
+	}
+	return false
 }
