@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"time"
@@ -206,9 +207,6 @@ func validateEntry(e Entry) error {
 }
 
 func validateRecord(r *Record, canonicalRoot, rootKey string) error {
-	if r == nil {
-		return fmt.Errorf("%w: ownership record is missing", ErrStateCorrupt)
-	}
 	if r.Version != stateVersion {
 		return fmt.Errorf("%w: unsupported state version %d", ErrStateCorrupt, r.Version)
 	}
@@ -218,35 +216,39 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 	if r.CanonicalRoot != canonicalRoot {
 		return ErrStateRootMismatch
 	}
-	if r.Generation == 0 {
-		return fmt.Errorf("%w: ownership generation must be positive", ErrStateCorrupt)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, r.UpdatedAt); err != nil {
-		return fmt.Errorf("%w: ownership timestamp is malformed", ErrStateCorrupt)
-	}
 	for rel, fs := range r.Files {
-		if err := validateRelativePath(rel); err != nil {
-			return fmt.Errorf("%w: file key: %v", ErrStateCorrupt, err)
+		if rel == "" || filepath.IsAbs(rel) {
+			return fmt.Errorf("%w: file key is not an output-relative path", ErrStateCorrupt)
 		}
-		if !digestPattern.MatchString(fs.ContentDigest) {
+		if fs.ContentDigest != "" && !digestPattern.MatchString(fs.ContentDigest) {
 			return fmt.Errorf("%w: file content digest is malformed", ErrStateCorrupt)
 		}
-		if len(fs.Entries) == 0 {
-			return fmt.Errorf("%w: file state has no owned entries", ErrStateCorrupt)
-		}
-		seen := make(map[string]struct{}, len(fs.Entries))
 		for _, e := range fs.Entries {
 			if err := validateEntry(e); err != nil {
 				return errors.Join(ErrStateCorrupt, err)
 			}
-			key := e.ID().mapKey()
-			if _, ok := seen[key]; ok {
-				return fmt.Errorf("%w: duplicate entry identity", ErrStateCorrupt)
-			}
-			seen[key] = struct{}{}
 		}
 	}
 	return nil
+}
+
+// normalizeHookEntries recomputes the identity digest for every hook entry from
+// its canonical value digest. This is the lazy read-side migration from the old
+// lossy hook/v1 identity to the total hook/v2 identity: it makes records written
+// before the new algorithm valid on read without bumping the schema version.
+func normalizeHookEntries(rec *Record) {
+	if rec == nil || rec.Files == nil {
+		return
+	}
+	for rel, fs := range rec.Files {
+		for i := range fs.Entries {
+			if fs.Entries[i].Kind != KindHook {
+				continue
+			}
+			fs.Entries[i].IdentityDigest = HookIdentityDigest(fs.Entries[i].Container, fs.Entries[i].ValueDigest)
+		}
+		rec.Files[rel] = fs
+	}
 }
 
 // EverRecorded reports whether this canonical root has any durable trace of a
@@ -298,17 +300,18 @@ func (s *Store) missingStateError() error {
 // record that went away. That is a reporting distinction only: the code, the
 // severity, and the nil record are identical either way.
 func (s *Store) Load() (*Record, error) {
-	data, err := readOwnershipFile(s.StateFile(), maxOwnershipMetadataSize)
+	data, err := os.ReadFile(s.StateFile())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 		}
-		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
+		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %v", ErrStateCorrupt, err))
 	}
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed JSON", ErrStateCorrupt))
 	}
+	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
 		code := diag.CodeOwnershipStateCorrupt
 		if errors.Is(err, ErrStateRootMismatch) {
@@ -337,7 +340,7 @@ func (s *Store) commitRecord(rec *Record) error {
 	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
 		return fmt.Errorf("ownership: create state directory: %w", err)
 	}
-	return s.atomicWrite(s.StateFile(), data, 0o600)
+	return atomicWrite(s.StateFile(), data, 0o600)
 }
 
 // nextRecord builds the record that a mutation will commit, from the currently

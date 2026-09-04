@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
 func newDeinitCmd() *cobra.Command {
@@ -122,26 +123,22 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	var resolvedArtifacts []resolver.ResolvedArtifact
 	switch scope {
 	case deinitScopeUser:
-		// Resolve organization output before running either materialization or
-		// cache GC. An incomplete view must fail closed: an empty resolved set
-		// would otherwise look like proof that all organization-owned output and
-		// cache entries are safe to remove.
+		opts = append(opts, materialize.WithMachineScopeOnly())
 		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
 		if err != nil {
-			slog.Error("deinit could not resolve organization-owned artifacts; refusing teardown", "error", err)
-			if _, werr := fmt.Fprintf(out, "error: could not resolve organization-owned artifacts; refusing teardown: %v\n", err); werr != nil {
+			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
+			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
 				return werr
 			}
-			return fmt.Errorf("resolving organization-owned artifacts: %w", err)
+		} else {
+			resolvedArtifacts = orgArtifacts
 		}
-		resolvedArtifacts = orgArtifacts
-		opts = append(opts, materialize.WithMachineScopeOnly())
 	case deinitScopeRepo, deinitScopeLocal:
 		opts = append(opts, materialize.WithRepoScopeOnly())
 	}
 
 	opts = append(opts, materialize.WithMaterializationModes(modes))
-	report, err := materialize.Run(ctx, repoRoot, resolvedArtifacts, opts...)
+	report, err := materialize.Run(context.Background(), repoRoot, resolvedArtifacts, opts...)
 	if err != nil {
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
@@ -226,6 +223,19 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 				dir := filepath.Dir(path)
 				removeEmptyDir(dir)
 			}
+
+			if telemetry.InventoryEnabled(ctx) {
+				// Report the effective post-purge configuration from cache only. This
+				// lookup is telemetry best effort: resolution errors neither add output
+				// nor change the successful teardown's exit status.
+				finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+					RepoRoot:       repoRoot,
+					LocalConfigDir: config.FindLocalConfigDir(),
+					CatalogMode:    catalog.LoadModeCachedNoFetch,
+					SkipInventory:  true,
+				})
+				pipeline.RecordResolvedInventory(ctx, finalResult)
+			}
 		}
 	}
 
@@ -266,35 +276,24 @@ func removeEmptyDir(dir string) {
 // mandatory policy output).
 //
 // It uses the trusted exact Git lock view so teardown never refreshes mutable
-// refs or writes the Git cache. Marketplace resolution is explicitly
-// CachedNoFetch instead of status inspection: trusted local metadata
-// and verified artifact archives are decoded into IR resources so preserved
-// Marketplace output remains materializable. User-owned Marketplace pins are
-// omitted from this preservation view; their cache failures must not block org
-// preservation. Missing or unsafe Git paths and any missing/invalid org-owned
-// Marketplace cache remain hard failures. When no machine-wide target harness
-// set is configured, there is no org-owned output to preserve, so the function
-// returns an empty slice rather than defaulting artifacts to a target the user
-// never requested.
+// refs or writes the Git cache. Missing or unsafe Git snapshots remain hard
+// failures. When no machine-wide target harness set is configured, there is no
+// organization-owned output to preserve, so the function returns an empty
+// slice rather than defaulting artifacts to a target the user never requested.
 func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
 	localDir := config.FindLocalConfigDir()
-	exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true})
+	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true})
 	if err != nil {
 		return nil, err
 	}
-	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:             repoRoot,
-		LocalConfigDir:       localDir,
-		CatalogMode:          catalog.LoadModeInspect,
-		CatalogOption:        []catalog.LoadOption{exactOption},
-		RequireTargetSet:     true,
-		MarketplaceMode:      &marketplaceMode,
-		MarketplaceExactView: exactMarketplace,
-		ExactLockLease:       exactLease,
-		MarketplaceSourceFilter: func(source config.Source) bool {
-			return source == config.Organization
-		},
+		RepoRoot:         repoRoot,
+		LocalConfigDir:   localDir,
+		CatalogMode:      catalog.LoadModeInspect,
+		CatalogOption:    []catalog.LoadOption{exactOption},
+		RequireTargetSet: true,
+		SkipInventory:    true,
+		ExactLockLease:   exactLease,
 	}
 	res := pipeline.Resolve(ctx, resolveOpts)
 	if len(res.Errors) > 0 {

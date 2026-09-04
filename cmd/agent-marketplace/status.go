@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -88,6 +87,7 @@ type statusView struct {
 	targetHarnesses []string
 	targetSource    config.Source
 	harnessTargets  []harnessTargetRow
+	lockMetadata    []pipeline.LockMetadata
 }
 
 func newStatusCmd() *cobra.Command {
@@ -104,8 +104,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	repoRoot := config.FindRepoRoot()
 
 	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		RepoRoot:    repoRoot,
-		CatalogMode: catalog.LoadModeInspect,
+		RepoRoot:           repoRoot,
+		CatalogMode:        catalog.LoadModeInspect,
+		ReadOnlyExactLocks: true,
 	})
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
@@ -245,6 +246,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		targetHarnesses: targetHarnesses,
 		targetSource:    result.TargetHarnessSource,
 		harnessTargets:  harnessTargets,
+		lockMetadata:    result.LockMetadata,
 	}); err != nil {
 		return err
 	}
@@ -636,6 +638,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource
 	harnessTargets := view.harnessTargets
+	lockMetadata := view.lockMetadata
 
 	if diag.Managed() {
 		if _, err := fmt.Fprintln(out, "MANAGED INSTALLATION"); err != nil {
@@ -671,6 +674,12 @@ func writeStatusSections(out io.Writer, view statusView) error {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+	}
+
+	if len(lockMetadata) > 0 {
+		if err := writeStatusTable(out, "EXACT REGISTRY LOCKS", []string{"SOURCE", "REGISTRY", "REF", "COMMIT", "SNAPSHOT"}, lockMetadataRowsToCells(lockMetadata)); err != nil {
 			return err
 		}
 	}
@@ -827,21 +836,6 @@ func lockMetadataRowsToCells(rows []pipeline.LockMetadata) [][]string {
 			snapshot = "available"
 		}
 		cells = append(cells, []string{row.Source.String(), row.URL, row.Ref, row.Commit, snapshot})
-	}
-	return cells
-}
-
-func marketplaceLockMetadataRowsToCells(rows []pipeline.MarketplaceLockMetadata) [][]string {
-	cells := make([][]string, 0, len(rows))
-	for _, row := range rows {
-		state := "exact"
-		if row.Blocked {
-			state = "blocked"
-			if row.Code != "" {
-				state += " (" + row.Code + ")"
-			}
-		}
-		cells = append(cells, []string{row.Source.String(), row.URL, row.InstanceID, strconv.Itoa(row.Resources), state})
 	}
 	return cells
 }

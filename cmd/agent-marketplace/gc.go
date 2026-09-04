@@ -14,7 +14,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 func newGCCmd() *cobra.Command {
@@ -37,10 +36,9 @@ func newGCCmd() *cobra.Command {
 func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	started := time.Now()
 	var registryResult cache.GCResult
-	var marketplaceResult marketplace.GCResult
 	slog.Info("cache garbage collection started", "dry_run", dryRun)
 	defer func() {
-		attrs := []any{"dry_run", dryRun, "registry_removed", len(registryResult.Removed), "marketplace_removed", len(marketplaceResult.Removed), "duration_ms", time.Since(started).Milliseconds()}
+		attrs := []any{"dry_run", dryRun, "registry_removed", len(registryResult.Removed), "duration_ms", time.Since(started).Milliseconds()}
 		if resultErr != nil {
 			attrs = append(attrs, "error", resultErr)
 			slog.Error("cache garbage collection failed", attrs...)
@@ -67,23 +65,13 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		return loadEffectiveLayerLocks(readCtx, effective)
 	}
 
-	var registryErr, marketplaceErr error
-	marketplaceCache := marketplace.DefaultCache()
-
+	var registryErr error
 	if dryRun {
 		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged)
-		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks)
+	} else if _, err := cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged); err != nil {
+		registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
 	} else {
-		if _, err := cache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks, effective.Merged); err != nil {
-			registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
-		} else if _, err := marketplaceCache.GarbageCollectWithLocksAndContext(ctx, true, locks, readLocks); err != nil {
-			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", err)
-		} else {
-			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks)
-			if marketplaceErr == nil {
-				registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks, effective.Merged)
-			}
-		}
+		registryResult, registryErr = cache.GarbageCollectWithLocksAndContext(ctx, false, locks, readLocks, effective.Merged)
 	}
 
 	action := "Removed"
@@ -100,16 +88,7 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		return err
 	}
 
-	for _, removed := range marketplaceResult.Removed {
-		if _, err := fmt.Fprintf(out, "%s %s\n", action, removed); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(out, "%s %d marketplace cache directories\n", action, len(marketplaceResult.Removed)); err != nil {
-		return err
-	}
-
-	return errors.Join(registryErr, marketplaceErr)
+	return registryErr
 }
 
 func loadEffectiveLayerLocks(ctx context.Context, effective config.EffectiveConfig) ([]lockfile.Document, error) {
@@ -153,7 +132,7 @@ func loadEffectiveLayerLocks(ctx context.Context, effective config.EffectiveConf
 		if err := lockfile.ValidateScope(doc, scope); err != nil {
 			return nil, fmt.Errorf("validate %s layer lock %q: %w", layer.Source, lockPath, err)
 		}
-		if scope == lockfile.ScopeOrganization && !unselectedLayerIsFresh(scope, remoteEntries(layerRegistries(layer)), layerMarketplaces(layer), doc) {
+		if scope == lockfile.ScopeOrganization && !unselectedLayerIsFresh(scope, remoteEntries(layerRegistries(layer)), doc) {
 			return nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
 		}
 		documents = append(documents, doc)
@@ -176,7 +155,7 @@ func layerRequiresLock(layer config.LayerResult) bool {
 				return true
 			}
 		}
-		return len(layer.Config.Marketplaces) > 0
+		return false
 	}
 	if layer.Local != nil {
 		for _, entry := range layer.Local.Registries {
@@ -184,7 +163,7 @@ func layerRequiresLock(layer config.LayerResult) bool {
 				return true
 			}
 		}
-		return len(layer.Local.Marketplaces) > 0
+		return false
 	}
 	return false
 }

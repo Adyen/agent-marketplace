@@ -123,12 +123,7 @@ func previewOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outDir
 
 func readOwnedJSONRepairState(store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, options ownedJSONReconcileOptions) (*ownedJSONRepairState, []diag.Diagnostic) {
 	rel := file.rel
-	abs := filepath.Join(outDir, rel)
-	if err := store.ValidateAggregateFile(rel, abs); err != nil {
-		return nil, []diag.Diagnostic{ownedAggregateDiag(options.writeCode, key, rel,
-			fmt.Sprintf("aggregate %q is not a safe regular file: %v", ownedAggregateLabel(outDir, rel), err))}
-	}
-	raw, err := os.ReadFile(abs)
+	raw, err := os.ReadFile(filepath.Join(outDir, rel))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

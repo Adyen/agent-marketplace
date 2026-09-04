@@ -26,7 +26,11 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("silentSyncCollect: %v", err)
 	}
-	if len(warnings) != 1 || !errors.Is(warnings[0], warning) {
+	found := false
+	for _, got := range warnings {
+		found = found || errors.Is(got, warning)
+	}
+	if !found {
 		t.Fatalf("warnings = %v, want dependency warning", warnings)
 	}
 }

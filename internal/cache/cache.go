@@ -18,9 +18,8 @@ import (
 )
 
 const (
-	compiledCacheDirName    = "compiled"
-	exactGitCacheDirName    = "exact-git"
-	marketplaceCacheDirName = "marketplace"
+	compiledCacheDirName = "compiled"
+	exactGitCacheDirName = "exact-git"
 )
 
 // RegistryKey returns a stable, unique identifier for a registry entry's catalog.
@@ -271,7 +270,7 @@ func garbageCollectWithContext(ctx context.Context, dryRun bool, cfgs ...*config
 		if !entry.IsDir() {
 			continue
 		}
-		if entry.Name() == compiledCacheDirName || entry.Name() == exactGitCacheDirName || entry.Name() == marketplaceCacheDirName {
+		if entry.Name() == compiledCacheDirName || entry.Name() == exactGitCacheDirName {
 			slog.Debug("cache garbage collection skipped reserved namespace", "namespace", entry.Name(), "dry_run", dryRun)
 			continue
 		}

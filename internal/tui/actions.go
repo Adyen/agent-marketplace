@@ -813,9 +813,7 @@ var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 }
 
 func runDependencySyncCmd(ctx context.Context, repoRoot string, sync DependencyLifecycleFunc) tea.Cmd {
-	return func() tea.Msg {
-		return syncDoneMsg{err: sync(ctx, repoRoot)}
-	}
+	return func() tea.Msg { return syncDoneMsg{err: sync(ctx, repoRoot)} }
 }
 
 func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
@@ -832,6 +830,20 @@ func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, gener
 		}
 		return result
 	}
+}
+
+func (m Model) dependencySyncCmd() tea.Cmd {
+	if m.dependencyLifecycle.Sync != nil {
+		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.repoRoot, m.dependencyLifecycle.Sync)
+	}
+	return runSyncCmd(ctxOrBackground(m.ctx), m.repoRoot)
+}
+
+func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
+	if m.dependencyLifecycle.Update != nil {
+		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation, m.dependencyLifecycle.Update)
+	}
+	return runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 }
 
 func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {

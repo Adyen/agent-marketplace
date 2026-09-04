@@ -53,7 +53,7 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: test.expected, Bytes: staged, Mode: 0o644}}})
+			_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: test.expected, Bytes: staged, Mode: 0o644}}})
 			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 				t.Fatalf("error = %v, want generation conflict", err)
 			}
@@ -78,7 +78,7 @@ func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 	repo := filepath.Join(canonicalTempDir(t), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
-	_, _, _, validate, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, validate, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [claude]\n")
-	_, _, _, _, err = prepareRuntimeLocks(context.Background(), dir, dir, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: canonicalFirst, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = prepareRuntimeLocks(context.Background(), dir, dir, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: canonicalFirst, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("error = %v, want generation conflict", err)
 	}
@@ -152,7 +152,7 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 		{name: "duplicate", edits: []pipeline.StagedConfigEdit{edit, edit}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: test.edits})
+			_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: test.edits})
 			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 				t.Fatalf("error = %v, want generation conflict", err)
 			}
@@ -196,7 +196,7 @@ func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_, _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -237,7 +237,7 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
-	_, _, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -265,7 +265,7 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -293,7 +293,7 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, _, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -342,7 +342,7 @@ func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: generation, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: generation, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("error = %v, want generation conflict", err)
 	}

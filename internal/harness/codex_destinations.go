@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -14,10 +13,6 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
-
-// ErrCodexDestinationOverlap identifies partition roots that would alias an
-// ownership store. Callers can map it to their stable diagnostic namespace.
-var ErrCodexDestinationOverlap = errors.New("codex destination roots overlap")
 
 var resolvedLayoutProviders = map[hcc.Target]resolvedLayoutProvider{
 	hcc.Target(targetmeta.TargetCodex): resolveCodexDestinations,
@@ -58,9 +53,6 @@ func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]De
 			Info:                 codexTargetInfo(partition),
 		})
 	}
-	if err := validateCodexDestinationRoots(destinations); err != nil {
-		return nil, err
-	}
 	if !machineScope {
 		canonicalRepo, err := canonicalCodexRoot(repoRoot)
 		if err != nil {
@@ -73,28 +65,6 @@ func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]De
 		}
 	}
 	return destinations, nil
-}
-
-func validateCodexDestinationRoots(destinations []Destination) error {
-	for i := range destinations {
-		for j := i + 1; j < len(destinations); j++ {
-			if CodexDestinationRootsOverlap(destinations[i].Root, destinations[j].Root) {
-				return fmt.Errorf("%w: %q and %q", ErrCodexDestinationOverlap, destinations[i].Root, destinations[j].Root)
-			}
-		}
-	}
-	return nil
-}
-
-// CodexDestinationRootsOverlap reports whether two resolved roots are equal or
-// one contains the other. Both paths are expected to be canonical destinations.
-func CodexDestinationRootsOverlap(a, b string) bool {
-	return codexPathContains(a, b) || codexPathContains(b, a)
-}
-
-func codexPathContains(parent, child string) bool {
-	rel, err := filepath.Rel(parent, child)
-	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
 func isStrictlyWithin(root, path string) bool {

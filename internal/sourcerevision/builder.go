@@ -1,7 +1,9 @@
 package sourcerevision
 
 import (
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,9 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	marketartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 )
 
 var (
@@ -35,7 +35,7 @@ type Input struct {
 
 type Result struct {
 	SourceHarness string
-	Manifest      marketartifact.SourceRevisionManifest
+	Manifest      sourceRevisionManifest
 	Payload       []byte
 	Warnings      []ResourceWarning
 }
@@ -56,11 +56,11 @@ func (w ResourceWarning) DependencyWarning() {}
 type Projection struct {
 	SourceHarness  string
 	RevisionDigest string
-	Resources      []marketartifact.RevisionResource
+	Resources      []revisionResource
 }
 
 func (r Result) Projection() Projection {
-	resources := make([]marketartifact.RevisionResource, 0, len(r.Manifest.Resources))
+	resources := make([]revisionResource, 0, len(r.Manifest.Resources))
 	for _, resource := range r.Manifest.Resources {
 		if resource.ArchiveDigest == "" {
 			continue
@@ -108,7 +108,7 @@ func Build(input Input) (Result, error) {
 	entries = append(entries, cat.Entries...)
 	entries = append(entries, collectionEntries...)
 
-	resources := make([]marketartifact.RevisionResource, 0, len(entries))
+	resources := make([]revisionResource, 0, len(entries))
 	warnings := make([]ResourceWarning, 0)
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -154,18 +154,14 @@ func Build(input Input) (Result, error) {
 		return warnings[i].Reason < warnings[j].Reason
 	})
 
-	manifest := marketartifact.SourceRevisionManifest{
-		SchemaVersion: marketartifact.SourceRevisionSchemaV1,
-		Generator:     marketartifact.SourceRevisionGeneratorV1,
+	manifest := sourceRevisionManifest{
+		SchemaVersion: sourceRevisionSchemaV1,
+		Generator:     sourceRevisionGeneratorV1,
 		Resources:     resources,
 	}
-	payload, _, err := marketartifact.EncodeSourceRevisionManifest(manifest)
+	payload, manifest, err := encodeManifest(manifest)
 	if err != nil {
 		return Result{}, fmt.Errorf("encode source revision manifest: %w", err)
-	}
-	manifest, _, err = marketartifact.DecodeSourceRevisionManifest(bytes.NewReader(payload))
-	if err != nil {
-		return Result{}, fmt.Errorf("decode source revision manifest: %w", err)
 	}
 
 	slog.Debug("built direct-Git source revision", "root", normalizedRootPath(input.RootPath), "source_harness", cat.SourceHarness, "resources", len(resources), "warnings", len(warnings), "deferred_diagnostic_errors", diagnosticErrors)
@@ -173,7 +169,7 @@ func Build(input Input) (Result, error) {
 }
 
 func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarning, error) {
-	resources := make([]marketartifact.RevisionResource, 0, len(root.Resources))
+	resources := make([]revisionResource, 0, len(root.Resources))
 	for _, resource := range root.Resources {
 		support := make(map[string]string, len(resource.SupportFiles))
 		for name, digest := range resource.SupportFiles {
@@ -182,7 +178,7 @@ func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarn
 		if len(support) == 0 {
 			support = nil
 		}
-		resources = append(resources, marketartifact.RevisionResource{
+		resources = append(resources, revisionResource{
 			Kind:          resource.Kind,
 			Name:          resource.Name,
 			ContentDigest: resource.ContentDigest.String(),
@@ -232,45 +228,61 @@ func cloneDigests(in map[string]string) map[string]string {
 	return out
 }
 
-func buildResource(root string, entry catalog.Entry) (marketartifact.RevisionResource, error) {
+func buildResource(root string, entry catalog.Entry) (revisionResource, error) {
 	if entry.Resource == nil {
-		return marketartifact.RevisionResource{}, errors.New("resource is nil")
+		return revisionResource{}, errors.New("resource is nil")
 	}
+	payload, err := resourceSourceBytes(root, entry)
+	if err != nil {
+		return revisionResource{}, err
+	}
+	digest := contentDigest(payload)
 	if entry.Kind == ir.KindCollection {
-		collectionResource, ok := entry.Resource.(*ir.Collection)
-		if !ok {
-			return marketartifact.RevisionResource{}, fmt.Errorf("collection has type %T", entry.Resource)
-		}
-		manifest, err := hccartifact.CollectionFromIR(collectionResource)
-		if err != nil {
-			return marketartifact.RevisionResource{}, err
-		}
-		_, digest, err := hccartifact.EncodeCollectionManifest(manifest)
-		if err != nil {
-			return marketartifact.RevisionResource{}, err
-		}
-		return marketartifact.RevisionResource{Kind: "collection", Name: entry.Name, ContentDigest: digest}, nil
-	}
-
-	artifact, err := hccartifact.FromIR(entry.Resource)
-	if err != nil {
-		return marketartifact.RevisionResource{}, err
-	}
-	_, archiveDigest, err := hccartifact.Encode(artifact)
-	if err != nil {
-		return marketartifact.RevisionResource{}, err
+		return revisionResource{Kind: "collection", Name: entry.Name, ContentDigest: digest}, nil
 	}
 	support, err := intrinsicSupportFileDigests(root, entry)
 	if err != nil {
-		return marketartifact.RevisionResource{}, err
+		return revisionResource{}, err
 	}
-	return marketartifact.RevisionResource{
-		Kind:          artifact.Manifest.Kind,
-		Name:          artifact.Manifest.Name,
-		ContentDigest: artifact.Manifest.ContentDigest,
-		ArchiveDigest: archiveDigest,
-		SupportFiles:  support,
-	}, nil
+	archiveInput := append([]byte(nil), payload...)
+	names := make([]string, 0, len(support))
+	for name := range support {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		archiveInput = append(archiveInput, 0)
+		archiveInput = append(archiveInput, name...)
+		archiveInput = append(archiveInput, 0)
+		archiveInput = append(archiveInput, support[name]...)
+	}
+	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
+}
+
+func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
+	if entry.Path != "" {
+		name, err := containedPath(root, entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := rejectSymlinkComponents(root, name); err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(name)
+		if err == nil {
+			return data, nil
+		}
+	}
+	data, err := json.Marshal(entry.Resource)
+	if err != nil {
+		return nil, fmt.Errorf("encode canonical resource: %w", err)
+	}
+	return data, nil
+}
+
+func contentDigest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func intrinsicSupportFileDigests(root string, entry catalog.Entry) (map[string]string, error) {
@@ -306,7 +318,7 @@ func intrinsicSupportFileDigests(root string, entry catalog.Entry) (map[string]s
 		if err != nil {
 			return nil, fmt.Errorf("read support file %q: %w", normalized, err)
 		}
-		digests[normalized] = hccartifact.ContentDigest(data)
+		digests[normalized] = contentDigest(data)
 	}
 	return digests, nil
 }

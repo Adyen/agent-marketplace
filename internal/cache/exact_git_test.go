@@ -600,14 +600,14 @@ func TestExactGitSupportsRepositoryObjectFormats(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			repo := newExactGitRepository(t, algorithm)
 			oid := resolveExactGitRefForTest(t, "https://example.invalid/"+algorithm, repo, "main")
-			if oid.Algorithm != algorithm {
-				t.Fatalf("resolved algorithm = %q, want %q", oid.Algorithm, algorithm)
+			if oid.Algorithm() != algorithm {
+				t.Fatalf("resolved algorithm = %q, want %q", oid.Algorithm(), algorithm)
 			}
 			path, err := AcquireExactGit("https://example.invalid/"+algorithm, repo, oid)
 			if err != nil {
 				t.Fatalf("AcquireExactGit: %v", err)
 			}
-			assertExactHead(t, path, oid.Hex)
+			assertExactHead(t, path, oid.Hex())
 		})
 	}
 }

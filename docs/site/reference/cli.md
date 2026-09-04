@@ -153,9 +153,31 @@ Removed registry entry https://github.com/example/resources.git
 Excluded all resources from https://github.com/example/resources.git (local scope)
 ```
 
+## `lock`
+
+Resolves remote Git requirements to exact commits and verified source manifests in generated, layer-owned locks. With the default `all` scope it writes user, repository, and personal-local locks; organization locks are written only when selected explicitly.
+
+```text
+agent-marketplace lock [resource ...] [flags]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--scope` | string | no | `all` | Lock scope: `user`, `repo`, `local`, `all`, or `organization`. |
+| `--check` | boolean | no | `false` | Reports whether selected locks would change without writing. A required change returns exit status 1. |
+| `--upgrade` | boolean | no | `false` | Refreshes all or targeted Git resolutions to their current refs. |
+| `--registry` | string | conditionally | none | Targets a configured Git registry during `--upgrade`. |
+| `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
+| `--path` | string | no | none | Narrows `--registry` to a locked source root. |
+| `--kind` | string | conditionally | none | Resource kind for named `--registry` upgrade targets. |
+
+Resource names and the registry targeting flags require `--upgrade`; names also require `--registry` and `--kind`. A resource-level upgrade expands to its containing Git source because the commit is the atomic acquisition unit.
+
+The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace locking is not part of this foundation.
+
 ## `sync`
 
-Resolves selected resources and reconciles native harness output with configuration.
+Resolves selected resources from exact Git snapshots and reconciles native harness output with configuration.
 
 ```text
 agent-marketplace sync [flags]
@@ -163,7 +185,9 @@ agent-marketplace sync [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--check` | boolean | no | `false` | Computes drift without reconciling it. Returns exit status 1 when output is out of sync. |
+| `--check` | boolean | no | `false` | Computes lock and output drift without reconciling either. Returns exit status 1 when state is out of sync. |
+| `--locked` | boolean | no | `false` | Requires fresh lockfiles and forbids config or lock writes. |
+| `--offline` | boolean | no | `false` | Uses only trusted local Git caches and never fetches remote endpoints; implies locked dependency behavior. |
 | `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. Mandatory shared-aggregate safety backups are unaffected. |
 | `--strict` | boolean | no | `false` | Promotes selected-but-missing and selected-but-malformed warnings to errors. |
 | `--prune-stale` | boolean | no | `false` | Removes direct, non-required stale selections from configuration after catalogs load successfully, then synchronizes again. |
@@ -175,11 +199,11 @@ Normal synchronization prints counts for installed, removed, malformed, and fail
 Installed 3  Removed 1  Malformed 0  Errors 0
 ```
 
-With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` does not reconcile files.
+With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` does not reconcile files or locks. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
 
 ## `update`
 
-Refreshes configured pinned registries and synchronizes enabled resources.
+Advances selected Git locks and synchronizes enabled resources. Without targeting flags it updates all writable scopes.
 
 ```text
 agent-marketplace update [flags]
@@ -187,7 +211,12 @@ agent-marketplace update [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites repository registry refs to newer matching tags before synchronization. |
+| `--bump` | boolean | no | `false` | Rewrites eligible registry refs to newer matching tags before advancing locks. |
+| `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. |
+| `--registry` | string | no | none | Targets a configured Git registry. |
+| `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
+| `--path` | string | no | none | Narrows `--registry` to a locked source root. |
+| `--kind` | string | conditionally | none | Resource kind for named registry targets. |
 
 Output reports the number of refreshed registries and, with `--bump`, the number of rewritten refs:
 
@@ -208,6 +237,7 @@ The report can contain these sections:
 | Section | Contents |
 |---|---|
 | `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. |
+| `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and immutable snapshot path. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
 | `SYNCED RESOURCES` | Resource kind, name, harness, target path, registry, ref, cache state, source, and collection origin. |
 | `LOCALLY EXCLUDED` | Resources removed by repository-personal exclusions. |
@@ -325,7 +355,7 @@ The command refuses a non-directory target root and a target root that is a symb
 
 ## `gc`
 
-Removes registry cache directories that are no longer referenced by merged configuration. Protected derived-cache namespaces are retained.
+Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks. It rereads locks before deletion; a missing, stale, malformed, or untrusted required lock blocks destructive collection. Protected derived-cache namespaces are retained.
 
 ```text
 agent-marketplace gc [flags]

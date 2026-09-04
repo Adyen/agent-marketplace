@@ -173,11 +173,6 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	var out ownedJSONAggregateReport
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
-	if err := store.ValidateAggregateFile(rel, abs); err != nil {
-		out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
-			fmt.Sprintf("aggregate %q is not a safe regular file: %v", ownedAggregateLabel(outDir, rel), err)))
-		return out
-	}
 
 	raw, readErr := os.ReadFile(abs)
 	switch {
@@ -278,16 +273,6 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 	}
 
 	priorGen, priorDigest := ownedAggregatePriorForApply(raw, readErr, proof)
-	var priorMode os.FileMode
-	if readErr == nil {
-		info, statErr := os.Stat(abs)
-		if statErr != nil {
-			out.diags = append(out.diags, ownedAggregateDiag(options.writeCode, key, rel,
-				fmt.Sprintf("stat aggregate %q before apply: %v", ownedAggregateLabel(outDir, rel), statErr)))
-			return out
-		}
-		priorMode = info.Mode().Perm()
-	}
 	result, applyErr := store.Apply(ownership.Mutation{
 		Rel:                   rel,
 		AbsFile:               abs,
@@ -296,7 +281,6 @@ func reconcileOwnedJSONAggregateFile(store *ownership.Store, key outputKey, outD
 		Reason:                ownership.ReasonSync,
 		ExpectPriorGeneration: priorGen,
 		ExpectPriorDigest:     priorDigest,
-		ExpectPriorMode:       priorMode,
 	})
 	if applyErr != nil {
 		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, applyErr, options.writeCode))

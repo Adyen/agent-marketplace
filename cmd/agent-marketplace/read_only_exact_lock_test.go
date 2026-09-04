@@ -162,58 +162,6 @@ registries:
 	}
 }
 
-func TestStatusShowsBlockedMarketplaceLockMetadata(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-marketplaces:
-  - url: https://market.example
-    instance_id: mp
-    resources:
-      - source_id: src
-        kind: skill
-        name: review
-`)
-	withWorkingDir(t, repo)
-	output, err := executeCommand("status")
-	if err == nil {
-		t.Fatalf("status accepted missing Marketplace lock:\n%s", output)
-	}
-	for _, want := range []string{"EXACT MARKETPLACE LOCKS", "market.example", "blocked (lock.missing)"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("status missing %q:\n%s\nerror: %v", want, output, err)
-		}
-	}
-}
-
-func TestConfiguredListRendersHealthyLocalLayerBeforeMarketplaceLockError(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	registry := filepath.Join(t.TempDir(), "registry")
-	writeSkill(t, registry, "healthy-local", "Healthy", nil)
-	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+registry+`
-marketplaces:
-  - url: https://market.example
-    instance_id: mp
-    resources:
-      - source_id: src
-        kind: skill
-        name: review
-`)
-	withWorkingDir(t, repo)
-	output, err := executeCommand("list")
-	if err == nil || !strings.Contains(err.Error(), "lock.missing") {
-		t.Fatalf("list accepted missing Marketplace lock: output=%s error=%v", output, err)
-	}
-	if !strings.Contains(output, "healthy-local") {
-		t.Fatalf("list hid healthy local catalog before lock error:\n%s", output)
-	}
-}
-
 func TestConfiguredListKeepsLocalRegistryLiveWithoutLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

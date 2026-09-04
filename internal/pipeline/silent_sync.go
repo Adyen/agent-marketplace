@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // silentSyncOptsForPaths carries the non-default roots used by monorepo
@@ -24,10 +22,9 @@ func silentSyncOptsForPaths(repoRoot, materializeRoot, localConfigDir string) []
 }
 
 type DependencyLockView struct {
-	CatalogOption        catalog.LoadOption
-	MarketplaceExactView func(*config.Config) (*config.Config, error)
-	ExactLockLease       func(context.Context) (func(), error)
-	Warnings             []error
+	CatalogOption  catalog.LoadOption
+	ExactLockLease func(context.Context) (func(), error)
+	Warnings       []error
 }
 
 type DependencyReconciler func(context.Context, string, string, bool, []StagedConfigEdit) (DependencyLockView, error)
@@ -38,6 +35,11 @@ func (e *DependencyCommittedSyncError) Error() string {
 	return "dependency-committed sync failure: " + e.Err.Error()
 }
 func (e *DependencyCommittedSyncError) Unwrap() error { return e.Err }
+
+func silentSync(ctx context.Context, repoRoot string, opts ...silentSyncOpt) error {
+	_, err := silentSyncCollect(ctx, repoRoot, opts...)
+	return err
+}
 
 func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncOpt) ([]error, error) {
 	var o silentSyncOptions
@@ -60,12 +62,11 @@ func silentSyncCollect(ctx context.Context, repoRoot string, opts ...silentSyncO
 		if view.CatalogOption != nil {
 			o.CatalogOption = append(o.CatalogOption, view.CatalogOption)
 		}
-		o.MarketplaceExactView = view.MarketplaceExactView
 		o.ExactLockLease = view.ExactLockLease
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, MarketplaceMode: o.MarketplaceMode, MarketplaceExactView: o.MarketplaceExactView, ExactLockLease: o.ExactLockLease}
+	resolveOpts := ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease}
 	if o.MaterializeRoot != "" && o.MaterializeRoot != repoRoot {
 		resolveOpts.MaterializeRoot = o.MaterializeRoot
 	}
@@ -87,8 +88,6 @@ type silentSyncOptions struct {
 	IgnoreBlockedRegistries bool
 	CatalogMode             catalog.LoadMode
 	CatalogOption           []catalog.LoadOption
-	MarketplaceMode         *resolver.MarketplaceResolveMode
-	MarketplaceExactView    func(*config.Config) (*config.Config, error)
 	ExactLockLease          func(context.Context) (func(), error)
 	DependencyReconciler    DependencyReconciler
 	StagedConfigEdits       []StagedConfigEdit
@@ -109,18 +108,6 @@ func withMaterializeRoot(dir string) silentSyncOpt {
 // in local-config-layer registry entries.
 func withLocalConfigDir(dir string) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.LocalConfigDir = dir }
-}
-
-func withCatalogMode(mode catalog.LoadMode) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.CatalogMode = mode }
-}
-
-func withCatalogOptions(opts []catalog.LoadOption) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.CatalogOption = opts }
-}
-
-func withMarketplaceMode(mode resolver.MarketplaceResolveMode) silentSyncOpt {
-	return func(o *silentSyncOptions) { o.MarketplaceMode = &mode }
 }
 
 func withDependencyReconciler(reconciler DependencyReconciler) silentSyncOpt {

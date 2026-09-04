@@ -77,21 +77,12 @@ func TestOrganizationConfigLockTrustUnit(t *testing.T) {
 }
 
 func TestOrganizationRemoteRequirementsLoadWithoutLock(t *testing.T) {
-	for _, fixture := range []string{
-		remoteOrganizationFixture,
-		`apiVersion: agent-marketplace/v2
-marketplaces:
-  - url: https://marketplace.example.com
-    instance_id: org
-`,
-	} {
-		dir := t.TempDir()
-		configPath := filepath.Join(dir, "config.yaml")
-		writeFile(t, configPath, fixture)
-		ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
-		if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
-			t.Fatalf("organization config without lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
-		}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, configPath, remoteOrganizationFixture)
+	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(configPath))
+	if len(ec.Errors) != 0 || ec.Organization.Config == nil || !ec.Managed {
+		t.Fatalf("organization config without lock was blocked: managed=%v config=%v errors=%v", ec.Managed, ec.Organization.Config != nil, ec.Errors)
 	}
 }
 

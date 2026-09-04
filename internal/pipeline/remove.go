@@ -49,8 +49,6 @@ type RemoveOptions struct {
 	FromRef             string // --ref flag: git ref for --from
 	FromPath            string // --path flag: subdirectory for --from
 	DependencyReconcile DependencyReconciler
-	configStaging       *configStagingManager
-	warningSink         *[]error
 }
 
 // RemoveResult holds the outcome of a remove operation.
@@ -71,32 +69,12 @@ type RemoveResult struct {
 // per-scope config editing, and --from ad-hoc registry removal.
 func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyncOpt) error {
 	if opts.DependencyReconcile != nil {
-		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
+		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile))
 	}
-	warnings, err := silentSyncCollect(ctx, opts.RepoRoot, extra...)
-	if opts.warningSink != nil {
-		*opts.warningSink = append(*opts.warningSink, warnings...)
-	}
-	return err
+	return silentSync(ctx, opts.RepoRoot, extra...)
 }
 
 func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
-	var warnings []error
-	opts.warningSink = &warnings
-	defer func() {
-		if result != nil {
-			result.Warnings = warnings
-		}
-	}()
-	if opts.DependencyReconcile != nil {
-		var err error
-		opts.configStaging, err = newConfigStagingManager()
-		if err != nil {
-			return nil, err
-		}
-		defer closeConfigStaging(opts.configStaging, "remove", &retErr)
-	}
-
 	tel := telemetry.TelemetryFromContext(ctx)
 	var removeSpan telemetry.Span
 	if tel != nil {
@@ -130,10 +108,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, name, opts.Scope, opts.ScopeSpecified)
 		if err != nil {
 			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		configPath, err = stageConfigPath(opts.configStaging, configPath)
-		if err != nil {
-			return nil, err
 		}
 		if err := config.RemoveCollectionFromConfig(configPath, name); err != nil {
 			return nil, err
@@ -182,7 +156,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	// Skill comes from a collection — write an exclude in the active scope so
 	// the collection stays installed but this member is suppressed.
 	if target.Via != "" {
-		if err := excludeCollectionMember(opts.RepoRoot, effective, opts.configStaging, target, name); err != nil {
+		if err := excludeCollectionMember(opts.RepoRoot, effective, target, name); err != nil {
 			return nil, err
 		}
 		if err := syncAfterRemove(ctx, opts); err != nil {
@@ -191,7 +165,7 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return &RemoveResult{RemovedName: name, CollectionVia: target.Via, InferredUserScope: inferredUserScope}, nil
 	}
 
-	if err := removeResource(opts.RepoRoot, effective, opts.configStaging, repoCfg, target, name, opts.ScopeSpecified); err != nil {
+	if err := removeResource(opts.RepoRoot, effective, repoCfg, target, name, opts.ScopeSpecified); err != nil {
 		return nil, enrichRemoveError(err, name, target)
 	}
 
@@ -488,50 +462,44 @@ func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg *config.C
 	return ec.Merged, ec.Repo.Config, nil
 }
 
-func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
-	path, err := ScopedConfigPath(repoRoot, scope)
-	if err != nil {
-		return err
-	}
-	path, err = stageConfigPath(staging, path)
-	if err != nil {
-		return err
-	}
+func excludeCollectionMember(repoRoot string, scope Scope, target *resolver.ResolvedArtifact, name string) error {
 	switch scope {
 	case ScopeUser:
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+		globalPath, err := config.GlobalConfigPath()
+		if err != nil {
+			return err
+		}
+		// When the registry exists in the user config, add the exclude there.
+		// Otherwise, create a shadow entry so cross-layer exclusion works.
+		return config.DisableResourceWithShadowFallback(globalPath, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
 	case ScopeLocal:
 		if target.Source == config.RepoPersonal {
-			return config.AddKindExcludeToRegistryInConfig(path, target.RegistryURL, target.RegistryPath, target.Kind, name)
+			return config.AddKindExcludeToRegistryInConfig(config.LocalConfigPath(repoRoot), target.RegistryURL, target.RegistryPath, target.Kind, name)
 		}
-		return config.AddKindExcludeToConfig(path, target.Kind, name)
+		return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 	default:
-		return config.AddKindExcludeToRegistryInConfig(path, target.RegistryURL, target.RegistryPath, target.Kind, name)
+		return config.AddKindExcludeToRegistryInConfig(config.ProjectConfigPath(repoRoot), target.RegistryURL, target.RegistryPath, target.Kind, name)
 	}
 }
 
-func removeResource(repoRoot string, scope Scope, staging *configStagingManager, repoCfg *config.Config, target *resolver.ResolvedArtifact, name string, scopeSpecified bool) error {
-	path, err := ScopedConfigPath(repoRoot, scope)
-	if err != nil {
-		return err
-	}
-	path, err = stageConfigPath(staging, path)
-	if err != nil {
-		return err
-	}
+func removeResource(repoRoot string, scope Scope, repoCfg *config.Config, target *resolver.ResolvedArtifact, name string, scopeSpecified bool) error {
 	switch scope {
 	case ScopeUser:
+		globalPath, err := config.GlobalConfigPath()
+		if err != nil {
+			return err
+		}
 		// DisableResourceWithShadowFallback handles three cases:
 		//  1. Registry exists in user config with exact URL+path → modify that entry
 		//  2. Registry exists with normalized-URL match (e.g. .git suffix) → add exclude there
 		//  3. Registry not in user config at all → create shadow entry
 		// Pass the resolved artifact's RegistryPath so case 2 can find
 		// the right entry when multiple entries share a URL.
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+		return config.DisableResourceWithShadowFallback(globalPath, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
 
 	case ScopeLocal:
 		if target.Source == config.RepoPersonal {
-			localCfgPath := path
+			localCfgPath := config.LocalConfigPath(repoRoot)
 			// Check whether the registry entry exists in config.local.yaml.
 			// When it does, remove from include and add exclude in that entry.
 			// When it doesn't (the resource was installed via the top-level
@@ -550,15 +518,15 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 			// Resource is in the top-level selector (or a new shadow entry
 			// is needed): remove from the top-level include and add a
 			// registry-level exclude so cross-layer exclusion suppresses it.
-			if err := config.RemoveKindExcludeFromConfig(path, target.Kind, name); err != nil {
+			if err := config.RemoveKindExcludeFromLocalConfig(repoRoot, target.Kind, name); err != nil {
 				return fmt.Errorf("clear stale exclude from local config: %w", err)
 			}
-			if err := config.RemoveSkillFromConfig(path, name); err != nil {
+			if err := config.RemoveSkillFromLocalConfig(repoRoot, name); err != nil {
 				return fmt.Errorf("remove skill from local config include: %w", err)
 			}
-			return config.AddKindExcludeToConfig(path, target.Kind, name)
+			return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 		}
-		return config.AddKindExcludeToConfig(path, target.Kind, name)
+		return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 
 	default:
 		if repoCfg == nil {
@@ -570,13 +538,10 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		// via tag matching), fall back to a local exclude so the
 		// committed project config is not modified without intent.
 		if (!scopeSpecified || target.Source.IsMachineScope()) && !projectExplicitlySelects(repoCfg, *target) && !projectSelectsByTag(repoCfg, *target) {
-			localPath, err := stageConfigPath(staging, config.LocalConfigPath(repoRoot))
-			if err != nil {
-				return err
-			}
-			return config.AddKindExcludeToConfig(localPath, target.Kind, name)
+			return config.AddKindExcludeToLocalConfig(repoRoot, target.Kind, name)
 		}
-		return config.DisableResourceWithShadowFallback(path, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
+		configPath := config.ProjectConfigPath(repoRoot)
+		return config.DisableResourceWithShadowFallback(configPath, target.RegistryURL, target.RegistryPath, target.Ref, target.Kind, name)
 	}
 }
 
@@ -621,13 +586,6 @@ func ScopedConfigPath(repoRoot string, scope Scope) (string, error) {
 // scopedConfigPath is the unexported version used internally.
 func scopedConfigPath(repoRoot string, scope Scope) (string, error) {
 	return ScopedConfigPath(repoRoot, scope)
-}
-
-func stageConfigPath(staging *configStagingManager, path string) (string, error) {
-	if staging == nil {
-		return path, nil
-	}
-	return staging.Path(path)
 }
 
 // registryEntryInList reports whether the list contains an entry that exactly
@@ -1108,10 +1066,6 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if entryInMerged && strings.TrimSpace(mergedEntry.Ref) != "" {
 		shadowRef = mergedEntry.Ref
 	}
-	configPath, err = stageConfigPath(opts.configStaging, configPath)
-	if err != nil {
-		return nil, err
-	}
 
 	// An empty name targets the registry.
 	name := strings.TrimSpace(opts.ResourceName)
@@ -1244,7 +1198,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		return nil, err
 	}
 
-	if err := silentSync(ctx, repoRoot, WithIgnoreBlockedRegistries()); err != nil {
+	if err := syncAfterRemove(ctx, opts, WithIgnoreBlockedRegistries()); err != nil {
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name}, nil

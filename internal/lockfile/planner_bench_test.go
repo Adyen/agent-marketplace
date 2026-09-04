@@ -30,25 +30,3 @@ func BenchmarkPlanUnchanged(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkNormalizeCollectionGraph(b *testing.B) {
-	digest := Digest(sha256a)
-	root := MarketplaceCollection{SourceID: "sets", Name: "base", Revision: digest, Direct: true}
-	resources := make([]MarketplaceResource, 32)
-	for i := range resources {
-		name := fmt.Sprintf("leaf-%02d", i)
-		root.Members = append(root.Members, CollectionEdge{SourceID: "src", Kind: "skill", Name: name, Revision: digest})
-		resources[i] = marketplaceTestResource("src", "skill", name, digest, false)
-		resources[i].SelectedBy = []CollectionEdge{{SourceID: root.SourceID, Name: root.Name, Revision: root.Revision}}
-	}
-	doc := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Marketplaces: []Marketplace{{
-		URL: "https://market.example", InstanceID: "mp", Collections: []MarketplaceCollection{root}, Resources: resources,
-	}}}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := Normalize(doc); err != nil {
-			b.Fatal(err)
-		}
-	}
-}

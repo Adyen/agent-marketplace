@@ -2,7 +2,7 @@
 
 The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
 
-Agent Marketplace treats the configuration as the source of truth. After editing the selected root file, run `agent-marketplace sync` to reconcile generated harness files, or `agent-marketplace sync --check` to report drift without changing files.
+Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. After editing configuration, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or `agent-marketplace sync --check` to report lock and output drift without changing files.
 
 ## File location and scope
 
@@ -12,12 +12,14 @@ The selected file applies to its directory tree. Generated repository-scoped out
 
 Other configuration layers use related schemas:
 
-| Layer | File | Purpose |
-|---|---|---|
-| Organization | `/etc/agent-marketplace/config.yaml` | Managed machine policy and required resources |
-| User | `~/.agents/config.yaml` | Personal machine-wide targets and resources |
-| Repository | `<repo>/.agents/config.yaml` | Shared project targets and resources |
-| Repository personal | `<repo>/.agents/config.local.yaml` | Gitignored choices for one checkout |
+| Layer | Configuration | Generated Git lock | Purpose |
+|---|---|---|---|
+| Organization | `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | Managed machine policy and required resources |
+| User | `~/.agents/config.yaml` | `~/.agents/lock.yaml` | Personal machine-wide targets and resources |
+| Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Shared project targets and resources |
+| Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Gitignored choices for one checkout |
+
+Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. This foundation does not define hosted Marketplace lock schema or adapters.
 
 This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 

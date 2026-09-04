@@ -115,6 +115,7 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(
 		newInitCmd(),
+		newLockCmd(),
 		newSyncCmd(),
 		newListCmd(),
 		newInstallCmd(),
@@ -147,14 +148,6 @@ func commandNeedsDependencyRecovery(cmd *cobra.Command) bool {
 }
 
 var acquireExactCacheLease = cache.AcquireExactGitNamespaceLease
-
-func withExactCacheCommandLease(cmd *cobra.Command) *cobra.Command {
-	run := cmd.RunE
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return withExactCacheLease(func() error { return run(cmd, args) })
-	}
-	return cmd
-}
 
 func withExactCacheLease(run func() error) error {
 	release, err := acquireExactCacheLease()

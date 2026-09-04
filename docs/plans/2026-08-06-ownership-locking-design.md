@@ -196,13 +196,10 @@ Established by reading `go.mod`, `go.sum`, the `Makefile`, and `e2e/go.mod`:
   `LOCK_UN` exist on darwin, linux, and every BSD. They do not exist on Windows,
   plan9, or js/wasm — which is why the `//go:build unix` split in section 6 is
   required, not why a dependency is.
-- **`golang.org/x/sys v0.38.0` is already in `go.mod`, but as an `// indirect`
-  requirement** (pulled in by the charm/termenv stack). Importing
-  `golang.org/x/sys/unix` would promote it to the direct `require` block.
-  `make lint` runs `go mod tidy` and `make ci-lint` runs **`go mod tidy -diff`**,
-  which fails the build on an uncommitted `go.mod` delta. That is survivable —
-  commit the promoted line — but it buys nothing: `x/sys/unix.Flock` is the same
-  syscall with a nicer errno type.
+- **`golang.org/x/sys` is now a direct repository dependency for other
+  filesystem operations.** Ownership locking still uses `syscall.Flock` because
+  `x/sys/unix.Flock` is the same syscall with a nicer errno type and would add no
+  capability here.
 - **The `e2e` module is deliberately dependency-free.** `e2e/go.mod` has a
   `module` line, a `go` line, and **no `require` block at all**. It will not
   import `internal/ownership` (it drives the built binary as a subprocess), but
@@ -211,10 +208,10 @@ Established by reading `go.mod`, `go.sum`, the `Makefile`, and `e2e/go.mod`:
 - **`CGO_ENABLED=0`** on every build target (`Makefile:28`, `:63`, `:67`, `:71`).
   `syscall.Flock` is a pure syscall; it is unaffected.
 
-**Verdict: use `syscall`. Do not add `golang.org/x/sys` as a direct dependency,
-and do not add a third-party lock library.** The syscall-only alternative is not
-merely "priced acceptable" — it is strictly cheaper and strictly smaller than
-every dependency-bearing option.
+**Verdict for ownership locking: use `syscall` and do not add a third-party lock
+library.** The repository's direct `golang.org/x/sys` dependency serves other
+filesystem operations; switching this lock implementation to it would add no
+capability.
 
 ### Probe result (throwaway, not committed)
 

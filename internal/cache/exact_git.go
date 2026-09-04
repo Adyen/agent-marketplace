@@ -28,46 +28,15 @@ var (
 	ErrGitOIDMismatch              = errors.New("git oid mismatch")
 )
 
-type GitOID struct {
-	Algorithm string
-	Hex       string
-}
+type GitOID = lockfile.GitOID
 
 func ParseGitOID(value string) (GitOID, error) {
-	algorithm, raw, ok := strings.Cut(value, ":")
-	if !ok {
-		return GitOID{}, fmt.Errorf("parse git oid: missing algorithm")
-	}
-	oid := GitOID{Algorithm: algorithm, Hex: raw}
-	if err := oid.validate(); err != nil {
-		return GitOID{}, err
-	}
-	return oid, nil
+	return lockfile.ParseGitOID(value)
 }
 
-func (oid GitOID) String() string {
-	return oid.Algorithm + ":" + oid.Hex
-}
-
-func (oid GitOID) validate() error {
-	length := 0
-	switch oid.Algorithm {
-	case "sha1":
-		length = 40
-	case "sha256":
-		length = 64
-	default:
-		return fmt.Errorf("unsupported git oid algorithm %q", oid.Algorithm)
-	}
-	if len(oid.Hex) != length {
-		return fmt.Errorf("%s git oid must contain %d hexadecimal characters", oid.Algorithm, length)
-	}
-	for _, c := range oid.Hex {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return fmt.Errorf("git oid must use lowercase hexadecimal")
-		}
-	}
-	return nil
+func validateGitOID(oid GitOID) error {
+	_, err := lockfile.ParseGitOID(oid.String())
+	return err
 }
 
 const exactGitLockTimeout = 30 * time.Second
@@ -126,7 +95,7 @@ func ResolveExactGitRefWithContext(ctx context.Context, canonicalSource, fetchUR
 	if err != nil {
 		return GitOID{}, err
 	}
-	slog.Debug("resolved exact git ref", "source", redactSecrets(canonicalSource), "ref", ref, "algorithm", oid.Algorithm)
+	slog.Debug("resolved exact git ref", "source", redactSecrets(canonicalSource), "ref", ref, "algorithm", oid.Algorithm())
 	return oid, nil
 }
 
@@ -143,7 +112,7 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
 		return "", err
 	}
-	if err := oid.validate(); err != nil {
+	if err := validateGitOID(oid); err != nil {
 		return "", err
 	}
 
@@ -209,7 +178,7 @@ func OpenExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string
 	if err := validateCanonicalSource(canonicalSource); err != nil {
 		return "", err
 	}
-	if err := oid.validate(); err != nil {
+	if err := validateGitOID(oid); err != nil {
 		return "", err
 	}
 	path := exactGitSnapshotPath(canonicalSource, oid)
@@ -252,7 +221,7 @@ func WithExactGitReadOnly(ctx context.Context, canonicalSource string, oid GitOI
 	if err := validateCanonicalSource(canonicalSource); err != nil {
 		return err
 	}
-	if err := oid.validate(); err != nil {
+	if err := validateGitOID(oid); err != nil {
 		return err
 	}
 	path := exactGitSnapshotPath(canonicalSource, oid)
@@ -390,7 +359,7 @@ func ensureExactGitObject(ctx context.Context, canonicalSource, fetchURL string,
 			if err := prepareExactGitDirectory(filepath.Dir(store)); err != nil {
 				return err
 			}
-			if err := runExactGitWithContext(ctx, "", "init", "--bare", "--object-format="+oid.Algorithm, store); err != nil {
+			if err := runExactGitWithContext(ctx, "", "init", "--bare", "--object-format="+oid.Algorithm(), store); err != nil {
 				return fmt.Errorf("initialize git object store: %w", err)
 			}
 		}
@@ -401,22 +370,22 @@ func ensureExactGitObject(ctx context.Context, canonicalSource, fetchURL string,
 		if err != nil {
 			return fmt.Errorf("query git object format: %w", err)
 		}
-		if format != oid.Algorithm {
-			return fmt.Errorf("%w: repository uses %s, lock declares %s", ErrGitOIDMismatch, format, oid.Algorithm)
+		if format != oid.Algorithm() {
+			return fmt.Errorf("%w: repository uses %s, lock declares %s", ErrGitOIDMismatch, format, oid.Algorithm())
 		}
-		if _, err := exactGitOutputWithContext(ctx, store, "cat-file", "-e", oid.Hex+"^{commit}"); err == nil {
+		if _, err := exactGitOutputWithContext(ctx, store, "cat-file", "-e", oid.Hex()+"^{commit}"); err == nil {
 			return nil
 		} else if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
 			return ctxErr
 		}
-		if err := runExactGitWithContext(ctx, store, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", fetchURL, oid.Hex); err != nil {
+		if err := runExactGitWithContext(ctx, store, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", fetchURL, oid.Hex()); err != nil {
 			return fmt.Errorf("fetch exact git object %s: %w", oid.String(), err)
 		}
-		got, err := exactGitOutputWithContext(ctx, store, "rev-parse", "--verify", oid.Hex+"^{commit}")
+		got, err := exactGitOutputWithContext(ctx, store, "rev-parse", "--verify", oid.Hex()+"^{commit}")
 		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
 			return ctxErr
 		}
-		if err != nil || got != oid.Hex {
+		if err != nil || got != oid.Hex() {
 			return fmt.Errorf("%w: fetched object does not resolve to %s", ErrGitOIDMismatch, oid.String())
 		}
 		return nil
@@ -433,16 +402,16 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 		return fmt.Errorf("create exact git staging directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
-	if err := runExactGitWithContext(ctx, stage, "init", "--object-format="+oid.Algorithm); err != nil {
+	if err := runExactGitWithContext(ctx, stage, "init", "--object-format="+oid.Algorithm()); err != nil {
 		return fmt.Errorf("initialize exact git staging repository: %w", err)
 	}
 	if err := sanitizeExactGitConfigWithContext(ctx, stage); err != nil {
 		return fmt.Errorf("sanitize exact git staging config: %w", err)
 	}
-	if err := runExactGitWithContext(ctx, stage, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", store, oid.Hex); err != nil {
+	if err := runExactGitWithContext(ctx, stage, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", store, oid.Hex()); err != nil {
 		return fmt.Errorf("copy exact git object into snapshot: %w", err)
 	}
-	if err := runExactGitWithContext(ctx, stage, "checkout", "--detach", "--force", oid.Hex); err != nil {
+	if err := runExactGitWithContext(ctx, stage, "checkout", "--detach", "--force", oid.Hex()); err != nil {
 		return fmt.Errorf("checkout exact git object: %w", err)
 	}
 	if err := verifyExactGitSnapshotWithContext(ctx, stage, oid); err != nil {
@@ -471,8 +440,8 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 		}
 		return fmt.Errorf("%w: query object format: %v", ErrExactGitSnapshotUntrusted, err)
 	}
-	if format != oid.Algorithm {
-		return fmt.Errorf("%w: %w: repository uses %s, lock declares %s", ErrExactGitSnapshotUntrusted, ErrGitOIDMismatch, format, oid.Algorithm)
+	if format != oid.Algorithm() {
+		return fmt.Errorf("%w: %w: repository uses %s, lock declares %s", ErrExactGitSnapshotUntrusted, ErrGitOIDMismatch, format, oid.Algorithm())
 	}
 	head, err := exactGitOutputWithContext(ctx, path, "rev-parse", "--verify", "HEAD")
 	if err != nil {
@@ -480,8 +449,8 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 			return ctxErr
 		}
 	}
-	if err != nil || head != oid.Hex {
-		return fmt.Errorf("%w: %w: HEAD is %q, want %q", ErrExactGitSnapshotUntrusted, ErrGitOIDMismatch, head, oid.Hex)
+	if err != nil || head != oid.Hex() {
+		return fmt.Errorf("%w: %w: HEAD is %q, want %q", ErrExactGitSnapshotUntrusted, ErrGitOIDMismatch, head, oid.Hex())
 	}
 	top, err := exactGitOutputWithContext(ctx, path, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -495,7 +464,7 @@ func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid Git
 	if pathErr != nil || topErr != nil || pathAbs != topAbs {
 		return fmt.Errorf("%w: worktree root differs from snapshot path", ErrExactGitSnapshotUntrusted)
 	}
-	if err := verifyExactGitTrackedTreeWithContext(ctx, path, oid.Algorithm); err != nil {
+	if err := verifyExactGitTrackedTreeWithContext(ctx, path, oid.Algorithm()); err != nil {
 		if ctxErr := exactGitContextErr(ctx); ctxErr != nil {
 			return ctxErr
 		}

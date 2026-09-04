@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -31,6 +32,10 @@ func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
 	if t != nil {
 		t.Cleanup(func() { testOrganizationConfigPath = old })
 	}
+}
+
+func SetTestOrganizationConfigPath(t testing.TB, path string) {
+	SetTestV3OrganizationConfigPath(t, path)
 }
 
 // OrganizationConfigPath returns the fixed filesystem path of the externally
@@ -299,7 +304,7 @@ func organizationHasRemoteRequirements(cfg *Config) bool {
 			return true
 		}
 	}
-	return len(cfg.Marketplaces) > 0
+	return false
 }
 
 func loadOrganizationConfig(path string, data []byte) LayerResult {

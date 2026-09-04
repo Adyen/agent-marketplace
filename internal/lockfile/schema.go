@@ -31,10 +31,9 @@ func ParseScope(value string) (Scope, error) {
 }
 
 type Document struct {
-	APIVersion   string        `yaml:"apiVersion"`
-	Scope        Scope         `yaml:"scope"`
-	Registries   []GitRegistry `yaml:"registries,omitempty"`
-	Marketplaces []Marketplace `yaml:"marketplaces,omitempty"`
+	APIVersion string        `yaml:"apiVersion"`
+	Scope      Scope         `yaml:"scope"`
+	Registries []GitRegistry `yaml:"registries,omitempty"`
 }
 
 type GitRegistry struct {
@@ -58,48 +57,6 @@ type GitResource struct {
 	ContentDigest Digest            `yaml:"content_digest"`
 	ArchiveDigest Digest            `yaml:"archive_digest"`
 	SupportFiles  map[string]Digest `yaml:"support_files,omitempty"`
-}
-
-type Marketplace struct {
-	URL         string                  `yaml:"url"`
-	InstanceID  string                  `yaml:"instance_id"`
-	Collections []MarketplaceCollection `yaml:"collections,omitempty"`
-	Resources   []MarketplaceResource   `yaml:"resources,omitempty"`
-}
-
-type MarketplaceCollection struct {
-	SourceID string           `yaml:"source_id"`
-	Name     string           `yaml:"name"`
-	Revision Digest           `yaml:"revision"`
-	Direct   bool             `yaml:"direct,omitempty"`
-	Members  []CollectionEdge `yaml:"members,omitempty"`
-}
-
-type CollectionEdge struct {
-	SourceID string `yaml:"source_id"`
-	Kind     string `yaml:"kind,omitempty"`
-	Name     string `yaml:"name"`
-	Revision Digest `yaml:"revision"`
-}
-
-type Acquisition string
-
-const (
-	AcquisitionMirror    Acquisition = "mirror"
-	AcquisitionIndexOnly Acquisition = "index-only"
-)
-
-type MarketplaceResource struct {
-	SourceID             string           `yaml:"source_id"`
-	Kind                 string           `yaml:"kind"`
-	Name                 string           `yaml:"name"`
-	Revision             Digest           `yaml:"revision"`
-	Acquisition          Acquisition      `yaml:"acquisition"`
-	ArchiveDigest        Digest           `yaml:"archive_digest,omitempty"`
-	SourceCommit         GitOID           `yaml:"source_commit,omitempty"`
-	SourceManifestDigest Digest           `yaml:"source_manifest_digest,omitempty"`
-	Direct               bool             `yaml:"direct,omitempty"`
-	SelectedBy           []CollectionEdge `yaml:"selected_by,omitempty"`
 }
 
 type Digest string

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -85,18 +86,29 @@ func (a toggleAction) disablesResource() bool {
 // skills list would have no effect when the entry has its own skills list
 // (specific wins over default in attribute inheritance).
 func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
+	return runScopedToggleAt(repoRoot, act, nil)
+}
+
+func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.ConfigPathMapper) tea.Cmd {
 	return func() tea.Msg {
+		mapPath := func(path string) (string, error) {
+			if mapper == nil {
+				return path, nil
+			}
+			return mapper(path)
+		}
 		var err error
 		switch act.scope {
 		case scopeGlobal:
-			globalPath := configPath
-			if globalPath == "" {
-				var pathErr error
-				globalPath, pathErr = config.GlobalConfigPath()
-				if pathErr != nil {
-					err = pathErr
-					break
-				}
+			globalPath, pathErr := config.GlobalConfigPath()
+			if pathErr != nil {
+				err = pathErr
+				break
+			}
+			globalPath, pathErr = mapPath(globalPath)
+			if pathErr != nil {
+				err = pathErr
+				break
 			}
 			// Repo-relative local paths are valid in repo/local configs but
 			// meaningless machine-wide; refuse to write them to the user
@@ -124,9 +136,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(globalPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeProject:
-			projectPath := configPath
-			if projectPath == "" {
-				projectPath = config.ProjectConfigPath(repoRoot)
+			projectPath, pathErr := mapPath(config.ProjectConfigPath(repoRoot))
+			if pathErr != nil {
+				err = pathErr
+				break
 			}
 			if act.enable {
 				if err := config.EnsureRegistryWithPathsInConfig(projectPath, act.registryURL, act.registryRef, act.registryPath); err != nil {
@@ -141,9 +154,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(projectPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeLocal:
-			localPath := configPath
-			if localPath == "" {
-				localPath = config.LocalConfigPath(repoRoot)
+			localPath, pathErr := mapPath(config.LocalConfigPath(repoRoot))
+			if pathErr != nil {
+				err = pathErr
+				break
 			}
 			if act.enable {
 				// Write the include scoped to the registry entry (creating a
@@ -162,9 +176,10 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 				err = config.DisableResourceWithShadowFallback(localPath, act.registryURL, act.registryPath, act.registryRef, act.kind, act.skillName)
 			}
 		case scopeLocalExclude:
-			localPath := configPath
-			if localPath == "" {
-				localPath = config.LocalConfigPath(repoRoot)
+			localPath, pathErr := mapPath(config.LocalConfigPath(repoRoot))
+			if pathErr != nil {
+				err = pathErr
+				break
 			}
 			if act.enable {
 				if strings.TrimSpace(act.registryURL) == "" {
@@ -214,41 +229,26 @@ func runScopedToggle(repoRoot string, act toggleAction) tea.Cmd {
 	}
 }
 
+func runDependencyScopedToggle(ctx context.Context, repoRoot string, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
+	if mutate == nil {
+		return runScopedToggle(repoRoot, act)
+	}
+	return func() tea.Msg {
+		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
+			msg, ok := runScopedToggleAt(repoRoot, act, mapper)().(configWrittenMsg)
+			if !ok {
+				return fmt.Errorf("toggle did not produce a config result")
+			}
+			return msg.err
+		})
+		return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+	}
+}
+
 // excludeCompetingRegistriesCmd returns a tea.Cmd that adds excludes for
 // competing registry URLs that provide the same resource name. This resolves
 // name collisions when the user toggles ON a colliding skill.
 func excludeCompetingRegistriesCmd(repoRoot string, rows []row, act toggleAction) tea.Cmd {
-	return excludeCompetingRegistriesCmdAt(repoRoot, rows, act, "")
-}
-
-func excludeCompetingRegistriesWithDependenciesCmd(ctx context.Context, repoRoot string, rows []row, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
-	if len(competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)) == 0 {
-		return nil
-	}
-	if mutate == nil {
-		return excludeCompetingRegistriesCmd(repoRoot, rows, act)
-	}
-	return func() tea.Msg {
-		err := mutate(ctx, repoRoot, func(mapper pipeline.ConfigPathMapper) error {
-			path, err := scopedToggleConfigPath(repoRoot, act.scope)
-			if err != nil {
-				return err
-			}
-			path, err = mapper(path)
-			if err != nil {
-				return err
-			}
-			msg, ok := excludeCompetingRegistriesCmdAt(repoRoot, rows, act, path)().(configWrittenMsg)
-			if !ok {
-				return fmt.Errorf("collision exclusions did not produce a config result")
-			}
-			return msg.err
-		})
-		return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
-	}
-}
-
-func excludeCompetingRegistriesCmdAt(repoRoot string, rows []row, act toggleAction, configPath string) tea.Cmd {
 	competing := competingRegistryURLs(rows, act.kind, act.skillName, act.registryURL)
 	if len(competing) == 0 {
 		return nil
@@ -269,14 +269,17 @@ func excludeCompetingRegistriesCmdAt(repoRoot string, rows []row, act toggleActi
 	}
 
 	return func() tea.Msg {
-		if configPath == "" {
-			var err error
-			configPath, err = scopedToggleConfigPath(repoRoot, act.scope)
+		var configPath string
+		switch act.scope {
+		case scopeGlobal:
+			p, err := config.GlobalConfigPath()
 			if err != nil {
 				return configWrittenMsg{skillName: act.skillName, err: err}
 			}
-		}
-		if act.scope != scopeGlobal && act.scope != scopeProject {
+			configPath = p
+		case scopeProject:
+			configPath = config.ProjectConfigPath(repoRoot)
+		default:
 			return nil
 		}
 		if act.scope == scopeGlobal {
@@ -482,7 +485,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 	if act.enable && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
-	return m, correlateOperation(runScopedToggle(m.repoRoot, act), operation, false)
+	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.repoRoot, act, m.dependencyLifecycle.Mutate), operation, false)
 }
 
 // handleToggleModalKey routes modal key presses. Returns (newModel, cmd).

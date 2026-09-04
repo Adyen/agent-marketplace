@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
-	marketartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 )
 
 func TestBuildIsDeterministicCompleteAndIncludesIntrinsicSupport(t *testing.T) {
@@ -59,7 +57,7 @@ func TestBuildIsDeterministicCompleteAndIncludesIntrinsicSupport(t *testing.T) {
 	if first.Manifest.RevisionDigest == "" || len(first.Payload) == 0 {
 		t.Fatalf("manifest digest/payload missing: digest=%q bytes=%d", first.Manifest.RevisionDigest, len(first.Payload))
 	}
-	if err := marketartifact.VerifySourceRevisionManifest(first.Manifest, first.Payload); err != nil {
+	if err := verifyManifest(first.Manifest, first.Payload); err != nil {
 		t.Fatalf("canonical source manifest verification: %v", err)
 	}
 }
@@ -122,7 +120,7 @@ func TestBuildInventoriesValidResourcesAlongsideMalformedDiagnostics(t *testing.
 	if resource.Kind != "skill" || resource.Name != "valid" || resource.ContentDigest == "" || resource.ArchiveDigest == "" {
 		t.Fatalf("resource = %+v, want complete valid skill projection", resource)
 	}
-	if err := marketartifact.VerifySourceRevisionManifest(first.Manifest, first.Payload); err != nil {
+	if err := verifyManifest(first.Manifest, first.Payload); err != nil {
 		t.Fatalf("canonical source manifest verification: %v", err)
 	}
 }
@@ -188,7 +186,7 @@ func TestVerifyDetectsManifestAndFilesystemTampering(t *testing.T) {
 
 	t.Run("locked field", func(t *testing.T) {
 		tampered := locked
-		tampered.Resources = append([]marketartifact.RevisionResource(nil), locked.Resources...)
+		tampered.Resources = append([]revisionResource(nil), locked.Resources...)
 		tampered.Resources[0].ContentDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		if _, err := Verify(input, tampered); !errors.Is(err, ErrManifestMismatch) {
 			t.Fatalf("Verify error = %v, want ErrManifestMismatch", err)

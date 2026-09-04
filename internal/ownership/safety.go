@@ -1,11 +1,8 @@
 package ownership
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -124,7 +121,7 @@ func (s *Store) BackupOnly(rel, absFile string, reason Reason) (string, error) {
 
 // backupOnlyLocked is BackupOnly's body, running with the per-root lock held.
 func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, error) {
-	if err := s.ValidateAggregateFile(rel, absFile); err != nil {
+	if err := s.ensureUnderRoot(absFile); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(s.recordDir(), 0o700); err != nil {
@@ -154,9 +151,6 @@ func (s *Store) backupOnlyLocked(rel, absFile string, reason Reason) (string, er
 // this path, so a malformed or comment-laden file is preserved exactly, which is
 // the only version of a backup worth having for a file a user hand-wrote.
 func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason Reason, entries []Entry) (backupPath, priorDigest string, priorAbsent bool, err error) {
-	if err := s.ValidateAggregateFile(rel, absFile); err != nil {
-		return "", "", false, err
-	}
 	raw, readErr := os.ReadFile(absFile)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
@@ -181,8 +175,6 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 			break
 		} else if statErr != nil {
 			return "", "", false, statErr
-		} else if err := validateRegularFile(backupPath, false); err != nil {
-			return "", "", false, err
 		}
 		backupPath = fmt.Sprintf("%s.%03d%s", base, seq, backupSuffix)
 	}
@@ -198,7 +190,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	// The raw bytes are written even when the file was absent: a zero-byte .bak
 	// with PriorAbsent=true is what lets recovery and `doctor` distinguish "we
 	// created this file" from "we replaced an empty file".
-	if err := s.atomicWrite(backupPath, raw, 0o600); err != nil {
+	if err := atomicWrite(backupPath, raw, 0o600); err != nil {
 		return "", "", false, err
 	}
 	manifest := BackupManifest{
@@ -218,7 +210,7 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 	if err != nil {
 		return "", "", false, fmt.Errorf("ownership: marshal backup manifest: %w", err)
 	}
-	if err := s.atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
+	if err := atomicWrite(metaPathFor(backupPath), append(metaBytes, '\n'), 0o600); err != nil {
 		return "", "", false, err
 	}
 	slog.Info("safety backup written",
@@ -262,64 +254,14 @@ func (s *Store) pruneSafetyBackups(dir string) error {
 			return fmt.Errorf("ownership: prune safety backup manifest: %w", err)
 		}
 	}
-	return s.syncDirectory(dir)
-}
-
-func validateBackupManifest(s *Store, rel string, manifest BackupManifest, raw []byte) error {
-	if manifest.Version != 1 {
-		return fmt.Errorf("unsupported backup manifest version")
-	}
-	if manifest.File != rel || manifest.RootKey != s.rootKey || manifest.CanonicalRoot != s.canonicalRoot {
-		return fmt.Errorf("backup manifest identity does not match target root and file")
-	}
-	if err := validateRelativePath(manifest.File); err != nil {
-		return fmt.Errorf("backup manifest file: %w", err)
-	}
-	if manifest.Generation == 0 && len(manifest.ManagedEntries) > 0 {
-		return fmt.Errorf("backup manifest generation is invalid")
-	}
-	switch manifest.Reason {
-	case ReasonSync, ReasonAdoption, ReasonOrphanRemoval, ReasonConflictReplace:
-	default:
-		return fmt.Errorf("backup manifest reason is invalid")
-	}
-	if manifest.PriorSize < 0 || int64(len(raw)) != manifest.PriorSize {
-		return fmt.Errorf("backup manifest prior size does not match raw backup bytes")
-	}
-	if manifest.PriorAbsent {
-		if manifest.PriorDigest != "" || len(raw) != 0 {
-			return fmt.Errorf("absent prior aggregate has digest or bytes")
-		}
-	} else {
-		if !digestPattern.MatchString(manifest.PriorDigest) || manifest.PriorDigest != Digest(raw) {
-			return fmt.Errorf("backup manifest prior digest does not match raw backup bytes")
-		}
-	}
-	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
-		return fmt.Errorf("backup manifest timestamp is invalid")
-	}
-	seen := make(map[string]struct{}, len(manifest.ManagedEntries))
-	for _, entry := range manifest.ManagedEntries {
-		if err := validateEntry(entry); err != nil {
-			return fmt.Errorf("backup manifest managed entry: %w", err)
-		}
-		key := entry.ID().mapKey()
-		if _, ok := seen[key]; ok {
-			return fmt.Errorf("backup manifest has duplicate managed entry identity")
-		}
-		seen[key] = struct{}{}
-	}
-	return nil
+	return fsyncDir(dir)
 }
 
 // SafetyBackups returns the retained backups for one canonical output file,
 // oldest first, each paired with its manifest. A backup whose manifest is
-// missing, unreadable, semantically invalid, or whose raw bytes do not match
-// the manifest is skipped: unverified bytes are not evidence.
+// missing or unreadable is skipped: bytes without recorded provenance are not
+// evidence.
 func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
-	if err := validateRelativePath(rel); err != nil {
-		return nil, err
-	}
 	dir := s.SafetyBackupDir(rel)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -338,37 +280,15 @@ func (s *Store) SafetyBackups(rel string) ([]RetainedBackup, error) {
 	out := make([]RetainedBackup, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		if err := validateRegularFile(path, false); err != nil {
-			return nil, err
-		}
-		metaPath := metaPathFor(path)
-		if _, err := os.Lstat(metaPath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return nil, err
-		}
-		if err := validateRegularFile(metaPath, false); err != nil {
-			return nil, err
-		}
-		metaBytes, err := readOwnershipFile(metaPath, maxOwnershipMetadataSize)
+		metaBytes, err := os.ReadFile(metaPathFor(path))
 		if err != nil {
 			continue
 		}
 		var manifest BackupManifest
-		decoder := json.NewDecoder(bytes.NewReader(metaBytes))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&manifest); err != nil {
+		if err := json.Unmarshal(metaBytes, &manifest); err != nil {
 			continue
 		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			continue
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if err := validateBackupManifest(s, rel, manifest, raw); err != nil {
+		if manifest.Version != 1 || manifest.RootKey != s.rootKey || manifest.File != rel {
 			continue
 		}
 		out = append(out, RetainedBackup{Path: path, Manifest: manifest})

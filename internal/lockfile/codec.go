@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -190,22 +189,6 @@ func Normalize(input Document) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	for i := range doc.Marketplaces {
-		if err := normalizeMarketplace(&doc.Marketplaces[i]); err != nil {
-			return Document{}, fmt.Errorf("marketplaces[%d]: %w", i, err)
-		}
-	}
-	sort.Slice(doc.Marketplaces, func(i, j int) bool {
-		a, b := doc.Marketplaces[i], doc.Marketplaces[j]
-		if a.InstanceID != b.InstanceID {
-			return a.InstanceID < b.InstanceID
-		}
-		return a.URL < b.URL
-	})
-	doc.Marketplaces, err = dedupeMarketplaces(doc.Marketplaces)
-	if err != nil {
-		return Document{}, err
-	}
 	return doc, nil
 }
 
@@ -283,12 +266,4 @@ func normalizeArtifactPath(value string, allowRoot bool) (string, error) {
 		return "", coded(CodeInvalidPath, "empty artifact path")
 	}
 	return clean, nil
-}
-
-func canonicalMarketplaceURL(raw string) (string, error) {
-	canonical, err := urlutil.NormalizeEndpointURL(raw)
-	if err != nil {
-		return "", coded(CodeInvalidDocument, "%v", err)
-	}
-	return canonical, nil
 }

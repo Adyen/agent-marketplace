@@ -38,64 +38,6 @@ git commit -m "Add shared infrastructure skills"
 
 Factory output is generated at `.factory/skills/<name>/SKILL.md`. Other harnesses get their own native layouts when listed in the effective `harnesses:`.
 
-## Layer-owned lockfiles
-
-`sync` generates a deterministic `agent-marketplace-lock/v1` lock beside each
-configuration file that has remote requirements:
-
-| Configuration | Lockfile | Handling |
-|---|---|---|
-| `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` | optional externally managed organization lock |
-| `~/.agents/config.yaml` | `~/.agents/lock.yaml` | machine-local |
-| `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | commit with the repo config |
-| `<dir>/.agents/config.local.yaml` | `<dir>/.agents/lock.local.yaml` | personal and gitignored |
-
-The lock records exact Git commits and source manifests, or exact Marketplace
-revisions and acquisition integrity. It is not a second configuration file:
-config remains the human-authored requirement, while the adjacent lock holds
-resolution state. Plain filesystem directory registries remain live and are not
-copied to a lock. A hostless `file://` URL ending in `.git` is a supported remote
-Git registry and is lockable like other Git sources. The repository ignore rule
-`/.agents/*.dependencytxn.lock` covers the short-lived per-destination
-transaction handles; these handles are not lockfiles and must not be committed.
-
-Normal `sync` minimally reconciles writable user, repo, and local locks. It
-retains compatible resolutions even when a branch or Marketplace has moved;
-use `agent-marketplace update` or `lock --upgrade` to seek newer resolutions.
-`sync --locked` requires fresh locks and never writes config or locks.
-`sync --check` checks lock freshness and materialized-output drift without
-changing authoritative files (online cache warming is allowed).
-`sync --offline` is fully non-networked and requires every exact remote object
-in a verified cache. `lock --check` checks whether lock files would change
-without writing them.
-
-Locked Git catalogs are identified by canonical source, exact
-algorithm-qualified commit, and root path; this keeps two retained commits
-separate even when they use the same configured URL and ref. Exact snapshot
-verification and consumption hold a shared cache lease, so garbage collection
-cannot remove a verified snapshot between the check and its use. Config/lock
-commits are journaled: if the journal directory fsync fails after the journal
-rename, the command reports the failure but leaves recovery evidence for the
-next invocation instead of discarding the staged transaction.
-
-The organization lock is optional for consumers. If it is missing, organization
-requirements are resolved live and no organization lock is created implicitly.
-When present, the config/lock pair must pass trusted-owner, permissions,
-regular-file, and safe-ancestor checks; a malformed, stale, symlinked, or
-untrusted lock is a hard error and never falls back to a user lock.
-Administrators create or refresh it explicitly with
-`agent-marketplace lock --scope organization`.
-Dependency transaction destinations reject symlinked ancestors and unsafe
-non-regular paths. A final config-file symlink remains supported only when it
-resolves to a regular file beside the logical config path; it cannot redirect a
-config/lock transaction into another layer.
-
-Marketplace IDs and resource coordinates use safe single-segment values: they
-cannot be empty, contain whitespace or control characters, contain `/` or `\\`,
-or equal `.` or `..`. Collection locks allow nested collections but reject
-cycles, missing/conflicting records, and inconsistent selection edges; limits
-are 100,000 member edges, 250,000 expansion steps, and depth 100.
-
 ## Add Codex
 
 Select Codex in the TUI harness modal (`H`) or add `codex` to the machine-wide
@@ -234,20 +176,15 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists. Required skills cannot be locally excluded.
 
-When a non-required resource is enabled in both machine and repo scopes,
-`remove` without `--scope` reports the ambiguity. Use `remove --scope user` or
-`remove --scope repo` to remove only the selected occurrence; the other scope
-remains enabled. An explicit scope never falls back to another scope when that
-scope has no occurrence; it reports that the resource is not enabled (and a
-machine-owned occurrence targeted from repo/local scope produces a boundary
-error). `--scope local` is for checkout-local selections/excludes, and cannot
-bypass the machine/repo boundary. An unscoped removal with one unambiguous
-occurrence infers its effective layer (machine resources use user config),
-except that a repo-scoped auto-selected resource that is not explicitly selected
-by committed repo config is recorded as a checkout-local exclusion. Use
-`--scope repo` to edit committed repo config.
+## Git dependency locks
+
+Remote Git requirements resolve to generated lockfiles owned by their configuration layers: `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock with `.agents/config.yaml`; keep the personal-local lock private. A deployed organization lock is validated with the organization config, but the CLI does not create one when it is absent.
+
+Normal sync retains compatible exact commits and minimally reconciles writable locks after configuration changes. `sync --locked` fails instead of changing config or locks. `sync --check` checks both dependency and materialization drift without writing. Use `lock --upgrade` or `update` to advance Git resolutions deliberately. Install, remove, update, and TUI config changes publish config and lock state transactionally.
+
+Plain local-directory registries are read live and never locked. This foundation does not include hosted Marketplace lock records, acquisition adapters, or integration.
 
 ## Daily commands
 
@@ -255,14 +192,13 @@ by committed repo config is recorded as a checkout-local exclusion. Use
 agent-marketplace list
 agent-marketplace install <skill>
 agent-marketplace remove <skill>
+agent-marketplace lock
+agent-marketplace lock --upgrade
 agent-marketplace sync
 agent-marketplace sync --locked
 agent-marketplace sync --check
-agent-marketplace sync --offline
-agent-marketplace lock --check
 agent-marketplace status
 agent-marketplace update
-agent-marketplace lock --upgrade
 agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair
@@ -296,12 +232,13 @@ Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompati
 
 ## How sync works
 
-1. Load org, user, repo, and local config.
-2. Fetch registry caches under `~/.cache/agent-marketplace/`.
-3. Ingest registry content through `harness-compilation`.
-4. Resolve the five target-materialized kinds (skills, commands, subagents,
+1. Load org, user, repo, and local config with their layer provenance.
+2. Validate existing locks, retain compatible Git resolutions, and reconcile stale writable locks unless locked/check mode forbids writes.
+3. Open each Git source by exact commit and verify its source manifest; read plain directory registries live.
+4. Ingest registry content through `harness-compilation`.
+5. Resolve the five target-materialized kinds (skills, commands, subagents,
    hooks, and MCP servers), plus collections, tags, and excludes.
-5. Compile each resolved resource to each configured harness.
-6. Materialize native harness files with prune-stale enabled.
+6. Compile each resolved resource to each configured harness.
+7. Materialize native harness files and prune stale generated output.
 
-Run `agent-marketplace status` to see the selected harnesses, native targets, cache freshness, local excludes, orphaned files, collisions, and errors. Lock and trust failures are reported as diagnostics (including missing or untrusted exact snapshots and source-manifest mismatches); the CLI does not silently fall back to a mutable ref.
+Run `agent-marketplace status` to see the selected harnesses, native targets, cache freshness, local excludes, orphaned files, collisions, and errors.

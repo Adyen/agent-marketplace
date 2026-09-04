@@ -28,6 +28,14 @@ _Avoid_: Registry entry, partial compiler
 A command represented as a skill in a harness that has no command primitive while retaining its command identity.
 _Avoid_: Native command
 
+**Acquisition lock**:
+A generated, layer-owned record that binds a remote Git requirement to an exact commit and verified source revision manifest without changing selection precedence.
+_Avoid_: Effective configuration, Marketplace lock
+
+**Exact snapshot**:
+An immutable Git cache entry opened by an algorithm-qualified commit and verified against the acquisition lock's source manifest.
+_Avoid_: Mutable ref cache, working tree
+
 **Owned entry**:
 An element inside a shared harness configuration file that Agent Marketplace is demonstrably authorized to reconcile and prune.
 _Avoid_: Generated file, managed file
@@ -35,22 +43,6 @@ _Avoid_: Generated file, managed file
 **Ownership state**:
 Evidence identifying owned entries in shared harness configuration files.
 _Avoid_: Cache, ownership marker
-
-**Configuration layer**:
-One authority's scope-owned declarations and policy, composed with other layers to produce effective configuration.
-_Avoid_: Effective configuration, lockfile
-
-**Requirement**:
-A human-authored declaration of acquisition intent owned by one configuration layer.
-_Avoid_: Locked resolution, pin
-
-**Locked resolution**:
-The immutable source occurrence or resource revision selected for a requirement.
-_Avoid_: Requirement, cache entry
-
-**Lockfile**:
-A generated, scope-owned record mapping one configuration layer's remote requirements to locked resolutions.
-_Avoid_: Configuration, effective snapshot, cache
 
 **Community telemetry consent**:
 An affirmative, user-controlled choice made during interactive initialization before an unmanaged installation sends community telemetry.

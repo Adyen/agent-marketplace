@@ -162,16 +162,17 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane            pane
-	driftReport     materialize.DriftReport
-	driftAssessment driftAssessment
-	diagnostics     diagnosticStore
-	errs            []error
-	warnings        []error
-	syncing         bool
-	refreshing      bool
-	requests        requestState
-	rowsStale       bool
+	pane                pane
+	driftReport         materialize.DriftReport
+	driftAssessment     driftAssessment
+	diagnostics         diagnosticStore
+	errs                []error
+	warnings            []error
+	syncing             bool
+	refreshing          bool
+	requests            requestState
+	rowsStale           bool
+	dependencyLifecycle DependencyLifecycle
 
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config

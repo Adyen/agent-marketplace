@@ -18,7 +18,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
@@ -87,12 +86,11 @@ func selectedLockScopes(mode lockMode) []string {
 }
 
 type upgradeTargetSpec struct {
-	marketplace []marketplace.MarketplaceLocator
-	registry    string
-	ref         string
-	path        string
-	kind        string
-	names       []string
+	registry string
+	ref      string
+	path     string
+	kind     string
+	names    []string
 }
 
 type upgradeTargetResult struct {
@@ -117,7 +115,7 @@ func newLockCmd() *cobra.Command {
 	var scope, registry, ref, registryPath, kind string
 	var check, upgrade bool
 	cmd := &cobra.Command{
-		Use:   "lock [marketplace-locator ...]",
+		Use:   "lock [resource ...]",
 		Short: "Resolve and verify exact Git dependency locks",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selected, explicitOrg, err := parseLockSelection(scope, check)
@@ -167,30 +165,13 @@ func parseUpgradeTargets(upgrade bool, args []string, registry, ref, registryPat
 	if !upgrade && (len(args) > 0 || hasGit) {
 		return nil, errors.New("upgrade targets require --upgrade")
 	}
-	if registry == "" && (ref != "" || registryPath != "" || kind != "") {
-		return nil, errors.New("--ref, --path, and --kind require --registry")
+	if registry == "" && (len(args) > 0 || ref != "" || registryPath != "" || kind != "") {
+		return nil, errors.New("resource targets, --ref, --path, and --kind require --registry")
 	}
-	targets := &upgradeTargetSpec{registry: registry, ref: ref, path: registryPath, kind: kind}
-	if registry != "" {
-		if len(args) > 0 && kind == "" {
-			return nil, errors.New("named --registry targets require --kind")
-		}
-		for _, arg := range args {
-			if _, err := marketplace.ParseMarketplaceLocator(arg); err == nil {
-				return nil, errors.New("marketplace locators cannot be mixed with direct git targeting")
-			}
-		}
-		targets.names = append(targets.names, args...)
-		return targets, nil
+	if len(args) > 0 && kind == "" {
+		return nil, errors.New("named --registry targets require --kind")
 	}
-	for _, raw := range args {
-		locator, err := marketplace.ParseMarketplaceLocator(raw)
-		if err != nil {
-			return nil, err
-		}
-		targets.marketplace = append(targets.marketplace, locator)
-	}
-	return targets, nil
+	return &upgradeTargetSpec{registry: registry, ref: ref, path: registryPath, kind: kind, names: append([]string(nil), args...)}, nil
 }
 
 func parseLockSelection(value string, check bool) (map[lockfile.Scope]bool, bool, error) {
@@ -225,7 +206,7 @@ func resolveUpgradeTargets(ec config.EffectiveConfig, mode lockMode) (upgradeTar
 		return upgradeTargetResult{selection: lockfile.UpgradeSelection{All: mode.upgrade}}, nil
 	}
 	targets := mode.upgradeTargets
-	if targets.registry == "" && len(targets.marketplace) == 0 {
+	if targets.registry == "" {
 		return upgradeTargetResult{selection: lockfile.UpgradeSelection{All: true}}, nil
 	}
 	result := upgradeTargetResult{}
@@ -323,71 +304,11 @@ func resolveUpgradeTargets(ec config.EffectiveConfig, mode lockMode) (upgradeTar
 		return result, nil
 	}
 
-	for _, locator := range targets.marketplace {
-		type match struct {
-			selector lockfile.MarketplaceUpgradeSelector
-			revision string
-		}
-		var matches []match
-		identities := map[string]bool{}
-		for _, layer := range ec.PresentLayers() {
-			scope := lockScopeForSource(layer.Source)
-			if mode.selects != nil && !mode.selects[scope] {
-				continue
-			}
-			current, err := loadExistingLayerDocument(layer, scope)
-			if err != nil {
-				return result, err
-			}
-			for _, entry := range layerMarketplaces(layer) {
-				if !marketplaceEndpointMatches(locator, entry) {
-					continue
-				}
-				endpointURL, err := marketplace.NormalizeMarketplaceURL(entry.URL)
-				if err != nil {
-					continue
-				}
-				for _, pin := range entry.Resources {
-					sourceMatches := locator.Source == pin.SourceID || pin.SourceSlug != "" && locator.Source == pin.SourceSlug
-					if !sourceMatches || locator.Kind != pin.Kind || locator.Name != pin.Name {
-						continue
-					}
-					revision := pin.Revision
-					if revision == "" {
-						revision = pin.Digest
-					}
-					matchedRevision := revision
-					if matchedRevision == "" && current != nil {
-						matchedRevision = lockedMarketplaceRevision(*current, endpointURL, entry.InstanceID, pin.SourceID, pin.Kind, pin.Name)
-					}
-					if locator.Revision != "" && locator.Revision != matchedRevision {
-						continue
-					}
-					selector := lockfile.MarketplaceUpgradeSelector{URL: endpointURL, InstanceID: entry.InstanceID, SourceID: pin.SourceID, Kind: pin.Kind, Name: pin.Name}
-					identity := endpointURL + "\x00" + entry.InstanceID + "\x00" + pin.SourceID + "\x00" + pin.Kind + "\x00" + pin.Name
-					identities[identity] = true
-					matches = append(matches, match{selector: selector, revision: revision})
-				}
-			}
-		}
-		if len(matches) == 0 {
-			return result, fmt.Errorf("marketplace target %s:%s/%s/%s matched no selected requirement", locator.Marketplace, locator.Source, locator.Kind, locator.Name)
-		}
-		if len(identities) > 1 {
-			return result, fmt.Errorf("marketplace target %s:%s/%s/%s is ambiguous; qualify it by endpoint URL, source ID, or --scope", locator.Marketplace, locator.Source, locator.Kind, locator.Name)
-		}
-		for _, matched := range matches {
-			result.selection.Marketplace = appendMarketplaceSelector(result.selection.Marketplace, matched.selector)
-			if matched.revision != "" {
-				result.notices = append(result.notices, fmt.Sprintf("Marketplace %s/%s/%s is constrained to %s and was not advanced", matched.selector.SourceID, matched.selector.Kind, matched.selector.Name, matched.revision))
-			}
-		}
-	}
 	return result, nil
 }
 
 func loadExistingLayerDocument(layer config.LayerResult, scope lockfile.Scope) (*lockfile.Document, error) {
-	if len(remoteEntries(layerRegistries(layer))) == 0 && len(layerMarketplaces(layer)) == 0 {
+	if len(remoteEntries(layerRegistries(layer))) == 0 {
 		return nil, nil
 	}
 	lockPath, err := lockfile.PathForConfig(layer.Path)
@@ -443,49 +364,7 @@ func lockedRootHasResource(root lockfile.GitRoot, kind, name string) bool {
 	return false
 }
 
-func lockedMarketplaceRevision(doc lockfile.Document, endpointURL, instanceID, sourceID, kind, name string) string {
-	for _, endpoint := range doc.Marketplaces {
-		if endpoint.URL != endpointURL || endpoint.InstanceID != instanceID {
-			continue
-		}
-		if kind == "collection" {
-			for _, collection := range endpoint.Collections {
-				if collection.SourceID == sourceID && collection.Name == name {
-					return collection.Revision.String()
-				}
-			}
-		}
-		for _, resource := range endpoint.Resources {
-			if resource.SourceID == sourceID && resource.Kind == kind && resource.Name == name {
-				return resource.Revision.String()
-			}
-		}
-	}
-	return ""
-}
-
-func marketplaceEndpointMatches(locator marketplace.MarketplaceLocator, entry config.MarketplaceEntry) bool {
-	if locator.Alias != "" {
-		return locator.Alias == entry.Alias
-	}
-	want, err := marketplace.NormalizeMarketplaceURL(locator.URL)
-	if err != nil {
-		return false
-	}
-	got, err := marketplace.NormalizeMarketplaceURL(entry.URL)
-	return err == nil && want == got
-}
-
 func appendGitSelector(selectors []lockfile.GitUpgradeSelector, incoming lockfile.GitUpgradeSelector) []lockfile.GitUpgradeSelector {
-	for _, selector := range selectors {
-		if selector == incoming {
-			return selectors
-		}
-	}
-	return append(selectors, incoming)
-}
-
-func appendMarketplaceSelector(selectors []lockfile.MarketplaceUpgradeSelector, incoming lockfile.MarketplaceUpgradeSelector) []lockfile.MarketplaceUpgradeSelector {
 	for _, selector := range selectors {
 		if selector == incoming {
 			return selectors
@@ -591,17 +470,17 @@ func validateStagedConfigPathIdentity(edit pipeline.StagedConfigEdit) (string, e
 }
 
 func prepareExactLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (catalog.LoadOption, int, error) {
-	option, _, changed, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+	option, changed, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 	return option, changed, err
 }
 
 func reconcileCommandDependencies(ctx context.Context, repoRoot, localDir string, ignoreBlocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 	var warnings []error
-	option, marketplaceView, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings})
+	option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings})
 	if err != nil {
 		return pipeline.DependencyLockView{}, err
 	}
-	return pipeline.DependencyLockView{CatalogOption: option, MarketplaceExactView: marketplaceView, ExactLockLease: lease, Warnings: warnings}, nil
+	return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, nil
 }
 
 type configTransactionSnapshot struct {
@@ -678,7 +557,7 @@ func loadStableEffective(ctx context.Context, options config.LoadEffectiveOption
 
 type exactLockLeaseFunc func(context.Context) (func(), error)
 
-func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, resultMarketplace marketplaceLockView, changed int, resultLease exactLockLeaseFunc, resultErr error) {
+func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lockMode) (resultOption catalog.LoadOption, changed int, resultLease exactLockLeaseFunc, resultErr error) {
 	started := time.Now()
 	modeName := lockModeName(mode)
 	scopes := selectedLockScopes(mode)
@@ -695,20 +574,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 
 	stateDir, err := dependencyStateDir()
 	if err != nil {
-		return nil, nil, 0, nil, err
+		return nil, 0, nil, err
 	}
 	if err := recoverDependencyTransactions(ctx); err != nil {
-		return nil, nil, 0, nil, err
+		return nil, 0, nil, err
 	}
 	overlays := make(map[string][]byte, len(mode.stagedConfigEdits))
 	stagedEdits := make(map[string]pipeline.StagedConfigEdit, len(mode.stagedConfigEdits))
 	for _, edit := range mode.stagedConfigEdits {
 		destination, err := validateStagedConfigPathIdentity(edit)
 		if err != nil {
-			return nil, nil, 0, nil, err
+			return nil, 0, nil, err
 		}
 		if _, duplicate := stagedEdits[destination]; duplicate {
-			return nil, nil, 0, nil, fmt.Errorf("%w: duplicate staged config destination %s", dependencytxn.ErrGenerationConflict, destination)
+			return nil, 0, nil, fmt.Errorf("%w: duplicate staged config destination %s", dependencytxn.ErrGenerationConflict, destination)
 		}
 		edit.Path = destination
 		stagedEdits[destination] = edit
@@ -720,7 +599,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	ec, configSnapshots, err := loadStableEffective(ctx, loadOptions)
 	if err != nil {
-		return nil, nil, 0, nil, err
+		return nil, 0, nil, err
 	}
 	consumed := make(map[string]int, len(stagedEdits))
 	for source, snapshot := range configSnapshots {
@@ -732,9 +611,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		consumed[snapshot.path]++
-		if snapshot.generation != edit.Expected {
-			return nil, nil, 0, nil, fmt.Errorf("%w: staged config generation changed at %s", dependencytxn.ErrGenerationConflict, snapshot.path)
-		}
+		// The snapshot was loaded from the staged overlay, so its digest describes
+		// the desired bytes rather than the destination generation. Preserve the
+		// generation captured before staging; the dependency transaction validates
+		// it against the destination immediately before publication.
 		snapshot.generation = edit.Expected
 		if edit.Mode != 0 {
 			snapshot.mode = edit.Mode
@@ -743,15 +623,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 	for path := range stagedEdits {
 		if consumed[path] != 1 {
-			return nil, nil, 0, nil, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
+			return nil, 0, nil, fmt.Errorf("%w: staged config %s matched %d effective writable layers", dependencytxn.ErrGenerationConflict, path, consumed[path])
 		}
 	}
 	if len(ec.Errors) > 0 && (!mode.ignoreBlocked || !config.OnlyRegistryURLBlockedErrors(ec.Errors)) {
-		return nil, nil, 0, nil, errors.Join(ec.Errors...)
+		return nil, 0, nil, errors.Join(ec.Errors...)
 	}
 	resolvedTargets, err := resolveUpgradeTargets(ec, mode)
 	if err != nil {
-		return nil, nil, 0, nil, err
+		return nil, 0, nil, err
 	}
 	mode.upgradeSelection = resolvedTargets.selection
 	if mode.upgradeResult != nil {
@@ -759,7 +639,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	}
 
 	set := exactLockSet{bySource: map[string]lockedGit{}, byIdentity: map[string][]lockedGit{}}
-	documents := map[config.Source]lockfile.Document{}
 	lockExpectations := map[string]dependencytxn.Generation{}
 	lockModes := map[string]os.FileMode{}
 	lockDesired := map[string][]byte{}
@@ -777,14 +656,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	organizationRequiresLock := false
-	resolverMP := marketplace.NewResolver()
-	resolverMP.AllowedRegistries = ec.Allowed
 	for _, layer := range ec.PresentLayers() {
 		scope := lockScopeForSource(layer.Source)
 		entries := layerRegistries(layer)
 		remote := remoteEntries(entries)
-		marketplaces := layerMarketplaces(layer)
-		if scope == lockfile.ScopeOrganization && (len(remote) > 0 || len(marketplaces) > 0) {
+		if scope == lockfile.ScopeOrganization && len(remote) > 0 {
 			organizationRequiresLock = true
 		}
 		configPath := layer.Path
@@ -802,7 +678,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		requestedLockPath := lockPath
 		lockPath, pathErr = rejectGeneratedLockSymlink(lockPath)
 		if pathErr != nil {
-			return nil, nil, changed, nil, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
+			return nil, changed, nil, fmt.Errorf("resolve lock destination %s: %w", requestedLockPath, pathErr)
 		}
 		selected := mode.selects == nil || mode.selects[scope]
 		current, generation, exists, loadErr := loadLayerLock(lockPath, scope)
@@ -810,33 +686,32 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if mode.upgrade && !selected {
 				continue
 			}
-			return nil, nil, changed, nil, loadErr
+			return nil, changed, nil, loadErr
 		}
-		if len(remote) > 0 || len(marketplaces) > 0 {
+		if len(remote) > 0 {
 			lockExpectations[lockPath] = generation
 			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
 			if stateErr != nil {
-				return nil, nil, changed, nil, stateErr
+				return nil, changed, nil, stateErr
 			}
 			lockModes[lockPath] = currentMode
 		}
-		if len(remote) == 0 && len(marketplaces) == 0 && !exists {
+		if len(remote) == 0 && !exists {
 			continue
 		}
 		if !selected && !mode.upgrade {
 			continue
 		}
 		if mode.upgrade && !selected && !mode.reconcileUnselected {
-			if !exists || current == nil || !unselectedLayerIsFresh(scope, remote, marketplaces, *current) {
+			if !exists || current == nil || !unselectedLayerIsFresh(scope, remote, *current) {
 				continue
 			}
-			documents[layer.Source] = *current
 			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
 		if !exists && mode.locked {
-			return nil, nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
+			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 
 		operation := lockfile.OperationSync
@@ -845,72 +720,36 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		gitDesired, gitFresh := reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline)
 		if gitDesired.err != nil {
-			return nil, nil, changed, nil, gitDesired.err
-		}
-		mpStats := lockReconcileStats{}
-		mpDesired, mpFresh, err := reconcileMarketplaceDocument(ctx, scope, marketplaces, current, operation, mode.upgradeSelection, mode.offline, resolverMP, &mpStats)
-		if err != nil {
-			return nil, nil, changed, nil, err
+			return nil, changed, nil, gitDesired.err
 		}
 		doc := gitDesired.doc
-		doc.Marketplaces = mpDesired.Marketplaces
-		doc, err = lockfile.Normalize(doc)
-		if err != nil {
-			return nil, nil, changed, nil, err
-		}
-		fresh := exists && gitFresh && mpFresh
-
-		var migration config.MarketplaceConfigMigration
-		if !mode.locked && !mode.offline && !mode.check && selected && (!implicitOrg || mode.explicitOrganization) {
-			snapshot, ok := configSnapshots[layer.Source]
-			if !ok {
-				return nil, nil, changed, nil, fmt.Errorf("missing configuration transaction participant for %s", layer.Path)
-			}
-			raw := snapshot.bytes
-			if staged, ok := configDesired[layer.Source]; ok {
-				raw = staged
-			}
-			migration, err = config.StageMarketplaceConfigMigration(raw)
-			if err != nil {
-				return nil, nil, changed, nil, fmt.Errorf("stage Marketplace migration for %s: %w", layer.Path, err)
-			}
-		}
-		if migration.MigrationNeeded {
-			if err := validateLegacyMarketplaceSeeds(marketplaces, doc); err != nil {
-				return nil, nil, changed, nil, fmt.Errorf("validate Marketplace migration for %s: %w", layer.Path, err)
-			}
-		}
-		layerChanged := !fresh || migration.MigrationNeeded
-		if layerChanged {
+		fresh := exists && gitFresh
+		if !fresh {
 			if mode.locked || implicitOrg && exists || !selected && !mode.upgrade {
-				return nil, nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
+				return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
 			}
 			if !implicitOrg {
 				changed++
 				if !mode.check {
 					data, err := lockfile.Encode(doc)
 					if err != nil {
-						return nil, nil, changed, nil, err
+						return nil, changed, nil, err
 					}
 					lockDesired[lockPath] = data
 					desiredFiles = append(desiredFiles, dependencytxn.DesiredFile{Path: lockPath, Expected: generation, ExpectedMode: lockModes[lockPath], Bytes: data, Mode: 0o644})
-					if migration.MigrationNeeded {
-						configDesired[layer.Source] = migration.SimplifiedConfig
-					}
 				}
 			}
 		}
 		layerChangedCount := 0
-		if layerChanged {
+		if !fresh {
 			layerChangedCount = 1
 		}
-		slog.Debug("lock layer reconciled", "scope", scope, "operation", operation, "retained", gitDesired.stats.retained+mpStats.retained, "acquired", gitDesired.stats.acquired+mpStats.acquired, "changed", layerChangedCount)
-		documents[layer.Source] = doc
+		slog.Debug("lock layer reconciled", "scope", scope, "operation", operation, "retained", gitDesired.stats.retained, "acquired", gitDesired.stats.acquired, "changed", layerChangedCount)
 		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
 	}
 	for _, job := range snapshots {
 		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.warningSink); err != nil {
-			return nil, nil, changed, nil, err
+			return nil, changed, nil, err
 		}
 	}
 	if !mode.check {
@@ -938,12 +777,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		for _, edit := range stagedEdits {
 			if _, err := validateStagedConfigPathIdentity(edit); err != nil {
-				return nil, nil, changed, nil, err
+				return nil, changed, nil, err
 			}
 		}
 		for _, file := range desiredFiles {
 			if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
-				return nil, nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
+				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
 		}
 		// Exact-cache GC re-reads lock documents while holding the namespace
@@ -951,14 +790,14 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		// a commit cannot complete between that re-read and deletion.
 		releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
 		if err != nil {
-			return nil, nil, changed, nil, fmt.Errorf("acquire exact cache publication lease: %w", err)
+			return nil, changed, nil, fmt.Errorf("acquire exact cache publication lease: %w", err)
 		}
 		commitStarted := time.Now()
 		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles)
 		releaseExactNamespace()
 		if err != nil {
 			slog.Error("lock transaction commit failed", "files", len(desiredFiles), "duration_ms", time.Since(commitStarted).Milliseconds(), "error", err)
-			return nil, nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)
+			return nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)
 		}
 		slog.Info("lock transaction commit completed", "files", len(desiredFiles), "changed", len(commitResult.Changed), "duration_ms", time.Since(commitStarted).Milliseconds())
 	} else {
@@ -968,7 +807,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		verificationStarted := time.Now()
 		if err := config.ValidateOrganizationTrustUnit(ec.Organization.Path, true, false); err != nil {
 			slog.Error("organization lock verification failed", "duration_ms", time.Since(verificationStarted).Milliseconds(), "error", err)
-			return nil, nil, changed, nil, fmt.Errorf("verify resulting organization config and lock: %w", err)
+			return nil, changed, nil, fmt.Errorf("verify resulting organization config and lock: %w", err)
 		}
 		slog.Info("organization lock verification completed", "duration_ms", time.Since(verificationStarted).Milliseconds())
 	}
@@ -1013,12 +852,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
 	})
-	marketplaceView := func(input *config.Config) (*config.Config, error) {
-		if err := validateExactLocks(); err != nil {
-			return nil, err
-		}
-		return exactMarketplaceView(documents)(input)
-	}
 	resultLease = func(ctx context.Context) (func(), error) {
 		release, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
 		if err != nil {
@@ -1030,7 +863,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		return release, nil
 	}
-	return option, marketplaceView, changed, resultLease, nil
+	return option, changed, resultLease, nil
 }
 
 type reconciledDocument struct {
@@ -1162,17 +995,8 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 	return registry, nil
 }
 
-func unselectedLayerIsFresh(scope lockfile.Scope, registries []config.RegistryEntry, marketplaces []config.MarketplaceEntry, doc lockfile.Document) bool {
-	if !documentMatchesEntries(doc, registries) {
-		return false
-	}
-	requirements, err := marketplaceRequirements(marketplaces)
-	if err != nil {
-		return false
-	}
-	current := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope, Marketplaces: doc.Marketplaces}
-	plan, err := lockfile.Plan(lockfile.Requirements{Scope: scope, Marketplaces: requirements}, &current, lockfile.OperationSync)
-	return err == nil && !plan.Changed()
+func unselectedLayerIsFresh(_ lockfile.Scope, registries []config.RegistryEntry, doc lockfile.Document) bool {
+	return documentMatchesEntries(doc, registries)
 }
 
 func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntry) bool {

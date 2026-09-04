@@ -22,7 +22,7 @@ func TestMinimalDocumentsGolden(t *testing.T) {
 	}
 }
 
-func TestCompleteDocumentGoldensCoverEveryScope(t *testing.T) {
+func TestCompleteGitDocumentGoldensCoverEveryScope(t *testing.T) {
 	headers := map[Scope]string{
 		ScopeOrganization: "apiVersion: agent-marketplace-lock/v1\nscope: organization",
 		ScopeUser:         "apiVersion: agent-marketplace-lock/v1\nscope: user",
@@ -35,9 +35,6 @@ func TestCompleteDocumentGoldensCoverEveryScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// This expected YAML is authored independently of Encode and
-			// Normalize. Keep every scope-specific header explicit while the
-			// complete record body remains one readable byte fixture.
 			want := headers[scope] + `
 registries:
   - url: https://git.example.com/team/tools
@@ -60,76 +57,6 @@ registries:
             support_files:
               docs/README.md: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
               examples/config.yaml: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-marketplaces:
-  - url: https://market.example/api
-    instance_id: market-1
-    collections:
-      - source_id: sets
-        name: child
-        revision: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-        members:
-          - source_id: source-a
-            kind: command
-            name: nested-mirror
-            revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-          - source_id: source-a
-            kind: skill
-            name: nested-index
-            revision: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-      - source_id: sets
-        name: root
-        revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        direct: true
-        members:
-          - source_id: sets
-            kind: collection
-            name: child
-            revision: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-          - source_id: source-a
-            kind: skill
-            name: direct-mirror
-            revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-    resources:
-      - source_id: source-a
-        kind: command
-        name: nested-mirror
-        revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-        acquisition: mirror
-        archive_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-        selected_by:
-          - source_id: sets
-            name: root
-            revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      - source_id: source-a
-        kind: skill
-        name: direct-mirror
-        revision: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-        acquisition: mirror
-        archive_digest: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-        direct: true
-        selected_by:
-          - source_id: sets
-            name: root
-            revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      - source_id: source-a
-        kind: skill
-        name: nested-index
-        revision: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-        acquisition: index-only
-        source_commit: sha1:89abcdef0123456789abcdef0123456789abcdef
-        source_manifest_digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-        selected_by:
-          - source_id: sets
-            name: root
-            revision: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      - source_id: source-b
-        kind: mcpserver
-        name: direct-index
-        revision: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-        acquisition: index-only
-        source_commit: sha1:0123456789abcdef0123456789abcdef01234567
-        source_manifest_digest: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-        direct: true
 `
 			if string(got) != want {
 				t.Fatalf("complete lock bytes:\n%s\nwant:\n%s", got, want)
@@ -152,19 +79,6 @@ func completeGoldenDocument(scope Scope) Document {
 				{Kind: "command", Name: "alpha", ContentDigest: Digest("sha256:" + strings.Repeat("d", 64)), ArchiveDigest: Digest("sha256:" + strings.Repeat("c", 64))},
 			}}},
 		}},
-		Marketplaces: []Marketplace{{
-			URL: "https://market.example/api/", InstanceID: "market-1",
-			Collections: []MarketplaceCollection{
-				{SourceID: "sets", Name: "root", Revision: Digest("sha256:" + strings.Repeat("a", 64)), Direct: true, Members: []CollectionEdge{{SourceID: "sets", Kind: "collection", Name: "child", Revision: Digest("sha256:" + strings.Repeat("b", 64))}, {SourceID: "source-a", Kind: "skill", Name: "direct-mirror", Revision: Digest("sha256:" + strings.Repeat("c", 64))}}},
-				{SourceID: "sets", Name: "child", Revision: Digest("sha256:" + strings.Repeat("b", 64)), Members: []CollectionEdge{{SourceID: "source-a", Kind: "skill", Name: "nested-index", Revision: Digest("sha256:" + strings.Repeat("d", 64))}, {SourceID: "source-a", Kind: "command", Name: "nested-mirror", Revision: Digest("sha256:" + strings.Repeat("c", 64))}}},
-			},
-			Resources: []MarketplaceResource{
-				{SourceID: "source-a", Kind: "command", Name: "nested-mirror", Revision: Digest("sha256:" + strings.Repeat("c", 64)), Acquisition: AcquisitionMirror, ArchiveDigest: Digest("sha256:" + strings.Repeat("b", 64)), SelectedBy: []CollectionEdge{{SourceID: "sets", Name: "root", Revision: Digest("sha256:" + strings.Repeat("a", 64))}}},
-				{SourceID: "source-a", Kind: "skill", Name: "direct-mirror", Revision: Digest("sha256:" + strings.Repeat("c", 64)), Acquisition: AcquisitionMirror, ArchiveDigest: Digest("sha256:" + strings.Repeat("d", 64)), Direct: true, SelectedBy: []CollectionEdge{{SourceID: "sets", Name: "root", Revision: Digest("sha256:" + strings.Repeat("a", 64))}}},
-				{SourceID: "source-a", Kind: "skill", Name: "nested-index", Revision: Digest("sha256:" + strings.Repeat("d", 64)), Acquisition: AcquisitionIndexOnly, SourceCommit: mustOIDForGolden("sha1:89abcdef0123456789abcdef0123456789abcdef"), SourceManifestDigest: Digest("sha256:" + strings.Repeat("c", 64)), SelectedBy: []CollectionEdge{{SourceID: "sets", Name: "root", Revision: Digest("sha256:" + strings.Repeat("a", 64))}}},
-				{SourceID: "source-b", Kind: "mcpserver", Name: "direct-index", Revision: Digest("sha256:" + strings.Repeat("b", 64)), Acquisition: AcquisitionIndexOnly, SourceCommit: mustOIDForGolden("sha1:0123456789abcdef0123456789abcdef01234567"), SourceManifestDigest: Digest("sha256:" + strings.Repeat("d", 64)), Direct: true},
-			},
-		}},
 	}
 }
 
@@ -184,28 +98,6 @@ func TestDecodeIntoDoesNotOverwriteOnFailure(t *testing.T) {
 	}
 	if !reflect.DeepEqual(destination, before) {
 		t.Fatalf("destination overwritten: %#v", destination)
-	}
-}
-
-func TestMarketplaceCollectionAndAcquisitionInvariants(t *testing.T) {
-	digest := Digest(sha256a)
-	valid := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Marketplaces: []Marketplace{{
-		URL: "https://MARKET.example/", InstanceID: "mp_1",
-		Collections: []MarketplaceCollection{{SourceID: "sets", Name: "base", Revision: digest, Direct: true, Members: []CollectionEdge{{SourceID: "source", Kind: "skill", Name: "review", Revision: digest}}}},
-		Resources:   []MarketplaceResource{{SourceID: "source", Kind: "skill", Name: "review", Revision: digest, Acquisition: AcquisitionMirror, ArchiveDigest: digest, SelectedBy: []CollectionEdge{{SourceID: "sets", Name: "base", Revision: digest}}}},
-	}}}
-	if _, err := Normalize(valid); err != nil {
-		t.Fatalf("valid graph: %v", err)
-	}
-	invalid := cloneDocument(valid)
-	invalid.Marketplaces[0].Resources[0].SelectedBy = nil
-	if err := Validate(invalid); err == nil {
-		t.Fatal("unselected non-direct resource accepted")
-	}
-	invalid = cloneDocument(valid)
-	invalid.Marketplaces[0].Resources[0].SourceCommit = mustOID(t, sha1a)
-	if err := Validate(invalid); err == nil {
-		t.Fatal("mirror source occurrence accepted")
 	}
 }
 

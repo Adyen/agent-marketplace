@@ -44,15 +44,7 @@ Effective merge order (low → high):
 
 Higher layers override lower layers where applicable.
 
-For remote registries and Marketplaces, each layer's acquisition requirement is
-resolved through its adjacent, scope-matching lock before these catalogs are
-merged. The lock does not introduce another selection-precedence layer: config
-still owns requirements and selectors, while the lock owns exact commits,
-revisions, integrity data, and collection closure. Repository `lock.yaml` is
-committed; personal-local `lock.local.yaml` is gitignored. Plain
-filesystem directory registries remain live and have no lock record. A hostless
-`file://` URL ending in `.git` is a supported remote Git registry and can have a
-lock record.
+Each layer's remote Git requirements are resolved only against that layer's generated lock: organization `/etc/agent-marketplace/lock.yaml`, user `~/.agents/lock.yaml`, repository `.agents/lock.yaml`, and personal-local `.agents/lock.local.yaml`. Lock composition does not change selection precedence: exact layer catalogs are composed before the normal merge and selection rules below. Plain local-directory registries remain live and unlocked. Hosted Marketplace lock schema and adapters are outside this Git-only foundation.
 
 Top-level target harnesses follow project-first precedence: `RepoCommitted`
 then `UserPersonal`, then `OrgMandatory`. A registry entry's `harnesses:`

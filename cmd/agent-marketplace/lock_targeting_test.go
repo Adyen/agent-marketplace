@@ -15,9 +15,7 @@ func TestLockAndUpdateTargetValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "lock target requires upgrade", args: []string{"lock", "public:src/skill/review"}, want: "require --upgrade"},
 		{name: "named git target requires kind", args: []string{"lock", "--upgrade", "--registry", "https://example.com/registry.git", "review"}, want: "require --kind"},
-		{name: "target modes do not mix", args: []string{"lock", "--upgrade", "--registry", "https://example.com/registry.git", "--kind", "skill", "public:src/skill/review"}, want: "cannot be mixed"},
 		{name: "update rejects organization", args: []string{"update", "--scope", "organization"}, want: "does not support organization"},
 	}
 	for _, tt := range tests {
@@ -146,41 +144,6 @@ registries:
 	}
 	if got := readLockDocument(t, lockPath).Registries[0].Commit; got == before {
 		t.Fatal("targeted update did not advance the lock")
-	}
-}
-
-func TestLockUpgradeMarketplaceExactRequirementIsConstrained(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	repo := filepath.Join(t.TempDir(), "repo")
-	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-marketplaces:
-  - url: https://market.example
-    instance_id: mp
-    alias: public
-    resources:
-      - source_id: src
-        kind: skill
-        name: review
-        revision: `+testMarketplaceDigest+`
-`)
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Marketplaces: []lockfile.Marketplace{{URL: "https://market.example", InstanceID: "mp", Resources: []lockfile.MarketplaceResource{{SourceID: "src", Kind: "skill", Name: "review", Revision: lockfile.Digest(testMarketplaceDigest), Acquisition: lockfile.AcquisitionMirror, ArchiveDigest: lockfile.Digest(testMarketplaceArchive), Direct: true}}}}}
-	encoded, err := lockfile.Encode(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, ".agents", "lock.yaml"), encoded, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	withWorkingDir(t, repo)
-	output, err := executeCommand("lock", "--upgrade", "--scope", "repo", "public:src/skill/review")
-	if err != nil {
-		t.Fatalf("exact targeted lock: %v\n%s", err, output)
-	}
-	if !strings.Contains(output, "constrained to "+testMarketplaceDigest+" and was not advanced") || !strings.Contains(output, "Locks: 0 changed") {
-		t.Fatalf("exact constraint outcome was not reported:\n%s", output)
 	}
 }
 

@@ -15,9 +15,8 @@ import (
 func newUpdateCmd() *cobra.Command {
 	var bump bool
 	var scope, registry, ref, registryPath, kind string
-
 	cmd := &cobra.Command{
-		Use:   "update [marketplace-locator ...]",
+		Use:   "update [resource ...]",
 		Short: "Refresh pinned registries and sync enabled skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selected, explicitOrg, err := parseLockSelection(scope, false)
@@ -34,14 +33,12 @@ func newUpdateCmd() *cobra.Command {
 			return runUpdate(cmd.Context(), cmd.OutOrStdout(), bump, selected, targets)
 		},
 	}
-
 	cmd.Flags().BoolVar(&bump, "bump", false, "Bump repo registry refs to newer matching tags")
 	cmd.Flags().StringVar(&scope, "scope", "all", "Update scope: user, repo, local, or all")
 	cmd.Flags().StringVar(&registry, "registry", "", "Target a configured Git registry URL")
 	cmd.Flags().StringVar(&ref, "ref", "", "Narrow --registry to a configured Git ref")
 	cmd.Flags().StringVar(&registryPath, "path", "", "Narrow --registry to a locked root path")
 	cmd.Flags().StringVar(&kind, "kind", "", "Resource kind for direct Git targets")
-
 	return cmd
 }
 
@@ -49,33 +46,24 @@ func runUpdate(ctx context.Context, out io.Writer, bump bool, selected map[lockf
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	targetResult := &upgradeTargetResult{}
-	updateOpts := pipeline.UpdateOptions{
-		RepoRoot:   repoRoot,
-		Bump:       bump,
-		BumpScopes: selected,
-		BumpTarget: updateBumpTarget(targets),
+	var warnings []error
+	opts := pipeline.UpdateOptions{
+		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
-			var warnings []error
-			exactOption, exactMarketplace, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
-				upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, warningSink: &warnings,
-			})
-			if err != nil {
-				return pipeline.DependencyLockView{}, err
-			}
-			return pipeline.DependencyLockView{CatalogOption: exactOption, MarketplaceExactView: exactMarketplace, ExactLockLease: exactLease, Warnings: warnings}, nil
+			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, warningSink: &warnings})
+			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
 		},
 	}
 	if localDir != "" && localDir != repoRoot {
-		updateOpts.LocalConfigDir = localDir
-		updateOpts.MaterializeRoot = localDir
+		opts.LocalConfigDir = localDir
+		opts.MaterializeRoot = localDir
 	}
-	result, err := pipeline.Update(ctx, updateOpts)
+	result, err := pipeline.Update(ctx, opts)
 	if err != nil {
 		return err
 	}
-	result.UpdatedRegistries = updatedRegistryCount(ctx, repoRoot, localDir, selected, targetResult.selection)
-	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
+	if err := writeGroupedWarnings(out, warnings, false); err != nil {
 		return err
 	}
 	for _, notice := range targetResult.notices {
@@ -84,6 +72,13 @@ func runUpdate(ctx context.Context, out io.Writer, bump bool, selected map[lockf
 		}
 	}
 	return writeUpdateOutput(out, result, bump)
+}
+
+func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
+	if targets == nil || targets.registry == "" {
+		return nil
+	}
+	return &pipeline.UpdateTarget{Registry: targets.registry, Ref: targets.ref, Path: targets.path, Kind: targets.kind, Names: append([]string(nil), targets.names...)}
 }
 
 func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBump) {
@@ -106,41 +101,11 @@ func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBu
 	}
 }
 
-func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
-	if targets == nil || targets.registry == "" {
-		return nil
-	}
-	return &pipeline.UpdateTarget{
-		Registry: targets.registry,
-		Ref:      targets.ref,
-		Path:     targets.path,
-		Kind:     targets.kind,
-		Names:    append([]string(nil), targets.names...),
-	}
-}
-
-func updatedRegistryCount(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, selection lockfile.UpgradeSelection) int {
-	if !selection.All && (len(selection.Git) > 0 || len(selection.Marketplace) > 0) {
-		return len(selection.Git)
-	}
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir})
-	count := 0
-	for _, layer := range ec.PresentLayers() {
-		if selected != nil && !selected[lockScopeForSource(layer.Source)] {
-			continue
-		}
-		count += len(remoteEntries(layerRegistries(layer)))
-	}
-	return count
-}
-
 func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump bool) error {
 	if bump {
-		if _, err := fmt.Fprintf(out, "Updated %d registries, bumped %d refs\n", result.UpdatedRegistries, len(result.Bumps)); err != nil {
-			return err
-		}
-	} else if _, err := fmt.Fprintf(out, "Updated %d registries\n", result.UpdatedRegistries); err != nil {
+		_, err := fmt.Fprintf(out, "Updated %d registries, bumped %d refs\n", result.UpdatedRegistries, len(result.Bumps))
 		return err
 	}
-	return nil
+	_, err := fmt.Fprintf(out, "Updated %d registries\n", result.UpdatedRegistries)
+	return err
 }

@@ -31,5 +31,5 @@ e2e/e2e-report.json
 
 # IDEA
 /.idea/
-.agents/config.local.yaml
+
 .agents/lock.local.yaml
