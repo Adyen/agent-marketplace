@@ -44,7 +44,7 @@ const links = [
 .utility-footer {
   padding: 22px 0;
   border-top: 1px solid var(--am-border);
-  background: #070d09;
+  background: var(--am-footer-bg);
 }
 
 .footer-row {

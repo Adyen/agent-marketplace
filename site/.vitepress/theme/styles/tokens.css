@@ -3,8 +3,8 @@
  *
  * The accent is mapped onto VitePress's own brand variables so the default
  * theme (links, buttons, code highlights) inherits it instead of being
- * overridden component by component. The site is forced dark, and the shared
- * landing tokens extend the hero's green-black palette through every section.
+ * overridden component by component. Shared landing tokens provide matching
+ * light and dark palettes for VitePress's built-in appearance switch.
  */
 
 :root {
@@ -49,9 +49,27 @@
   --am-code-cyan: #006b83;
   --am-code-warning: #8a5500;
   --am-code-selection: rgba(8, 122, 61, 0.12);
+  --am-terminal-bg: #edf4ef;
+  --am-terminal-bg-raised: #f8fbf9;
+  --am-terminal-border: #91ad9d;
+  --am-terminal-text: #0f2016;
+  --am-terminal-muted: #40564a;
+  --am-terminal-accent: #006b35;
+  --am-terminal-cyan: #00576c;
+  --am-terminal-warning: #704400;
+  --am-terminal-danger: #a8302a;
+  --am-terminal-selection: rgba(0, 107, 53, 0.16);
   --am-technical-padding: 16px;
   --am-technical-font-size: 12.5px;
   --am-technical-line-height: 1.8;
+  --am-hero-bg: #f5fbf7;
+  --am-hero-text: #14231a;
+  --am-hero-text-muted: #435b4f;
+  --am-hero-grid: rgba(8, 122, 61, 0.09);
+  --am-hero-glow: rgba(27, 166, 79, 0.16);
+  --am-hero-ring: rgba(8, 122, 61, 0.2);
+  --am-hero-surface: rgba(255, 255, 255, 0.7);
+  --am-footer-bg: #eef6f0;
 
   --vp-code-font-size: 13px;
 }
@@ -88,7 +106,25 @@
   --am-code-cyan: #7cd7da;
   --am-code-warning: #f3bd64;
   --am-code-selection: rgba(85, 219, 137, 0.11);
+  --am-terminal-bg: var(--am-code-bg);
+  --am-terminal-bg-raised: var(--am-code-bg-raised);
+  --am-terminal-border: var(--am-code-border);
+  --am-terminal-text: var(--am-code-text);
+  --am-terminal-muted: var(--am-code-muted);
+  --am-terminal-accent: var(--vp-c-brand-1);
+  --am-terminal-cyan: var(--am-code-cyan);
+  --am-terminal-warning: var(--am-code-warning);
+  --am-terminal-danger: var(--am-danger);
+  --am-terminal-selection: var(--am-code-selection);
   --am-technical-font-size: 13.5px;
+  --am-hero-bg: #09110d;
+  --am-hero-text: #f7faf8;
+  --am-hero-text-muted: #aebcb4;
+  --am-hero-grid: rgba(85, 219, 137, 0.045);
+  --am-hero-glow: rgba(37, 194, 102, 0.18);
+  --am-hero-ring: rgba(85, 219, 137, 0.12);
+  --am-hero-surface: rgba(255, 255, 255, 0.055);
+  --am-footer-bg: #070d09;
 }
 
 @media (max-width: 680px) {

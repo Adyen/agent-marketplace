@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
+import TerminalFrame from './TerminalFrame.vue'
 import {
   DEMO_LOCAL_REGISTRY,
   DEMO_PROJECT_NAME,
@@ -63,7 +64,7 @@ const resources = ref(cloneResources())
 const selectedID = ref(initialResources[0].id)
 const syncState = ref<'pending' | 'syncing' | 'synced'>('pending')
 const spinner = ref('\\')
-const terminal = ref<HTMLElement | null>(null)
+const terminal = ref<InstanceType<typeof TerminalFrame> | null>(null)
 const hasFocus = ref(false)
 let spinnerTimer: ReturnType<typeof setInterval> | undefined
 let syncTimer: ReturnType<typeof setTimeout> | undefined
@@ -170,10 +171,12 @@ onUnmounted(clearSyncTimers)
 </script>
 
 <template>
-  <figure
+  <TerminalFrame
     ref="terminal"
     class="demo"
     :class="{ 'is-focused': hasFocus }"
+    tag="figure"
+    label="agent-marketplace tui"
     tabindex="0"
     aria-label="Keyboard-only Agent Marketplace TUI demo"
     @click="focusDemo"
@@ -181,11 +184,7 @@ onUnmounted(clearSyncTimers)
     @blur="hasFocus = false"
     @keydown="handleKeydown"
   >
-    <div class="terminal-label">
-      <span class="window-controls" aria-hidden="true">
-        <i></i><i></i><i></i>
-      </span>
-      <span>agent-marketplace tui</span>
+    <template #status>
       <button
         class="focus-control"
         type="button"
@@ -194,7 +193,7 @@ onUnmounted(clearSyncTimers)
       >
         {{ hasFocus ? 'Keyboard active' : 'Click to interact' }}
       </button>
-    </div>
+    </template>
 
     <div class="screen">
       <div class="title">agent-marketplace — {{ DEMO_PROJECT_NAME }}</div>
@@ -270,36 +269,23 @@ onUnmounted(clearSyncTimers)
         <span><kbd>↑↓</kbd> navigate · <kbd>space</kbd> toggle · <kbd>s</kbd> sync</span>
       </div>
     </div>
-  </figure>
+  </TerminalFrame>
 </template>
 
 <style scoped>
 .demo {
-  --tui-bg: var(--am-code-bg);
-  --tui-bg-raised: var(--am-code-bg-raised);
-  --tui-border: var(--am-code-border);
-  --tui-text: var(--am-code-text);
-  --tui-muted: var(--am-code-muted);
-  --tui-cyan: var(--am-code-cyan);
-  --tui-green: var(--vp-c-brand-1);
-  --tui-orange: var(--am-code-warning);
-  --tui-selection: var(--am-code-selection);
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid var(--tui-border);
-  border-radius: var(--am-radius-lg);
-  background: var(--tui-bg);
-  box-shadow:
-    0 34px 72px -34px rgba(0, 0, 0, 0.92),
-    0 0 0 1px rgba(85, 219, 137, 0.08),
-    0 0 64px rgba(45, 190, 104, 0.1);
-  color: var(--tui-text);
-  font-family: var(--vp-font-family-mono);
-  font-size: 14px;
-  line-height: 1.45;
+  --tui-bg-raised: var(--am-terminal-bg-raised);
+  --tui-border: var(--am-terminal-border);
+  --tui-text: var(--am-terminal-text);
+  --tui-muted: var(--am-terminal-muted);
+  --tui-cyan: var(--am-terminal-cyan);
+  --tui-green: var(--am-terminal-accent);
+  --tui-orange: var(--am-terminal-warning);
+  --tui-selection: var(--am-terminal-selection);
+  --am-terminal-font-size: 14px;
+  --am-terminal-line-height: 1.45;
 }
 
-.terminal-label,
 .activity {
   align-items: center;
   gap: 12px;
@@ -308,37 +294,6 @@ onUnmounted(clearSyncTimers)
 .activity {
   display: flex;
   justify-content: space-between;
-}
-
-.terminal-label {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  padding: 11px 18px;
-  border-bottom: 1px solid var(--tui-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent);
-  color: var(--tui-muted);
-  font-size: 13px;
-}
-
-.window-controls {
-  display: inline-flex;
-  gap: 6px;
-  justify-self: start;
-}
-
-.window-controls i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #67746c;
-}
-
-.window-controls i:nth-child(2) {
-  background: #8b7850;
-}
-
-.window-controls i:nth-child(3) {
-  background: var(--tui-green);
 }
 
 .focus-control {
@@ -487,8 +442,8 @@ kbd {
 }
 
 .demo.is-focused {
-  border-color: var(--tui-green);
-  box-shadow:
+  --am-terminal-border: var(--tui-green);
+  --am-terminal-shadow:
     0 34px 72px -34px rgba(0, 0, 0, 0.92),
     0 0 0 3px var(--vp-c-brand-soft),
     0 0 70px rgba(45, 190, 104, 0.15);
@@ -496,7 +451,7 @@ kbd {
 
 @media (max-width: 680px) {
   .demo {
-    font-size: 12.5px;
+    --am-terminal-font-size: 12.5px;
   }
 
   .panes {
