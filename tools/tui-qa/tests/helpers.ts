@@ -238,10 +238,18 @@ export const waitForExit = (terminal: TestTerminal, timeoutMs = 5_000): Promise<
   });
 };
 
-export const targetPID = (fixture: Fixture): number => {
-  const pid = Number(fs.readFileSync(fixture.pidFile, "utf8").trim());
-  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error("real TUI process did not publish a valid PID");
-  return pid;
+export const targetPID = async (fixture: Fixture, timeoutMs = 5_000): Promise<number> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number(fs.readFileSync(fixture.pidFile, "utf8").trim());
+      if (Number.isSafeInteger(pid) && pid > 1) return pid;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("real TUI process did not publish its PID within the bounded wait");
 };
 
 export const runNonTTY = (fixture: Pick<ProcessFixture, "repo" | "env">, args: string[], timeout = 5_000) => spawnSync(binary, args, {

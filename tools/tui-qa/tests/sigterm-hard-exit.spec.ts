@@ -19,7 +19,7 @@ test("SIGTERM stops the published target process", async ({ terminal }) => {
     await expect(terminal.getByText("~ in sync")).toBeVisible();
   });
 
-  const pid = targetPID(fixture);
+  const pid = await targetPID(fixture);
   await step("hard exit with SIGTERM", () => {
     process.kill(pid, "SIGTERM");
   }, async () => {
