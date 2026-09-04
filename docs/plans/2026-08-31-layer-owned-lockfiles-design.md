@@ -93,13 +93,13 @@ Config edits and lock reconciliation use a dependency transaction with validated
 - read-only `list`, `status`, and deinit planning consume exact lock views without reconciliation.
 - `status` reports each layer's exact Git lock state and distinguishes lock failures from materialization drift.
 - `gc` derives the active immutable and legacy Git cache set from validated configuration and locks, then removes only inactive entries. Any required lock preflight failure blocks deletion.
-- the TUI invokes the same dependency lifecycle callbacks for mutating toggles and updates, reloads only after the transaction completes, and surfaces failures without silently falling back to stale catalogs.
+- the TUI invokes the same dependency lifecycle callbacks for mutating toggles and updates, carries the resulting lock-generation lease into sync, reloads only after the transaction and materialization complete, and surfaces failures without silently falling back to stale catalogs.
 
 ## Determinism and safety
 
 Lock YAML uses strict bounded decoding: aliases, merge keys, duplicate or unknown fields, multiple documents, excessive depth or nodes, and conflict markers are rejected. URLs, OIDs, digests, roots, resources, and support paths are validated before use. Output ordering is explicit and duplicate identities are rejected or deterministically deduplicated where the schema permits it.
 
-Writers compare desired bytes before publishing, use same-directory temporary files and atomic rename, and preserve modes. Exact-snapshot readers hold a shared namespace lease through catalog filesystem consumption; garbage collection takes the exclusive counterpart, so it cannot delete a verified snapshot between validation and use. Lock publication uses the shared lease across transaction commit so collection cannot race a newly active commit after its final lock reread. All destructive paths fail closed. Lockfiles contain no credentials, cache paths, plain-directory paths, verification markers, or transient policy decisions.
+Writers compare desired bytes before publishing, use same-directory temporary files and atomic rename, and preserve modes. Sync acquires and revalidates one shared exact-cache namespace lease before resolution, then holds it through catalog discovery and materialization. Garbage collection takes the exclusive counterpart, so it cannot delete a verified snapshot before its final consumer finishes. Read-only inspection and check paths open existing coordination state without creating or repairing it; missing or unsafe coordination fails closed. Lock publication uses the shared lease across transaction commit so collection cannot race a newly active commit after its final lock reread. All destructive paths fail closed. Lockfiles contain no credentials, cache paths, plain-directory paths, verification markers, or transient policy decisions.
 
 ## Verification
 

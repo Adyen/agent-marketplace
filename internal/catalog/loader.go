@@ -756,7 +756,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	}
 	discover := func() {
 		if hasExactRequest {
-			release, lockErr := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+			release, lockErr := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
 			if lockErr != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("acquire exact git read lease: %w", lockErr))
 				return

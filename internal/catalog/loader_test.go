@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -2035,6 +2036,11 @@ func TestPrepareFetchJobsExactSnapshotPreservesCommitQualifiedCatalogKey(t *test
 
 func TestLoadRegistriesKeepsDistinctExactSnapshotCatalogs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	release, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
 	snapshot := filepath.Join(t.TempDir(), "snapshot")
 	skillDir := filepath.Join(snapshot, "bundles", "review", "skills", "review")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {

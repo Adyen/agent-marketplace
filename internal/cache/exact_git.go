@@ -23,9 +23,10 @@ import (
 )
 
 var (
-	ErrExactGitSnapshotUnavailable = errors.New("exact git snapshot unavailable")
-	ErrExactGitSnapshotUntrusted   = errors.New("exact git snapshot untrusted")
-	ErrGitOIDMismatch              = errors.New("git oid mismatch")
+	ErrExactGitSnapshotUnavailable     = errors.New("exact git snapshot unavailable")
+	ErrExactGitSnapshotUntrusted       = errors.New("exact git snapshot untrusted")
+	ErrExactGitCoordinationUnavailable = errors.New("exact git coordination infrastructure unavailable")
+	ErrGitOIDMismatch                  = errors.New("git oid mismatch")
 )
 
 type GitOID = lockfile.GitOID
@@ -40,6 +41,19 @@ func validateGitOID(oid GitOID) error {
 }
 
 const exactGitLockTimeout = 30 * time.Second
+
+type exactGitNamespaceLeaseContextKey struct{}
+
+// ContextWithExactGitNamespaceLease marks downstream exact-cache consumers as
+// covered by a namespace lease already held by the caller. Callers must not use
+// the returned context after releasing that lease.
+func ContextWithExactGitNamespaceLease(ctx context.Context) context.Context {
+	return context.WithValue(ctx, exactGitNamespaceLeaseContextKey{}, true)
+}
+
+func exactGitNamespaceLeaseHeld(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(exactGitNamespaceLeaseContextKey{}) == true
+}
 
 func ResolveExactGitRef(canonicalSource, fetchURL, ref string) (GitOID, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), exactGitLockTimeout)
@@ -206,7 +220,13 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 	if err := exactGitContextErr(ctx); err != nil {
 		return "", nil, err
 	}
-	release, err := acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
+	if exactGitNamespaceLeaseHeld(ctx) {
+		if err := openExactGitPathWithContext(ctx, path, oid); err != nil {
+			return "", nil, err
+		}
+		return path, func() {}, nil
+	}
+	release, err := acquireExactGitReadOnlyFileLock(ctx, "namespace", unix.LOCK_SH)
 	if err != nil {
 		return "", nil, err
 	}
@@ -717,6 +737,16 @@ func AcquireExactGitNamespaceLeaseWithContext(ctx context.Context) (func(), erro
 	return acquireExactGitFileLock(ctx, "namespace", unix.LOCK_SH)
 }
 
+// AcquireExactGitNamespaceReadOnlyLeaseWithContext opens existing coordination
+// state without creating or changing any cache entry or metadata. It fails
+// closed when mutating cache acquisition has not prepared that state yet.
+func AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx context.Context) (func(), error) {
+	if exactGitNamespaceLeaseHeld(ctx) {
+		return func() {}, nil
+	}
+	return acquireExactGitReadOnlyFileLock(ctx, "namespace", unix.LOCK_SH)
+}
+
 // AcquireExactGitExclusiveNamespaceLeaseWithContext excludes both exact-cache
 // readers and lock publication while a caller revalidates shared reachability.
 func AcquireExactGitExclusiveNamespaceLeaseWithContext(ctx context.Context) (func(), error) {
@@ -759,6 +789,14 @@ func exactGitContextErr(ctx context.Context) error {
 }
 
 func acquireExactGitFileLock(ctx context.Context, key string, operation int) (func(), error) {
+	return acquireExactGitFileLockMode(ctx, key, operation, false)
+}
+
+func acquireExactGitReadOnlyFileLock(ctx context.Context, key string, operation int) (func(), error) {
+	return acquireExactGitFileLockMode(ctx, key, operation, true)
+}
+
+func acquireExactGitFileLockMode(ctx context.Context, key string, operation int, readOnly bool) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -774,15 +812,33 @@ func acquireExactGitFileLock(ctx context.Context, key string, operation int) (fu
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(ErrExactGitLockTimeout, err)
 	}
-	if err := prepareExactGitDirectory(lockDir); err != nil {
+	if readOnly {
+		exists, validateErr := validateExactGitDirectory(lockDir)
+		if validateErr != nil {
+			return nil, fmt.Errorf("%w: validate lock directory: %w", ErrExactGitCoordinationUnavailable, validateErr)
+		}
+		if !exists {
+			return nil, fmt.Errorf("%w: lock directory is missing", ErrExactGitCoordinationUnavailable)
+		}
+		if validateErr := validateExactGitCoordinationDirectories(lockDir); validateErr != nil {
+			return nil, fmt.Errorf("%w: %w", ErrExactGitCoordinationUnavailable, validateErr)
+		}
+	} else if err := prepareExactGitDirectory(lockDir); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(ErrExactGitLockTimeout, err)
 	}
 	path := filepath.Join(lockDir, key+".lock")
-	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	flags := unix.O_CREAT | unix.O_RDWR | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	if readOnly {
+		flags = unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	}
+	fd, err := unix.Open(path, flags, 0o600)
 	if err != nil {
+		if readOnly {
+			return nil, fmt.Errorf("%w: open lock file: %w", ErrExactGitCoordinationUnavailable, err)
+		}
 		return nil, fmt.Errorf("open exact git lock: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), path)
@@ -793,11 +849,20 @@ func acquireExactGitFileLock(ctx context.Context, key string, operation int) (fu
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		_ = file.Close()
+		if readOnly {
+			return nil, fmt.Errorf("%w: lock file is not regular", ErrExactGitCoordinationUnavailable)
+		}
 		return nil, errors.New("exact git lock is not a regular file")
 	}
-	if err := unix.Fchmod(fd, 0o600); err != nil {
+	if readOnly && (stat.Uid != uint32(unix.Geteuid()) || stat.Mode&0o077 != 0) {
 		_ = file.Close()
-		return nil, fmt.Errorf("secure exact git lock: %w", err)
+		return nil, fmt.Errorf("%w: lock file has unsafe ownership or permissions", ErrExactGitCoordinationUnavailable)
+	}
+	if !readOnly {
+		if err := unix.Fchmod(fd, 0o600); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("secure exact git lock: %w", err)
+		}
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -838,6 +903,22 @@ func acquireExactGitFileLock(ctx context.Context, key string, operation int) (fu
 			_ = file.Close()
 		})
 	}, nil
+}
+
+func validateExactGitCoordinationDirectories(path string) error {
+	root := exactGitRoot()
+	for current := path; ; current = filepath.Dir(current) {
+		var stat unix.Stat_t
+		if err := unix.Lstat(current, &stat); err != nil {
+			return fmt.Errorf("inspect coordination directory %q: %w", current, err)
+		}
+		if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != uint32(unix.Geteuid()) || stat.Mode&0o077 != 0 {
+			return fmt.Errorf("coordination directory %q has unsafe type, ownership, or permissions", current)
+		}
+		if current == root {
+			return nil
+		}
+	}
 }
 
 func prepareExactGitDirectory(path string) error {

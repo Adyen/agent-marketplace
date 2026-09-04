@@ -497,6 +497,67 @@ func TestExactGitLockHonorsContextDeadline(t *testing.T) {
 	}
 }
 
+func TestExactGitNamespaceReadOnlyLeaseFailsClosedWithoutCreatingState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := AcquireExactGitNamespaceReadOnlyLeaseWithContext(context.Background())
+	if release != nil {
+		release()
+	}
+	if !errors.Is(err, ErrExactGitCoordinationUnavailable) {
+		t.Fatalf("read-only namespace lease error = %v, want coordination unavailable", err)
+	}
+	if _, statErr := os.Lstat(CacheDir()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("read-only namespace lease created cache state: %v", statErr)
+	}
+}
+
+func TestExactGitNamespaceReadOnlyLeasePreservesCoordinationMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	lockDir := filepath.Join(exactGitRoot(), "locks")
+	lockPath := filepath.Join(lockDir, "namespace.lock")
+	oldTime := time.Unix(1_700_000_000, 0)
+	for _, path := range []string{lockDir, lockPath} {
+		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beforeDir, err := os.Stat(lockDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	release, err = AcquireExactGitNamespaceReadOnlyLeaseWithContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	afterDir, err := os.Stat(lockDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterLock, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		name          string
+		before, after os.FileInfo
+	}{{"lock directory", beforeDir, afterDir}, {"namespace lock", beforeLock, afterLock}} {
+		if item.after.Mode() != item.before.Mode() || !item.after.ModTime().Equal(item.before.ModTime()) || item.after.Size() != item.before.Size() {
+			t.Fatalf("%s metadata changed: before mode=%v mtime=%v size=%d; after mode=%v mtime=%v size=%d", item.name, item.before.Mode(), item.before.ModTime(), item.before.Size(), item.after.Mode(), item.after.ModTime(), item.after.Size())
+		}
+	}
+}
+
 func TestExactGitNamespaceLeaseHonorsContextDeadline(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	release, err := acquireExactGitFileLock(context.Background(), "namespace", unix.LOCK_EX)

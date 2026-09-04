@@ -43,9 +43,9 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 }
 
 var (
-	prepareTUILocks = func(ctx context.Context, repoRoot, localDir string, mode lockMode) error {
-		_, _, _, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
-		return err
+	prepareTUILocks = func(ctx context.Context, repoRoot, localDir string, mode lockMode) (exactLockLeaseFunc, error) {
+		_, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+		return lease, err
 	}
 	runTUIExactSync = pipeline.Sync
 )
@@ -64,10 +64,11 @@ func runTUIDependencyLifecycle(ctx context.Context, repoRoot string, upgrade boo
 		}
 		mode.selects = selected
 	}
-	if err := prepareTUILocks(ctx, repoRoot, localDir, mode); err != nil {
+	exactLease, err := prepareTUILocks(ctx, repoRoot, localDir, mode)
+	if err != nil {
 		return err
 	}
-	options := pipeline.ResolveOptions{RepoRoot: repoRoot, ReadOnlyExactLocks: true}
+	options := pipeline.ResolveOptions{RepoRoot: repoRoot, ReadOnlyExactLocks: true, ExactLockLease: exactLease}
 	if localDir != "" && localDir != repoRoot {
 		options.LocalConfigDir = localDir
 		options.MaterializeRoot = localDir

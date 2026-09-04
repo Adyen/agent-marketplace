@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -22,6 +23,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
+
+// syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
+// Production callers never install it.
+type syncPhaseHookContextKey struct{}
 
 type Loaders struct {
 	Org    func() (*config.Config, error)
@@ -508,9 +513,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	if tel != nil {
 		ctx, syncSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.sync", nil)
 	}
-
-	resolved := Resolve(ctx, opts)
-	result := SyncResult{ResolveResult: resolved}
+	var result SyncResult
 	defer func() {
 		written := 0
 		removed := 0
@@ -535,6 +538,32 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			syncSpan.End()
 		}
 	}()
+
+	var releaseExactLocks func()
+	if opts.ExactLockLease != nil {
+		release, err := opts.ExactLockLease(ctx)
+		if err != nil {
+			wrapped := fmt.Errorf("acquire and revalidate exact locks before sync: %w", err)
+			result = SyncResult{ResolveResult: ResolveResult{Errors: []error{wrapped}}, MaterializeErrors: []error{wrapped}}
+			return result
+		}
+		releaseExactLocks = release
+	} else if opts.ReadOnlyExactLocks {
+		release, err := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		if err != nil {
+			wrapped := fmt.Errorf("acquire exact cache read lease before sync: %w", err)
+			result = SyncResult{ResolveResult: ResolveResult{Errors: []error{wrapped}}, MaterializeErrors: []error{wrapped}}
+			return result
+		}
+		releaseExactLocks = release
+	}
+	if releaseExactLocks != nil {
+		defer releaseExactLocks()
+		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+	}
+
+	resolved := Resolve(ctx, opts)
+	result.ResolveResult = resolved
 	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
 
 	// Compute the materialization root once and reuse it for both the
@@ -643,13 +672,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 
-	if opts.ExactLockLease != nil {
-		release, err := opts.ExactLockLease(ctx)
-		if err != nil {
-			result.addMaterializeError(fmt.Errorf("revalidate exact locks before materialization: %w", err))
-			return result
-		}
-		defer release()
+	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
+		hook("before-materialization")
 	}
 
 	var materializeSpan telemetry.Span

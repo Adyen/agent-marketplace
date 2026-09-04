@@ -1,13 +1,57 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
+
+func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
+	repoRoot := t.TempDir()
+	withWorkingDir(t, repoRoot)
+
+	originalPrepare, originalSync := prepareTUILocks, runTUIExactSync
+	t.Cleanup(func() {
+		prepareTUILocks = originalPrepare
+		runTUIExactSync = originalSync
+	})
+	leaseAcquired := false
+	leaseReleased := false
+	prepareTUILocks = func(context.Context, string, string, lockMode) (exactLockLeaseFunc, error) {
+		return func(context.Context) (func(), error) {
+			leaseAcquired = true
+			return func() { leaseReleased = true }, nil
+		}, nil
+	}
+	runTUIExactSync = func(ctx context.Context, opts pipeline.ResolveOptions) pipeline.SyncResult {
+		if !opts.ReadOnlyExactLocks {
+			t.Error("TUI sync did not request exact read-only locks")
+		}
+		if opts.ExactLockLease == nil {
+			t.Fatal("TUI sync dropped the prepared exact lock lease")
+		}
+		release, err := opts.ExactLockLease(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+		return pipeline.SyncResult{}
+	}
+
+	if err := runTUIDependencyLifecycle(context.Background(), repoRoot, false); err != nil {
+		t.Fatal(err)
+	}
+	if !leaseAcquired || !leaseReleased {
+		t.Fatalf("propagated lease lifecycle = acquired %t, released %t", leaseAcquired, leaseReleased)
+	}
+}
 
 func TestConfiguredInstallKeepsValidLayerExactWhenAnotherLayerLockIsMissing(t *testing.T) {
 	homeDir := t.TempDir()
@@ -50,6 +94,79 @@ registries:
 		t.Fatalf("missing-lock layer did not retain mutable bootstrap: %v\n%s", err, output)
 	}
 	assertFactorySkillExists(t, repoRoot, "bootstrap")
+}
+
+func TestReadOnlyCommandsPreserveWarmExactCacheBytesAndMetadata(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "xdg-cache"))
+	origin, working := createBareRepoWithWorkingClone(t, "warm-check.git")
+	writeSkill(t, working, "keeper", "Warm exact cache content", nil)
+	commitAndPushAll(t, working, "seed warm check")
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v2
+harnesses: [factory]
+registries:
+  - url: `+origin+`
+    ref: main
+    skills: [keeper]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("seed lock: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed materialization: %v\n%s", err, output)
+	}
+	exactRoot := filepath.Join(cache.CacheDir(), "exact-git")
+	before := exactCacheTreeSnapshot(t, exactRoot)
+	for _, args := range [][]string{{"sync", "--check"}, {"lock", "--check", "--scope", "repo"}, {"status"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("%s: %v\n%s", strings.Join(args, " "), err, output)
+		}
+		if after := exactCacheTreeSnapshot(t, exactRoot); after != before {
+			t.Fatalf("%s changed warm exact cache\nbefore:\n%s\nafter:\n%s", strings.Join(args, " "), before, after)
+		}
+	}
+}
+
+func exactCacheTreeSnapshot(t *testing.T, root string) string {
+	t.Helper()
+	var entries []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		content := ""
+		switch {
+		case info.Mode().IsRegular():
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			content = fmt.Sprintf("%x", data)
+		case info.Mode()&os.ModeSymlink != 0:
+			content, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+		entries = append(entries, fmt.Sprintf("%s|%s|%d|%d|%s", rel, info.Mode(), info.Size(), info.ModTime().UnixNano(), content))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, "\n")
 }
 
 func TestCheckCommandsDoNotPopulateColdExactCacheOrState(t *testing.T) {
