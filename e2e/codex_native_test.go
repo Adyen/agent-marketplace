@@ -122,7 +122,7 @@ registries:
 	if found, ok := lookInPath(withoutCodex, "codex"); ok {
 		t.Fatalf("test PATH still resolves codex at %s", found)
 	}
-	result := env.RunAMWithEnv(map[string]string{"PATH": withoutCodex}, "sync")
+	result := env.RunAMWithEnv(map[string]string{"PATH": withoutCodex, "CODEX_HOME": customHome}, "sync")
 	if result.ExitCode != 0 {
 		t.Fatalf("sync with no Codex executable exited %d:\n%s", result.ExitCode, result.Combined)
 	}
@@ -395,6 +395,7 @@ func TestE2ECodexRepairPreviewAndExactMatchAdoption(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock")
 
 	preview := env.RunAM("doctor", "--repair")
 	if preview.ExitCode != 0 || !strings.Contains(preview.Combined, `adopt mcp-server "managed"`) || !strings.Contains(preview.Combined, "preview only") {
@@ -629,7 +630,11 @@ exec "$AM_E2E_BINARY" "$AM_E2E_COMMAND" >"$AM_E2E_STDOUT" 2>"$AM_E2E_STDERR"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	args := []string{"-q", "/dev/null", wrapper}
-	commandEnv := append(env.subprocessEnv(),
+	commandEnv := env.subprocessEnv()
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		commandEnv = subprocessEnvWithOverrides(commandEnv, map[string]string{"CODEX_HOME": codexHome})
+	}
+	commandEnv = append(commandEnv,
 		"AM_E2E_BINARY="+env.binary,
 		"AM_E2E_COMMAND="+command,
 		"AM_E2E_OPTION="+option,

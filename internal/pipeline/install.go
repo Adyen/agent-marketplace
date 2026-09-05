@@ -281,7 +281,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return snapshot, identity, snapshotErr
 	})
 	discoveryOptions := []catalog.LoadOption{catalog.WithExactSnapshots(installExactSnapshot)}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir, discoveryOptions...)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir, discoveryOptions...)
 	exactView.release()
 	if err != nil {
 		return nil, err
@@ -570,8 +570,7 @@ func onlyMissingInstallLocks(errs []error) bool {
 	return len(errs) > 0
 }
 
-func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfigDir string, opts ...catalog.LoadOption) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
-	repoRoot := config.FindRepoRoot()
+func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, repoRoot, localConfigDir string, opts ...catalog.LoadOption) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
 	if localConfigDir != "" && localConfigDir != repoRoot {
 		opts = append(opts, catalog.WithLocalConfigDir(localConfigDir))
 	}
@@ -968,7 +967,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}

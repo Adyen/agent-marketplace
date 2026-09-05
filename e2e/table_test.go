@@ -198,6 +198,7 @@ registries:
       - logging-skill
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list"}, MustPass: true,
 				FilesExist: []string{"/root/.agent-marketplace/logs/agent-marketplace.log"},
 				FileContains: map[string]string{
@@ -2984,7 +2985,7 @@ registries:
 	},
 	{
 		Name: "list/shows_available_resources",
-		Desc: "Given a registry with a skill, When list is run, Then the skill name appears in the output",
+		Desc: "Given a locked registry with a skill, When list is run, Then the skill name appears in the output",
 		Registries: []RegistryDef{
 			{Name: "list-reg", Skills: []Skill{
 				{Name: "visible-skill", Description: "A visible skill"},
@@ -2996,13 +2997,14 @@ registries:
     ref: main
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list"}, MustPass: true,
 				OutContains: []string{"visible-skill"}},
 		},
 	},
 	{
 		Name: "list/kind_filter",
-		Desc: "Given a registry with skills and commands, When list --kind command is run, Then only commands appear (no skills)",
+		Desc: "Given a locked registry with skills and commands, When list --kind command is run, Then only commands appear (no skills)",
 		Registries: []RegistryDef{
 			{Name: "kind-list", Skills: []Skill{
 				{Name: "listed-skill"},
@@ -3016,6 +3018,7 @@ registries:
     ref: main
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list", "--kind", "command"}, MustPass: true,
 				OutContains:    []string{"listed-cmd"},
 				OutNotContains: []string{"listed-skill"}},
@@ -3503,6 +3506,7 @@ harnesses:
   - factory
 registries: []
 `},
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
 				OutContains: []string{
 					"out of sync",
@@ -3616,8 +3620,8 @@ registries:
 		},
 	},
 	{
-		Name: "deinit/user_scope_removes_cache",
-		Desc: "Given a synced environment with cache, When deinit is run, Then the cache directory is removed",
+		Name: "deinit/user_scope_removes_artifacts",
+		Desc: "Given a synced environment with an exact locked cache, When deinit is run, Then machine-scoped artifacts are removed while reachable cache remains managed by GC",
 		Registries: []RegistryDef{
 			{Name: "deinit-cache-reg", Skills: []Skill{
 				{Name: "cached-skill", Description: "Skill to populate cache"},
@@ -3633,7 +3637,8 @@ registries:
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
 			{Args: []string{"deinit"}, MustPass: true,
-				OutContains: []string{"Removed cache"}},
+				OutContains: []string{"managed artifact"},
+				FilesAbsent: []string{"/root/.factory/skills/cached-skill/SKILL.md"}},
 		},
 	},
 	{
