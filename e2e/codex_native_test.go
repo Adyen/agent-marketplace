@@ -160,10 +160,12 @@ registries:
     mcp:
       - %s
 `
-	env.WriteFile("/etc/agent-marketplace/codex-alpha.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
-	env.WriteFile("/etc/agent-marketplace/codex-beta.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
-	alphaOrg := env.mustResolvePath("/etc/agent-marketplace/codex-alpha.yaml")
-	betaOrg := env.mustResolvePath("/etc/agent-marketplace/codex-beta.yaml")
+	env.WriteFile("/etc/agent-marketplace/codex-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
+	env.WriteFile("/etc/agent-marketplace/codex-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
+	alphaOrg := env.mustResolvePath("/etc/agent-marketplace/codex-alpha/config.yaml")
+	betaOrg := env.mustResolvePath("/etc/agent-marketplace/codex-beta/config.yaml")
+	env.MustLockOrganizationConfig(alphaOrg)
+	env.MustLockOrganizationConfig(betaOrg)
 
 	const seed = "# handwritten\n[mcp_servers.handwritten]\ncommand = 'user-bin'\n"
 	configPath := filepath.Join(env.home, ".codex", "config.toml")
@@ -181,10 +183,7 @@ registries:
 		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync")
 	}()
 
-	fifoWriter, err := os.OpenFile(configPath, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fifoWriter := openFIFOWriter(t, configPath, alphaDone, &alpha)
 	seedPath := configPath + ".seed"
 	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
 		_ = fifoWriter.Close()
@@ -216,11 +215,18 @@ registries:
 	if err := fifoWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	<-alphaDone
-	<-betaDone
-	for name, result := range map[string]ExecResult{"alpha": alpha, "beta": beta} {
-		if result.ExitCode != 0 {
-			t.Fatalf("%s serialized sync exited %d:\n%s", name, result.ExitCode, result.Combined)
+	waitForProcess(t, "alpha", alphaDone)
+	waitForProcess(t, "beta", betaDone)
+	for _, process := range []struct {
+		name   string
+		result ExecResult
+	}{
+		{name: "alpha", result: alpha},
+		{name: "beta", result: beta},
+	} {
+		t.Logf("%s sync exit=%d output:\n%s", process.name, process.result.ExitCode, process.result.Combined)
+		if process.result.ExitCode != 0 {
+			t.Fatalf("%s serialized sync exited %d:\n%s", process.name, process.result.ExitCode, process.result.Combined)
 		}
 	}
 	if log := readFile(t, betaLog); !strings.Contains(log, codeOwnershipLockContended) {

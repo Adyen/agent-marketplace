@@ -15,6 +15,7 @@ func BenchmarkRenderBoundedDetail(b *testing.B) {
 	}
 	r := mkRow("detail", withProject)
 	r.Artifact.Path = path
+	r.DetailSource = captureDetailSource(path)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

@@ -95,7 +95,7 @@ func organizationTrustError(code, path string, err error) error {
 }
 
 func testPathTrustEnabled(path string) bool {
-	return testing.Testing() && filepath.Clean(path) != defaultOrganizationConfigPath
+	return (testing.Testing() || testOrganizationConfigPath != "") && filepath.Clean(path) != defaultOrganizationConfigPath
 }
 
 func trustedOrganizationOwner(info os.FileInfo, configPath string) bool {
@@ -276,7 +276,11 @@ func inspectManagedConfig(path string, readErr error, cfg *Config, source Source
 				Hint: "restrict write permissions to the file owner only",
 			})
 		}
-		if !trustedOwnerFn(info) {
+		ownerTrusted := trustedOwnerFn(info)
+		if !testing.Testing() && testPathTrustEnabled(path) {
+			ownerTrusted = trustedOrganizationOwner(info, path)
+		}
+		if !ownerTrusted {
 			d.Warnings = append(d.Warnings, &TrustWarning{
 				Code: "org-config-wrong-owner",
 				Path: path,

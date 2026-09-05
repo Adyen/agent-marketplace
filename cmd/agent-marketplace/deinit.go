@@ -121,10 +121,11 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	var resolvedArtifacts []resolver.ResolvedArtifact
+	releaseExactLease := func() {}
 	switch scope {
 	case deinitScopeUser:
 		opts = append(opts, materialize.WithMachineScopeOnly())
-		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
+		orgArtifacts, release, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
 		if err != nil {
 			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
 			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
@@ -132,13 +133,16 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 			}
 		} else {
 			resolvedArtifacts = orgArtifacts
+			releaseExactLease = release
 		}
 	case deinitScopeRepo, deinitScopeLocal:
 		opts = append(opts, materialize.WithRepoScopeOnly())
 	}
-
 	opts = append(opts, materialize.WithMaterializationModes(modes))
-	report, err := materialize.Run(context.Background(), repoRoot, resolvedArtifacts, opts...)
+	report, err := func() (*materialize.Report, error) {
+		defer releaseExactLease()
+		return materialize.Run(context.WithoutCancel(ctx), repoRoot, resolvedArtifacts, opts...)
+	}()
 	if err != nil {
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
@@ -280,11 +284,13 @@ func removeEmptyDir(dir string) {
 // failures. When no machine-wide target harness set is configured, there is no
 // organization-owned output to preserve, so the function returns an empty
 // slice rather than defaulting artifacts to a target the user never requested.
-func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+// On success the caller must release the returned exact-cache lease after its
+// final use of the artifacts.
+func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, func(), error) {
 	localDir := config.FindLocalConfigDir()
 	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resolveOpts := pipeline.ResolveOptions{
 		RepoRoot:         repoRoot,
@@ -295,21 +301,24 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 		SkipInventory:    true,
 		ExactLockLease:   exactLease,
 	}
-	res := pipeline.Resolve(ctx, resolveOpts)
+	res, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
+		releaseExactLease()
 		var missingErr *pipeline.TargetHarnessSetMissingError
 		if len(res.Errors) == 1 && errors.As(res.Errors[0], &missingErr) {
 			slog.Info("deinit: no machine-wide target harness set configured; no organization-owned artifacts to preserve")
-			return nil, nil
+			return nil, func() {}, nil
 		}
-		return nil, errors.Join(res.Errors...)
+		return nil, nil, errors.Join(res.Errors...)
 	}
 	if unresolved := organizationUnresolvedSelections(res); len(unresolved) > 0 {
-		return nil, errors.Join(unresolved...)
+		releaseExactLease()
+		return nil, nil, errors.Join(unresolved...)
 	}
 	if len(res.TargetHarnesses) == 0 {
+		releaseExactLease()
 		slog.Info("deinit: target harness set is empty; no organization-owned artifacts to preserve")
-		return nil, nil
+		return nil, func() {}, nil
 	}
 	var preserved []resolver.ResolvedArtifact
 	for _, r := range res.Resolved {
@@ -318,7 +327,7 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 		}
 	}
 	slog.Info("deinit: resolved organization-owned artifacts to preserve", "count", len(preserved))
-	return preserved, nil
+	return preserved, releaseExactLease, nil
 }
 
 // organizationUnresolvedSelections promotes soft unresolved selections from

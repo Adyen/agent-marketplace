@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -431,6 +433,49 @@ type ExecResult struct {
 	Combined string
 }
 
+const concurrencyHandshakeTimeout = 10 * time.Second
+
+// openFIFOWriter waits a bounded amount of time for the subprocess reader.
+// A plain os.OpenFile(O_WRONLY) can hide an early sync failure forever because
+// opening a FIFO writer blocks until a reader exists.
+func openFIFOWriter(t *testing.T, path string, processDone <-chan struct{}, result *ExecResult) *os.File {
+	t.Helper()
+	deadline := time.NewTimer(concurrencyHandshakeTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		// The writer must not survive an Exec while the fixture starts the
+		// contending process. An inherited writer would keep the FIFO readable,
+		// leaving the first process blocked on EOF while it holds the ownership
+		// lock and the second process waits for that lock.
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+		if err == nil {
+			return os.NewFile(uintptr(fd), path)
+		}
+		if !errors.Is(err, syscall.ENXIO) {
+			t.Fatalf("open FIFO writer %s: %v", path, err)
+		}
+		select {
+		case <-processDone:
+			t.Fatalf("sync exited before opening FIFO reader (exit=%d):\n%s", result.ExitCode, result.Combined)
+		case <-deadline.C:
+			t.Fatal("timed out waiting for sync to open FIFO reader")
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitForProcess bounds the completion half of a concurrency handshake.
+func waitForProcess(t *testing.T, name string, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(concurrencyHandshakeTimeout):
+		t.Fatalf("timed out waiting for %s subprocess", name)
+	}
+}
+
 // subprocessEnv returns environment variables for agent-marketplace
 // subprocess execution. HOME is overridden so all path resolution
 // (~/.agents/config.yaml, ~/.cache/agent-marketplace/, etc.) uses the
@@ -601,6 +646,16 @@ func (e *Env) MustRunAM(args ...string) ExecResult {
 			strings.Join(args, " "), r.ExitCode, r.Combined)
 	}
 	return r
+}
+
+func (e *Env) MustLockOrganizationConfig(configPath string) {
+	e.t.Helper()
+	r := e.RunAMWithEnv(map[string]string{
+		"AGENT_MARKETPLACE_V3_ORG_CONFIG": configPath,
+	}, "lock", "--scope", "organization")
+	if r.ExitCode != 0 {
+		e.t.Fatalf("lock organization config %s failed (exit %d):\n%s", configPath, r.ExitCode, r.Combined)
+	}
 }
 
 // ---------- file injection ----------

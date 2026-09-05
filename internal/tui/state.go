@@ -40,8 +40,9 @@ const (
 
 type row struct {
 	Artifact     resolver.ResolvedArtifact
-	IsAvailable  bool // not in resolved (available but not enabled)
-	IsExcluded   bool // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable  bool                  // not in resolved (available but not enabled)
+	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
 	IsMalformed  bool
 	MalformedMsg string
 	DriftItem    *materialize.DriftItem // nil if in sync or available-only

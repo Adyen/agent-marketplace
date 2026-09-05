@@ -407,6 +407,16 @@ func recoverDependencyTransactions(ctx context.Context) error {
 		return fmt.Errorf("inspect dependency transaction state: %w", err)
 	}
 
+	// Recovery can publish the same config/lock destinations as a normal
+	// dependency transaction. Hold the shared exact-cache namespace lease in
+	// the same order as normal publication so exclusive GC cannot inventory a
+	// half-recovered transaction and delete its newly reachable snapshots.
+	releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire exact cache recovery lease: %w", err)
+	}
+	defer releaseExactNamespace()
+
 	started := time.Now()
 	if err := dependencytxn.Recover(ctx, stateDir); err != nil {
 		slog.Error("lock transaction recovery failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)

@@ -211,8 +211,30 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	var resolvedNames []string
+	// Copy detail bytes before any downstream work can yield long enough for a
+	// waiting GC to run immediately after the resolution lease is released.
+	detailSources := make(map[string]*detailSourceSnapshot, len(resolvedResult.Resolved))
+	captureEntry := func(entry catalog.Entry) {
+		if entry.Path == "" {
+			return
+		}
+		if _, ok := detailSources[entry.Path]; !ok {
+			detailSources[entry.Path] = captureDetailSource(catalog.SourcePath(entry))
+		}
+	}
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
+		captureEntry(resolved.Entry)
+	}
+	for _, loaded := range resolvedResult.CatalogLoad.Catalogs {
+		for _, entry := range loaded.Entries {
+			captureEntry(entry)
+		}
+		for _, malformed := range loaded.Malformed {
+			if malformed.Path != "" {
+				detailSources[malformed.Path] = captureDetailSource(malformed.Path)
+			}
+		}
 	}
 	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
@@ -247,6 +269,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	base.rows = buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
 	base.diagnostics = deduplicateDiagnostics(diagnostics)

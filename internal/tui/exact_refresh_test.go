@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,12 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	}
 	if _, err := os.Stat(snapshot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("GC did not remove snapshot after TUI consumption: %v", err)
+	}
+	for _, width := range []int{80, 50} {
+		msg := loadDetailContent(result.rows[0], 1, width, width == 50)().(detailContentMsg)
+		if !strings.Contains(msg.content, "pinned") || strings.Contains(msg.content, "Error reading resource") {
+			t.Fatalf("detail rerender at width %d lost the collected snapshot after GC:\n%s", width, msg.content)
+		}
 	}
 }
 

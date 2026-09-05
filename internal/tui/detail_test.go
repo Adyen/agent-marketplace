@@ -189,6 +189,7 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "myskill", Path: skillDir}},
 		EnabledGlobal: true,
 	}}
+	m.rows[0].DetailSource = captureDetailSource(skillDir)
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
@@ -215,16 +216,18 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 	}
 }
 
-func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
+func TestRenderDetailFullRendersCapturedNonSkillSource(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "continue.md")
 	if err := os.WriteFile(commandPath, []byte("# Continue\n\nResume the work.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out := renderDetailFullContent(row{
-		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-	}, 80)
+	r := row{
+		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
+		DetailSource: captureDetailSource(commandPath),
+	}
+	out := renderDetailFullContent(r, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)

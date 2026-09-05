@@ -359,7 +359,7 @@ The command refuses a non-directory target root and a target root that is a symb
 
 ## `gc`
 
-Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks. Under an exclusive exact-cache lease, it reloads the complete effective configuration and every layer lock before deriving reachability; a missing, stale, malformed, or untrusted required lock blocks destructive collection. Protected derived-cache namespaces are retained.
+Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks. Pending dependency-transaction recovery runs first and holds the shared exact-cache lease while publishing recovered config and lock state. Collection then takes the exclusive lease and reloads the complete effective configuration and every layer lock before deriving reachability; a missing, stale, malformed, or untrusted required lock blocks destructive collection. Protected derived-cache namespaces are retained.
 
 ```text
 agent-marketplace gc [flags]

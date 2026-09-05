@@ -84,11 +84,12 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 
 	repoRoot := config.FindRepoRoot()
-	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		RepoRoot:           repoRoot,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 
 	if len(result.TargetHarnesses) == 0 {
 		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; add `harnesses` to your user config.\n"); err != nil {
@@ -145,7 +146,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := materialize.Run(context.Background(), repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would

@@ -285,6 +285,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.Errors = []error{ctx.Err()}
 		return result, releaseExactLease
 	}
+	if opts.ExactLockLease != nil {
+		release, err := opts.ExactLockLease(ctx)
+		if err != nil {
+			result.Errors = []error{fmt.Errorf("acquire and revalidate exact locks before resolution: %w", err)}
+			return result, releaseExactLease
+		}
+		if release != nil {
+			releaseExactLease = release
+		}
+		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+	}
 	var ec config.EffectiveConfig
 
 	var configLoadSpan telemetry.Span
@@ -458,7 +469,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	var readOnlyView readOnlyExactView
 	if opts.ReadOnlyExactLocks {
 		ctx, readOnlyView = exactLockViewWithContext(ctx, ec)
-		releaseExactLease = readOnlyView.release
+		previousRelease := releaseExactLease
+		releaseExactLease = func() {
+			readOnlyView.release()
+			previousRelease()
+		}
 		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
 		result.LockMetadata = readOnlyView.gitMetadata
 	}
@@ -577,7 +592,11 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 	}
 
-	resolved := Resolve(ctx, opts)
+	resolveOpts := opts
+	// Sync already holds and revalidated the caller-provided lease above; do not
+	// acquire a second file description when delegating to resolution.
+	resolveOpts.ExactLockLease = nil
+	resolved := Resolve(ctx, resolveOpts)
 	result.ResolveResult = resolved
 	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
 

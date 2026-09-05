@@ -52,6 +52,7 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. The binary runs as a subprocess with `HOME` overridden so it never touches the host filesystem.
 - **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
 - **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.
+- **FIFO concurrency handshakes**: use `openFIFOWriter` so writer setup is bounded, reports a subprocess that exits before opening its reader, and keeps the writer descriptor close-on-exec; use `waitForProcess` to bound subprocess completion.
 
 #### When to add a test
 

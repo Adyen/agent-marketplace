@@ -15,6 +15,97 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
+func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(stateDir, ".dependencytxn-broken.json"), "{")
+
+	gcEntered := make(chan struct{})
+	releaseGC := make(chan struct{})
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GarbageCollectWithReachabilityAndContext(context.Background(), true, func(context.Context) (cache.GCReachability, error) {
+			close(gcEntered)
+			<-releaseGC
+			return cache.GCReachability{Configs: []*config.Config{{}}}, nil
+		})
+		gcDone <- err
+	}()
+	<-gcEntered
+
+	recoveryDone := make(chan error, 1)
+	go func() { recoveryDone <- recoverDependencyTransactions(context.Background()) }()
+	select {
+	case err := <-recoveryDone:
+		t.Fatalf("recovery entered publication while GC held the exclusive namespace lease: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseGC)
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-recoveryDone; !errors.Is(err, dependencytxn.ErrRecoveryBlocked) {
+		t.Fatalf("recovery error = %v, want recovery blocked after GC released", err)
+	}
+}
+
+func TestDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "deinit-contention.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "seed")
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repo)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
+	orgConfig := filepath.Join(t.TempDir(), "config.yaml")
+	config.SetTestOrganizationConfigPath(t, orgConfig)
+	writeConfig(t, orgConfig, "\nregistries:\n  - url: "+origin+"\n    ref: main\n    skills: [review]\n")
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("seed organization exact lock: %v\n%s", err, output)
+	}
+
+	artifacts, release, err := resolveOrgOwnedArtifacts(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].Name != "review" || artifacts[0].Source != config.Organization {
+		release()
+		t.Fatalf("organization artifacts = %#v, want organization-owned review", artifacts)
+	}
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		gcDone <- err
+	}()
+	select {
+	case err := <-gcDone:
+		release()
+		t.Fatalf("GC completed while deinit held organization artifacts: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-gcDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GC did not resume after deinit released its exact lease")
+	}
+}
+
 func TestSyncCheckExactConsumerLeasePreventsSnapshotDeletion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
