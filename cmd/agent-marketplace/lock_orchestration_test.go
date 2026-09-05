@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,52 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	origin, working := createBareRepoWithWorkingClone(t, "publication-gc.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "review")
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	withWorkingDir(t, repo)
+
+	gcDone := make(chan error, 1)
+	originalHook := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() {
+		go func() {
+			gcDone <- runGC(context.Background(), io.Discard, false)
+		}()
+		select {
+		case err := <-gcDone:
+			t.Fatalf("GC crossed snapshot-to-publication gap: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { lockSnapshotAcquiredHook = originalHook })
+
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("lock publication: %v\n%s", err, output)
+	}
+	select {
+	case err := <-gcDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GC did not resume after lock publication released its lease")
+	}
+	entries, err := os.ReadDir(filepath.Join(cache.CacheDir(), "exact-git", "snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("published exact snapshot count = %d, want 1", len(entries))
+	}
+}
 
 func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
 	home := t.TempDir()

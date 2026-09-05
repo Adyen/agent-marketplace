@@ -125,10 +125,18 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	switch scope {
 	case deinitScopeUser:
 		opts = append(opts, materialize.WithMachineScopeOnly())
-		orgArtifacts, release, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
+		orgMode := catalog.LoadModeRefresh
+		if dryRun {
+			orgMode = catalog.LoadModeInspect
+		}
+		orgArtifacts, release, err := resolveOrgOwnedArtifactsMode(ctx, repoRoot, orgMode)
 		if err != nil {
-			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
-			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
+			if !dryRun || organizationLockFailure(err) {
+				slog.Error("deinit could not safely resolve organization-owned artifacts", "error", err)
+				return fmt.Errorf("resolve organization-owned artifacts before deinit: %w", err)
+			}
+			slog.Warn("deinit dry-run could not inspect uncached organization artifacts", "error", err)
+			if _, werr := fmt.Fprintf(out, "warning: could not inspect uncached organization-owned artifacts (%v); dry-run made no changes\n", err); werr != nil {
 				return werr
 			}
 		} else {
@@ -279,27 +287,26 @@ func removeEmptyDir(dir string) {
 // artifacts that a user-scoped deinit must preserve (organization and
 // mandatory policy output).
 //
-// It uses the trusted exact Git lock view so teardown never refreshes mutable
-// refs or writes the Git cache. Missing or unsafe Git snapshots remain hard
-// failures. When no machine-wide target harness set is configured, there is no
-// organization-owned output to preserve, so the function returns an empty
-// slice rather than defaulting artifacts to a target the user never requested.
+// It uses the read-only exact lock view. A present organization lock is exact
+// and fail-closed; an intentionally absent organization lock follows unlocked
+// mutable acquisition/cache rules so organization output can still be preserved.
+// When no machine-wide target harness set is configured, there is no organization-
+// owned output to preserve, so the function returns an empty slice rather than
+// defaulting artifacts to a target the user never requested.
 // On success the caller must release the returned exact-cache lease after its
 // final use of the artifacts.
 func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, func(), error) {
-	localDir := config.FindLocalConfigDir()
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: true})
-	if err != nil {
-		return nil, nil, err
-	}
+	return resolveOrgOwnedArtifactsMode(ctx, repoRoot, catalog.LoadModeInspect)
+}
+
+func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode catalog.LoadMode) ([]resolver.ResolvedArtifact, func(), error) {
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:         repoRoot,
-		LocalConfigDir:   localDir,
-		CatalogMode:      catalog.LoadModeInspect,
-		CatalogOption:    []catalog.LoadOption{exactOption},
-		RequireTargetSet: true,
-		SkipInventory:    true,
-		ExactLockLease:   exactLease,
+		RepoRoot:           repoRoot,
+		LocalConfigDir:     config.FindLocalConfigDir(),
+		CatalogMode:        mode,
+		RequireTargetSet:   true,
+		SkipInventory:      true,
+		ReadOnlyExactLocks: true,
 	}
 	res, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
@@ -328,6 +335,15 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 	}
 	slog.Info("deinit: resolved organization-owned artifacts to preserve", "count", len(preserved))
 	return preserved, releaseExactLease, nil
+}
+
+func organizationLockFailure(err error) bool {
+	var trustErr *config.OrganizationTrustError
+	if errors.As(err, &trustErr) {
+		return true
+	}
+	var lockErr *pipeline.LockViewError
+	return errors.As(err, &lockErr)
 }
 
 // organizationUnresolvedSelections promotes soft unresolved selections from

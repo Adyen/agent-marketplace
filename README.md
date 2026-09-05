@@ -652,15 +652,20 @@ same configuration layer:
 | `.agents/config.local.yaml` | `.agents/lock.local.yaml` |
 
 Commit `.agents/lock.yaml` with the repository config. The personal-local lock
-is gitignored. An organization may deploy its lock beside its config; consumer
-commands do not create a missing organization lock.
+is gitignored. An organization may deploy its lock beside its config. When that
+lock is absent, consumer commands treat the organization requirements as
+intentionally unlocked and may inspect or refresh the mutable cache without
+creating a lock. A present organization lock is exact and fail-closed.
 
 A normal `sync` retains compatible resolutions, reconciles writable stale
-locks, and materializes from verified exact snapshots. Use `sync --locked` when
-config and lock changes must be refused, or `sync --check` to check lock and
-output drift without writing. Use `lock --upgrade` or `update` to advance Git
-resolutions intentionally. Config edits made by install, remove, update, and the
-TUI publish config and lock state as one dependency transaction.
+locks, and materializes from verified exact snapshots, except for intentionally
+unlocked organization requirements. Use `sync --locked` when config and lock
+changes must be refused, or `sync --check` to check lock and output drift without
+writing. Use `lock --upgrade` or `update` to advance Git resolutions intentionally.
+Lock reconciliation holds the shared exact-cache lease from snapshot acquisition
+through config-and-lock publication, so garbage collection cannot remove a new
+snapshot before its lock becomes reachable. Config edits made by install, remove,
+update, and the TUI publish config and lock state as one dependency transaction.
 
 Locking in this foundation applies only to Git registries. Plain filesystem
 registries stay live, and hosted Marketplace lock schema, acquisition adapters,

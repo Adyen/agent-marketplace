@@ -175,13 +175,13 @@ agent-marketplace lock [resource ...] [flags]
 
 Resource names and the registry targeting flags require `--upgrade`; names also require `--registry` and `--kind`. A resource-level upgrade expands to its containing Git source because the commit is the atomic acquisition unit.
 
-`lock --check` inspects existing config, lock, and exact-snapshot bytes without transaction recovery, remote resolution, or cache population. A fresh lock whose exact snapshot is absent from a cold cache reports `lock.snapshot-unavailable`; a stale or missing lock reports the required change without fetching it.
+`lock --check` inspects existing config, lock, and exact-snapshot bytes without transaction recovery, remote resolution, or cache population. A fresh lock whose exact snapshot is absent from a cold cache reports `lock.snapshot-unavailable`; a stale or missing lock reports the required change without fetching it. A writing reconciliation holds the shared exact-cache lease from before its first snapshot acquisition or verification through config-and-lock publication, preventing garbage collection from deleting a new snapshot before the published lock makes it reachable.
 
-The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace locking is not part of this foundation.
+The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. An absent organization lock leaves that layer intentionally unlocked: consumer commands may use mutable acquisition or cache inspection but do not create the organization lock. A present organization lock is exact and fail-closed; malformed or untrusted lock state is not downgraded to mutable discovery. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace locking is not part of this foundation.
 
 ## `sync`
 
-Resolves selected resources from exact Git snapshots and reconciles native harness output with configuration.
+Resolves selected resources from exact Git snapshots and reconciles native harness output with configuration. Organization requirements use mutable acquisition when that externally managed layer intentionally has no lock.
 
 ```text
 agent-marketplace sync [flags]
@@ -378,7 +378,7 @@ Would remove 2 cache entries
 
 ## `deinit`
 
-Removes marketplace-managed artifacts for one scope. User scope also removes orphaned registry caches while preserving currently resolvable organization-owned machine artifacts. Configuration files remain unless `--purge-config` is set.
+Removes marketplace-managed artifacts for one scope. User scope also removes orphaned registry caches while preserving currently resolvable organization-owned machine artifacts. A present organization lock is inspected exactly and any invalid lock blocks teardown. When the organization lock is absent, normal deinit may refresh the mutable registry to preserve its output and cache; `--dry-run` is inspection-only, so an uncached unlocked organization registry produces a warning rather than a fetch. Configuration files remain unless `--purge-config` is set.
 
 ```text
 agent-marketplace deinit [flags]

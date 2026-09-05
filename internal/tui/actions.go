@@ -214,13 +214,17 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	// Copy detail bytes before any downstream work can yield long enough for a
 	// waiting GC to run immediately after the resolution lease is released.
 	detailSources := make(map[string]*detailSourceSnapshot, len(resolvedResult.Resolved))
-	captureEntry := func(entry catalog.Entry) {
-		if entry.Path == "" {
+	var detailBudget detailCaptureBudget
+	capturePath := func(key, sourcePath string) {
+		if key == "" {
 			return
 		}
-		if _, ok := detailSources[entry.Path]; !ok {
-			detailSources[entry.Path] = captureDetailSource(catalog.SourcePath(entry))
+		if _, ok := detailSources[key]; !ok {
+			detailSources[key] = detailBudget.capture(sourcePath)
 		}
+	}
+	captureEntry := func(entry catalog.Entry) {
+		capturePath(entry.Path, catalog.SourcePath(entry))
 	}
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
@@ -231,9 +235,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			captureEntry(entry)
 		}
 		for _, malformed := range loaded.Malformed {
-			if malformed.Path != "" {
-				detailSources[malformed.Path] = captureDetailSource(malformed.Path)
-			}
+			capturePath(malformed.Path, malformed.Path)
 		}
 	}
 	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))

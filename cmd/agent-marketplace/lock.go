@@ -22,7 +22,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
-var commitDependencyTransaction = dependencytxn.Commit
+var (
+	commitDependencyTransaction = dependencytxn.Commit
+	lockSnapshotAcquiredHook    func()
+)
 
 type lockLifecycleError struct {
 	Code  string
@@ -668,6 +671,39 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	organizationRequiresLock := false
+	// Exact snapshot acquisition, verification, and dependency publication form
+	// one GC-critical section. Preserve the lock order: namespace before
+	// dependency transaction destinations.
+	var releaseSnapshotLease func()
+	snapshotLeaseAttempted := false
+	ensureSnapshotLease := func() error {
+		if snapshotLeaseAttempted {
+			return nil
+		}
+		snapshotLeaseAttempted = true
+		var err error
+		if mode.check {
+			releaseSnapshotLease, err = cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		} else {
+			releaseSnapshotLease, err = cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
+		}
+		if err != nil {
+			// A cold read-only check must not create coordination state. Let
+			// addLayerSnapshots return its established snapshot-unavailable
+			// diagnostic when there is no namespace to protect.
+			if mode.check && errors.Is(err, cache.ErrExactGitCoordinationUnavailable) {
+				return nil
+			}
+			return fmt.Errorf("acquire exact cache snapshot publication lease: %w", err)
+		}
+		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+		return nil
+	}
+	defer func() {
+		if releaseSnapshotLease != nil {
+			releaseSnapshotLease()
+		}
+	}()
 	for _, layer := range ec.PresentLayers() {
 		scope := lockScopeForSource(layer.Source)
 		entries := layerRegistries(layer)
@@ -718,6 +754,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if !exists || current == nil || !unselectedLayerIsFresh(scope, remote, *current) {
 				continue
 			}
+			if err := ensureSnapshotLease(); err != nil {
+				return nil, changed, nil, err
+			}
 			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
 			continue
 		}
@@ -734,6 +773,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				changed++
 				continue
 			}
+			if err := ensureSnapshotLease(); err != nil {
+				return nil, changed, nil, err
+			}
 			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
 			continue
 		}
@@ -742,7 +784,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if mode.upgrade && selected && !implicitOrg {
 			operation = lockfile.OperationUpgrade
 		}
-		gitDesired, gitFresh := reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline)
+		gitDesired, gitFresh := reconcileLayerDocument(ctx, scope, remote, current, operation, mode.upgradeSelection, mode.offline, ensureSnapshotLease)
 		if gitDesired.err != nil {
 			return nil, changed, nil, gitDesired.err
 		}
@@ -807,16 +849,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
 		}
-		// Exact-cache GC re-reads lock documents while holding the namespace
-		// exclusive lease. Coordinate publication with its shared counterpart so
-		// a commit cannot complete between that re-read and deletion.
-		releaseExactNamespace, err := cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
-		if err != nil {
-			return nil, changed, nil, fmt.Errorf("acquire exact cache publication lease: %w", err)
-		}
 		commitStarted := time.Now()
 		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles)
-		releaseExactNamespace()
 		if err != nil {
 			slog.Error("lock transaction commit failed", "files", len(desiredFiles), "duration_ms", time.Since(commitStarted).Milliseconds(), "error", err)
 			return nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)
@@ -906,7 +940,7 @@ type reconciledDocument struct {
 	err   error
 }
 
-func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool) (reconciledDocument, bool) {
+func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
 	stats := lockReconcileStats{}
 	old := map[string]lockfile.GitRegistry{}
@@ -949,7 +983,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		if offline {
 			return reconciledDocument{stats: stats, err: &lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")}}, false
 		}
-		registry, err := acquireLockedRegistry(ctx, group.canonical, group.fetchURL, group.ref, group.entries)
+		registry, err := acquireLockedRegistry(ctx, group.canonical, group.fetchURL, group.ref, group.entries, beforeSnapshot)
 		if err != nil {
 			return reconciledDocument{stats: stats, err: err}, false
 		}
@@ -981,7 +1015,7 @@ func groupRemoteEntries(entries []config.RegistryEntry) map[string]remoteGroup {
 	return groups
 }
 
-func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry) (lockfile.GitRegistry, error) {
+func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry, beforeSnapshot func() error) (lockfile.GitRegistry, error) {
 	if err := ctx.Err(); err != nil {
 		return lockfile.GitRegistry{}, err
 	}
@@ -989,9 +1023,15 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 	if err != nil {
 		return lockfile.GitRegistry{}, fmt.Errorf("resolve exact Git ref %s@%s: %w", canonical, ref, err)
 	}
+	if err := beforeSnapshot(); err != nil {
+		return lockfile.GitRegistry{}, err
+	}
 	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, fetchURL, oid)
 	if err != nil {
 		return lockfile.GitRegistry{}, fmt.Errorf("acquire exact Git snapshot %s: %w", oid.String(), err)
+	}
+	if lockSnapshotAcquiredHook != nil {
+		lockSnapshotAcquiredHook()
 	}
 	commit, err := lockfile.ParseGitOID(oid.String())
 	if err != nil {

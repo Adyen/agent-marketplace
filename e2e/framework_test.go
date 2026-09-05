@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -476,35 +477,63 @@ func waitForProcess(t *testing.T, name string, done <-chan struct{}) {
 	}
 }
 
-// subprocessEnv returns environment variables for agent-marketplace
-// subprocess execution. HOME is overridden so all path resolution
-// (~/.agents/config.yaml, ~/.cache/agent-marketplace/, etc.) uses the
-// temp sandbox.
+// subprocessEnv returns an environment isolated from every host-controlled
+// application path and policy setting. Fixture-specific overrides must be
+// applied after this baseline with subprocessEnvWithOverrides.
 func (e *Env) subprocessEnv() []string {
-	// Start from a clean set: inherit the host env, but override HOME,
-	// PATH (sanitized, see sanitizePath) and AGENT_MARKETPLACE_V3_ORG_CONFIG.
 	hostEnv := os.Environ()
-	filtered := make([]string, 0, len(hostEnv)+4)
-	skip := map[string]bool{
-		"HOME":                            true,
-		"PATH":                            true,
-		"AGENT_MARKETPLACE_V3_ORG_CONFIG": true,
-	}
+	filtered := make([]string, 0, len(hostEnv)+8)
 	for _, v := range hostEnv {
-		k, _, _ := strings.Cut(v, "=")
-		if skip[k] {
+		key, _, _ := strings.Cut(v, "=")
+		if isSandboxedAppEnv(key) {
 			continue
 		}
 		filtered = append(filtered, v)
 	}
 	filtered = append(filtered,
 		"HOME="+e.home,
+		"XDG_STATE_HOME="+filepath.Join(e.home, ".local", "state"),
+		"XDG_CONFIG_HOME="+filepath.Join(e.home, ".config"),
+		"XDG_CACHE_HOME="+filepath.Join(e.home, ".cache"),
+		"CODEX_HOME="+filepath.Join(e.home, ".codex"),
 		// Sanitized so host-installed tools the CLI probes for (currently the
 		// Devin CLI) cannot change assertion outcomes.
 		"PATH="+e.path,
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG="+filepath.Join(e.etc, "config.yaml"),
 	)
 	return filtered
+}
+
+func isSandboxedAppEnv(key string) bool {
+	switch key {
+	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME":
+		return true
+	default:
+		return strings.HasPrefix(key, "AGENT_MARKETPLACE_")
+	}
+}
+
+func subprocessEnvWithOverrides(base []string, overrides map[string]string) []string {
+	env := append([]string(nil), base...)
+	positions := make(map[string]int, len(env))
+	for i, value := range env {
+		key, _, _ := strings.Cut(value, "=")
+		positions[key] = i
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		assignment := key + "=" + overrides[key]
+		if i, ok := positions[key]; ok {
+			env[i] = assignment
+			continue
+		}
+		env = append(env, assignment)
+	}
+	return env
 }
 
 // Exec runs a command inside the sandbox and returns the result.
@@ -556,17 +585,7 @@ func (e *Env) RunAM(args ...string) ExecResult {
 // overriding the sandbox defaults.
 func (e *Env) RunAMWithEnv(extra map[string]string, args ...string) ExecResult {
 	e.t.Helper()
-	env := e.subprocessEnv()
-	for i, v := range env {
-		k, _, _ := strings.Cut(v, "=")
-		if val, ok := extra[k]; ok {
-			env[i] = k + "=" + val
-			delete(extra, k)
-		}
-	}
-	for k, v := range extra {
-		env = append(env, k+"="+v)
-	}
+	env := subprocessEnvWithOverrides(e.subprocessEnv(), extra)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

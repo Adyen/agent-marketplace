@@ -549,6 +549,50 @@ func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 	}
 }
 
+func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "maximum.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var budget detailCaptureBudget
+	var snapshots []*detailSourceSnapshot
+	for i := 0; i < maxDetailCaptureEntries+16; i++ {
+		snapshots = append(snapshots, budget.capture(path))
+	}
+	if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
+		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.bytes, budget.entries)
+	}
+	var truncated, omitted int
+	for _, snapshot := range snapshots {
+		if snapshot.truncationMarker != "" {
+			truncated++
+		}
+		if snapshot.omitted {
+			omitted++
+			if got := renderDetailFullContent(row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
+				t.Fatalf("omitted detail marker = %q, want %q", got, detailCaptureOmittedMarker)
+			}
+		}
+	}
+	if truncated == 0 || omitted == 0 {
+		t.Fatalf("budget must visibly mark both truncated and omitted details: truncated=%d omitted=%d", truncated, omitted)
+	}
+
+	var entryBudget detailCaptureBudget
+	small := filepath.Join(t.TempDir(), "small.md")
+	if err := os.WriteFile(small, []byte("small"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxDetailCaptureEntries; i++ {
+		if snapshot := entryBudget.capture(small); snapshot.omitted {
+			t.Fatalf("entry %d omitted before entry budget", i)
+		}
+	}
+	if snapshot := entryBudget.capture(small); !snapshot.omitted {
+		t.Fatal("entry beyond entry budget was captured")
+	}
+}
+
 func TestRenderDetailShowsPathForMalformedSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{

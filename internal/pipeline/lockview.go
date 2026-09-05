@@ -42,6 +42,7 @@ func (e *LockViewError) Unwrap() error { return e.Err }
 type readOnlyLockedGit struct {
 	snapshot string
 	commit   string
+	unlocked bool
 	err      error
 }
 
@@ -91,6 +92,20 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) (c
 				bySource[readOnlySourceKey(layer.Source, canonical, entry.Ref)] = locked
 				identity := readOnlyGitIdentity(canonical, entry.Ref)
 				byIdentity[identity] = append(byIdentity[identity], locked)
+			}
+			continue
+		}
+		if scope == lockfile.ScopeOrganization && doc.APIVersion == "" {
+			// An absent organization lock is an explicit unlocked authority: read
+			// commands may inspect it through the mutable cache, but a present lock
+			// must always validate and can never silently downgrade to this path.
+			for _, entry := range registries {
+				canonical, canonicalErr := readOnlyCanonicalURL(entry.URL)
+				if canonicalErr != nil {
+					viewErrors = append(viewErrors, canonicalErr)
+					continue
+				}
+				bySource[readOnlySourceKey(layer.Source, canonical, entry.Ref)] = readOnlyLockedGit{unlocked: true}
 			}
 			continue
 		}
@@ -152,6 +167,9 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) (c
 		if locked.err != nil {
 			return "", "", locked.err
 		}
+		if locked.unlocked {
+			return "", "", nil
+		}
 		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
 	})
 	return ctx, readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, release: releaseAll}
@@ -165,7 +183,7 @@ func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries
 	}
 	data, err := lockfile.ReadBytes(path)
 	if err != nil {
-		if scope == lockfile.ScopeOrganization && len(registries) == 0 && errors.Is(err, os.ErrNotExist) {
+		if scope == lockfile.ScopeOrganization && errors.Is(err, os.ErrNotExist) {
 			return lockfile.Document{}, nil
 		}
 		code := "lock.read"

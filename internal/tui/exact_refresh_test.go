@@ -18,6 +18,61 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
+func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	repo := t.TempDir()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(authority, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	registry := t.TempDir()
+	writeExactRefreshSkill(t, registry, "unlocked-org")
+
+	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
+	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
+	originalClone := cloneOrPull
+	loadOrgConfig = func() (*config.Config, error) {
+		return &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Required: true, SourceHarness: "factory"}}}, nil
+	}
+	loadGlobalConfig = func() (*config.Config, error) {
+		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+	}
+	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
+	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
+	t.Cleanup(func() {
+		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
+		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
+		cloneOrPull = originalClone
+	})
+
+	snapshot := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
+	if len(snapshot.errs) > 0 {
+		t.Fatalf("TUI snapshot rejected unlocked organization registry: %v", snapshot.errs)
+	}
+	found := false
+	for _, row := range snapshot.rows {
+		if row.Artifact.Name == "unlocked-org" && row.Artifact.Source == config.Organization {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("TUI snapshot rows do not contain unlocked organization resource: %#v", snapshot.rows)
+	}
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("TUI snapshot created organization lock: %v", err)
+	}
+}
+
 func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
