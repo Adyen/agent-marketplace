@@ -166,7 +166,7 @@ agent-marketplace sync --check                 # Check lock and output drift wit
 agent-marketplace status                       # Show exact locks, HARNESS TARGETS, refs, cache, drift
 agent-marketplace update                       # Advance Git locks and synchronize
 agent-marketplace update --bump                # Rewrite eligible refs before advancing locks
-agent-marketplace migrate --harnesses factory  # Rewrite v2 configs to v3
+agent-marketplace migrate --harnesses factory  # Remediate structural config issues
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
 agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery

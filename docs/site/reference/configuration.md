@@ -2,7 +2,7 @@
 
 The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
 
-Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. After editing configuration, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or `agent-marketplace sync --check` to report lock and output drift without changing files.
+Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. After editing the selected root file, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or `agent-marketplace sync --check` to report lock and output drift without changing files.
 
 ## File location and scope
 

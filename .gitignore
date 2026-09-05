@@ -32,4 +32,9 @@ e2e/e2e-report.json
 # IDEA
 /.idea/
 
+# Website
+/site/node_modules/
+/site/.vitepress/dist/
+/site/.vitepress/cache/
+
 .agents/lock.local.yaml

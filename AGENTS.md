@@ -55,8 +55,8 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
-- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; refuses required resources
-- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry
+- `agent-marketplace remove <resource>` / `remove --scope {user,repo,local}` — polymorphic remove: deletes explicit selections, appends exclude for auto-selected/default resources; explicit scope selects the machine/repo/local occurrence and preserves other scopes; refuses required resources and machine removal from repo/local scope
+- `agent-marketplace remove <name> --from <url> [--ref <ref>] [--path <path>] [--scope <scope>]` — remove a resource from a specific ad-hoc registry entry; without `<name>` removes the entire registry entry; `--path` narrows URL matching to an entry/subtree and `--scope` defaults to repo
 - `agent-marketplace lock [--scope user|repo|local|all|organization]` — create or minimally reconcile generated Git locks; `--check` reports required changes without writing and `--upgrade` refreshes all or targeted Git requirements
 - `agent-marketplace sync` — materialize from exact Git snapshots, minimally reconciling writable stale locks
 - `agent-marketplace sync --locked` — require fresh locks and forbid config or lock writes

@@ -16,6 +16,7 @@ func TestMain(m *testing.M) {
 		slog.Error("initialize isolated test home", "err", err)
 		os.Exit(1)
 	}
+	config.SetTestV3OrganizationConfigPath(nil, filepath.Join(home, "missing-org-config.yaml"))
 	cwd, err := os.Getwd()
 	if err != nil {
 		slog.Error("resolve pipeline test working directory", "err", err)

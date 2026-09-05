@@ -151,9 +151,10 @@ excluded by any layer (see below).
 How it works from a user's point of view:
 
 - The CLI reads every layer that exists, then **merges** them. The result is one
-  effective set of registries and resources. When a resource is both selected
-  and excluded across layers, the more specific layer (repo, then personal) wins
-  — except `required: true` resources, which no layer can exclude.
+  effective set of registries and resources. When a repo-scoped resource is both
+  selected and excluded across layers, the more specific layer (repo, then
+  personal) wins — except `required: true` resources, which no layer can exclude.
+  Machine-scoped resources are not suppressed by repo or checkout-local excludes.
 - **Machine-wide** layers materialize into your home harness root (e.g.
   `~/.factory/`); **repo** layers materialize into `<repo>/.factory/`. The two
   are complementary — a resource can exist at both scopes without conflict.
@@ -619,11 +620,12 @@ agent-marketplace remove platform-onboarding         # remove the whole bundle
 
 Instead of a Git URL, a registry entry can point at a local directory — handy
 for developing or testing resources before publishing them. A URL is treated as
-a local path when it starts with `/`, `~/`, `./`, or `../` (or is `.`/`..`) and
-does **not** end in `.git`. A hostless `file://` URL is local only when its
-decoded path does not end in `.git`; `file:///path/to/registry.git` is a remote
-Git registry, requires a `ref`, and participates in lockfiles. A `ref` on a
-plain local-directory entry is ignored rather than making it remote:
+a local path when it is `.`, starts with `./`, `/`, or `~/`, and does **not**
+end in `.git`. Parent traversal (`..` or a path containing a `..` component) is
+rejected. A hostless `file://` URL is local only when its decoded path does not
+end in `.git`; `file:///path/to/registry.git` is a remote Git registry, requires
+a `ref`, and participates in lockfiles. A `ref` on an accepted local directory
+is ignored rather than making it remote:
 
 ```yaml
 registries:
@@ -633,6 +635,17 @@ registries:
       include: [my-custom-skill]
 ```
 
+For a local-path registry, `path` may also be used as the registry location when
+`url` is omitted:
+
+```yaml
+registries:
+  - path: /tmp/local-skills    # `path` is the URL/location alias here
+    skills:
+      include: [my-custom-skill]
+```
+
+When `url` is present, `path` instead means a subdirectory within that registry.
 Local registries are read directly from disk (no clone or fetch), are excluded
 from `update` and Git lockfiles, and show `local` as their cache freshness in
 `status`.

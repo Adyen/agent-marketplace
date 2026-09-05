@@ -176,7 +176,7 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists. Required skills cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
 
 ## Git dependency locks
 
@@ -185,6 +185,8 @@ Remote Git requirements resolve to generated lockfiles owned by their configurat
 Normal sync retains compatible exact commits and minimally reconciles writable locks after configuration changes. `sync --locked` fails instead of changing config or locks. `sync --check` and `lock --check` are read-only: they do not recover transactions, resolve mutable refs, fetch or populate a cold cache, or create state roots. If a required exact snapshot is absent locally, check mode reports it as unavailable. Use `lock --upgrade` or `update` to advance Git resolutions deliberately. Lock reconciliation protects exact snapshots with a shared cache lease from acquisition through config-and-lock publication. Install, remove, update, and TUI config changes publish config and lock state transactionally; configured install discovery uses exact inventory for each valid locked layer and falls back to a mutable ref only for a registry whose own layer lock is missing.
 
 Plain local-directory registries are read live and never locked. This foundation does not include hosted Marketplace lock records, acquisition adapters, or integration.
+
+When a non-required resource is enabled in both machine and repo scopes, `remove` without `--scope` reports the ambiguity. Use `remove --scope user` or `remove --scope repo` to remove only the selected occurrence; the other scope remains enabled. An explicit scope never falls back to another scope when that scope has no occurrence. A machine-owned occurrence targeted from repo or local scope produces a boundary error. `--scope local` is for checkout-local selections and excludes and cannot bypass the machine/repo boundary. An unscoped removal with one unambiguous occurrence infers its effective layer, except that a repo-scoped auto-selected resource not explicitly selected by committed repo config is recorded as a checkout-local exclusion. Use `--scope repo` to edit committed repo config.
 
 ## Daily commands
 
