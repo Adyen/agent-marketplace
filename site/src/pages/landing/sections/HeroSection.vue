@@ -52,19 +52,18 @@ import TuiPreview from '../components/TuiPreview.vue'
 
 <style scoped>
 .hero {
-  --hero-accent: #55db89;
-  --hero-accent-strong: #78eba2;
+  --hero-accent: var(--vp-c-brand-1);
   position: relative;
   z-index: 1;
   overflow: hidden;
   padding: 120px 0 80px;
   background:
-    radial-gradient(circle at 76% 44%, rgba(37, 194, 102, 0.18), transparent 31rem),
-    linear-gradient(rgba(85, 219, 137, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(85, 219, 137, 0.045) 1px, transparent 1px),
-    #09110d;
+    radial-gradient(circle at 76% 44%, var(--am-hero-glow), transparent 31rem),
+    linear-gradient(var(--am-hero-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--am-hero-grid) 1px, transparent 1px),
+    var(--am-hero-bg);
   background-size: auto, 44px 44px, 44px 44px, auto;
-  color: #f5f8f6;
+  color: var(--am-hero-text);
 }
 
 .hero::after {
@@ -73,9 +72,9 @@ import TuiPreview from '../components/TuiPreview.vue'
   bottom: -22rem;
   width: 44rem;
   height: 44rem;
-  border: 1px solid rgba(85, 219, 137, 0.12);
+  border: 1px solid var(--am-hero-ring);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(85, 219, 137, 0.1), transparent 65%);
+  background: radial-gradient(circle, var(--am-hero-glow), transparent 65%);
   content: "";
   pointer-events: none;
 }
@@ -95,7 +94,7 @@ import TuiPreview from '../components/TuiPreview.vue'
 
 h1 {
   margin: 0 0 20px;
-  color: #f7faf8;
+  color: var(--am-hero-text);
   font-size: clamp(56px, 5.2vw, 72px);
   line-height: 0.99;
   letter-spacing: -0.052em;
@@ -105,7 +104,7 @@ h1 {
 .h1-sub {
   display: block;
   margin-top: 20px;
-  color: #b9c8bf;
+  color: var(--am-hero-text-muted);
   font-size: clamp(23px, 2.1vw, 29px);
   font-weight: 520;
   line-height: 1.32;
@@ -115,7 +114,7 @@ h1 {
 .lede {
   max-width: 56ch;
   margin: 0;
-  color: #aebcb4;
+  color: var(--am-hero-text-muted);
   font-size: 18px;
   line-height: 1.66;
 }
@@ -157,25 +156,18 @@ h1 {
 }
 
 .secondary {
-  border-color: rgba(255, 255, 255, 0.17);
-  background: rgba(255, 255, 255, 0.055);
-  color: #e3eae6;
+  border-color: var(--am-hero-ring);
+  background: var(--am-hero-surface);
+  color: var(--am-hero-text);
 }
 
 .secondary:hover {
-  border-color: rgba(85, 219, 137, 0.45);
-  background: rgba(85, 219, 137, 0.08);
-  color: #ffffff;
+  border-color: var(--hero-accent);
+  background: var(--am-accent-soft);
+  color: var(--am-hero-text);
 }
 
 .install {
-  --am-code-bg: rgba(4, 9, 6, 0.78);
-  --am-code-border: rgba(85, 219, 137, 0.2);
-  --am-code-shadow: rgba(0, 0, 0, 0.75);
-  --am-code-text: #eef5f0;
-  --am-on-accent: #07130c;
-  --vp-c-brand-1: var(--hero-accent);
-  --vp-c-brand-2: var(--hero-accent-strong);
   --am-technical-font-size: 14px;
   --am-technical-padding: 15px;
   margin-top: 30px;
@@ -191,29 +183,14 @@ h1 {
 }
 
 .product-stage {
-  --am-code-bg: #0b0f0d;
-  --am-code-bg-raised: #121915;
-  --am-code-border: rgba(167, 204, 180, 0.17);
-  --am-code-text: #edf4ef;
-  --am-code-muted: #9eb0a5;
-  --am-code-cyan: #7cd7da;
-  --am-code-warning: #f3c36d;
-  --am-code-selection: rgba(85, 219, 137, 0.12);
-  --vp-c-brand-1: var(--hero-accent);
   position: relative;
   min-width: 0;
   padding: 0 14px 14px;
 }
 
-.product-stage :deep(.terminal) {
-  box-shadow:
-    0 34px 44px rgba(0, 0, 0, 0.34),
-    0 0 52px rgba(45, 190, 104, 0.13);
-}
-
 .preview-caption {
   margin: 12px 20px 2px;
-  color: #91a198;
+  color: var(--am-hero-text-muted);
   font-size: 13.5px;
   line-height: 1.5;
 }

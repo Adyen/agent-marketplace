@@ -15,7 +15,7 @@ export default defineConfig({
   description:
     'A package manager for AI agent tooling. Distribute skills, commands, subagents and MCP servers from git registries into the native layout of every AI coding harness you use.',
   cleanUrls: true,
-  appearance: 'force-dark',
+  appearance: true,
 
   vite: {
     server: {

@@ -8,19 +8,3 @@ body {
   font-size: 15px;
   font-weight: 650;
 }
-
-/*
- * The landing hero is deliberately dark in both themes. Keep the navigation
- * in the same visual environment instead of leaving a light-theme strip above
- * it. Scope this to the landing route so future pages continue to follow the
- * selected VitePress theme.
- */
-body:has(.landing) .VPNavBar {
-  --vp-c-brand-1: #55db89;
-  --vp-c-text-1: #f5f8f6;
-  --vp-c-text-2: #aebcb4;
-}
-
-body:has(.landing) .VPNavBarTitle .title {
-  color: #55db89;
-}

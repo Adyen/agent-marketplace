@@ -8,7 +8,6 @@ import {
   targets,
   type Status
 } from '../data/harnesses'
-import CodeBlock from '../components/CodeBlock.vue'
 import SectionShell from '../components/SectionShell.vue'
 
 const KINDS = kinds.map((kind) => kind.id)
@@ -73,7 +72,7 @@ const legend = computed(() => {
       </button>
     </div>
 
-    <CodeBlock class="pane">
+    <div class="pane">
       <div
         v-for="row in rows"
         :key="row.kindId"
@@ -93,7 +92,7 @@ const legend = computed(() => {
           {{ metaFor(row.status).badge }}
         </span>
       </div>
-    </CodeBlock>
+    </div>
 
     <p v-if="supportingArtifacts.length" class="supporting-artifacts">
       <span>Also writes:</span>
@@ -146,9 +145,16 @@ const legend = computed(() => {
 }
 
 .pane {
-  padding: 0 22px 20px;
-  border-color: var(--am-code-border);
+  overflow-x: auto;
+  padding: 16px 22px 20px;
+  border: 1px solid var(--am-code-border);
+  border-radius: var(--am-radius-lg);
   background: var(--am-code-bg);
+  box-shadow:
+    0 24px 50px -34px var(--am-code-shadow),
+    inset 0 1px rgba(255, 255, 255, 0.025);
+  color: var(--am-code-text);
+  font-family: var(--vp-font-family-mono);
 }
 
 .row {
