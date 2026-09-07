@@ -272,24 +272,16 @@ func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
 	}
 }
 
-// TestAggregateProtectedPathsKeysOffOwnership is the bead
-// agent-marketplace-5exj.29 acceptance test: the prune fence is driven by
-// harness.TargetInfo.OwnershipReconciledAggregates, not by SymlinkOnly.
+// TestAggregateProtectedPathsKeysOffOwnership retains the bead
+// agent-marketplace-5exj.29 acceptance contract: the prune fence follows
+// harness.TargetInfo.OwnershipReconciledAggregates, not installation mode.
 //
-// The interesting cases are targets that do not exist in the registry — an
-// ownership-reconciled target that is NOT symlink-only (what the
-// marker-to-ownership migration produces the moment Cursor, Claude, Factory,
-// Windsurf or Gemini flips) and a symlink-only target that is NOT
-// ownership-reconciled. Neither can be expressed by naming a real target, and
-// mutating harness.TargetInfoMap to invent one would leak global state across
-// tests, so the predicate is exercised through aggregateProtectedPathsFor over
-// synthetic TargetInfo values instead.
+// Synthetic declarations exercise both reconciliation policies without
+// mutating the global target registry. File and symlink installation share
+// the same aggregate fence; the former SymlinkOnly capability is removed.
 //
-// Both mixed rows FAIL against the old `!info.SymlinkOnly` predicate — the
-// ownership-reconciled non-symlink target would be unprotected (its user-owned
-// aggregates decoded and rewritten by the marker-strip walk the migration
-// exists to escape), and the symlink-only marker-merge target would be
-// protected (its stale managed entries never pruned).
+// Ownership-reconciled aggregates must remain protected from marker stripping,
+// while marker-merged aggregates must remain eligible for stale-entry pruning.
 func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 	aggregates := harness.AggregateFileSet{
 		Project: []string{"hooks.v1.json", "mcp_config.json"},
@@ -304,38 +296,18 @@ func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 		wantProtected bool
 	}{
 		{
-			name: "ownership-reconciled and symlink-only: the Devin shape",
+			name: "ownership-reconciled aggregates",
 			info: harness.TargetInfo{
 				AggregateFiles:                aggregates,
 				OwnershipReconciledAggregates: true,
-				SymlinkOnly:                   true,
 			},
 			wantProtected: true,
 		},
 		{
-			name: "ownership-reconciled but NOT symlink-only: the next migrated target",
-			info: harness.TargetInfo{
-				AggregateFiles:                aggregates,
-				OwnershipReconciledAggregates: true,
-				SymlinkOnly:                   false,
-			},
-			wantProtected: true,
-		},
-		{
-			name: "symlink-only but NOT ownership-reconciled: still marker-merged",
+			name: "marker-merged aggregates",
 			info: harness.TargetInfo{
 				AggregateFiles:                aggregates,
 				OwnershipReconciledAggregates: false,
-				SymlinkOnly:                   true,
-			},
-			wantProtected: false,
-		},
-		{
-			name: "neither property: the five marker-merge targets",
-			info: harness.TargetInfo{
-				AggregateFiles:                aggregates,
-				OwnershipReconciledAggregates: false,
-				SymlinkOnly:                   false,
 			},
 			wantProtected: false,
 		},
@@ -375,15 +347,10 @@ func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 	}
 }
 
-// TestOwnershipAndSymlinkOnlyAreIndependentProperties guards the documentation
-// on the two fields. They are unrelated properties that Devin alone happens to
-// hold today, and that coincidence is exactly what made the old SymlinkOnly
-// proxy look correct. The registry may legitimately grow a target with either
-// one alone — that is what the migration does — so this test does NOT require
-// them to agree. It requires the FENCE to follow ownership: every
-// ownership-reconciled target with declared aggregates is protected, and no
-// other target is, whatever its SymlinkOnly value.
-func TestOwnershipAndSymlinkOnlyAreIndependentProperties(t *testing.T) {
+// TestAggregateFenceFollowsOwnership guards the registry-wide contract:
+// every ownership-reconciled target with declared aggregates is protected,
+// and no other target is. Installation mode is not a target capability.
+func TestAggregateFenceFollowsOwnership(t *testing.T) {
 	ownership := make([]hcc.Target, 0, len(harness.TargetInfoMap))
 	for _, target := range sortedTargets(t) {
 		info := harness.TargetInfoMap[target]
@@ -394,8 +361,8 @@ func TestOwnershipAndSymlinkOnlyAreIndependentProperties(t *testing.T) {
 			protected := len(aggregateProtectedPaths(target, machineScope)) > 0
 			want := info.OwnershipReconciledAggregates && len(info.AggregateFilesForScope(machineScope)) > 0
 			if protected != want {
-				t.Errorf("%s (machine_scope=%v): protected = %v, want %v (ownership_reconciled = %v, symlink_only = %v); the fence must follow ownership, never SymlinkOnly",
-					target, machineScope, protected, want, info.OwnershipReconciledAggregates, info.SymlinkOnly)
+				t.Errorf("%s (machine_scope=%v): protected = %v, want %v (ownership_reconciled = %v); the fence must follow ownership",
+					target, machineScope, protected, want, info.OwnershipReconciledAggregates)
 			}
 		}
 	}

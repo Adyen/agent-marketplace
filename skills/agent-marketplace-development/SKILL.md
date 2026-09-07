@@ -175,14 +175,11 @@ Preserve these invariants:
   `ResolveDestinations`; never flatten Codex into one root or let a repo
   symlink escape the repository. `.agents/skills` alone is not Codex
   installation evidence.
-- **Symlink-only targets refuse file mode.** A target that sets
-  `harness.TargetInfo.SymlinkOnly` (Devin) rejects
-  `config.MaterializationModeFile` with
-  `materialize.devin.symlink-required` rather than degrading to regular
-  files. Do not add a fallback. `SymlinkOnly` is about per-resource
-  artifact shape only and is INDEPENDENT of
-  `OwnershipReconciledAggregates`; Devin holding both is coincidence, so
-  never use one as a proxy for the other.
+- **Installation mode is generic distribution policy.** Every target uses
+  the same file-copy or symlink materializer, selected by configuration.
+  Compilers describe native artifact paths and contents, not installation
+  mode. Shared-entry reconciliation remains independent: never infer
+  `OwnershipReconciledAggregates` from how resource files are installed.
 - **Gemini is not a skill-link exception.** Gemini CLI discovers native
   Agent Skills from `.gemini/skills` and the generic `.agents/skills`
   alias; within a tier, `.agents/skills` takes precedence over

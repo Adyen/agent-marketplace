@@ -318,7 +318,16 @@ materialization:
 
 A repository setting affects project-scoped output only. In file mode, Agent Marketplace records managed paths in `.agents/materialization-manifest.yaml` so stale files can be reconciled safely.
 
-The Devin target is symlink-only. Selecting `file` mode with Devin produces `materialize.devin.symlink-required` for that target rather than silently changing modes.
+Use `targets` when one harness needs a different mode from the scope default:
+
+```yaml
+materialization:
+  mode: file
+  targets:
+    devin: symlink
+```
+
+Target overrides follow the same layer and scope precedence as `mode`. All targets, including Devin, support both modes through the generic materializer. Shared hooks and MCP configuration retain their existing reconciliation and ownership rules in either mode; this setting controls generated resource files and trees, not shared-entry ownership.
 
 ## Name collisions
 

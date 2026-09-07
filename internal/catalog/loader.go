@@ -416,6 +416,7 @@ func scanSubBundlesWalk(dir string, bundles *[]string) {
 //     handled by hasMultiSkillSubdirs only when AutodetectStrict returns false.
 var skippedScanDirs = map[string]struct{}{
 	".git":             {},
+	".github":          {},
 	"node_modules":     {},
 	".cache":           {},
 	"test":             {},
