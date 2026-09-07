@@ -1305,7 +1305,7 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 		}
 		generation := m.beginRequest(requestDetail)
 		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
-			return loadDetailContent(r, generation, width, true)
+			return loadDetailContent(r, generation, previewWidthFor(width), true)
 		}
 		return loadBundleDetailContent(m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 	}

@@ -61,11 +61,12 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	m.height = 24
 	generation := m.beginRequest(requestDetail)
 	m.enterDetailPane()
-	initial := loadDetailContent(r, generation, 80, false)().(detailContentMsg)
+	initialWidth := 47
+	initial := loadDetailContent(r, generation, initialWidth, false)().(detailContentMsg)
 	updated, _ := m.Update(initial)
 	m = updated.(Model)
-	if m.detailRenderWidth != 80 {
-		t.Fatalf("initial render width = %d", m.detailRenderWidth)
+	if m.detailRenderWidth != initialWidth {
+		t.Fatalf("initial render width = %d, want %d", m.detailRenderWidth, initialWidth)
 	}
 
 	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
@@ -74,13 +75,14 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 		t.Fatal("resize did not schedule a detail rerender")
 	}
 	resized := cmd().(detailContentMsg)
-	if resized.width != 50 || !resized.keepScroll {
-		t.Fatalf("resize message = %+v", resized)
+	wantWidth := 29
+	if resized.width != wantWidth || !resized.keepScroll {
+		t.Fatalf("resize message = %+v, want width %d", resized, wantWidth)
 	}
 	updated, _ = m.Update(resized)
 	m = updated.(Model)
-	if m.detailRenderWidth != 50 {
-		t.Fatalf("accepted render width = %d, want 50", m.detailRenderWidth)
+	if m.detailRenderWidth != wantWidth {
+		t.Fatalf("accepted render width = %d, want %d", m.detailRenderWidth, wantWidth)
 	}
 	assertTerminalBounds(t, m.View(), 50, 12)
 }
