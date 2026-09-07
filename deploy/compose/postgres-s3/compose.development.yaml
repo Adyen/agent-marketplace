@@ -16,7 +16,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
     volumes:
-      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+      - ./config.yaml:/app/marketplace.yaml:ro
     secrets: !reset []
 
   worker:
@@ -26,5 +26,5 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
     volumes:
-      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+      - ./config.yaml:/app/marketplace.yaml:ro
     secrets: !reset []

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	marketplaceapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -89,6 +90,110 @@ func TestBuildRegistryRevision(t *testing.T) {
 		if strings.Contains(string(rev.ManifestPayload), field) {
 			t.Fatalf("registry revision manifest exposed %q: %s", field, rev.ManifestPayload)
 		}
+	}
+}
+
+func TestBuildRegistryRevisionRecursivelyIngestsNestedBundles(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	for _, fixture := range []struct {
+		plugin string
+		name   string
+	}{
+		{plugin: "alpha", name: "skill-a"},
+		{plugin: "teams/platform/beta", name: "skill-b"},
+	} {
+		skillDir := filepath.Join(repoDir, "plugins", fixture.plugin, "skills", fixture.name)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + fixture.name + "\ndescription: Nested skill\nlicense: MIT\n---\nNested body.\n"
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collectionDir := filepath.Join(repoDir, "plugins", "alpha", "collections", "nested-defaults")
+	if err := os.MkdirAll(collectionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	collection := "name: nested-defaults\nversion: 1.0.0\nresources:\n  - name: skill-a\n    kind: skill\n"
+	if err := os.WriteFile(filepath.Join(collectionDir, "COLLECTION.yaml"), []byte(collection), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+	source := store.Registry{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots:       []store.RegistryRoot{{Path: "plugins", SourceHarness: "claude"}},
+	}
+
+	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevision: %v", err)
+	}
+	got := make(map[string]bool)
+	for _, resource := range rev.Resources {
+		got[resource.Coordinate.Kind+"/"+resource.Coordinate.Name] = true
+	}
+	for _, want := range []string{"skill/skill-a", "skill/skill-b", "collection/nested-defaults"} {
+		if !got[want] {
+			t.Errorf("missing recursively discovered resource %q: %v", want, got)
+		}
+	}
+}
+
+func TestBuildRegistryRevisionRejectsNestedBundleDiagnostics(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	skillDir := filepath.Join(repoDir, "plugins", "broken", "skills", "broken")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: [broken\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+	source := store.Registry{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		Roots:       []store.RegistryRoot{{Path: "plugins", SourceHarness: "claude"}},
+	}
+
+	_, err = BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err == nil || !strings.Contains(err.Error(), diag.CodeIngestClaudeLoadSkillFailed) {
+		t.Fatalf("BuildRegistryRevision error = %v", err)
+	}
+}
+
+func TestBuildRegistryRevisionRejectsMissingRoot(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	commit, err := repoCommit(repoDir)
+	if err != nil {
+		t.Fatalf("repo commit: %v", err)
+	}
+	source := store.Registry{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"file://" + repoDir},
+		Acquisition: store.AcquisitionMirror,
+		Roots:       []store.RegistryRoot{{Path: "missing", SourceHarness: "claude"}},
+	}
+
+	_, err = BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err == nil || !strings.Contains(err.Error(), `root path "missing" does not exist`) {
+		t.Fatalf("BuildRegistryRevision error = %v", err)
 	}
 }
 

@@ -17,7 +17,7 @@ The mounted `config.dsn-file.example.yaml` is authoritative for the S3 bucket, r
    chmod 0400 secrets/marketplace-postgres-password secrets/marketplace-postgres-dsn
    ```
 
-2. Replace the non-secret placeholders in `config.dsn-file.example.yaml` (S3 bucket, region, endpoint, and canonical URL), or mount your own equivalent file at `/etc/agent-marketplace/config.yaml`.
+2. Replace the non-secret placeholders in `config.dsn-file.example.yaml` (S3 bucket, region, endpoint, and canonical URL), or mount your own equivalent Marketplace operator configuration at `/app/marketplace.yaml`.
 3. Provide S3 access through workload identity/IAM or the platform's AWS credentials-file integration. Do not add `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, or other static credential declarations to this Compose path.
 4. Require TLS and authentication at the reverse proxy or a private network boundary, and restrict access to the proxy port. The application has no built-in authentication.
 5. Validate the merged file and start it:

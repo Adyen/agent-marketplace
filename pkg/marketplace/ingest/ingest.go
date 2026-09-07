@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -115,33 +116,21 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			return rev, fmt.Errorf("stat root %q: %w", root.Path, err)
 		}
 
-		cat, err := catalog.Load(rootDir, root.SourceHarness)
+		entries, diagnostics, err := discoverRootEntries(rootDir, dir, root, registry, origin)
 		if err != nil {
 			return rev, fmt.Errorf("load catalog at %q: %w", root.Path, err)
 		}
-
-		for _, d := range cat.Diagnostics {
+		for _, d := range diagnostics {
 			if d.IsError() {
 				slog.Warn("catalog diagnostic", "path", root.Path, "code", d.Code, "message", d.Message)
 			} else {
 				slog.Info("catalog diagnostic", "path", root.Path, "code", d.Code, "message", d.Message)
 			}
 		}
-		if diag.HasErrors(cat.Diagnostics) {
-			d := firstErrorDiagnostic(cat.Diagnostics)
+		if diag.HasErrors(diagnostics) {
+			d := firstErrorDiagnostic(diagnostics)
 			return rev, fmt.Errorf("catalog error at %q: %s: %s", root.Path, d.Code, d.Message)
 		}
-
-		cols, err := collection.DiscoverCollections(rootDir, string(registry.Slug), origin, registry.Ref, root.Path)
-		if err != nil {
-			return rev, fmt.Errorf("discover collections at %q: %w", root.Path, err)
-		}
-		colEntries, err := catalog.EntriesFromCollections(cols)
-		if err != nil {
-			return rev, fmt.Errorf("collection entries at %q: %w", root.Path, err)
-		}
-
-		entries := append(cat.Entries, colEntries...)
 
 		for _, entry := range entries {
 			kind := api.FromIR(entry.Kind)
@@ -530,6 +519,51 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		ResourceArchives:      resourceArchives,
 		ResourceArchiveDigest: resourceArchiveDigests,
 	}, nil
+}
+
+func discoverRootEntries(rootDir, registryDir string, root store.RegistryRoot, registry store.Registry, origin string) ([]catalog.Entry, []diag.Diagnostic, error) {
+	discovered, err := catalog.Discover(rootDir, root.SourceHarness)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := errors.Join(discovered.Errors...); err != nil {
+		return nil, nil, err
+	}
+
+	bundleDirs := []string{rootDir}
+	catalogs := map[string]catalog.LoadedCatalog{rootDir: discovered}
+	if len(discovered.SubBundles) > 0 {
+		bundleDirs = bundleDirs[:0]
+		catalogs = discovered.SubBundles
+		for bundleDir := range catalogs {
+			bundleDirs = append(bundleDirs, bundleDir)
+		}
+		sort.Strings(bundleDirs)
+	}
+
+	var entries []catalog.Entry
+	var diagnostics []diag.Diagnostic
+	for _, bundleDir := range bundleDirs {
+		bundle := catalogs[bundleDir]
+		entries = append(entries, bundle.Entries...)
+		diagnostics = append(diagnostics, bundle.Diagnostics...)
+
+		rel, err := filepath.Rel(registryDir, bundleDir)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, nil, fmt.Errorf("nested bundle %q escapes registry directory", bundleDir)
+		}
+		bundlePath := filepath.ToSlash(rel)
+		cols, err := collection.DiscoverCollections(bundleDir, string(registry.Slug), origin, registry.Ref, bundlePath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("discover collections at %q: %w", bundlePath, err)
+		}
+		colEntries, err := catalog.EntriesFromCollections(cols)
+		if err != nil {
+			return nil, nil, fmt.Errorf("collection entries at %q: %w", bundlePath, err)
+		}
+		entries = append(entries, colEntries...)
+	}
+	return entries, diagnostics, nil
 }
 
 func firstErrorDiagnostic(ds []diag.Diagnostic) diag.Diagnostic {

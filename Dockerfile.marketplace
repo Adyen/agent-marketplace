@@ -26,7 +26,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -q -O - -T 5 http://127.0.0.1:9090/readyz >/dev/null || exit 1
 ENTRYPOINT ["/app/agent-marketplace"]
-CMD ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "api"]
+CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
 
 FROM ${ALPINE_RUNTIME_IMAGE} AS worker
 RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
@@ -37,4 +37,4 @@ WORKDIR /app
 COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
 USER marketplace
 ENTRYPOINT ["/app/agent-marketplace"]
-CMD ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "worker"]
+CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "worker"]
