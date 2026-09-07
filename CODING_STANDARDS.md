@@ -70,7 +70,7 @@ Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`
 
 Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns a small set of direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
 
-TUI QA commands must run without direnv or organization-specific infrastructure. Optional local values may come from the environment or ignored `.envrc.local`; tracked files and emitted snapshots must not contain organization-specific image, certificate, registry, or infrastructure identifiers.
+TUI QA commands must run without direnv or organization-specific infrastructure. Optional local values may come from the environment or ignored `.envrc.local`; tracked commands, reports, and fixtures must not contain organization-specific image, certificate, registry, or infrastructure identifiers.
 
 ## Errors and observability
 
