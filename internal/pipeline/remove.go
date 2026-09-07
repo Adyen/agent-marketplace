@@ -1413,29 +1413,6 @@ func inferMarketplaceRemoveScope(source config.Source) Scope {
 	return ScopeRepo
 }
 
-// isCollectionInstalled reports whether any layer of the merged config
-// contains a collection ref with the given name, including registry-scoped
-// collection selections.
-func isCollectionInstalled(cfg *config.Config, name string) bool {
-	if cfg == nil {
-		return false
-	}
-	name = strings.TrimSpace(name)
-	for _, n := range cfg.Collections.Include {
-		if strings.TrimSpace(n) == name {
-			return true
-		}
-	}
-	for _, entry := range cfg.Registries {
-		for _, n := range entry.Collections.Include {
-			if strings.TrimSpace(n) == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // enrichRemoveError wraps config-level disambiguation errors with an
 // actionable hint that tells the user which --from/--path flags to use.
 func enrichRemoveError(err error, name string, target *resolver.ResolvedArtifact) error {
