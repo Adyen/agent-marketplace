@@ -489,7 +489,11 @@ func prepareBundleSource(name, content string) string {
 	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || isJSONPath(name) {
 		return prepared
 	}
-	return "```text\n" + prepared + "\n```"
+	fence := "```"
+	for strings.Contains(prepared, fence) {
+		fence += "`"
+	}
+	return fence + "text\n" + prepared + "\n" + fence
 }
 
 // readDetailSource reads a resource source file (SKILL.md inside a directory,
@@ -665,22 +669,11 @@ func renderBundleEntry(t *bundleTree, relative string, width int) string {
 // following symlinks, keeping an enumeration/read race inside the resource
 // root and the regular-file-only preview contract.
 func renderBundleFile(root, relative string, width int) string {
-	path, err := safeBundlePath(root, relative)
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := openBundleFile(root, relative)
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	if !info.Mode().IsRegular() {
-		return "Error reading file: source is not a regular file"
-	}
 	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
 	if err != nil {
 		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
@@ -694,7 +687,7 @@ func renderBundleContent(relative string, data []byte, truncated bool, width int
 	if truncated {
 		data = data[:maxDetailSourceBytes]
 	}
-	content := prepareDetailSource(relative, string(data))
+	content := prepareBundleSource(relative, string(data))
 	if truncated {
 		content += "\n\n> " + detailTruncationMarker + "\n"
 		slog.Info("tui bundle preview source truncated", "path", relative, "limit_bytes", maxDetailSourceBytes)
@@ -704,6 +697,30 @@ func renderBundleContent(relative string, data []byte, truncated bool, width int
 		return boundRenderedDetail(content)
 	}
 	return boundRenderedDetail(rendered)
+}
+
+func openBundleFile(root, relative string) (*os.File, error) {
+	if _, err := safeBundlePath(root, relative); err != nil {
+		return nil, err
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	file, err := dir.OpenFile(filepath.FromSlash(relative), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("source is not a regular file")
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func safeBundlePath(root, relative string) (string, error) {

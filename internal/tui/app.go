@@ -583,6 +583,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		generation := m.beginRequest(requestSnapshot)
 		return m, tea.Batch(loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), toastExpiryCmd(2*time.Second))
 
+	case bundlePagerClosedMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		m.finishOperation(msg.operation)
+		if msg.err != nil {
+			m.recordOperationFailure(operationPager, diagnosticPager, msg.err)
+			slog.Error("bundle pager failed", "err", msg.err)
+			m.toast = fmt.Sprintf("pager error: %v", msg.err)
+			m.toastExp = time.Now().Add(5 * time.Second)
+			return m, toastExpiryCmd(5 * time.Second)
+		}
+		m.recordOperationSuccess(operationPager)
+		return m, nil
+
 	case editConfigPathMsg:
 		if !m.acceptsOperation(msg.operation) {
 			return m, nil
@@ -1134,6 +1149,8 @@ func (m *Model) rebuildOpenBundle() {
 
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, m.keys.DetailPager):
+		return m.openBundlePager()
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
 		m.detailKey = ""
@@ -1375,9 +1392,14 @@ func (m Model) View() string {
 		preview.Height = bodyHeight
 		tree := renderBundleTree(m, listWidth, bodyHeight)
 		joined := lipgloss.JoinHorizontal(lipgloss.Top, tree, preview.View())
-		footer := "esc/q back · ↑/↓/j/k navigate · h/l fold · enter toggle · pgup/pgdn preview · Ctrl+C quit"
+		pagerHint := m.keys.DetailPager.Help().Key + " pager"
+		actions := pagerHint + " · esc/q back · Ctrl+C quit"
+		footer := footerWithRight("↑/↓/j/k navigate · h/l fold · enter toggle · pgup/pgdn preview", actions, m.width)
 		if compactTerminalLayout(m) {
-			footer = "esc/q back · Ctrl+C quit"
+			footer = actions
+		}
+		if m.toast != "" && !m.toastExp.IsZero() {
+			footer = footerWithRight(styleToast.Render(sanitizeTerminalData(m.toast, terminalSingleLine)), "esc/q back · Ctrl+C quit", m.width)
 		}
 		return fitTerminalWithFooter(joined, footer, m.width, m.height)
 	}

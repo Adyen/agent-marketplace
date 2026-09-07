@@ -74,7 +74,8 @@ type keyMap struct {
 	EditConfigCancel  key.Binding
 
 	// Detail pane
-	DetailBack key.Binding
+	DetailBack  key.Binding
+	DetailPager key.Binding
 
 	// Search mode
 	SearchConfirm   key.Binding
@@ -153,7 +154,8 @@ var defaultKeyMap = keyMap{
 	EditConfigCancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 
 	// Detail pane
-	DetailBack: key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "back to list")),
+	DetailBack:  key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "back to list")),
+	DetailPager: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open bundle file in $PAGER")),
 
 	// Search mode
 	SearchConfirm:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm search")),
@@ -192,7 +194,7 @@ func (k keyMap) navigationBindings() []key.Binding {
 
 // actionBindings returns the action-related key bindings.
 func (k keyMap) actionBindings() []key.Binding {
-	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.Sync, k.Update}
+	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.Harness, k.EditConfig, k.DetailPager, k.Sync, k.Update}
 }
 
 // toggleModalBindings returns the toggle-modal key bindings.

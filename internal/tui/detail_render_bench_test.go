@@ -28,6 +28,44 @@ func BenchmarkCaptureAggregateDetailDiskIO(b *testing.B) {
 	}
 }
 
+func BenchmarkBundlePagerDispatch(b *testing.B) {
+	m := bundlePagerTestModel(b)
+	b.Setenv("PAGER", os.Args[0])
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, cmd := m.openBundlePager(); cmd == nil {
+			b.Fatal("no pager command")
+		}
+	}
+}
+
+func BenchmarkBundleBrowserView(b *testing.B) {
+	m := bundlePagerTestModel(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if m.View() == "" {
+			b.Fatal("empty browser")
+		}
+	}
+}
+
+func BenchmarkBundleSourcePreview(b *testing.B) {
+	root := b.TempDir()
+	content := strings.Repeat("def example(value):\n    if value:\n        return value + 1\n\n", 40)
+	if err := os.WriteFile(filepath.Join(root, "script.py"), []byte(content), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if output := renderBundleFile(root, "script.py", 80); output == "" {
+			b.Fatal("empty preview")
+		}
+	}
+}
+
 func BenchmarkCaptureSnapshotTraversalDiskIO(b *testing.B) {
 	for _, tc := range []struct {
 		name  string

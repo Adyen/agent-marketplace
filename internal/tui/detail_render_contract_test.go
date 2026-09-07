@@ -13,6 +13,38 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestBundlePreviewPreservesSourceWhitespace(t *testing.T) {
+	for _, name := range []string{"script.py", "notes.txt", "config.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			content := "first  line\nsecond line\n\n\n  indented\n    nested  content\n```\n**literal**\nlast line\n"
+			if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			output := ansi.Strip(renderBundleFile(root, name, 80))
+			lines := strings.Split(output, "\n")
+			for i, line := range lines {
+				if strings.TrimSpace(line) != "first  line" {
+					continue
+				}
+				margin := line[:strings.Index(line, "first")]
+				want := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+				if len(lines)-i < len(want) {
+					t.Fatalf("preview lost source lines:\n%s", output)
+				}
+				for j, expected := range want {
+					got := strings.TrimRight(strings.TrimPrefix(lines[i+j], margin), " ")
+					if got != expected {
+						t.Errorf("source line %d = %q, want %q", j+1, got, expected)
+					}
+				}
+				return
+			}
+			t.Fatalf("preview lost the first source line:\n%s", output)
+		})
+	}
+}
+
 func TestDetailSourceAndRenderedOutputAreBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large.md")
 	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1024)), 0o644); err != nil {
