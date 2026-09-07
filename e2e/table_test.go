@@ -3683,14 +3683,15 @@ registries:
 	},
 	// ===== devin =====
 	{
-		Name: "devin/project_scope_symlinks_and_aggregate_preservation",
-		Desc: "Given a Devin harness with a skill, a command, a subagent, and an MCP server plus a handwritten mcp_config.json entry, When sync runs, Then skills and commands are directory symlinks under .devin/skills, subagents are file symlinks under .devin/agents, mcp_config.json stays a regular file that gains the generated entry, keeps the handwritten entry, and carries no in-file ownership marker",
+		Name: "devin/project_mode_lifecycle_and_aggregate_preservation",
+		Desc: "Given all five Devin resource kinds and handwritten shared entries, When sync switches between symlink and file modes and then prunes, Then resources follow the configured mode while shared files retain handwritten content and ownership-safe reconciliation",
 		Registries: []RegistryDef{
 			{Name: "devin-reg",
 				Skills:     []Skill{{Name: "devin-skill", Description: "A Devin skill"}},
 				Commands:   []Command{{Name: "devin-command", Description: "A Devin command"}},
 				Subagents:  []Subagent{{Name: "devin-agent", Description: "A Devin subagent"}},
 				MCPServers: []MCPServer{{Name: "devin-mcp", Command: "devin-mcp-bin"}},
+				Files:      map[string]string{"hooks/hooks.json": `{"hooks":{"PostToolUse":[{"type":"command","command":"echo generated-hook"}]}}`},
 			},
 		},
 		// harnesses is required on the global layer and is inherited by the
@@ -3710,10 +3711,14 @@ registries:
       - devin-command
     subagents:
       - devin-agent
+    hooks:
+      - PostToolUse-command
     mcp:
       - devin-mcp
 `,
 		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/.devin/hooks.v1.json",
+				Body: "{\n  \"PostToolUse\": [{\"type\":\"command\",\"command\":\"echo handwritten-hook\"}]\n}\n"},
 			{Action: ActionWriteFile, Path: "/workspace/.devin/mcp_config.json",
 				Body: "{\n  \"mcpServers\": {\n    \"handwritten\": { \"command\": \"user-owned-binary\" }\n  }\n}\n"},
 			{Args: []string{"sync"}, MustPass: true,
@@ -3726,6 +3731,7 @@ registries:
 				FileContains: map[string]string{
 					"/workspace/.devin/skills/devin-command/SKILL.md": "x-agent-marketplace-kind: command",
 					"/workspace/.devin/mcp_config.json":               "devin-mcp",
+					"/workspace/.devin/hooks.v1.json":                 "echo generated-hook",
 				},
 				FileNotContains: map[string]string{
 					// Devin ownership is proven from the durable state root, never
@@ -3736,6 +3742,29 @@ registries:
 				FileContains: map[string]string{
 					// The handwritten entry survives reconciliation.
 					"/workspace/.devin/mcp_config.json": "user-owned-binary",
+				}},
+			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: file\n",
+				Args: []string{"sync"}, MustPass: true,
+				RegularFiles:   []string{"/workspace/.devin/skills/devin-skill/SKILL.md", "/workspace/.devin/skills/devin-command/SKILL.md", "/workspace/.devin/agents/devin-agent.md"},
+				PathsUnchanged: []string{"/workspace/.devin/mcp_config.json", "/workspace/.devin/hooks.v1.json"}},
+			{Args: []string{"sync", "--check"}, MustPass: true,
+				PathsUnchanged: []string{"/workspace/.devin"}},
+			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: symlink\n",
+				Args: []string{"sync"}, MustPass: true,
+				Symlinks:       []string{"/workspace/.devin/skills/devin-skill", "/workspace/.devin/skills/devin-command", "/workspace/.devin/agents/devin-agent.md"},
+				PathsUnchanged: []string{"/workspace/.devin/mcp_config.json", "/workspace/.devin/hooks.v1.json"}},
+			{Action: ActionWriteLocalConfig, Body: "materialization:\n  mode: file\n",
+				Args: []string{"sync"}, MustPass: true},
+			{Action: ActionWriteRepoConfig, Body: "registries: []\n",
+				Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.devin/skills/devin-skill", "/workspace/.devin/skills/devin-command", "/workspace/.devin/agents/devin-agent.md"},
+				FileContains: map[string]string{
+					"/workspace/.devin/mcp_config.json": "user-owned-binary",
+					"/workspace/.devin/hooks.v1.json":   "echo handwritten-hook",
+				},
+				FileNotContains: map[string]string{
+					"/workspace/.devin/mcp_config.json": "devin-mcp",
+					"/workspace/.devin/hooks.v1.json":   "echo generated-hook",
 				}},
 		},
 	},
@@ -3808,8 +3837,8 @@ registries:
 		},
 	},
 	{
-		Name: "devin/machine_scope_routes_to_user_root",
-		Desc: "Given a Devin harness whose registry is declared in the global (machine-scope) config, When sync runs, Then skills, commands, subagents and the MCP aggregate are materialized under Devin's machine root ~/.config/devin and nothing is written into the repo's .devin",
+		Name: "devin/machine_file_mode_routes_to_user_root",
+		Desc: "Given file mode and a Devin registry in the global config, When sync runs, Then skills, commands, subagents and the MCP aggregate are regular outputs under ~/.config/devin and nothing is written into the repo's .devin",
 		Registries: []RegistryDef{
 			{Name: "devin-machine-reg",
 				Skills:     []Skill{{Name: "machine-skill", Description: "A machine-scope Devin skill"}},
@@ -3823,6 +3852,8 @@ registries:
 		GlobalCfg: `
 harnesses:
   - devin
+materialization:
+  mode: file
 registries:
   - url: {{REG:devin-machine-reg}}
     ref: main
@@ -3837,12 +3868,12 @@ registries:
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
-				Symlinks: []string{
-					"/root/.config/devin/skills/machine-skill",
-					"/root/.config/devin/skills/machine-command",
+				RegularFiles: []string{
+					"/root/.config/devin/skills/machine-skill/SKILL.md",
+					"/root/.config/devin/skills/machine-command/SKILL.md",
 					"/root/.config/devin/agents/machine-agent.md",
+					"/root/.config/devin/mcp_config.json",
 				},
-				RegularFiles: []string{"/root/.config/devin/mcp_config.json"},
 				FileContains: map[string]string{
 					"/root/.config/devin/skills/machine-command/SKILL.md": "x-agent-marketplace-kind: command",
 					"/root/.config/devin/mcp_config.json":                 "machine-mcp",

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -4319,77 +4320,118 @@ func TestRunFileModePrunesManifestWhenHarnessRootIsAbsent(t *testing.T) {
 }
 
 func TestRunFileModePortableManifestPruneAndMigration(t *testing.T) {
-	repoRoot := t.TempDir()
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	for _, target := range []struct {
+		name        hcc.Target
+		projectRoot string
+		userRoot    string
+	}{
+		{hcc.TargetClaude, ".claude", ".claude"},
+		{hcc.TargetFactory, ".factory", ".factory"},
+		{hcc.TargetCursor, ".cursor", ".cursor"},
+		{hcc.TargetWindsurf, ".windsurf", ".codeium/windsurf"},
+		{hcc.TargetGemini, ".gemini", ".gemini"},
+		{hcc.TargetDevin, ".devin", ".config/devin"},
+		{hcc.TargetCodex, ".agents", ".agents"},
+	} {
+		for _, machine := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/machine=%v", target.name, machine), func(t *testing.T) {
+				repoRoot, homeDir := devinEnv(t)
+				t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
+				root, source := filepath.Join(repoRoot, target.projectRoot), config.RepoCommitted
+				manifestPath := filepath.Join(repoRoot, ".agents", "materialization-manifest.yaml")
+				if machine {
+					root, source = filepath.Join(homeDir, target.userRoot), config.UserPersonal
+					manifestPath = filepath.Join(homeDir, ".agent-marketplace", "materialization-manifest.yaml")
+				}
 
-	sourceDir := filepath.Join(t.TempDir(), "portable-skill")
-	if err := os.MkdirAll(filepath.Join(sourceDir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("---\nname: portable-skill\ndescription: portable\n---\n\nbody"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "helper.sh"), []byte("echo portable"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	resource := ir.NewSkill("portable-skill", "portable", "body", nil, nil, ir.SourceRef{File: filepath.Join(sourceDir, "SKILL.md")})
-	resolved := []resolver.ResolvedArtifact{{
-		Entry:     catalog.Entry{Name: "portable-skill", Path: sourceDir, Resource: resource},
-		Source:    config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetClaude},
-	}}
-	fileModes := config.MaterializationModes{Machine: config.MaterializationModeSymlink, Project: config.MaterializationModeFile}
-	if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(fileModes)); err != nil {
-		t.Fatalf("file mode run: %v", err)
-	}
+				sourceDir := filepath.Join(t.TempDir(), "portable-skill")
+				if err := os.MkdirAll(filepath.Join(sourceDir, "scripts"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("---\nname: portable-skill\ndescription: portable\n---\n\nbody"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "helper.sh"), []byte("echo portable"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				resource := ir.NewSkill("portable-skill", "portable", "body", nil, nil, ir.SourceRef{File: filepath.Join(sourceDir, "SKILL.md")})
+				resolved := []resolver.ResolvedArtifact{{
+					Entry:     catalog.Entry{Name: "portable-skill", Path: sourceDir, Resource: resource},
+					Source:    source,
+					Harnesses: []hcc.Target{target.name},
+				}, {
+					Entry:     catalog.Entry{Name: "compiled-only", Resource: ir.NewSkill("compiled-only", "compiled skill", "compiled body", nil, nil, ir.SourceRef{})},
+					Source:    source,
+					Harnesses: []hcc.Target{target.name},
+				}}
+				fileModes := config.MaterializationModes{Machine: config.MaterializationModeFile, Project: config.MaterializationModeFile}
+				run := func(resources []resolver.ResolvedArtifact, options ...RunOption) *Report {
+					t.Helper()
+					report, err := Run(context.Background(), repoRoot, resources, options...)
+					if err != nil {
+						t.Fatalf("Run: %v", err)
+					}
+					requireNoErrorDiags(t, report.Diags)
+					return report
+				}
+				run(resolved, WithMaterializationModes(fileModes))
 
-	installed := filepath.Join(repoRoot, ".claude", "skills", "portable-skill")
-	info, err := os.Lstat(installed)
-	if err != nil {
-		t.Fatalf("stat portable skill: %v", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		t.Fatalf("file mode should install a regular skill tree, got mode %v", info.Mode())
-	}
-	if _, err := os.Stat(filepath.Join(installed, "scripts", "helper.sh")); err != nil {
-		t.Fatalf("portable support file missing: %v", err)
-	}
-	manifestPath := filepath.Join(repoRoot, ".agents", "materialization-manifest.yaml")
-	manifest, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatalf("read project manifest: %v", err)
-	}
-	if strings.Contains(string(manifest), repoRoot) || !strings.Contains(string(manifest), "skills/portable-skill") || !strings.Contains(string(manifest), "digest: sha256:") {
-		t.Fatalf("manifest must contain portable target-relative digest state, got:\n%s", manifest)
-	}
-	second, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(fileModes))
-	if err != nil {
-		t.Fatalf("second file mode run: %v", err)
-	}
-	if second.TotalWritten() != 0 {
-		t.Fatalf("unchanged file mode output should be in sync, wrote %d", second.TotalWritten())
-	}
+				installed := filepath.Join(root, "skills", "portable-skill")
+				info, err := os.Lstat(installed)
+				if err != nil {
+					t.Fatalf("stat portable skill: %v", err)
+				}
+				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+					t.Fatalf("file mode should install a regular skill tree, got mode %v", info.Mode())
+				}
+				if got := readFileString(t, filepath.Join(installed, "scripts", "helper.sh")); got != "echo portable" {
+					t.Fatalf("portable support file = %q", got)
+				}
+				helperInfo, err := os.Lstat(filepath.Join(installed, "scripts", "helper.sh"))
+				if err != nil || !helperInfo.Mode().IsRegular() || helperInfo.Mode().Perm() != 0o755 {
+					t.Fatalf("portable support file mode: info=%v err=%v", helperInfo, err)
+				}
+				manifest, err := os.ReadFile(manifestPath)
+				if err != nil {
+					t.Fatalf("read project manifest: %v", err)
+				}
+				if strings.Contains(string(manifest), repoRoot) || !strings.Contains(string(manifest), "skills/portable-skill") || !strings.Contains(string(manifest), "digest: sha256:") {
+					t.Fatalf("manifest must contain portable target-relative digest state, got:\n%s", manifest)
+				}
+				second := run(resolved, WithMaterializationModes(fileModes))
+				if second.TotalWritten() != 0 || !second.InSync() {
+					t.Fatalf("unchanged file mode output should be in sync: %+v", second)
+				}
+				if check := run(resolved, WithMaterializationModes(fileModes), WithDryRun()); !check.InSync() {
+					t.Fatalf("unchanged file mode output has drift: %+v", check)
+				}
 
-	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
-		t.Fatalf("symlink migration run: %v", err)
-	}
-	info, err = os.Lstat(installed)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("symlink migration should replace manifest-owned tree, info=%v err=%v", info, err)
-	}
-	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
-		t.Fatalf("manifest should be removed after migration to symlink mode, err=%v", err)
-	}
+				run(resolved)
+				info, err = os.Lstat(installed)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("symlink migration should replace manifest-owned tree, info=%v err=%v", info, err)
+				}
+				if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+					t.Fatalf("manifest should be removed after migration to symlink mode, err=%v", err)
+				}
 
-	if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(fileModes)); err != nil {
-		t.Fatalf("reinstall file mode: %v", err)
-	}
-	if _, err := Run(context.Background(), repoRoot, nil, WithMaterializationModes(fileModes)); err != nil {
-		t.Fatalf("file mode prune: %v", err)
-	}
-	if _, err := os.Lstat(installed); !os.IsNotExist(err) {
-		t.Fatalf("file mode prune should remove manifest-owned tree, err=%v", err)
+				run(resolved, WithMaterializationModes(fileModes))
+				info, err = os.Lstat(installed)
+				if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+					t.Fatalf("symlink-to-file migration: info=%v err=%v", info, err)
+				}
+				if check := run(nil, WithMaterializationModes(fileModes), WithDryRun()); check.InSync() {
+					t.Fatal("deselected installed resource must report prune drift")
+				}
+				if _, err := os.Stat(installed); err != nil {
+					t.Fatalf("dry run changed installed resource: %v", err)
+				}
+				run(nil, WithMaterializationModes(fileModes))
+				if _, err := os.Lstat(installed); !os.IsNotExist(err) {
+					t.Fatalf("file mode prune should remove manifest-owned tree, err=%v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -4479,76 +4521,79 @@ func TestSyncPortableArtifactFilesStaleManifestDigestNoFalseCollision(t *testing
 }
 
 func TestRunFileModePreservesModifiedManifestOutputs(t *testing.T) {
-	t.Run("update", func(t *testing.T) {
-		repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t)
-		if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
-			t.Fatalf("initial file-mode run: %v", err)
-		}
-		userContent := []byte("user-owned update\n")
-		if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), userContent, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		updated := append([]resolver.ResolvedArtifact(nil), resolved...)
-		updated[0].Resource = ir.NewSkill("portable-skill", "portable", "updated body", nil, nil, ir.SourceRef{})
-		report, err := Run(context.Background(), repoRoot, updated, WithMaterializationModes(modes))
-		if err != nil {
-			t.Fatalf("update run: %v", err)
-		}
-		got, err := os.ReadFile(filepath.Join(installed, "SKILL.md"))
-		if err != nil || !bytes.Equal(got, userContent) {
-			t.Fatalf("modified output was overwritten: %q, err=%v", got, err)
-		}
-		if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
-			t.Fatalf("expected collision diagnostic, got %+v", report.Diags)
-		}
-	})
+	for _, target := range []hcc.Target{hcc.TargetClaude, hcc.TargetDevin} {
+		t.Run(string(target), func(t *testing.T) {
+			t.Run("update", func(t *testing.T) {
+				repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t, target)
+				if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
+					t.Fatalf("initial file-mode run: %v", err)
+				}
+				userContent := []byte("user-owned update\n")
+				if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), userContent, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				updated := append([]resolver.ResolvedArtifact(nil), resolved...)
+				updated[0].Resource = ir.NewSkill("portable-skill", "portable", "updated body", nil, nil, ir.SourceRef{})
+				report, err := Run(context.Background(), repoRoot, updated, WithMaterializationModes(modes))
+				if err != nil {
+					t.Fatalf("update run: %v", err)
+				}
+				got, err := os.ReadFile(filepath.Join(installed, "SKILL.md"))
+				if err != nil || !bytes.Equal(got, userContent) {
+					t.Fatalf("modified output was overwritten: %q, err=%v", got, err)
+				}
+				if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
+					t.Fatalf("expected collision diagnostic, got %+v", report.Diags)
+				}
+			})
 
-	t.Run("prune", func(t *testing.T) {
-		repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t)
-		if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
-			t.Fatalf("initial file-mode run: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), []byte("user-owned prune\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		report, err := Run(context.Background(), repoRoot, nil, WithMaterializationModes(modes))
-		if err != nil {
-			t.Fatalf("prune run: %v", err)
-		}
-		if _, err := os.Stat(installed); err != nil {
-			t.Fatalf("modified stale output was removed: %v", err)
-		}
-		if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
-			t.Fatalf("expected prune collision diagnostic, got %+v", report.Diags)
-		}
-	})
+			t.Run("prune", func(t *testing.T) {
+				repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t, target)
+				if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
+					t.Fatalf("initial file-mode run: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), []byte("user-owned prune\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				report, err := Run(context.Background(), repoRoot, nil, WithMaterializationModes(modes))
+				if err != nil {
+					t.Fatalf("prune run: %v", err)
+				}
+				if _, err := os.Stat(installed); err != nil {
+					t.Fatalf("modified stale output was removed: %v", err)
+				}
+				if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
+					t.Fatalf("expected prune collision diagnostic, got %+v", report.Diags)
+				}
+			})
 
-	t.Run("file-to-symlink migration", func(t *testing.T) {
-		repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t)
-		if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
-			t.Fatalf("initial file-mode run: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), []byte("user-owned migration\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		report, err := Run(context.Background(), repoRoot, resolved)
-		if err != nil {
-			t.Fatalf("symlink migration run: %v", err)
-		}
-		info, err := os.Lstat(installed)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			t.Fatalf("modified file-mode output was migrated: info=%v err=%v", info, err)
-		}
-		if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
-			t.Fatalf("expected migration collision diagnostic, got %+v", report.Diags)
-		}
-	})
+			t.Run("file-to-symlink migration", func(t *testing.T) {
+				repoRoot, resolved, modes, installed := setupPortableFileModeSkill(t, target)
+				if _, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(modes)); err != nil {
+					t.Fatalf("initial file-mode run: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(installed, "SKILL.md"), []byte("user-owned migration\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				report, err := Run(context.Background(), repoRoot, resolved)
+				if err != nil {
+					t.Fatalf("symlink migration run: %v", err)
+				}
+				info, err := os.Lstat(installed)
+				if err != nil || info.Mode()&os.ModeSymlink != 0 {
+					t.Fatalf("modified file-mode output was migrated: info=%v err=%v", info, err)
+				}
+				if !hasDiagCode(report.Diags, "materialize.collision.user-owned") {
+					t.Fatalf("expected migration collision diagnostic, got %+v", report.Diags)
+				}
+			})
+		})
+	}
 }
 
-func setupPortableFileModeSkill(t *testing.T) (string, []resolver.ResolvedArtifact, config.MaterializationModes, string) {
+func setupPortableFileModeSkill(t *testing.T, target hcc.Target) (string, []resolver.ResolvedArtifact, config.MaterializationModes, string) {
 	t.Helper()
-	repoRoot := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	repoRoot, _ := devinEnv(t)
 	sourceDir := filepath.Join(t.TempDir(), "portable-skill")
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -4560,10 +4605,10 @@ func setupPortableFileModeSkill(t *testing.T) (string, []resolver.ResolvedArtifa
 	resolved := []resolver.ResolvedArtifact{{
 		Entry:     catalog.Entry{Name: "portable-skill", Path: sourceDir, Resource: resource},
 		Source:    config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetClaude},
+		Harnesses: []hcc.Target{target},
 	}}
 	modes := config.MaterializationModes{Machine: config.MaterializationModeSymlink, Project: config.MaterializationModeFile}
-	return repoRoot, resolved, modes, filepath.Join(repoRoot, ".claude", "skills", "portable-skill")
+	return repoRoot, resolved, modes, filepath.Join(repoRoot, "."+string(target), "skills", "portable-skill")
 }
 
 func TestRunMaterializationModesAreScopeSpecific(t *testing.T) {

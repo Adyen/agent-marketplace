@@ -187,9 +187,6 @@ func TestDevinTargetInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("no TargetInfo for devin")
 	}
-	if !info.SymlinkOnly {
-		t.Error("devin must be symlink-only")
-	}
 	if !info.OwnershipReconciledAggregates {
 		t.Error("devin aggregates must be ownership-reconciled")
 	}

@@ -8,6 +8,10 @@ Agent Marketplace distributes harness-neutral agent resources and materializes t
 A destination runtime format into which harness-neutral resources are compiled.
 _Avoid_: Provider, compatibility layout
 
+**Materialization mode**:
+The choice to install generated resource files and directory trees as regular copies or cache-backed symlinks, independent of the destination runtime format and ownership of entries in shared configuration.
+_Avoid_: Harness capability, compiler format
+
 **Source layout**:
 The canonical on-disk format from which a resource bundle is ingested.
 _Avoid_: Harness target, import path

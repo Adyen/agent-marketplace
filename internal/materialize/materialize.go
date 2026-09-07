@@ -1041,23 +1041,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		}
 
 		mode := modes.For(string(key.target), key.machineScope)
-		// "There is no real-file fallback in this increment" (plan, target
-		// contract): a SymlinkOnly target refuses file-copy materialization
-		// outright instead of degrading to a shape Devin is not proven to read.
-		if info, ok := harness.TargetInfoMap[key.target]; ok && info.SymlinkOnly && mode == config.MaterializationModeFile {
-			slog.Error("refused file-copy materialization for a symlink-only target",
-				"target", key.target, "machine_scope", key.machineScope, "out_dir", outDir,
-				"code", diag.CodeMaterializeDevinSymlinkRequired)
-			report.Diags = append(report.Diags, diag.Diagnostic{
-				Code:     diag.CodeMaterializeDevinSymlinkRequired,
-				Severity: diag.SeverityError,
-				Target:   string(key.target),
-				Message: fmt.Sprintf("target %s materializes skills as directory symlinks and subagents as file symlinks and has no real-file fallback; file-copy materialization mode was refused for %s",
-					key.target, outDir),
-				Hint: "Devin has no real-file fallback; set the materialization mode back to symlink for this harness",
-			})
-			continue
-		}
+		// Resource installation mode is distribution policy, not a compiler
+		// capability. All targets use the same file-copy or symlink path;
+		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
 		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
@@ -2638,7 +2624,7 @@ func portableLinkedDesiredDigest(link skillLink, dryRun bool) (string, error) {
 	if !dryRun {
 		return portablePathDigest(link.target)
 	}
-	if link.sourceDir == "" && len(link.artifacts) == 1 {
+	if link.cacheDir != "" && len(link.artifacts) == 1 && link.target == filepath.Join(link.cacheDir, filepath.FromSlash(link.artifacts[0].Path)) {
 		return portableArtifactDigest(link.artifacts[0]), nil
 	}
 	return portableSkillVirtualDigest(link)

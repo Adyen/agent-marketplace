@@ -70,6 +70,7 @@ var topLevelAllowed = map[layerKind]map[string]bool{
 		"backup":             true,
 		"logging":            true,
 		"telemetry":          true,
+		"materialization":    true,
 	},
 	repoLayer: {
 		"include":            true,
