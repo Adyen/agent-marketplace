@@ -55,6 +55,7 @@ type LoadedCatalog struct {
 	Malformed   []skill.MalformedSkill
 	Collections []collection.Collection
 	Resources   map[string]ir.Resource
+	Diagnostics []diag.Diagnostic
 	// SubBundles holds per-sub-bundle results when recursive discovery was
 	// triggered for a meta-directory. Keyed by sub-bundle absolute path.
 	// When non-empty, discoverAll splits them into separate catalogs (each
@@ -279,9 +280,10 @@ func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	}
 
 	return LoadedCatalog{
-		Entries:   slices.Clone(cat.Entries),
-		Malformed: malformed,
-		Resources: Resources(cat),
+		Entries:     slices.Clone(cat.Entries),
+		Malformed:   malformed,
+		Resources:   Resources(cat),
+		Diagnostics: cat.Diagnostics,
 	}, nil
 }
 
@@ -668,9 +670,10 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 		}
 
 		subLoaded := LoadedCatalog{
-			Entries:   subCat.Entries,
-			Malformed: normalizeMalformedPaths(subDir, malformedFromDiagnostics(subCat.Diagnostics)),
-			Resources: Resources(subCat),
+			Entries:     subCat.Entries,
+			Malformed:   normalizeMalformedPaths(subDir, malformedFromDiagnostics(subCat.Diagnostics)),
+			Resources:   Resources(subCat),
+			Diagnostics: subCat.Diagnostics,
 		}
 		subCats[subDir] = subLoaded
 
@@ -684,6 +687,7 @@ func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 		}
 
 		merged.Malformed = append(merged.Malformed, subLoaded.Malformed...)
+		merged.Diagnostics = append(merged.Diagnostics, subLoaded.Diagnostics...)
 
 		if merged.Resources == nil {
 			merged.Resources = make(map[string]ir.Resource)

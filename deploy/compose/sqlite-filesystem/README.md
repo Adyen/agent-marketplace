@@ -22,4 +22,4 @@ MARKETPLACE_PLATFORM=linux/amd64 docker compose up --build
 
 If ARM64 images are available, use `MARKETPLACE_PLATFORM=linux/arm64` instead.
 
-This deployment has no application authentication. Put the proxy behind an authenticated, TLS-terminating network boundary before exposing it to users. Do not mount consumer-provided or writable configuration over `/etc/agent-marketplace/config.yaml`.
+This deployment has no application authentication. Put the proxy behind an authenticated, TLS-terminating network boundary before exposing it to users. Mount only the deployment-owned Marketplace operator configuration at `/app/marketplace.yaml`; do not substitute consumer-provided or writable configuration.

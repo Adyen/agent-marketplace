@@ -64,6 +64,10 @@ _Avoid_: Marketplace installation, resource pin
 A Git repository that remains the publishing source of truth for resources indexed by a Marketplace.
 _Avoid_: Marketplace, artifact store
 
+**Registry root**:
+A configured directory within a registry repository from which a Marketplace recursively discovers source-layout bundles, stopping descent at each bundle. The root itself need not be a bundle.
+_Avoid_: Skill directory, bundle root
+
 **Marketplace submission**:
 A request to add a registry to a Marketplace. A submission is not discoverable until approved through that Marketplace's vetting process.
 _Avoid_: Published registry, automatic crawl
@@ -163,6 +167,14 @@ _Avoid_: Deleted resource
 **Marketplace operator**:
 The party that administers a Marketplace and decides which registries and policies it applies.
 _Avoid_: Registry publisher
+
+**Marketplace operator configuration**:
+Deployment-owned configuration defining a Marketplace instance, its storage, indexing policy, approved registries, refresh behavior, and revocations.
+_Avoid_: Agent Marketplace configuration, organization configuration, consumer configuration
+
+**Consumer organization configuration**:
+Externally managed machine configuration that constrains Agent Marketplace client behavior for an organization.
+_Avoid_: Marketplace operator configuration, Marketplace configuration
 
 **Registry publisher**:
 The party represented as publishing a registry repository. Publisher identity is distinct from Marketplace admission and operator endorsement.

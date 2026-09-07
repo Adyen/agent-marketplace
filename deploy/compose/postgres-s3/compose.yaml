@@ -34,9 +34,9 @@ services:
       args:
         <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
-    command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "api"]
+    command: ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
     volumes:
-      - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
+      - ./config.dsn-file.example.yaml:/app/marketplace.yaml:ro
     secrets:
       - source: marketplace_postgres_dsn
         target: marketplace-postgres-dsn
@@ -69,9 +69,9 @@ services:
       args:
         <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
-    command: ["serve", "--config", "/etc/agent-marketplace/config.yaml", "--role", "worker"]
+    command: ["serve", "--config", "/app/marketplace.yaml", "--role", "worker"]
     volumes:
-      - ./config.dsn-file.example.yaml:/etc/agent-marketplace/config.yaml:ro
+      - ./config.dsn-file.example.yaml:/app/marketplace.yaml:ro
     secrets:
       - source: marketplace_postgres_dsn
         target: marketplace-postgres-dsn

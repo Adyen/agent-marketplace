@@ -97,6 +97,24 @@ func TestServeReindex(t *testing.T) {
 	env.AssertFileExists("/workspace/blobs")
 }
 
+func TestServeReindexRecursivelyIngestsParentRoot(t *testing.T) {
+	env := newServeReindexEnv(t)
+	config := strings.Replace(env.ReadFile("/workspace/marketplace.yaml"), "      - path: .agents\n", "      - path: .\n", 1)
+	env.WriteFile("/workspace/marketplace.yaml", config)
+
+	r := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
+	if r.ExitCode != 0 {
+		t.Fatalf("serve reindex exited %d:\n%s", r.ExitCode, r.Combined)
+	}
+
+	metadata := openServeMetadata(t, env)
+	defer func() { _ = metadata.Close() }()
+	coordinate := store.ResourceCoordinate{Marketplace: "e2e-serve-mp", Registry: "src-serve", Kind: "skill", Name: "review"}
+	if _, err := metadata.GetLatestResourceRevision(t.Context(), coordinate); err != nil {
+		t.Fatalf("load recursively indexed resource: %v", err)
+	}
+}
+
 func TestServeReindexDoesNotProcessUnrelatedRefreshJobs(t *testing.T) {
 	env := newServeReindexEnv(t)
 	if r := env.RunAM("serve", "reindex", "--config", "marketplace.yaml"); r.ExitCode != 0 {
