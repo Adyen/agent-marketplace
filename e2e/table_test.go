@@ -474,6 +474,20 @@ registries:
 		},
 	},
 	{
+		Name: "materialize/target_mode_override_supports_devin_with_file_mode",
+		Desc: "Given file mode with a Devin symlink override, When the same skill targets Factory and Devin, Then Factory writes files and Devin writes a directory symlink",
+		Registries: []RegistryDef{
+			{Name: "mixed-mode-test", Skills: []Skill{{Name: "mixed-mode-skill", Description: "Mixed mode skill"}}},
+		},
+		GlobalCfg: "harnesses:\n  - factory\n  - devin\n",
+		RepoCfg:   "materialization:\n  mode: file\n  targets:\n    devin: symlink\nregistries:\n  - url: {{REG:mixed-mode-test}}\n    ref: main\n    skills:\n      - mixed-mode-skill\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				RegularFiles: []string{"/workspace/.factory/skills/mixed-mode-skill/SKILL.md"},
+				Symlinks:     []string{"/workspace/.devin/skills/mixed-mode-skill"}},
+		},
+	},
+	{
 		Name: "materialize/manual_skills_survive_sync",
 		Desc: "Given a managed skill and a manually created skill, When sync is re-run, Then the manual skill survives and the managed skill stays",
 		Registries: []RegistryDef{

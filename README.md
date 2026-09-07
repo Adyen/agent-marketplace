@@ -353,11 +353,20 @@ target-relative paths, is intentionally not gitignored, and is never staged or
 committed by the CLI. User-scope file-mode state is kept locally under
 `~/.agent-marketplace/`.
 
-The `devin` target is symlink-only: it has no real-file fallback, so
-`materialization.mode: file` is refused for that target with an error
-diagnostic (`materialize.devin.symlink-required`) rather than degrading to a
-layout Devin is not proven to read. Other targets in the same run are
-unaffected.
+Target-specific modes override the scope default, which allows file-capable
+targets and symlink-only targets to coexist:
+
+```yaml
+materialization:
+  mode: file
+  targets:
+    devin: symlink
+```
+
+The `devin` target is symlink-only: it has no real-file fallback. If its
+effective mode is `file`, materialization is refused with
+`materialize.devin.symlink-required` rather than degrading to an unverified
+layout. Other targets in the same run are unaffected.
 
 ---
 

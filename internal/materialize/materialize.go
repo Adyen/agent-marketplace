@@ -1040,10 +1040,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			report.Diags = append(report.Diags, targetDiags...)
 		}
 
-		mode := modes.Project
-		if key.machineScope {
-			mode = modes.Machine
-		}
+		mode := modes.For(string(key.target), key.machineScope)
 		// "There is no real-file fallback in this increment" (plan, target
 		// contract): a SymlinkOnly target refuses file-copy materialization
 		// outright instead of degrading to a shape Devin is not proven to read.
