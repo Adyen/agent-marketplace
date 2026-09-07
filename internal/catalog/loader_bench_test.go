@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,6 +190,36 @@ func BenchmarkHasBundleRoot(b *testing.B) {
 			hasBundleRoot(dir)
 		}
 	})
+}
+
+func BenchmarkDiscoverSubBundleEvidence(b *testing.B) {
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previous) })
+	for _, rootResources := range []bool{false, true} {
+		b.Run(fmt.Sprintf("root_resources_%v", rootResources), func(b *testing.B) {
+			dir := b.TempDir()
+			files := map[string]string{
+				".github/agents/review.md":    "Repository automation",
+				"automation/agents/runner.sh": "exit 0",
+				"automation/hooks/pre-commit": "exit 0",
+			}
+			for i := 0; i < 10; i++ {
+				files[fmt.Sprintf("plugin-%02d/commands/review.md", i)] = fmt.Sprintf("---\nname: review-%02d\ndescription: Review\n---\nReview", i)
+			}
+			if rootResources {
+				files["commands/root.md"] = "---\nname: root\ndescription: Root\n---\nRoot"
+			}
+			writeDiscoveryFiles(b, dir, files)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := Discover(dir, "claude"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 // BenchmarkPrepareFetchJobs_LocalRegistry exercises the local-registry path
