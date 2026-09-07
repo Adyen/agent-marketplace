@@ -282,24 +282,35 @@ func hasWarningOrHigher(diagnostics []diag.Diagnostic) bool {
 // not independent bundles with missed resources. In that case the
 // sub-bundles-ignored warning is a false positive and should be suppressed.
 func catalogCoversSubBundles(entries []Entry, dir string, subBundles []string) bool {
-	// Compute the relative path from dir to each sub-bundle.
-	relPaths := make([]string, 0, len(subBundles))
-	for _, sb := range subBundles {
-		rel, err := filepath.Rel(dir, sb)
-		if err != nil {
-			return false // Can't compute relative path; be conservative.
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return false // Can't resolve the discovery root; be conservative.
+	}
+	root = filepath.Clean(root)
+
+	// Normalize each sub-bundle against the discovery root and reject paths
+	// outside it. This keeps coverage checks from treating an unrelated path as
+	// a sub-bundle, including when callers mix absolute and relative forms.
+	normalizedSubBundles := make([]string, 0, len(subBundles))
+	for _, subBundle := range subBundles {
+		normalized, ok := normalizeCatalogPath(root, subBundle)
+		if !ok {
+			return false
 		}
-		relPaths = append(relPaths, rel)
+		normalizedSubBundles = append(normalizedSubBundles, normalized)
 	}
 
 	// For each sub-bundle, check if at least one entry has a source path
-	// within it. Entry.Path comes from ir.SourceRef.File and is relative
-	// to the bundle root (dir).
-	covered := make(map[int]bool, len(subBundles))
+	// within it. Entry.Path comes from ir.SourceRef.File and may be relative
+	// to the bundle root (dir) or absolute (as returned by Load).
+	covered := make(map[int]bool, len(normalizedSubBundles))
 	for _, entry := range entries {
-		p := filepath.ToSlash(entry.Path)
-		for i, rel := range relPaths {
-			if !covered[i] && subPathRel(p, rel) {
+		p, ok := normalizeCatalogPath(root, entry.Path)
+		if !ok {
+			continue // An entry outside the root cannot prove coverage.
+		}
+		for i, subBundle := range normalizedSubBundles {
+			if !covered[i] && catalogPathWithin(subBundle, p) {
 				covered[i] = true
 			}
 		}
@@ -309,7 +320,33 @@ func catalogCoversSubBundles(entries []Entry, dir string, subBundles []string) b
 			return false // At least one sub-bundle has no entries from it.
 		}
 	}
-	return len(covered) == len(subBundles)
+	return len(covered) == len(normalizedSubBundles)
+}
+
+// normalizeCatalogPath returns p as a clean absolute path under root. It
+// rejects empty paths and paths that escape root lexically.
+func normalizeCatalogPath(root, p string) (string, bool) {
+	if p == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, p)
+	}
+	p = filepath.Clean(p)
+	if !catalogPathWithin(root, p) {
+		return "", false
+	}
+	return p, true
+}
+
+// catalogPathWithin reports whether candidate is root itself or a descendant
+// of root, using component-aware path containment.
+func catalogPathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // subPathRel reports whether path starts with prefix as a component-wise
@@ -333,7 +370,8 @@ func subPathRel(path, prefix string) bool {
 // or any HCC Autodetect markers). When a directory with roots is found, it is
 // added to the results and its children are NOT descended into — the bundle's
 // own Load call handles its internal structure. Directories without roots are
-// recursed into. Results are sorted deterministically by path.
+// recursed into unless they contain a root-level SKILL.md. Results are sorted
+// deterministically by path.
 func scanForSubBundles(dir string) []string {
 	var bundles []string
 	scanSubBundlesWalk(dir, &bundles)
@@ -357,6 +395,8 @@ func scanSubBundlesWalk(dir string, bundles *[]string) {
 		subDir := filepath.Join(dir, entry.Name())
 		if hasBundleRoot(subDir) {
 			*bundles = append(*bundles, subDir)
+		} else if hasRootSkill(os.DirFS(subDir)) {
+			continue
 		} else {
 			scanSubBundlesWalk(subDir, bundles)
 		}
@@ -387,6 +427,8 @@ var skippedScanDirs = map[string]struct{}{
 	".claude-plugin":   {},
 	".cursor":          {},
 	".cursor-plugin":   {},
+	".agents":          {},
+	".devin":           {},
 	".windsurf":        {},
 	".gemini":          {},
 	"gemini-extension": {},
@@ -396,6 +438,11 @@ var skippedScanDirs = map[string]struct{}{
 	"hooks":            {},
 }
 
+func hasRootSkill(src fs.FS) bool {
+	info, err := fs.Stat(src, "SKILL.md")
+	return err == nil && !info.IsDir()
+}
+
 // hasBundleRoot reports whether dir contains any standard root directory or file
 // that marks it as a harness bundle. Uses HCC's AutodetectStrict to cover all
 // harness-specific markers (plugin manifests, workspace directories, and bare
@@ -403,17 +450,58 @@ var skippedScanDirs = map[string]struct{}{
 // excludes the bare-skills-directory form to prevent individual skill dirs
 // from being treated as sub-bundles, but we re-enable the multi-skill subdir
 // case (dir/*/SKILL.md) so container directories with multiple skills are
-// still recognized. A root SKILL.md (single-skill directory) remains excluded.
+// still recognized.
 func hasBundleRoot(dir string) bool {
 	srcFS := os.DirFS(dir)
-	_, ok := ingest.AutodetectStrict(srcFS)
-	if ok {
+	_, strictMatch := ingest.AutodetectStrict(srcFS)
+
+	// A root-level SKILL.md identifies a skill directory. Preserve an explicit
+	// plugin or canonical workspace marker when one is present, but do not let
+	// a nested bare asset directory (for example, rules/) promote the skill to
+	// a sub-bundle.
+	if hasRootSkill(srcFS) {
+		return strictMatch && hasExplicitBundleMarker(srcFS)
+	}
+	if strictMatch {
 		return true
 	}
 	// AutodetectStrict skips bare-skills-directory form; check if this
 	// directory contains immediate subdirectories with SKILL.md (multi-skill
-	// container). A root SKILL.md (single skill) is NOT a sub-bundle root.
+	// container).
 	return hasMultiSkillSubdirs(srcFS)
+}
+
+// hasExplicitBundleMarker recognizes the explicit plugin manifests and
+// canonical workspace roots used by HCC. Bare root asset directories are
+// intentionally omitted: they are ambiguous when SKILL.md is at the root.
+func hasExplicitBundleMarker(src fs.FS) bool {
+	manifestMarkers := []string{
+		".claude-plugin/plugin.json",
+		".factory-plugin/plugin.json",
+		".cursor-plugin/plugin.json",
+		"gemini-extension.json",
+	}
+	for _, marker := range manifestMarkers {
+		if info, err := fs.Stat(src, marker); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+
+	workspaceMarkers := []string{
+		".claude",
+		".factory",
+		".cursor",
+		".windsurf",
+		".gemini",
+		".agents",
+		".devin",
+	}
+	for _, marker := range workspaceMarkers {
+		if info, err := fs.Stat(src, marker); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // hasMultiSkillSubdirs reports whether the filesystem contains at least one
