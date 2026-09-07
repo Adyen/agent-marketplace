@@ -66,7 +66,7 @@ type PreviewDiagnostic struct {
 // Preview renders a representative local payload for the requested telemetry
 // level and writes it to a user-only file under the durable state root. The
 // returned path contains the sample payload; the payload is never transmitted.
-func Preview(ctx context.Context, level string, state TelemetryState) (string, error) {
+func Preview(ctx context.Context, level string, state TelemetryState, version string) (string, error) {
 	level = normalizePreviewLevel(level)
 
 	installationID := state.InstallationIDPath
@@ -78,7 +78,7 @@ func Preview(ctx context.Context, level string, state TelemetryState) (string, e
 		id = "<generated when telemetry is active>"
 	}
 
-	res, err := buildResource(ctx, id, tmcfg.SchemaVersion)
+	res, err := buildResource(ctx, id, tmcfg.SchemaVersion, version)
 	if err != nil {
 		slog.Warn("failed to build telemetry resource for preview; using empty resource", "error", err)
 	}

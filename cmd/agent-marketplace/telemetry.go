@@ -291,7 +291,7 @@ func runTelemetryPreview(ctx context.Context, out io.Writer, in io.Reader, level
 		return err
 	}
 
-	path, err := telemetry.Preview(ctx, level, state)
+	path, err := telemetry.Preview(ctx, level, state, version)
 	if err != nil {
 		return err
 	}
