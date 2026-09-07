@@ -200,7 +200,7 @@ func initTelemetry(cmd *cobra.Command, start time.Time) {
 		return
 	}
 
-	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithDiagnostic(diagnosticCapture))
+	t, err := telemetry.New(ctx, state, slog.Default(), telemetry.WithVersion(version), telemetry.WithDiagnostic(diagnosticCapture))
 	if err != nil {
 		slog.Warn("telemetry initialization failed; continuing without telemetry", "error", err)
 		return

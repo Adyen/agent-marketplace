@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -158,6 +159,9 @@ func TestTelemetryPurge(t *testing.T) {
 
 func TestTelemetryPreview(t *testing.T) {
 	setupTelemetryHome(t)
+	originalVersion := version
+	version = "3.0.4"
+	t.Cleanup(func() { version = originalVersion })
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
 		t.Fatalf("init failed: %v", err)
@@ -181,6 +185,15 @@ func TestTelemetryPreview(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "agent_marketplace.command") {
 		t.Fatalf("expected detailed spans in preview file, got:\n%s", string(data))
+	}
+	var payload struct {
+		ResourceAttributes map[string]string `json:"resource_attributes"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.ResourceAttributes["cli.version"]; got != "3.0.4" {
+		t.Fatalf("preview cli.version = %q, want release version 3.0.4", got)
 	}
 }
 
@@ -298,6 +311,9 @@ func writeTelemetryTestFile(t *testing.T, path, content string) {
 
 func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	_ = setupTelemetryHome(t)
+	originalVersion := version
+	version = "3.0.4"
+	t.Cleanup(func() { version = originalVersion })
 
 	var mu sync.Mutex
 	var reqCount int
@@ -328,7 +344,7 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version command failed: %v\n%s", err, output)
 	}
-	if output != defaultVersion+"\n" {
+	if output != "3.0.4\n" {
 		t.Fatalf("unexpected version output: %q", output)
 	}
 
@@ -342,6 +358,16 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	}
 	if count > 1 {
 		t.Fatalf("expected exactly one metrics export request, got %d", count)
+	}
+
+	if len(req.ResourceMetrics) == 0 {
+		t.Fatal("expected resource metrics")
+	}
+	for _, resource := range req.ResourceMetrics {
+		attrs := keyValueMap(resource.GetResource().GetAttributes())
+		if got := attrs[string(tmcfg.ResourceAttrCLIVersion)]; got != "3.0.4" {
+			t.Fatalf("telemetry cli.version = %q, want release version 3.0.4", got)
+		}
 	}
 
 	attrs := extractFirstMetricAttrs(t, req)
