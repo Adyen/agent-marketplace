@@ -146,31 +146,16 @@ type TargetInfo struct {
 	// keeps the marker-merge path, and excluding its aggregates from the walk
 	// would silently stop pruning stale managed entries.
 	//
-	// This field and SymlinkOnly are INDEPENDENT properties that Devin happens to
-	// be the only holder of today. "Aggregates are reconciled through proven
-	// ownership" says nothing about how per-resource artifacts are materialized,
-	// and "resources must be symlinks" says nothing about how shared files are
-	// merged. Before bead agent-marketplace-5exj.29, aggregateProtectedPaths used
-	// SymlinkOnly as a proxy for this field, which was correct only by
-	// coincidence: the first target migrated to proven ownership without also
-	// being symlink-only would have fallen back into the marker path it was
-	// migrated away from. Do not re-conflate them — flip this field, and only
-	// this field, when a target moves to internal/ownership (see
+	// Ownership is independent of whether generated resources are copied or
+	// symlinked. Before bead agent-marketplace-5exj.29, aggregateProtectedPaths
+	// incorrectly used the former SymlinkOnly flag as a proxy for this field.
+	// Flip only this field when a target moves to internal/ownership (see
 	// docs/plans/2026-08-04-marker-to-ownership-migration.md).
-	OwnershipReconciledAggregates bool
-
-	// SymlinkOnly forbids materializing this target's resources as real file
-	// copies. Devin sets it because the promoted plan states "Skills use directory
-	// symlinks and flat subagents use file symlinks. Both shapes are release
-	// requirements ... There is no real-file fallback in this increment." A
-	// SymlinkOnly target refuses config.MaterializationModeFile outright rather
-	// than silently degrading to copies.
 	//
-	// This is about per-resource artifact SHAPE only. It is independent of
-	// OwnershipReconciledAggregates (see that field): nothing about refusing file
-	// copies implies anything about how shared aggregate files are merged, and
-	// vice versa.
-	SymlinkOnly bool
+	// The former symlink-only restriction reflected the initial Devin delivery
+	// scope, not a runtime limitation. Installation mode belongs to the generic
+	// materializer and is selected by configuration for every harness target.
+	OwnershipReconciledAggregates bool
 
 	// MachineComponentDirs renames component directories for machine (user)
 	// scope, for targets whose machine layout diverges from their repo layout.
@@ -512,13 +497,10 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 			// Devin's aggregates go through internal/ownership (see
 			// internal/materialize/devin.go): no `_managed_by` marker is ever
 			// written into a Devin file, so the marker-strip walk must not touch
-			// them. Independent of SymlinkOnly below; Devin is currently the only
-			// target holding either property, which is coincidence, not
-			// implication.
+			// them. This applies in both file and symlink materialization modes.
+			// The original plan's "no real-file fallback" was delivery scope,
+			// not a limitation on Devin's ability to read regular files.
 			OwnershipReconciledAggregates: true,
-			// "There is no real-file fallback in this increment" (plan, target
-			// contract): a Devin resource is a symlink or it is a failure.
-			SymlinkOnly: true,
 		},
 	}
 

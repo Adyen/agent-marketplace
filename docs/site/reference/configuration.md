@@ -327,7 +327,7 @@ materialization:
     devin: symlink
 ```
 
-Target overrides follow the same layer and scope precedence as `mode`. The Devin target is symlink-only. An effective `file` mode for Devin produces `materialize.devin.symlink-required` rather than silently changing modes.
+Target overrides follow the same layer and scope precedence as `mode`. All targets, including Devin, support both modes through the generic materializer. Shared hooks and MCP configuration retain their existing reconciliation and ownership rules in either mode; this setting controls generated resource files and trees, not shared-entry ownership.
 
 ## Name collisions
 
