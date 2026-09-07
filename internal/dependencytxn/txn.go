@@ -738,7 +738,7 @@ func validateStaged(file journalFile) error {
 	if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
 		return err
 	}
-	raw, info, err := readRegularFile(file.Temp, 0)
+	raw, info, err := readRegularFile(file.Temp, maxDependencyFileSize)
 	if err != nil {
 		return fmt.Errorf("%w: staged file unavailable for %s", ErrRecoveryBlocked, file.Path)
 	}

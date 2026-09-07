@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
@@ -347,6 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
+		m.driftAssessment = driftUnknown
 		if msg.selectNext {
 			m.selectionAfterDisable = m.nextRowSelectionKey()
 		}
@@ -398,6 +400,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
 			m.recordOperationSuccess(operationSync)
+			m.driftReport = materialize.DriftReport{}
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}

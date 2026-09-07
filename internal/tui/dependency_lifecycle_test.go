@@ -9,8 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -41,6 +44,50 @@ func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 	}
 	if syncCalls.Load() != 1 || updateCalls.Load() != 1 {
 		t.Fatalf("lifecycle calls = sync %d, update %d; want one each", syncCalls.Load(), updateCalls.Load())
+	}
+}
+
+func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
+	var syncCalls atomic.Int64
+	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
+		Sync: func(context.Context, string) error {
+			syncCalls.Add(1)
+			return nil
+		},
+	}))
+	model.loading = false
+	model.driftAssessment = driftReady
+	operation, ok := model.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+
+	updated, _ := model.Update(configWrittenMsg{operation: operation, skillName: "review", enabled: true})
+	model = updated.(Model)
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model = updated.(Model)
+	for _, command := range batchCmds(command) {
+		if _, ok := command().(syncDoneMsg); ok {
+			break
+		}
+	}
+	if syncCalls.Load() != 1 || !model.syncing {
+		t.Fatalf("immediate post-mutation sync = calls %d, syncing %t; want one active sync", syncCalls.Load(), model.syncing)
+	}
+}
+
+func TestSuccessfulSyncClearsPendingDriftBeforeReload(t *testing.T) {
+	model := NewModel("/repo", "/home")
+	model.loading = false
+	model.syncing = true
+	model.driftAssessment = driftReady
+	model.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Name: "review", Reason: materialize.DriftMissing}}}
+
+	updated, _ := model.Update(syncDoneMsg{})
+	model = updated.(Model)
+	_, command := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if !cmdProducesQuitMsg(command) {
+		t.Fatal("successful sync retained stale pending drift and blocked quit")
 	}
 }
 

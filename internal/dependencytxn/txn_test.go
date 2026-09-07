@@ -1,6 +1,7 @@
 package dependencytxn
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -483,6 +484,26 @@ func TestUnsafeDestinations(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
+}
+
+func TestValidateStagedRejectsOversizedFileWithMatchingDigest(t *testing.T) {
+	root := t.TempDir()
+	staged := filepath.Join(root, ".dependencytxn-staged.tmp")
+	data := bytes.Repeat([]byte("x"), int(maxDependencyFileSize)+1)
+	mustWrite(t, staged, data, 0o600)
+	file := journalFile{
+		Path:      filepath.Join(root, "config.yaml"),
+		Temp:      staged,
+		NewDigest: Digest(data),
+		NewMode:   0o600,
+	}
+
+	if err := validateStaged(file); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("validateStaged error = %v, want ErrRecoveryBlocked", err)
+	}
+	if _, err := os.Stat(file.Path); !os.IsNotExist(err) {
+		t.Fatalf("oversized staged file changed destination: %v", err)
+	}
 }
 
 func TestReadGenerationRejectsOversizedSparseFileWithoutResidue(t *testing.T) {
