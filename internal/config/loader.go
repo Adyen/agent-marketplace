@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	"gopkg.in/yaml.v3"
 )
 
 // fileExists reports whether the given path exists (file or directory).
@@ -481,6 +480,7 @@ func configAsLocal(cfg *Config) *LocalConfig {
 		Include:         cfg.Include,
 		APIVersion:      cfg.APIVersion,
 		Registries:      cfg.Registries,
+		Marketplaces:    cfg.Marketplaces,
 		Skills:          cfg.Skills,
 		Commands:        cfg.Commands,
 		Subagents:       cfg.Subagents,

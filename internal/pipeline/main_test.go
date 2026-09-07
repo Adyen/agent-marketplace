@@ -3,8 +3,10 @@ package pipeline
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/testutil"
 )
 
