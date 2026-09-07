@@ -18,15 +18,17 @@ RUN pnpm run build
 
 FROM ${NGINX_IMAGE}
 
+ARG SITE_BASE=/
+
 RUN printf 'server {\n\
     listen 8080;\n\
     location / {\n\
         root /usr/share/nginx/html;\n\
         try_files $uri $uri.html $uri/ =404;\n\
     }\n\
-    error_page 404 /404.html;\n\
-}\n' > /etc/nginx/conf.d/default.conf
+    error_page 404 %s404.html;\n\
+}\n' "${SITE_BASE}" > /etc/nginx/conf.d/default.conf
 
-COPY --from=build /site/.vitepress/dist /usr/share/nginx/html
+COPY --from=build /site/.vitepress/dist/ /usr/share/nginx/html${SITE_BASE}
 
 EXPOSE 8080
