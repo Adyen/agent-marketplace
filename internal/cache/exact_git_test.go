@@ -370,6 +370,25 @@ func TestExactGitRejectsMaliciousLocalConfigWithoutExecutingHelper(t *testing.T)
 	}
 }
 
+func TestSanitizeExactGitConfigAllowsPlatformLocalConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := newExactGitRepository(t, "sha1")
+	canonical := "https://example.invalid/platform-config"
+	resolveExactGitRefForTest(t, canonical, repo, "main")
+	configPath := filepath.Join(exactGitObjectStorePath(canonical), "config")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = append(config, []byte("\n[core]\n\tignorecase = true\n")...)
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := sanitizeExactGitConfigWithContext(context.Background(), exactGitObjectStorePath(canonical)); err != nil {
+		t.Fatalf("sanitizeExactGitConfigWithContext: %v", err)
+	}
+}
+
 func TestExactGitRejectsObjectFormatMismatch(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")

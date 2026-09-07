@@ -505,7 +505,7 @@ func sanitizeExactGitConfigWithContext(ctx context.Context, repo string) error {
 	for _, key := range strings.Fields(string(output)) {
 		lower := strings.ToLower(key)
 		switch lower {
-		case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.precomposeunicode", "extensions.objectformat":
+		case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "extensions.objectformat":
 		case "remote.origin.url", "remote.origin.fetch", "remote.origin.mirror", "remote.origin.tagopt":
 			hasOrigin = true
 		default:
@@ -570,7 +570,7 @@ func validateExactGitConfigWithContext(ctx context.Context, repo string) error {
 	}
 	for _, key := range strings.Fields(string(output)) {
 		switch strings.ToLower(key) {
-		case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.precomposeunicode", "extensions.objectformat":
+		case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "extensions.objectformat":
 		default:
 			return fmt.Errorf("repository-local config key %q is not allowed", key)
 		}
