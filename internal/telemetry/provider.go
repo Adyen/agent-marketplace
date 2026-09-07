@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +40,7 @@ const (
 // types so callers do not depend directly on OpenTelemetry SDK types.
 type Telemetry struct {
 	state                    TelemetryState
+	version                  string
 	id                       string
 	queue                    *Queue
 	mp                       *sdkmetric.MeterProvider
@@ -86,6 +86,12 @@ type Telemetry struct {
 
 // NewOption configures Telemetry construction.
 type NewOption func(*Telemetry)
+
+func WithVersion(version string) NewOption {
+	return func(t *Telemetry) {
+		t.version = version
+	}
+}
 
 // WithDiagnostic enables per-invocation diagnostic capture when the resolved
 // telemetry level already allows detailed signals.
@@ -232,7 +238,7 @@ func New(ctx context.Context, state TelemetryState, logger *slog.Logger, opts ..
 	t.id = id
 	logger.Debug("loaded installation id", "path", state.InstallationIDPath)
 
-	res, err := buildResource(ctx, id, state.SchemaVersion)
+	res, err := buildResource(ctx, id, state.SchemaVersion, t.version)
 	if err != nil {
 		logger.Warn("partial resource built for telemetry", "error", err)
 	}
@@ -673,13 +679,16 @@ func ReadLastDeliveryFailure(path string) (DeliveryFailure, error) {
 	return df, nil
 }
 
-func buildResource(ctx context.Context, installationID, schemaVersion string) (*otelresource.Resource, error) {
-	slog.Debug("building telemetry resource", "schema_version", schemaVersion)
+func buildResource(ctx context.Context, installationID, schemaVersion, version string) (*otelresource.Resource, error) {
+	if version == "" {
+		version = "dev"
+	}
+	slog.Debug("building telemetry resource", "schema_version", schemaVersion, "cli_version", version)
 
 	attrs := []otelattribute.KeyValue{
 		otelattribute.String(string(tmcfg.ResourceAttrInstallationID), installationID),
 		otelattribute.String(string(tmcfg.ResourceAttrSchemaVersion), schemaVersion),
-		otelattribute.String(string(tmcfg.ResourceAttrCLIVersion), cliVersion()),
+		otelattribute.String(string(tmcfg.ResourceAttrCLIVersion), version),
 		otelattribute.String(string(tmcfg.ResourceAttrOSName), runtime.GOOS),
 		otelattribute.String(string(tmcfg.ResourceAttrArch), runtime.GOARCH),
 	}
@@ -689,22 +698,6 @@ func buildResource(ctx context.Context, installationID, schemaVersion string) (*
 		slog.Error("failed to build telemetry resource", "error", err)
 	}
 	return res, err
-}
-
-func cliVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "dev"
-	}
-	if info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
-	}
-	for _, d := range info.Deps {
-		if d.Path == "github.com/Adyen/agent-marketplace" {
-			return d.Version
-		}
-	}
-	return "dev"
 }
 
 func attrsToKeyValues(attrs map[string]string) []otelattribute.KeyValue {
