@@ -447,6 +447,41 @@ registries:
 	}
 }
 
+func TestInstallFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "example-infra-skills.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAll(t, working, "Add infra skill")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries: []
+`)
+
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "vm-lifecycle", "--from", origin)
+	if err != nil {
+		t.Fatalf("expected install --from without --ref to succeed: %v\n%s", err, output)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("expected repo config to load after install --from: %v", err)
+	}
+	if len(cfg.Registries) != 1 {
+		t.Fatalf("expected 1 registry entry, got %d", len(cfg.Registries))
+	}
+	if cfg.Registries[0].Ref != "main" {
+		t.Fatalf("expected registry default branch to be persisted as ref=main, got %q", cfg.Registries[0].Ref)
+	}
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("expected registry to include vm-lifecycle, got %#v", cfg.Registries[0].Skills)
+	}
+}
+
 func TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

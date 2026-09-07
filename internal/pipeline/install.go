@@ -12,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -814,6 +815,15 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err := config.ValidateRegistryPath(syntheticEntry.Path); err != nil {
 		slog.Warn("install rejected invalid registry path", "error", err)
 		return nil, err
+	}
+	if !syntheticEntry.IsLocal() && fromRef == "" {
+		defaultBranch, err := cache.DefaultBranch(fromURL)
+		if err != nil {
+			return nil, err
+		}
+		fromRef = defaultBranch
+		syntheticEntry.Ref = fromRef
+		slog.Info("install using registry default branch", "ref", fromRef)
 	}
 
 	// Repo-relative local registries are project-local and cannot be written to
