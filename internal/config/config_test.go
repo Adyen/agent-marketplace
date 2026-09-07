@@ -867,4 +867,44 @@ func TestMaterializationModeValidation(t *testing.T) {
 	if err := local.ValidateBasic(); err == nil || !strings.Contains(err.Error(), "materialization.mode") {
 		t.Fatalf("invalid local materialization mode error = %v, want materialization.mode validation", err)
 	}
+	cfg.Materialization = &MaterializationConfig{Targets: map[string]string{"unknown": "symlink"}}
+	if err := cfg.ValidateBasic(); err == nil || !strings.Contains(err.Error(), "materialization.targets") {
+		t.Fatalf("invalid materialization target error = %v, want materialization.targets validation", err)
+	}
+	cfg.Materialization = &MaterializationConfig{Targets: map[string]string{"devin": "copy"}}
+	if err := cfg.ValidateBasic(); err == nil || !strings.Contains(err.Error(), "materialization.targets.devin") {
+		t.Fatalf("invalid target mode error = %v, want target-specific validation", err)
+	}
+}
+
+func TestResolveMaterializationModesSupportsTargetOverrides(t *testing.T) {
+	global := &Config{Materialization: &MaterializationConfig{
+		Mode:    "file",
+		Targets: map[string]string{"devin": "symlink"},
+	}}
+	modes, err := ResolveMaterializationModes(global, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := modes.For("factory", false); got != MaterializationModeFile {
+		t.Fatalf("factory project mode = %q, want file", got)
+	}
+	if got := modes.For("devin", false); got != MaterializationModeSymlink {
+		t.Fatalf("devin project mode = %q, want symlink", got)
+	}
+	if got := modes.For("devin", true); got != MaterializationModeSymlink {
+		t.Fatalf("devin machine mode = %q, want symlink", got)
+	}
+
+	repo := &Config{Materialization: &MaterializationConfig{Targets: map[string]string{"devin": "file"}}}
+	modes, err = ResolveMaterializationModes(global, repo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := modes.For("devin", false); got != MaterializationModeFile {
+		t.Fatalf("repo override project mode = %q, want file", got)
+	}
+	if got := modes.For("devin", true); got != MaterializationModeSymlink {
+		t.Fatalf("repo override changed machine mode to %q, want symlink", got)
+	}
 }

@@ -508,9 +508,10 @@ atomic per file, not per target ... Malformed destination JSON blocks that file
 only." A malformed destination, an unpatchable shape, and a failed journaled
 mutation are therefore errors that block exactly one file and leave it byte-for-
 byte as found, while every other file, skill, and subagent in the same run is
-still materialized. `materialize.devin.symlink-required` is an error because the
-plan states "There is no real-file fallback in this increment": refusing the run
-is the only alternative to writing a shape Devin is not proven to read.
+still materialized. `materialize.devin.symlink-required` is retired and no longer
+emitted. Its original restriction reflected integration delivery scope, not a
+Devin runtime limitation. All targets now use the generic copy/link materializer;
+the exported diagnostic constant remains for compatibility with older consumers.
 
 `materialize.devin.hook-satisfied-by-unmanaged` is a warning, not an error,
 because the plan says "One semantically identical unmanaged hook may satisfy any
@@ -602,7 +603,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.devin.aggregate-malformed` | The destination Devin aggregate JSON could not be parsed, so that file was left exactly as found | Fix the reported parse location by hand; a safety backup of the raw bytes is retained under the Agent Marketplace state root |
 | `materialize.devin.aggregate-shape` | The destination Devin aggregate has a shape this target cannot patch, so that file was left exactly as found | The aggregate root and its hooks/mcpServers members must be JSON objects; move the conflicting value out of the way by hand |
 | `materialize.devin.aggregate-write` | The journaled Devin aggregate mutation failed, so that file was left exactly as found | Nothing was partially written; check the reported cause and re-run sync |
-| `materialize.devin.symlink-required` | Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target | Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness |
+| `materialize.devin.symlink-required` | Retired; older versions refused file mode for Devin | No longer emitted; Devin supports both file and symlink modes through the generic materializer |
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
 
 ### Devin doctor and repair codes

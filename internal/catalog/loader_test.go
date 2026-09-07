@@ -923,6 +923,31 @@ func TestScanForSubBundles_SkipsHarnessWorkspaceDirs(t *testing.T) {
 	}
 }
 
+func TestDiscoverSkipsGitHubMetadataSubBundle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".github", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "commands"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".github", "agents", "dependency-review.md"), "repository automation")
+	writeFile(t, filepath.Join(dir, "commands", "review.md"), "---\nname: review\ndescription: Review\n---\nReview")
+
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "review" {
+		t.Fatalf("Discover() entries = %#v, want only review", result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Fatalf("GitHub metadata produced a sub-bundle warning: %v", malformed.Error)
+		}
+	}
+}
+
 // TestDiscover_SubBundlePathsAbsolute verifies that entry paths from
 // sub-bundles are absolute and point to the correct on-disk location.
 func TestDiscover_SubBundlePathsAbsolute(t *testing.T) {

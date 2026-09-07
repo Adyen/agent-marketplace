@@ -94,12 +94,14 @@ func preflightCodexDestinations(result *compilePhaseResult, repoRoot string, mod
 		if len(group) < 2 {
 			continue
 		}
-		if modes.Project != modes.Machine {
+		projectMode := modes.For(string(hcc.TargetCodex), false)
+		machineMode := modes.For(string(hcc.TargetCodex), true)
+		if projectMode != machineMode {
 			d := codexDestinationDiagnostic(
-				fmt.Sprintf("Codex destination %q is selected by repository and machine scopes with incompatible materialization modes (%s and %s)", group[0].destination.Root, modes.Project, modes.Machine),
+				fmt.Sprintf("Codex destination %q is selected by repository and machine scopes with incompatible materialization modes (%s and %s)", group[0].destination.Root, projectMode, machineMode),
 				"use the same materialization mode for both scopes or move CODEX_HOME/the repository so their managed destinations do not overlap",
 			)
-			slog.Error("Codex destination overlap preflight refused incompatible ownership intent", "code", d.Code, "destination", group[0].destination.ID, "project_mode", modes.Project, "machine_mode", modes.Machine)
+			slog.Error("Codex destination overlap preflight refused incompatible ownership intent", "code", d.Code, "destination", group[0].destination.ID, "project_mode", projectMode, "machine_mode", machineMode)
 			return nil, &d
 		}
 		if d := coalesceCodexPartition(result, group); d != nil {
