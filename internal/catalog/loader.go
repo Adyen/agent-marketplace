@@ -153,9 +153,9 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// Before falling back to DiscoverSkills, check for sub-bundles.
 		// If subdirectories contain bundle roots, load them recursively
 		// instead of relying on the legacy skill-only discovery.
-		subBundles := scanForSubBundles(dir)
+		subBundles := scanForSubBundles(dir, sourceHarness)
 		if len(subBundles) > 0 {
-			return discoverSubBundles(subBundles, sourceHarness)
+			return discoverSubBundles(subBundles)
 		}
 
 		// No sub-bundles and no recognizable bundle format: return the
@@ -169,9 +169,9 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// multiple independent bundle subdirectories. Scan for sub-bundles and
 	// recurse into them.
 	if len(cat.Entries) == 0 && !hasWarningOrHigher(cat.Diagnostics) {
-		subBundles := scanForSubBundles(dir)
+		subBundles := scanForSubBundles(dir, sourceHarness)
 		if len(subBundles) > 0 {
-			return discoverSubBundles(subBundles, sourceHarness)
+			return discoverSubBundles(subBundles)
 		}
 	}
 
@@ -246,14 +246,18 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// discovers all skills within the workspace, so the sub-bundles don't
 	// contain any missed resources — the warning would be a false positive.
 	if len(cat.Entries) > 0 {
-		if subBundles := scanForSubBundles(dir); len(subBundles) > 0 {
-			if !catalogCoversSubBundles(cat.Entries, dir, subBundles) {
-				malformed = append(malformed, skill.MalformedSkill{
-					DirName: "catalog.discover.sub-bundles-ignored",
-					Path:    dir,
-					Error:   fmt.Errorf("directory has both root-level resources and %d sub-bundle(s) (e.g. %s); sub-bundles are ignored. Move root resources into a sub-bundle (e.g. common/) so the parent is a pure container for recursive discovery", len(subBundles), filepath.Base(subBundles[0])),
-				})
+		var ignored []string
+		for _, subBundle := range scanForSubBundles(dir, sourceHarness) {
+			if !subBundle.coveredBy(cat.Entries, dir) {
+				ignored = append(ignored, subBundle.path)
 			}
+		}
+		if len(ignored) > 0 {
+			malformed = append(malformed, skill.MalformedSkill{
+				DirName: "catalog.discover.sub-bundles-ignored",
+				Path:    dir,
+				Error:   fmt.Errorf("directory has both root-level resources and %d sub-bundle(s) (e.g. %s); sub-bundles are ignored. Move root resources into a sub-bundle (e.g. common/) so the parent is a pure container for recursive discovery", len(ignored), filepath.Base(ignored[0])),
+			})
 		}
 	}
 
@@ -276,10 +280,10 @@ func hasWarningOrHigher(diagnostics []diag.Diagnostic) bool {
 }
 
 // catalogCoversSubBundles reports whether the loaded catalog entries already
-// cover the detected sub-bundle directories. When all sub-bundles have at
-// least one entry whose source path falls within the sub-bundle, the
-// sub-bundles are just organizational groupings within the loaded bundle —
-// not independent bundles with missed resources. In that case the
+// cover the supplied sub-bundle paths. Each path may identify a directory
+// or an individual resource file. Warning suppression supplies every source
+// file from a candidate, so partial coverage cannot hide missed resources.
+// When every supplied path is covered by the loaded catalog, the
 // sub-bundles-ignored warning is a false positive and should be suppressed.
 func catalogCoversSubBundles(entries []Entry, dir string, subBundles []string) bool {
 	// Compute the relative path from dir to each sub-bundle.
@@ -292,12 +296,20 @@ func catalogCoversSubBundles(entries []Entry, dir string, subBundles []string) b
 		relPaths = append(relPaths, rel)
 	}
 
-	// For each sub-bundle, check if at least one entry has a source path
-	// within it. Entry.Path comes from ir.SourceRef.File and is relative
-	// to the bundle root (dir).
+	// For each supplied path, check if at least one entry covers it.
+	// Load makes Entry.Path absolute; LoadFS leaves it relative to the
+	// bundle root (dir). Normalize both forms before comparing.
 	covered := make(map[int]bool, len(subBundles))
 	for _, entry := range entries {
-		p := filepath.ToSlash(entry.Path)
+		p := entry.Path
+		if filepath.IsAbs(p) {
+			var err error
+			p, err = filepath.Rel(dir, p)
+			if err != nil {
+				continue
+			}
+		}
+		p = filepath.ToSlash(p)
 		for i, rel := range relPaths {
 			if !covered[i] && subPathRel(p, rel) {
 				covered[i] = true
@@ -330,18 +342,43 @@ func subPathRel(path, prefix string) bool {
 
 // scanForSubBundles walks downward from dir, looking for subdirectories that
 // contain standard bundle roots (skills/, commands/, agents/, hooks/, mcp.json,
-// or any HCC Autodetect markers). When a directory with roots is found, it is
-// added to the results and its children are NOT descended into — the bundle's
-// own Load call handles its internal structure. Directories without roots are
-// recursed into. Results are sorted deterministically by path.
-func scanForSubBundles(dir string) []string {
-	var bundles []string
-	scanSubBundlesWalk(dir, &bundles)
-	sort.Strings(bundles)
+// or any HCC Autodetect markers). Candidates are loaded once and retained only
+// when they yield resources, warning/error diagnostics, or a load error.
+// Retained candidates own their children; empty candidates are traversed.
+// Results retain the load outcome and are sorted deterministically by path.
+func scanForSubBundles(dir, sourceHarness string) []subBundle {
+	var bundles []subBundle
+	scanSubBundlesWalk(dir, sourceHarness, &bundles)
+	sort.Slice(bundles, func(i, j int) bool { return bundles[i].path < bundles[j].path })
 	return bundles
 }
 
-func scanSubBundlesWalk(dir string, bundles *[]string) {
+type subBundle struct {
+	path    string
+	catalog *Catalog
+	err     error
+}
+
+func loadSubBundle(path, sourceHarness string) subBundle {
+	cat, err := Load(path, sourceHarness)
+	return subBundle{path: path, catalog: cat, err: err}
+}
+
+func (b subBundle) coveredBy(entries []Entry, dir string) bool {
+	if b.err != nil || hasWarningOrHigher(b.catalog.Diagnostics) {
+		return false
+	}
+	paths := make([]string, 0, len(b.catalog.Entries))
+	for _, entry := range b.catalog.Entries {
+		if entry.Path == "" {
+			return false
+		}
+		paths = append(paths, entry.Path)
+	}
+	return catalogCoversSubBundles(entries, dir, paths)
+}
+
+func scanSubBundlesWalk(dir, sourceHarness string, bundles *[]subBundle) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -351,19 +388,23 @@ func scanSubBundlesWalk(dir string, bundles *[]string) {
 			continue
 		}
 		name := entry.Name()
-		if _, skip := skippedScanDirs[name]; skip {
+		if skippedScanDirs(name) {
 			continue
 		}
-		subDir := filepath.Join(dir, entry.Name())
+		subDir := filepath.Join(dir, name)
 		if hasBundleRoot(subDir) {
-			*bundles = append(*bundles, subDir)
-		} else {
-			scanSubBundlesWalk(subDir, bundles)
+			candidate := loadSubBundle(subDir, sourceHarness)
+			if candidate.err != nil || len(candidate.catalog.Entries) > 0 || hasWarningOrHigher(candidate.catalog.Diagnostics) {
+				*bundles = append(*bundles, candidate)
+				continue
+			}
+			slog.Debug("ignoring empty bundle candidate", "path", subDir)
 		}
+		scanSubBundlesWalk(subDir, sourceHarness, bundles)
 	}
 }
 
-// skippedScanDirs lists directory names that should never be treated as
+// skippedScanDirs identifies directory names that should never be treated as
 // sub-bundles or descended into during recursive bundle scanning. Includes:
 //   - VCS and dependency directories (same as skill.DiscoverSkills skip list)
 //   - Harness workspace directories (.factory/, .claude/, .cursor/, etc.)
@@ -374,14 +415,23 @@ func scanSubBundlesWalk(dir string, bundles *[]string) {
 //     because these are part of a recognized bundle's layout, not independent
 //     sub-bundles. A bare skills/ directory that IS an independent bundle is
 //     handled by hasMultiSkillSubdirs only when AutodetectStrict returns false.
-var skippedScanDirs = map[string]struct{}{
-	".git":             {},
-	".github":          {},
-	"node_modules":     {},
-	".cache":           {},
-	"test":             {},
-	"tests":            {},
-	"__tests__":        {},
+func skippedScanDirs(name string) bool {
+	_, repository := repositoryScanExclusions[name]
+	_, layout := bundleLayoutDirs[name]
+	return repository || layout
+}
+
+var repositoryScanExclusions = map[string]struct{}{
+	".git":         {},
+	".github":      {},
+	"node_modules": {},
+	".cache":       {},
+	"test":         {},
+	"tests":        {},
+	"__tests__":    {},
+}
+
+var bundleLayoutDirs = map[string]struct{}{
 	".factory":         {},
 	".factory-plugin":  {},
 	".claude":          {},
@@ -437,7 +487,7 @@ func hasMultiSkillSubdirs(src fs.FS) bool {
 		}
 		// Skip harness resource directories — they're part of the bundle,
 		// not independent sub-bundles containing skills.
-		if _, skip := skippedScanDirs[e.Name()]; skip {
+		if skippedScanDirs(e.Name()) {
 			continue
 		}
 		if _, err := fs.ReadFile(src, e.Name()+"/SKILL.md"); err == nil {
@@ -502,20 +552,20 @@ func normalizeMalformedPaths(root string, malformed []skill.MalformedSkill) []sk
 	return malformed
 }
 
-// discoverSubBundles loads each sub-bundle directory. It populates
+// discoverSubBundles merges the retained sub-bundle load results. It populates
 // SubBundles with per-sub-bundle results so discoverAll can create separate
 // catalogs for each. Entries/Malformed/Resources contain the merged view
 // for backward compatibility with callers that don't check SubBundles.
 // Name collisions across sub-bundles are resolved by first-wins (sub-bundles
 // are processed in sorted directory order).
-func discoverSubBundles(subBundles []string, sourceHarness string) (LoadedCatalog, error) {
+func discoverSubBundles(subBundles []subBundle) (LoadedCatalog, error) {
 	var merged LoadedCatalog
 	var errs []error
 	seen := make(map[string]struct{})
 	subCats := make(map[string]LoadedCatalog, len(subBundles))
 
-	for _, subDir := range subBundles {
-		subCat, subErr := Load(subDir, sourceHarness)
+	for _, candidate := range subBundles {
+		subDir, subCat, subErr := candidate.path, candidate.catalog, candidate.err
 		if subErr != nil {
 			errs = append(errs, fmt.Errorf("sub-bundle %q: %w", subDir, subErr))
 			continue
