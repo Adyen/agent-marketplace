@@ -31,6 +31,24 @@ func TestTruncateGitErrorPreservesUTF8AndCharacterLimit(t *testing.T) {
 	}
 }
 
+func TestDefaultBranchReturnsAdvertisedBranch(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runGitCommand(t, "", "init", "--initial-branch=trunk", source)
+	writeFile(t, filepath.Join(source, ".gitkeep"), "seed\n")
+	runGitCommand(t, source, "add", ".gitkeep")
+	runGitCommand(t, source, "commit", "-m", "seed")
+	runGitCommand(t, "", "clone", "--bare", source, origin)
+
+	got, err := DefaultBranch(origin)
+	if err != nil {
+		t.Fatalf("DefaultBranch: %v", err)
+	}
+	if got != "trunk" {
+		t.Fatalf("DefaultBranch() = %q, want trunk", got)
+	}
+}
+
 func TestRegistryKeyReturnsCachePathForGitRegistries(t *testing.T) {
 	entry := config.RegistryEntry{URL: "git@example.com:repo.git", Ref: "main"}
 	key, err := RegistryKey(entry, "/repo")

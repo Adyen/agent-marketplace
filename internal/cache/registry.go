@@ -71,6 +71,33 @@ func CloneOrPull(url, ref string) (string, error) {
 	return cachePath, nil
 }
 
+// DefaultBranch returns the branch advertised by a remote repository's HEAD.
+func DefaultBranch(url string) (string, error) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return "", errors.New("registry url is required")
+	}
+
+	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != "ref:" || fields[2] != "HEAD" {
+			continue
+		}
+		const prefix = "refs/heads/"
+		if !strings.HasPrefix(fields[1], prefix) || len(fields[1]) == len(prefix) {
+			continue
+		}
+		return strings.TrimPrefix(fields[1], prefix), nil
+	}
+
+	return "", fmt.Errorf("remote did not advertise a default branch")
+}
+
 func checkoutResolvedRef(repoDir, ref string) error {
 	slog.Debug("checking out remote git ref", "repo_dir", repoDir, "ref", ref)
 	if err := runGit(repoDir, "checkout", "--force", "-B", ref, "origin/"+ref); err == nil {
@@ -93,6 +120,11 @@ func dirExists(path string) (bool, error) {
 }
 
 func runGit(repoDir string, args ...string) error {
+	_, err := runGitOutput(repoDir, args...)
+	return err
+}
+
+func runGitOutput(repoDir string, args ...string) (string, error) {
 	start := time.Now()
 	redactedArgs := redactArgs(args)
 	redactedCmd := strings.Join(redactedArgs, " ")
@@ -105,13 +137,13 @@ func runGit(repoDir string, args ...string) error {
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		slog.Debug("git command end", "dir", repoDir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", true)
-		return nil
+		return string(output), nil
 	}
 
 	trimmedOutput := redactSecrets(strings.TrimSpace(string(output)))
 	slog.Debug("git command end", "dir", repoDir, "args", redactedArgs, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", trimmedOutput)
 	if trimmedOutput == "" {
-		return fmt.Errorf("git %s: %w", redactedCmd, err)
+		return "", fmt.Errorf("git %s: %w", redactedCmd, err)
 	}
 
 	// Bound the error message to prevent screen flooding. Git can emit
@@ -122,7 +154,7 @@ func runGit(repoDir string, args ...string) error {
 		firstLine = firstLine[:idx]
 	}
 	firstLine = truncateGitError(firstLine)
-	return fmt.Errorf("git %s: %w: %s", redactedCmd, err, firstLine)
+	return "", fmt.Errorf("git %s: %w: %s", redactedCmd, err, firstLine)
 }
 
 const maxGitErrorChars = 200

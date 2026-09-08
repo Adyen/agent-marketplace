@@ -241,13 +241,17 @@ func parseTable(t *testing.T, output string) ([]string, []string) {
 }
 
 func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, string) {
+	return createBareRepoWithWorkingCloneOnBranch(t, bareName, "main")
+}
+
+func createBareRepoWithWorkingCloneOnBranch(t *testing.T, bareName, branch string) (string, string) {
 	t.Helper()
 
 	baseDir := t.TempDir()
 	origin := filepath.Join(baseDir, bareName)
 	working := filepath.Join(baseDir, "working")
 
-	runGit(t, "", "init", "--initial-branch=main", working)
+	runGit(t, "", "init", "--initial-branch="+branch, working)
 	runGit(t, working, "commit", "--allow-empty", "-m", "seed")
 	runGit(t, "", "clone", "--bare", working, origin)
 
@@ -256,7 +260,7 @@ func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, stri
 	if err != nil {
 		t.Fatalf("open git config %q: %v", gitConfig, err)
 	}
-	if _, err := fmt.Fprintf(config, "\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", filepath.ToSlash(origin)); err != nil {
+	if _, err := fmt.Fprintf(config, "\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"%s\"]\n\tremote = origin\n\tmerge = refs/heads/%s\n", filepath.ToSlash(origin), branch, branch); err != nil {
 		_ = config.Close()
 		t.Fatalf("write git config %q: %v", gitConfig, err)
 	}
@@ -268,11 +272,15 @@ func createBareRepoWithWorkingClone(t *testing.T, bareName string) (string, stri
 }
 
 func commitAndPushAll(t *testing.T, repoDir, message string) {
+	commitAndPushAllToBranch(t, repoDir, message, "main")
+}
+
+func commitAndPushAllToBranch(t *testing.T, repoDir, message, branch string) {
 	t.Helper()
 
 	runGit(t, repoDir, "add", ".")
 	runGit(t, repoDir, "commit", "-m", message)
-	runGit(t, repoDir, "push", "origin", "main")
+	runGit(t, repoDir, "push", "origin", branch)
 }
 
 func writeSkill(t *testing.T, repoDir, name, description string, tags []string) {
