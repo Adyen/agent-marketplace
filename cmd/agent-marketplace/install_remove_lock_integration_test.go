@@ -179,14 +179,14 @@ func TestInstallMaterializationFailureKeepsCommittedConfigAndLock(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "committed-sync-failure.git")
-	writeSkill(t, working, "review", "Review", nil)
+	writeUndocumentedTransportMCP(t, working, "review")
 	commitAndPushAll(t, working, "review")
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nharnesses: [devin]\nmaterialization:\n  mode: file\n")
+	writeConfig(t, configPath, "\nharnesses: [devin]\n")
 	withWorkingDir(t, repo)
-	_, err := executeCommand("install", "review", "--from", origin, "--ref", "main")
+	_, err := executeCommand("install", "review", "--kind", "mcp", "--from", origin, "--ref", "main")
 	var committed *pipeline.DependencyCommittedSyncError
 	if !errors.As(err, &committed) {
 		t.Fatalf("install error = %v, want DependencyCommittedSyncError", err)
