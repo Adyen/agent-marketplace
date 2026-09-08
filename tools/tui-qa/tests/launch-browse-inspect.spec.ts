@@ -36,9 +36,17 @@ test("bare launch browses tabs and inspects alpha-skill", async ({ terminal }) =
     await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
   });
 
+  await step("focus alpha-skill files", () => terminal.write("\r"), async () => {
+    await expect(terminal.getByText("Preview · SKILL.md", { strict: false })).toBeVisible();
+  });
+
   await step("open full alpha-skill detail", () => terminal.write("\r"), async () => {
     await expect(terminal.getByText("Alpha Skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("Alpha fixture body.")).toBeVisible();
+  });
+
+  await step("close alpha-skill pager", () => terminal.write("q"), async () => {
+    await expect(terminal.getByText("Preview · SKILL.md", { strict: false })).toBeVisible();
   });
 
   await step("return to selected alpha-skill", () => terminal.write("\u001b"), async () => {
