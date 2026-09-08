@@ -2095,6 +2095,41 @@ func TestPrepareFetchJobsExactSnapshotPreservesCommitQualifiedCatalogKey(t *test
 	}
 }
 
+func TestExactSnapshotDoesNotInventSyntheticEntryOverlap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	pluginDir := filepath.Join(snapshot, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	url := "https://example.invalid/team/resources.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "main", SourceHarness: "factory"},
+		{URL: url, Ref: "main", Path: "plugin", SourceHarness: "factory"},
+	}}
+	plugin := LoadedCatalog{Entries: []Entry{{Kind: ir.KindSkill, Name: "review"}}}
+	root := LoadedCatalog{Entries: plugin.Entries, SubBundles: map[string]LoadedCatalog{pluginDir: plugin}}
+	result := LoadRegistries(cfg, "", LoadModeRefresh,
+		WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+			return snapshot, url + "@sha1:" + strings.Repeat("a", 40) + ":" + entry.Path, nil
+		}),
+		WithDiscoverFunc(func(dir, _ string) (LoadedCatalog, error) {
+			if dir == snapshot {
+				return root, nil
+			}
+			return plugin, nil
+		}),
+	)
+	if len(result.Errors) != 0 {
+		t.Fatalf("exact snapshot invented overlap errors: %v", result.Errors)
+	}
+}
+
 func TestLoadRegistriesKeepsDistinctExactSnapshotCatalogs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	release, err := cache.AcquireExactGitNamespaceLease()

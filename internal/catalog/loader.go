@@ -957,6 +957,13 @@ func (w *OverlappingEntryWarning) Error() string {
 		w.Dir, redact.URL(w.FirstURL), redact.URL(w.FirstPath), redact.URL(w.SecondURL), redact.URL(w.SecondPath))
 }
 
+func (w *OverlappingEntryWarning) Resource() string          { return w.SecondPath }
+func (w *OverlappingEntryWarning) Source() string            { return redact.URL(w.SecondURL) }
+func (w *OverlappingEntryWarning) PresentationKey() string   { return "catalog.registry-overlap" }
+func (w *OverlappingEntryWarning) PresentationText() string  { return "registry entries overlap" }
+func (w *OverlappingEntryWarning) DiagnosticCode() string    { return "" }
+func (w *OverlappingEntryWarning) DiagnosticMessage() string { return "" }
+
 // IsOverlapWarning reports whether an error is an OverlappingEntryWarning.
 func IsOverlapWarning(err error) bool {
 	var w *OverlappingEntryWarning
@@ -967,6 +974,7 @@ func IsOverlapWarning(err error) bool {
 func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFunc) {
 	discoveredByKey := make(map[string]LoadedCatalog)
 	scannedDirs := make(map[string]struct{})
+	scannedDirEntries := make(map[string]config.RegistryEntry)
 	// scannedDirKeys maps each scanned skill directory to the catalogKey
 	// under which its catalog was stored. This allows overlapping entries
 	// to copy the catalog from the first scan instead of getting an empty one.
@@ -1001,11 +1009,16 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			// (one is a component-wise prefix of the other). Same-path entries
 			// from different URL forms (e.g. .git suffix) are URL dedup, not
 			// path overlap — no warning needed.
+			firstURL := findEntryURL(requests, firstKey)
 			firstPath := findEntryPath(requests, firstKey)
+			if firstURL == "" {
+				firstURL = scannedDirEntries[skillDir].URL
+				firstPath = scannedDirEntries[skillDir].Path
+			}
 			if isCatalogPathPrefix(firstPath, entry.Path) || isCatalogPathPrefix(entry.Path, firstPath) {
 				result.Errors = append(result.Errors, &OverlappingEntryWarning{
 					Dir:        skillDir,
-					FirstURL:   findEntryURL(requests, firstKey),
+					FirstURL:   firstURL,
 					FirstPath:  firstPath,
 					SecondURL:  entry.URL,
 					SecondPath: entry.Path,
@@ -1015,6 +1028,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		}
 		scannedDirs[skillDir] = struct{}{}
 		scannedDirKeys[skillDir] = req.catalogKey
+		scannedDirEntries[skillDir] = entry
 
 		discovered, err := discover(skillDir, entry.SourceHarness)
 		if err != nil {
@@ -1038,7 +1052,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		// --from install path) can still look up resources without needing
 		// to know about the sub-bundle decomposition.
 		if len(discovered.SubBundles) > 0 {
-			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, requests, entry, req.catalogKey, basePath, discovered.SubBundles, discovered.Errors, discover)
+			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, scannedDirEntries, requests, entry, req.catalogKey, basePath, discovered.SubBundles, discovered.Errors, discover)
 			discoveredByKey[req.catalogKey] = discovered
 			result.Catalogs[req.catalogKey] = discovered
 			if len(discovered.Resources) > 0 {
@@ -1127,7 +1141,7 @@ func rebaseCatalogEntryPaths(loaded *LoadedCatalog, fromRoot, toRoot string) {
 // derived from the sub-bundle's path relative to the repo root, so the TUI
 // groups them under distinct sections. The parent registry entry's selectors
 // (default, skills, tags, etc.) are inherited by each sub-bundle entry.
-func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
+func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, scannedDirEntries map[string]config.RegistryEntry, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
 	// Sort sub-bundle directories for deterministic processing.
 	subDirs := make([]string, 0, len(subBundles))
 	for dir := range subBundles {
@@ -1179,11 +1193,16 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 			// Only emit an overlap warning when the paths genuinely overlap
 			// (one is a component-wise prefix of the other), consistent with
 			// the same check in discoverAll's scannedDirs path.
+			firstURL := findEntryURL(requests, firstKey)
 			firstPath := findEntryPath(requests, firstKey)
+			if firstURL == "" {
+				firstURL = scannedDirEntries[subSkillDir].URL
+				firstPath = scannedDirEntries[subSkillDir].Path
+			}
 			if isCatalogPathPrefix(firstPath, relPath) || isCatalogPathPrefix(relPath, firstPath) {
 				result.Errors = append(result.Errors, &OverlappingEntryWarning{
 					Dir:        subSkillDir,
-					FirstURL:   findEntryURL(requests, firstKey),
+					FirstURL:   firstURL,
 					FirstPath:  firstPath,
 					SecondURL:  parentEntry.URL,
 					SecondPath: relPath,
@@ -1193,6 +1212,9 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		}
 		scannedDirs[subSkillDir] = struct{}{}
 		scannedDirKeys[subSkillDir] = subKey
+		scannedEntry := parentEntry
+		scannedEntry.Path = relPath
+		scannedDirEntries[subSkillDir] = scannedEntry
 
 		// Create a synthetic RegistryEntry for this sub-bundle.
 		subEntry := parentEntry

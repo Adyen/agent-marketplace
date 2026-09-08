@@ -51,8 +51,14 @@ func (w ResourceWarning) Error() string {
 	return fmt.Sprintf("source revision omitted %s/%s: %s", w.Kind, w.Name, w.Reason)
 }
 
-func (w ResourceWarning) Resource() string   { return w.Kind + "/" + w.Name }
-func (w ResourceWarning) DependencyWarning() {}
+func (w ResourceWarning) Resource() string        { return w.Kind + "/" + w.Name }
+func (w ResourceWarning) PresentationKey() string { return "source-revision-omitted\x00" + w.Reason }
+func (w ResourceWarning) PresentationText() string {
+	return "source revision omitted resources: " + w.Reason
+}
+func (w ResourceWarning) DiagnosticCode() string    { return "" }
+func (w ResourceWarning) DiagnosticMessage() string { return "" }
+func (w ResourceWarning) DependencyWarning()        {}
 
 type Projection struct {
 	SourceHarness  string
