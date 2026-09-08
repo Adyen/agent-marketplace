@@ -646,7 +646,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.path == "" {
 			m.detailLegacyRender = true
 		}
-		if !m.detailLegacyRender && msg.width > 0 && msg.width != m.previewWidth() {
+		if msg.width > 0 && msg.width != m.previewWidth() {
 			if rerender := m.rerenderDetailAtWidth(m.width); rerender != nil {
 				return m, rerender
 			}

@@ -119,6 +119,31 @@ func TestDetailResizeRendersAtCurrentWidth(t *testing.T) {
 	assertTerminalBounds(t, m.View(), 50, 12)
 }
 
+func TestLegacyDetailWidthMismatchSchedulesRerender(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "detail.md")
+	if err := os.WriteFile(path, []byte("# Detail\n\ncontent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := mkRow("detail", withProject)
+	r.Artifact.Path = path
+	m := modelWithSelectedRow(t, r)
+	m.width = 50
+	m.height = 24
+	m.enterDetailPane()
+	m.detailLegacyRender = true
+	generation := m.beginRequest(requestDetail)
+
+	updated, cmd := m.Update(detailContentMsg{generation: generation, content: "stale width", width: 47})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("legacy detail accepted stale-width content without rerendering")
+	}
+	rendered := cmd().(detailContentMsg)
+	if want := previewWidthFor(m.width); rendered.width != want || !rendered.keepScroll {
+		t.Fatalf("legacy rerender message = %+v, want width %d with scroll preservation", rendered, want)
+	}
+}
+
 func TestWidthMismatchWithoutSourceAppliesDeliveredContent(t *testing.T) {
 	r := mkRow("missing-source", withProject)
 	r.Artifact.Path = ""

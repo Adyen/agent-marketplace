@@ -59,6 +59,21 @@ func TestBundleTreeInitialSelectionAndDeterministicExpansion(t *testing.T) {
 	}
 }
 
+func TestBundleTreeAlignsCursorWithInitialSelection(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"README.md", "SKILL.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tree := newBundleTree(root, "")
+	entry, ok := tree.selectedEntry()
+	if !ok || entry.IsDir || entry.RelPath != "SKILL.md" {
+		t.Fatalf("initial cursor entry = %+v, ok=%v; want SKILL.md", entry, ok)
+	}
+}
+
 func TestBundleTreeRestoresNestedSelection(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "scripts", "checks"), 0o755); err != nil {
