@@ -164,6 +164,33 @@ func WithCacheReadLock[T any](fn func() (T, error)) (T, error) {
 	return fn()
 }
 
+func WithRegistryReadLockWithContext[T any](ctx context.Context, urls []string, fn func() (T, error)) (T, error) {
+	return withRegistryLocks(ctx, urls, lockfileShared, fn)
+}
+
+func withRegistryLocks[T any](ctx context.Context, urls []string, operation int, fn func() (T, error)) (T, error) {
+	release, err := acquireCacheFileLockWithContext(ctx, lockfileShared)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	defer release()
+	keys := make([]string, len(urls))
+	for i, url := range urls {
+		keys[i] = HashURL(url)
+	}
+	slices.Sort(keys)
+	for _, key := range slices.Compact(keys) {
+		release, err := acquireCachePathLockWithContext(ctx, CacheDir()+".registry-"+key+".lock", operation)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		defer release()
+	}
+	return fn()
+}
+
 func WithCacheMutation(fn func() error) error {
 	_, err := WithCacheMutationLock(func() (struct{}, error) {
 		return struct{}{}, fn()
@@ -210,30 +237,34 @@ func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, 
 	started := time.Now()
 	slog.Debug("registry cache garbage collection started", "dry_run", dryRun)
 	var lockLayers int
-	result, err := withContextCacheMutationLock(ctx, func() (GCResult, error) {
-		var result GCResult
-		err := withExactGitExclusiveLock(ctx, func() error {
+	var result GCResult
+	err := withExactGitExclusiveLock(ctx, func() error {
+		var err error
+		result, err = withContextCacheMutationLock(ctx, func() (GCResult, error) {
 			reachability, err := reader(ctx)
 			if err != nil {
-				return fmt.Errorf("reload cache garbage collection reachability: %w", err)
+				return GCResult{}, fmt.Errorf("reload cache garbage collection reachability: %w", err)
 			}
 			lockLayers = len(reachability.Locks)
 			for i := range reachability.Locks {
 				if err := lockfile.Validate(reachability.Locks[i]); err != nil {
-					return fmt.Errorf("validate layer lock %d: %w", i, err)
+					return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
 				}
+			}
+			sources, err := activeExactGitSources(reachability.Configs...)
+			if err != nil {
+				return GCResult{}, err
 			}
 			legacy, err := garbageCollectWithContext(ctx, dryRun, reachability.Configs...)
 			if err != nil {
-				return err
+				return GCResult{}, err
 			}
-			exact, _, err := garbageCollectExactGitUnderLease(ctx, dryRun, reachability.Locks)
+			exact, _, err := garbageCollectExactGitUnderLease(ctx, dryRun, reachability.Locks, sources)
 			legacy.Removed = append(legacy.Removed, exact.Removed...)
 			slices.Sort(legacy.Removed)
-			result = legacy
-			return err
+			return legacy, err
 		})
-		return result, err
+		return err
 	})
 	attrs := []any{"dry_run", dryRun, "lock_layers", lockLayers, "removed", len(result.Removed), "duration_ms", time.Since(started).Milliseconds()}
 	if err != nil {

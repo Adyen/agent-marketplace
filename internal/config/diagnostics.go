@@ -148,10 +148,36 @@ func ValidateOrganizationTrustUnit(configPath string, requireLock, allowMissingL
 	return nil
 }
 
+func validateOrganizationInclude(path, configPath string) error {
+	dir := lexicalConfigParent(path)
+	boundary := string(filepath.Separator)
+	if testPathTrustEnabled(configPath) {
+		boundary = organizationTrustBoundary(dir, configPath)
+	}
+	if err := validateOrganizationAncestry(dir, configPath, boundary); err != nil {
+		return err
+	}
+	return validateOrganizationNode(path, configPath, "include")
+}
+
+func lexicalConfigParent(path string) string {
+	index := strings.LastIndexByte(path, filepath.Separator)
+	if index == 0 {
+		return string(filepath.Separator)
+	}
+	if index < 0 {
+		return "."
+	}
+	return path[:index]
+}
+
 func validateOrganizationAuthorityDirectory(authorityDir, configPath string) error {
 	authorityDir = filepath.Clean(authorityDir)
-	boundary := organizationTrustBoundary(authorityDir, configPath)
-	for current := authorityDir; ; current = filepath.Dir(current) {
+	return validateOrganizationAncestry(authorityDir, configPath, organizationTrustBoundary(authorityDir, configPath))
+}
+
+func validateOrganizationAncestry(authorityDir, configPath, boundary string) error {
+	for current := authorityDir; ; current = lexicalConfigParent(current) {
 		info, err := os.Lstat(current)
 		if err != nil {
 			return organizationTrustError("organization.trust.ancestor.inspect", current, err)

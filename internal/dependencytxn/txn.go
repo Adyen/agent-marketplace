@@ -24,6 +24,7 @@ var (
 	ErrGenerationConflict = errors.New("dependency transaction: generation conflict")
 	ErrUnsafePath         = errors.New("dependency transaction: unsafe path")
 	ErrRecoveryBlocked    = errors.New("dependency transaction: recovery blocked")
+	ErrRecoveryRequired   = errors.New("dependency.recovery-required: pending transaction; run sync or lock without --locked, --offline, or --check to recover")
 	ErrLockTimeout        = errors.New("dependency transaction: lock timeout")
 )
 
@@ -42,6 +43,13 @@ type DesiredFile struct {
 	ExpectedMode fs.FileMode
 	Bytes        []byte
 	Mode         fs.FileMode
+	Delete       bool
+}
+
+type ReadAssertion struct {
+	Path          string     `json:"path"`
+	RequestedPath string     `json:"requested_path"`
+	Expected      Generation `json:"expected"`
 }
 
 type Result struct {
@@ -73,6 +81,11 @@ type Option func(*options)
 type options struct {
 	fault   FaultHook
 	syncDir func(string) error
+	reads   []ReadAssertion
+}
+
+func WithReadAssertions(reads []ReadAssertion) Option {
+	return func(o *options) { o.reads = append(o.reads, reads...) }
 }
 
 func WithFaultHook(hook FaultHook) Option {
@@ -96,6 +109,7 @@ type journal struct {
 	ID         string             `json:"id"`
 	Files      []journalFile      `json:"files"`
 	Assertions []journalAssertion `json:"assertions,omitempty"`
+	Reads      []ReadAssertion    `json:"reads,omitempty"`
 }
 
 type journalAssertion struct {
@@ -111,6 +125,7 @@ type journalFile struct {
 	OldMode   fs.FileMode `json:"old_mode"`
 	NewDigest string      `json:"new_digest"`
 	NewMode   fs.FileMode `json:"new_mode"`
+	Delete    bool        `json:"delete,omitempty"`
 }
 
 type preparedFile struct {
@@ -186,7 +201,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		return Result{}, err
 	}
 	if len(files) == 0 {
-		return Result{}, nil
+		return Result{}, ValidateReadAssertions(cfg.reads)
 	}
 	stateDir, err = prepareStateDir(stateDir)
 	if err != nil {
@@ -202,6 +217,12 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		return Result{}, err
 	}
 
+	if err := checkPendingDestinations(stateDir, paths); err != nil {
+		return Result{}, err
+	}
+	if err := ValidateReadAssertions(cfg.reads); err != nil {
+		return Result{}, err
+	}
 	changed := make([]preparedFile, 0, len(files))
 	assertions := make([]journalAssertion, 0, len(files))
 	for _, file := range files {
@@ -212,7 +233,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		if current != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
 			return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
 		}
-		if current.Exists && current.Digest == Digest(file.Bytes) && mode == file.Mode {
+		if file.Delete && !current.Exists || !file.Delete && current.Exists && current.Digest == Digest(file.Bytes) && mode == file.Mode {
 			assertions = append(assertions, journalAssertion{Path: file.Path, Expected: current, Mode: mode})
 			continue
 		}
@@ -237,12 +258,14 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	}()
 	stagedDirs := make(map[string]struct{}, len(changed))
 	for i := range changed {
-		temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
-		if err != nil {
-			return Result{}, err
+		if !changed[i].desired.Delete {
+			temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
+			if err != nil {
+				return Result{}, err
+			}
+			changed[i].temp = temp
+			stagedDirs[filepath.Dir(temp)] = struct{}{}
 		}
-		changed[i].temp = temp
-		stagedDirs[filepath.Dir(temp)] = struct{}{}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterStage, Index: i, Path: changed[i].desired.Path}); err != nil {
 			return Result{}, err
 		}
@@ -257,9 +280,12 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	if err != nil {
 		return Result{}, err
 	}
-	j := journal{Version: journalVersion, ID: id, Files: make([]journalFile, len(changed)), Assertions: assertions}
+	j := journal{Version: journalVersion, ID: id, Files: make([]journalFile, len(changed)), Assertions: assertions, Reads: cfg.reads}
 	for i, file := range changed {
-		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, NewDigest: Digest(file.desired.Bytes), NewMode: file.desired.Mode}
+		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, Delete: file.desired.Delete, NewMode: file.desired.Mode}
+		if !file.desired.Delete {
+			j.Files[i].NewDigest = Digest(file.desired.Bytes)
+		}
 	}
 	journalPath, err := persistJournal(stateDir, &j, cfg.syncDir)
 	if journalPath != "" {
@@ -275,6 +301,9 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	}
 	for i, file := range j.Files {
 		if err := inject(cfg, FaultPoint{Stage: FaultBeforePublish, Index: i, Path: file.Path}); err != nil {
+			return Result{}, err
+		}
+		if err := validateJournalReads(j); err != nil {
 			return Result{}, err
 		}
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
@@ -301,6 +330,33 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	return result, nil
 }
 
+func CheckPending(stateDir string) error {
+	stateDir, err := normalizeDestinationPath(stateDir)
+	if err != nil {
+		return err
+	}
+	if err := validateDestinationAncestors(stateDir); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect dependency transaction journals: %w", err)
+	}
+	for _, entry := range entries {
+		if isJournalEntry(entry) {
+			return fmt.Errorf("%w: %s", ErrRecoveryRequired, filepath.Join(stateDir, entry.Name()))
+		}
+	}
+	return nil
+}
+
+func isJournalEntry(entry os.DirEntry) bool {
+	return !entry.IsDir() && strings.HasPrefix(entry.Name(), ".dependencytxn-") && strings.HasSuffix(entry.Name(), ".json")
+}
+
 func Recover(ctx context.Context, stateDir string, opts ...Option) error {
 	cfg := applyOptions(opts)
 	var err error
@@ -313,7 +369,7 @@ func Recover(ctx context.Context, stateDir string, opts ...Option) error {
 		return fmt.Errorf("dependency transaction: list journals: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".dependencytxn-") || !strings.HasSuffix(entry.Name(), ".json") {
+		if !isJournalEntry(entry) {
 			continue
 		}
 		if err := recoverJournal(ctx, filepath.Join(stateDir, entry.Name()), stateDir, cfg); err != nil {
@@ -323,21 +379,64 @@ func Recover(ctx context.Context, stateDir string, opts ...Option) error {
 	return nil
 }
 
-func recoverJournal(ctx context.Context, path, stateDir string, cfg options) error {
+func readJournal(path string) (journal, error) {
+	var j journal
 	raw, _, err := readRegularFile(path, maxJournalSize)
 	if err != nil {
-		return fmt.Errorf("%w: read journal %s: %v", ErrRecoveryBlocked, path, err)
+		return j, fmt.Errorf("%w: read journal %s: %w", ErrRecoveryBlocked, path, err)
 	}
-	var j journal
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&j); err != nil {
-		return fmt.Errorf("%w: decode journal %s: %v", ErrRecoveryBlocked, path, err)
+		return j, fmt.Errorf("%w: decode journal %s: %v", ErrRecoveryBlocked, path, err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: trailing data in journal %s", ErrRecoveryBlocked, path)
+		return j, fmt.Errorf("%w: trailing data in journal %s", ErrRecoveryBlocked, path)
 	}
-	if err := validateJournal(&j); err != nil {
+	return j, validateJournal(&j)
+}
+
+func checkPendingDestinations(stateDir string, paths []string) error {
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return fmt.Errorf("inspect pending dependency destinations: %w", err)
+	}
+	for _, entry := range entries {
+		if !isJournalEntry(entry) {
+			continue
+		}
+		j, err := readJournal(filepath.Join(stateDir, entry.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		pending := make(map[string]bool, len(j.Files)+len(j.Assertions)+len(j.Reads))
+		for _, file := range j.Files {
+			pending[file.Path] = true
+		}
+		for _, assertion := range j.Assertions {
+			pending[assertion.Path] = true
+		}
+		for _, read := range j.Reads {
+			pending[read.Path] = true
+		}
+		for _, path := range paths {
+			if pending[path] {
+				return fmt.Errorf("%w: %s", ErrRecoveryRequired, path)
+			}
+		}
+	}
+	return nil
+}
+
+func recoverJournal(ctx context.Context, path, stateDir string, cfg options) error {
+	j, err := readJournal(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	paths := make([]string, 0, len(j.Files)+len(j.Assertions))
@@ -353,10 +452,18 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 		return err
 	}
 	defer releaseLocks(locks)
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect locked recovery journal: %w", err)
+	}
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterLocks, Index: -1}); err != nil {
 		return err
 	}
 	if err := validateAssertions(j.Assertions); err != nil {
+		return err
+	}
+	if err := validateJournalReads(j); err != nil {
 		return err
 	}
 
@@ -380,9 +487,15 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 	for i, file := range j.Files {
 		state, _ := classify(file)
 		if state == "new" {
+			if err := cfg.syncDir(filepath.Dir(file.Path)); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultBeforePublish, Index: i, Path: file.Path}); err != nil {
+			return err
+		}
+		if err := validateJournalReads(j); err != nil {
 			return err
 		}
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
@@ -405,6 +518,12 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 	files := append([]DesiredFile(nil), desired...)
 	for i := range files {
+		if files[i].Delete && (len(files[i].Bytes) != 0 || files[i].Mode != 0) {
+			return nil, fmt.Errorf("%w: deletion cannot contain replacement bytes or mode: %s", ErrUnsafePath, files[i].Path)
+		}
+		if int64(len(files[i].Bytes)) > maxDependencyFileSize {
+			return nil, fmt.Errorf("%w: desired file %s exceeds %d bytes", ErrRecoveryBlocked, files[i].Path, maxDependencyFileSize)
+		}
 		path, err := canonicalDestination(files[i].Path)
 		if err != nil {
 			return nil, err
@@ -687,6 +806,60 @@ func validatePublishPreconditions(files []journalFile, assertions []journalAsser
 	return nil
 }
 
+func ValidateReadAssertions(reads []ReadAssertion) error {
+	return validateReadAssertions(reads, nil)
+}
+
+func validateReadAssertions(reads []ReadAssertion, published map[string]Generation) error {
+	for _, read := range reads {
+		if err := validateReadAssertion(read); err != nil {
+			return err
+		}
+		next, owned := published[read.Path]
+		canonical, err := filepath.EvalSymlinks(read.RequestedPath)
+		if errors.Is(err, os.ErrNotExist) && (!read.Expected.Exists || owned && !next.Exists) {
+			var parent string
+			parent, err = filepath.EvalSymlinks(filepath.Dir(read.RequestedPath))
+			canonical = filepath.Join(parent, filepath.Base(read.RequestedPath))
+		}
+		if err != nil || canonical != read.Path {
+			return fmt.Errorf("%w: config read path changed at %s", ErrGenerationConflict, read.RequestedPath)
+		}
+		generation, err := ReadGeneration(read.Path)
+		if err != nil {
+			return fmt.Errorf("%w: config read unavailable at %s: %w", ErrGenerationConflict, read.Path, err)
+		}
+		if generation != read.Expected && (!owned || generation != next) {
+			return fmt.Errorf("%w: config read changed at %s", ErrGenerationConflict, read.Path)
+		}
+	}
+	return nil
+}
+
+func validateReadAssertion(read ReadAssertion) error {
+	if err := validateCleanAbsolutePath(read.Path); err != nil {
+		return err
+	}
+	if err := validateCleanAbsolutePath(read.RequestedPath); err != nil {
+		return err
+	}
+	return validateGeneration(read.Expected)
+}
+
+func validateJournalReads(j journal) error {
+	if len(j.Reads) == 0 {
+		return nil
+	}
+	published := make(map[string]Generation, len(j.Files))
+	for _, file := range j.Files {
+		published[file.Path] = Generation{Exists: !file.Delete, Digest: file.NewDigest}
+	}
+	if err := validateReadAssertions(j.Reads, published); err != nil {
+		return fmt.Errorf("%w: %w", ErrRecoveryBlocked, err)
+	}
+	return nil
+}
+
 func validateAssertions(assertions []journalAssertion) error {
 	for _, assertion := range assertions {
 		generation, mode, err := inspectDestination(assertion.Path)
@@ -711,11 +884,17 @@ func publish(file journalFile, syncDir func(string) error) error {
 	if state != "old" {
 		return fmt.Errorf("%w: third-party bytes at %s", ErrRecoveryBlocked, file.Path)
 	}
-	if err := validateStaged(file); err != nil {
-		return err
-	}
-	if err := os.Rename(file.Temp, file.Path); err != nil {
-		return fmt.Errorf("dependency transaction: publish %s: %w", file.Path, err)
+	if file.Delete {
+		if err := os.Remove(file.Path); err != nil {
+			return fmt.Errorf("dependency transaction: delete %s: %w", file.Path, err)
+		}
+	} else {
+		if err := validateStaged(file); err != nil {
+			return err
+		}
+		if err := os.Rename(file.Temp, file.Path); err != nil {
+			return fmt.Errorf("dependency transaction: publish %s: %w", file.Path, err)
+		}
 	}
 	return syncDir(filepath.Dir(file.Path))
 }
@@ -728,7 +907,7 @@ func classify(file journalFile) (string, error) {
 	if generation == file.Old && (!generation.Exists || mode == file.OldMode) {
 		return "old", nil
 	}
-	if generation.Exists && generation.Digest == file.NewDigest && mode == file.NewMode {
+	if generation == (Generation{Exists: !file.Delete, Digest: file.NewDigest}) && mode == file.NewMode {
 		return "new", nil
 	}
 	return "foreign", nil
@@ -749,6 +928,11 @@ func validateStaged(file journalFile) error {
 }
 
 func validateJournal(j *journal) error {
+	for _, read := range j.Reads {
+		if err := validateReadAssertion(read); err != nil {
+			return fmt.Errorf("%w: invalid read assertion: %w", ErrRecoveryBlocked, err)
+		}
+	}
 	if j.Version != journalVersion || j.ID == "" || len(j.Files) == 0 {
 		return fmt.Errorf("%w: invalid journal header", ErrRecoveryBlocked)
 	}
@@ -759,13 +943,20 @@ func validateJournal(j *journal) error {
 		if err != nil || canonical != file.Path || file.Path <= previous {
 			return fmt.Errorf("%w: unsafe or unordered journal destination %s", ErrRecoveryBlocked, file.Path)
 		}
-		if err := validateGeneration(file.Old); err != nil || !validDigest(file.NewDigest) {
+		if err := validateGeneration(file.Old); err != nil {
+			return fmt.Errorf("%w: invalid journal digest for %s", ErrRecoveryBlocked, file.Path)
+		}
+		if err := validateGeneration(Generation{Exists: !file.Delete, Digest: file.NewDigest}); err != nil {
 			return fmt.Errorf("%w: invalid journal digest for %s", ErrRecoveryBlocked, file.Path)
 		}
 		if file.NewMode != file.NewMode.Perm() || file.OldMode != file.OldMode.Perm() {
 			return fmt.Errorf("%w: invalid journal mode for %s", ErrRecoveryBlocked, file.Path)
 		}
-		if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+		if file.Delete {
+			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {
+				return fmt.Errorf("%w: invalid journal deletion for %s", ErrRecoveryBlocked, file.Path)
+			}
+		} else if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
 			return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
 		}
 		destinations[file.Path] = struct{}{}
@@ -778,7 +969,7 @@ func validateJournal(j *journal) error {
 		if err != nil || canonical != assertion.Path || assertion.Path <= previous || duplicate {
 			return fmt.Errorf("%w: unsafe, duplicate, or unordered journal assertion %s", ErrRecoveryBlocked, assertion.Path)
 		}
-		if err := validateGeneration(assertion.Expected); err != nil || !assertion.Expected.Exists || assertion.Mode != assertion.Mode.Perm() {
+		if err := validateGeneration(assertion.Expected); err != nil || !assertion.Expected.Exists && assertion.Mode != 0 || assertion.Mode != assertion.Mode.Perm() {
 			return fmt.Errorf("%w: invalid journal assertion for %s", ErrRecoveryBlocked, assertion.Path)
 		}
 		destinations[assertion.Path] = struct{}{}

@@ -7,6 +7,20 @@ import (
 	"testing"
 )
 
+func BenchmarkCheckPending(b *testing.B) {
+	state, err := filepath.EvalSymlinks(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := CheckPending(state); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkCommitUnchanged(b *testing.B) {
 	base, err := filepath.EvalSymlinks(b.TempDir())
 	if err != nil {

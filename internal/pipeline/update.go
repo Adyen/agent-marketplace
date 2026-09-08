@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os/exec"
 	pathpkg "path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -91,7 +89,10 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	var bumps []RefBump
 	if opts.Bump {
 		for _, layer := range ec.PresentLayers() {
-			scope := updateScopeForSource(layer.Source)
+			if !layer.Source.IsWritable() {
+				continue
+			}
+			scope := lockfile.Scope(layer.Source.LockScope())
 			if !bumpScopeSelected(opts.BumpScopes, scope) {
 				continue
 			}
@@ -133,17 +134,6 @@ func layerRegistriesForUpdate(layer config.LayerResult) []config.RegistryEntry {
 		return layer.Local.Registries
 	}
 	return nil
-}
-
-func updateScopeForSource(source config.Source) lockfile.Scope {
-	switch source {
-	case config.UserPersonal:
-		return lockfile.ScopeUser
-	case config.RepoCommitted:
-		return lockfile.ScopeRepo
-	default:
-		return lockfile.ScopeLocal
-	}
 }
 
 func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) bool {
@@ -225,10 +215,7 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 }
 
 func canonicalUpdateRegistryURL(raw string) (string, error) {
-	if filepath.IsAbs(raw) {
-		raw = (&url.URL{Scheme: "file", Path: filepath.ToSlash(raw)}).String()
-	}
-	return lockfile.CanonicalGitURL(strings.TrimSpace(raw))
+	return lockfile.CanonicalGitConfigURL(raw)
 }
 
 func updateTargetMatchesEntry(entry config.RegistryEntry, target *UpdateTarget, wantedURL string) bool {

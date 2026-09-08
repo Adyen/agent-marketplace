@@ -32,7 +32,7 @@ func redactArgs(args []string) []string {
 var refNameRE = regexp.MustCompile(`^[A-Za-z0-9._+/@-]+$`)
 
 func CloneOrPull(url, ref string) (string, error) {
-	return WithCacheMutationLock(func() (string, error) {
+	return withRegistryLocks(context.Background(), []string{url}, lockfileExclusive, func() (string, error) {
 		return cloneOrPull(url, ref)
 	})
 }
@@ -305,6 +305,17 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		cmd.Dir = repoDir
 	}
 	cmd.Env = gitEnv()
+	if source, acquisition := gitAcquisition(args); acquisition {
+		var err error
+		cmd.Env, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
+		if err != nil {
+			return nil, err
+		}
+		if err := cmd.Run(); err != nil {
+			return []byte("git.auth-transport-failed: transport diagnostics withheld to protect authentication data"), err
+		}
+		return nil, nil
+	}
 	return cmd.CombinedOutput()
 }
 
@@ -354,6 +365,9 @@ func gitEnv() []string {
 		"GIT_SSH_COMMAND": true,
 		"GIT_SSL_CERT":    true,
 		"GIT_SSL_KEY":     true,
+		"GIT_SSL_CAINFO":  true,
+		"GIT_SSL_CAPATH":  true,
+		"GIT_ASKPASS":     true,
 		"GIT_HTTP_PROXY":  true,
 		"GIT_HTTPS_PROXY": true,
 		"GIT_NO_PROXY":    true,
@@ -368,9 +382,11 @@ func gitEnv() []string {
 		env = append(env, e)
 	}
 
+	if os.Getenv("GIT_ASKPASS") == "" {
+		env = append(env, "GIT_ASKPASS=echo")
+	}
 	env = append(env,
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=echo",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 	)

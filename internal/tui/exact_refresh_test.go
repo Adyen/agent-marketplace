@@ -97,7 +97,7 @@ func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := lockfile.GitRoot{Path: ".", SourceHarness: built.SourceHarness, RevisionSchema: "v1", RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
+	root := lockfile.GitRoot{Path: ".", SourceHarness: built.SourceHarness, RevisionSchema: built.Manifest.SchemaVersion, RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
 	for _, resource := range built.Manifest.Resources {
 		support := make(map[string]lockfile.Digest, len(resource.SupportFiles))
 		for name, digest := range resource.SupportFiles {

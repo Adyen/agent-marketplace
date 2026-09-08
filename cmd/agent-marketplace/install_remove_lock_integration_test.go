@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -90,6 +91,87 @@ func TestConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	}
 	if string(afterLock) != string(beforeLock) {
 		t.Fatalf("failed install changed lock:\nbefore:\n%s\nafter:\n%s", beforeLock, afterLock)
+	}
+}
+
+func TestRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+	for _, from := range []bool{false, true} {
+		name := "ordinary"
+		if from {
+			name = "from"
+		}
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			stagingRoot := t.TempDir()
+			t.Setenv("TMPDIR", stagingRoot)
+			origin, working := createBareRepoWithWorkingClone(t, "remove-moved-ref.git")
+			writeCommand(t, working, "review", "Review A", "echo review")
+			writeCommand(t, working, "keep", "Keep A", "echo keep")
+			commitAndPushAll(t, working, "inventory A")
+
+			repo := filepath.Join(t.TempDir(), "repo")
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			writeConfig(t, configPath, "\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    commands: [review, keep]\n")
+			userPath := filepath.Join(home, ".agents", "config.yaml")
+			writeConfig(t, userPath, "\nharnesses: [factory]\n")
+			withWorkingDir(t, repo)
+			if output, err := executeCommand("sync"); err != nil {
+				t.Fatalf("seed sync: %v\n%s", err, output)
+			}
+			reviewPath := filepath.Join(repo, ".factory", "commands", "review.md")
+			assertFileExists(t, reviewPath)
+			preserved := make(map[string][]byte)
+			for _, path := range []string{userPath, filepath.Join(repo, ".agents", "lock.yaml"), filepath.Join(repo, ".factory", "commands", "keep.md")} {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preserved[path] = data
+			}
+
+			if err := os.Remove(filepath.Join(working, "commands", "review.md")); err != nil {
+				t.Fatal(err)
+			}
+			writeCommand(t, working, "keep", "Keep B", "echo changed")
+			commitAndPushAll(t, working, "inventory B")
+			args := []string{"remove", "review"}
+			if from {
+				args = append(args, "--from", origin, "--ref", "main")
+			}
+			if output, err := executeCommand(args...); err != nil {
+				t.Fatalf("remove locked command: %v\n%s", err, output)
+			}
+			cfg, err := config.LoadConfigFromPath(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg == nil || len(cfg.Registries) != 1 || len(cfg.Registries[0].Commands.Include) != 1 || cfg.Registries[0].Commands.Include[0] != "keep" {
+				t.Fatalf("remove did not retain only the keep command: %+v", cfg)
+			}
+			if len(cfg.Registries[0].Skills.Exclude) != 0 {
+				t.Fatalf("remove wrote a skill exclusion for a command: %+v", cfg.Registries[0].Skills)
+			}
+			if _, err := os.Lstat(reviewPath); !os.IsNotExist(err) {
+				t.Fatalf("removed command still materialized: %v", err)
+			}
+			for path, before := range preserved {
+				after, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Errorf("remove changed %s: %v\nbefore:\n%s\nafter:\n%s", path, err, before, after)
+				}
+			}
+			for _, path := range []string{config.LocalConfigPath(repo), filepath.Join(repo, ".agents", "lock.local.yaml")} {
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Errorf("remove unexpectedly created %s: %v", path, err)
+				}
+			}
+			if residue, err := filepath.Glob(filepath.Join(stagingRoot, ".agent-marketplace-config-*")); err != nil || len(residue) != 0 {
+				t.Errorf("config staging residue = %v, %v", residue, err)
+			}
+		})
 	}
 }
 

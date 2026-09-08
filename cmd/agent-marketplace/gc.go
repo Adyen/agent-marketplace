@@ -66,7 +66,11 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		if err != nil {
 			return cache.GCReachability{}, err
 		}
-		return cache.GCReachability{Locks: locks, Configs: []*config.Config{effective.Merged}}, nil
+		var configs []*config.Config
+		for _, layer := range effective.PresentLayers() {
+			configs = append(configs, &config.Config{Registries: layerRegistries(layer)})
+		}
+		return cache.GCReachability{Locks: locks, Configs: configs}, nil
 	}
 
 	var registryErr error

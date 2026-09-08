@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
 const tamperedLockDigest = lockfile.Digest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -39,6 +42,64 @@ registries:
 	}
 	lockPath = filepath.Join(repoRoot, ".agents", "lock.yaml")
 	return repoRoot, origin, working, lockPath
+}
+
+func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
+	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
+	doc := readExactManifestLock(t, lockPath)
+	root := &doc.Registries[0].Roots[0]
+	if root.RevisionSchema != "v2" {
+		t.Fatalf("new lock schema = %s", root.RevisionSchema)
+	}
+	legacy, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: working, RootPath: root.Path, SourceHarness: root.SourceHarness, RevisionSchema: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root.RevisionSchema = "v1"
+	root.RevisionDigest = lockfile.Digest(legacy.Manifest.RevisionDigest)
+	writeExactManifestLock(t, lockPath, doc)
+	before, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"sync", "--locked"}, {"lock"}, {"sync", "--check"}, {"list"}, {"status"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("legacy %v: %v\n%s", args, err, output)
+		}
+		after, err := os.ReadFile(lockPath)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("%v changed legacy lock: %v", args, err)
+		}
+	}
+	if output, err := executeCommand("lock", "--upgrade"); err != nil {
+		t.Fatalf("explicit upgrade: %v\n%s", err, output)
+	}
+	upgraded := readExactManifestLock(t, lockPath)
+	if upgraded.Registries[0].Commit != doc.Registries[0].Commit || upgraded.Registries[0].Roots[0].RevisionSchema != "v2" {
+		t.Fatalf("unchanged upstream should regenerate v2 at same commit: %+v", upgraded)
+	}
+	assertMaterializedSkillContains(t, repoRoot, "alpha", "Alpha locked")
+	current, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := bytes.Replace(current, []byte("revision_schema: v2"), []byte("revision_schema: v99"), 1)
+	if bytes.Equal(current, unknown) {
+		t.Fatal("fixture lacks v2 schema")
+	}
+	if err := os.WriteFile(lockPath, unknown, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = executeCommand("sync", "--locked")
+	var coded *lockfile.Error
+	if !errors.As(err, &coded) || coded.Code != lockfile.CodeUnsupportedVersion {
+		t.Fatalf("unknown schema must fail with typed unsupported diagnostic: %v", err)
+	}
+	after, err := os.ReadFile(lockPath)
+	if err != nil || !bytes.Equal(after, unknown) {
+		t.Fatalf("unknown version was rewritten: %v", err)
+	}
+	assertMaterializedSkillContains(t, repoRoot, "alpha", "Alpha locked")
 }
 
 func TestLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {

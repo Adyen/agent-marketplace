@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -751,6 +754,115 @@ func readExactFile(t testing.TB, root, name string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func exactGitBlobFixture(tb testing.TB, algorithm string, size int) string {
+	tb.Helper()
+	tb.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	tb.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	root := tb.TempDir()
+	gitTest(tb, "", "init", "--object-format="+algorithm, root)
+	if err := os.WriteFile(filepath.Join(root, "blob"), []byte(strings.Repeat("x", size)), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	gitTest(tb, root, "add", "blob")
+	gitTest(tb, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "blob")
+	return root
+}
+
+func TestExactGitTrackedTreeLargeBlobMemory(t *testing.T) {
+	const size = 8 << 20
+	for _, algorithm := range []string{"sha1", "sha256"} {
+		t.Run(algorithm, func(t *testing.T) {
+			root := exactGitBlobFixture(t, algorithm, size)
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm)
+			runtime.ReadMemStats(&after)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= size/2 {
+				t.Fatalf("verification allocated %d bytes for an %d-byte blob; want less than %d", allocated, size, size/2)
+			}
+		})
+	}
+}
+
+func TestGitBlobOIDIndependentVectors(t *testing.T) {
+	for _, tc := range []struct {
+		name, data, sha1, sha256 string
+	}{
+		{"empty", "", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"},
+		{"binary", "\x00\xff\n\r\x80", "f8954e10bf6f369a02d0da43befdd00802f45fab", "dbbbd0d5e6e83d4e8e2c607d6720c27052219f69b217a0c255b9c94bac733bfa"},
+		{"large", strings.Repeat("x", 8<<20), "1f6907f8a73acbeff2b1264800de17aa2cfc7b16", "11b606d886b40798e39234f97e41dc924bf7449da5c3c78e65cb170aa16a3b52"},
+	} {
+		for algorithm, want := range map[string]string{"sha1": tc.sha1, "sha256": tc.sha256} {
+			t.Run(tc.name+"/"+algorithm, func(t *testing.T) {
+				for _, reader := range []io.Reader{strings.NewReader(tc.data), struct{ io.Reader }{strings.NewReader(tc.data)}} {
+					got, err := gitBlobOID(algorithm, reader, int64(len(tc.data)))
+					if err != nil || got != want {
+						t.Fatalf("blob OID = %s, %v; want %s", got, err, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestGitBlobOIDRejectsSizeMismatchAndReadError(t *testing.T) {
+	for _, algorithm := range []string{"sha1", "sha256"} {
+		t.Run(algorithm, func(t *testing.T) {
+			for _, size := range []int64{0, 2, 4} {
+				got, err := gitBlobOID(algorithm, strings.NewReader("abc"), size)
+				if !errors.Is(err, errGitBlobSizeMismatch) || got != "" {
+					t.Fatalf("size %d: OID = %q, error = %v; want size mismatch and no OID", size, got, err)
+				}
+			}
+			readErr := errors.New("fixture read failure")
+			reader := io.MultiReader(strings.NewReader("abc"), iotest.ErrReader(readErr))
+			got, err := gitBlobOID(algorithm, reader, 3)
+			if !errors.Is(err, readErr) || got != "" {
+				t.Fatalf("OID = %q, error = %v; want read failure and no OID", got, err)
+			}
+		})
+	}
+}
+
+func TestExactGitTrackedTreePreservesExecutableAndSymlinkModes(t *testing.T) {
+	for _, algorithm := range []string{"sha1", "sha256"} {
+		t.Run(algorithm, func(t *testing.T) {
+			root := exactGitBlobFixture(t, algorithm, 4096)
+			blob := filepath.Join(root, "blob")
+			if err := os.Chmod(blob, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("blob", filepath.Join(root, "link")); err != nil {
+				t.Fatal(err)
+			}
+			gitTest(t, root, "add", "blob", "link")
+			gitTest(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "modes")
+			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(blob, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil {
+				t.Fatal("accepted removed executable bits")
+			}
+			if err := os.Remove(blob); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("link", blob); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil {
+				t.Fatal("accepted a symlink in place of a regular file")
+			}
+		})
+	}
 }
 
 func assertExactHead(t testing.TB, root, want string) {

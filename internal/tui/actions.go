@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -213,30 +214,9 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	var resolvedNames []string
 	// Copy detail bytes before any downstream work can yield long enough for a
 	// waiting GC to run immediately after the resolution lease is released.
-	detailSources := make(map[string]*detailSourceSnapshot, len(resolvedResult.Resolved))
-	var detailBudget detailCaptureBudget
-	capturePath := func(key, sourcePath string) {
-		if key == "" {
-			return
-		}
-		if _, ok := detailSources[key]; !ok {
-			detailSources[key] = detailBudget.capture(sourcePath)
-		}
-	}
-	captureEntry := func(entry catalog.Entry) {
-		capturePath(entry.Path, catalog.SourcePath(entry))
-	}
+	detailSources := captureSnapshotDetailSources(resolvedResult.Resolved, resolvedResult.CatalogLoad.Catalogs)
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
-		captureEntry(resolved.Entry)
-	}
-	for _, loaded := range resolvedResult.CatalogLoad.Catalogs {
-		for _, entry := range loaded.Entries {
-			captureEntry(entry)
-		}
-		for _, malformed := range loaded.Malformed {
-			capturePath(malformed.Path, malformed.Path)
-		}
 	}
 	dryRunReport, dryRunErr := runMaterialize(ctx, repoRoot, resolvedResult.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(resolvedResult.MaterializationModes))
 	driftReport := materialize.DriftReportFromReport(dryRunReport, resolvedNames)
@@ -279,6 +259,55 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
 	base.refreshAfterLoad = resolvedResult.CatalogLoad.RefreshAfterLoad
 	return base
+}
+
+func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs map[string]catalogInfo) map[string]*detailSourceSnapshot {
+	detailSources := make(map[string]*detailSourceSnapshot, len(resolved))
+	var detailBudget detailCaptureBudget
+	capturePath := func(key, sourcePath string) {
+		if key == "" {
+			return
+		}
+		if _, ok := detailSources[key]; !ok {
+			detailSources[key] = detailBudget.capture(sourcePath)
+		}
+	}
+	captureEntry := func(entry catalog.Entry) {
+		capturePath(entry.Path, catalog.SourcePath(entry))
+	}
+	for _, artifact := range resolved {
+		captureEntry(artifact.Entry)
+	}
+	for _, key := range slices.Sorted(maps.Keys(catalogs)) {
+		loaded := catalogs[key]
+		entries := slices.Clone(loaded.Entries)
+		slices.SortFunc(entries, func(a, b catalog.Entry) int {
+			if order := strings.Compare(a.Kind.String(), b.Kind.String()); order != 0 {
+				return order
+			}
+			if order := strings.Compare(a.Name, b.Name); order != 0 {
+				return order
+			}
+			if order := strings.Compare(a.Path, b.Path); order != 0 {
+				return order
+			}
+			return strings.Compare(catalog.SourcePath(a), catalog.SourcePath(b))
+		})
+		for _, entry := range entries {
+			captureEntry(entry)
+		}
+		malformedEntries := slices.Clone(loaded.Malformed)
+		slices.SortFunc(malformedEntries, func(a, b skill.MalformedSkill) int {
+			if order := strings.Compare(a.DirName, b.DirName); order != 0 {
+				return order
+			}
+			return strings.Compare(a.Path, b.Path)
+		})
+		for _, malformed := range malformedEntries {
+			capturePath(malformed.Path, malformed.Path)
+		}
+	}
+	return detailSources
 }
 
 func isSoftResolutionIssue(err error) bool {

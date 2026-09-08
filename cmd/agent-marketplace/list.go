@@ -79,7 +79,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	if err := recoverDependencyTransactions(ctx); err != nil {
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
 		return err
 	}
 
@@ -172,6 +172,9 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 // runListFrom lists resources available at an ad-hoc registry URL without
 // writing to any config. This is a browse-before-you-install feature.
 func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, kindFilter string) error {
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
+		return err
+	}
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err

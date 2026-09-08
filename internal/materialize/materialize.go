@@ -36,6 +36,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -3313,7 +3314,7 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Ar
 		return nil
 	}
 	sourceDir := filepath.Dir(sourcePath)
-	entries, err := os.ReadDir(sourceDir)
+	names, err := catalog.HookSupportFiles(sourcePath)
 	if err != nil {
 		return nil
 	}
@@ -3322,11 +3323,7 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Ar
 		return nil
 	}
 	var artifacts []artifact.Artifact
-	for _, entry := range entries {
-		name := entry.Name()
-		if name == "hooks.json" || entry.IsDir() {
-			continue
-		}
+	for _, name := range names {
 		srcPath := filepath.Join(sourceDir, name)
 		data, err := os.ReadFile(srcPath)
 		if err != nil {

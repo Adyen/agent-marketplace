@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,139 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
+
+func dependencyReadOnlyEntrypoints() map[string]func() error {
+	entries := map[string]func() error{
+		"direct-list":   func() error { return runList(context.Background(), io.Discard, io.Discard, "") },
+		"direct-status": func() error { return runStatus(context.Background(), io.Discard, time.Now()) },
+		"direct-check":  func() error { return runSyncCheck(context.Background(), io.Discard) },
+	}
+	for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--offline"}, {"sync", "--locked", "--offline"}, {"sync", "--check"}, {"lock", "--check"}, {"list"}, {"status"}} {
+		entries[strings.Join(args, " ")] = func() error { _, err := executeCommand(args...); return err }
+	}
+	for name, mode := range map[string]lockMode{"locked": {locked: true}, "offline": {offline: true}, "check": {check: true}} {
+		entries["direct-"+name+"-locks"] = func() error {
+			root := config.FindRepoRoot()
+			_, _, _, err := prepareRuntimeLocks(context.Background(), root, root, mode)
+			return err
+		}
+	}
+	return entries
+}
+
+func dependencyTreeSnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	result := make(map[string]string)
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		var data []byte
+		if info.Mode().IsRegular() {
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		result[path] = fmt.Sprintf("%v %v %s", info.Mode(), info.ModTime(), data)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func setupDependencyInspection(t *testing.T) (string, string, string) {
+	t.Helper()
+	root := canonicalTempDir(t)
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries: []\n")
+	repo := filepath.Join(root, "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries: []\n")
+	withWorkingDir(t, repo)
+	config.ResetRepoRootCache()
+	t.Cleanup(config.ResetRepoRootCache)
+	state, err := dependencyStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, repo, state
+}
+
+func TestReadOnlyDependencyEntrypointsPreservePendingTransactions(t *testing.T) {
+	entrypoints := dependencyReadOnlyEntrypoints()
+	entrypoints["direct-list-from"] = func() error {
+		return runListFrom(context.Background(), io.Discard, io.Discard, ".", "", "", "")
+	}
+	entrypoints["list --from"] = func() error {
+		_, err := executeCommand("list", "--from", ".")
+		return err
+	}
+	for name, run := range entrypoints {
+		for _, stage := range []dependencytxn.FaultStage{dependencytxn.FaultAfterJournal, dependencytxn.FaultAfterPublish} {
+			t.Run(name+"/"+string(stage), func(t *testing.T) {
+				root, repo, state := setupDependencyInspection(t)
+				configPath := filepath.Join(repo, ".agents", "config.yaml")
+				generation, err := dependencytxn.ReadGeneration(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				injected := errors.New("interrupted transaction")
+				_, err = dependencytxn.Commit(context.Background(), state, []dependencytxn.DesiredFile{
+					{Path: configPath, Expected: generation, Bytes: []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), Mode: 0o600},
+					{Path: filepath.Join(repo, ".agents", "lock.yaml"), Bytes: []byte("apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries: []\n"), Mode: 0o640},
+				}, dependencytxn.WithFaultHook(func(point dependencytxn.FaultPoint) error {
+					if point.Stage == stage && (stage != dependencytxn.FaultAfterPublish || point.Index == 0) {
+						return injected
+					}
+					return nil
+				}))
+				if !errors.Is(err, injected) {
+					t.Fatalf("seed pending transaction: %v", err)
+				}
+				if err := os.Chmod(state, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				before := dependencyTreeSnapshot(t, root)
+				err = run()
+				if !errors.Is(err, dependencytxn.ErrRecoveryRequired) {
+					t.Errorf("error = %v, want dependency.recovery-required", err)
+				}
+				if after := dependencyTreeSnapshot(t, root); !reflect.DeepEqual(before, after) {
+					t.Errorf("read-only entrypoint changed bytes, modes, timestamps, or recovery evidence\nbefore: %v\nafter: %v", before, after)
+				}
+			})
+		}
+	}
+}
+
+func TestReadOnlyDependencyEntrypointsWithoutPendingState(t *testing.T) {
+	for name, run := range dependencyReadOnlyEntrypoints() {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/existing-%t", name, existing), func(t *testing.T) {
+				_, _, state := setupDependencyInspection(t)
+				if existing {
+					if err := os.MkdirAll(state, 0o750); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := run(); err != nil {
+					t.Fatalf("empty dependencies: %v", err)
+				}
+				info, err := os.Stat(state)
+				if !existing && !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("created dependency state: %v", err)
+				}
+				if existing && (err != nil || info.Mode().Perm() != 0o750) {
+					t.Fatalf("changed dependency state mode: %v, %v", info, err)
+				}
+			})
+		}
+	}
+}
 
 func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 	home := t.TempDir()
@@ -340,6 +475,12 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 		t.Fatalf("prepare interrupted transaction: %v", err)
 	}
 
+	if output, err := executeCommand("lock", "--check", "--scope", "repo"); !errors.Is(err, dependencytxn.ErrRecoveryRequired) {
+		t.Fatalf("lock check before recovery: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("writing sync recovery: %v\n%s", err, output)
+	}
 	if output, err := executeCommand("lock", "--check", "--scope", "repo"); err != nil {
 		t.Fatalf("lock check after recovery: %v\n%s", err, output)
 	}
@@ -352,8 +493,8 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	}
 }
 
-func TestConfiguredReadCommandsRecoverBeforeLoadingConfig(t *testing.T) {
-	for _, command := range []string{"list", "status", "gc", "tui"} {
+func TestConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T) {
+	for command, expected := range map[string]error{"list": dependencytxn.ErrRecoveryRequired, "status": dependencytxn.ErrRecoveryRequired, "gc": dependencytxn.ErrRecoveryBlocked, "tui": dependencytxn.ErrRecoveryBlocked} {
 		t.Run(command, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
@@ -366,8 +507,8 @@ func TestConfiguredReadCommandsRecoverBeforeLoadingConfig(t *testing.T) {
 			writeFile(t, filepath.Join(stateDir, ".dependencytxn-broken.json"), "{")
 
 			output, err := executeCommand(command)
-			if !errors.Is(err, dependencytxn.ErrRecoveryBlocked) {
-				t.Fatalf("%s error = %v\n%s; want recovery blocked", command, err, output)
+			if !errors.Is(err, expected) {
+				t.Fatalf("%s error = %v\n%s; want %v", command, err, output, expected)
 			}
 		})
 	}

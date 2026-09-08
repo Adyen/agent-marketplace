@@ -2,8 +2,10 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -386,9 +388,180 @@ func TestGarbageCollectRejectsNonDirectoryCacheRoot(t *testing.T) {
 	}
 }
 
+func TestExactGitObjectGCReachability(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	objectPath := func(source string) string {
+		return filepath.Join(CacheDir(), "exact-git", "objects", fmt.Sprintf("%x.git", sha256.Sum256([]byte(source))))
+	}
+	locked := objectPath("https://example.com/locked")
+	configured := objectPath("https://example.com/configured")
+	included := objectPath("https://example.com/included")
+	orphan := objectPath("https://example.com/orphan")
+	local := objectPath("/local/catalog")
+	root := filepath.Dir(orphan)
+	unknown := []string{filepath.Join(root, "notes.git"), filepath.Join(root, strings.Repeat("1", 64)), filepath.Join(root, strings.Repeat("A", 64)+".git"), filepath.Join(root, strings.Repeat("1", 63)+".git"), filepath.Join(root, strings.Repeat("1", 64)+".git.extra")}
+	retained := append([]string{locked, configured, included}, unknown...)
+	unlockedSnapshot := filepath.Join(CacheDir(), "exact-git", "snapshots", fmt.Sprintf("%x", sha256.Sum256([]byte("https://example.com/configured\x00sha1:"+strings.Repeat("1", 40)))))
+	removed := []string{orphan, local, unlockedSnapshot, filepath.Join(root, ".objects-stage-orphan")}
+	slices.Sort(removed)
+	for _, path := range append(append([]string{}, retained...), removed...) {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coordination := []string{filepath.Join(CacheDir(), "exact-git", "locks", "persistent.lock"), CacheDir() + ".registry-persistent.lock"}
+	for _, path := range coordination {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("persistent\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oid, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := []lockfile.Document{{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: "https://EXAMPLE.com/locked.git", Ref: "main", Commit: oid}}}}
+	configs := []*config.Config{nil, {Registries: []config.RegistryEntry{{URL: "https://EXAMPLE.com/configured.git", Ref: "main"}, {URL: "/local/catalog"}}}, {Registries: []config.RegistryEntry{{URL: "https://example.com/included", Ref: "other"}}}}
+	for _, dryRun := range []bool{true, false} {
+		result, err := GarbageCollectWithLocks(dryRun, docs, configs...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(result.Removed, removed) {
+			t.Fatalf("dryRun=%v: removed=%v, want %v", dryRun, result.Removed, removed)
+		}
+		for _, path := range retained {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("retained %q: %v", path, err)
+			}
+		}
+		for _, path := range removed {
+			_, err := os.Stat(path)
+			if dryRun && err != nil || !dryRun && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("dryRun=%v candidate %q: %v", dryRun, path, err)
+			}
+		}
+		for _, path := range coordination {
+			raw, err := os.ReadFile(path)
+			if err != nil || string(raw) != "persistent\n" {
+				t.Fatalf("coordination changed %q: %q, %v", path, raw, err)
+			}
+		}
+	}
+}
+
+func TestExactGitObjectGCRetainsAbsoluteGitConfigSources(t *testing.T) {
+	rawPath := filepath.Join(t.TempDir(), "catalog # space.git")
+	fileURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(rawPath)}).String()
+	canonical := (&url.URL{Scheme: "file", Path: filepath.ToSlash(strings.TrimSuffix(rawPath, ".git"))}).String()
+	if _, err := lockfile.CanonicalGitURL(rawPath); err == nil {
+		t.Fatal("lock wire canonicalization accepted a raw filesystem path")
+	}
+	for _, input := range []string{rawPath, fileURL} {
+		t.Run(input, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			retained := filepath.Join(CacheDir(), "exact-git", "objects", fmt.Sprintf("%x.git", sha256.Sum256([]byte(canonical))))
+			orphan := exactGitObjectStorePath("https://example.com/orphan")
+			for _, path := range []string{retained, orphan} {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{Registries: []config.RegistryEntry{{URL: input, Ref: "main"}}}
+			for _, dryRun := range []bool{true, false} {
+				result, err := GarbageCollectWithLocks(dryRun, nil, cfg)
+				if err != nil || !slices.Equal(result.Removed, []string{orphan}) {
+					t.Fatalf("dryRun=%v: result=%+v err=%v", dryRun, result, err)
+				}
+				if _, err := os.Stat(retained); err != nil {
+					t.Fatalf("active file source removed: %v", err)
+				}
+				_, err = os.Stat(orphan)
+				if dryRun && err != nil || !dryRun && !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("dryRun=%v orphan: %v", dryRun, err)
+				}
+			}
+		})
+	}
+}
+
+func TestExactGitObjectGCRejectsMalformedReachability(t *testing.T) {
+	for _, invalidLock := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalidLock), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			object := exactGitObjectStorePath("https://example.com/orphan")
+			legacy := filepath.Join(CacheDir(), "legacy-orphan")
+			for _, path := range []string{object, legacy} {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := &config.Config{}
+			var docs []lockfile.Document
+			wantCode := lockfile.CodeInvalidGitURL
+			if invalidLock {
+				docs = []lockfile.Document{{APIVersion: "invalid"}}
+				wantCode = lockfile.CodeUnsupportedVersion
+			} else {
+				cfg.Registries = []config.RegistryEntry{{URL: "https://example.com/%zz"}}
+			}
+			for _, dryRun := range []bool{true, false} {
+				result, err := GarbageCollectWithLocks(dryRun, docs, cfg)
+				var codedErr *lockfile.Error
+				if !errors.As(err, &codedErr) || codedErr.Code != wantCode || len(result.Removed) != 0 {
+					t.Fatalf("invalid inventory: result=%+v err=%v, want %s", result, err, wantCode)
+				}
+				for _, path := range []string{object, legacy} {
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("invalid inventory removed %q: %v", path, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExactGitObjectGCRejectsUnsafeCandidates(t *testing.T) {
+	for _, symlink := range []bool{true, false} {
+		t.Run(fmt.Sprint(symlink), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			candidate := exactGitObjectStorePath("https://example.com/orphan")
+			external := filepath.Join(t.TempDir(), "user-bytes")
+			if err := os.WriteFile(external, []byte("keep\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(candidate), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if symlink {
+				if err := os.Symlink(filepath.Dir(external), candidate); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(candidate, []byte("keep\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, dryRun := range []bool{true, false} {
+				result, err := GarbageCollectWithLocks(dryRun, nil, &config.Config{})
+				if err == nil || len(result.Removed) != 0 {
+					t.Fatalf("unsafe candidate: result=%+v err=%v", result, err)
+				}
+				if _, err := os.Lstat(candidate); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := os.ReadFile(external)
+				if err != nil || string(raw) != "keep\n" {
+					t.Fatalf("external bytes changed: %q, %v", raw, err)
+				}
+			}
+		})
+	}
+}
+
 func TestGarbageCollectWithLocksSeparatesCommitsFromSameSource(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	source := "https://git.example.com/catalog.git"
+	source := "https://git.example.com/catalog"
 	reachableOID, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
 	if err != nil {
 		t.Fatal(err)
@@ -497,7 +670,7 @@ func TestGarbageCollectReloadsReachabilityUnderExclusiveLease(t *testing.T) {
 
 func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	source := "https://git.example.com/new-layer.git"
+	source := "https://git.example.com/new-layer"
 	newOID, err := ParseGitOID("sha1:" + strings.Repeat("3", 40))
 	if err != nil {
 		t.Fatal(err)
@@ -508,8 +681,9 @@ func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T
 	}
 	newSnapshot := exactGitSnapshotPath(source, newOID)
 	orphanSnapshot := exactGitSnapshotPath(source, orphanOID)
+	objectStore := exactGitObjectStorePath(source)
 	activeLegacy := filepath.Join(CacheDir(), HashURL(source), "main")
-	for _, path := range []string{newSnapshot, orphanSnapshot, activeLegacy} {
+	for _, path := range []string{newSnapshot, orphanSnapshot, activeLegacy, objectStore} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -559,7 +733,7 @@ func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T
 	if err := <-gcDone; err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{newSnapshot, activeLegacy} {
+	for _, path := range []string{newSnapshot, activeLegacy, objectStore} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("newly published layer reachability %q was removed: %v", path, err)
 		}
@@ -571,7 +745,7 @@ func TestGarbageCollectReloadsConcurrentNewLayerUnderExclusiveLease(t *testing.T
 
 func TestGarbageCollectWithLocksPreservesSnapshotsAcrossLayersAndSortsDryRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	source := "https://git.example.com/catalog.git"
+	source := "https://git.example.com/catalog"
 	var documents []lockfile.Document
 	for i, scope := range []lockfile.Scope{lockfile.ScopeUser, lockfile.ScopeRepo} {
 		oid, err := ParseGitOID(fmt.Sprintf("sha1:%s", strings.Repeat(fmt.Sprint(i+1), 40)))
@@ -589,7 +763,8 @@ func TestGarbageCollectWithLocksPreservesSnapshotsAcrossLayersAndSortsDryRun(t *
 	}
 	stageA := filepath.Join(exactGitRoot(), "objects", ".objects-stage-z")
 	stageB := filepath.Join(exactGitRoot(), "snapshots", ".snapshot-stage-a")
-	for _, path := range []string{stageA, stageB} {
+	objectStore := exactGitObjectStorePath(source)
+	for _, path := range []string{stageA, stageB, objectStore} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}

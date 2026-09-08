@@ -103,6 +103,9 @@ func newStatusCmd() *cobra.Command {
 var runStatusMaterialize = materialize.Run
 
 func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
+		return err
+	}
 	repoRoot := config.FindRepoRoot()
 
 	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{

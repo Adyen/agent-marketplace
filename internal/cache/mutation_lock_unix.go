@@ -24,15 +24,17 @@ func acquireCacheFileLock(operation int) (func(), error) {
 }
 
 func acquireCacheFileLockWithContext(ctx context.Context, operation int) (func(), error) {
+	return acquireCachePathLockWithContext(ctx, CacheDir()+".mutation.lock", operation)
+}
+
+func acquireCachePathLockWithContext(ctx context.Context, lockPath string, operation int) (func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cacheRoot := CacheDir()
-	lockPath := cacheRoot + ".mutation.lock"
-	parent := filepath.Dir(cacheRoot)
+	parent := filepath.Dir(lockPath)
 	if err := ValidateDirectoryAncestry(filepath.Dir(parent), parent); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("validate cache lock parent: %w", err)
 	}

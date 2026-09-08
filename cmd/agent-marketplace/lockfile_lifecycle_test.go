@@ -149,17 +149,39 @@ registries:
 	if len(initial.Registries) != 1 || len(initial.Registries[0].Roots) != 1 {
 		t.Fatalf("unexpected initial roots: %+v", initial.Registries)
 	}
-	writeConfig(t, configPath, "\nregistries:\n  - url: "+origin+"\n    ref: main\n  - url: "+origin+"\n    ref: main\n    source_harness: "+initial.Registries[0].Roots[0].SourceHarness+"\n")
-	output, err := executeCommand("lock", "--check", "--scope", "repo")
-	if err != nil {
-		t.Fatalf("equivalent roots remained stale: %v\n%s", err, output)
-	}
-	after, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("freshness check rewrote lock\nbefore:\n%s\nafter:\n%s", before, after)
+	auto := "  - url: " + origin + "\n    ref: main\n"
+	explicit := auto + "    source_harness: " + initial.Registries[0].Roots[0].SourceHarness + "\n"
+	for _, tc := range []struct{ name, entries string }{
+		{"auto-first", auto + explicit},
+		{"explicit-first", explicit + auto},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeConfig(t, configPath, "\nregistries:\n"+tc.entries)
+			configBefore, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"lock", "--check", "--scope", "repo"}, {"list"}, {"status"}} {
+				t.Run(args[0], func(t *testing.T) {
+					output, err := executeCommand(args...)
+					if err != nil {
+						t.Errorf("equivalent roots remained stale: %v\n%s", err, output)
+					}
+					if args[0] == "list" && !strings.Contains(output, "review") {
+						t.Errorf("exact inventory missing review: %s", output)
+					}
+					if args[0] == "status" && (!strings.Contains(output, initial.Registries[0].Commit.String()) || !strings.Contains(output, "available")) {
+						t.Errorf("exact status missing available locked commit: %s", output)
+					}
+					for path, want := range map[string][]byte{configPath: configBefore, lockPath: before} {
+						after, err := os.ReadFile(path)
+						if err != nil || string(after) != string(want) {
+							t.Errorf("inspection changed %s: %v", path, err)
+						}
+					}
+				})
+			}
+		})
 	}
 }
 

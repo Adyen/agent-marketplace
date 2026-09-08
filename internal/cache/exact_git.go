@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"golang.org/x/sys/unix"
 )
@@ -27,6 +29,7 @@ var (
 	ErrExactGitSnapshotUntrusted       = errors.New("exact git snapshot untrusted")
 	ErrExactGitCoordinationUnavailable = errors.New("exact git coordination infrastructure unavailable")
 	ErrGitOIDMismatch                  = errors.New("git oid mismatch")
+	errGitBlobSizeMismatch             = errors.New("git blob size mismatch")
 )
 
 type GitOID = lockfile.GitOID
@@ -635,7 +638,7 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 		if err != nil {
 			return err
 		}
-		var data []byte
+		var actual string
 		switch want.mode {
 		case "100644", "100755":
 			if !info.Mode().IsRegular() || (want.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
@@ -646,7 +649,14 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 				return err
 			}
 			file := os.NewFile(uintptr(fd), candidate)
-			data, err = io.ReadAll(file)
+			info, err = file.Stat()
+			if err == nil {
+				if !info.Mode().IsRegular() || (want.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
+					err = fmt.Errorf("mode mismatch at %q", rel)
+				} else {
+					actual, err = gitBlobOID(algorithm, file, info.Size())
+				}
+			}
 			closeErr := file.Close()
 			if err != nil {
 				return err
@@ -662,11 +672,14 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 			if err != nil {
 				return err
 			}
-			data = []byte(target)
+			actual, err = gitBlobOID(algorithm, strings.NewReader(target), int64(len(target)))
+			if err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported mode %q at %q", want.mode, rel)
 		}
-		if gitBlobOID(algorithm, data) != want.oid {
+		if actual != want.oid {
 			return fmt.Errorf("content mismatch at %q", rel)
 		}
 		seen[rel] = struct{}{}
@@ -681,18 +694,22 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 	return nil
 }
 
-func gitBlobOID(algorithm string, data []byte) string {
-	header := []byte("blob " + strconv.Itoa(len(data)) + "\x00")
+func gitBlobOID(algorithm string, reader io.Reader, size int64) (string, error) {
+	var h hash.Hash
 	if algorithm == "sha256" {
-		h := sha256.New()
-		_, _ = h.Write(header)
-		_, _ = h.Write(data)
-		return hex.EncodeToString(h.Sum(nil))
+		h = sha256.New()
+	} else {
+		h = sha1.New()
 	}
-	h := sha1.New()
-	_, _ = h.Write(header)
-	_, _ = h.Write(data)
-	return hex.EncodeToString(h.Sum(nil))
+	_, _ = h.Write([]byte("blob " + strconv.FormatInt(size, 10) + "\x00"))
+	copied, err := io.Copy(h, reader)
+	if err != nil {
+		return "", fmt.Errorf("hash git blob: %w", err)
+	}
+	if copied != size {
+		return "", fmt.Errorf("%w: read %d bytes, expected %d", errGitBlobSizeMismatch, copied, size)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func validateExactGitTree(root string) error {
@@ -1050,6 +1067,26 @@ func snapshotKey(canonicalSource string, oid GitOID) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func activeExactGitSources(cfgs ...*config.Config) (map[string]struct{}, error) {
+	sources := make(map[string]struct{})
+	for i, cfg := range cfgs {
+		if cfg == nil {
+			continue
+		}
+		for j, entry := range cfg.Registries {
+			if entry.IsLocal() {
+				continue
+			}
+			source, err := lockfile.CanonicalGitConfigURL(entry.URL)
+			if err != nil {
+				return nil, fmt.Errorf("validate exact git reachability config %d registry %d: %w", i, j, err)
+			}
+			sources[sourceKey(source)] = struct{}{}
+		}
+	}
+	return sources, nil
+}
+
 func garbageCollectExactGit(dryRun bool, locks []lockfile.Document) (GCResult, error) {
 	return garbageCollectExactGitWithContext(context.Background(), dryRun, locks)
 }
@@ -1072,7 +1109,7 @@ func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks [
 	}()
 	resultErr = withExactGitExclusiveLock(ctx, func() error {
 		var err error
-		result, reachable, err = garbageCollectExactGitUnderLease(ctx, dryRun, locks)
+		result, reachable, err = garbageCollectExactGitUnderLease(ctx, dryRun, locks, nil)
 		return err
 	})
 	slices.Sort(result.Removed)
@@ -1081,8 +1118,11 @@ func garbageCollectExactGitWithContext(ctx context.Context, dryRun bool, locks [
 
 // garbageCollectExactGitUnderLease derives reachability and removes candidates
 // while the caller holds the exclusive exact-cache namespace lease.
-func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []lockfile.Document) (result GCResult, reachable map[string]struct{}, resultErr error) {
+func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []lockfile.Document, sources map[string]struct{}) (result GCResult, reachable map[string]struct{}, resultErr error) {
 	reachable = make(map[string]struct{})
+	if sources == nil {
+		sources = make(map[string]struct{})
+	}
 	for i, doc := range locks {
 		if err := lockfile.Validate(doc); err != nil {
 			return result, reachable, fmt.Errorf("validate exact git reachability lock %d: %w", i, err)
@@ -1092,6 +1132,11 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 			if err != nil {
 				return result, reachable, err
 			}
+			source, err := lockfile.CanonicalGitURL(registry.URL)
+			if err != nil {
+				return result, reachable, err
+			}
+			sources[sourceKey(source)] = struct{}{}
 			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
 		}
 	}
@@ -1099,12 +1144,13 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 		return result, reachable, err
 	}
 	roots := []struct {
-		path      string
-		stage     string
-		snapshots bool
+		path   string
+		stage  string
+		suffix string
+		active map[string]struct{}
 	}{
-		{path: filepath.Join(exactGitRoot(), "objects"), stage: ".objects-stage-"},
-		{path: filepath.Join(exactGitRoot(), "snapshots"), stage: ".snapshot-stage-", snapshots: true},
+		{path: filepath.Join(exactGitRoot(), "objects"), stage: ".objects-stage-", suffix: ".git", active: sources},
+		{path: filepath.Join(exactGitRoot(), "snapshots"), stage: ".snapshot-stage-", active: reachable},
 	}
 	for _, root := range roots {
 		exists, err := validateExactGitDirectory(root.path)
@@ -1122,8 +1168,9 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 			if err := exactGitContextErr(ctx); err != nil {
 				return result, reachable, err
 			}
-			_, retained := reachable[entry.Name()]
-			removable := strings.HasPrefix(entry.Name(), root.stage) || root.snapshots && len(entry.Name()) == sha256.Size*2 && isHex(entry.Name()) && !retained
+			key := strings.TrimSuffix(entry.Name(), root.suffix)
+			_, retained := root.active[key]
+			removable := strings.HasPrefix(entry.Name(), root.stage) || strings.HasSuffix(entry.Name(), root.suffix) && len(key) == sha256.Size*2 && isHex(key) && !retained
 			if !removable {
 				continue
 			}

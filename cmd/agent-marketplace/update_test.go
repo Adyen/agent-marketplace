@@ -354,6 +354,97 @@ func TestUpdateBumpHonorsLocalScope(t *testing.T) {
 	}
 }
 
+func TestUpdateBumpSkipsOrganization(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope string
+		layer string
+	}{
+		{name: "default", layer: "repo"},
+		{name: "all", scope: "all", layer: "user"},
+		{name: "local", scope: "local", layer: "local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := canonicalTempDir(t)
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			stagingRoot := canonicalTempDir(t)
+			t.Setenv("TMPDIR", stagingRoot)
+			origin, working := createBareRepoWithWorkingClone(t, "org-bump.git")
+			writeSkill(t, working, "target", "Target v1", nil)
+			commitAndPushAll(t, working, "target v1")
+			createAndPushTag(t, working, "v1.0")
+			writeSkill(t, working, "target", "Target v1.1", nil)
+			commitAndPushAll(t, working, "target v1.1")
+			createAndPushTag(t, working, "v1.1")
+
+			authority := canonicalTempDir(t)
+			orgPath := filepath.Join(authority, "config.yaml")
+			registryConfig := "registries:\n  - url: " + origin + "\n    ref: v1.0\n    skills: [target]\n"
+			writeConfig(t, orgPath, registryConfig)
+			orgBefore, err := os.ReadFile(orgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(authority, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			repo := filepath.Join(canonicalTempDir(t), "repo")
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+			writeConfig(t, configPath, "harnesses: [factory]\n")
+			switch tc.layer {
+			case "user":
+				configPath = filepath.Join(home, ".agents", "config.yaml")
+				lockPath = filepath.Join(home, ".agents", "lock.yaml")
+			case "local":
+				configPath = filepath.Join(repo, ".agents", "config.local.yaml")
+				lockPath = filepath.Join(repo, ".agents", "lock.local.yaml")
+			}
+			writeConfig(t, configPath, registryConfig)
+			withWorkingDir(t, repo)
+			if output, err := executeCommand("sync"); err != nil {
+				t.Fatalf("initial sync: %v\n%s", err, output)
+			}
+			beforeLock := readLockDocument(t, lockPath)
+			if len(beforeLock.Registries) != 1 || beforeLock.Registries[0].Ref != "v1.0" {
+				t.Fatalf("initial lock = %+v, want v1.0", beforeLock.Registries)
+			}
+
+			args := []string{"update", "--bump"}
+			if tc.scope != "" {
+				args = append(args, "--scope", tc.scope)
+			}
+			output, updateErr := executeCommand(args...)
+			orgAfter, err := os.ReadFile(orgPath)
+			if err != nil || !bytes.Equal(orgBefore, orgAfter) {
+				t.Fatalf("organization config changed: %v\nbefore:\n%s\nafter:\n%s", err, orgBefore, orgAfter)
+			}
+			if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("organization lock created: %v", err)
+			}
+			residue, err := filepath.Glob(filepath.Join(stagingRoot, ".agent-marketplace-config-*"))
+			if err != nil || len(residue) != 0 {
+				t.Fatalf("config staging residue = %v, %v", residue, err)
+			}
+			if updateErr != nil {
+				t.Fatalf("update --bump: %v\n%s", updateErr, output)
+			}
+			afterConfig, err := os.ReadFile(configPath)
+			if err != nil || !bytes.Contains(afterConfig, []byte("ref: v1.1")) {
+				t.Fatalf("selected %s config did not bump: %s, %v", tc.layer, afterConfig, err)
+			}
+			afterLock := readLockDocument(t, lockPath)
+			if len(afterLock.Registries) != 1 || afterLock.Registries[0].Ref != "v1.1" || afterLock.Registries[0].Commit == beforeLock.Registries[0].Commit {
+				t.Fatalf("selected %s lock did not advance: %+v", tc.layer, afterLock.Registries)
+			}
+		})
+	}
+}
+
 func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

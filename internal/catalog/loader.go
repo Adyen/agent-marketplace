@@ -744,37 +744,37 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	// directory after fetching but before its contents are consumed. Exact
 	// snapshots use their own namespace lease because exact-git GC has a
 	// separate lock from the mutable registry cache.
-	hasRemoteRequest := false
+	var mutableURLs []string
 	hasExactRequest := false
 	for _, request := range requests {
 		// Exact snapshots have no fetch job and are protected by the exact
 		// namespace lease, not the mutable-cache lease.
 		if request.job != nil {
-			hasRemoteRequest = true
+			mutableURLs = append(mutableURLs, request.job.url)
 		}
 		if request.catalogBasePath != "" {
 			hasExactRequest = true
 		}
 	}
 	discover := func() {
-		if hasExactRequest {
-			release, lockErr := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
-			if lockErr != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("acquire exact git read lease: %w", lockErr))
-				return
+		if len(mutableURLs) > 0 {
+			if _, lockErr := cache.WithRegistryReadLockWithContext(ctx, mutableURLs, func() (struct{}, error) {
+				discoverAll(&result, requests, lc.discover)
+				return struct{}{}, nil
+			}); lockErr != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("acquire registry cache read lease: %w", lockErr))
 			}
-			discoverAll(&result, requests, lc.discover)
-			release()
 			return
 		}
 		discoverAll(&result, requests, lc.discover)
 	}
-	if hasRemoteRequest {
-		if _, lockErr := cache.WithCacheReadLock(func() (struct{}, error) {
+	if hasExactRequest {
+		release, lockErr := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		if lockErr != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("acquire exact git read lease: %w", lockErr))
+		} else {
 			discover()
-			return struct{}{}, nil
-		}); lockErr != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("acquire registry cache read lease: %w", lockErr))
+			release()
 		}
 	} else {
 		discover()

@@ -45,7 +45,7 @@ registries:
     roots:
       - path: skills
         source_harness: claude
-        revision_schema: v1
+        revision_schema: v2
         revision_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         resources:
           - kind: skill
@@ -66,14 +66,30 @@ A hostless `file://` URL whose decoded path ends in `.git` is a lockable remote-
 
 ## Source revision manifests
 
-Every exact root has a deterministic manifest that separates:
+Every exact root has an interpreted resource inventory. `revision_schema` selects the complete supported source-generator contract, not just a JSON shape. `internal/lockfile/revision.go` is the authoritative supported-version registry used by lock decoding, source building, manifest encoding and verification. No independent CLI-version or HCC-version stamp is stored. The manifest's generator string is derived from that contract and must match it exactly.
 
-- semantic resource content digests;
-- canonical archive digests used for immutable extraction;
-- support-file digests;
-- the root-wide revision digest and schema.
+The supported contracts are:
 
-Manifest construction validates all relative paths, rejects traversal and symlink escape, sorts map-derived output, and produces byte-stable results. Opening an exact snapshot verifies the commit and manifest rather than trusting a mutable ref cache. Missing, corrupt, or mismatched exact snapshots produce stable lock diagnostics and do not fall back to mutable content.
+| Revision | Discovery and primary content | Support source set |
+|---|---|---|
+| `v1` (legacy, still supported) | HCC catalog ingestion for the recorded harness; fallback catalog discovery when loading fails; separately discovered collections; duplicate identities rejected; unsupported rules/unknown kinds and unbuildable resources omitted with warnings | Skill support paths reported by ingestion only; no hook support digests |
+| `v2` (new acquisitions) | Same discovery and primary-content rules as v1 | Skill support paths plus hook-adjacent non-directory entries other than `hooks.json`, using the same `catalog.HookSupportFiles` enumeration as materialization; no recursive hook-directory traversal or command-string dependency inference |
+
+For both versions, `content_digest` is SHA-256 of the readable primary source file's raw bytes, not a normalized semantic representation. Resources without a readable source file use JSON serialization of their IR (including collections). Each support digest is SHA-256 of its raw file bytes. `archive_digest` is a source-set digest, **not** a tar/zip hash: hash the primary payload followed by each support entry in lexical path order, appending a NUL, the relative slash path, another NUL, and its algorithm-qualified digest string. Collections have content digests only and are omitted from the lock's resource projection, but contribute to the root digest. File modes are authenticated by the exact Git tree, not these content digests.
+
+The root digest is SHA-256 of compact JSON containing `schema_version`, the contract's `generator`, and the resources sorted by kind/name. Resource fields are ordered kind, name, content digest, optional archive digest, optional support map; support keys are sorted. HTML escaping is disabled and there is no trailing newline. `revision_digest` itself is excluded when hashing. These rules, resource identities, fallback serialization, omission policy and support enumeration are versioned together.
+
+### Compatibility and migration lifecycle
+
+Verification dispatches on the lock's recorded revision, never the current default. Building with an explicit v1 input regenerates the legacy bytes. Normal `lock`, `sync`, `sync --locked`, checks and read-only consumers retain valid v1 records without migrating them. Newly acquired or explicitly upgraded roots use v2. `lock --upgrade` / `update` opt into regeneration and also resolve the declared ref, so they may advance the commit; they are not metadata-only migrations. To require the same commit during regeneration, use an exact-OID requirement. Organization lock migration remains organization-owned.
+
+Unknown or retired revisions fail with typed `lock.unsupported-version` before interpreting the snapshot; even upgrade does not silently reinterpret such a lock. Use a CLI that supports its recorded revision to inspect or regenerate it. A supported revision whose rebuilt inventory differs fails with `lock.manifest-mismatch`, not automatic relocking.
+
+The independently authored `internal/sourcerevision/testdata/compatibility-v1.json` and `compatibility-v2.json` vectors pin all six supported inventory kinds, raw-file and collection-IR encoding, skill and hook support, and malformed-sibling omission across Claude and Factory inputs. They were calculated from authored payloads using independent SHA-256/JSON calculations, not production builder output. Tests verify both generation and verification against these bytes, and demonstrate that a hook-support edit affects v2 but not legacy v1. Existing version vectors must not be rewritten to bless changed semantics: changes to discovery, names, validation/omission, IR serialization or support rules require a new revision and new vectors. Preserve a compatibility implementation for supported old revisions; if that is no longer feasible, explicitly retire the revision in the registry and reject it with the typed unsupported diagnostic. Add fixtures for newly encountered compatibility cases.
+
+This is an explicit support lifecycle, not a frozen duplicate of all HCC code or proof that fixtures cover every possible source. HCC is built into the CLI and shared implementation changes require compatibility review. Git commits pin source trees, recorded harnesses pin source-layout selection, and supported generator revisions check the interpreted inventory. Target compilation, target capability changes and byte-identical materialized output across CLI releases are **not** pinned.
+
+Manifest construction validates relative paths, rejects traversal and support-file symlinks, sorts map-derived output, and produces byte-stable results. Opening an exact snapshot independently verifies the commit and every tracked file's bytes/mode before manifest verification. Missing, corrupt, or mismatched snapshots produce stable lock diagnostics and never fall back to mutable content.
 
 ## Planning and transactions
 

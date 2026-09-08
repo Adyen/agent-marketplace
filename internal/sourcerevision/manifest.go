@@ -8,11 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-)
 
-const (
-	sourceRevisionSchemaV1    = "v1"
-	sourceRevisionGeneratorV1 = "agent-marketplace source-revision/v1"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 type sourceRevisionManifest struct {
@@ -81,11 +78,12 @@ func verifyManifest(manifest sourceRevisionManifest, payload []byte) error {
 }
 
 func validateManifest(manifest sourceRevisionManifest) error {
-	if manifest.SchemaVersion != sourceRevisionSchemaV1 {
-		return fmt.Errorf("unsupported revision schema version %q", manifest.SchemaVersion)
+	contract, err := lockfile.RevisionContract(manifest.SchemaVersion)
+	if err != nil {
+		return err
 	}
-	if manifest.Generator == "" {
-		return errors.New("revision manifest generator is required")
+	if manifest.Generator != contract.Generator {
+		return fmt.Errorf("%w: generator %q does not match revision_schema %q", ErrManifestMismatch, manifest.Generator, manifest.SchemaVersion)
 	}
 	seen := make(map[string]bool, len(manifest.Resources))
 	for i, resource := range manifest.Resources {

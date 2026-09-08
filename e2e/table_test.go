@@ -179,6 +179,22 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 // ---------- test table ----------
 
 var testTable = []TestCase{
+	{
+		Name:       "locks/equivalent_auto_explicit_inspection",
+		Desc:       "Given equivalent auto and explicit registry roots, When lock check, list and status run in either entry order, Then inspection agrees with reconciliation without changing config or locks",
+		Registries: []RegistryDef{{Name: "equivalent-roots", Skills: []Skill{{Name: "review", Description: "Review changes"}}, Files: map[string]string{".claude-plugin/plugin.json": `{"name":"equivalent-roots"}`}}},
+		RepoCfg:    "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n",
+		Steps: []Step{
+			{Args: []string{"lock", "--scope", "repo"}, MustPass: true},
+			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteRepoConfig, Body: "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n  - url: {{REG:equivalent-roots}}\n    ref: main\n"},
+			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+		},
+	},
 	// ===== logging =====
 	{
 		Name: "logging/file_and_debug",
@@ -3666,7 +3682,7 @@ registries:
 	},
 	{
 		Name: "deinit/purge_config_removes_repo_config",
-		Desc: "Given a repo with config, When deinit --scope repo --purge-config is run, Then the repo config file is deleted",
+		Desc: "Given a synced repo with config and a generated lock, When deinit --scope repo --purge-config is run, Then both files are deleted and transaction coordination files remain",
 		Registries: []RegistryDef{
 			{Name: "deinit-purge-reg", Skills: []Skill{
 				{Name: "purge-skill", Description: "Skill for purge test"},
@@ -3680,10 +3696,12 @@ registries:
       - purge-skill
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true,
-				OutContains: []string{"Removed config"},
-				FilesAbsent: []string{"/workspace/.agents/config.yaml"}},
+				OutContains: []string{"Removed config", "Removed lock"},
+				FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"},
+				FilesExist:  []string{"/workspace/.agents/.config.yaml.dependencytxn.lock", "/workspace/.agents/.lock.yaml.dependencytxn.lock"}},
 		},
 	},
 	// ===== devin =====

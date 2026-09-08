@@ -2,6 +2,7 @@ package lockfile
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -96,6 +97,40 @@ func TestNormalizeEncodeDeterministic(t *testing.T) {
 	second, err := Encode(doc)
 	if err != nil || string(first) != string(second) {
 		t.Fatalf("ordering changed bytes: %v\n%s\n---\n%s", err, first, second)
+	}
+}
+
+func TestEncodeSizeBoundary(t *testing.T) {
+	const prefix = "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries:\n  - url: https://example.com/repo\n    ref: "
+	const suffix = "\n    commit: " + sha1a + "\n"
+	for _, size := range []int{4194303, 4194304, 4194305} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			ref := strings.Repeat("x", size-len(prefix)-len(suffix))
+			doc := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://EXAMPLE.com/repo.git", Ref: ref, Commit: mustOID(t, sha1a)}}}
+			before := doc
+			before.Registries = append([]GitRegistry(nil), doc.Registries...)
+			data, err := Encode(doc)
+			if !reflect.DeepEqual(doc, before) {
+				t.Fatal("Encode mutated its input")
+			}
+			if size > 4194304 {
+				if !errors.Is(err, ErrFileTooLarge) || data != nil {
+					t.Fatalf("Encode returned %d bytes, error = %v, want nil bytes and ErrFileTooLarge", len(data), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != prefix+ref+suffix {
+				t.Fatalf("encoded boundary fixture differs: got %d bytes, want %d", len(data), size)
+			}
+			decoded, err := Decode(data)
+			before.Registries[0].URL = "https://example.com/repo"
+			if err != nil || !reflect.DeepEqual(decoded, before) {
+				t.Fatalf("boundary round trip failed: %v", err)
+			}
+		})
 	}
 }
 

@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -206,34 +204,26 @@ func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries
 }
 
 func readOnlyGitDocumentMatches(doc lockfile.Document, entries []config.RegistryEntry) bool {
-	wanted := make(map[string]map[string]bool)
+	wanted := make(map[string][]lockfile.GitRootRequirement)
 	for _, entry := range entries {
 		canonical, err := readOnlyCanonicalURL(entry.URL)
 		if err != nil {
 			return false
 		}
 		identity := readOnlyGitIdentity(canonical, entry.Ref)
-		if wanted[identity] == nil {
-			wanted[identity] = make(map[string]bool)
-		}
-		root := entry.Path
-		if root == "" {
-			root = "."
-		}
-		wanted[identity][root+"\x00"+entry.SourceHarness] = true
+		wanted[identity] = append(wanted[identity], lockfile.GitRootRequirement{Path: entry.Path, SourceHarness: entry.SourceHarness})
 	}
 	if len(doc.Registries) != len(wanted) {
 		return false
 	}
 	for _, registry := range doc.Registries {
 		roots, ok := wanted[readOnlyGitIdentity(registry.URL, registry.Ref)]
-		if !ok || len(registry.Roots) != len(roots) {
+		if !ok {
 			return false
 		}
-		for _, root := range registry.Roots {
-			if !roots[root.Path+"\x00"+root.SourceHarness] && !roots[root.Path+"\x00"] {
-				return false
-			}
+		projected, matches := lockfile.ProjectGitRoots(registry.Roots, roots)
+		if !matches || len(projected) != len(registry.Roots) {
+			return false
 		}
 	}
 	return true
@@ -269,10 +259,7 @@ func readOnlyLockScope(source config.Source) lockfile.Scope {
 }
 
 func readOnlyCanonicalURL(raw string) (string, error) {
-	if filepath.IsAbs(raw) {
-		raw = (&url.URL{Scheme: "file", Path: filepath.ToSlash(raw)}).String()
-	}
-	return lockfile.CanonicalGitURL(strings.TrimSpace(raw))
+	return lockfile.CanonicalGitConfigURL(raw)
 }
 func readOnlySourceKey(source config.Source, canonical, ref string) string {
 	return fmt.Sprintf("%d\x00%s\x00%s", source, canonical, ref)

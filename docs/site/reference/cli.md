@@ -205,6 +205,8 @@ Installed 3  Removed 1  Malformed 0  Errors 0
 
 With `--check`, an in-sync result produces no verdict text and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists planned changes, and returns exit status 1. `--check` is read-only across config, locks, caches, transaction state, and materialized output: it neither recovers pending transactions nor fetches a cold exact snapshot, and reports `lock.snapshot-unavailable` when required snapshot bytes are absent. `--prune-stale` cannot be combined with `--locked` or `--offline` because pruning changes configuration.
 
+Pending dependency transactions cause `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` to fail with `dependency.recovery-required` before loading configuration or registry state. These commands leave config, locks, journal evidence, and transaction-state permissions unchanged. Run a writing `sync` or `lock` without those flags to recover, then retry the inspection. An absent transaction-state directory does not require recovery and is not created by inspection.
+
 ## `update`
 
 Advances selected Git locks and synchronizes enabled resources. Without targeting flags it updates all writable scopes.
@@ -359,7 +361,11 @@ The command refuses a non-directory target root and a target root that is a symb
 
 ## `gc`
 
-Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks. Pending dependency-transaction recovery runs first and holds the shared exact-cache lease while publishing recovered config and lock state. Collection then takes the exclusive lease and reloads the complete effective configuration and every layer lock before deriving reachability; a missing, stale, malformed, or untrusted required lock blocks destructive collection. Protected derived-cache namespaces are retained.
+Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks in the **current context**: organization, user, current repository, and personal-local layers, including their applicable includes. Exact snapshots are retained by locked source and commit; Git object stores are retained by canonical source URL from either a lock or configuration, including organization sources with no organization lock. Unreferenced object stores and abandoned staging directories are collected. Protected derived-cache namespaces and persistent coordination locks are retained.
+
+The cache is shared across repositories, but `gc` does not inventory other repositories. Running it in repository A can evict a source used only by repository B. Later use in B may require reacquisition from the remote and can fail offline or if the remote no longer serves the locked commit. Use `--dry-run` to inspect current-context eviction before deleting.
+
+Pending dependency-transaction recovery runs first and holds the shared exact-cache lease while publishing recovered config and lock state. Collection then takes the exclusive exact-cache lease before mutable-cache exclusion and reloads all applicable configuration layers and their locks before deriving reachability. Missing required locks, malformed configuration or locks, and untrusted locks block destructive collection; a present organization lock must also match its configuration.
 
 ```text
 agent-marketplace gc [flags]
@@ -387,8 +393,8 @@ agent-marketplace deinit [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--scope` | string | no | `user` | Teardown scope: `user`, `repo`, or `local`. `repo` and `local` both target repository-scoped artifacts. |
-| `--purge-config` | boolean | no | `false` | Also removes the configuration file for the selected scope. |
-| `--dry-run` | boolean | no | `false` | Reports artifacts, caches, and configuration files that would be removed without deleting them. |
+| `--purge-config` | boolean | no | `false` | Also removes the configuration file and its owning generated YAML lock for the selected scope, including an orphaned lock. Other layers and included fragments are preserved. Stable transaction coordination files and unrelated recovery journals are retained; an overlapping pending transaction blocks purge until recovered. |
+| `--dry-run` | boolean | no | `false` | Reports artifacts, caches, configuration files, and generated YAML locks that would be removed without deleting them. |
 
 Unreadable configuration does not block teardown. In that case the command reports a warning, applies default materialization-mode assumptions, and notes that artifacts created in another mode may remain.
 

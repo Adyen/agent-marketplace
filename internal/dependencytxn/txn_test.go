@@ -9,11 +9,352 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestDeleteRecovery(t *testing.T) {
+	for _, stage := range []FaultStage{FaultAfterCAS, FaultAfterStage, FaultAfterJournal, FaultAfterPublish} {
+		for _, orphan := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/orphan=%t", stage, orphan), func(t *testing.T) {
+				root, state := testDirs(t)
+				paths := []string{filepath.Join(root, "config.yaml"), filepath.Join(root, "lock.yaml")}
+				var desired []DesiredFile
+				var reads []ReadAssertion
+				for i, path := range paths {
+					if i != 0 || !orphan {
+						mustWrite(t, path, []byte("original"), 0o600)
+					}
+					expected := generation(t, path)
+					desired = append(desired, DesiredFile{Path: path, Expected: expected, Delete: true})
+					reads = append(reads, ReadAssertion{Path: path, RequestedPath: path, Expected: expected})
+				}
+				interrupted := errors.New("interrupted deletion")
+				_, err := Commit(context.Background(), state, desired, WithReadAssertions(reads), WithFaultHook(func(p FaultPoint) error {
+					if p.Stage == stage {
+						return interrupted
+					}
+					return nil
+				}))
+				if !errors.Is(err, interrupted) {
+					t.Fatalf("interrupt: %v", err)
+				}
+				if stage == FaultAfterCAS || stage == FaultAfterStage {
+					for _, file := range desired {
+						if generation(t, file.Path) != file.Expected {
+							t.Fatal("pre-journal failure changed destination")
+						}
+					}
+					assertNoTransactionResidue(t, root, state)
+					return
+				}
+				if len(journals(t, state)) != 1 {
+					t.Fatal("missing recovery authority")
+				}
+				if err := Recover(context.Background(), state); err != nil {
+					t.Fatal(err)
+				}
+				for _, path := range paths {
+					if _, err := os.Lstat(path); !os.IsNotExist(err) {
+						t.Fatalf("deleted path remains %s: %v", path, err)
+					}
+					if _, err := os.Stat(lockPath(path)); err != nil {
+						t.Fatalf("lost coordination: %v", err)
+					}
+				}
+				assertNoTransactionResidue(t, root, state)
+				for i := range desired {
+					desired[i].Expected = Generation{}
+				}
+				result, err := Commit(context.Background(), state, desired)
+				if err != nil || len(result.Changed) != 0 {
+					t.Fatalf("idempotent deletion: %v, %v", result, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDeletePendingPublicationSafety(t *testing.T) {
+	for _, pendingDelete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending-delete=%t", pendingDelete), func(t *testing.T) {
+			root, state := testDirs(t)
+			path := filepath.Join(root, "config.yaml")
+			mustWrite(t, path, []byte("original"), 0o600)
+			file := DesiredFile{Path: path, Expected: generation(t, path), Delete: pendingDelete}
+			if !pendingDelete {
+				file.Bytes, file.Mode = []byte("published"), 0o600
+			}
+			interrupted := errors.New("interrupted publication")
+			_, err := Commit(context.Background(), state, []DesiredFile{file}, WithFaultHook(func(p FaultPoint) error {
+				if p.Stage == FaultAfterJournal {
+					return interrupted
+				}
+				return nil
+			}))
+			if !errors.Is(err, interrupted) {
+				t.Fatal(err)
+			}
+			journalPath := journals(t, state)[0]
+			before, err := os.ReadFile(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}})
+			if !errors.Is(err, ErrRecoveryRequired) {
+				t.Fatalf("overlapping pending publication not blocked: %v", err)
+			}
+			assertFile(t, path, "original", 0o600)
+			assertFile(t, journalPath, string(before), 0o600)
+			other := filepath.Join(root, "unrelated.yaml")
+			mustWrite(t, other, []byte("unrelated"), 0o600)
+			if _, err := Commit(context.Background(), state, []DesiredFile{{Path: other, Expected: generation(t, other), Delete: true}}); err != nil {
+				t.Fatal(err)
+			}
+			assertFile(t, journalPath, string(before), 0o600)
+			if err := Recover(context.Background(), state); err != nil {
+				t.Fatal(err)
+			}
+			if pendingDelete {
+				if generation(t, path).Exists {
+					t.Fatal("pending deletion not recovered")
+				}
+			} else {
+				assertFile(t, path, "published", 0o600)
+			}
+		})
+	}
+}
+
+func TestDeleteRecoverySyncsPublishedDirectories(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("original"), 0o600)
+	interrupted := errors.New("directory sync failed")
+	_, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}}, WithFsyncDir(func(dir string) error {
+		if dir == root {
+			return interrupted
+		}
+		return fsyncDir(dir)
+	}))
+	if !errors.Is(err, interrupted) || generation(t, path).Exists {
+		t.Fatalf("interrupted deletion: %v", err)
+	}
+	if len(journals(t, state)) != 1 {
+		t.Fatal("missing recovery evidence")
+	}
+	synced := false
+	if err := Recover(context.Background(), state, WithFsyncDir(func(dir string) error {
+		if dir == root {
+			synced = true
+		}
+		return fsyncDir(dir)
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if !synced {
+		t.Fatal("recovery finalized without syncing deletion")
+	}
+	assertNoTransactionResidue(t, root, state)
+}
+
+type recoveryWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (ctx *recoveryWaitContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
+
+func TestDeleteRecoveryWaiterIgnoresFinalizedJournal(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("original"), 0o600)
+	_, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}}, WithFaultHook(func(p FaultPoint) error {
+		if p.Stage == FaultAfterPublish {
+			return errors.New("interrupted")
+		}
+		return nil
+	}))
+	if err == nil || generation(t, path).Exists {
+		t.Fatalf("expected interruption after deletion: %v", err)
+	}
+	journalPath := journals(t, state)[0]
+	locks, err := acquireLocks(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { releaseLocks(locks) }()
+	base, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ctx := &recoveryWaitContext{Context: base, waiting: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- Recover(ctx, state) }()
+	select {
+	case <-ctx.waiting:
+	case <-base.Done():
+		t.Fatal("recovery never waited for publication lock")
+	}
+	if err := finalizeJournal(journalPath, state, fsyncDir); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, path, []byte("new owner"), 0o600)
+	releaseLocks(locks)
+	locks = nil
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("stale recovery: %v", err)
+		}
+	case <-base.Done():
+		t.Fatal("recovery did not finish")
+	}
+	assertFile(t, path, "new owner", 0o600)
+}
+
+func TestDeleteRecoveryPreservesRecreatedFile(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("original"), 0o600)
+	_, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}}, WithFaultHook(func(p FaultPoint) error {
+		if p.Stage == FaultAfterPublish {
+			return errors.New("interrupted")
+		}
+		return nil
+	}))
+	if err == nil || generation(t, path).Exists {
+		t.Fatalf("expected interruption after deletion: %v", err)
+	}
+	mustWrite(t, path, []byte("handwritten"), 0o600)
+	if err := Recover(context.Background(), state); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("recovery: %v", err)
+	}
+	assertFile(t, path, "handwritten", 0o600)
+	if len(journals(t, state)) != 1 {
+		t.Fatal("lost recovery evidence")
+	}
+}
+
+func TestCheckPendingDoesNotCreateOrRepairState(t *testing.T) {
+	_, state := testDirs(t)
+	if err := CheckPending(state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspection created state: %v", err)
+	}
+	if err := os.Mkdir(state, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(state, "unrelated.json"), []byte("{"), 0o640)
+	if err := CheckPending(state); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(state, ".dependencytxn-pending.json")
+	mustWrite(t, path, []byte("{"), 0o640)
+	if err := CheckPending(state); !errors.Is(err, ErrRecoveryRequired) || !strings.Contains(err.Error(), "dependency.recovery-required") {
+		t.Fatalf("pending journal error = %v", err)
+	}
+	assertFile(t, path, "{", 0o640)
+	info, err := os.Stat(state)
+	if err != nil || info.Mode().Perm() != 0o750 {
+		t.Fatalf("inspection repaired state: %v, %v", info, err)
+	}
+}
+
+func TestReadAssertionsSurviveRecoveryWithoutSiblingLocks(t *testing.T) {
+	root, state := testDirs(t)
+	fragmentDir := filepath.Join(root, "fragments")
+	if err := os.Mkdir(fragmentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fragment := filepath.Join(fragmentDir, "shared.yaml")
+	mustWrite(t, fragment, []byte("original"), 0o644)
+	alias := filepath.Join(root, "alias.yaml")
+	if err := os.Symlink(fragment, alias); err != nil {
+		t.Fatal(err)
+	}
+	reads := []ReadAssertion{{Path: fragment, RequestedPath: alias, Expected: generation(t, fragment)}}
+	if _, err := Commit(context.Background(), state, nil, WithReadAssertions(reads)); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, fragment, []byte("changed"), 0o644)
+	if _, err := Commit(context.Background(), state, nil, WithReadAssertions(reads)); !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("read-only assertion error = %v", err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("read-only assertions created state: %v", err)
+	}
+	mustWrite(t, fragment, []byte("original"), 0o644)
+	if err := os.Chmod(fragmentDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(fragmentDir, 0o755) })
+	lock := filepath.Join(root, "lock.yaml")
+	_, err := Commit(context.Background(), state, []DesiredFile{{Path: lock, Bytes: []byte("locked"), Mode: 0o644}}, WithReadAssertions(reads), WithFaultHook(func(point FaultPoint) error {
+		if point.Stage == FaultBeforePublish {
+			mustWrite(t, fragment, []byte("concurrent"), 0o644)
+		}
+		return nil
+	}))
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("publication error = %v", err)
+	}
+	if err := Recover(context.Background(), state); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("recovery error = %v", err)
+	}
+	if _, err := os.Stat(lock); !os.IsNotExist(err) {
+		t.Fatalf("published on read conflict: %v", err)
+	}
+	assertFile(t, fragment, "concurrent", 0o644)
+	mustWrite(t, fragment, []byte("original"), 0o644)
+	if err := Recover(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, lock, "locked", 0o644)
+	entries, err := os.ReadDir(fragmentDir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "shared.yaml" {
+		t.Fatalf("fragment directory mutated: %v, %v", entries, err)
+	}
+	assertNoTransactionResidue(t, root, state)
+}
+
+func TestReadAssertionMayAliasPublishedDestination(t *testing.T) {
+	root, state := testDirs(t)
+	config := filepath.Join(root, "config.yaml")
+	lock := filepath.Join(root, "lock.yaml")
+	mustWrite(t, config, []byte("old"), 0o644)
+	alias := filepath.Join(root, "alias.yaml")
+	if err := os.Symlink(config, alias); err != nil {
+		t.Fatal(err)
+	}
+	expected := generation(t, config)
+	interrupted := errors.New("interrupted")
+	_, err := Commit(context.Background(), state, []DesiredFile{
+		{Path: config, Expected: expected, Bytes: []byte("new"), Mode: 0o644},
+		{Path: lock, Bytes: []byte("locked"), Mode: 0o644},
+	}, WithReadAssertions([]ReadAssertion{{Path: config, RequestedPath: alias, Expected: expected}}), WithFaultHook(func(point FaultPoint) error {
+		if point.Stage == FaultAfterPublish && point.Index == 0 {
+			return interrupted
+		}
+		return nil
+	}))
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("commit error = %v", err)
+	}
+	assertFile(t, config, "new", 0o644)
+	if err := Recover(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, lock, "locked", 0o644)
+	assertNoTransactionResidue(t, root, state)
+}
 
 func TestCommitAndUnchangedFiles(t *testing.T) {
 	root, state := testDirs(t)
@@ -486,6 +827,76 @@ func TestUnsafeDestinations(t *testing.T) {
 	})
 }
 
+func TestCommitDesiredSizeBoundary(t *testing.T) {
+	for _, size := range []int{4194303, 4194304, 4194305} {
+		for _, exists := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/existing=%t", size, exists), func(t *testing.T) {
+				root, state := testDirs(t)
+				first, second := filepath.Join(root, "config.yaml"), filepath.Join(root, "lock.yaml")
+				mustWrite(t, first, []byte("old-config"), 0o600)
+				mustWrite(t, lockPath(first), []byte("coordination"), 0o600)
+				if exists {
+					mustWrite(t, second, []byte("old-lock"), 0o640)
+				}
+				entriesBefore, err := os.ReadDir(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				desired := []DesiredFile{
+					{Path: second, Expected: generation(t, second), Bytes: bytes.Repeat([]byte("x"), size), Mode: 0o644},
+					{Path: first, Expected: generation(t, first), ExpectedMode: 0o600, Bytes: []byte("new-config"), Mode: 0o644},
+				}
+				before := append([]DesiredFile(nil), desired...)
+				for i := range before {
+					before[i].Bytes = bytes.Clone(before[i].Bytes)
+				}
+				result, err := Commit(context.Background(), state, desired)
+				if !reflect.DeepEqual(desired, before) {
+					t.Fatal("Commit mutated desired files")
+				}
+				assertFile(t, lockPath(first), "coordination", 0o600)
+				if size <= 4194304 {
+					if err != nil || !reflect.DeepEqual(result.Changed, []string{first, second}) {
+						t.Fatalf("Commit result = %v, error = %v", result, err)
+					}
+					assertFile(t, first, "new-config", 0o644)
+					assertFile(t, second, string(before[0].Bytes), 0o644)
+					if got := generation(t, second); got != (Generation{Exists: true, Digest: Digest(before[0].Bytes)}) {
+						t.Fatal("committed boundary file has unexpected generation")
+					}
+					assertNoTransactionResidue(t, root, state)
+					return
+				}
+				if !errors.Is(err, ErrRecoveryBlocked) || len(result.Changed) != 0 {
+					t.Fatalf("Commit result = %v, error = %v, want ErrRecoveryBlocked and no changes", result, err)
+				}
+				if _, err := os.Stat(state); !os.IsNotExist(err) {
+					t.Errorf("oversized desired file created transaction state: %v", err)
+				}
+				entriesAfter, err := os.ReadDir(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entriesAfter) != len(entriesBefore) {
+					t.Errorf("directory entries changed from %d to %d", len(entriesBefore), len(entriesAfter))
+				} else {
+					for i := range entriesBefore {
+						if entriesBefore[i].Name() != entriesAfter[i].Name() {
+							t.Errorf("directory entry changed: %s -> %s", entriesBefore[i].Name(), entriesAfter[i].Name())
+						}
+					}
+				}
+				if exists {
+					assertFile(t, second, "old-lock", 0o640)
+				} else if _, err := os.Stat(second); !os.IsNotExist(err) {
+					t.Errorf("absent destination changed: %v", err)
+				}
+				assertFile(t, first, "old-config", 0o600)
+			})
+		}
+	}
+}
+
 func TestValidateStagedRejectsOversizedFileWithMatchingDigest(t *testing.T) {
 	root := t.TempDir()
 	staged := filepath.Join(root, ".dependencytxn-staged.tmp")
@@ -647,17 +1058,37 @@ func TestMultiProcessSerialization(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	_, err := Commit(ctx, state, []DesiredFile{{Path: path, Expected: generation(t, path), Bytes: []byte("second"), Mode: 0o600}})
-	cancel()
-	if !errors.Is(err, ErrLockTimeout) {
-		t.Fatalf("error = %v", err)
+	before, err := os.Stat(lockPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDelete := DesiredFile{Path: path, Expected: generation(t, path), Delete: true}
+	for _, desired := range []DesiredFile{{Path: path, Expected: generation(t, path), Bytes: []byte("second"), Mode: 0o600}, staleDelete} {
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		_, err := Commit(ctx, state, []DesiredFile{desired})
+		cancel()
+		if !errors.Is(err, ErrLockTimeout) {
+			t.Fatalf("error = %v", err)
+		}
 	}
 	mustWrite(t, release, nil, 0o600)
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	assertFile(t, path, "helper", 0o600)
+	if _, err := Commit(context.Background(), state, []DesiredFile{staleDelete}); !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("stale deletion: %v", err)
+	}
+	if _, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(lockPath(path))
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("coordination inode changed: %v", err)
+	}
+	if generation(t, path).Exists {
+		t.Fatal("file not deleted")
+	}
 	assertNoTransactionResidue(t, root, state)
 }
 

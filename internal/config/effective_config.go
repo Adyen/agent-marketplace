@@ -64,6 +64,14 @@ type LayerResult struct {
 	Config *Config
 	Local  *LocalConfig
 	Errors []error
+	Reads  []ConfigRead
+}
+
+type ConfigRead struct {
+	Path          string
+	RequestedPath string
+	Digest        string
+	Overlay       bool
 }
 
 // EffectiveConfig is the result of loading and merging all applicable
@@ -271,8 +279,11 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
 		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
 	}
-	lr := loadOrganizationConfig(canonicalPath, data)
+	lr := loadOrganizationConfig(path, canonicalPath, data)
 	lr.Path = path
+	if len(lr.Reads) > 0 {
+		lr.Reads[0].RequestedPath, _ = filepath.Abs(path)
+	}
 	d := inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
 	if len(lr.Errors) == 0 && lr.Config != nil && organizationHasRemoteRequirements(lr.Config) {
 		if trustErr := ValidateOrganizationTrustUnit(path, true, true); trustErr != nil {
@@ -308,9 +319,9 @@ func organizationHasRemoteRequirements(cfg *Config) bool {
 	return false
 }
 
-func loadOrganizationConfig(path string, data []byte) LayerResult {
-	cfg, err := loadConfigTreeFromRootData(path, data, organizationLayer)
-	lr := LayerResult{Source: Organization, Path: path, Config: cfg}
+func loadOrganizationConfig(path, canonicalPath string, data []byte) LayerResult {
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, organizationLayer, nil)
+	lr := LayerResult{Source: Organization, Path: path, Config: cfg, Reads: reads}
 	if err != nil {
 		lr.Errors = []error{err}
 	}
@@ -334,8 +345,8 @@ func loadEffectiveUser(override string, overlays map[string][]byte) LayerResult 
 		}
 		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{readErr}}
 	}
-	cfg, err := loadConfigTreeFromRootData(canonicalPath, data, userLayer)
-	lr := LayerResult{Source: UserPersonal, Path: path, Config: cfg}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, userLayer, overlays)
+	lr := LayerResult{Source: UserPersonal, Path: path, Config: cfg, Reads: reads}
 	if err != nil {
 		lr.Errors = []error{err}
 	}
@@ -358,8 +369,8 @@ func loadEffectiveRepo(repoRoot, override string, overlays map[string][]byte) La
 		}
 		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{readErr}}
 	}
-	cfg, err := loadConfigTreeFromRootData(canonicalPath, data, repoLayer)
-	lr := LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, repoLayer, overlays)
+	lr := LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Reads: reads}
 	if err != nil {
 		lr.Errors = []error{err}
 	}
@@ -382,8 +393,8 @@ func loadEffectiveLocal(localDir, override string, overlays map[string][]byte) L
 		}
 		return LayerResult{Source: RepoPersonal, Path: path, Errors: []error{fmt.Errorf("read local config %q: %w", path, readErr)}}
 	}
-	cfg, err := loadConfigTreeFromRootData(canonicalPath, data, localLayer)
-	lr := LayerResult{Source: RepoPersonal, Path: path, Local: configAsLocal(cfg)}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, localLayer, overlays)
+	lr := LayerResult{Source: RepoPersonal, Path: path, Local: configAsLocal(cfg), Reads: reads}
 	if err != nil {
 		lr.Errors = []error{err}
 	}

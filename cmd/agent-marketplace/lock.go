@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -398,6 +398,21 @@ func dependencyStateDir() (string, error) {
 	return filepath.Join(home, ".local", "state", "agent-marketplace", "dependencies"), nil
 }
 
+func (mode lockMode) readOnlyDependencies() bool {
+	return mode.check || mode.locked || mode.offline
+}
+
+func prepareDependencyTransactions(ctx context.Context, readOnly bool) error {
+	if !readOnly {
+		return recoverDependencyTransactions(ctx)
+	}
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		return err
+	}
+	return dependencytxn.CheckPending(stateDir)
+}
+
 func recoverDependencyTransactions(ctx context.Context) error {
 	stateDir, err := dependencyStateDir()
 	if err != nil {
@@ -502,6 +517,7 @@ type configTransactionSnapshot struct {
 	expectedMode os.FileMode
 	bytes        []byte
 	mode         os.FileMode
+	reads        []config.ConfigRead
 }
 
 func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]byte) (map[config.Source]configTransactionSnapshot, error) {
@@ -533,9 +549,51 @@ func snapshotEffectiveConfigs(ec config.EffectiveConfig, overlays map[string][]b
 		} else if _, staged := overlays[participantPath]; !staged {
 			return nil, fmt.Errorf("configuration layer disappeared while loading: %s", layer.Path)
 		}
-		snapshots[layer.Source] = configTransactionSnapshot{path: participantPath, generation: generation, expectedMode: expectedMode, bytes: raw, mode: mode}
+		snapshots[layer.Source] = configTransactionSnapshot{path: participantPath, generation: generation, expectedMode: expectedMode, bytes: raw, mode: mode, reads: layer.Reads}
+	}
+	reads, err := effectiveReadAssertions(ec, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+		return nil, err
 	}
 	return snapshots, nil
+}
+
+func effectiveReadAssertions(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit) ([]dependencytxn.ReadAssertion, error) {
+	byAlias := make(map[string]dependencytxn.ReadAssertion)
+	byPath := make(map[string]string)
+	for _, layer := range ec.PresentLayers() {
+		for _, read := range layer.Reads {
+			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
+				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
+			}
+			byPath[read.Path] = read.Digest
+			expected := dependencytxn.Generation{Exists: true, Digest: read.Digest}
+			if read.Overlay {
+				if staged == nil {
+					continue
+				}
+				edit, exists := staged[read.Path]
+				if !exists || dependencytxn.Digest(edit.Bytes) != read.Digest {
+					return nil, fmt.Errorf("%w: unmatched config overlay at %s", dependencytxn.ErrGenerationConflict, read.Path)
+				}
+				expected = edit.Expected
+			}
+			assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath, Expected: expected}
+			if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
+				return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
+			}
+			byAlias[read.RequestedPath] = assertion
+		}
+	}
+	reads := make([]dependencytxn.ReadAssertion, 0, len(byAlias))
+	for _, read := range byAlias {
+		reads = append(reads, read)
+	}
+	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
+	return reads, nil
 }
 
 func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot) bool {
@@ -544,7 +602,7 @@ func sameConfigSnapshots(left, right map[config.Source]configTransactionSnapshot
 	}
 	for source, a := range left {
 		b, ok := right[source]
-		if !ok || a.path != b.path || a.generation != b.generation {
+		if !ok || a.path != b.path || a.generation != b.generation || !slices.Equal(a.reads, b.reads) {
 			return false
 		}
 	}
@@ -589,10 +647,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if !mode.check {
-		if err := recoverDependencyTransactions(ctx); err != nil {
-			return nil, 0, nil, err
-		}
+	if err := prepareDependencyTransactions(ctx, mode.readOnlyDependencies()); err != nil {
+		return nil, 0, nil, err
 	}
 	overlays := make(map[string][]byte, len(mode.stagedConfigEdits))
 	stagedEdits := make(map[string]pipeline.StagedConfigEdit, len(mode.stagedConfigEdits))
@@ -849,8 +905,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 				return nil, changed, nil, fmt.Errorf("create dependency destination directory: %w", err)
 			}
 		}
+		reads, err := effectiveReadAssertions(ec, stagedEdits)
+		if err != nil {
+			return nil, changed, nil, err
+		}
 		commitStarted := time.Now()
-		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles)
+		commitResult, err := commitDependencyTransaction(ctx, stateDir, desiredFiles, dependencytxn.WithReadAssertions(reads))
 		if err != nil {
 			slog.Error("lock transaction commit failed", "files", len(desiredFiles), "duration_ms", time.Since(commitStarted).Milliseconds(), "error", err)
 			return nil, changed, nil, fmt.Errorf("commit dependency config and locks: %w", err)
@@ -969,7 +1029,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		}
 		upgrade := operation == lockfile.OperationUpgrade && selection.SelectsGit(lockfile.GitRequirement{URL: group.canonical, Ref: group.ref, Roots: rootRequirements})
 		if ok && !upgrade {
-			if projected, matches := projectLockedRoots(locked.Roots, group.entries); matches {
+			if projected, matches := lockfile.ProjectGitRoots(locked.Roots, rootRequirements); matches {
 				if len(projected) != len(locked.Roots) {
 					fresh = false
 				}
@@ -1053,7 +1113,7 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 			continue
 		}
 		seen[key] = true
-		root := lockfile.GitRoot{Path: rootPath, SourceHarness: built.SourceHarness, RevisionSchema: "v1", RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
+		root := lockfile.GitRoot{Path: rootPath, SourceHarness: built.SourceHarness, RevisionSchema: built.Manifest.SchemaVersion, RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
 		for _, resource := range built.Manifest.Resources {
 			if resource.ArchiveDigest == "" {
 				continue
@@ -1092,34 +1152,11 @@ func documentMatchesEntries(doc lockfile.Document, entries []config.RegistryEntr
 }
 
 func projectLockedRoots(roots []lockfile.GitRoot, entries []config.RegistryEntry) ([]lockfile.GitRoot, bool) {
-	selected := make([]bool, len(roots))
-	for _, entry := range entries {
-		rootPath := entry.Path
-		if rootPath == "" {
-			rootPath = "."
-		}
-		match := -1
-		for i, root := range roots {
-			if root.Path != rootPath || entry.SourceHarness != "" && root.SourceHarness != entry.SourceHarness {
-				continue
-			}
-			match = i
-			if entry.SourceHarness != "" || selected[i] {
-				break
-			}
-		}
-		if match < 0 {
-			return nil, false
-		}
-		selected[match] = true
+	requirements := make([]lockfile.GitRootRequirement, len(entries))
+	for i, entry := range entries {
+		requirements[i] = lockfile.GitRootRequirement{Path: entry.Path, SourceHarness: entry.SourceHarness}
 	}
-	projected := make([]lockfile.GitRoot, 0, len(roots))
-	for i, root := range roots {
-		if selected[i] {
-			projected = append(projected, root)
-		}
-	}
-	return projected, true
+	return lockfile.ProjectGitRoots(roots, requirements)
 }
 
 func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Source, entries []config.RegistryEntry, doc lockfile.Document, offline, readOnly bool, warningSink *[]error) (resultErr error) {
@@ -1248,10 +1285,7 @@ func lockScopeForSource(source config.Source) lockfile.Scope {
 }
 
 func canonicalRegistryURL(raw string) (string, error) {
-	if filepath.IsAbs(raw) {
-		raw = (&url.URL{Scheme: "file", Path: filepath.ToSlash(raw)}).String()
-	}
-	return lockfile.CanonicalGitURL(raw)
+	return lockfile.CanonicalGitConfigURL(raw)
 }
 
 func sourceLockKey(source config.Source, canonical, ref string) string {

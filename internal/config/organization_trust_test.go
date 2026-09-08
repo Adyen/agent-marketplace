@@ -187,6 +187,197 @@ func TestOrganizationTrustedFixtureLoadsAsManaged(t *testing.T) {
 	}
 }
 
+func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
+	for _, withLock := range []bool{false, true} {
+		for _, test := range []struct {
+			name string
+			code string
+			set  func(t *testing.T, external, leaf string) string
+		}{
+			{name: "trusted nested relative"},
+			{name: "trusted nested absolute", set: func(t *testing.T, _, leaf string) string { return leaf }},
+			{name: "nonregular fragment", code: "organization.trust.include.non-regular", set: func(t *testing.T, _, _ string) string { return "nested" }},
+			{name: "writable fragment", code: "organization.trust.include.writable", set: func(t *testing.T, _, leaf string) string {
+				if err := os.Chmod(leaf, 0o666); err != nil {
+					t.Fatal(err)
+				}
+				return "nested/leaf.yaml"
+			}},
+			{name: "writable ancestor", code: "organization.trust.ancestor.writable", set: func(t *testing.T, _, leaf string) string {
+				if err := os.Chmod(filepath.Dir(leaf), 0o777); err != nil {
+					t.Fatal(err)
+				}
+				return "nested/leaf.yaml"
+			}},
+			{name: "symlink fragment", code: "organization.trust.include.symlink", set: func(t *testing.T, external, leaf string) string {
+				if err := os.Symlink(leaf, filepath.Join(external, "alias.yaml")); err != nil {
+					t.Fatal(err)
+				}
+				return "alias.yaml"
+			}},
+			{name: "symlink ancestor", code: "organization.trust.ancestor.symlink", set: func(t *testing.T, external, leaf string) string {
+				if err := os.Symlink(filepath.Dir(leaf), filepath.Join(external, "alias")); err != nil {
+					t.Fatal(err)
+				}
+				return "alias/leaf.yaml"
+			}},
+			{name: "symlink before dotdot", code: "organization.trust.ancestor.symlink", set: func(t *testing.T, external, leaf string) string {
+				if err := os.Symlink(filepath.Dir(leaf), filepath.Join(external, "alias")); err != nil {
+					t.Fatal(err)
+				}
+				return "alias/../nested/leaf.yaml"
+			}},
+			{name: "writable ancestor before dotdot", code: "organization.trust.ancestor.writable", set: func(t *testing.T, external, _ string) string {
+				dir := filepath.Join(external, "writable")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(dir, 0o777); err != nil {
+					t.Fatal(err)
+				}
+				return "writable/../nested/leaf.yaml"
+			}},
+			{name: "duplicate through symlink", code: "organization.trust.include.symlink", set: func(t *testing.T, external, leaf string) string {
+				if err := os.Symlink(leaf, filepath.Join(external, "alias.yaml")); err != nil {
+					t.Fatal(err)
+				}
+				return "nested/leaf.yaml, alias.yaml"
+			}},
+			{name: "wrong owner", code: "organization.trust.include.owner", set: func(t *testing.T, _, leaf string) string {
+				if os.Geteuid() != 0 {
+					t.Skip("changing fixture ownership requires root")
+				}
+				if err := os.Chown(leaf, 65534, -1); err != nil {
+					t.Skipf("cannot create wrong-owner fixture: %v", err)
+				}
+				return "nested/leaf.yaml"
+			}},
+		} {
+			name := test.name + "/local-only"
+			if withLock {
+				name = test.name + "/with-lock"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				root := filepath.Join(dir, "authority", "config.yaml")
+				external := filepath.Join(dir, "external")
+				middle := filepath.Join(external, "middle.yaml")
+				leaf := filepath.Join(external, "nested", "leaf.yaml")
+				writeIncludeConfig(t, leaf, "registries:\n  - path: /trusted-live-registry\n    required: true\n    skills: {include: [review]}\n")
+				include := "nested/leaf.yaml"
+				if test.set != nil {
+					include = test.set(t, external, leaf)
+				}
+				writeIncludeConfig(t, middle, "include: ["+include+"]\n")
+				rootInclude := "../external/middle.yaml"
+				if test.name == "trusted nested absolute" {
+					rootInclude = middle
+				}
+				data := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: " + rootInclude + "\n"
+				if withLock {
+					data += "registries:\n  - url: https://example.com/org.git\n    ref: main\n"
+				}
+				writeIncludeConfig(t, root, data)
+				paths := []string{root, middle, leaf}
+				if withLock {
+					writeTrustedOrganizationLock(t, root)
+					paths = append(paths, OrganizationLockPath(root))
+				}
+				for _, path := range paths {
+					before, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						after, err := os.ReadFile(path)
+						if err != nil || string(after) != string(before) {
+							t.Errorf("user bytes changed at %s: %v", path, err)
+						}
+					})
+				}
+				ec := LoadEffective(context.Background(), isolatedEffectiveOptions(root))
+				if test.code != "" {
+					assertOrganizationTrustFailure(t, ec, test.code)
+					var trustErr *OrganizationTrustError
+					if !errors.As(errors.Join(ec.Errors...), &trustErr) || trustErr.Path == "" {
+						t.Fatalf("missing unsafe include path: %v", ec.Errors)
+					}
+					return
+				}
+				if len(ec.Errors) != 0 || !ec.Managed || ec.Organization.Config == nil {
+					t.Fatalf("trusted external includes blocked: %v", ec.Errors)
+				}
+				entry := ec.Organization.Config.Registries[0]
+				if entry.URL != "/trusted-live-registry" || !entry.Required || len(entry.Skills.Include) != 1 || entry.Skills.Include[0] != "review" {
+					t.Fatalf("trusted fragment policy not applied: %#v", entry)
+				}
+				if len(ec.Organization.Reads) != 3 {
+					t.Fatalf("include read assertions lost: %#v", ec.Organization.Reads)
+				}
+				if !withLock {
+					if _, err := os.Lstat(OrganizationLockPath(root)); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("local-only load created lock: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestOrganizationIncludeRetainsRootLexicalPath(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "authority", "config.yaml")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: leaf.yaml\n")
+	writeIncludeConfig(t, filepath.Join(dir, "authority", "leaf.yaml"), "registries:\n  - path: /live-registry\n")
+	target := filepath.Join(dir, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	requested := dir + "/alias/../authority/config.yaml"
+	ec := LoadEffective(context.Background(), isolatedEffectiveOptions(requested))
+	assertOrganizationTrustFailure(t, ec, "organization.trust.ancestor.symlink")
+}
+
+func TestNonOrganizationIncludesKeepSymlinkAndWritableCompatibility(t *testing.T) {
+	for _, kind := range []layerKind{userLayer, repoLayer, localLayer} {
+		dir := t.TempDir()
+		root := filepath.Join(dir, "config.yaml")
+		leaf := filepath.Join(dir, "nested", "leaf.yaml")
+		writeIncludeConfig(t, leaf, "registries:\n  - path: /live-registry\n")
+		if err := os.Chmod(leaf, 0o666); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Dir(leaf), filepath.Join(dir, "alias")); err != nil {
+			t.Fatal(err)
+		}
+		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: alias/../nested/leaf.yaml\n")
+		cfg, err := loadConfigTree(root, kind)
+		if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/live-registry" {
+			t.Fatalf("non-organization layer %v changed: cfg=%v err=%v", kind, cfg, err)
+		}
+	}
+}
+
+func TestOrganizationIncludeCannotEnableTestTrustFromFragmentPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires a non-root fixture owner")
+	}
+	dir := t.TempDir()
+	fragment := filepath.Join(dir, "fragment.yaml")
+	writeIncludeConfig(t, fragment, "registries: []\n")
+	if err := validateOrganizationInclude(fragment, filepath.Join(dir, "config.yaml")); err != nil {
+		t.Fatalf("existing fixture trust override blocked: %v", err)
+	}
+	err := validateOrganizationInclude(fragment, defaultOrganizationConfigPath)
+	var trustErr *OrganizationTrustError
+	if !errors.As(err, &trustErr) || trustErr.Code != "organization.trust.ancestor.owner" || trustErr.Path != dir {
+		t.Fatalf("production authority accepted fixture owner: %v", err)
+	}
+}
+
 func isolatedEffectiveOptions(configPath string) LoadEffectiveOptions {
 	dir := filepath.Dir(configPath)
 	return LoadEffectiveOptions{

@@ -60,10 +60,8 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
-			if commandNeedsDependencyRecovery(cmd) || rootTUI {
-				if err := recoverDependencyTransactions(cmd.Context()); err != nil {
-					return err
-				}
+			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
+				return err
 			}
 			start := time.Now()
 			initRootLogging(cmd, debug)
@@ -132,16 +130,24 @@ func newRootCmd() *cobra.Command {
 	return rootCmd
 }
 
-func commandNeedsDependencyRecovery(cmd *cobra.Command) bool {
-	switch cmd.Name() {
-	case "status", "tui", "gc":
-		return true
-	case "list":
-		from, err := cmd.Flags().GetString("from")
-		return err == nil && strings.TrimSpace(from) == ""
-	default:
-		return false
+func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
+	if rootTUI {
+		return prepareDependencyTransactions(cmd.Context(), false)
 	}
+	switch cmd.Name() {
+	case "tui", "gc":
+		return prepareDependencyTransactions(cmd.Context(), false)
+	case "list", "status":
+		return prepareDependencyTransactions(cmd.Context(), true)
+	case "sync", "lock":
+		check, _ := cmd.Flags().GetBool("check")
+		locked, _ := cmd.Flags().GetBool("locked")
+		offline, _ := cmd.Flags().GetBool("offline")
+		if (lockMode{check: check, locked: locked, offline: offline}).readOnlyDependencies() {
+			return prepareDependencyTransactions(cmd.Context(), true)
+		}
+	}
+	return nil
 }
 
 func validateStartupTargetRegistrations() error {

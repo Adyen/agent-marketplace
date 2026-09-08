@@ -1,11 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -13,21 +12,51 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
-	repoRoot, lockPath := setupWarmLockedGitSyncBenchmark(b)
-	previousDir, err := os.Getwd()
-	if err != nil {
-		b.Fatalf("get working directory: %v", err)
+func BenchmarkProjectLockedRoots(b *testing.B) {
+	roots := make([]lockfile.GitRoot, 0, 32)
+	entries := make([]config.RegistryEntry, 0, 64)
+	for i := range 32 {
+		path := fmt.Sprintf("skills/team-%d", i)
+		roots = append(roots, lockfile.GitRoot{Path: path, SourceHarness: "factory"})
+		entries = append(entries, config.RegistryEntry{Path: path}, config.RegistryEntry{Path: path, SourceHarness: "factory"})
 	}
-	if err := os.Chdir(repoRoot); err != nil {
-		b.Fatalf("enter benchmark repository: %v", err)
-	}
-	b.Cleanup(func() {
-		config.ResetRepoRootCache()
-		if err := os.Chdir(previousDir); err != nil {
-			b.Errorf("restore working directory: %v", err)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		projected, ok := projectLockedRoots(roots, entries)
+		if !ok || len(projected) != 32 {
+			b.Fatal("matching roots rejected")
 		}
-	})
+	}
+}
+
+func BenchmarkLoadStableEffectiveIncludes(b *testing.B) {
+	root, err := filepath.EvalSymlinks(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Setenv("HOME", root)
+	for name, data := range map[string]string{
+		"config.yaml": "apiVersion: agent-marketplace/v2\ninclude: [middle.yaml, leaf.yaml]\n",
+		"middle.yaml": "include: leaf.yaml\n",
+		"leaf.yaml":   "harnesses: [claude]\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	opts := config.LoadEffectiveOptions{RepoRoot: root, LocalConfigDir: root, OrganizationPath: filepath.Join(root, "missing-org"), GlobalPath: filepath.Join(root, "config.yaml")}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, _, err := loadStableEffective(context.Background(), opts); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
+	_, lockPath := setupWarmLockedGitSyncBenchmark(b)
 
 	beforeLock, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -60,45 +89,8 @@ func BenchmarkSyncWarmUnchangedRemoteGitLock(b *testing.B) {
 
 func setupWarmLockedGitSyncBenchmark(b *testing.B) (repoRoot, lockPath string) {
 	b.Helper()
-	b.StopTimer()
-
-	home := canonicalTempDir(b)
-	b.Setenv("HOME", home)
-	b.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-	b.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-
-	fixtureRoot := canonicalTempDir(b)
-	source := filepath.Join(fixtureRoot, "source")
-	origin := filepath.Join(fixtureRoot, "origin.git")
-	runLockBenchmarkGit(b, "", "init", "--initial-branch=main", source)
-	writeLockBenchmarkFile(b, filepath.Join(source, "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Review changes\nmetadata:\n  tags:\n    - benchmark\n---\n\n# Review\n")
-	writeLockBenchmarkFile(b, filepath.Join(source, "skills", "review", "scripts", "review.sh"), "#!/bin/sh\necho review\n")
-	runLockBenchmarkGit(b, source, "add", ".")
-	runLockBenchmarkGit(b, source, "-c", "user.name=Benchmark", "-c", "user.email=benchmark@example.com", "commit", "-m", "seed registry")
-	runLockBenchmarkGit(b, "", "clone", "--bare", source, origin)
-
-	repoRoot = filepath.Join(canonicalTempDir(b), "repo")
-	configBody := fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", origin)
-	writeLockBenchmarkFile(b, filepath.Join(repoRoot, ".agents", "config.yaml"), configBody)
-
-	previousDir, err := os.Getwd()
-	if err != nil {
-		b.Fatalf("get setup working directory: %v", err)
-	}
-	if err := os.Chdir(repoRoot); err != nil {
-		b.Fatalf("enter setup repository: %v", err)
-	}
-	output, syncErr := executeCommand("sync")
-	if err := os.Chdir(previousDir); err != nil {
-		b.Fatalf("restore setup working directory: %v", err)
-	}
-	config.ResetRepoRootCache()
-	if syncErr != nil {
-		b.Fatalf("seed lock-backed sync: %v\n%s", syncErr, output)
-	}
-	if !strings.Contains(output, "Installed 1  Removed 0  Malformed 0  Errors 0") {
-		b.Fatalf("seed sync did not materialize fixture: %s", output)
-	}
+	repoRoot = setupLocalGitSyncBenchmark(b, 1)
+	runSyncBenchmark(b)
 
 	lockPath = filepath.Join(repoRoot, ".agents", "lock.yaml")
 	doc, err := lockfile.Read(lockPath)
@@ -115,28 +107,8 @@ func setupWarmLockedGitSyncBenchmark(b *testing.B) (repoRoot, lockPath string) {
 	if _, err := cache.OpenExactGit(doc.Registries[0].URL, oid); err != nil {
 		b.Fatalf("open seeded exact snapshot: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "review", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(repoRoot, ".factory", "skills", "review-0", "SKILL.md")); err != nil {
 		b.Fatalf("stat seeded materialization: %v", err)
 	}
 	return repoRoot, lockPath
-}
-
-func runLockBenchmarkGit(tb testing.TB, dir string, args ...string) {
-	tb.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		tb.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
-	}
-}
-
-func writeLockBenchmarkFile(tb testing.TB, name, content string) {
-	tb.Helper()
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
-		tb.Fatalf("create fixture directory: %v", err)
-	}
-	if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
-		tb.Fatalf("write fixture %s: %v", name, err)
-	}
 }

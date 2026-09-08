@@ -28,9 +28,10 @@ var (
 )
 
 type Input struct {
-	SnapshotRoot  string
-	RootPath      string
-	SourceHarness string
+	SnapshotRoot   string
+	RootPath       string
+	SourceHarness  string
+	RevisionSchema string
 }
 
 type Result struct {
@@ -55,6 +56,7 @@ func (w ResourceWarning) DependencyWarning() {}
 
 type Projection struct {
 	SourceHarness  string
+	RevisionSchema string
 	RevisionDigest string
 	Resources      []revisionResource
 }
@@ -68,10 +70,17 @@ func (r Result) Projection() Projection {
 		resource.SupportFiles = cloneDigests(resource.SupportFiles)
 		resources = append(resources, resource)
 	}
-	return Projection{SourceHarness: r.SourceHarness, RevisionDigest: r.Manifest.RevisionDigest, Resources: resources}
+	return Projection{SourceHarness: r.SourceHarness, RevisionSchema: r.Manifest.SchemaVersion, RevisionDigest: r.Manifest.RevisionDigest, Resources: resources}
 }
 
 func Build(input Input) (Result, error) {
+	if input.RevisionSchema == "" {
+		input.RevisionSchema = lockfile.CurrentRevisionSchema
+	}
+	contract, err := lockfile.RevisionContract(input.RevisionSchema)
+	if err != nil {
+		return Result{}, err
+	}
 	root, err := secureRoot(input)
 	if err != nil {
 		return Result{}, err
@@ -127,7 +136,7 @@ func Build(input Input) (Result, error) {
 			continue
 		}
 
-		resource, err := buildResource(root, entry)
+		resource, err := buildResource(root, entry, contract)
 		if err != nil {
 			if errors.Is(err, ErrPathEscape) {
 				return Result{}, fmt.Errorf("%w: build %s: %w", ErrCatalog, key, err)
@@ -155,8 +164,8 @@ func Build(input Input) (Result, error) {
 	})
 
 	manifest := sourceRevisionManifest{
-		SchemaVersion: sourceRevisionSchemaV1,
-		Generator:     sourceRevisionGeneratorV1,
+		SchemaVersion: contract.Schema,
+		Generator:     contract.Generator,
 		Resources:     resources,
 	}
 	payload, manifest, err := encodeManifest(manifest)
@@ -164,7 +173,7 @@ func Build(input Input) (Result, error) {
 		return Result{}, fmt.Errorf("encode source revision manifest: %w", err)
 	}
 
-	slog.Debug("built direct-Git source revision", "root", normalizedRootPath(input.RootPath), "source_harness", cat.SourceHarness, "resources", len(resources), "warnings", len(warnings), "deferred_diagnostic_errors", diagnosticErrors)
+	slog.Debug("built direct-Git source revision", "root", normalizedRootPath(input.RootPath), "source_harness", cat.SourceHarness, "revision_schema", contract.Schema, "resources", len(resources), "warnings", len(warnings), "deferred_diagnostic_errors", diagnosticErrors)
 	return Result{SourceHarness: cat.SourceHarness, Manifest: manifest, Payload: payload, Warnings: warnings}, nil
 }
 
@@ -188,12 +197,17 @@ func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarn
 	}
 	return Verify(Input{SnapshotRoot: snapshot, RootPath: root.Path}, Projection{
 		SourceHarness:  root.SourceHarness,
+		RevisionSchema: root.RevisionSchema,
 		RevisionDigest: root.RevisionDigest.String(),
 		Resources:      resources,
 	})
 }
 
 func Verify(input Input, locked Projection) ([]ResourceWarning, error) {
+	if _, err := lockfile.RevisionContract(locked.RevisionSchema); err != nil {
+		return nil, err
+	}
+	input.RevisionSchema = locked.RevisionSchema
 	if locked.SourceHarness == "" {
 		return nil, fmt.Errorf("%w: locked source harness is empty", ErrManifestMismatch)
 	}
@@ -228,7 +242,7 @@ func cloneDigests(in map[string]string) map[string]string {
 	return out
 }
 
-func buildResource(root string, entry catalog.Entry) (revisionResource, error) {
+func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (revisionResource, error) {
 	if entry.Resource == nil {
 		return revisionResource{}, errors.New("resource is nil")
 	}
@@ -240,7 +254,7 @@ func buildResource(root string, entry catalog.Entry) (revisionResource, error) {
 	if entry.Kind == ir.KindCollection {
 		return revisionResource{Kind: "collection", Name: entry.Name, ContentDigest: digest}, nil
 	}
-	support, err := intrinsicSupportFileDigests(root, entry)
+	support, err := intrinsicSupportFileDigests(root, entry, contract)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -285,21 +299,30 @@ func contentDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func intrinsicSupportFileDigests(root string, entry catalog.Entry) (map[string]string, error) {
-	skill, ok := entry.Resource.(*ir.Skill)
-	if !ok || len(skill.SupportFiles) == 0 {
+func intrinsicSupportFileDigests(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (map[string]string, error) {
+	var supportFiles []string
+	if skill, ok := entry.Resource.(*ir.Skill); ok {
+		supportFiles = skill.SupportFiles
+	} else if entry.Kind == ir.KindHook && contract.HookSupport {
+		var err error
+		supportFiles, err = catalog.HookSupportFiles(entry.Path)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(supportFiles) == 0 {
 		return nil, nil
 	}
 	if entry.Path == "" {
-		return nil, errors.New("skill with support files has no source path")
+		return nil, errors.New("resource with support files has no source path")
 	}
 	resourceFile, err := containedPath(root, entry.Path)
 	if err != nil {
 		return nil, err
 	}
 	resourceRoot := filepath.Dir(resourceFile)
-	digests := make(map[string]string, len(skill.SupportFiles))
-	for _, supportPath := range skill.SupportFiles {
+	digests := make(map[string]string, len(supportFiles))
+	for _, supportPath := range supportFiles {
 		normalized, err := safeArtifactPath(supportPath)
 		if err != nil {
 			return nil, err

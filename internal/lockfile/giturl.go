@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -26,6 +27,13 @@ func NewGitURLIdentity(raw string) (GitURLIdentity, error) {
 func (i GitURLIdentity) String() string { return i.Version + ":" + i.URL }
 
 var scpOrigin = regexp.MustCompile(`^([^/@:[:space:]]+)@([^/:[:space:]]+):(.+)$`)
+
+func CanonicalGitConfigURL(raw string) (string, error) {
+	if filepath.IsAbs(raw) {
+		raw = (&url.URL{Scheme: "file", Path: filepath.ToSlash(raw)}).String()
+	}
+	return CanonicalGitURL(raw)
+}
 
 func CanonicalGitURL(raw string) (string, error) { return CanonicalGitURLV1(raw) }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,8 +110,11 @@ func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) 
 	}
 }
 
-func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
+func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	origin := filepath.Join(t.TempDir(), "origin")
 	if err := os.MkdirAll(filepath.Join(origin, ".factory", "skills", "keeper"), 0o755); err != nil {
 		t.Fatal(err)
@@ -145,7 +149,7 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := lockfile.GitRoot{Path: ".", SourceHarness: built.SourceHarness, RevisionSchema: "v1", RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
+	root := lockfile.GitRoot{Path: ".", SourceHarness: built.SourceHarness, RevisionSchema: built.Manifest.SchemaVersion, RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest)}
 	for _, resource := range built.Manifest.Resources {
 		if resource.ArchiveDigest == "" {
 			continue
@@ -175,6 +179,11 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	entry := config.RegistryEntry{URL: canonical, Ref: "HEAD", Source: config.RepoCommitted}
 	cfg := &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{entry}}
 	ec := config.EffectiveConfig{Repo: config.LayerResult{Source: config.RepoCommitted, Path: configPath, Config: cfg}, Merged: cfg}
+	return ec, snapshot
+}
+
+func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
+	ec, snapshot := exactLockViewGCFixture(t)
 	_, view := exactLockViewWithContext(context.Background(), ec)
 	defer view.release()
 	if len(view.errors) > 0 {
@@ -210,5 +219,166 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	}
 	if _, err := os.Stat(snapshot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("GC did not remove snapshot after catalog consumption: %v", err)
+	}
+}
+
+type exactAcquisitionContext struct {
+	context.Context
+	reached chan struct{}
+	once    sync.Once
+}
+
+func (ctx *exactAcquisitionContext) Deadline() (time.Time, bool) {
+	ctx.once.Do(func() { close(ctx.reached) })
+	return ctx.Context.Deadline()
+}
+
+func awaitCacheLease[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(2 * time.Second):
+		t.Fatal("cache lease ordering barrier timed out")
+		var zero T
+		return zero
+	}
+}
+
+func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
+	for _, preheld := range []bool{true, false} {
+		name := "standalone-exact-before-mutable"
+		if preheld {
+			name = "preheld-exact-with-concurrent-gc"
+		}
+		t.Run(name, func(t *testing.T) {
+			ec, snapshot := exactLockViewGCFixture(t)
+			orgEntry := config.RegistryEntry{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Source: config.Organization}
+			orgPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+orgEntry.URL+"\n    ref: main\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ec.Organization = config.LayerResult{Source: config.Organization, Path: orgPath, Config: &config.Config{Registries: []config.RegistryEntry{orgEntry}}}
+			ec.Merged = &config.Config{Registries: append([]config.RegistryEntry{orgEntry}, ec.Repo.Config.Registries...)}
+			mutableRoot := cache.RegistryCachePath(orgEntry.URL, orgEntry.Ref)
+			if err := os.MkdirAll(filepath.Join(mutableRoot, ".factory", "skills", "organization"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(mutableRoot, ".factory", "skills", "organization", "SKILL.md"), []byte("---\nname: organization\ndescription: unlocked\n---\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			viewCtx, view := exactLockViewWithContext(context.Background(), ec)
+			defer view.release()
+			if len(view.errors) > 0 {
+				t.Fatal(errors.Join(view.errors...))
+			}
+			if path, identity, err := view.exactSnapshot(orgEntry); err != nil || path != "" || identity != "" {
+				t.Fatalf("organization fallback = %q, %q, %v", path, identity, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			barrier := &exactAcquisitionContext{Context: ctx, reached: make(chan struct{})}
+			var finish func()
+			releaseBlocking := cancel
+			if preheld {
+				gcDone := make(chan struct{})
+				var gcErr error
+				go func() {
+					defer close(gcDone)
+					_, gcErr = cache.GarbageCollectWithReachabilityAndContext(barrier, false, func(context.Context) (cache.GCReachability, error) {
+						return cache.GCReachability{Configs: []*config.Config{{}}}, nil
+					})
+				}()
+				t.Cleanup(func() {
+					cancel()
+					view.release()
+					awaitCacheLease(t, gcDone)
+				})
+				awaitCacheLease(t, barrier.reached)
+				finish = func() {
+					select {
+					case <-gcDone:
+						t.Fatalf("GC finished before final snapshot consumption: %v", gcErr)
+					default:
+					}
+					if _, err := os.ReadFile(filepath.Join(snapshot, ".factory", "skills", "keeper", "SKILL.md")); err != nil {
+						t.Fatal(err)
+					}
+					view.release()
+					awaitCacheLease(t, gcDone)
+					if gcErr != nil {
+						t.Fatal(gcErr)
+					}
+					if _, err := os.Stat(snapshot); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("snapshot survived final release: %v", err)
+					}
+				}
+			} else {
+				view.release()
+				viewCtx = barrier
+				mutableHeld := make(chan struct{})
+				mutableDone := make(chan error, 1)
+				resume := make(chan struct{})
+				var once sync.Once
+				releaseMutable := func() { once.Do(func() { close(resume) }) }
+				go func() {
+					_, err := cache.WithCacheMutationLock(func() (struct{}, error) {
+						close(mutableHeld)
+						<-resume
+						return struct{}{}, nil
+					})
+					mutableDone <- err
+				}()
+				releaseBlocking = releaseMutable
+				t.Cleanup(releaseMutable)
+				awaitCacheLease(t, mutableHeld)
+				finish = func() {
+					awaitCacheLease(t, barrier.reached)
+					releaseMutable()
+					if err := awaitCacheLease(t, mutableDone); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			loadDone := make(chan struct{})
+			var loaded catalog.LoadResult
+			go func() {
+				defer close(loadDone)
+				loaded = catalog.LoadRegistriesWithContext(viewCtx, ec.Merged, filepath.Dir(filepath.Dir(ec.Repo.Path)), catalog.LoadModeInspect, view.catalogOption)
+			}()
+			t.Cleanup(func() {
+				releaseBlocking()
+				awaitCacheLease(t, loadDone)
+			})
+			if !preheld {
+				finish()
+			}
+			select {
+			case <-loadDone:
+			case <-time.After(2 * time.Second):
+				cancel()
+				view.release()
+				awaitCacheLease(t, loadDone)
+				t.Fatal("mixed discovery stalled behind GC while retaining the exact shared lease")
+			}
+			if len(loaded.Errors) > 0 {
+				t.Fatal(errors.Join(loaded.Errors...))
+			}
+			found := make(map[string]bool)
+			for _, cat := range loaded.Catalogs {
+				for _, entry := range cat.Entries {
+					found[entry.Name] = true
+				}
+			}
+			if len(found) != 2 || !found["keeper"] || !found["organization"] {
+				t.Fatalf("mixed resources = %v", found)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(orgPath), "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("organization lock unexpectedly created: %v", err)
+			}
+			if preheld {
+				finish()
+			}
+		})
 	}
 }

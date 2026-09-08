@@ -9,9 +9,182 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
+
+func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
+	t.Setenv("HOME", canonicalTempDir(t))
+	repo := canonicalTempDir(t)
+	root := filepath.Join(repo, ".agents", "config.yaml")
+	fragment := filepath.Join(repo, ".agents", "fragment.yaml")
+	writeConfig(t, root, "include: fragment.yaml\n")
+	writeConfig(t, fragment, "harnesses: [claude]\n")
+	opts := config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo}
+	loaded, before, err := loadStableEffective(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, fragment, "harnesses: [codex]\n")
+	if _, err := snapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("stale parsed bytes accepted: %v", err)
+	}
+	_, after, err := loadStableEffective(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameConfigSnapshots(before, after) {
+		t.Fatal("include-only change left snapshots equal")
+	}
+}
+
+func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
+	for _, change := range []string{"unchanged", "edit", "delete", "retarget"} {
+		t.Run(change, func(t *testing.T) {
+			home := canonicalTempDir(t)
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			origin, working := createBareRepoWithWorkingClone(t, "include-cas.git")
+			writeSkill(t, working, "review", "Review", nil)
+			commitAndPushAll(t, working, "review")
+			repo := canonicalTempDir(t)
+			fragments := canonicalTempDir(t)
+			leaf := filepath.Join(fragments, "leaf.yaml")
+			body := "registries:\n  - url: " + origin + "\n    ref: main\n"
+			writeConfig(t, leaf, body)
+			other := filepath.Join(fragments, "other.yaml")
+			writeConfig(t, other, body)
+			alias := filepath.Join(fragments, "alias.yaml")
+			if err := os.Symlink(leaf, alias); err != nil {
+				t.Fatal(err)
+			}
+			middle := filepath.Join(fragments, "middle.yaml")
+			writeConfig(t, middle, "include: alias.yaml\n")
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			writeConfig(t, configPath, "include: "+middle+"\nharnesses: [claude]\n")
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "include: "+middle+"\n")
+			original, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(fragments, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(fragments, 0o755) })
+			var concurrentBytes []byte
+			commit := commitDependencyTransaction
+			commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+				switch change {
+				case "edit":
+					writeConfig(t, leaf, "registries: []\n")
+				case "delete", "retarget":
+					if err := os.Chmod(fragments, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if change == "delete" {
+						if err := os.Remove(leaf); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if err := os.Remove(alias); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(other, alias); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if change != "delete" {
+					concurrentBytes, err = os.ReadFile(leaf)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				return commit(ctx, state, desired, opts...)
+			}
+			t.Cleanup(func() { commitDependencyTransaction = commit })
+			_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+			if change == "unchanged" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(filepath.Join(repo, ".agents", "lock.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+					t.Fatalf("error = %v, want generation conflict", err)
+				}
+				for _, root := range []string{repo, home} {
+					if _, err := os.Stat(filepath.Join(root, ".agents", "lock.yaml")); !os.IsNotExist(err) {
+						t.Fatalf("lock published on conflict: %v", err)
+					}
+				}
+			}
+			if got, err := os.ReadFile(configPath); err != nil || !bytes.Equal(got, original) {
+				t.Fatalf("root changed: %q, %v", got, err)
+			}
+			if change == "delete" {
+				if _, err := os.Stat(leaf); !os.IsNotExist(err) {
+					t.Fatalf("deleted fragment restored: %v", err)
+				}
+			} else if got, err := os.ReadFile(leaf); err != nil || !bytes.Equal(got, concurrentBytes) {
+				t.Fatalf("fragment edit overwritten: %q, %v", got, err)
+			}
+			if change == "retarget" {
+				if target, err := os.Readlink(alias); err != nil || target != other {
+					t.Fatalf("alias retarget overwritten: %s, %v", target, err)
+				}
+			}
+			entries, err := os.ReadDir(fragments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if entry.Name()[0] == '.' {
+					t.Fatalf("assertion created fragment sidecar: %s", entry.Name())
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
+	home := canonicalTempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	origin, working := createBareRepoWithWorkingClone(t, "include-overlay.git")
+	writeSkill(t, working, "review", "Review", nil)
+	commitAndPushAll(t, working, "review")
+	repo := canonicalTempDir(t)
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeConfig(t, configPath, "harnesses: [claude]\n")
+	alias := filepath.Join(home, "repo-alias.yaml")
+	if err := os.Symlink(configPath, alias); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "include: ["+alias+", "+configPath+"]\n")
+	expected, err := dependencytxn.ReadGeneration(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || !bytes.Equal(got, staged) {
+		t.Fatalf("staged config = %q, %v", got, err)
+	}
+	for _, root := range []string{home, repo} {
+		if _, err := os.Stat(filepath.Join(root, ".agents", "lock.yaml")); err != nil {
+			t.Fatalf("included overlay missing lock: %v", err)
+		}
+	}
+}
 
 func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

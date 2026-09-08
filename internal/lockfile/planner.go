@@ -2,6 +2,7 @@ package lockfile
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -115,7 +116,8 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		wanted[identity] = true
 		record := RecordRef{Kind: RecordGit, Identity: identity}
 		locked, exists := oldGit[identity]
-		compatible := exists && rootsCompatible(requirement.Roots, locked.Roots)
+		projected, compatible := ProjectGitRoots(locked.Roots, requirement.Roots)
+		compatible = exists && compatible
 		upgrade := operation == OperationUpgrade && requirements.Upgrade.SelectsGit(requirement)
 		switch {
 		case upgrade && compatible:
@@ -124,11 +126,13 @@ func Plan(requirements Requirements, current *Document, operation Operation) (Re
 		case compatible:
 			plan.Retained = append(plan.Retained, record)
 			for _, root := range locked.Roots {
-				if !requiresRoot(requirement.Roots, root) {
+				if !slices.ContainsFunc(projected, func(got GitRoot) bool {
+					return got.Path == root.Path && got.SourceHarness == root.SourceHarness
+				}) {
 					plan.Removed = append(plan.Removed, RecordRef{Kind: RecordGit, Identity: identity + "\x00root\x00" + root.Path + "\x00" + root.SourceHarness})
 				}
 			}
-			locked.Roots = projectRoots(requirement.Roots, locked.Roots)
+			locked.Roots = projected
 			plan.Desired.Registries = append(plan.Desired.Registries, locked)
 		case exists:
 			plan.Invalidated = append(plan.Invalidated, record)
@@ -213,56 +217,6 @@ func normalizeGitRequirement(requirement GitRequirement) (GitRequirement, error)
 }
 
 func gitIdentity(url, ref string) string { return url + "\x00" + ref }
-
-func gitRootMatches(want GitRootRequirement, got GitRoot) bool {
-	return want.Path == got.Path && (want.SourceHarness == "" || want.SourceHarness == got.SourceHarness)
-}
-
-func rootsCompatible(required []GitRootRequirement, locked []GitRoot) bool {
-	for _, want := range required {
-		found := false
-		for _, got := range locked {
-			if gitRootMatches(want, got) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-func requiresRoot(required []GitRootRequirement, locked GitRoot) bool {
-	for _, want := range required {
-		if gitRootMatches(want, locked) {
-			return true
-		}
-	}
-	return false
-}
-
-func projectRoots(required []GitRootRequirement, locked []GitRoot) []GitRoot {
-	out := make([]GitRoot, 0, len(required))
-	seen := make(map[string]bool, len(required))
-	for _, want := range required {
-		for _, got := range locked {
-			if !gitRootMatches(want, got) {
-				continue
-			}
-			key := got.Path + "\x00" + got.SourceHarness
-			if !seen[key] {
-				out = append(out, got)
-				seen[key] = true
-			}
-			if want.SourceHarness != "" {
-				break
-			}
-		}
-	}
-	return out
-}
 
 func sortPlan(plan *ResolutionPlan) {
 	sortRecords := func(records []RecordRef) {

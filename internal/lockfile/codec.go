@@ -83,6 +83,9 @@ func Encode(doc Document) ([]byte, error) {
 	if err := enc.Close(); err != nil {
 		return nil, fmt.Errorf("finish lock encoding: %w", err)
 	}
+	if int64(out.Len()) > MaxFileSize {
+		return nil, fmt.Errorf("%w: encoded lock exceeds %d bytes", ErrFileTooLarge, MaxFileSize)
+	}
 	return out.Bytes(), nil
 }
 
@@ -116,8 +119,8 @@ func Normalize(input Document) (Document, error) {
 			if err := require(root.SourceHarness, "source_harness"); err != nil {
 				return Document{}, err
 			}
-			if root.RevisionSchema != "v1" {
-				return Document{}, coded(CodeInvalidDocument, "unsupported revision_schema %q", root.RevisionSchema)
+			if _, err := RevisionContract(root.RevisionSchema); err != nil {
+				return Document{}, err
 			}
 			if err := validateDigest(root.RevisionDigest, "revision_digest"); err != nil {
 				return Document{}, err
@@ -256,7 +259,7 @@ func normalizeArtifactPath(value string, allowRoot bool) (string, error) {
 	if value == "" || strings.Contains(value, `\`) || hasControl(value) || strings.HasPrefix(value, "/") {
 		return "", coded(CodeInvalidPath, "invalid portable path %q", value)
 	}
-	for _, part := range strings.Split(value, "/") {
+	for part := range strings.SplitSeq(value, "/") {
 		if part == ".." {
 			return "", coded(CodeInvalidPath, "path traversal in %q", value)
 		}

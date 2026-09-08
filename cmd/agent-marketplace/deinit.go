@@ -14,6 +14,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -34,7 +36,8 @@ By default (--scope user), removes all machine-scoped materialized artifacts
 and cleans the registry cache. Use --scope repo or --scope local to remove
 repo-scoped artifacts only.
 
-Use --purge-config to also delete the config file(s) for the target scope.`,
+Use --purge-config to also delete the config file(s) and owning generated YAML
+lockfile(s) for the target scope. Transaction coordination files are retained.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, err := parseDeinitScope(scopeStr)
@@ -46,7 +49,7 @@ Use --purge-config to also delete the config file(s) for the target scope.`,
 	}
 
 	cmd.Flags().StringVar(&scopeStr, "scope", "user", "Scope to deinit: user (default), repo, or local")
-	cmd.Flags().BoolVar(&purgeConfig, "purge-config", false, "Also delete config file(s) for the target scope")
+	cmd.Flags().BoolVar(&purgeConfig, "purge-config", false, "Also delete config file(s) and owning generated YAML lockfile(s) for the target scope")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be removed without deleting")
 
 	return cmd
@@ -212,22 +215,8 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 		if cfgErr != nil {
 			return cfgErr
 		}
-		for _, path := range configFiles {
-			if _, statErr := os.Stat(path); statErr != nil {
-				continue
-			}
-			if dryRun {
-				if _, err := fmt.Fprintf(out, "Would remove config %s\n", path); err != nil {
-					return err
-				}
-			} else {
-				if err := os.Remove(path); err != nil {
-					return fmt.Errorf("removing config %s: %w", path, err)
-				}
-				if _, err := fmt.Fprintf(out, "Removed config %s\n", path); err != nil {
-					return err
-				}
-			}
+		if err := purgeConfigPairs(context.WithoutCancel(ctx), out, configFiles, dryRun); err != nil {
+			return err
 		}
 		// Clean up empty .agents directory after config removal.
 		if !dryRun {
@@ -252,6 +241,61 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	slog.Info("deinit end", "scope", scope.String(), "dry_run", dryRun, "removed", totalRemoved, "purge_config", purgeConfig)
+	return nil
+}
+
+func purgeConfigPairs(ctx context.Context, out io.Writer, configFiles []string, dryRun bool) error {
+	var desired []dependencytxn.DesiredFile
+	var existing []string
+	kinds := make(map[string]string)
+	for _, configPath := range configFiles {
+		lockPath, err := lockfile.PathForConfig(configPath)
+		if err != nil {
+			return err
+		}
+		var pair []dependencytxn.DesiredFile
+		for i, path := range []string{configPath, lockPath} {
+			path, err = dependencytxn.ValidateDestination(path)
+			if err != nil {
+				return err
+			}
+			generation, mode, err := dependencytxn.ReadGenerationAndMode(path)
+			if err != nil {
+				return err
+			}
+			pair = append(pair, dependencytxn.DesiredFile{Path: path, Expected: generation, ExpectedMode: mode, Delete: true})
+			kinds[path] = "config"
+			if i == 1 {
+				kinds[path] = "lock"
+			}
+			if generation.Exists {
+				existing = append(existing, path)
+			}
+		}
+		if pair[0].Expected.Exists || pair[1].Expected.Exists {
+			desired = append(desired, pair...)
+		}
+	}
+	if !dryRun && len(desired) > 0 {
+		stateDir, err := dependencyStateDir()
+		if err != nil {
+			return err
+		}
+		result, err := dependencytxn.Commit(ctx, stateDir, desired)
+		if err != nil {
+			return fmt.Errorf("purge config and generated lock: %w", err)
+		}
+		existing = result.Changed
+	}
+	action := "Removed"
+	if dryRun {
+		action = "Would remove"
+	}
+	for _, path := range existing {
+		if _, err := fmt.Fprintf(out, "%s %s %s\n", action, kinds[path], path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
