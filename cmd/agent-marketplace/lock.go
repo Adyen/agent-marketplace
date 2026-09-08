@@ -834,7 +834,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			continue
 		}
 		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
-		if !exists && mode.locked {
+		if !exists && mode.locked && !implicitOrg {
 			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
 		if mode.check {
@@ -864,7 +864,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		doc := gitDesired.doc
 		fresh := exists && gitFresh
 		if !fresh {
-			if mode.locked || implicitOrg && exists || !selected && !mode.upgrade {
+			if mode.locked && !implicitOrg || implicitOrg && exists || !selected && !mode.upgrade {
 				return nil, changed, nil, &lockLifecycleError{Code: "lock.stale", Scope: scope, Path: lockPath, Err: errors.New("lock does not match configuration")}
 			}
 			if !implicitOrg {

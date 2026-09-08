@@ -832,7 +832,7 @@ skills:
 	},
 	{
 		Name: "precedence/org_config_sets_floor",
-		Desc: "Given org config with a required registry, When global config has no registries, Then the org-mandated skill is still materialized",
+		Desc: "Given an unlocked org config with a required registry, When locked sync runs without a global registry, Then the org skill is materialized without creating an org lock",
 		Registries: []RegistryDef{
 			{Name: "org-registry", Skills: []Skill{
 				{Name: "compliance-check", Description: "Org-mandated compliance"},
@@ -850,8 +850,9 @@ registries:
 `,
 		GlobalCfg: ``,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true,
-				FilesExist: []string{"/root/.factory/skills/compliance-check/SKILL.md"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true,
+				FilesExist:  []string{"/root/.factory/skills/compliance-check/SKILL.md"},
+				FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
 		},
 	},
 	{

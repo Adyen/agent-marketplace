@@ -13,6 +13,15 @@ import (
 )
 
 func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	testSyncAllowsOrganizationRequirementsWithoutLock(t, true, "sync")
+}
+
+func TestSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	testSyncAllowsOrganizationRequirementsWithoutLock(t, false, "sync", "--locked")
+}
+
+func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoRegistry bool, args ...string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -29,13 +38,18 @@ func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
-	repo := filepath.Join(canonicalTempDir(t), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
-	withWorkingDir(t, repo)
+	if withRepoRegistry {
+		repo := filepath.Join(canonicalTempDir(t), "repo")
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+		withWorkingDir(t, repo)
+	} else {
+		writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "harnesses: [factory]\n")
+		withWorkingDir(t, t.TempDir())
+	}
 
-	output, err := executeCommand("sync")
+	output, err := executeCommand(args...)
 	if err != nil {
-		t.Fatalf("sync rejected organization config without a lock: %v\n%s", err, output)
+		t.Fatalf("%s rejected organization config without a lock: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	if _, statErr := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("consumer created or replaced organization lock: %v", statErr)

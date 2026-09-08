@@ -305,8 +305,7 @@ func createBareRepoWithWorkingCloneOnBranch(t *testing.T, bareName, branch strin
 	working := filepath.Join(baseDir, "working")
 
 	runGit(t, "", "init", "--initial-branch="+branch, working)
-	runGit(t, working, "commit", "--allow-empty", "-m", "seed")
-	runGit(t, "", "clone", "--bare", working, origin)
+	runGit(t, "", "init", "--bare", "--initial-branch="+branch, origin)
 
 	gitConfig := filepath.Join(working, ".git", "config")
 	config, err := os.OpenFile(gitConfig, os.O_APPEND|os.O_WRONLY, 0)
