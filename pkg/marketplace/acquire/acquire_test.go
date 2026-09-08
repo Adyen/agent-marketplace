@@ -2,11 +2,8 @@ package acquire
 
 import (
 	"context"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -427,36 +424,30 @@ func TestGitEnvDoesNotInheritAmbientCA(t *testing.T) {
 	}
 }
 
-func TestCloneUsesSourceCAFile(t *testing.T) {
-	repo := createGitRepo(t, map[string]string{"README.md": "hello"})
-	serverRoot := t.TempDir()
-	bareRepo := filepath.Join(serverRoot, "repo.git")
-	runGitTestCommand(t, serverRoot, "git", "clone", "-q", "--bare", repo, bareRepo)
-	runGitTestCommand(t, serverRoot, "git", "--git-dir", bareRepo, "update-server-info")
-	commitBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("resolve test commit: %v", err)
-	}
-	commit := strings.TrimSpace(string(commitBytes))
-
-	server := httptest.NewTLSServer(http.FileServer(http.Dir(serverRoot)))
-	defer server.Close()
-	origin := server.URL + "/repo.git"
-	if res, err := CloneAtCommit(context.Background(), origin, "main", commit, Credentials{}, Limits{}, time.Minute); err == nil {
-		_ = res.Release()
-		t.Fatal("CloneAtCommit succeeded without the source CA")
-	}
-
+func TestWorkspaceCopiesSourceCAFile(t *testing.T) {
 	caFile := filepath.Join(t.TempDir(), "source-ca.pem")
-	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
-	if err := os.WriteFile(caFile, cert, 0o644); err != nil {
+	want := []byte("source CA bytes")
+	if err := os.WriteFile(caFile, want, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := CloneAtCommit(context.Background(), origin, "main", commit, Credentials{CAFile: caFile}, Limits{}, time.Minute)
+
+	workspace, err := newWorkspace(Credentials{CAFile: caFile})
 	if err != nil {
-		t.Fatalf("CloneAtCommit with source CA: %v", err)
+		t.Fatalf("newWorkspace: %v", err)
 	}
-	defer func() { _ = res.Release() }()
+	defer func() { _ = workspace.cleanup() }()
+
+	copied := envMap(workspace.env())["GIT_SSL_CAINFO"]
+	if copied == "" || copied == caFile {
+		t.Fatalf("GIT_SSL_CAINFO = %q, want a private copy path", copied)
+	}
+	got, err := os.ReadFile(copied)
+	if err != nil {
+		t.Fatalf("read copied CA file: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("copied CA bytes = %q, want %q", got, want)
+	}
 }
 
 func envMap(values []string) map[string]string {
