@@ -300,7 +300,7 @@ func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
 // wrapped in a markdown code block before being rendered through glamour,
 // so it displays with syntax highlighting instead of a raw minified blob.
 func renderDetailFullContent(r row, width int) string {
-	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" {
+	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" && r.DetailSource == nil {
 		sources, err := detailSourcePaths(r)
 		if err != nil {
 			return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
@@ -376,7 +376,7 @@ func renderDetailFullContent(r row, width int) string {
 	}
 
 	prepared := prepareDetailSource(filepath.Base(r.Artifact.Path), content)
-	rendered, err = renderMarkdownAtWidth(prepared, width)
+	rendered, err := renderMarkdownAtWidth(prepared, width)
 	if err != nil {
 		return boundRenderedDetail(prepared)
 	}

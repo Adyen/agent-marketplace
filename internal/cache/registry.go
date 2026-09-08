@@ -246,13 +246,6 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 	return safeArgs, nil
 }
 
-// runGitRaw executes the already-sanitised git arguments with the hardened
-// environment and logging used by runGit.
-func runGitRaw(repoDir string, safeArgs []string, start time.Time) error {
-	_, err := runGitRawOutput(repoDir, safeArgs, start)
-	return err
-}
-
 func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string, error) {
 	redactedSafe := redactArgs(safeArgs)
 	slog.Debug("git command start", "dir", repoDir, "args", redactedSafe)
