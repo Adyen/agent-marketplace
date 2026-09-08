@@ -3,14 +3,18 @@ ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.29-alpine
 
 FROM ${NODE_IMAGE} AS build
 
+USER root
+
+RUN npm install --global pnpm@10.26.0 && npm cache clean --force
+
+RUN mkdir -p /site && chown -R 1000:1000 /site
 WORKDIR /site
+USER 1000
 
-RUN corepack enable && corepack install --global pnpm@10.4.1
-
-COPY package.json pnpm-lock.yaml ./
+COPY --chown=1000:1000 package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-COPY . .
+COPY --chown=1000:1000 . .
 
 ARG SITE_BASE=/
 ENV SITE_BASE=${SITE_BASE}
