@@ -99,7 +99,7 @@ func TestServeReindex(t *testing.T) {
 
 func TestServeReindexRecursivelyIngestsParentRoot(t *testing.T) {
 	env := newServeReindexEnv(t)
-	config := strings.Replace(env.ReadFile("/workspace/marketplace.yaml"), "      - path: .agents\n", "      - path: .\n", 1)
+	config := strings.Replace(env.ReadFile("/workspace/marketplace.yaml"), "      - path: .agents\n        source_harness: factory\n", "      - path: .\n", 1)
 	env.WriteFile("/workspace/marketplace.yaml", config)
 
 	r := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
