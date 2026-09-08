@@ -254,6 +254,7 @@ test.describe('Marketplace browser discovery', () => {
     expect(csp).toContain(`img-src 'self' data: ${mockURL}`)
     await expect(page.getByText(`searches ${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
     await page.getByLabel('Search', { exact: true }).fill('secure')
+    await page.keyboard.press('Escape')
     await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page).toHaveURL(/q=secure/)
     expect(absoluteRequests.some(url => url.startsWith(`${mockURL}/api/v1/`))).toBe(true)
@@ -271,6 +272,7 @@ test.describe('Marketplace browser discovery', () => {
     await relativePage.goto(relativeAppURL)
     await expect(relativePage.getByRole('heading', { name: '2', exact: true })).toBeVisible()
     await relativePage.getByLabel('Search', { exact: true }).fill('secure')
+    await relativePage.keyboard.press('Escape')
     await relativePage.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(relativePage.getByRole('heading', { name: '1', exact: true })).toBeVisible()
     expect(sameOriginRequests.some(url => {
