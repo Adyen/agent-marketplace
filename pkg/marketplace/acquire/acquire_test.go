@@ -433,13 +433,18 @@ func TestCloneUsesSourceCAFile(t *testing.T) {
 	bareRepo := filepath.Join(serverRoot, "repo.git")
 	runGitTestCommand(t, serverRoot, "git", "clone", "-q", "--bare", repo, bareRepo)
 	runGitTestCommand(t, serverRoot, "git", "--git-dir", bareRepo, "update-server-info")
+	commitBytes, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve test commit: %v", err)
+	}
+	commit := strings.TrimSpace(string(commitBytes))
 
 	server := httptest.NewTLSServer(http.FileServer(http.Dir(serverRoot)))
 	defer server.Close()
 	origin := server.URL + "/repo.git"
-	if res, err := Clone(context.Background(), origin, "main", Credentials{}, Limits{}, time.Minute); err == nil {
+	if res, err := CloneAtCommit(context.Background(), origin, "main", commit, Credentials{}, Limits{}, time.Minute); err == nil {
 		_ = res.Release()
-		t.Fatal("Clone succeeded without the source CA")
+		t.Fatal("CloneAtCommit succeeded without the source CA")
 	}
 
 	caFile := filepath.Join(t.TempDir(), "source-ca.pem")
@@ -447,9 +452,9 @@ func TestCloneUsesSourceCAFile(t *testing.T) {
 	if err := os.WriteFile(caFile, cert, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Clone(context.Background(), origin, "main", Credentials{CAFile: caFile}, Limits{}, time.Minute)
+	res, err := CloneAtCommit(context.Background(), origin, "main", commit, Credentials{CAFile: caFile}, Limits{}, time.Minute)
 	if err != nil {
-		t.Fatalf("Clone with source CA: %v", err)
+		t.Fatalf("CloneAtCommit with source CA: %v", err)
 	}
 	defer func() { _ = res.Release() }()
 }
