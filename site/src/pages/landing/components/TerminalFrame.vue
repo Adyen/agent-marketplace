@@ -86,11 +86,19 @@ defineExpose({
   width: 8px;
   height: 8px;
   border-radius: 50%;
+<<<<<<< HEAD
   background: #67746c;
 }
 
 .window-controls i:nth-child(2) {
   background: #8b7850;
+=======
+  background: var(--am-color-text-muted);
+}
+
+.window-controls i:nth-child(2) {
+  background: var(--am-terminal-warning);
+>>>>>>> 389282c (Unify Marketplace styling and shared-origin routing)
 }
 
 .window-controls i:nth-child(3) {

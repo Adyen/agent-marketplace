@@ -3,7 +3,7 @@ instance:
   id: example-marketplace
   name: Example Agent Marketplace
   canonical_url: https://marketplace.example.invalid
-  browser_base: https://marketplace.example.invalid
+  browser_base: https://marketplace.example.invalid/marketplace
 listen: 0.0.0.0:8080
 operations_listen: 127.0.0.1:9090
 storage:

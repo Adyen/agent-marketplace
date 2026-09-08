@@ -278,7 +278,9 @@ test.describe('Marketplace browser discovery', () => {
       contentType: 'application/json',
       body: JSON.stringify(searchResult()),
     }))
-    await relativePage.goto(relativeAppURL)
+    await relativePage.goto(`${relativeAppURL}/marketplace/`)
+    await expect(relativePage.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(relativePage.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
     await expect(relativePage.getByText('· 2 total', { exact: true })).toBeVisible()
     await relativePage.getByLabel('Search', { exact: true }).fill('secure')
     await expect(relativePage.getByText('· 1 total', { exact: true })).toBeVisible()

@@ -1,4 +1,4 @@
-import { createMarketplaceApi, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase } from '~/lib/api'
+import { bindRelativeApiRequestsToOrigin, createMarketplaceApi, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase } from '~/lib/api'
 
 export function useMarketplaceApi() {
   const config = useRuntimeConfig()
@@ -11,6 +11,7 @@ export function useMarketplaceApi() {
   const internalApiBase = import.meta.server ? config.apiBaseInternal : undefined
   const apiBase = selectMarketplaceApiBase(import.meta.server, publicApiBase, internalApiBase)
   const requestFetcher = import.meta.server ? useRequestFetch() : $fetch
-  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, $fetch)
+  const clientFetcher = bindRelativeApiRequestsToOrigin($fetch, import.meta.client ? window.location.origin : undefined)
+  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, clientFetcher)
   return createMarketplaceApi(fetcher, apiBase)
 }

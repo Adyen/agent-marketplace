@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, bindRelativeApiRequestsToOrigin, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
 import { RESOURCE_KINDS } from '../../app/types/marketplace'
 import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
@@ -90,6 +90,23 @@ describe('Marketplace API URL handling', () => {
     expect(selectMarketplaceFetcher(true, '/', requestFetcher, clientFetcher)).toBe(requestFetcher)
     expect(selectMarketplaceFetcher(true, 'https://api.example', requestFetcher, clientFetcher)).toBe(clientFetcher)
     expect(selectMarketplaceFetcher(false, '/', requestFetcher, clientFetcher)).toBe(clientFetcher)
+  })
+
+  it('keeps browser-relative API requests at the public origin when Nuxt has a path base', async () => {
+    const requests: string[] = []
+    const fetcher: ApiFetcher = async <T>(request: string) => {
+      requests.push(request)
+      return undefined as T
+    }
+    const originFetcher = bindRelativeApiRequestsToOrigin(fetcher, 'https://market.example')
+
+    await originFetcher('/api/v1/search')
+    await originFetcher('https://api.example/api/v1/search')
+
+    expect(requests).toEqual([
+      'https://market.example/api/v1/search',
+      'https://api.example/api/v1/search',
+    ])
   })
 
   it('builds the documented encoded resource route and validates API payloads', async () => {

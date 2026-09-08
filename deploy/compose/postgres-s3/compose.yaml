@@ -92,9 +92,12 @@ services:
     build:
       context: ../../../web
       dockerfile: Dockerfile
+      additional_contexts:
+        design: ../../../design
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
     environment:
+      NUXT_APP_BASE_URL: /marketplace/
       NUXT_PUBLIC_API_BASE: /
       NUXT_API_BASE_INTERNAL: http://api:8080
     read_only: true
@@ -110,6 +113,35 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  site:
+    platform: *marketplace-platform
+    build:
+      context: ../../../site
+      dockerfile: Dockerfile
+      additional_contexts:
+        design: ../../../design
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NGINX_IMAGE: ${SITE_NGINX_IMAGE:-${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29-alpine}}
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    cap_drop:
+      - ALL
+    # Keep standard mirrored Nginx images usable when registries do not mirror
+    # nginx-unprivileged; the default site image remains unprivileged.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8080"
+    restart: unless-stopped
 
   proxy:
     platform: *marketplace-platform
@@ -137,6 +169,8 @@ services:
       api:
         condition: service_healthy
       web:
+        condition: service_healthy
+      site:
         condition: service_healthy
 
 volumes:
