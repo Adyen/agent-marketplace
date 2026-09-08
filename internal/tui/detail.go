@@ -158,8 +158,12 @@ func renderDetail(m Model) string {
 		b.WriteString("\n")
 	}
 
-	writeLine(label("Kind:     ") + value(skill.KindLabel(r.Artifact.Kind)))
-	writeLine(label("Name:     ") + value(safe(r.Artifact.Name)))
+	writeLine(label("Name: ") + value(safe(r.Artifact.Name)) + label(" · Kind: ") + value(skill.KindLabel(r.Artifact.Kind)))
+	if r.Artifact.Description != "" {
+		// Word-wrap the description
+		writeLine(value(safe(r.Artifact.Description)))
+	}
+	writeLine(label("Status: ") + value(safe(r.StatusText())))
 
 	if !r.IsMalformed {
 		if r.Artifact.RegistryURL != "" {
@@ -184,7 +188,6 @@ func renderDetail(m Model) string {
 		}
 	}
 
-	writeLine(label("Status:   ") + value(safe(r.StatusText())))
 	if discovery := r.MarketplaceDiscovery; discovery != nil {
 		writeLine(label("Marketplace: ") + value(safe(marketplaceEndpointDisplay(discovery.Endpoint))))
 		writeLine(label("Registry:    ") + value(safe(discovery.Item.RegistrySlug+" ("+discovery.Item.RegistryID+")")))
@@ -197,12 +200,6 @@ func renderDetail(m Model) string {
 		writeLine(label("Source:   ") + value(safe(r.Artifact.Path)))
 	}
 
-	if r.Artifact.Description != "" {
-		b.WriteString("\n")
-		// Word-wrap the description
-		writeLine(value(safe(r.Artifact.Description)))
-	}
-
 	if r.IsMalformed {
 		b.WriteString("\n")
 		writeLine(styleGlyphBroken.Render("Error: ") + value(safe(r.MalformedMsg)))
@@ -211,9 +208,9 @@ func renderDetail(m Model) string {
 	// Hint line
 	b.WriteString("\n")
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"})
-	hint := "enter = full view"
+	hint := "→/enter browse files"
 	if !r.IsAvailable && !r.IsMalformed {
-		hint = "space = toggle · enter = full view"
+		hint = "space = toggle · →/enter browse files"
 	}
 	b.WriteString(lineStyle.Render(hintStyle.Render(hint)))
 

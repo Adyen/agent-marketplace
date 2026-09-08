@@ -135,7 +135,11 @@ func bundlePagerTestModel(t testing.TB) Model {
 	r := mkRow("source", withProject)
 	r.Artifact.Path = path
 	m := modelWithSelectedRow(t, r)
+	cmd := m.syncInlineBundle()
+	updated, _ := m.Update(cmd())
+	m = updated.(Model)
 	m.enterDetailPane()
+	m.detailRenderWidth = m.previewWidth()
 	m.detailViewport.SetContent(strings.Repeat("preview\n", 100))
 	m.detailViewport.SetYOffset(7)
 	return m
@@ -144,10 +148,10 @@ func bundlePagerTestModel(t testing.TB) Model {
 func TestBundlePagerKeyAndReturnPreserveBrowser(t *testing.T) {
 	m := bundlePagerTestModel(t)
 	t.Setenv("PAGER", "missing-pager")
-	updated, cmd := m.Update(keyPress('o'))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	if cmd == nil || m.operations.active == nil || m.operations.active.kind != operationPager {
-		t.Fatal("o did not schedule a pager operation")
+		t.Fatal("Enter did not schedule a pager operation")
 	}
 	operation := m.operations.active.id
 	for _, err := range []error{nil, errors.New("missing pager\x1b[2J")} {
@@ -166,7 +170,7 @@ func TestBundlePagerKeyAndReturnPreserveBrowser(t *testing.T) {
 			}
 		}
 	}
-	_, blocked := m.Update(keyPress('o'))
+	_, blocked := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if _, ok := blocked().(toastMsg); !ok {
 		t.Fatal("overlapping pager operation was not blocked")
 	}
@@ -177,7 +181,7 @@ func TestBundlePagerKeyAndReturnPreserveBrowser(t *testing.T) {
 	for _, width := range []int{50, 80, 120} {
 		m.width = width
 		view := ansi.Strip(m.View())
-		if !strings.Contains(view, "o pager") {
+		if !strings.Contains(view, "enter open") {
 			t.Fatalf("pager key missing at width %d: %q", width, view)
 		}
 		assertTerminalBounds(t, m.View(), width, m.height)
@@ -211,7 +215,7 @@ func TestBundlePagerProgramResumesAfterProcessExit(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			program := tea.NewProgram(pagerProgramModel{bundlePagerTestModel(t)}, tea.WithContext(ctx), tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignalHandler())
-			go program.Send(keyPress('o'))
+			go program.Send(tea.KeyMsg{Type: tea.KeyEnter})
 			result, err := program.Run()
 			if err != nil {
 				t.Fatal(err)
@@ -230,7 +234,7 @@ func TestBundlePagerProgramResumesAfterProcessExit(t *testing.T) {
 func TestBundlePagerWithoutSelectedFileDoesNotLaunch(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.pane = paneDetail
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("pager launched without a selected file")
 	}
@@ -241,7 +245,7 @@ func TestBundlePagerWithoutSelectedFileDoesNotLaunch(t *testing.T) {
 	if entry, ok := m.bundle.selectedEntry(); !ok || !entry.IsDir {
 		t.Fatal("expected a highlighted directory")
 	}
-	if _, cmd := m.Update(keyPress('o')); cmd != nil {
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
 		t.Fatal("pager launched for a directory")
 	}
 }

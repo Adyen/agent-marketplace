@@ -164,8 +164,12 @@ func TestKeyMapDetailBindingsMatch(t *testing.T) {
 		want    bool
 	}{
 		{"esc matches DetailBack", keyNamed("esc"), k.DetailBack, true},
-		{"q matches DetailBack", keyPress('q'), k.DetailBack, true},
-		{"o matches DetailPager", keyPress('o'), k.DetailPager, true},
+		{"left matches DetailBack", tea.KeyMsg{Type: tea.KeyLeft}, k.DetailBack, true},
+		{"right matches Enter", tea.KeyMsg{Type: tea.KeyRight}, k.Enter, true},
+		{"right does not match DetailPager", tea.KeyMsg{Type: tea.KeyRight}, k.DetailPager, false},
+		{"q does not match DetailBack", keyPress('q'), k.DetailBack, false},
+		{"enter matches DetailPager", tea.KeyMsg{Type: tea.KeyEnter}, k.DetailPager, true},
+		{"o does not match DetailPager", keyPress('o'), k.DetailPager, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

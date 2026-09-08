@@ -109,7 +109,7 @@ var defaultKeyMap = keyMap{
 	// Actions
 	Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
 	Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
-	Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
+	Enter:      key.NewBinding(key.WithKeys("enter", "right"), key.WithHelp("enter/→", "browse files / open section")),
 	Space:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle modal / fold section")),
 	Collapse:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
 	Expand:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
@@ -154,8 +154,8 @@ var defaultKeyMap = keyMap{
 	EditConfigCancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 
 	// Detail pane
-	DetailBack:  key.NewBinding(key.WithKeys("esc", "q"), key.WithHelp("esc/q", "back to list")),
-	DetailPager: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open bundle file in $PAGER")),
+	DetailBack:  key.NewBinding(key.WithKeys("esc", "left"), key.WithHelp("←/esc", "focus resources")),
+	DetailPager: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open bundle file in $PAGER")),
 
 	// Search mode
 	SearchConfirm:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm search")),
@@ -189,7 +189,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // navigationBindings returns the navigation-related key bindings.
 func (k keyMap) navigationBindings() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
+	return []key.Binding{k.Up, k.Down, k.HalfPageDown, k.HalfPageUp, k.PageDown, k.PageUp, k.Top, k.Bottom, k.DetailBack, k.Tab1, k.Tab2, k.Tab3, k.NextTab, k.PrevTab}
 }
 
 // actionBindings returns the action-related key bindings.

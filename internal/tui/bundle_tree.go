@@ -308,22 +308,6 @@ func (t *bundleTree) move(delta int) {
 		t.selected = entry.RelPath
 	}
 }
-func (t *bundleTree) top() {
-	if len(t.visible) > 0 {
-		t.cursor = 0
-		if !t.visible[0].IsDir {
-			t.selected = t.visible[0].RelPath
-		}
-	}
-}
-func (t *bundleTree) bottom() {
-	if len(t.visible) > 0 {
-		t.cursor = len(t.visible) - 1
-		if !t.visible[t.cursor].IsDir {
-			t.selected = t.visible[t.cursor].RelPath
-		}
-	}
-}
 
 func (t *bundleTree) toggle() {
 	entry, ok := t.selectedEntry()

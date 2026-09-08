@@ -12,11 +12,19 @@ func renderBundleTree(m Model, width, height int) string {
 	if width < 1 || height < 1 {
 		return ""
 	}
+	title := "Files"
+	if m.pane == paneDetail {
+		title = "> Files"
+	}
 	if m.bundle == nil {
-		return fitTerminalRows("bundle\nNo bundle tree available", width, height)
+		message := m.bundleError
+		if message == "" {
+			message = "Loading files…"
+		}
+		return fitTerminalRows(title+"\n"+message, width, height)
 	}
 	lines := make([]string, 0, height)
-	lines = append(lines, styleDetailLabel.Render(bundleTreeRootLabel(m.bundle)))
+	lines = append(lines, ansi.Truncate(styleDetailLabel.Render(title+" · "+bundleTreeRootLabel(m.bundle)), width, ""))
 	if m.bundle.rootErr != nil {
 		lines = append(lines, "  Error: "+sanitizeTerminalData(m.bundle.rootErr.Error(), terminalSingleLine))
 	} else if len(m.bundle.entries()) == 0 {
@@ -43,10 +51,10 @@ func renderBundleTree(m Model, width, height int) string {
 			line += " [error]"
 		}
 		line = ansi.Truncate(line, width, "")
-		if i == m.bundle.cursor {
+		if i == m.bundle.cursor && m.pane == paneDetail {
 			line = styleSelected.Render(line)
 		}
 		lines = append(lines, line)
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().Width(width).Height(height).Render(fitTerminalRows(strings.Join(lines, "\n"), width, height))
 }

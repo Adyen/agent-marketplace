@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // BenchmarkCaptureAggregateDetailDiskIO includes bounded local disk reads for a
@@ -47,6 +49,40 @@ func BenchmarkBundleBrowserView(b *testing.B) {
 	for b.Loop() {
 		if m.View() == "" {
 			b.Fatal("empty browser")
+		}
+	}
+}
+
+func BenchmarkInlineBundleSelectionDispatch(b *testing.B) {
+	m := modelWithSelectedRow(b, inlineBundleRow(b, "alpha"))
+	m.rows = append(m.rows, inlineBundleRow(b, "beta"))
+	m.recomputeView()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, direction := range []tea.KeyType{tea.KeyDown, tea.KeyUp} {
+			updated, cmd := m.Update(tea.KeyMsg{Type: direction})
+			m = updated.(Model)
+			if cmd == nil {
+				b.Fatal("selection did not dispatch a bundle load")
+			}
+		}
+	}
+}
+
+func BenchmarkInlineBundleFileNavigationDispatch(b *testing.B) {
+	m := modelWithSelectedRow(b, inlineBundleRow(b, "alpha"))
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = applyBundleCommand(b, updated.(Model), cmd)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, direction := range []tea.KeyType{tea.KeyDown, tea.KeyUp} {
+			updated, cmd := m.Update(tea.KeyMsg{Type: direction})
+			m = updated.(Model)
+			if cmd == nil {
+				b.Fatal("navigation did not dispatch a preview")
+			}
 		}
 	}
 }
