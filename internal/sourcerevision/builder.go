@@ -39,6 +39,7 @@ type Result struct {
 	Manifest      sourceRevisionManifest
 	Payload       []byte
 	Warnings      []ResourceWarning
+	Catalog       *catalog.Catalog
 }
 
 type ResourceWarning struct {
@@ -93,6 +94,7 @@ func Build(input Input) (Result, error) {
 	}
 
 	cat, err := catalog.Load(root, input.SourceHarness)
+	loaded := cat
 	if err != nil {
 		discovered, discoverErr := catalog.Discover(root, input.SourceHarness)
 		if discoverErr != nil {
@@ -179,11 +181,35 @@ func Build(input Input) (Result, error) {
 		return Result{}, fmt.Errorf("encode source revision manifest: %w", err)
 	}
 
+	if loaded != nil {
+		catalogRoot, err := filepath.Abs(filepath.Join(input.SnapshotRoot, filepath.FromSlash(normalizedRootPath(input.RootPath))))
+		if err != nil {
+			return Result{}, fmt.Errorf("resolve catalog root: %w", err)
+		}
+		if catalogRoot != root {
+			for i, entry := range loaded.Entries {
+				if entry.Path == "" {
+					continue
+				}
+				rel, err := lexicallyContained(root, entry.Path)
+				if err != nil {
+					loaded = nil
+					break
+				}
+				loaded.Entries[i].Path = filepath.Join(catalogRoot, rel)
+			}
+		}
+	}
 	slog.Debug("built direct-Git source revision", "root", normalizedRootPath(input.RootPath), "source_harness", cat.SourceHarness, "revision_schema", contract.Schema, "resources", len(resources), "warnings", len(warnings), "deferred_diagnostic_errors", diagnosticErrors)
-	return Result{SourceHarness: cat.SourceHarness, Manifest: manifest, Payload: payload, Warnings: warnings}, nil
+	return Result{SourceHarness: cat.SourceHarness, Manifest: manifest, Payload: payload, Warnings: warnings, Catalog: loaded}, nil
 }
 
 func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarning, error) {
+	result, err := VerifyLockedGitRootWithCatalog(snapshot, root)
+	return result.Warnings, err
+}
+
+func VerifyLockedGitRootWithCatalog(snapshot string, root lockfile.GitRoot) (Result, error) {
 	resources := make([]revisionResource, 0, len(root.Resources))
 	for _, resource := range root.Resources {
 		support := make(map[string]string, len(resource.SupportFiles))
@@ -201,7 +227,7 @@ func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarn
 			SupportFiles:  support,
 		})
 	}
-	return Verify(Input{SnapshotRoot: snapshot, RootPath: root.Path}, Projection{
+	return verify(Input{SnapshotRoot: snapshot, RootPath: root.Path}, Projection{
 		SourceHarness:  root.SourceHarness,
 		RevisionSchema: root.RevisionSchema,
 		RevisionDigest: root.RevisionDigest.String(),
@@ -210,12 +236,17 @@ func VerifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]ResourceWarn
 }
 
 func Verify(input Input, locked Projection) ([]ResourceWarning, error) {
+	result, err := verify(input, locked)
+	return result.Warnings, err
+}
+
+func verify(input Input, locked Projection) (Result, error) {
 	if _, err := lockfile.RevisionContract(locked.RevisionSchema); err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	input.RevisionSchema = locked.RevisionSchema
 	if locked.SourceHarness == "" {
-		return nil, fmt.Errorf("%w: locked source harness is empty", ErrManifestMismatch)
+		return Result{}, fmt.Errorf("%w: locked source harness is empty", ErrManifestMismatch)
 	}
 	input.SourceHarness = locked.SourceHarness
 	if input.SourceHarness == "auto" {
@@ -223,18 +254,18 @@ func Verify(input Input, locked Projection) ([]ResourceWarning, error) {
 	}
 	built, err := Build(input)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	if built.SourceHarness != locked.SourceHarness {
-		return nil, fmt.Errorf("%w: source harness got %q, want %q", ErrManifestMismatch, built.SourceHarness, locked.SourceHarness)
+		return Result{}, fmt.Errorf("%w: source harness got %q, want %q", ErrManifestMismatch, built.SourceHarness, locked.SourceHarness)
 	}
 	if built.Manifest.RevisionDigest != locked.RevisionDigest {
-		return nil, fmt.Errorf("%w: revision digest got %q, want %q", ErrManifestMismatch, built.Manifest.RevisionDigest, locked.RevisionDigest)
+		return Result{}, fmt.Errorf("%w: revision digest got %q, want %q", ErrManifestMismatch, built.Manifest.RevisionDigest, locked.RevisionDigest)
 	}
 	if !reflect.DeepEqual(built.Projection().Resources, locked.Resources) {
-		return nil, fmt.Errorf("%w: rebuilt resource inventory differs", ErrManifestMismatch)
+		return Result{}, fmt.Errorf("%w: rebuilt resource inventory differs", ErrManifestMismatch)
 	}
-	return built.Warnings, nil
+	return built, nil
 }
 
 func cloneDigests(in map[string]string) map[string]string {

@@ -231,6 +231,12 @@ func TestExactGitCancelledContextHasNoCacheSideEffects(t *testing.T) {
 			_, err := AcquireExactGitWithContext(ctx, canonical, "/does/not/exist", oid)
 			return err
 		}},
+		{name: "acquire and consume", call: func() error {
+			return WithAcquiredExactGit(ctx, canonical, "/does/not/exist", oid, func(string) error {
+				consumed = true
+				return nil
+			})
+		}},
 		{name: "open", call: func() error {
 			_, err := OpenExactGitReadOnlyWithContext(ctx, canonical, oid)
 			return err
@@ -342,9 +348,16 @@ func TestAcquireExactGitReplacesTamperedSnapshot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "resource.txt"), []byte("tampered\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := AcquireExactGit(canonical, repo, oid)
+	var got string
+	err = WithAcquiredExactGit(context.Background(), canonical, repo, oid, func(snapshot string) error {
+		got = snapshot
+		if readExactFile(t, snapshot, "resource.txt") != "first\n" {
+			return errors.New("consumer received tampered bytes")
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("AcquireExactGit(tampered): %v", err)
+		t.Fatalf("WithAcquiredExactGit(tampered): %v", err)
 	}
 	if got != path || readExactFile(t, got, "resource.txt") != "first\n" {
 		t.Fatalf("reacquired snapshot = %q with unexpected content", got)
@@ -597,6 +610,14 @@ func TestExactGitNamespaceLeaseHonorsContextDeadline(t *testing.T) {
 }
 
 func TestExactGitReadOnlyConsumptionBlocksGarbageCollection(t *testing.T) {
+	for _, acquire := range []bool{false, true} {
+		t.Run(fmt.Sprintf("acquire=%t", acquire), func(t *testing.T) {
+			testExactGitConsumptionBlocksGarbageCollection(t, acquire)
+		})
+	}
+}
+
+func testExactGitConsumptionBlocksGarbageCollection(t *testing.T, acquire bool) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
 	canonical := "https://example.invalid/read-lease"
@@ -605,11 +626,19 @@ func TestExactGitReadOnlyConsumptionBlocksGarbageCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	withSnapshot := func(consume func(string) error) error {
+		return WithExactGitReadOnly(context.Background(), canonical, oid, consume)
+	}
+	if acquire {
+		withSnapshot = func(consume func(string) error) error {
+			return WithAcquiredExactGit(context.Background(), canonical, repo, oid, consume)
+		}
+	}
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	consumeDone := make(chan error, 1)
 	go func() {
-		consumeDone <- WithExactGitReadOnly(context.Background(), canonical, oid, func(path string) error {
+		consumeDone <- withSnapshot(func(path string) error {
 			close(entered)
 			<-release
 			raw, err := os.ReadFile(filepath.Join(path, "resource.txt"))

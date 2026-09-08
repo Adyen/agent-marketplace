@@ -54,9 +54,35 @@ func BenchmarkSyncLocalGitDiskIONoNetwork(b *testing.B) {
 	}
 }
 
+func BenchmarkSyncMissingLockWarmCacheDiskIONoNetwork(b *testing.B) {
+	for _, count := range []int{1, 4} {
+		b.Run(fmt.Sprintf("registries=%d", count), func(b *testing.B) {
+			repo := setupLocalGitSyncBenchmark(b, count)
+			runSyncBenchmark(b)
+			lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.StartTimer()
+			for range b.N {
+				b.StopTimer()
+				if err := os.Remove(lockPath); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				runSyncBenchmark(b)
+			}
+		})
+	}
+}
+
 func setupLocalGitSyncBenchmark(b *testing.B, count int) string {
 	b.Helper()
 	b.StopTimer()
+	return setupLocalGitSyncFixture(b, count)
+}
+
+func setupLocalGitSyncFixture(b testing.TB, count int) string {
+	b.Helper()
 	root, err := filepath.EvalSymlinks(b.TempDir())
 	if err != nil {
 		b.Fatal(err)
@@ -78,6 +104,10 @@ func setupLocalGitSyncBenchmark(b *testing.B, count int) string {
 		"GIT_CONFIG_NOSYSTEM":               "1",
 		"GIT_TERMINAL_PROMPT":               "0",
 		"GIT_CONFIG_COUNT":                  "0",
+		"GIT_AUTHOR_NAME":                   "Benchmark",
+		"GIT_AUTHOR_EMAIL":                  "benchmark@example.com",
+		"GIT_COMMITTER_NAME":                "Benchmark",
+		"GIT_COMMITTER_EMAIL":               "benchmark@example.com",
 		"AGENT_MARKETPLACE_LOG_ENABLED":     "false",
 		"AGENT_MARKETPLACE_TELEMETRY_LEVEL": "off",
 	} {

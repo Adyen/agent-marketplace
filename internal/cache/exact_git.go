@@ -174,6 +174,37 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 	return path, nil
 }
 
+func WithAcquiredExactGit(ctx context.Context, canonicalSource, fetchURL string, oid GitOID, consume func(string) error) error {
+	if consume == nil {
+		return errors.New("exact git consumer is required")
+	}
+	if err := exactGitContextErr(ctx); err != nil {
+		return err
+	}
+	if err := validateExactGitInputs(canonicalSource, fetchURL); err != nil {
+		return err
+	}
+	if err := validateGitOID(oid); err != nil {
+		return err
+	}
+	if !exactGitNamespaceLeaseHeld(ctx) {
+		release, err := AcquireExactGitNamespaceLeaseWithContext(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+		ctx = ContextWithExactGitNamespaceLease(ctx)
+	}
+	path, err := AcquireExactGitWithContext(ctx, canonicalSource, fetchURL, oid)
+	if err != nil {
+		return err
+	}
+	if err := exactGitContextErr(ctx); err != nil {
+		return err
+	}
+	return consume(path)
+}
+
 func OpenExactGit(canonicalSource string, oid GitOID) (string, error) {
 	return OpenExactGitReadOnly(canonicalSource, oid)
 }

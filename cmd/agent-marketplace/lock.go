@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -104,6 +105,22 @@ type upgradeTargetResult struct {
 type exactLockSet struct {
 	bySource   map[string]lockedGit
 	byIdentity map[string][]lockedGit
+	catalogs   map[string]map[string]*catalog.Catalog
+}
+
+func (set *exactLockSet) discover(path, sourceHarness string) (catalog.LoadedCatalog, error) {
+	catalogs := set.catalogs[filepath.Clean(path)]
+	loaded := catalogs[sourceHarness]
+	if loaded == nil && sourceHarness == "" && len(catalogs) == 1 {
+		for _, candidate := range catalogs {
+			loaded = candidate
+		}
+	}
+	if loaded != nil {
+		slog.Debug("reusing verified source catalog", "path", path, "source_harness", loaded.SourceHarness)
+		return loaded.Discover(path, sourceHarness)
+	}
+	return catalog.Discover(path, sourceHarness)
 }
 
 type lockedGit struct {
@@ -738,7 +755,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		snapshotLeaseAttempted = true
 		var err error
-		if mode.check {
+		if mode.check || mode.offline {
 			releaseSnapshotLease, err = cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
 		} else {
 			releaseSnapshotLease, err = cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
@@ -747,7 +764,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			// A cold read-only check must not create coordination state. Let
 			// addLayerSnapshots return its established snapshot-unavailable
 			// diagnostic when there is no namespace to protect.
-			if mode.check && errors.Is(err, cache.ErrExactGitCoordinationUnavailable) {
+			if (mode.check || mode.offline) && errors.Is(err, cache.ErrExactGitCoordinationUnavailable) {
 				return nil
 			}
 			return fmt.Errorf("acquire exact cache snapshot publication lease: %w", err)
@@ -868,6 +885,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: doc})
 	}
 	for _, job := range snapshots {
+		if len(job.doc.Registries) > 0 {
+			if err := ensureSnapshotLease(); err != nil {
+				return nil, changed, nil, err
+			}
+		}
 		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.doc, mode.offline, mode.check, mode.warningSink); err != nil {
 			return nil, changed, nil, err
 		}
@@ -967,7 +989,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
-	})
+	}, set.discover)
 	hasExactConsumers := len(set.bySource) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
@@ -977,7 +999,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			release func()
 			err     error
 		)
-		if mode.check {
+		if mode.check || mode.offline {
 			release, err = cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
 		} else {
 			release, err = cache.AcquireExactGitNamespaceLeaseWithContext(ctx)
@@ -1000,6 +1022,28 @@ type reconciledDocument struct {
 	err   error
 }
 
+func runRegistryJobs(count int, run func(int) error) error {
+	started := time.Now()
+	jobs := make(chan int)
+	errs := make([]error, count)
+	var workers sync.WaitGroup
+	for range min(4, count) {
+		workers.Go(func() {
+			for i := range jobs {
+				errs[i] = run(i)
+			}
+		})
+	}
+	for i := range count {
+		jobs <- i
+	}
+	close(jobs)
+	workers.Wait()
+	err := errors.Join(errs...)
+	slog.Debug("registry jobs completed", "registries", count, "concurrency", min(4, count), "duration_ms", time.Since(started).Milliseconds(), "success", err == nil)
+	return err
+}
+
 func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document, operation lockfile.Operation, selection lockfile.UpgradeSelection, offline bool, beforeSnapshot func() error) (reconciledDocument, bool) {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: scope}
 	stats := lockReconcileStats{}
@@ -1015,6 +1059,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		identities = append(identities, identity)
 	}
 	sort.Strings(identities)
+	var acquisitions []remoteGroup
 	fresh := current != nil
 	for _, identity := range identities {
 		group := grouped[identity]
@@ -1043,12 +1088,24 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		if offline {
 			return reconciledDocument{stats: stats, err: &lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")}}, false
 		}
-		registry, err := acquireLockedRegistry(ctx, group.canonical, group.fetchURL, group.ref, group.entries, beforeSnapshot)
+		acquisitions = append(acquisitions, group)
+	}
+	if len(acquisitions) > 0 {
+		if err := beforeSnapshot(); err != nil {
+			return reconciledDocument{stats: stats, err: err}, false
+		}
+		acquired := make([]lockfile.GitRegistry, len(acquisitions))
+		err := runRegistryJobs(len(acquisitions), func(i int) error {
+			group := acquisitions[i]
+			registry, err := acquireLockedRegistry(ctx, group.canonical, group.fetchURL, group.ref, group.entries)
+			acquired[i] = registry
+			return err
+		})
 		if err != nil {
 			return reconciledDocument{stats: stats, err: err}, false
 		}
-		doc.Registries = append(doc.Registries, registry)
-		stats.acquired++
+		doc.Registries = append(doc.Registries, acquired...)
+		stats.acquired += len(acquired)
 	}
 	if len(old) != len(grouped) {
 		fresh = false
@@ -1075,16 +1132,13 @@ func groupRemoteEntries(entries []config.RegistryEntry) map[string]remoteGroup {
 	return groups
 }
 
-func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry, beforeSnapshot func() error) (lockfile.GitRegistry, error) {
+func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string, entries []config.RegistryEntry) (lockfile.GitRegistry, error) {
 	if err := ctx.Err(); err != nil {
 		return lockfile.GitRegistry{}, err
 	}
 	oid, err := cache.ResolveExactGitRefWithContext(ctx, canonical, fetchURL, ref)
 	if err != nil {
 		return lockfile.GitRegistry{}, fmt.Errorf("resolve exact Git ref %s@%s: %w", canonical, ref, err)
-	}
-	if err := beforeSnapshot(); err != nil {
-		return lockfile.GitRegistry{}, err
 	}
 	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, fetchURL, oid)
 	if err != nil {
@@ -1179,33 +1233,47 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		}
 		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
 	}
-	for _, registry := range doc.Registries {
+	results := make([]struct {
+		locked   lockedGit
+		catalogs map[string]map[string]*catalog.Catalog
+		warnings []error
+		verified int
+	}, len(doc.Registries))
+	err := runRegistryJobs(len(doc.Registries), func(i int) error {
+		registry := doc.Registries[i]
+		result := &results[i]
+		result.catalogs = make(map[string]map[string]*catalog.Catalog)
 		cacheOID, err := cache.ParseGitOID(registry.Commit.String())
 		if err != nil {
 			return err
 		}
-		if !offline && !readOnly {
-			if _, err := cache.AcquireExactGitWithContext(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID); err != nil {
-				return &lockLifecycleError{Code: "lock.snapshot-unavailable", Err: err}
-			}
-		}
 		var snapshot string
-		err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, func(path string) error {
+		consume := func(path string) error {
 			snapshot = path
 			for _, root := range registry.Roots {
-				warnings, verifyErr := verifyLockedGitRoot(path, root)
+				rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithCatalog(path, root)
 				if verifyErr != nil {
 					return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
 				}
-				if warningSink != nil {
-					for _, warning := range warnings {
-						*warningSink = append(*warningSink, warning)
+				if rootResult.Catalog != nil {
+					rootPath := filepath.Join(path, filepath.FromSlash(root.Path))
+					if result.catalogs[rootPath] == nil {
+						result.catalogs[rootPath] = make(map[string]*catalog.Catalog)
 					}
+					result.catalogs[rootPath][root.SourceHarness] = rootResult.Catalog
 				}
-				verified++
+				for _, warning := range rootResult.Warnings {
+					result.warnings = append(result.warnings, warning)
+				}
+				result.verified++
 			}
 			return nil
-		})
+		}
+		if !offline && !readOnly {
+			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID, consume)
+		} else {
+			err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, consume)
+		}
 		if err != nil {
 			var lifecycleErr *lockLifecycleError
 			if errors.As(err, &lifecycleErr) {
@@ -1217,16 +1285,36 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			}
 			return &lockLifecycleError{Code: code, Err: err}
 		}
-		locked := lockedGit{canonical: registry.URL, fetchURL: fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
-		set.bySource[sourceLockKey(source, registry.URL, registry.Ref)] = locked
-		identity := gitLockIdentity(registry.URL, registry.Ref)
+		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
+		return nil
+	})
+	for _, result := range results {
+		verified += result.verified
+	}
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		locked := result.locked
+		set.bySource[sourceLockKey(source, locked.canonical, locked.ref)] = locked
+		identity := gitLockIdentity(locked.canonical, locked.ref)
 		set.byIdentity[identity] = append(set.byIdentity[identity], locked)
+		if set.catalogs == nil {
+			set.catalogs = make(map[string]map[string]*catalog.Catalog)
+		}
+		for path, catalogs := range result.catalogs {
+			if set.catalogs[path] == nil {
+				set.catalogs[path] = make(map[string]*catalog.Catalog)
+			}
+			for harness, loaded := range catalogs {
+				set.catalogs[path][harness] = loaded
+			}
+		}
+		if warningSink != nil {
+			*warningSink = append(*warningSink, result.warnings...)
+		}
 	}
 	return nil
-}
-
-func verifyLockedGitRoot(snapshot string, root lockfile.GitRoot) ([]sourcerevision.ResourceWarning, error) {
-	return sourcerevision.VerifyLockedGitRoot(snapshot, root)
 }
 
 func loadLayerLock(path string, scope lockfile.Scope) (*lockfile.Document, dependencytxn.Generation, bool, error) {

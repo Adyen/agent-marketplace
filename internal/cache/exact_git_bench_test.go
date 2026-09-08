@@ -38,6 +38,29 @@ func BenchmarkVerifyExactGitTrackedTreeDiskNoNetwork(b *testing.B) {
 	}
 }
 
+func BenchmarkWithAcquiredExactGitWarmDiskNoNetwork(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	repo := newExactGitRepository(b, "sha1")
+	canonical := "https://example.invalid/acquired-benchmark"
+	oid := resolveExactGitRefForTest(b, canonical, repo, "main")
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		err := WithAcquiredExactGit(context.Background(), canonical, repo, oid, func(path string) error {
+			if got := readExactFile(b, path, "resource.txt"); got != "first\n" {
+				b.Fatalf("snapshot content = %q", got)
+			}
+			return nil
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkGitAuthEnvironment(b *testing.B) {
 	isolatedGitAuth(b)
 	b.Setenv("GIT_CONFIG_SYSTEM", authFile(b, "system", "[credential]\n\thelper = fixture-helper\n", 0o600))

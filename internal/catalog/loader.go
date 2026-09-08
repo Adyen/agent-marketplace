@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -136,8 +137,13 @@ func WithCloneOrPull(fn CloneOrPullFunc) LoadOption {
 	return func(c *loadConfig) { c.cloneOrPull = fn }
 }
 
-func WithExactSnapshots(fn ExactSnapshotFunc) LoadOption {
-	return func(c *loadConfig) { c.exactSnapshot = fn }
+func WithExactSnapshots(fn ExactSnapshotFunc, discover ...DiscoverFunc) LoadOption {
+	return func(c *loadConfig) {
+		c.exactSnapshot = fn
+		if len(discover) > 0 {
+			c.discover = discover[0]
+		}
+	}
 }
 
 func WithDiscoverFunc(fn DiscoverFunc) LoadOption {
@@ -170,7 +176,10 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// original load error so the caller knows discovery failed.
 		return LoadedCatalog{}, err
 	}
+	return cat.Discover(dir, sourceHarness)
+}
 
+func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// Vacant-lot condition: zero entries and no warning/error diagnostics.
 	// HCC scanned the directory, found nothing, and had nothing to complain
 	// about. This can happen when the directory is a meta-directory containing
@@ -270,7 +279,7 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	}
 
 	return LoadedCatalog{
-		Entries:   cat.Entries,
+		Entries:   slices.Clone(cat.Entries),
 		Malformed: malformed,
 		Resources: Resources(cat),
 	}, nil
