@@ -90,3 +90,79 @@ func BenchmarkSearchResourceRevisions(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkCatalogProjectionPage measures a continuation page with direct
+// collection references after setup has published 100 current resources.
+func BenchmarkCatalogProjectionPage(b *testing.B) {
+	ctx := context.Background()
+	s := New(":memory:")
+	if err := s.Open(ctx); err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := s.PutMarketplace(ctx, store.Marketplace{ID: "projection", Name: "Projection", CanonicalURL: "https://projection.test"}); err != nil {
+		b.Fatal(err)
+	}
+	registry := store.Registry{ID: "projection-registry", Slug: "projection", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
+	if err := s.PutRegistry(ctx, registry); err != nil {
+		b.Fatal(err)
+	}
+	manifest := store.RevisionDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := s.PutRegistryOccurrence(ctx, store.RegistryOccurrence{RegistryID: registry.ID, Ref: registry.Ref, Commit: "projection-commit", RegistryRevisionManifestDigest: manifest, Acquisition: registry.Acquisition}); err != nil {
+		b.Fatal(err)
+	}
+	putCurrent := func(kind, name string, digestIndex int) store.ResourceRevision {
+		rev := store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: "projection", Registry: registry.ID, Kind: kind, Name: name},
+			ContentDigest: store.RevisionDigest(fmt.Sprintf("sha256:%064d", digestIndex)),
+		}
+		if err := s.PutResourceRevision(ctx, rev); err != nil {
+			b.Fatal(err)
+		}
+		if err := s.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: "projection-commit", ManifestDigest: manifest}); err != nil {
+			b.Fatal(err)
+		}
+		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "benchmark/v1", PolicyDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Decision: store.AssessmentDecisionAllow, InspectionManifestDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", AssessedAt: time.Unix(1, 0).UTC()})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := s.PutResourceAssessment(ctx, assessment); err != nil {
+			b.Fatal(err)
+		}
+		if err := s.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+			b.Fatal(err)
+		}
+		return rev
+	}
+	for i := 0; i < 100; i++ {
+		putCurrent("skill", fmt.Sprintf("skill-%04d", i), i)
+	}
+	for i := 0; i < 50; i++ {
+		collection := putCurrent("collection", fmt.Sprintf("collection-%04d", i), 100+i)
+		if err := s.PutCollectionRevision(ctx, store.CollectionRevision{
+			ID:             string(collection.ContentDigest),
+			RegistryID:     registry.ID,
+			ManifestDigest: collection.ContentDigest,
+			Members: []store.ResourceCoordinate{
+				{Marketplace: "projection", Registry: registry.ID, Kind: "skill", Name: fmt.Sprintf("skill-%04d", i*2)},
+				{Marketplace: "projection", Registry: registry.ID, Kind: "skill", Name: fmt.Sprintf("skill-%04d", i*2+1)},
+			},
+			Includes: []store.ResourceCoordinate{{
+				Marketplace: "projection", Registry: registry.ID, Kind: "collection", Name: fmt.Sprintf("collection-%04d", (i+1)%50),
+			}},
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	first, err := s.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: "projection", Limit: 25})
+	if err != nil {
+		b.Fatal(err)
+	}
+	request := store.CatalogProjectionPageRequest{Marketplace: "projection", After: first.Next, Limit: 25}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := s.ReadCatalogProjectionPage(ctx, request); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -86,6 +86,48 @@ func TestMigrationsAreRerunnable(t *testing.T) {
 	dropSchema(t, dsn, schema)
 }
 
+func TestCollectionIncludesMigrationDefaultsExistingRows(t *testing.T) {
+	ctx := context.Background()
+	dsn := testDSN(t)
+	schema := testSchema(t)
+	quoted := pgx.Identifier{schema}.Sanitize()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { dropSchema(t, dsn, schema) })
+	migrated := postgres.NewWithSchema(dsn, schema)
+	if err := migrated.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+SET search_path TO `+quoted+`;
+ALTER TABLE collection_revisions DROP COLUMN includes;
+DELETE FROM marketplace_metadata_v2_schema_migrations WHERE version = 2;
+INSERT INTO collection_revisions (id, registry_id, manifest_digest, members, created_at)
+VALUES ('legacy-collection', 'reg-1', 'sha256:legacy', '[]', 0);
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	s := postgres.NewWithSchema(dsn, schema)
+	if err := s.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	collection, err := s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collection.Includes) != 0 {
+		t.Fatalf("migrated legacy collection includes = %+v, want empty", collection.Includes)
+	}
+}
+
 func TestMigrationsSerializeConcurrentStartup(t *testing.T) {
 	dsn := testDSN(t)
 	schema := testSchema(t)
@@ -327,6 +369,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 		Members: []store.ResourceCoordinate{
 			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "skill", Name: "member"},
 		},
+		Includes: []store.ResourceCoordinate{
+			{Marketplace: store.MarketplaceID("mp"), Registry: store.RegistryID("reg-1"), Kind: "collection", Name: "included"},
+		},
 	}
 	if err := s.PutCollectionRevision(ctx, cr); err != nil {
 		t.Fatalf("PutCollectionRevision: %v", err)
@@ -338,6 +383,14 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	if len(got.Members) != 1 || got.Members[0].Name != "member" {
 		t.Fatalf("collection members lost: %+v", got.Members)
 	}
+	if len(got.Includes) != 1 || got.Includes[0].Name != "included" {
+		t.Fatalf("collection includes lost: %+v", got.Includes)
+	}
+	changed := cr
+	changed.Includes = nil
+	if err := s.PutCollectionRevision(ctx, changed); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("conflicting collection includes write = %v, want ErrConflict", err)
+	}
 
 	all, err := s.ListCollectionRevisions(ctx, cr.RegistryID)
 	if err != nil {
@@ -345,6 +398,9 @@ func TestCollectionAndRevocationCRUD(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Fatalf("ListCollectionRevisions returned %d, want 1", len(all))
+	}
+	if len(all[0].Includes) != 1 || all[0].Includes[0].Name != "included" {
+		t.Fatalf("ListCollectionRevisions lost includes: %+v", all[0].Includes)
 	}
 
 	r := store.Revocation{

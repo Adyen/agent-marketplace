@@ -16,6 +16,31 @@ The application has no built-in user authentication or authorization. Treat ever
 
 `operations_listen` serves `/readyz` and `/metrics`. It defaults to loopback and must not be published through a container port or reverse proxy; the public listener returns 404 for both paths. If operators need metrics, collect them from a private sidecar/network path with its own access controls. `/healthz` is a liveness endpoint and does not prove storage readiness. Container API healthchecks use the private `/readyz` listener.
 
+## Catalog projection consumers
+
+The catalog projection endpoint is for internal consumers such as Backstage. It remains unauthenticated at the application layer.
+
+The projection contains only resources from registries that this hosted Marketplace instance has approved and indexed. It does not include local registries, personal directories, direct Git sources, or ad-hoc CLI `--from` registries. Consumers must not treat CLI-discovered or locally configured registries as projection inputs.
+
+Each current resource anchor is one of these six kinds: `skill`, `command`, `subagent`, `hook`, `mcpserver`, or `collection`. Blocked and revoked anchors remain in the projection with their availability state so a consumer can distinguish them from a resource that has disappeared; consumers must retain and reconcile those anchors rather than interpreting their absence or state as an instruction to silently discard identity.
+
+Rows may include the sanitized source repository URL, repository-relative source path, and exact indexed commit. These fields can reveal repository structure and must not be exposed to a broader audience without confirming the gateway policy permits that disclosure.
+
+### Scan and compatibility contract
+
+Consumers read the projection as a stateless, bounded keyset scan. Start without a cursor, then use the opaque cursor from each response until the final page. Do not expect Marketplace to retain consumer cursors, snapshots, marks, sweep state, or any other per-consumer synchronization state.
+
+The scan is moving rather than snapshot-consistent. Record the global ETag on the first and final pages. If they differ, schedule a catch-up scan: additions behind the cursor, updates, or removals may otherwise converge on the next cycle. Send `If-None-Match` only on the first page of a new scan, using the ETag from the last completed ingestion; continuation pages use only their cursor. Do not send conditional validators with continuation requests.
+
+Before enabling a consumer, verify that it supports the endpoint's advertised API version and required catalog-projection capability. The endpoint is disabled by default. Enable it explicitly with:
+
+```yaml
+catalog_projection:
+  enabled: true
+```
+
+When disabled, `/api/v1/catalog` is not routed and the catalog-projection feature is absent from both capability responses. Keep the consumer disabled until both its compatible version/capability check and this operator-configured gate are satisfied.
+
 ## Configuration and secrets
 
 Set `instance.browser_base` to the public Nuxt base when browser pages are deployed, including its path prefix (for example, `https://marketplace.example/marketplace`); omit it for an API-only deployment. The well-known document then includes separate latest and exact browser route templates. Use `storage.metadata.dsn_file` in production, preferably through a Compose/platform secret integration. Exactly one DSN source must be configured and the selected value must be non-empty. Literal `dsn` and the environment-based `dsn_env` Compose fixture are for local development only. DSN values are not included in configuration errors or application startup logs.

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -88,6 +89,8 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 	type processed struct {
 		entry             catalog.Entry
+		root              store.RegistryRoot
+		sourcePath        string
 		result            artifact.BuildResult
 		supportFiles      map[string]string
 		inspectionBody    []byte
@@ -101,6 +104,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	inspectionDigests := make(map[string]string)
 	var inspectionBlobs []store.BlobUpload
 	var collectionEntries []catalog.Entry
+	collectionPaths := make(map[string]string)
 	seen := make(map[string]string)
 
 	for _, root := range registry.Roots {
@@ -139,7 +143,10 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				continue
 			}
 			key := kind + "/" + entry.Name
-			path := registryEntryPath(dir, root, entry)
+			path, err := registryEntryPath(dir, root, entry)
+			if err != nil {
+				return rev, fmt.Errorf("source path for %s %q: %w", kind, entry.Name, err)
+			}
 			if keptPath, duplicate := seen[key]; duplicate {
 				if keptPath == path {
 					return rev, fmt.Errorf("duplicate resource %q at %q in registry %q", key, path, registry.ID)
@@ -158,6 +165,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 			if entry.Kind == hccir.KindCollection {
 				collectionEntries = append(collectionEntries, entry)
+				collectionPaths[entry.Name] = path
 				continue
 			}
 
@@ -175,7 +183,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				resourceArchives[key] = rawArchive
 				resourceArchiveDigests[key] = rawArchiveDigest
 			}
-			p := processed{entry: entry, result: r, supportFiles: supportFileDigests(files)}
+			p := processed{entry: entry, root: root, sourcePath: path, result: r, supportFiles: supportFileDigests(files)}
 			primary, projectionSupport := inspectionInput(entry.Resource, r, files)
 			p.inspectionBody, p.inspectionSupport = primary, projectionSupport
 			projection, err := inspection.Build(
@@ -365,7 +373,11 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			return rev, fmt.Errorf("resolve collection %q: %w", entry.Name, err)
 		}
 		body, support := inspectionInput(entry.Resource, r, nil)
-		processedResults = append(processedResults, processed{entry: entry, result: r, inspectionBody: body, inspectionSupport: support})
+		collectionRoot := store.RegistryRoot{}
+		if collection, ok := entry.Resource.(*hccir.Collection); ok {
+			collectionRoot.Path = collection.SourcePath
+		}
+		processedResults = append(processedResults, processed{entry: entry, root: collectionRoot, sourcePath: collectionPaths[entry.Name], result: r, inspectionBody: body, inspectionSupport: support})
 	}
 
 	// Validate every published collection against the complete set of manifests
@@ -420,15 +432,16 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		return rev, fmt.Errorf("canonical registry revision manifest: %w", err)
 	}
 
-	occ := store.RegistryOccurrence{
+	occ := store.NormalizeRegistryOccurrence(store.RegistryOccurrence{
 		RegistryID:                     registry.ID,
 		Ref:                            registry.Ref,
 		Roots:                          append([]store.RegistryRoot(nil), registry.Roots...),
 		Commit:                         commit,
 		RegistryRevisionManifestDigest: store.RevisionDigest(digest),
 		Acquisition:                    registry.Acquisition,
+		SourceOrigin:                   origin,
 		OccurredAt:                     time.Now().UTC(),
-	}
+	})
 
 	var resources []store.ResourceRevision
 	var resourceOccurrences []store.ResourceOccurrence
@@ -472,7 +485,13 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, p.entry.Name, err)
 		}
 		resources = append(resources, rev)
-		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{Coordinate: coord, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: store.RevisionDigest(digest)})
+		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{
+			Coordinate:     coord,
+			ContentDigest:  rev.ContentDigest,
+			Commit:         commit,
+			ManifestDigest: store.RevisionDigest(digest),
+			SourcePath:     p.sourcePath,
+		})
 		assessments = append(assessments, assessment)
 
 		if kind == "collection" {
@@ -497,7 +516,14 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			for _, member := range collection.Members {
 				members = append(members, store.ResourceCoordinate{Marketplace: mpID, Registry: store.RegistryID(member.RegistryID), Kind: member.Kind, Name: member.Name})
 			}
-			collections = append(collections, store.CollectionRevision{ID: p.result.ManifestDigest, RegistryID: registry.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest), Members: members})
+			includes := make([]store.ResourceCoordinate, 0, len(collection.Includes))
+			for _, include := range collection.Includes {
+				includes = append(includes, store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: "collection", Name: include})
+			}
+			collections = append(collections, store.CollectionRevision{
+				ID: p.result.ManifestDigest, RegistryID: registry.ID, ManifestDigest: store.RevisionDigest(p.result.ManifestDigest),
+				Members: members, Includes: includes,
+			})
 		}
 
 		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
@@ -584,19 +610,26 @@ func appendUniquePath(paths [][]string, candidate []string) [][]string {
 	return append(paths, append([]string(nil), candidate...))
 }
 
-func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry) string {
-	path := entry.Path
-	if path == "" {
-		return filepath.ToSlash(filepath.Clean(root.Path))
+func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry) (string, error) {
+	sourcePath := entry.Path
+	if sourcePath == "" {
+		return "", fmt.Errorf("resource has no source file")
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, root.Path, path)
+	if !filepath.IsAbs(sourcePath) {
+		sourcePath = filepath.Join(dir, root.Path, sourcePath)
 	}
-	rel, err := filepath.Rel(dir, path)
+	rel, err := filepath.Rel(dir, sourcePath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return filepath.ToSlash(filepath.Clean(root.Path))
+		return "", fmt.Errorf("source path escapes registry directory")
 	}
-	return filepath.ToSlash(rel)
+	normalized, err := store.NormalizeSourcePath(filepath.ToSlash(rel))
+	if err != nil {
+		return "", fmt.Errorf("normalize source path: %w", err)
+	}
+	if strings.ContainsFunc(normalized, unicode.IsControl) {
+		return "", fmt.Errorf("normalize source path: contains control characters")
+	}
+	return normalized, nil
 }
 
 // buildResource analyzes one catalog entry and builds its artifact. License

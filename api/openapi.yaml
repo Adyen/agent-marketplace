@@ -38,6 +38,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/Capabilities"
 
+  /api/v1/catalog:
+    get:
+      operationId: listCatalogProjection
+      summary: List the current catalog projection
+      description: >-
+        Returns a stateless, bounded keyset page ordered by immutable resource
+        coordinate. Start a scan without `after`; continue with the opaque
+        `next_cursor` until `complete` is true. The scan is eventually
+        consistent rather than snapshot-consistent: consumers compare the
+        global ETag on the first and final pages and schedule a catch-up scan
+        when it changes. `If-None-Match` is accepted only on a first-page
+        request without `after`; continuation pages use only their cursor.
+      parameters:
+        - in: query
+          name: after
+          description: Opaque keyset cursor from the preceding page. Clients must not inspect or construct this value.
+          schema:
+            $ref: "#/components/schemas/CatalogKeysetCursor"
+        - in: query
+          name: limit
+          description: Maximum number of resource rows to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 500
+        - in: header
+          name: If-None-Match
+          description: HTTP If-None-Match value from the consumer's last completed ingestion. Accepted only on the first page, when `after` is absent.
+          schema:
+            $ref: "#/components/schemas/CatalogIfNoneMatch"
+      responses:
+        "200":
+          description: Current catalog projection page
+          headers:
+            ETag:
+              description: Strong quoted validator for all catalog-visible current state, including changes outside this page.
+              schema:
+                $ref: "#/components/schemas/CatalogETag"
+            Cache-Control:
+              description: Catalog pages are revalidated before reuse.
+              schema:
+                type: string
+                enum: [no-cache]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogPage"
+        "304":
+          description: Catalog-visible state is unchanged since the supplied first-page If-None-Match validator. The response has no body.
+          headers:
+            ETag:
+              description: Strong quoted validator for all catalog-visible current state.
+              schema:
+                $ref: "#/components/schemas/CatalogETag"
+            Cache-Control:
+              description: Catalog pages are revalidated before reuse.
+              schema:
+                type: string
+                enum: [no-cache]
+
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -1024,3 +1085,165 @@ components:
         registry: { type: string }
         kind: { type: string }
         name: { type: string }
+
+    CatalogKeysetCursor:
+      type: string
+      minLength: 1
+      description: Opaque, stateless encoding of the final immutable resource coordinate from the preceding page. It contains no credentials or server-side session identifier.
+
+    CatalogETag:
+      type: string
+      pattern: '^"[^"]+"$'
+      description: Strong quoted validator representing all catalog-visible current state, not only one page.
+
+    CatalogIfNoneMatch:
+      type: string
+      minLength: 1
+      description: HTTP conditional validator value. It may be `*` or a comma-separated list of quoted entity tags.
+
+    CatalogPage:
+      type: object
+      additionalProperties: false
+      required: [api_version, marketplace_id, catalog_version, complete, resources]
+      properties:
+        api_version:
+          type: string
+          enum: [agent-marketplace.io/catalog/v1alpha1]
+        marketplace_id:
+          type: string
+        catalog_version:
+          type: string
+          minLength: 1
+          description: Monotonic global catalog version for catalog-visible current state.
+        complete:
+          type: boolean
+          description: True only on the final page of the current scan.
+        next_cursor:
+          $ref: "#/components/schemas/CatalogKeysetCursor"
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogResource"
+
+    CatalogResource:
+      type: object
+      additionalProperties: false
+      description: Current catalog-visible resource with embedded supporting registry identity and display metadata.
+      required: [registry_id, registry_slug, kind, name, revision, availability]
+      properties:
+        registry_id:
+          type: string
+        registry_slug:
+          type: string
+        kind:
+          type: string
+          enum: [skill, command, subagent, hook, mcpserver, collection]
+          description: Agent Marketplace resource kind. It is not a Backstage type.
+        name:
+          type: string
+        description:
+          type: string
+          maxLength: 1024
+          description: Optional normalized author-written resource summary. Collection description is omitted until it is covered by collection revision identity.
+        revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        license:
+          type: string
+        availability:
+          type: string
+          enum: [available, blocked, revoked]
+          description: Blocked and revoked rows remain catalog-visible so consumers can distinguish them from removed resources.
+        source:
+          $ref: "#/components/schemas/CatalogSource"
+        collection:
+          $ref: "#/components/schemas/CatalogCollection"
+          description: Present only when kind is collection; non-collection rows omit it.
+
+    CatalogSource:
+      type: object
+      additionalProperties: false
+      description: Immutable source provenance. It is omitted for legacy occurrences without trustworthy source data.
+      required: [repository_url, path, commit]
+      properties:
+        repository_url:
+          type: string
+          format: uri
+          description: Safe HTTP(S) repository URL with userinfo, fragments, and credential/signature query values removed.
+        path:
+          type: string
+          minLength: 1
+          description: Normalized repository-relative path using slash separators.
+        commit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+          description: Exact full-length lowercase Git commit identifier.
+
+    CatalogCollection:
+      type: object
+      additionalProperties: false
+      description: Direct collection relations only. Resources and includes are not recursively flattened.
+      required: [resources, includes, unresolved_references]
+      properties:
+        resources:
+          type: array
+          description: Successfully resolved immediate resource declarations from the collection's legacy skills or current resources fields. Every coordinate references a catalog-visible row when this collection row is read.
+          items:
+            $ref: "#/components/schemas/CatalogCollectionResourceReference"
+        includes:
+          type: array
+          description: Successfully resolved immediate collection declarations from the includes field. Every coordinate references a catalog-visible row when this collection row is read.
+          items:
+            $ref: "#/components/schemas/CatalogCollectionIncludeReference"
+        unresolved_references:
+          type: array
+          description: Direct resource or include declarations that cannot be safely resolved. They are retained instead of becoming dangling coordinates.
+          items:
+            $ref: "#/components/schemas/CatalogUnresolvedReference"
+
+    CatalogCollectionResourceReference:
+      type: object
+      additionalProperties: false
+      required: [registry_id, kind, name]
+      properties:
+        registry_id:
+          type: string
+        kind:
+          type: string
+          enum: [skill, command, subagent, hook, mcpserver, collection]
+        name:
+          type: string
+
+    CatalogCollectionIncludeReference:
+      type: object
+      additionalProperties: false
+      required: [registry_id, kind, name]
+      properties:
+        registry_id:
+          type: string
+        kind:
+          type: string
+          enum: [collection]
+        name:
+          type: string
+
+    CatalogUnresolvedReference:
+      type: object
+      additionalProperties: false
+      required: [reference_type, kind, name, reason]
+      properties:
+        reference_type:
+          type: string
+          enum: [resource, include]
+        registry_id:
+          type: string
+          description: Declared registry identifier when it was safe to preserve.
+        kind:
+          type: string
+          enum: [skill, command, subagent, hook, mcpserver, collection]
+        name:
+          type: string
+        reason:
+          type: string
+          minLength: 1
+          description: Stable machine-readable resolution reason code.

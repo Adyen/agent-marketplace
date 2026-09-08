@@ -69,6 +69,41 @@ func TestCollectionManifestDeterministic(t *testing.T) {
 	}
 }
 
+func TestCollectionMetadataChangesAdvanceContentIdentity(t *testing.T) {
+	members := []ir.CollectionMember{{Kind: ir.KindSkill, Name: "review"}}
+	base, err := CollectionFromIR(ir.NewCollection("defaults", "1.0.0", "Original description", members, nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("CollectionFromIR base: %v", err)
+	}
+	_, baseDigest, err := EncodeCollectionManifest(base)
+	if err != nil {
+		t.Fatalf("EncodeCollectionManifest base: %v", err)
+	}
+
+	for _, changed := range []struct {
+		name        string
+		version     string
+		description string
+	}{
+		{name: "version", version: "1.0.1", description: "Original description"},
+		{name: "description", version: "1.0.0", description: "Updated description"},
+	} {
+		t.Run(changed.name, func(t *testing.T) {
+			manifest, err := CollectionFromIR(ir.NewCollection("defaults", changed.version, changed.description, members, nil, nil, ir.SourceRef{}))
+			if err != nil {
+				t.Fatalf("CollectionFromIR: %v", err)
+			}
+			_, digest, err := EncodeCollectionManifest(manifest)
+			if err != nil {
+				t.Fatalf("EncodeCollectionManifest: %v", err)
+			}
+			if digest == baseDigest {
+				t.Fatalf("%s update did not advance collection content identity", changed.name)
+			}
+		})
+	}
+}
+
 func TestCollectionMemberRegistryIdentityJSON(t *testing.T) {
 	payload, err := json.Marshal(CollectionMemberEntry{RegistryID: "registry-id"})
 	if err != nil {

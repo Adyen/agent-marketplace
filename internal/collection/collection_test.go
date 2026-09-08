@@ -170,6 +170,9 @@ includes:
 	if c.SourcePath != "skills" {
 		t.Fatalf("expected SourcePath stamped, got %q", c.SourcePath)
 	}
+	if c.SourceFile != "collections/core-dev/COLLECTION.yaml" {
+		t.Fatalf("expected SourceFile stamped, got %q", c.SourceFile)
+	}
 }
 
 func TestDiscoverCollectionsAcceptsMinimalSkillEntry(t *testing.T) {

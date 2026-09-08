@@ -78,7 +78,24 @@ func TestRefreshEndToEnd(t *testing.T) {
 	if occ.Commit != commit {
 		t.Fatalf("occurrence commit = %q, want %q", occ.Commit, commit)
 	}
-
+	page, err := meta.ReadCatalogProjectionPage(ctx, store.CatalogProjectionPageRequest{Marketplace: deps.Marketplace.ID, Limit: 100})
+	if err != nil {
+		t.Fatalf("ReadCatalogProjectionPage: %v", err)
+	}
+	var review *store.CatalogProjectionResource
+	for i := range page.Resources {
+		resource := &page.Resources[i]
+		if resource.Coordinate.Registry == src.ID && resource.Coordinate.Kind == "skill" && resource.Coordinate.Name == "review" {
+			review = resource
+			break
+		}
+	}
+	if review == nil {
+		t.Fatal("review missing from catalog projection")
+	}
+	if review.Occurrence.SourcePath != ".agents/skills/review/SKILL.md" || review.Occurrence.Commit != commit {
+		t.Fatalf("review source occurrence = %#v", review.Occurrence)
+	}
 	for _, resource := range []struct{ kind, name string }{
 		{"skill", "review"},
 		{"command", "lint"},
@@ -472,7 +489,6 @@ func createTestRepo(tb testing.TB) (string, func()) {
 	write(".agents/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh"}]}]}`)
 	write(".agents/mcp.json", `{"mcpServers":{"docs":{"command":"npx","args":["-y","docs-server"]}}}`)
 	write(".agents/collections/default/COLLECTION.yaml", "name: default\ndescription: Default collection\nresources:\n  - name: review\n    kind: skill\n  - name: lint\n    kind: command\n")
-
 	cmds := [][]string{
 		{"git", "init", "-q", "--initial-branch=main"},
 		{"git", "config", "user.email", "test@example.com"},

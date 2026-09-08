@@ -197,6 +197,47 @@ func TestBuildRegistryRevisionRejectsMissingRoot(t *testing.T) {
 	}
 }
 
+func TestBuildRegistryRevisionCarriesSourceProvenance(t *testing.T) {
+	repoDir := createIngestRepo(t)
+	commit := mustRepoCommit(t, repoDir)
+	source := store.Registry{
+		ID:          "src-test",
+		Slug:        "example-source",
+		Ref:         "main",
+		Origins:     []string{"https://gitlab.example.test/group/resources.git"},
+		Acquisition: store.AcquisitionMirror,
+		License:     "MIT",
+		Roots:       []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}},
+	}
+
+	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, commit)
+	if err != nil {
+		t.Fatalf("BuildRegistryRevision: %v", err)
+	}
+	if rev.Occurrence.SourceOrigin != source.Origins[0] {
+		t.Fatalf("source origin = %q, want %q", rev.Occurrence.SourceOrigin, source.Origins[0])
+	}
+
+	wantPaths := map[string]string{
+		"skill/review":        ".agents/skills/review/SKILL.md",
+		"collection/defaults": ".agents/collections/defaults/COLLECTION.yaml",
+	}
+	for _, occurrence := range rev.ResourceOccurrences {
+		key := occurrence.Coordinate.Kind + "/" + occurrence.Coordinate.Name
+		want, relevant := wantPaths[key]
+		if !relevant {
+			continue
+		}
+		if occurrence.Commit != commit || occurrence.SourcePath != want {
+			t.Fatalf("%s provenance = commit %q path %q, want commit %q path %q", key, occurrence.Commit, occurrence.SourcePath, commit, want)
+		}
+		delete(wantPaths, key)
+	}
+	if len(wantPaths) != 0 {
+		t.Fatalf("missing provenance occurrences: %#v", wantPaths)
+	}
+}
+
 func TestBuildRegistryRevisionWarnsAndKeepsFirstDuplicateAcrossRoots(t *testing.T) {
 	ctx := context.Background()
 	repoDir := createIngestRepo(t)
@@ -591,16 +632,7 @@ resources:
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "add", ".")
-	cmd.Dir = repoDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v: %s", err, out)
-	}
-	cmd = exec.Command("git", "commit", "-q", "-m", "nested")
-	cmd.Dir = repoDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit: %v: %s", err, out)
-	}
+	commitAllIngestRepo(t, repoDir, "nested")
 
 	source := store.Registry{ID: "src-test", Slug: "example-source", Ref: "main", Origins: []string{"file://" + repoDir}, Acquisition: store.AcquisitionMirror, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
 	rev, err := BuildRegistryRevision(context.Background(), testConfig(t, repoDir), "mp-test", source, repoDir, mustRepoCommit(t, repoDir))
@@ -618,6 +650,18 @@ resources:
 	}
 	if rootDigest == "" {
 		t.Fatal("root collection revision missing")
+	}
+	var rootCollection store.CollectionRevision
+	for _, collection := range rev.Collections {
+		if collection.ID == string(rootDigest) {
+			rootCollection = collection
+			break
+		}
+	}
+	if len(rootCollection.Includes) != 1 || rootCollection.Includes[0] != (store.ResourceCoordinate{
+		Marketplace: "mp-test", Registry: "src-test", Kind: "collection", Name: "base",
+	}) {
+		t.Fatalf("collection revision direct includes = %#v, want base in the source registry", rootCollection.Includes)
 	}
 	var rootManifest []byte
 	for _, upload := range rev.CollectionManifests {
@@ -923,6 +967,20 @@ resources:
 		}
 	}
 	return repo
+}
+
+func commitAllIngestRepo(tb testing.TB, repo, message string) {
+	tb.Helper()
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		tb.Fatalf("git add: %v: %s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-q", "-m", message)
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		tb.Fatalf("git commit: %v: %s", err, out)
+	}
 }
 
 func TestEffectivePolicyHiddenContentOverride(t *testing.T) {
