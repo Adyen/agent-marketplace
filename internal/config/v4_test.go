@@ -351,6 +351,22 @@ func TestV4MarketplaceExclusionRejectsKindWildcard(t *testing.T) {
 	}
 }
 
+func TestV4MarketplaceExclusionDoesNotMatchSuffix(t *testing.T) {
+	cfg, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [tools/skill/command]
+    exclude: [skill/command/*]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Requests) != 1 || cfg.Requests[0].Locator != "tools/skill/command" {
+		t.Fatalf("requests = %#v, want the non-matching registry to remain selected", cfg.Requests)
+	}
+}
+
 func TestV4AliasUsesSafeFilenameRulesAndCollectionsRejectExplicitAs(t *testing.T) {
 	cases := map[string]string{
 		"reserved default":              "apiVersion: agent-marketplace/v4\nsources: {s: {git: https://example.test/a.git, ref: main}}\nresources: {s: [skill/CON]}\n",

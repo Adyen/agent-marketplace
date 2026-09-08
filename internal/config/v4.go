@@ -848,7 +848,6 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 				return g, err
 			}
 			g.Include = reqs
-			g.Decisions = append(g.Decisions, decisionsForIncludes(source, reqs, file)...)
 		case "exclude":
 			excludeNode = value
 			values, err := parseV4StringList(value, "resources."+source+".exclude")
@@ -1480,8 +1479,7 @@ func normalizeV4Tree(c *V4Config) error {
 			if includeIndex >= len(g.Include) {
 				return v4err("v4.internal", "resources."+name, 0, "explicit decision has no matching request")
 			}
-			r := g.Include[includeIndex]
-			g.Decisions[i].Request = &r
+			g.Decisions[i].Request = &g.Include[includeIndex]
 			includeIndex++
 		}
 		c.Groups[name] = g
@@ -1547,9 +1545,6 @@ func v4ExclusionMatches(exclude, locator string) bool {
 	}
 	if strings.HasSuffix(exclude, "/*") {
 		base := strings.TrimSuffix(exclude, "/*")
-		if strings.HasSuffix(locator, "/"+strings.TrimPrefix(base, "")) {
-			return true
-		}
 		parts := strings.Split(locator, "/")
 		if len(parts) == 2 && base == parts[0] {
 			return true
