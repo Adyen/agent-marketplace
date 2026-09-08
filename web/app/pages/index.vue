@@ -179,7 +179,7 @@ useHead({
               <label for="search-kind" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Kind</label>
               <SearchKindFilter id="search-kind" v-model="draft.kind" :kinds="supportedKinds" size="md" class="w-full" aria-label="Filter by resource kind" />
             </div>
-            <div class="w-full sm:w-44">
+            <div class="min-w-0 w-full sm:w-44">
               <label for="search-registry" class="mb-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Registry</label>
               <UInputMenu id="search-registry" v-model="draft.registry" multiple :items="registryOptions" size="md" icon="i-lucide-database" trailing-icon="i-lucide-chevron-down" placeholder="any" autocomplete="off" open-on-focus class="w-full" />
             </div>
