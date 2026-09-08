@@ -585,8 +585,10 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 		for _, fragment := range []string{
 			"location = /.well-known/agent-marketplace.json {\n        proxy_pass http://marketplace_api;",
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
-			"location /r/ {\n        proxy_pass http://marketplace_web;",
-			"location / {\n        proxy_pass http://marketplace_web;",
+			"location = /marketplace {\n        return 308 /marketplace/;",
+			"location /marketplace/ {\n        proxy_pass http://marketplace_web;",
+			"location / {\n        proxy_pass http://landing_site;",
+			"absolute_redirect off;",
 			"location = /readyz { return 404; }",
 			"location = /metrics { return 404; }",
 		} {
@@ -594,8 +596,47 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 				t.Errorf("%s missing routing contract fragment %q", relative, fragment)
 			}
 		}
-		if strings.Contains(config, "location /r/ {\n        proxy_pass http://marketplace_api;") {
+		if strings.Contains(config, "location /marketplace/ {\n        proxy_pass http://marketplace_api;") {
 			t.Errorf("%s routes browser pages to the API", relative)
+		}
+	}
+}
+
+func TestMarketplaceComposeServesBothUIsUnderOneOrigin(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		relative      string
+		siteContext   string
+		designContext string
+	}{
+		{
+			relative:      "compose.yaml",
+			siteContext:   "./site",
+			designContext: "./design",
+		},
+		{
+			relative:      "deploy/compose/postgres-s3/compose.yaml",
+			siteContext:   "../../../site",
+			designContext: "../../../design",
+		},
+	} {
+		data, err := os.ReadFile(filepath.Join(root, tc.relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := string(data)
+		for _, fragment := range []string{
+			"  site:\n    platform: *marketplace-platform",
+			"context: " + tc.siteContext,
+			"additional_contexts:\n        design: " + tc.designContext,
+			"NUXT_APP_BASE_URL: /marketplace/",
+		} {
+			if !strings.Contains(config, fragment) {
+				t.Errorf("%s missing combined UI fragment %q", tc.relative, fragment)
+			}
 		}
 	}
 }

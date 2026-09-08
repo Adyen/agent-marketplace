@@ -38,10 +38,8 @@ const actionLabel = computed(() => (isCopied.value ? `${props.label} copied` : `
       >{{ command }}</code>
       <span v-else class="min-w-0 flex-1 font-mono text-sm leading-6 text-dimmed">command unavailable</span>
 
-      <!-- The block is bg-muted, and this theme resolves bg-elevated to the same
-           ink-100 as bg-muted, so a ghost button's hover fill would be literally
-           invisible here. The control gets its own lighter resting surface and
-           darkens on hover instead.
+      <!-- The block is bg-muted, so the control gets its own resting surface
+           and a stronger border and fill on hover.
            Saturation is reserved for install verdicts, so a successful copy is
            confirmed with a check and full ink, never a colour. -->
       <UButton

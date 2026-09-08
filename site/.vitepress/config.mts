@@ -35,8 +35,7 @@ export default defineConfig({
     siteTitle: 'agent-marketplace',
 
     nav: [
-      { text: 'Docs', link: '/#install' },
-      { text: 'Marketplace', link: '/#flow' }
+      { text: 'Docs', link: '/#install' }
     ],
 
     socialLinks: [{ icon: 'github', link: repo }]

@@ -127,9 +127,7 @@ useHead({
 
     <header class="border-b border-default">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
-        <NuxtLink to="/" class="flex items-baseline gap-2 rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">
-          <span class="font-mono text-sm font-medium tracking-tight text-highlighted">agent-marketplace</span>
-        </NuxtLink>
+        <MarketplaceSiteNav />
         <div class="flex items-center gap-3">
           <GitHubLink />
           <div class="flex items-baseline gap-3 font-mono text-xs text-muted">

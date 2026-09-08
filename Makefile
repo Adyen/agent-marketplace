@@ -12,15 +12,17 @@ ALPINE_RUNTIME_IMAGE ?= alpine:3.22.1
 NODE_IMAGE ?= node:24-alpine
 POSTGRES_IMAGE ?= postgres:17.5-alpine
 NGINX_IMAGE ?= nginx:1.27-alpine
+SITE_NGINX_IMAGE ?= nginxinc/nginx-unprivileged:1.29-alpine
 MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
 WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
-export GO_BUILD_IMAGE ALPINE_RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE
+SITE_CONTAINER_IMAGE ?= agent-marketplace-site:$(VERSION)
+export GO_BUILD_IMAGE ALPINE_RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_NGINX_IMAGE
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 DIST_DIR := dist
 
-.PHONY: build test lint ci-lint lint-common version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-check compose-config $(PLATFORMS)
+.PHONY: build test lint ci-lint lint-common version release clean e2e marketplace-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build secrets-check container container-marketplace container-web container-site container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -69,7 +71,7 @@ lint-common:
 version:
 	@echo $(VERSION)
 
-container: container-marketplace container-web
+container: container-marketplace container-web container-site
 
 container-marketplace:
 	docker build \
@@ -80,8 +82,16 @@ container-marketplace:
 
 container-web:
 	docker build \
+		--build-context design=design \
 		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
 		-t "$(WEB_CONTAINER_IMAGE)" web
+
+container-site:
+	docker build \
+		--build-context design=design \
+		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
+		--build-arg NGINX_IMAGE="$(SITE_NGINX_IMAGE)" \
+		-t "$(SITE_CONTAINER_IMAGE)" site
 
 secrets-check:
 	@test -n "$$(git check-ignore --no-index deploy/compose/postgres-s3/.env 2>/dev/null)" || { echo "ERROR: deploy .env files must be ignored"; exit 1; }
@@ -95,18 +105,24 @@ container-check: secrets-check
 	@test -s Dockerfile.marketplace
 	@test -s .dockerignore
 	@test -s web/Dockerfile
+	@test -s site/Dockerfile
+	@for path in site/.vitepress/cache site/.vitepress/dist site/node_modules; do grep -Fxq "$$path" .dockerignore || exit 1; done
+	@for path in .vitepress/cache .vitepress/dist node_modules; do grep -Fxq "$$path" site/.dockerignore || exit 1; done
 	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{design=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !design || !install || !user || !health) exit 1}' web/Dockerfile
+	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{design=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase=1} /HEALTHCHECK/{health=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !design || !user || !sitebase || !health) exit 1}' site/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 4
+	@test "$$(grep -Fh -- 'image: $${NGINX_IMAGE:-' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- '$${SITE_NGINX_IMAGE:-' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg ALPINE_RUNTIME_IMAGE=' Makefile)" -eq 1
-	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 1
-	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.22$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx) exit 1}' Makefile
-	@if git grep -nEI '(ARG[[:space:]]+[A-Z_]*IMAGE|^[A-Z_]*IMAGE=|image:).*([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 2
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 1
+	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.22$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} /^SITE_NGINX_IMAGE \?= nginxinc\/nginx-unprivileged:1.29-alpine$$/{site_nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx || !site_nginx) exit 1}' Makefile
+	@if git grep -nEI '(ARG[[:space:]]+[A-Z_]*IMAGE|^[A-Z_]*IMAGE=|image:).*([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/' -- Dockerfile.marketplace web/Dockerfile site/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
 		echo "ERROR: tracked container image configuration contains a registry hostname; use an environment override instead"; exit 1; \
 	fi
 	@test "$$(grep -Fc -- 'wget -q -O - -T 5' Dockerfile.marketplace)" -eq 1
@@ -132,10 +148,10 @@ compose-config:
 		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
 		docker compose -f compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
-		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
-		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
+		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && grep -Fq 'override/site-nginx:test' "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
+		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && grep -Fq 'override/site-nginx:test' "$$postgres_config" && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-password$$' "$$postgres_config")" -eq 1 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-dsn$$' "$$postgres_config")" -eq 2 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace_postgres_(password|dsn)$$' "$$postgres_config")" -eq 0 && \

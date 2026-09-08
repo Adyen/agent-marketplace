@@ -1,6 +1,6 @@
 # PostgreSQL/S3 example
 
-This example runs PostgreSQL, separate API and worker images, the Nuxt web UI, and an internal Nginx reverse proxy. Only the proxy publishes a port. PostgreSQL, the API, and the worker are internal services; operations endpoints are intentionally not routed or published. Public `/readyz` and `/metrics` are explicit 404s.
+This example runs PostgreSQL, separate API and worker images, the static VitePress site, the Nuxt Marketplace UI, and an internal Nginx reverse proxy. Only the proxy publishes a port. The proxy serves VitePress at `/` and Nuxt at `/marketplace/`. PostgreSQL, the API, and the worker are internal services; operations endpoints are intentionally not routed or published. Public `/readyz` and `/metrics` are explicit 404s.
 
 The default `compose.yaml` is production-safe by construction. It uses a PostgreSQL password secret file, mounts the metadata DSN as a Compose secret at `/run/secrets/marketplace-postgres-dsn`, and declares no AWS credential environment variables. S3 credentials therefore come from the AWS SDK default credential chain (prefer workload identity/IAM roles). If roles are unavailable, use the platform's secret manager and an SDK-supported credentials file rather than adding static AWS secrets to Compose.
 
@@ -43,6 +43,8 @@ docker compose --env-file .env -f compose.yaml -f compose.development.yaml up --
 ```
 
 If your registry mirror provides only `linux/amd64` images, add `MARKETPLACE_PLATFORM=linux/amd64` to `.env` or export it before starting. Apple Silicon will then use emulation. Use `MARKETPLACE_PLATFORM=linux/arm64` when ARM64 images are available.
+`NGINX_IMAGE` overrides both Nginx services for mirrors that expose one image;
+set `SITE_NGINX_IMAGE` separately to retain an unprivileged site runtime.
 
 The development override switches both application services to `config.yaml`, which uses `storage.metadata.dsn_env`, and supplies `MARKETPLACE_POSTGRES_DSN` from `.env`. It also supplies AWS credentials from `.env` for local testing only. Never use `compose.development.yaml` or static AWS environment credentials for production.
 

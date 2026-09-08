@@ -39,7 +39,7 @@ withDefaults(
 
 .is-soft {
   background:
-    radial-gradient(circle at 82% 18%, rgba(85, 219, 137, 0.045), transparent 28rem),
+    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--am-color-action-primary) 4.5%, transparent), transparent 28rem),
     var(--am-surface-soft);
 }
 

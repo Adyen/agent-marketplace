@@ -3,11 +3,12 @@ import { withBase } from 'vitepress'
 import {
   DOCUMENTATION_URL,
   GITHUB_REPOSITORY_URL,
+  MARKETPLACE_PATH,
 } from '../site'
 
 const links = [
   { label: 'Documentation', href: DOCUMENTATION_URL, external: true },
-  { label: 'Marketplace', href: withBase('/#flow'), external: false },
+  { label: 'Marketplace', href: MARKETPLACE_PATH, external: false, hardNavigation: true },
   { label: 'GitHub', href: GITHUB_REPOSITORY_URL, external: true },
 ]
 </script>
@@ -22,7 +23,7 @@ const links = [
           v-for="link in links"
           :key="link.label"
           :href="link.href"
-          :target="link.external ? '_blank' : undefined"
+          :target="link.external ? '_blank' : link.hardNavigation ? '_self' : undefined"
           :rel="link.external ? 'noreferrer' : undefined"
         >
           {{ link.label }}

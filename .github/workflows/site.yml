@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'site/**'
+      - 'design/**'
       - 'Makefile'
       - '.github/workflows/site.yml'
   pull_request:
@@ -14,6 +15,7 @@ on:
       - main
     paths:
       - 'site/**'
+      - 'design/**'
       - 'Makefile'
       - '.github/workflows/site.yml'
 
@@ -43,3 +45,11 @@ jobs:
 
       - name: Build website
         run: make site-build
+
+      - name: Verify sibling Marketplace links
+        env:
+          SITE_BASE: /agent-marketplace/
+        run: |
+          make site-build
+          grep -Fq 'href="/marketplace/"' site/.vitepress/dist/index.html
+          ! grep -Fq 'href="/agent-marketplace/marketplace/"' site/.vitepress/dist/index.html

@@ -3,6 +3,11 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   modules: ['@nuxt/ui', '@nuxt/eslint'],
   css: ['~/assets/css/main.css'],
+  app: {
+    head: {
+      htmlAttrs: { class: 'am-theme-dark' },
+    },
+  },
   // Icons resolve entirely from the locally installed `@iconify-json/lucide`
   // collection at build time. The app's own CSP sets `connect-src 'self'`, so
   // the remote Iconify API is unreachable by design and must never be a

@@ -1,4 +1,4 @@
-import { createMarketplaceApi, selectMarketplaceApiBase, selectMarketplaceFetcher } from '~/lib/api'
+import { bindRelativeApiRequestsToOrigin, createMarketplaceApi, selectMarketplaceApiBase, selectMarketplaceFetcher } from '~/lib/api'
 
 export function useMarketplaceApi() {
   const config = useRuntimeConfig()
@@ -7,6 +7,7 @@ export function useMarketplaceApi() {
   // and therefore continue to use the public same-origin URL.
   const apiBase = selectMarketplaceApiBase(import.meta.server, config.public.apiBase, config.apiBaseInternal)
   const requestFetcher = import.meta.server ? useRequestFetch() : $fetch
-  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, $fetch)
+  const clientFetcher = bindRelativeApiRequestsToOrigin($fetch, import.meta.client ? window.location.origin : undefined)
+  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, clientFetcher)
   return createMarketplaceApi(fetcher, apiBase)
 }

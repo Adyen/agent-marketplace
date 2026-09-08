@@ -45,6 +45,13 @@ export function selectMarketplaceFetcher(isServer: boolean, apiBase: string | un
   return isServer && !isAbsoluteApiBase(apiBase) ? requestFetcher : clientFetcher
 }
 
+export function bindRelativeApiRequestsToOrigin(fetcher: ApiFetcher, origin: string | undefined): ApiFetcher {
+  const normalizedOrigin = normalizeApiBase(origin)
+  if (!isAbsoluteApiBase(normalizedOrigin)) return fetcher
+  return <T>(request: string, options?: Parameters<ApiFetcher>[1]) =>
+    fetcher<T>(request.startsWith('/') ? `${normalizedOrigin}${request}` : request, options)
+}
+
 export function serializeSearchQuery(params: SearchParams): Record<string, string | number | string[]> {
   const query: Record<string, string | number | string[]> = {}
   if (params.q.trim()) query.q = params.q.trim()
