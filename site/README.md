@@ -7,7 +7,7 @@ landing page is available at `/`; the marketplace application will live at
 ## Prerequisites
 
 - Node.js
-- pnpm 10.4.1
+- pnpm 10.26.0
 
 ## Run locally
 

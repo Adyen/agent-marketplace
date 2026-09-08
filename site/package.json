@@ -2,7 +2,7 @@
   "name": "agent-marketplace-site",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@10.4.1",
+  "packageManager": "pnpm@10.26.0",
   "description": "Landing page and documentation site for agent-marketplace",
   "license": "Apache-2.0",
   "type": "module",

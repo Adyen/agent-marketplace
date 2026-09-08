@@ -3,9 +3,11 @@ ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.29-alpine
 
 FROM ${NODE_IMAGE} AS build
 
+USER root
+
 WORKDIR /site
 
-RUN corepack enable && corepack install --global pnpm@10.4.1
+RUN npm install --global pnpm@10.26.0
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
