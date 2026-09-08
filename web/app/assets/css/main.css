@@ -16,6 +16,11 @@
  * owns Marketplace-specific document styling.
  */
 
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 .marketplace-markdown {
   max-width: 72ch;
   margin-inline: auto;

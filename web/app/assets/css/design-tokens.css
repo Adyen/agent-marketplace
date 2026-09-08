@@ -1,4 +1,5 @@
 @import "../../../../design/semantic-colors.css";
+@import "../../../../design/marketplace-navigation.css";
 
 /**
  * Tailwind and Nuxt UI adapters.
@@ -11,65 +12,65 @@
   --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --color-ink-50: var(--am-color-text-primary);
-  --color-ink-100: var(--am-color-code-text);
-  --color-ink-200: var(--am-color-text-secondary);
-  --color-ink-300: var(--am-color-code-text-muted);
+  --color-ink-50: var(--am-scale-light-end);
+  --color-ink-100: color-mix(in srgb, var(--am-color-text-secondary) 15%, var(--am-scale-light-end));
+  --color-ink-200: color-mix(in srgb, var(--am-color-text-secondary) 30%, var(--am-scale-light-end));
+  --color-ink-300: color-mix(in srgb, var(--am-color-text-secondary) 45%, var(--am-scale-light-end));
   --color-ink-400: var(--am-color-text-muted);
   --color-ink-500: var(--am-color-text-muted);
-  --color-ink-600: var(--am-color-border-strong);
-  --color-ink-700: var(--am-color-bg-raised);
-  --color-ink-800: var(--am-color-bg-subtle);
-  --color-ink-900: var(--am-color-bg-surface);
-  --color-ink-950: var(--am-color-code-bg);
+  --color-ink-600: var(--am-color-text-secondary);
+  --color-ink-700: color-mix(in srgb, var(--am-color-text-secondary) 70%, var(--am-scale-dark-end));
+  --color-ink-800: color-mix(in srgb, var(--am-color-text-secondary) 45%, var(--am-scale-dark-end));
+  --color-ink-900: color-mix(in srgb, var(--am-color-text-secondary) 20%, var(--am-scale-dark-end));
+  --color-ink-950: var(--am-scale-dark-end);
 
-  --color-focus-50: color-mix(in srgb, var(--am-color-action-primary) 10%, var(--am-color-text-primary));
-  --color-focus-100: color-mix(in srgb, var(--am-color-action-primary) 20%, var(--am-color-text-primary));
-  --color-focus-200: color-mix(in srgb, var(--am-color-action-primary) 35%, var(--am-color-text-primary));
-  --color-focus-300: color-mix(in srgb, var(--am-color-action-primary) 60%, var(--am-color-text-primary));
+  --color-focus-50: color-mix(in srgb, var(--am-color-action-primary) 10%, var(--am-scale-light-end));
+  --color-focus-100: color-mix(in srgb, var(--am-color-action-primary) 20%, var(--am-scale-light-end));
+  --color-focus-200: color-mix(in srgb, var(--am-color-action-primary) 35%, var(--am-scale-light-end));
+  --color-focus-300: color-mix(in srgb, var(--am-color-action-primary) 60%, var(--am-scale-light-end));
   --color-focus-400: var(--am-color-action-hover);
   --color-focus-500: var(--am-color-action-primary);
   --color-focus-600: var(--am-color-action-active);
-  --color-focus-700: color-mix(in srgb, var(--am-color-action-active) 75%, var(--am-color-bg-canvas));
-  --color-focus-800: color-mix(in srgb, var(--am-color-action-active) 55%, var(--am-color-bg-canvas));
-  --color-focus-900: color-mix(in srgb, var(--am-color-action-active) 40%, var(--am-color-bg-canvas));
-  --color-focus-950: color-mix(in srgb, var(--am-color-action-active) 25%, var(--am-color-bg-canvas));
+  --color-focus-700: color-mix(in srgb, var(--am-color-action-active) 75%, var(--am-scale-dark-end));
+  --color-focus-800: color-mix(in srgb, var(--am-color-action-active) 55%, var(--am-scale-dark-end));
+  --color-focus-900: color-mix(in srgb, var(--am-color-action-active) 40%, var(--am-scale-dark-end));
+  --color-focus-950: color-mix(in srgb, var(--am-color-action-active) 25%, var(--am-scale-dark-end));
 
-  --color-ready-50: color-mix(in srgb, var(--am-color-marketplace-installable) 10%, var(--am-color-text-primary));
-  --color-ready-100: color-mix(in srgb, var(--am-color-marketplace-installable) 20%, var(--am-color-text-primary));
-  --color-ready-200: color-mix(in srgb, var(--am-color-marketplace-installable) 35%, var(--am-color-text-primary));
-  --color-ready-300: color-mix(in srgb, var(--am-color-marketplace-installable) 60%, var(--am-color-text-primary));
-  --color-ready-400: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-color-text-primary));
+  --color-ready-50: color-mix(in srgb, var(--am-color-marketplace-installable) 10%, var(--am-scale-light-end));
+  --color-ready-100: color-mix(in srgb, var(--am-color-marketplace-installable) 20%, var(--am-scale-light-end));
+  --color-ready-200: color-mix(in srgb, var(--am-color-marketplace-installable) 35%, var(--am-scale-light-end));
+  --color-ready-300: color-mix(in srgb, var(--am-color-marketplace-installable) 60%, var(--am-scale-light-end));
+  --color-ready-400: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-scale-light-end));
   --color-ready-500: var(--am-color-marketplace-installable);
-  --color-ready-600: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-color-bg-canvas));
-  --color-ready-700: color-mix(in srgb, var(--am-color-marketplace-installable) 70%, var(--am-color-bg-canvas));
-  --color-ready-800: color-mix(in srgb, var(--am-color-marketplace-installable) 55%, var(--am-color-bg-canvas));
-  --color-ready-900: color-mix(in srgb, var(--am-color-marketplace-installable) 40%, var(--am-color-bg-canvas));
-  --color-ready-950: color-mix(in srgb, var(--am-color-marketplace-installable) 25%, var(--am-color-bg-canvas));
+  --color-ready-600: color-mix(in srgb, var(--am-color-marketplace-installable) 85%, var(--am-scale-dark-end));
+  --color-ready-700: color-mix(in srgb, var(--am-color-marketplace-installable) 70%, var(--am-scale-dark-end));
+  --color-ready-800: color-mix(in srgb, var(--am-color-marketplace-installable) 55%, var(--am-scale-dark-end));
+  --color-ready-900: color-mix(in srgb, var(--am-color-marketplace-installable) 40%, var(--am-scale-dark-end));
+  --color-ready-950: color-mix(in srgb, var(--am-color-marketplace-installable) 25%, var(--am-scale-dark-end));
 
-  --color-withheld-50: color-mix(in srgb, var(--am-color-marketplace-withheld) 10%, var(--am-color-text-primary));
-  --color-withheld-100: color-mix(in srgb, var(--am-color-marketplace-withheld) 20%, var(--am-color-text-primary));
-  --color-withheld-200: color-mix(in srgb, var(--am-color-marketplace-withheld) 35%, var(--am-color-text-primary));
-  --color-withheld-300: color-mix(in srgb, var(--am-color-marketplace-withheld) 60%, var(--am-color-text-primary));
-  --color-withheld-400: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-color-text-primary));
+  --color-withheld-50: color-mix(in srgb, var(--am-color-marketplace-withheld) 10%, var(--am-scale-light-end));
+  --color-withheld-100: color-mix(in srgb, var(--am-color-marketplace-withheld) 20%, var(--am-scale-light-end));
+  --color-withheld-200: color-mix(in srgb, var(--am-color-marketplace-withheld) 35%, var(--am-scale-light-end));
+  --color-withheld-300: color-mix(in srgb, var(--am-color-marketplace-withheld) 60%, var(--am-scale-light-end));
+  --color-withheld-400: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-scale-light-end));
   --color-withheld-500: var(--am-color-marketplace-withheld);
-  --color-withheld-600: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-color-bg-canvas));
-  --color-withheld-700: color-mix(in srgb, var(--am-color-marketplace-withheld) 70%, var(--am-color-bg-canvas));
-  --color-withheld-800: color-mix(in srgb, var(--am-color-marketplace-withheld) 55%, var(--am-color-bg-canvas));
-  --color-withheld-900: color-mix(in srgb, var(--am-color-marketplace-withheld) 40%, var(--am-color-bg-canvas));
-  --color-withheld-950: color-mix(in srgb, var(--am-color-marketplace-withheld) 25%, var(--am-color-bg-canvas));
+  --color-withheld-600: color-mix(in srgb, var(--am-color-marketplace-withheld) 85%, var(--am-scale-dark-end));
+  --color-withheld-700: color-mix(in srgb, var(--am-color-marketplace-withheld) 70%, var(--am-scale-dark-end));
+  --color-withheld-800: color-mix(in srgb, var(--am-color-marketplace-withheld) 55%, var(--am-scale-dark-end));
+  --color-withheld-900: color-mix(in srgb, var(--am-color-marketplace-withheld) 40%, var(--am-scale-dark-end));
+  --color-withheld-950: color-mix(in srgb, var(--am-color-marketplace-withheld) 25%, var(--am-scale-dark-end));
 
-  --color-revoked-50: color-mix(in srgb, var(--am-color-marketplace-revoked) 10%, var(--am-color-text-primary));
-  --color-revoked-100: color-mix(in srgb, var(--am-color-marketplace-revoked) 20%, var(--am-color-text-primary));
-  --color-revoked-200: color-mix(in srgb, var(--am-color-marketplace-revoked) 35%, var(--am-color-text-primary));
-  --color-revoked-300: color-mix(in srgb, var(--am-color-marketplace-revoked) 60%, var(--am-color-text-primary));
-  --color-revoked-400: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-color-text-primary));
+  --color-revoked-50: color-mix(in srgb, var(--am-color-marketplace-revoked) 10%, var(--am-scale-light-end));
+  --color-revoked-100: color-mix(in srgb, var(--am-color-marketplace-revoked) 20%, var(--am-scale-light-end));
+  --color-revoked-200: color-mix(in srgb, var(--am-color-marketplace-revoked) 35%, var(--am-scale-light-end));
+  --color-revoked-300: color-mix(in srgb, var(--am-color-marketplace-revoked) 60%, var(--am-scale-light-end));
+  --color-revoked-400: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-scale-light-end));
   --color-revoked-500: var(--am-color-marketplace-revoked);
-  --color-revoked-600: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-color-bg-canvas));
-  --color-revoked-700: color-mix(in srgb, var(--am-color-marketplace-revoked) 70%, var(--am-color-bg-canvas));
-  --color-revoked-800: color-mix(in srgb, var(--am-color-marketplace-revoked) 55%, var(--am-color-bg-canvas));
-  --color-revoked-900: color-mix(in srgb, var(--am-color-marketplace-revoked) 40%, var(--am-color-bg-canvas));
-  --color-revoked-950: color-mix(in srgb, var(--am-color-marketplace-revoked) 25%, var(--am-color-bg-canvas));
+  --color-revoked-600: color-mix(in srgb, var(--am-color-marketplace-revoked) 85%, var(--am-scale-dark-end));
+  --color-revoked-700: color-mix(in srgb, var(--am-color-marketplace-revoked) 70%, var(--am-scale-dark-end));
+  --color-revoked-800: color-mix(in srgb, var(--am-color-marketplace-revoked) 55%, var(--am-scale-dark-end));
+  --color-revoked-900: color-mix(in srgb, var(--am-color-marketplace-revoked) 40%, var(--am-scale-dark-end));
+  --color-revoked-950: color-mix(in srgb, var(--am-color-marketplace-revoked) 25%, var(--am-scale-dark-end));
 
   --color-marketplace-installable: var(--am-color-marketplace-installable);
   --color-marketplace-withheld: var(--am-color-marketplace-withheld);
@@ -79,8 +80,10 @@
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   --ui-radius: 0.25rem;
+  --am-scale-light-end: var(--am-color-bg-canvas);
+  --am-scale-dark-end: var(--am-color-text-primary);
 
   --ui-primary: var(--am-color-action-primary);
   --ui-success: var(--am-color-marketplace-installable);
@@ -107,6 +110,8 @@
   --ui-border-inverted: var(--am-color-action-primary);
 }
 
-body {
+.dark {
   color-scheme: dark;
+  --am-scale-light-end: var(--am-color-text-primary);
+  --am-scale-dark-end: var(--am-color-bg-canvas);
 }

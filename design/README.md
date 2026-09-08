@@ -1,4 +1,4 @@
-# Shared design colors
+# Shared design
 
 `semantic-colors.css` is the framework-neutral source of truth for colors used
 by the landing site and Marketplace UI. Its values come from the landing
@@ -19,6 +19,12 @@ Add framework-neutral color roles here. Keep typography, spacing, radii, and
 framework variables in the relevant adapter. Components should consume shared
 roles or adapter tokens instead of introducing raw color literals.
 
-The default token values are the light palette. Add `dark` or `am-theme-dark`
-to an ancestor to select the dark palette. The VitePress adapter follows its
-theme class; the Marketplace UI uses `am-theme-dark` because it is dark-only.
+The default token values are the light palette. Add `dark` to an ancestor to
+select the dark palette. Both applications use it on the document element and
+persist explicit choices under `vitepress-theme-appearance`, so the selected
+theme survives navigation between the landing site and Marketplace.
+
+VitePress's default theme owns the canonical top navigation, responsive menu,
+and appearance switch. `marketplace-navigation.css` adapts the Nuxt header to
+that baseline. Keep links and theme state in application code, where each
+router and rendering runtime owns its behavior.

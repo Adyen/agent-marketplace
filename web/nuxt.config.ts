@@ -1,4 +1,5 @@
 import { devApiProxyTargets } from './app/lib/api-base'
+import { SHARED_APPEARANCE_KEY } from './app/lib/site'
 
 const devApiProxy = process.env.NODE_ENV === 'development'
   ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
@@ -9,9 +10,26 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   modules: ['@nuxt/ui', '@nuxt/eslint'],
   css: ['~/assets/css/main.css'],
+  // Nuxt color mode persists `system`; VitePress persists `auto`. Keep one
+  // small controller so both applications can honor the same stored values.
+  ui: {
+    colorMode: false,
+  },
   app: {
     head: {
-      htmlAttrs: { class: 'am-theme-dark' },
+      script: [{
+        id: 'check-shared-appearance',
+        innerHTML: `;(() => {
+          let preference = 'auto'
+          try {
+            preference = localStorage.getItem('${SHARED_APPEARANCE_KEY}') || 'auto'
+          } catch {}
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          if (preference === 'dark' || (preference === 'auto' && prefersDark)) {
+            document.documentElement.classList.add('dark')
+          }
+        })()`,
+      }],
     },
   },
   // Icons resolve entirely from the locally installed `@iconify-json/lucide`

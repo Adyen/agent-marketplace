@@ -108,11 +108,17 @@ nav a:focus-visible,
     gap: 14px;
   }
 
+  .footer-row > * {
+    min-width: 0;
+  }
+
   .footer-meta {
     justify-self: start;
+    white-space: normal;
   }
 
   nav {
+    max-width: 100%;
     overflow-x: auto;
   }
 }

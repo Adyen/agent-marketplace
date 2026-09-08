@@ -67,10 +67,9 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <MarketplaceSkipLink target="resource-content" />
     <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource detail' }]" />
 
-    <main id="resource-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
         <h1 class="text-2xl font-semibold text-highlighted">Loading resource</h1>
         <p class="mt-3 text-sm text-muted">Fetching the latest verified revision and its metadata.</p>

@@ -68,8 +68,7 @@
   --am-color-marketplace-unknown: var(--am-color-status-info);
 }
 
-.dark,
-.am-theme-dark {
+.dark {
   /* Background */
   --am-color-bg-canvas: #09110d;
   --am-color-bg-surface: #0b120e;

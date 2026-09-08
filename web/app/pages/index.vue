@@ -48,7 +48,6 @@ const limitOptions = [
   { label: '100 per page', value: 100 },
 ]
 
-const cliMarketplaceDocsUrl = 'https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md#install-from-a-marketplace'
 const totalPages = computed(() => Math.max(1, Math.ceil((results.value?.total ?? 0) / searchParams.value.limit)))
 const currentPage = computed(() => Math.floor(searchParams.value.offset / searchParams.value.limit) + 1)
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
@@ -133,38 +132,22 @@ useHead({
 
 <template>
   <div class="min-h-screen bg-default text-default">
-    <MarketplaceSkipLink target="main-content" />
-
-    <header class="border-b border-default">
-      <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6">
-        <MarketplaceSiteNav />
-        <div class="flex items-center gap-3">
-          <GitHubLink />
-          <div class="flex items-baseline gap-3 font-mono text-xs text-muted">
-            <span v-if="metadata?.instance_id">{{ metadata.instance_id }}</span>
-            <span aria-hidden="true">·</span>
-            <span>read-only</span>
-          </div>
-        </div>
-      </div>
-    </header>
-
     <main id="main-content" ref="mainContent" tabindex="-1">
-      <section class="bg-muted/40">
-        <div class="mx-auto max-w-6xl px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
-          <h1 class="text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl">
-            Browse AI resources
-          </h1>
-          <p class="mt-2 max-w-4xl text-base leading-6 text-muted sm:text-lg sm:leading-7">
-            Every revision is pinned and analyzed before publication. Add resources with the
-            <a
-              :href="cliMarketplaceDocsUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="rounded font-medium text-primary underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-            ><span class="font-mono">agent-marketplace</span> CLI</a>
-            and sync them across your AI tools.
-          </p>
+      <!-- The index is the page. One line says what this instance is, then the
+           controls, then the entries. There is no marketing hero to scroll past. -->
+      <section class="border-b border-default bg-muted/40">
+        <div class="mx-auto max-w-6xl px-4 py-5 sm:px-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <h1 class="max-w-2xl text-base leading-6 text-toned">
+              A verified index of agent resources. Every entry is pinned to a content digest and analyzed before it is offered.
+              <span class="text-muted">Installation happens in your CLI.</span>
+            </h1>
+            <div class="flex items-baseline gap-3 font-mono text-xs text-muted">
+              <span v-if="metadata?.instance_id">{{ metadata.instance_id }}</span>
+              <span v-if="metadata?.instance_id" aria-hidden="true">·</span>
+              <span>read-only</span>
+            </div>
+          </div>
 
           <section
             v-if="marketplaceCommand"

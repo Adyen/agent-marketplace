@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitepress'
-import { GITHUB_REPOSITORY_URL } from '../src/shared/site'
+import { GITHUB_REPOSITORY_URL, MARKETPLACE_PATH } from '../src/shared/site'
 
 // The hosting target is deliberately undecided. SITE_BASE lets a project-path
 // deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
@@ -35,9 +35,16 @@ export default defineConfig({
     siteTitle: 'agent-marketplace',
 
     nav: [
+      // A relative link escapes SITE_BASE in both root and project-path builds.
+      // target keeps VitePress from handling the sibling app as an SPA route.
+      { text: 'Marketplace', link: `..${MARKETPLACE_PATH}`, target: '_self' },
       { text: 'Docs', link: '/#install' }
     ],
 
-    socialLinks: [{ icon: 'github', link: repo }]
+    socialLinks: [{
+      icon: 'github',
+      link: repo,
+      ariaLabel: 'View agent-marketplace on GitHub'
+    }]
   }
 })

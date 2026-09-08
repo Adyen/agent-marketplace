@@ -136,7 +136,7 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(search).not.toBeNull()
     expect(search!.width).toBeGreaterThan(1000)
 
-    const installHeading = await page.getByText(/Add resources with the agent-marketplace CLI/).boundingBox()
+    const installHeading = await page.getByRole('heading', { name: /A verified index of agent resources/ }).boundingBox()
     const catalogHeading = await page.getByRole('heading', { name: 'Resources', exact: true }).boundingBox()
     const resultCount = await page.getByText('· 1 total', { exact: true }).boundingBox()
     expect(installHeading).not.toBeNull()

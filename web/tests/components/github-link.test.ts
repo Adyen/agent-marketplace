@@ -10,7 +10,7 @@ describe('GitHubLink', () => {
       href: 'https://github.com/Adyen/agent-marketplace',
       target: '_blank',
       rel: 'noopener noreferrer',
-      'aria-label': 'Open agent-marketplace CLI on GitHub',
+      'aria-label': 'View agent-marketplace on GitHub',
     })
     expect(link.get('svg').attributes('aria-hidden')).toBe('true')
   })

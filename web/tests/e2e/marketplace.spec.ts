@@ -7,6 +7,8 @@ const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>
 const mockURL = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '4311'}`
 const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
+const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
+const sharedAppearanceKey = 'vitepress-theme-appearance'
 
 function searchResult() {
   return {
@@ -33,33 +35,155 @@ test.describe('Marketplace browser discovery', () => {
     })
 
     await page.goto('/')
-    const homepageStyle = await getBrandStyle('header a[href="/"] span')
+    const homepageStyle = await getBrandStyle('.am-site-nav__brand')
 
     await page.goto('/r/team-tools/skill/secure-review')
-    const detailStyle = await getBrandStyle('header a[href="/"]')
+    const detailStyle = await getBrandStyle('.am-site-nav__brand')
 
     expect(detailStyle).toEqual(homepageStyle)
+    expect(await page.getByRole('navigation', { name: 'Product navigation' }).getByRole('link', { name: 'Marketplace', exact: true }).getAttribute('aria-current')).toBeNull()
   })
 
-  test('links to CLI setup without making Marketplace registration a prerequisite', async ({ page, context }) => {
+  test('shares navigation and appearance across both frontends', async ({ page }) => {
+    await page.goto(sharedOriginURL)
+    await page.evaluate(key => localStorage.setItem(key, 'light'), sharedAppearanceKey)
+    await page.reload()
+
+    await expect(page.locator('.VPNav')).toHaveCount(1)
+    const landingNav = page.getByRole('navigation', { name: 'Main Navigation' })
+    await expect(page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '../marketplace/')
+    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+
+    await page.goto(`${sharedOriginURL}/README`)
+    await expect(page.locator('.VPNav')).toHaveCount(1)
+    expect(await page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true }).getAttribute('aria-current')).toBeNull()
+    await page.goto(sharedOriginURL)
+
+    const landingSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
+    await expect(landingSwitch).toHaveAttribute('title', 'Switch to dark theme')
+    await expect(landingSwitch).toHaveAttribute('aria-checked', 'false')
+    await landingSwitch.click()
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
+
+    await landingNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
+    await expect(page).toHaveURL(`${sharedOriginURL}/marketplace/`)
+
+    const marketplaceNav = page.getByRole('navigation', { name: 'Product navigation' })
+    await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+
+    const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to light theme' })
+    await expect(marketplaceSwitch).toHaveAttribute('aria-checked', 'true')
+    await marketplaceSwitch.click()
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('light')
+
+    await marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true }).click()
+    await expect(page).toHaveURL(`${sharedOriginURL}/`)
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect(page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).resolves.toBe('light')
+  })
+
+  test('keeps Nuxt color scales ordered in both themes', async ({ page }) => {
+    const scales = ['ink', 'focus', 'ready', 'withheld', 'revoked']
+
+    await page.goto('/')
+    for (const preference of ['light', 'dark']) {
+      await page.evaluate(
+        ({ key, value }) => localStorage.setItem(key, value),
+        { key: sharedAppearanceKey, value: preference },
+      )
+      await page.reload()
+
+      const luminances = await page.evaluate((names) => {
+        const probe = document.createElement('span')
+        document.body.appendChild(probe)
+
+        const result = Object.fromEntries(names.map((name) => {
+          const shades = [50, 500, 950].map((shade) => {
+            probe.style.color = `var(--color-${name}-${shade})`
+            const rendered = getComputedStyle(probe).color
+            const channels = (rendered.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number)
+            const divisor = channels.some(channel => channel > 1) ? 255 : 1
+            return channels.reduce((sum, channel) => sum + channel / divisor, 0) / 3
+          })
+          return [name, shades]
+        }))
+
+        probe.remove()
+        return result
+      }, scales)
+
+      for (const scale of scales) {
+        const [light, middle, dark] = luminances[scale] as number[]
+        expect(light, `${scale}-50 should be lighter in ${preference} mode`).toBeGreaterThan(middle)
+        expect(middle, `${scale}-500 should be lighter than ${scale}-950 in ${preference} mode`).toBeGreaterThan(dark)
+      }
+    }
+  })
+
+  test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+
+    for (const path of ['/', '/marketplace/']) {
+      await page.goto(`${sharedOriginURL}${path}`)
+      const isLanding = path === '/'
+      const nav = page.getByRole('navigation', { name: isLanding ? 'Main Navigation' : 'Product navigation' })
+      const menuButton = page.getByRole('button', { name: isLanding ? 'mobile navigation' : 'Toggle navigation' })
+      const marketplaceLink = isLanding
+        ? page.locator('#VPNavScreen').getByRole('link', { name: 'Marketplace', exact: true })
+        : nav.getByRole('link', { name: 'Marketplace', exact: true })
+
+      const viewport = await page.evaluate(() => ({
+        width: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      }))
+      expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.width)
+
+      await expect(menuButton).toBeVisible()
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+      await expect(marketplaceLink).not.toBeVisible()
+
+      await menuButton.focus()
+      await menuButton.press('Enter')
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+      await expect(marketplaceLink).toBeVisible()
+      if (isLanding) {
+        await menuButton.press('Enter')
+      }
+      else {
+        await menuButton.press('Escape')
+        await expect(menuButton).toBeFocused()
+      }
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+      await expect(marketplaceLink).not.toBeVisible()
+    }
+  })
+
+  test('identifies the index and exposes its Marketplace connection action', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: appURL })
     await page.goto('/')
 
-    await expect(page.getByRole('heading', { name: 'Browse AI resources', exact: true })).toBeVisible()
-    await expect(page.getByText(/Every revision is pinned and analyzed before publication.*sync them across your AI tools/)).toBeVisible()
+    await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Use this Marketplace from the CLI', exact: true })).toBeAttached()
-    await expect(page.getByRole('link', { name: 'agent-marketplace CLI', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md#install-from-a-marketplace')
     await expect(page.getByText(/Want to discover resources from the CLI.*Connect this Marketplace/)).toBeVisible()
     await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
     const copyMarketplace = page.getByRole('button', { name: 'Copy Marketplace connection command', exact: true })
     await copyMarketplace.click()
     await expect(page.getByRole('button', { name: 'Marketplace connection command copied', exact: true })).toHaveText('Copied')
-    await expect(page.getByRole('link', { name: 'Open agent-marketplace CLI on GitHub', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace')
+    await expect(page.getByRole('link', { name: 'View agent-marketplace on GitHub', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace')
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
     await expect(page.getByText('01 / connect', { exact: true })).toHaveCount(0)
     await expect(page.getByText('02 / discover', { exact: true })).toHaveCount(0)
     await expect(page.getByText('agent-marketplace search', { exact: true })).toHaveCount(0)
-    await expect(page.getByText(/read-only/i)).toHaveCount(0)
+    await expect(page.getByText('read-only', { exact: true })).toBeVisible()
     const lastResource = page.locator('article').last()
     const unavailableStatus = lastResource.getByRole('button', { name: 'Revoked for deploy-preview. More information' })
     await expect(unavailableStatus).toHaveText('Revoked')

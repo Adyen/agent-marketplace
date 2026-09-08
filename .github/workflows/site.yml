@@ -50,6 +50,7 @@ jobs:
         env:
           SITE_BASE: /agent-marketplace/
         run: |
-          make site-build
-          grep -Fq 'href="/marketplace/"' site/.vitepress/dist/index.html
-          ! grep -Fq 'href="/agent-marketplace/marketplace/"' site/.vitepress/dist/index.html
+          cd site
+          pnpm run build
+          grep -Fq 'href="/marketplace/"' .vitepress/dist/index.html
+          ! grep -Fq 'href="/agent-marketplace/marketplace/"' .vitepress/dist/index.html

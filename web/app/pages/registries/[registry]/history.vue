@@ -37,10 +37,9 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <MarketplaceSkipLink target="registry-history-content" />
     <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Registry', to: overviewPath }, { label: 'History' }]" />
 
-    <main id="registry-history-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
         <h1 ref="heading" tabindex="-1" class="text-2xl font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary">Loading registry history</h1>
         <p class="mt-3 text-sm text-muted">Fetching immutable registry occurrences.</p>
