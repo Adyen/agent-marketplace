@@ -55,6 +55,36 @@ func TestCatalogProjectionGateAndCapabilities(t *testing.T) {
 	}
 }
 
+// TestCatalogETagIsOrderIndependent pins the ETag to the revocation
+// declaration set rather than its slice order. A source backed by a map could
+// otherwise hand back a different order per instance, so replicas of the same
+// deployment would derive different ETags for identical state and never agree
+// on 304 responses.
+func TestCatalogETagIsOrderIndependent(t *testing.T) {
+	declarations := []store.Revocation{
+		{Kind: store.RevocationRegistry, TargetID: "src"},
+		{Kind: store.RevocationCoordinate, TargetID: "mp/src/command/command"},
+		{Kind: store.RevocationRevision, TargetID: "mp/src/skill/skill@sha256:" + strings.Repeat("b", 64)},
+	}
+	baseline := catalogETag(1, declarations)
+	if baseline == "" || !strings.HasPrefix(string(baseline), `"catalog-`) || !strings.HasSuffix(string(baseline), `"`) {
+		t.Fatalf("baseline ETag = %q, want strong quoted validator", baseline)
+	}
+	for i := range declarations {
+		rotated := append(append([]store.Revocation(nil), declarations[i:]...), declarations[:i]...)
+		if got := catalogETag(1, rotated); got != baseline {
+			t.Fatalf("rotation %d ETag = %s, want %s (order must not affect the hash)", i, got, baseline)
+		}
+	}
+	populated := append(append([]store.Revocation(nil), declarations...), store.Revocation{Kind: store.RevocationRegistry, TargetID: "other"})
+	if got := catalogETag(1, populated); got == baseline {
+		t.Fatal("different declaration set produced identical ETag")
+	}
+	if got := catalogETag(2, declarations); got == baseline {
+		t.Fatal("different catalog version produced identical ETag")
+	}
+}
+
 func TestCatalogProjectionHTTPContract(t *testing.T) {
 	ctx := context.Background()
 	meta := sqlite.New(":memory:")

@@ -202,16 +202,18 @@ func (s *Store) loadCatalogCollections(ctx context.Context, resources []store.Ca
 	collections := make(map[catalogCollectionKey]catalogCollectionReferences, len(indexes))
 	for start := 0; start < len(indexes); start += catalogBatchSize {
 		end := min(start+catalogBatchSize, len(indexes))
-		args := make([]any, 0, 3*(end-start))
+		args := make([]any, 0, end-start)
 		values := make([]string, 0, end-start)
 		for _, index := range indexes[start:end] {
 			resource := resources[index]
-			values = append(values, fmt.Sprintf("($%d, $%d, $%d)", len(args)+1, len(args)+2, len(args)+3))
-			args = append(args, resource.ContentDigest, resource.Coordinate.Registry, resource.ContentDigest)
+			values = append(values, fmt.Sprintf("$%d", len(args)+1))
+			args = append(args, resource.ContentDigest)
 		}
+		// collection_revisions.id is the PRIMARY KEY (the content digest), so
+		// no further columns are needed to identify the row.
 		rows, err := s.q.QueryContext(ctx, `SELECT id, registry_id, manifest_digest, members, includes
 			FROM collection_revisions
-			WHERE (id, registry_id, manifest_digest) IN (`+strings.Join(values, ", ")+`)`, args...)
+			WHERE id IN (`+strings.Join(values, ", ")+`)`, args...)
 		if err != nil {
 			return err
 		}

@@ -357,12 +357,28 @@ func encodeCatalogCursor(cursor *store.CatalogProjectionCursor) (CatalogKeysetCu
 }
 
 func (s *Server) catalogETag(version store.CatalogVersion) CatalogETag {
-	hash := sha256.New()
 	var declarations []store.Revocation
 	if s.revocations != nil {
 		declarations = s.revocations.Declarations()
 	}
-	for _, declaration := range declarations {
+	return catalogETag(version, declarations)
+}
+
+// catalogETag hashes the catalog version together with the live revocation
+// declarations. Declarations are sorted by kind and target ID first so the
+// hash depends only on the declaration set, never on the order the source
+// returned; otherwise replicas of the same deployment would derive different
+// ETags for identical state and lose If-None-Match hits.
+func catalogETag(version store.CatalogVersion, declarations []store.Revocation) CatalogETag {
+	sorted := append([]store.Revocation(nil), declarations...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Kind != sorted[j].Kind {
+			return sorted[i].Kind < sorted[j].Kind
+		}
+		return sorted[i].TargetID < sorted[j].TargetID
+	})
+	hash := sha256.New()
+	for _, declaration := range sorted {
 		_, _ = io.WriteString(hash, string(declaration.Kind))
 		_, _ = hash.Write([]byte{0})
 		_, _ = io.WriteString(hash, declaration.TargetID)
