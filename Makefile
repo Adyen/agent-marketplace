@@ -213,10 +213,7 @@ devin-probe:
 		$(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
 
 TUI_QA_PNPM_VERSION := 11.20.0
-TUI_QA_DEFAULT_RUN_ID := tui-qa-$(shell date -u +%Y%m%dT%H%M%SZ)-$(shell sh -c 'echo $$$$')
-TUI_QA_RUN_ID ?= $(TUI_QA_DEFAULT_RUN_ID)
 TUI_QA_BINARY := $(CURDIR)/.local/agent-marketplace/bin/agent-marketplace-tui-qa
-TUI_QA_ARTIFACT_DIR ?= $(CURDIR)/.local/agent-marketplace/qa/tui/$(TUI_QA_RUN_ID)
 
 tui-qa-check:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm $(TUI_QA_PNPM_VERSION) is required for TUI QA" >&2; exit 1; }
@@ -224,9 +221,9 @@ tui-qa-check:
 	cd tools/tui-qa && pnpm check
 
 tui-qa: tui-qa-check
-	@mkdir -p "$(dir $(TUI_QA_BINARY))" "$(TUI_QA_ARTIFACT_DIR)"
+	@mkdir -p "$(dir $(TUI_QA_BINARY))"
 	CGO_ENABLED=0 $(GO) build -tags e2e $(LDFLAGS) -o "$(TUI_QA_BINARY)" $(CMD)
-	cd tools/tui-qa && AM_TUI_QA_REPO_ROOT="$(CURDIR)" AM_TUI_QA_BINARY="$(TUI_QA_BINARY)" AM_TUI_QA_ARTIFACT_DIR="$(TUI_QA_ARTIFACT_DIR)" AM_TUI_QA_RUN_ID="$(TUI_QA_RUN_ID)" pnpm qa
+	cd tools/tui-qa && AM_TUI_QA_REPO_ROOT="$(CURDIR)" AM_TUI_QA_BINARY="$(TUI_QA_BINARY)" pnpm qa
 
 # Website.
 #

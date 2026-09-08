@@ -185,6 +185,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
+	m.rebuildOpenBundle()
 	if msg.inventoryResult != nil {
 		pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
 	}
@@ -209,7 +210,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
-		if !m.belowMinimumTerminal() && m.pane == paneDetail && msg.Width != m.detailRenderWidth {
+		if !m.belowMinimumTerminal() && m.pane == paneDetail && previewWidthFor(msg.Width) != m.detailRenderWidth {
 			if rerender := m.rerenderDetailAtWidth(msg.Width); rerender != nil {
 				m.detailStickyBottom = detailAtBottom
 				return m, rerender
@@ -578,10 +579,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case detailContentMsg:
-		if m.pane != paneDetail || !m.acceptsRequest(requestDetail, msg.generation) {
+		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
 		}
-		if msg.width > 0 && msg.width != m.width {
+		if msg.path == "" {
+			m.detailLegacyRender = true
+		}
+		if !m.detailLegacyRender && msg.width > 0 && msg.width != m.previewWidth() {
 			if rerender := m.rerenderDetailAtWidth(m.width); rerender != nil {
 				return m, rerender
 			}
@@ -881,10 +885,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if r, ok := m.selectedRow(); ok {
-			generation := m.beginRequest(requestDetail)
 			m.enterDetailPane()
+			generation := m.beginRequest(requestDetail)
 			recordActionSpan(m.ctx, "browse", map[string]string{"tab": tabName(m.activeTab), "view": "detail", "resource.kind": r.Artifact.Kind.String()})
-			return m, loadDetailContent(r, generation, m.width, false)
+			if m.bundle == nil || m.detailSelectedPath == "" {
+				return m, nil
+			}
+			return m, loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, m.previewWidth(), false)
 		}
 		return m, nil
 
@@ -1057,64 +1064,215 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *Model) rebuildOpenBundle() {
+	if m.pane != paneDetail || m.detailKey == "" {
+		return
+	}
+	var current row
+	found := false
+	for _, r := range m.rows {
+		if rowKey(r) == m.detailKey {
+			current, found = r, true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+	tree, err := bundleTreeForRow(current)
+	if err != nil {
+		m.bundle = nil
+		m.detailSelectedPath = ""
+		m.cancelRequest(requestDetail)
+		m.detailViewport.SetContent("Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine))
+		return
+	}
+	selected := m.detailSelectedPath
+	if selected != "" && tree.restoreSelection(selected) {
+		m.bundle = tree
+		m.detailSelectedPath = selected
+		m.ensureBundleCursorVisible()
+		return
+	}
+	selected = tree.selectedPath()
+	tree.selected = selected
+	tree.rebuild()
+	m.bundle = tree
+	m.detailSelectedPath = selected
+	m.ensureBundleCursorVisible()
+}
+
 func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.DetailBack):
 		m.pane = paneList
 		m.detailKey = ""
+		m.detailSelectedPath = ""
+		m.bundle = nil
 		m.cancelRequest(requestDetail)
 		return m, nil
-
+	case key.Matches(msg, m.keys.Up):
+		if m.bundle == nil {
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
+		}
+		return m.moveBundleCursor(-1)
+	case key.Matches(msg, m.keys.Down):
+		if m.bundle == nil {
+			var cmd tea.Cmd
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			return m, cmd
+		}
+		return m.moveBundleCursor(1)
 	case key.Matches(msg, m.keys.Top):
-		m.detailViewport.GotoTop()
-		m.detailStickyBottom = false
+		if m.bundle != nil {
+			m.bundle.top()
+			m.ensureBundleCursorVisible()
+		} else {
+			m.detailViewport.GotoTop()
+		}
 		return m, nil
-
 	case key.Matches(msg, m.keys.Bottom):
-		m.detailViewport.GotoBottom()
+		if m.bundle != nil {
+			m.bundle.bottom()
+			m.ensureBundleCursorVisible()
+		} else {
+			m.detailViewport.GotoBottom()
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Collapse):
+		if m.bundle != nil {
+			m.bundle.collapse()
+			m.ensureBundleCursorVisible()
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Expand):
+		if m.bundle != nil {
+			m.bundle.expand()
+			m.ensureBundleCursorVisible()
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Enter):
+		if m.bundle != nil {
+			before := m.bundle.selectedPath()
+			m.bundle.toggle()
+			if entry, ok := m.bundle.selectedEntry(); ok && !entry.IsDir {
+				m.detailSelectedPath = entry.RelPath
+			}
+			m.ensureBundleCursorVisible()
+			if m.detailSelectedPath != before {
+				return m.queueBundlePreview(false)
+			}
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.PageDown), key.Matches(msg, m.keys.PageUp):
 		m.detailStickyBottom = false
-		return m, nil
+		if m.handleViewportPageKey(msg, &m.detailViewport) {
+			return m, nil
+		}
 	}
-	// Delegate all other keys (up/down, j/k, pgup/pgdn, home/end, mouse
-	// wheel) to the viewport, which handles scroll offset and clamping.
+	// Preview scrolling remains available through page keys and viewport input.
 	m.detailStickyBottom = false
-	if m.handleViewportPageKey(msg, &m.detailViewport) {
-		return m, nil
-	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
 }
 
-// enterDetailPane transitions to the full-screen detail view. The viewport
-// is shown immediately with a "Loading…" placeholder; the actual SKILL.md
-// read + glamour render happens in a background tea.Cmd so the UI does not
-// block on file I/O or markdown rendering.
+func (m Model) moveBundleCursor(delta int) (tea.Model, tea.Cmd) {
+	if m.bundle == nil {
+		return m, nil
+	}
+	before := m.bundle.selectedPath()
+	m.bundle.move(delta)
+	m.ensureBundleCursorVisible()
+	if selected := m.bundle.selectedPath(); selected != "" && selected != before {
+		m.detailSelectedPath = selected
+		return m.queueBundlePreview(false)
+	}
+	return m, nil
+}
+
+func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
+	if m.bundle == nil || m.detailSelectedPath == "" {
+		return m, nil
+	}
+	for _, r := range m.rows {
+		if rowKey(r) == m.detailKey {
+			generation := m.beginRequest(requestDetail)
+			m.detailViewport.SetContent("Loading…")
+			return m, loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) ensureBundleCursorVisible() {
+	if m.bundle == nil {
+		return
+	}
+	height := max(1, m.height-1)
+	if m.bundle.cursor < m.bundleOffset {
+		m.bundleOffset = m.bundle.cursor
+	}
+	if m.bundle.cursor >= m.bundleOffset+height {
+		m.bundleOffset = m.bundle.cursor - height + 1
+	}
+	m.bundleOffset = min(max(0, m.bundleOffset), max(0, len(m.bundle.entries())-height))
+}
+
+// enterDetailPane opens the split browser and initializes the filesystem tree.
+// Tree inspection is bounded to the root directory; selected-file rendering is
+// scheduled separately so file I/O and Glamour never block the event loop.
 func (m *Model) enterDetailPane() {
 	m.pane = paneDetail
+	m.detailLegacyRender = false
+	m.detailSelectedPath = ""
 	if r, ok := m.selectedRow(); ok {
 		m.detailKey = rowKey(r)
+		bundle, err := bundleTreeForRow(r)
+		if err != nil {
+			m.bundle = nil
+			m.detailViewport.SetContent("Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine))
+		} else {
+			m.bundle = bundle
+			m.detailSelectedPath = bundle.selectedPath()
+		}
 	} else {
 		m.detailKey = ""
+		m.bundle = nil
 	}
-
+	m.bundleOffset = 0
 	m.detailViewport.Width = m.width
 	m.detailViewport.Height = max(1, m.height-1)
-	m.detailRenderWidth = m.width
+	m.detailRenderWidth = m.previewWidth()
 	m.detailStickyBottom = false
-	m.detailViewport.SetContent("Loading…")
+	if m.bundle != nil && m.detailSelectedPath != "" {
+		m.detailViewport.SetContent("Loading…")
+	}
 	m.detailViewport.GotoTop()
 }
+
+func previewWidthFor(width int) int {
+	_, preview := paneWidths(width)
+	return max(1, preview-1)
+}
+
+func (m Model) previewWidth() int { return previewWidthFor(m.width) }
 
 func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 	if m.detailKey == "" {
 		return nil
 	}
 	for _, r := range m.rows {
-		if rowKey(r) == m.detailKey && r.Artifact.Path != "" {
-			generation := m.beginRequest(requestDetail)
+		if rowKey(r) != m.detailKey || r.Artifact.Path == "" {
+			continue
+		}
+		generation := m.beginRequest(requestDetail)
+		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
 			return loadDetailContent(r, generation, width, true)
 		}
+		return loadBundleDetailContent(r, m.bundle.root, m.detailSelectedPath, generation, previewWidthFor(width), true)
 	}
 	return nil
 }
@@ -1175,7 +1333,18 @@ func (m Model) View() string {
 	case paneMarketplaceConsent:
 		return fitTerminalWithFooter(renderMarketplaceConsent(m), "↑/↓/page · y install · n/esc cancel · ^C quit", m.width, m.height)
 	case paneDetail:
-		return fitTerminalWithFooter(m.detailViewport.View(), "esc/q back · ↑/↓ or ctrl-d/u scroll · Ctrl+C quit", m.width, m.height)
+		listWidth, previewWidth := paneWidths(m.width)
+		bodyHeight := max(1, m.height-1)
+		preview := m.detailViewport
+		preview.Width = max(1, previewWidth-1)
+		preview.Height = bodyHeight
+		tree := renderBundleTree(m, listWidth, bodyHeight)
+		joined := lipgloss.JoinHorizontal(lipgloss.Top, tree, preview.View())
+		footer := "esc/q back · ↑/↓/j/k navigate · h/l fold · enter toggle · pgup/pgdn preview · Ctrl+C quit"
+		if compactTerminalLayout(m) {
+			footer = "esc/q back · Ctrl+C quit"
+		}
+		return fitTerminalWithFooter(joined, footer, m.width, m.height)
 	}
 
 	base := m.renderBaseScreen()

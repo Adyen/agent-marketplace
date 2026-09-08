@@ -189,7 +189,7 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("ResolveTelemetryConfig: %v", err)
 	}
 
-	path, err := Preview(context.Background(), tmcfg.LevelBasic, state)
+	path, err := Preview(context.Background(), tmcfg.LevelBasic, state, "3.0.4")
 	if err != nil {
 		t.Fatalf("Preview basic: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("basic preview should not contain inventory, got:\n%s", content)
 	}
 
-	path, err = Preview(context.Background(), tmcfg.LevelDetailed, state)
+	path, err = Preview(context.Background(), tmcfg.LevelDetailed, state, "3.0.4")
 	if err != nil {
 		t.Fatalf("Preview detailed: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestPreview(t *testing.T) {
 		}
 	}
 
-	path, err = Preview(context.Background(), tmcfg.LevelDiagnostic, state)
+	path, err = Preview(context.Background(), tmcfg.LevelDiagnostic, state, "3.0.4")
 	if err != nil {
 		t.Fatalf("Preview diagnostic: %v", err)
 	}

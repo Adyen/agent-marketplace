@@ -126,7 +126,7 @@ Roots are `<repo>/.devin` and `~/.config/devin`. Outputs:
 | Hook | repo `hooks.v1.json`; machine `config.json` → `hooks` member |
 | MCP server | `mcp_config.json` (same relative path in both scopes) |
 
-Rules are not a selectable kind and are unsupported by this target. Devin is symlink-only: `materialization.mode: file` is refused for it (`materialize.devin.symlink-required`) instead of falling back to regular files.
+Rules are not a selectable kind and are unsupported by this target. The links shown above are the default; `materialization.mode: file` installs regular skill/command trees and subagent files through the same generic materializer used by other targets. Shared hooks and MCP configuration retain ownership-safe reconciliation in both modes.
 
 Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
 

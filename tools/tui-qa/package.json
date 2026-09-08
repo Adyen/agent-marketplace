@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck && tui-test --help",
-    "qa": "pnpm build && node --test dist/tests/non-tty.test.js && tui-test && node --test dist/tests/privacy.test.js",
+    "qa": "pnpm build && pnpm qa:compiled",
+    "qa:compiled": "node --test dist/tests/*.test.js && tui-test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

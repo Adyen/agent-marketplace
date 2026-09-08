@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,79 +83,81 @@ func TestDevinAllFiveKindsMaterializeAtCanonicalPaths(t *testing.T) {
 		if machineScope {
 			name = "user"
 		}
-		t.Run(name, func(t *testing.T) {
-			repoRoot, home := devinEnv(t)
+		for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+			t.Run(name+"/"+string(mode), func(t *testing.T) {
+				repoRoot, home := devinEnv(t)
 
-			resolved := []resolver.ResolvedArtifact{
-				devinResolved("my-skill", ir.NewSkill("my-skill", "A skill", "Skill body", nil, nil, ir.SourceRef{}), machineScope),
-				devinResolved("my-command", ir.NewCommand("my-command", "A command", "Command body", nil, ir.SourceRef{}), machineScope),
-				devinResolved("my-agent", ir.NewSubagent("my-agent", "An agent", "Agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machineScope),
-				devinResolved("my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), machineScope),
-				devinResolved("my-mcp", ir.NewMcpServer("my-mcp", "server-bin", []string{"--stdio"}, nil, nil, ir.SourceRef{}), machineScope),
-			}
-
-			report, err := Run(context.Background(), repoRoot, resolved)
-			if err != nil {
-				t.Fatalf("Run: %v", err)
-			}
-			requireNoErrorDiags(t, report.Diags)
-
-			root := devinProjectRoot(repoRoot)
-			hooksFile := harness.DevinProjectHooksFile
-			if machineScope {
-				root = devinUserRoot(home)
-				hooksFile = harness.DevinUserConfigFile
-			}
-
-			// Skills and converted commands are directory symlinks at
-			// skills/<name>; flat subagents are file symlinks at agents/<name>.md.
-			for _, rel := range []string{
-				filepath.Join("skills", "my-skill"),
-				filepath.Join("skills", "my-command"),
-				filepath.Join("agents", "my-agent.md"),
-			} {
-				path := filepath.Join(root, rel)
-				info, lerr := os.Lstat(path)
-				if lerr != nil {
-					t.Fatalf("expected %s to exist: %v", path, lerr)
+				resolved := []resolver.ResolvedArtifact{
+					devinResolved("my-skill", ir.NewSkill("my-skill", "A skill", "Skill body", nil, nil, ir.SourceRef{}), machineScope),
+					devinResolved("my-command", ir.NewCommand("my-command", "A command", "Command body", nil, ir.SourceRef{}), machineScope),
+					devinResolved("my-agent", ir.NewSubagent("my-agent", "An agent", "Agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machineScope),
+					devinResolved("my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), machineScope),
+					devinResolved("my-mcp", ir.NewMcpServer("my-mcp", "server-bin", []string{"--stdio"}, nil, nil, ir.SourceRef{}), machineScope),
 				}
-				if info.Mode()&os.ModeSymlink == 0 {
-					t.Fatalf("%s is not a symlink (mode %v); Devin has no real-file fallback", path, info.Mode())
+
+				report, err := Run(context.Background(), repoRoot, resolved, WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode}))
+				if err != nil {
+					t.Fatalf("Run: %v", err)
 				}
-			}
-			if _, err := os.Stat(filepath.Join(root, "skills", "my-command", "SKILL.md")); err != nil {
-				t.Fatalf("expected the converted command to resolve to skills/my-command/SKILL.md: %v", err)
-			}
-			// The command-provenance extension has to survive materialization.
-			body := readFileString(t, filepath.Join(root, "skills", "my-command", "SKILL.md"))
-			if !strings.Contains(body, "x-agent-marketplace-kind: command") {
-				t.Fatalf("converted command SKILL.md lost its provenance extension:\n%s", body)
-			}
+				requireNoErrorDiags(t, report.Diags)
 
-			hooks := readFileString(t, filepath.Join(root, hooksFile))
-			if !strings.Contains(hooks, "PostToolUse") {
-				t.Fatalf("%s does not contain the compiled hook event:\n%s", hooksFile, hooks)
-			}
-			if machineScope && !strings.Contains(hooks, `"hooks"`) {
-				t.Fatalf("user-scope hooks must live under config.json#hooks:\n%s", hooks)
-			}
-			if !machineScope && strings.Contains(hooks, `"hooks"`) {
-				t.Fatalf("project-scope hooks.v1.json must hold the hook object directly:\n%s", hooks)
-			}
-
-			mcp := readFileString(t, filepath.Join(root, harness.DevinMcpConfigFile))
-			if !strings.Contains(mcp, `"my-mcp"`) || !strings.Contains(mcp, `"mcpServers"`) {
-				t.Fatalf("%s does not contain the compiled MCP entry:\n%s", harness.DevinMcpConfigFile, mcp)
-			}
-
-			// No `_managed_by` marker may be injected into any Devin aggregate:
-			// ownership is proven from the durable store, never inferred.
-			for _, rel := range []string{hooksFile, harness.DevinMcpConfigFile} {
-				if strings.Contains(readFileString(t, filepath.Join(root, rel)), managedByField) {
-					t.Fatalf("%s carries an in-file ownership marker; Devin ownership must be proven, not inferred", rel)
+				root := devinProjectRoot(repoRoot)
+				hooksFile := harness.DevinProjectHooksFile
+				if machineScope {
+					root = devinUserRoot(home)
+					hooksFile = harness.DevinUserConfigFile
 				}
-			}
-		})
+
+				// Skills and converted commands are directories at skills/<name>;
+				// flat subagents are files at agents/<name>.md, linked or copied.
+				for _, rel := range []string{
+					filepath.Join("skills", "my-skill"),
+					filepath.Join("skills", "my-command"),
+					filepath.Join("agents", "my-agent.md"),
+				} {
+					path := filepath.Join(root, rel)
+					info, lerr := os.Lstat(path)
+					if lerr != nil {
+						t.Fatalf("expected %s to exist: %v", path, lerr)
+					}
+					if (info.Mode()&os.ModeSymlink != 0) != (mode == config.MaterializationModeSymlink) {
+						t.Fatalf("%s has mode %v, want installation mode %s", path, info.Mode(), mode)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(root, "skills", "my-command", "SKILL.md")); err != nil {
+					t.Fatalf("expected the converted command to resolve to skills/my-command/SKILL.md: %v", err)
+				}
+				// The command-provenance extension has to survive materialization.
+				body := readFileString(t, filepath.Join(root, "skills", "my-command", "SKILL.md"))
+				if !strings.Contains(body, "x-agent-marketplace-kind: command") {
+					t.Fatalf("converted command SKILL.md lost its provenance extension:\n%s", body)
+				}
+
+				hooks := readFileString(t, filepath.Join(root, hooksFile))
+				if !strings.Contains(hooks, "PostToolUse") {
+					t.Fatalf("%s does not contain the compiled hook event:\n%s", hooksFile, hooks)
+				}
+				if machineScope && !strings.Contains(hooks, `"hooks"`) {
+					t.Fatalf("user-scope hooks must live under config.json#hooks:\n%s", hooks)
+				}
+				if !machineScope && strings.Contains(hooks, `"hooks"`) {
+					t.Fatalf("project-scope hooks.v1.json must hold the hook object directly:\n%s", hooks)
+				}
+
+				mcp := readFileString(t, filepath.Join(root, harness.DevinMcpConfigFile))
+				if !strings.Contains(mcp, `"my-mcp"`) || !strings.Contains(mcp, `"mcpServers"`) {
+					t.Fatalf("%s does not contain the compiled MCP entry:\n%s", harness.DevinMcpConfigFile, mcp)
+				}
+
+				// No `_managed_by` marker may be injected into any Devin aggregate:
+				// ownership is proven from the durable store, never inferred.
+				for _, rel := range []string{hooksFile, harness.DevinMcpConfigFile} {
+					if strings.Contains(readFileString(t, filepath.Join(root, rel)), managedByField) {
+						t.Fatalf("%s carries an in-file ownership marker; Devin ownership must be proven, not inferred", rel)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -681,32 +684,57 @@ func TestDevinErroringHookPostponesPruneForThatFileOnly(t *testing.T) {
 	}
 }
 
-// TestDevinFileModeIsRefused pins "no real-file fallback is authorized": file
-// mode is an error, not a silent degradation to copies.
-func TestDevinFileModeIsRefused(t *testing.T) {
-	repoRoot, _ := devinEnv(t)
-	resolved := []resolver.ResolvedArtifact{
-		devinResolved("skill", ir.NewSkill("skill", "d", "b", nil, nil, ir.SourceRef{}), false),
-	}
-	report, err := Run(context.Background(), repoRoot, resolved,
-		WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}))
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	d, ok := findDiag(report.Diags, diag.CodeMaterializeDevinSymlinkRequired)
-	if !ok {
-		t.Fatalf("expected %s, got %v", diag.CodeMaterializeDevinSymlinkRequired, report.Diags)
-	}
-	if d.Severity != diag.SeverityError {
-		t.Fatalf("%s severity = %v, want error", d.Code, d.Severity)
-	}
-	if d.Target != string(hcc.TargetDevin) {
-		t.Fatalf("%s target = %q, want %q", d.Code, d.Target, hcc.TargetDevin)
-	}
-	// Nothing may be written as a regular file.
-	path := filepath.Join(devinProjectRoot(repoRoot), "skills", "skill")
-	if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("%s was written as a regular %v; Devin has no real-file fallback", path, info.Mode())
+// TestDevinResourceModeMigration exercises the generic installation contract
+// for both directory-shaped commands and flat subagent profiles.
+func TestDevinResourceModeMigration(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(fmt.Sprintf("machine=%v", machine), func(t *testing.T) {
+			repoRoot, home := devinEnv(t)
+			root := devinProjectRoot(repoRoot)
+			if machine {
+				root = devinUserRoot(home)
+			}
+			resolved := []resolver.ResolvedArtifact{
+				devinResolved("command", ir.NewCommand("command", "d", "command body", nil, ir.SourceRef{}), machine),
+				devinResolved("agent", ir.NewSubagent("agent", "d", "agent body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{}), machine),
+			}
+			paths := []string{"skills/command", "agents/agent.md"}
+			for _, mode := range []config.MaterializationMode{config.MaterializationModeFile, config.MaterializationModeSymlink, config.MaterializationModeFile} {
+				options := []RunOption{WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})}
+				report, err := Run(context.Background(), repoRoot, resolved, options...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				requireNoErrorDiags(t, report.Diags)
+				for _, rel := range paths {
+					info, err := os.Lstat(filepath.Join(root, rel))
+					if err != nil || (info.Mode()&os.ModeSymlink != 0) != (mode == config.MaterializationModeSymlink) {
+						t.Fatalf("%s in %s mode: info=%v err=%v", rel, mode, info, err)
+					}
+				}
+				if got := readFileString(t, filepath.Join(root, "skills/command/SKILL.md")); !strings.Contains(got, "x-agent-marketplace-kind: command") || !strings.Contains(got, "command body") {
+					t.Fatalf("converted command lost content: %s", got)
+				}
+				if got := readFileString(t, filepath.Join(root, "agents/agent.md")); !strings.Contains(got, "agent body") {
+					t.Fatalf("subagent lost content: %s", got)
+				}
+				check, err := Run(context.Background(), repoRoot, resolved, append(options, WithDryRun())...)
+				if err != nil || !check.InSync() {
+					t.Fatalf("mode %s has drift: report=%+v err=%v", mode, check, err)
+				}
+			}
+			// Unmodified regular outputs remain owned and can be pruned.
+			report, err := Run(context.Background(), repoRoot, nil, WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireNoErrorDiags(t, report.Diags)
+			for _, rel := range paths {
+				if _, err := os.Lstat(filepath.Join(root, rel)); !os.IsNotExist(err) {
+					t.Fatalf("stale %s was not pruned: %v", rel, err)
+				}
+			}
+		})
 	}
 }
 

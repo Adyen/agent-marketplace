@@ -37,6 +37,14 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 			if err := proto.Unmarshal(body, &req); err != nil {
 				t.Errorf("unmarshal metrics: %v", err)
 			}
+			if len(req.ResourceMetrics) == 0 {
+				t.Error("expected resource metrics")
+			}
+			for _, resource := range req.ResourceMetrics {
+				if got := stringAttributes(resource.GetResource().GetAttributes())["cli.version"]; got != "v3.0.4" {
+					t.Errorf("metric cli.version = %q, want v3.0.4", got)
+				}
+			}
 			mu.Lock()
 			gotMetrics = true
 			mu.Unlock()
@@ -44,6 +52,14 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 			var req tracepb.ExportTraceServiceRequest
 			if err := proto.Unmarshal(body, &req); err != nil {
 				t.Errorf("unmarshal traces: %v", err)
+			}
+			if len(req.ResourceSpans) == 0 {
+				t.Error("expected resource spans")
+			}
+			for _, resource := range req.ResourceSpans {
+				if got := stringAttributes(resource.GetResource().GetAttributes())["cli.version"]; got != "v3.0.4" {
+					t.Errorf("trace cli.version = %q, want v3.0.4", got)
+				}
 			}
 			mu.Lock()
 			gotTraces = true
@@ -67,7 +83,7 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	tel, err := New(ctx, state, logger)
+	tel, err := New(ctx, state, logger, WithVersion("v3.0.4"))
 	if err != nil {
 		t.Fatalf("new telemetry: %v", err)
 	}

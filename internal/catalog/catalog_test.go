@@ -633,6 +633,38 @@ metadata:
 	}
 }
 
+func TestLoadNormalizesEntryPathsForRelativeDirectory(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills", "relative-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: relative-skill\ndescription: Relative path\n---\nBody\n")
+
+	workingDir, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relativeDir, err := filepath.Rel(workingDir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := Load(relativeDir, "claude")
+	if err != nil {
+		t.Fatalf("Load(%q, \"claude\") = _, %v", relativeDir, err)
+	}
+	if len(cat.Entries) != 1 {
+		t.Fatalf("expected one entry, got %d: %#v", len(cat.Entries), cat.Entries)
+	}
+	if !filepath.IsAbs(cat.Entries[0].Path) {
+		t.Fatalf("entry path %q is not absolute", cat.Entries[0].Path)
+	}
+	wantPath := filepath.Join(dir, "skills", "relative-skill", "SKILL.md")
+	if cat.Entries[0].Path != wantPath {
+		t.Errorf("entry path = %q, want %q", cat.Entries[0].Path, wantPath)
+	}
+}
+
 func TestLoadRegistriesCachedSkipsCloneOrPullForWarmCache(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

@@ -10,6 +10,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -400,7 +401,7 @@ func TestScanForSubBundles(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "gamma", "delta", "skills", "z", "SKILL.md"), "---\nname: z\n---\nZ\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(dir, "")
 
 	if len(bundles) != 3 {
 		t.Fatalf("expected 3 sub-bundles, got %d: %v", len(bundles), bundles)
@@ -412,8 +413,8 @@ func TestScanForSubBundles(t *testing.T) {
 		filepath.Join(dir, "gamma", "delta"),
 	}
 	for i, want := range expected {
-		if bundles[i] != want {
-			t.Errorf("bundles[%d] = %q, want %q", i, bundles[i], want)
+		if bundles[i].path != want {
+			t.Errorf("bundles[%d] = %q, want %q", i, bundles[i].path, want)
 		}
 	}
 }
@@ -435,13 +436,13 @@ func TestScanForSubBundles_StopsAtBundleRoot(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "alpha", "sub-skill", "skills", "inner", "SKILL.md"), "---\nname: inner\n---\nI\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(dir, "")
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (alpha only, not descending further), got %d: %v", len(bundles), bundles)
 	}
-	if bundles[0] != filepath.Join(dir, "alpha") {
-		t.Errorf("bundle = %q, want %q", bundles[0], filepath.Join(dir, "alpha"))
+	if bundles[0].path != filepath.Join(dir, "alpha") {
+		t.Errorf("bundle = %q, want %q", bundles[0].path, filepath.Join(dir, "alpha"))
 	}
 }
 
@@ -630,6 +631,110 @@ func TestDiscover_SubBundlesIgnoredSuppressedWhenCatalogCoversThem(t *testing.T)
 	}
 }
 
+// TestDiscover_BareSkillsContainerWithRulesDoesNotWarn verifies that rules
+// directories inside individual bare skills do not make those skill
+// directories look like independent sub-bundles.
+func TestDiscover_BareSkillsContainerWithRulesDoesNotWarn(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		skillDir := filepath.Join(dir, name)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(skillDir, "SKILL.md"), fmt.Sprintf("---\nname: %s\ndescription: %s skill\n---\nBody\n", name, name))
+	}
+	for _, name := range []string{"alpha", "gamma"} {
+		rulesDir := filepath.Join(dir, name, "rules")
+		if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(rulesDir, "conventions.md"), "# Conventions\n")
+		examplesDir := filepath.Join(rulesDir, "examples")
+		if err := os.MkdirAll(examplesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(examplesDir, "SKILL.md"), fmt.Sprintf("---\nname: %s-rules-example\ndescription: Nested rules example\n---\nNested skill\n", name))
+	}
+
+	detected, ok := ingest.Autodetect(os.DirFS(dir))
+	if !ok || detected != ingest.HarnessClaude {
+		t.Fatalf("ingest.Autodetect(%q) = (%q, %v), want (%q, true)", dir, detected, ok, ingest.HarnessClaude)
+	}
+
+	result, err := Discover(dir, "")
+	if err != nil {
+		t.Fatalf("Discover(%q, autodetect) = _, %v", dir, err)
+	}
+	if len(result.SubBundles) != 0 {
+		t.Fatalf("expected no sub-bundles, got %#v", result.SubBundles)
+	}
+	if len(result.Entries) != 3 {
+		t.Fatalf("expected 3 skills, got %d: %#v", len(result.Entries), result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Fatalf("unexpected sub-bundles-ignored warning: %v", malformed.Error)
+		}
+	}
+}
+
+// TestHasBundleRoot_RootSkillPreservesExplicitMarkers verifies that a root
+// skill is not promoted by an ambiguous bare asset directory, while explicit
+// plugin and workspace markers still take precedence.
+func TestHasBundleRoot_RootSkillPreservesExplicitMarkers(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, dir string)
+		wantBundle bool
+	}{
+		{
+			name: "nested bare rules directory",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(dir, "rules"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(dir, "rules", "conventions.md"), "# Conventions\n")
+			},
+			wantBundle: false,
+		},
+		{
+			name: "explicit plugin manifest",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(dir, ".claude-plugin", "plugin.json"), "{}\n")
+			},
+			wantBundle: true,
+		},
+		{
+			name: "canonical workspace marker",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				workspaceSkill := filepath.Join(dir, ".claude", "skills", "workspace-skill")
+				if err := os.MkdirAll(workspaceSkill, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, filepath.Join(workspaceSkill, "SKILL.md"), "---\nname: workspace-skill\n---\nBody\n")
+			},
+			wantBundle: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "SKILL.md"), "---\nname: root-skill\n---\nBody\n")
+			test.setup(t, dir)
+			if got := hasBundleRoot(dir); got != test.wantBundle {
+				t.Fatalf("hasBundleRoot() = %v, want %v", got, test.wantBundle)
+			}
+		})
+	}
+}
+
 // TestCatalogCoversSubBundles verifies the catalogCoversSubBundles helper.
 func TestCatalogCoversSubBundles(t *testing.T) {
 	dir := t.TempDir()
@@ -663,6 +768,85 @@ func TestCatalogCoversSubBundles(t *testing.T) {
 	// No sub-bundles should return true.
 	if !catalogCoversSubBundles(entries, dir, nil) {
 		t.Fatal("expected catalogCoversSubBundles to return true for no sub-bundles")
+	}
+}
+
+func TestCatalogCoversSubBundlesSupportsPathFormsAndRejectsEscapes(t *testing.T) {
+	dir := t.TempDir()
+	goDir := filepath.Join(dir, "go")
+	pythonDir := filepath.Join(dir, "python")
+
+	relativeEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "go-review", Path: "go/go-review/SKILL.md"},
+		{Kind: ir.KindSkill, Name: "python-review", Path: "python/python-review/SKILL.md"},
+	}
+	absoluteEntries := []Entry{
+		{Kind: ir.KindSkill, Name: "go-review", Path: filepath.Join(goDir, "go-review", "SKILL.md")},
+		{Kind: ir.KindSkill, Name: "python-review", Path: filepath.Join(pythonDir, "python-review", "SKILL.md")},
+	}
+
+	tests := []struct {
+		name        string
+		entries     []Entry
+		subBundles  []string
+		wantCovered bool
+	}{
+		{
+			name:        "relative entries and relative sub-bundles",
+			entries:     relativeEntries,
+			subBundles:  []string{"go", "python"},
+			wantCovered: true,
+		},
+		{
+			name:        "absolute entries and absolute sub-bundles",
+			entries:     absoluteEntries,
+			subBundles:  []string{goDir, pythonDir},
+			wantCovered: true,
+		},
+		{
+			name:        "absolute entries and relative sub-bundles",
+			entries:     absoluteEntries,
+			subBundles:  []string{"go", "python"},
+			wantCovered: true,
+		},
+		{
+			name:        "relative entries and absolute sub-bundles",
+			entries:     relativeEntries,
+			subBundles:  []string{goDir, pythonDir},
+			wantCovered: true,
+		},
+		{
+			name:        "component boundary",
+			entries:     []Entry{{Kind: ir.KindSkill, Name: "go-other", Path: "go-other/SKILL.md"}},
+			subBundles:  []string{"go"},
+			wantCovered: false,
+		},
+		{
+			name:        "entry outside root",
+			entries:     []Entry{{Kind: ir.KindSkill, Name: "outside", Path: filepath.Join(dir, "..", "outside", "SKILL.md")}},
+			subBundles:  []string{"go"},
+			wantCovered: false,
+		},
+		{
+			name:        "sub-bundle outside root",
+			entries:     relativeEntries,
+			subBundles:  []string{filepath.Join(dir, "..", "outside")},
+			wantCovered: false,
+		},
+		{
+			name:        "relative sub-bundle escape",
+			entries:     relativeEntries,
+			subBundles:  []string{"../outside"},
+			wantCovered: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := catalogCoversSubBundles(test.entries, dir, test.subBundles); got != test.wantCovered {
+				t.Fatalf("catalogCoversSubBundles() = %v, want %v", got, test.wantCovered)
+			}
+		})
 	}
 }
 
@@ -711,19 +895,207 @@ func TestScanForSubBundles_SkipsHarnessWorkspaceDirs(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "other", "SKILL.md"), "---\nname: other\n---\nO\n")
 
+	// .devin/ with skills inside — also workspace form.
+	if err := os.MkdirAll(filepath.Join(dir, ".devin", "skills", "devin-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".devin", "skills", "devin-skill", "SKILL.md"), "---\nname: devin-skill\n---\nD\n")
+
+	// .agents/ with skills inside — also workspace form.
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills", "agents-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".agents", "skills", "agents-skill", "SKILL.md"), "---\nname: agents-skill\n---\nA\n")
+
 	// A real sub-bundle should still be found.
 	if err := os.MkdirAll(filepath.Join(dir, "my-plugin", "skills", "x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "my-plugin", "skills", "x", "SKILL.md"), "---\nname: x\n---\nX\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(dir, "")
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (my-plugin only), got %d: %v", len(bundles), bundles)
 	}
-	if bundles[0] != filepath.Join(dir, "my-plugin") {
-		t.Errorf("bundle = %q, want %q", bundles[0], filepath.Join(dir, "my-plugin"))
+	if bundles[0].path != filepath.Join(dir, "my-plugin") {
+		t.Errorf("bundle = %q, want %q", bundles[0].path, filepath.Join(dir, "my-plugin"))
+	}
+}
+
+func TestDiscoverSubBundleEvidence(t *testing.T) {
+	const command = "---\nname: review\ndescription: Review\n---\nReview"
+	for _, tc := range []struct {
+		name        string
+		files       map[string]string
+		wantWarning bool
+	}{
+		{"unrelated agents directory", map[string]string{"automation/agents/runner.sh": "exit 0"}, false},
+		{"unrelated commands directory", map[string]string{"automation/commands/build.sh": "exit 0"}, false},
+		{"unrelated hooks directory", map[string]string{"automation/hooks/pre-commit": "exit 0"}, false},
+		{"empty native aggregate", map[string]string{"automation/.mcp.json": "{}"}, false},
+		{"real command", map[string]string{"plugin/commands/review.md": command}, true},
+		{"malformed skill", map[string]string{"plugin/skills/broken/SKILL.md": "---\nname: [\n---\nBroken"}, true},
+		{"malformed manifest", map[string]string{"plugin/.claude-plugin/plugin.json": "{"}, true},
+		{"malformed hooks", map[string]string{"plugin/hooks/hooks.json": "{"}, true},
+		{"metadata and genuine bundle", map[string]string{".github/agents/review.md": command, "plugin/commands/review.md": command}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeDiscoveryFiles(t, dir, tc.files)
+			writeDiscoveryFiles(t, dir, map[string]string{"commands/review.md": command})
+			result, err := Discover(dir, "claude")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Entries) != 1 || result.Entries[0].Name != "review" || len(result.SubBundles) != 0 {
+				t.Fatalf("expected only the root command, got %#v", result)
+			}
+			warnings := 0
+			for _, malformed := range result.Malformed {
+				if malformed.DirName == "catalog.discover.sub-bundles-ignored" {
+					warnings++
+				}
+			}
+			if (warnings == 1) != tc.wantWarning || warnings > 1 {
+				t.Fatalf("ignored-sub-bundle warnings = %d, want warning %v: %v", warnings, tc.wantWarning, result.Malformed)
+			}
+		})
+	}
+}
+
+func TestDiscoverTraversesFalseBundleCandidate(t *testing.T) {
+	dir := t.TempDir()
+	writeDiscoveryFiles(t, dir, map[string]string{
+		"automation/agents/runner.sh":          "exit 0",
+		"automation/nested/commands/review.md": "---\nname: review\ndescription: Review\n---\nReview",
+	})
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "review" || len(result.Malformed) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("expected nested command without diagnostics, got %#v", result)
+	}
+	if _, ok := result.SubBundles[filepath.Join(dir, "automation", "nested")]; !ok || len(result.SubBundles) != 1 {
+		t.Fatalf("expected the nested bundle, got %#v", result.SubBundles)
+	}
+}
+
+func TestDiscoverMalformedSubBundleEvidence(t *testing.T) {
+	dir := t.TempDir()
+	writeDiscoveryFiles(t, dir, map[string]string{
+		"valid/commands/review.md":           "---\nname: review\ndescription: Review\n---\nReview",
+		"broken/skills/broken/SKILL.md":      "---\nname: [\n---\nBroken",
+		"invalid/.claude-plugin/plugin.json": "{",
+	})
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "review" || len(result.Errors) != 1 {
+		t.Fatalf("expected valid command and manifest failure, got %#v", result)
+	}
+	if len(result.Malformed) != 1 || result.Malformed[0].DirName != "broken" || result.Malformed[0].Kind != "skill" {
+		t.Fatalf("expected malformed skill diagnostic, got %#v", result.Malformed)
+	}
+}
+
+func TestDiscoverDoesNotHideUnloadedGroups(t *testing.T) {
+	dir := t.TempDir()
+	writeDiscoveryFiles(t, dir, map[string]string{
+		"root/SKILL.md":         "---\nname: root\ndescription: Root\n---\nRoot",
+		"group/review/SKILL.md": "---\nname: review\ndescription: Review\n---\nReview",
+	})
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "root" || len(result.Malformed) != 1 || result.Malformed[0].DirName != "catalog.discover.sub-bundles-ignored" || len(result.SubBundles) != 0 {
+		t.Fatalf("expected the unloaded group to produce a warning, got %#v", result)
+	}
+}
+
+func TestSubBundleCoverageRequiresEverySource(t *testing.T) {
+	dir := t.TempDir()
+	writeDiscoveryFiles(t, dir, map[string]string{
+		"plugin/commands/one.md": "---\nname: one\ndescription: One\n---\nOne",
+		"plugin/commands/two.md": "---\nname: two\ndescription: Two\n---\nTwo",
+	})
+	candidate := loadSubBundle(filepath.Join(dir, "plugin"), "claude")
+	if candidate.err != nil || len(candidate.catalog.Entries) != 2 {
+		t.Fatalf("expected two source resources: %#v", candidate)
+	}
+	for _, absolute := range []bool{false, true} {
+		t.Run(fmt.Sprintf("absolute_%v", absolute), func(t *testing.T) {
+			entries := []Entry{
+				{Kind: ir.KindCommand, Name: "one", Path: "plugin/commands/one.md"},
+				{Kind: ir.KindCommand, Name: "two", Path: "plugin/commands/two.md"},
+			}
+			if absolute {
+				for i := range entries {
+					entries[i].Path = filepath.Join(dir, entries[i].Path)
+				}
+			}
+			if !candidate.coveredBy(entries, dir) {
+				t.Fatal("all source files are already loaded")
+			}
+			if candidate.coveredBy(entries[:1], dir) {
+				t.Fatal("one loaded source must not conceal another unloaded source")
+			}
+		})
+	}
+}
+
+func TestDiscoverExplicitMetadataRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeDiscoveryFiles(t, dir, map[string]string{
+		".github/commands/review.md": "---\nname: review\ndescription: Review\n---\nReview",
+	})
+	result, err := Discover(filepath.Join(dir, ".github"), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "review" || len(result.Malformed) != 0 {
+		t.Fatalf("expected explicitly selected metadata root to remain loadable, got %#v", result)
+	}
+}
+
+func writeDiscoveryFiles(t testing.TB, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDiscoverSkipsGitHubMetadataSubBundle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".github", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "commands"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".github", "agents", "dependency-review.md"), "repository automation")
+	writeFile(t, filepath.Join(dir, "commands", "review.md"), "---\nname: review\ndescription: Review\n---\nReview")
+
+	result, err := Discover(dir, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Name != "review" {
+		t.Fatalf("Discover() entries = %#v, want only review", result.Entries)
+	}
+	for _, malformed := range result.Malformed {
+		if malformed.DirName == "catalog.discover.sub-bundles-ignored" {
+			t.Fatalf("GitHub metadata produced a sub-bundle warning: %v", malformed.Error)
+		}
 	}
 }
 
@@ -811,13 +1183,13 @@ func TestScanForSubBundles_SkipsGitDir(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "my-plugin", "skills", "x", "SKILL.md"), "---\nname: x\n---\nX\n")
 
-	bundles := scanForSubBundles(dir)
+	bundles := scanForSubBundles(dir, "")
 
 	if len(bundles) != 1 {
 		t.Fatalf("expected 1 sub-bundle (my-plugin, NOT .git), got %d: %v", len(bundles), bundles)
 	}
-	if bundles[0] != filepath.Join(dir, "my-plugin") {
-		t.Errorf("bundle = %q, want %q", bundles[0], filepath.Join(dir, "my-plugin"))
+	if bundles[0].path != filepath.Join(dir, "my-plugin") {
+		t.Errorf("bundle = %q, want %q", bundles[0].path, filepath.Join(dir, "my-plugin"))
 	}
 }
 
@@ -1145,7 +1517,7 @@ metadata:
 	// non-existent paths. Load will fail on the non-existent directory.
 	badDir := filepath.Join(dir, "nonexistent-plugin")
 
-	result, err := discoverSubBundles([]string{goodDir, badDir}, "claude")
+	result, err := discoverSubBundles([]subBundle{loadSubBundle(goodDir, "claude"), loadSubBundle(badDir, "claude")})
 	if err != nil {
 		t.Fatalf("discoverSubBundles returned error: %v (expected partial success)", err)
 	}
@@ -1183,7 +1555,7 @@ func TestDiscoverSubBundles_AllFailReturnsError(t *testing.T) {
 	aaaDir := filepath.Join(dir, "aaa-plugin")
 	bbbDir := filepath.Join(dir, "bbb-plugin")
 
-	_, err := discoverSubBundles([]string{aaaDir, bbbDir}, "claude")
+	_, err := discoverSubBundles([]subBundle{loadSubBundle(aaaDir, "claude"), loadSubBundle(bbbDir, "claude")})
 	if err == nil {
 		t.Fatal("expected error when all sub-bundles fail to load, got nil")
 	}

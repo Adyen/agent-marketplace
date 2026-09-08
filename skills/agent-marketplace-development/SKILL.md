@@ -5,7 +5,7 @@ description: >
   tour, testing workflow, TUI (Bubble Tea) and CLI (Cobra) conventions,
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
-  changes to the agent-marketplace Go binary.
+  changes to the agent-marketplace Go binary, or running local TUI QA.
 metadata:
   tags:
     - development
@@ -59,6 +59,10 @@ go test ./cmd/agent-marketplace/...
 # Build + run the TUI against the current repo for smoke testing
 make build && ./agent-marketplace
 ```
+
+For local TUI QA or verification of a user-interaction change, follow
+[Local TUI QA](#local-tui-qa-real-terminal) below; a smoke launch or Go test
+run does not exercise the real-terminal journeys.
 
 Pre-commit runs `make test`, `make lint`, `make build`. If `go fmt`
 modifies files during lint, re-stage and commit again.
@@ -171,14 +175,11 @@ Preserve these invariants:
   `ResolveDestinations`; never flatten Codex into one root or let a repo
   symlink escape the repository. `.agents/skills` alone is not Codex
   installation evidence.
-- **Symlink-only targets refuse file mode.** A target that sets
-  `harness.TargetInfo.SymlinkOnly` (Devin) rejects
-  `config.MaterializationModeFile` with
-  `materialize.devin.symlink-required` rather than degrading to regular
-  files. Do not add a fallback. `SymlinkOnly` is about per-resource
-  artifact shape only and is INDEPENDENT of
-  `OwnershipReconciledAggregates`; Devin holding both is coincidence, so
-  never use one as a proxy for the other.
+- **Installation mode is generic distribution policy.** Every target uses
+  the same file-copy or symlink materializer, selected by configuration.
+  Compilers describe native artifact paths and contents, not installation
+  mode. Shared-entry reconciliation remains independent: never infer
+  `OwnershipReconciledAggregates` from how resource files are installed.
 - **Gemini is not a skill-link exception.** Gemini CLI discovers native
   Agent Skills from `.gemini/skills` and the generic `.agents/skills`
   alias; within a tier, `.agents/skills` takes precedence over
@@ -418,6 +419,53 @@ help path. Anything that might be invoked from CI must honor these
 signals.
 
 ## Testing Playbook
+
+### Local TUI QA (real terminal)
+
+Use this workflow to verify user interactions through a real PTY, separately
+from the Go model/file-I/O tests below and the CLI suite run by `make e2e`.
+Run commands from the repository root on macOS or Linux; Docker, direnv,
+and organization-specific infrastructure are not required.
+
+1. **Prepare.** Make Go, Git, Make, Node.js, and pnpm available. Use
+   [`tools/tui-qa/.node-version`](../../tools/tui-qa/.node-version) for the
+   Node pin, or a version allowed by `engines.node` in
+   [`package.json`](../../tools/tui-qa/package.json); match its
+   `packageManager` pnpm version exactly. Install the locked dependencies:
+
+   ```sh
+   pnpm --dir tools/tui-qa install --frozen-lockfile
+   ```
+
+   Continue when installation succeeds with the tracked lockfile unchanged.
+
+2. **Preflight.** Typecheck the tests and check that the PTY runner loads:
+
+   ```sh
+   make tui-qa-check
+   ```
+
+   Continue when the command exits zero. This checks setup, not journeys.
+
+3. **Run.** Execute the complete suite:
+
+   ```sh
+   make tui-qa
+   ```
+
+   This repeats preflight, builds the dedicated `e2e`-tagged binary, and runs
+   the Node process tests and PTY journeys. The tag redirects organization
+   config into the sandbox; a normal `make build` binary is not a substitute.
+   Fixtures supply temporary HOME/XDG roots, workspaces, and local Git
+   registries, keeping test mutations separate from personal configuration.
+
+4. **Report.** QA passes when `make tui-qa` exits zero with both runners
+   passing and all eight journeys exercised. On failure, retain the failing
+   test name and console output/current terminal screen; the suite produces
+   no snapshot or trace files. Report setup failures as blocked, not passed.
+
+For journey coverage or an already-built test binary, read the
+[TUI QA package reference](../../tools/tui-qa/README.md).
 
 ### Unit tests
 

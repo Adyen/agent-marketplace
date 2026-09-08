@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -195,19 +196,35 @@ const (
 // MaterializationConfig is intentionally small so it can be safely committed
 // in either user or project configuration.
 type MaterializationConfig struct {
-	Mode string `yaml:"mode,omitempty"`
+	Mode    string            `yaml:"mode,omitempty"`
+	Targets map[string]string `yaml:"targets,omitempty"`
 }
 
 // MaterializationModes is the fully resolved policy for each install scope.
 // Project is allowed to differ from Machine; repo configuration must never
 // influence machine-wide materialization.
 type MaterializationModes struct {
-	Machine MaterializationMode
-	Project MaterializationMode
+	Machine        MaterializationMode
+	Project        MaterializationMode
+	MachineTargets map[string]MaterializationMode
+	ProjectTargets map[string]MaterializationMode
 }
 
 func DefaultMaterializationModes() MaterializationModes {
 	return MaterializationModes{Machine: MaterializationModeSymlink, Project: MaterializationModeSymlink}
+}
+
+func (m MaterializationModes) For(target string, machine bool) MaterializationMode {
+	if machine {
+		if mode := m.MachineTargets[target]; mode != "" {
+			return mode
+		}
+		return m.Machine
+	}
+	if mode := m.ProjectTargets[target]; mode != "" {
+		return mode
+	}
+	return m.Project
 }
 
 func normalizeMaterializationMode(mode string) (MaterializationMode, error) {
@@ -226,28 +243,86 @@ func normalizeMaterializationMode(mode string) (MaterializationMode, error) {
 // and local project configuration can override only the project scope.
 func ResolveMaterializationModes(global, repo *Config, local *LocalConfig) (MaterializationModes, error) {
 	modes := DefaultMaterializationModes()
-	if global != nil && global.Materialization != nil {
-		mode, err := normalizeMaterializationMode(global.Materialization.Mode)
-		if err != nil {
+	if global != nil {
+		if err := modes.apply(global.Materialization, true); err != nil {
 			return modes, err
 		}
-		modes.Machine, modes.Project = mode, mode
 	}
-	if repo != nil && repo.Materialization != nil {
-		mode, err := normalizeMaterializationMode(repo.Materialization.Mode)
-		if err != nil {
+	if repo != nil {
+		if err := modes.apply(repo.Materialization, false); err != nil {
 			return modes, err
 		}
-		modes.Project = mode
 	}
-	if local != nil && local.Materialization != nil {
-		mode, err := normalizeMaterializationMode(local.Materialization.Mode)
-		if err != nil {
+	if local != nil {
+		if err := modes.apply(local.Materialization, false); err != nil {
 			return modes, err
 		}
-		modes.Project = mode
 	}
 	return modes, nil
+}
+
+func (m *MaterializationModes) apply(cfg *MaterializationConfig, bothScopes bool) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Mode != "" {
+		mode, err := normalizeMaterializationMode(cfg.Mode)
+		if err != nil {
+			return err
+		}
+		m.Project = mode
+		if bothScopes {
+			m.Machine = mode
+		}
+	}
+	targets, err := normalizeTargetMaterializationModes(cfg.Targets)
+	if err != nil {
+		return err
+	}
+	m.ProjectTargets = mergeMaterializationModes(m.ProjectTargets, targets)
+	if bothScopes {
+		m.MachineTargets = mergeMaterializationModes(m.MachineTargets, targets)
+	}
+	return nil
+}
+
+func normalizeTargetMaterializationModes(targets map[string]string) (map[string]MaterializationMode, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(targets))
+	for target := range targets {
+		keys = append(keys, target)
+	}
+	sort.Strings(keys)
+	modes := make(map[string]MaterializationMode, len(targets))
+	for _, target := range keys {
+		if target != strings.TrimSpace(target) || !IsSupportedHarness(target) {
+			return nil, fmt.Errorf("materialization.targets contains unknown harness %q", target)
+		}
+		if strings.TrimSpace(targets[target]) == "" {
+			return nil, fmt.Errorf("materialization.targets.%s must be one of symlink, file", target)
+		}
+		mode, err := normalizeMaterializationMode(targets[target])
+		if err != nil {
+			return nil, fmt.Errorf("materialization.targets.%s: %w", target, err)
+		}
+		modes[target] = mode
+	}
+	return modes, nil
+}
+
+func mergeMaterializationModes(base, override map[string]MaterializationMode) map[string]MaterializationMode {
+	if len(override) == 0 {
+		return base
+	}
+	if base == nil {
+		base = make(map[string]MaterializationMode, len(override))
+	}
+	for target, mode := range override {
+		base[target] = mode
+	}
+	return base
 }
 
 // Default user-level logging settings. These are the single source of truth
@@ -980,10 +1055,14 @@ func validateMaterialization(materialization *MaterializationConfig) []error {
 	if materialization == nil {
 		return nil
 	}
+	var errs []error
 	if _, err := normalizeMaterializationMode(materialization.Mode); err != nil {
-		return []error{err}
+		errs = append(errs, err)
 	}
-	return nil
+	if _, err := normalizeTargetMaterializationModes(materialization.Targets); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
 }
 
 func validateLogging(logging *LoggingConfig) []error {

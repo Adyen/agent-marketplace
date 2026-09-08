@@ -290,6 +290,10 @@ type Model struct {
 	detailKey          string
 	detailRenderWidth  int
 	detailStickyBottom bool
+	bundle             *bundleTree
+	bundleOffset       int
+	detailSelectedPath string
+	detailLegacyRender bool
 
 	toast    string
 	toastExp time.Time

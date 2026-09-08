@@ -4,13 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -239,7 +244,7 @@ const (
 
 var detailTruncationMarker = fmt.Sprintf("[truncated: source exceeds %d KiB; showing the first part only]", maxDetailSourceBytes/1024)
 
-// renderDetailFullContent reads and renders a resource's source file at the
+// renderDetailFullContent reads and renders a resource's source files at the
 // given word-wrap width (the actual detail viewport width in production).
 // Used internally by loadDetailContent (async tea.Cmd) and by tests.
 // Production code should call loadDetailContent instead of blocking the UI
@@ -253,37 +258,138 @@ func renderDetailFullContent(r row, width int) string {
 		return "No content available"
 	}
 
-	content, truncated, err := readDetailSource(r.Artifact.Path)
+	sources, err := detailSourcePaths(r)
 	if err != nil {
 		return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
 	}
-	if truncated {
-		content += "\n\n> " + detailTruncationMarker + "\n"
-		slog.Info("tui detail source truncated", "limit_bytes", maxDetailSourceBytes)
+	if len(sources) == 0 {
+		return "No content available"
 	}
-	content = sanitizeMarkdownForTerminal(content)
-	content = splitLongDetailLines(content, maxDetailLineChars)
 
-	// If the source file is JSON, pretty-print and wrap in a code block
-	// before handing off to the markdown renderer.
-	if isJSONPath(r.Artifact.Path) {
-		formatted, fmtErr := formatJSONContent(content)
-		if fmtErr == nil {
-			rendered, renderErr := renderMarkdownAtWidth(formatted, width)
-			if renderErr == nil {
-				return boundRenderedDetail(rendered)
-			}
-			// If glamour fails on the code block, return the pretty-printed
-			// JSON directly — it's still more readable than the minified form.
-			return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(formatted, "```"), "```json\n"))
+	var bundle strings.Builder
+	for i, source := range sources {
+		content, truncated, readErr := readDetailSource(source.path)
+		if i > 0 {
+			bundle.WriteString("\n\n---\n\n")
+		}
+		if len(sources) > 1 {
+			bundle.WriteString("## `")
+			bundle.WriteString(detailFileName(source.name))
+			bundle.WriteString("`\n\n")
+		}
+		if readErr != nil {
+			bundle.WriteString("Error reading file: ")
+			bundle.WriteString(sanitizeTerminalData(readErr.Error(), terminalSingleLine))
+			continue
+		}
+		if truncated {
+			content += "\n\n> " + detailTruncationMarker + "\n"
+			slog.Info("tui detail source truncated", "limit_bytes", maxDetailSourceBytes)
+		}
+		if len(sources) > 1 {
+			bundle.WriteString(prepareBundleSource(source.name, content))
+		} else {
+			// If the source file is JSON, pretty-print and wrap in a code block
+			// before handing off to the markdown renderer.
+			bundle.WriteString(prepareDetailSource(source.name, content))
 		}
 	}
 
+	content := bundle.String()
 	rendered, err := renderMarkdownAtWidth(content, width)
 	if err != nil {
+		if len(sources) == 1 && isJSONPath(sources[0].name) {
+			// If glamour fails on the code block, return the pretty-printed
+			// JSON directly — it's still more readable than the minified form.
+			return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(content, "```"), "```json\n"))
+		}
 		return boundRenderedDetail(content)
 	}
 	return boundRenderedDetail(rendered)
+}
+
+type detailSourcePath struct {
+	path string
+	name string
+}
+
+func detailSourcePaths(r row) ([]detailSourcePath, error) {
+	if r.Artifact.Kind != ir.KindSkill {
+		return []detailSourcePath{{path: r.Artifact.Path, name: filepath.Base(r.Artifact.Path)}}, nil
+	}
+
+	info, err := os.Stat(r.Artifact.Path)
+	if err != nil {
+		return nil, err
+	}
+	root := r.Artifact.Path
+	if !info.IsDir() {
+		root = filepath.Dir(root)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+
+	var sources []detailSourcePath
+	err = filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		entryInfo, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		if !entryInfo.Mode().IsRegular() {
+			return nil
+		}
+		relative, relErr := filepath.Rel(root, current)
+		if relErr != nil {
+			return relErr
+		}
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("file %q escapes resource directory", current)
+		}
+		sources = append(sources, detailSourcePath{path: current, name: filepath.ToSlash(relative)})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].name < sources[j].name })
+	if len(sources) == 0 {
+		return []detailSourcePath{{path: r.Artifact.Path, name: filepath.Base(r.Artifact.Path)}}, nil
+	}
+	return sources, nil
+}
+
+func detailFileName(name string) string {
+	name = sanitizeTerminalData(filepath.ToSlash(name), terminalSingleLine)
+	return strings.ReplaceAll(name, "`", "'")
+}
+
+func prepareDetailSource(name, content string) string {
+	content = sanitizeMarkdownForTerminal(content)
+	content = splitLongDetailLines(content, maxDetailLineChars)
+	if !isJSONPath(name) {
+		return content
+	}
+	formatted, err := formatJSONContent(content)
+	if err != nil {
+		return content
+	}
+	return formatted
+}
+
+func prepareBundleSource(name, content string) string {
+	prepared := prepareDetailSource(name, content)
+	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || isJSONPath(name) {
+		return prepared
+	}
+	return "```text\n" + prepared + "\n```"
 }
 
 // readDetailSource reads a resource source file (SKILL.md inside a directory,
@@ -293,14 +399,21 @@ func renderDetailFullContent(r row, width int) string {
 // exhaust TUI memory or render time.
 func readDetailSource(path string) (content string, truncated bool, err error) {
 	target := path
-	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
 	}
-	f, err := os.Open(target)
+	f, err := os.OpenFile(target, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return "", false, err
 	}
 	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("source is not a regular file")
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
 	if err != nil {
 		return "", false, err
@@ -375,6 +488,95 @@ func boundRenderedDetail(rendered string) string {
 // whose source files are fully JSON.
 func isJSONPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".json")
+}
+
+// renderBundleFile reads exactly one selected bundle file. The relative path
+// is validated before joining and the final descriptor is opened without
+// following symlinks, keeping an enumeration/read race inside the resource
+// root and the regular-file-only preview contract.
+func renderBundleFile(root, relative string, width int) string {
+	path, err := safeBundlePath(root, relative)
+	if err != nil {
+		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+	}
+	if !info.Mode().IsRegular() {
+		return "Error reading file: source is not a regular file"
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
+	if err != nil {
+		return "Error reading file: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+	}
+	truncated := len(data) > maxDetailSourceBytes
+	if truncated {
+		data = data[:maxDetailSourceBytes]
+	}
+	content := prepareDetailSource(relative, string(data))
+	if truncated {
+		content += "\n\n> " + detailTruncationMarker + "\n"
+		slog.Info("tui bundle preview source truncated", "path", relative, "limit_bytes", maxDetailSourceBytes)
+	}
+	rendered, err := renderMarkdownAtWidth(content, width)
+	if err != nil {
+		return boundRenderedDetail(content)
+	}
+	return boundRenderedDetail(rendered)
+}
+
+func safeBundlePath(root, relative string) (string, error) {
+	if root == "" || relative == "" || filepath.IsAbs(filepath.FromSlash(relative)) {
+		return "", fmt.Errorf("invalid bundle path")
+	}
+	clean := filepath.Clean(filepath.FromSlash(relative))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("bundle path escapes resource root")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve resource root: %w", err)
+	}
+	candidate := filepath.Join(root, clean)
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("bundle path escapes resource root")
+	}
+	current := root
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("bundle path contains a symlink")
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return "", fmt.Errorf("bundle path traverses a non-directory")
+		}
+	}
+	return candidate, nil
+}
+
+// loadBundleDetailContent is the asynchronous selected-file preview path.
+func loadBundleDetailContent(r row, root, relative string, generation requestGeneration, width int, keepScroll bool) tea.Cmd {
+	return func() tea.Msg {
+		return detailContentMsg{
+			generation: generation,
+			content:    renderBundleFile(root, relative, width),
+			width:      width,
+			keepScroll: keepScroll,
+			path:       relative,
+		}
+	}
 }
 
 // formatJSONContent parses raw JSON and returns it pretty-printed inside a

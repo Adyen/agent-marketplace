@@ -64,9 +64,15 @@ jobs:
         run: make test
 
   tui-qa:
-    name: TUI QA Driver
-    runs-on: ubuntu-latest
+    name: TUI QA (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
     permissions:
       contents: read
     steps:
@@ -100,19 +106,21 @@ jobs:
         env:
           AM_TUI_QA_REPO_ROOT: ${{ github.workspace }}
           AM_TUI_QA_BINARY: ${{ runner.temp }}/agent-marketplace-tui-qa
-          AM_TUI_QA_ARTIFACT_DIR: ${{ runner.temp }}/agent-marketplace-tui-qa-artifacts
-          AM_TUI_QA_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: pnpm qa
         working-directory: tools/tui-qa
 
-      - name: Upload sanitized TUI snapshots
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: tui-qa-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/agent-marketplace-tui-qa-artifacts/snapshots/
-          if-no-files-found: warn
-          retention-days: 7
+  tui-qa-required:
+    name: TUI QA Driver
+    if: always()
+    needs: tui-qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require all TUI QA platforms
+        env:
+          TUI_QA_RESULT: ${{ needs.tui-qa.result }}
+        run: test "$TUI_QA_RESULT" = success
 
   marketplace-gate:
     name: Marketplace E2E gate

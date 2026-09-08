@@ -437,7 +437,7 @@ const (
 	CodeMaterializeDevinAggregateMalformed = "materialize.devin.aggregate-malformed" // The destination aggregate JSON could not be parsed; that file was left unchanged
 	CodeMaterializeDevinAggregateShape     = "materialize.devin.aggregate-shape"     // The destination aggregate has a shape this target cannot patch; that file was left unchanged
 	CodeMaterializeDevinAggregateWrite     = "materialize.devin.aggregate-write"     // The journaled aggregate mutation failed; that file was left unchanged
-	CodeMaterializeDevinSymlinkRequired    = "materialize.devin.symlink-required"    // Devin resources must be symlinks; file-copy materialization was refused
+	CodeMaterializeDevinSymlinkRequired    = "materialize.devin.symlink-required"    // Retired: retained for compatibility; all targets now support generic file-copy materialization
 
 	// Devin REPAIR error code (work package D11). `doctor --repair` exits 1 on
 	// "corrupt state/file or partial repair failure"; this is the code for the

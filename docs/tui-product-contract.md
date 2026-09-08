@@ -9,9 +9,9 @@ Contract sources apply in this order:
 1. Repository security and configuration rules.
 2. Current normative product documentation, including this contract.
 3. Behavioral tests through public TUI, pipeline, and materialization paths.
-4. QA captures and snapshots, which are evidence and never define intended behavior by themselves.
+4. Direct real-terminal QA reports, which are evidence and never define intended behavior by themselves.
 
-Initial baseline discovery is non-blocking. Enforcement may begin only after every Critical or High defect in a required flow is fixed; such defects are never accepted as expected snapshots.
+Initial baseline discovery is non-blocking. Enforcement may begin only after every Critical or High defect in a required flow is fixed; such defects are never accepted as expected behavior.
 
 Severity follows user impact:
 
@@ -64,7 +64,9 @@ The TUI does not enable terminal mouse tracking. Drag selection remains terminal
 
 Registry metadata, paths, diagnostics, config values, Markdown-derived text, and returned errors are untrusted terminal data. C0, DEL, C1, ESC, carriage return, tab, unsupported structural newlines, invalid UTF-8, Unicode line separators, and bidi formatting controls render as visible escapes. Markdown is sanitized before entity decoding can turn encoded values into terminal controls. Printable Unicode, including combining and double-width characters, remains readable.
 
-Detail source reads are capped at 256 KiB, unbroken lines are split before rendering, and rendered output is capped at 5,000 lines with visible truncation markers. Markdown renderers are synchronized, keyed by viewport width, and bounded to recent widths. A width change re-renders the open detail under request-generation control while preserving its scroll anchor.
+The full resource view is a split bundle browser: the left pane is an expandable deterministic relative-path tree and the right pane previews the selected file. Directory entries precede files and each group is sorted lexically. `j`/`k` and the arrow keys move through visible entries; `h`/left folds, `l`/right expands, and enter toggles directories (enter on a file keeps it selected). `Esc`/`q` returns to the resource list, while Ctrl+C remains the hard exit. Directory-backed skills select `SKILL.md` initially when present. File-backed resources use the same shell with one file entry and retain their JSON/Markdown/text rendering behavior.
+
+Bundle source reads are capped at 256 KiB per file, and only regular files beneath the resolved resource root can be previewed; symlinked and special entries are omitted and traversal is rejected. Unbroken lines are split before rendering, and rendered output is capped at 5,000 lines with visible truncation markers. Markdown renderers are synchronized, keyed by viewport width, and bounded to recent widths. Preview requests carry both a generation and selected relative path, so stale completions cannot replace the current selection. A width change re-renders the selected file under request-generation control while preserving its scroll anchor. The browser remains within the 50-column by 12-row minimum; at narrow supported widths its footer keeps the back and hard-quit actions visible.
 
 ## Performance evidence
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { DEMO_LOCAL_REGISTRY, DEMO_PROJECT_NAME } from '../data/demo'
+import TerminalFrame from './TerminalFrame.vue'
 
 const registries = [
   {
@@ -19,17 +20,15 @@ const registries = [
 </script>
 
 <template>
-  <figure
+  <TerminalFrame
     class="terminal"
+    tag="figure"
+    label="agent-marketplace tui"
     aria-label="Agent Marketplace terminal UI showing resources grouped by registry and their configured harnesses"
   >
-    <div class="terminal-label">
-      <span class="window-controls" aria-hidden="true">
-        <i></i><i></i><i></i>
-      </span>
-      <span>agent-marketplace tui</span>
+    <template #status>
       <span class="ready"><i aria-hidden="true"></i> ready</span>
-    </div>
+    </template>
 
     <div class="screen">
       <div class="title">agent-marketplace - {{ DEMO_PROJECT_NAME }}</div>
@@ -73,65 +72,27 @@ const registries = [
         <span><kbd>space</kbd> toggle · <kbd>s</kbd> sync</span>
       </div>
     </div>
-  </figure>
+  </TerminalFrame>
 </template>
 
 <style scoped>
 .terminal {
-  --tui-bg: var(--am-code-bg);
-  --tui-bg-raised: var(--am-code-bg-raised);
-  --tui-border: var(--am-code-border);
-  --tui-text: var(--am-code-text);
-  --tui-muted: var(--am-code-muted);
-  --tui-cyan: var(--am-code-cyan);
-  --tui-green: var(--vp-c-brand-1);
-  --tui-orange: var(--am-code-warning);
-  --tui-selection: var(--am-code-selection);
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid var(--tui-border);
-  border-radius: 17px;
-  background: var(--tui-bg);
-  color: var(--tui-text);
-  font-family: var(--vp-font-family-mono);
-  font-size: 13.5px;
-  line-height: 1.5;
+  --tui-bg-raised: var(--am-terminal-bg-raised);
+  --tui-border: var(--am-terminal-border);
+  --tui-text: var(--am-terminal-text);
+  --tui-muted: var(--am-terminal-muted);
+  --tui-cyan: var(--am-terminal-cyan);
+  --tui-green: var(--am-terminal-accent);
+  --tui-orange: var(--am-terminal-warning);
+  --tui-selection: var(--am-terminal-selection);
+  --am-terminal-font-size: 13.5px;
 }
 
-.terminal-label,
 .activity {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.terminal-label {
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--tui-border);
-  color: var(--tui-muted);
-  font-size: 11.5px;
-}
-
-.window-controls {
-  display: inline-flex;
-  gap: 5px;
-}
-
-.window-controls i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #67746c;
-}
-
-.window-controls i:nth-child(2) {
-  background: #8b7850;
-}
-
-.window-controls i:nth-child(3) {
-  background: var(--tui-green);
 }
 
 .ready {
@@ -264,7 +225,7 @@ kbd {
 
 @media (max-width: 680px) {
   .terminal {
-    font-size: 12px;
+    --am-terminal-font-size: 12px;
   }
 
   .panes {
