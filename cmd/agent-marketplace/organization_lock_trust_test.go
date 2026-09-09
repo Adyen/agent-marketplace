@@ -12,11 +12,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+func scenarioSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, true, "sync")
 }
 
-func TestSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+func scenarioSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, false, "sync", "--locked")
 }
 
@@ -59,7 +59,7 @@ func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoReg
 	}
 }
 
-func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
+func scenarioReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -96,7 +96,7 @@ func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 	}
 }
 
-func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
+func scenarioDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -139,7 +139,7 @@ func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
 	}
 }
 
-func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
+func scenarioDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -165,7 +165,7 @@ func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
 	}
 }
 
-func TestExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
+func scenarioExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

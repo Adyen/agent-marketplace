@@ -14,10 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -71,10 +68,7 @@ registries:
 	}
 }
 
-func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -151,7 +145,7 @@ registries:
 
 }
 
-func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
+func scenarioTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -224,7 +218,7 @@ registries:
 	}
 }
 
-func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
+func scenarioUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -276,7 +270,7 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 	}
 }
 
-func TestUpdateBumpHonorsUserScope(t *testing.T) {
+func scenarioUpdateBumpHonorsUserScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -310,7 +304,7 @@ func TestUpdateBumpHonorsUserScope(t *testing.T) {
 	}
 }
 
-func TestUpdateBumpHonorsLocalScope(t *testing.T) {
+func scenarioUpdateBumpHonorsLocalScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -360,7 +354,7 @@ func TestUpdateBumpHonorsLocalScope(t *testing.T) {
 	}
 }
 
-func TestUpdateBumpSkipsOrganization(t *testing.T) {
+func scenarioUpdateBumpSkipsOrganization(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		scope string
@@ -451,7 +445,7 @@ func TestUpdateBumpSkipsOrganization(t *testing.T) {
 	}
 }
 
-func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
+func scenarioScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -491,10 +485,7 @@ func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	}
 }
 
-func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -539,10 +530,7 @@ registries:
 	}
 }
 
-func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateBumpWithThreeSegmentSemver(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -591,10 +579,7 @@ registries:
 	}
 }
 
-func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -638,10 +623,7 @@ registries:
 	}
 }
 
-func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -680,10 +662,7 @@ registries:
 	}
 }
 
-func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

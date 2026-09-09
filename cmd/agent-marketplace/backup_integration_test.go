@@ -14,10 +14,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
-func TestBackupCreatedOnInstall(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupCreatedOnInstall(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -65,10 +62,7 @@ registries:
 	t.Logf("Backup archive: %s", archives[0])
 }
 
-func TestBackupRestoreRoundTrip(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupRestoreRoundTrip(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -144,10 +138,7 @@ registries:
 	}
 }
 
-func TestBackupListCommand(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupListCommand(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -191,10 +182,7 @@ registries:
 	}
 }
 
-func TestBackupListUsesCodexLabel(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupListUsesCodexLabel(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	createEmptyCodexBackupSet(t, homeDir)
@@ -208,10 +196,7 @@ func TestBackupListUsesCodexLabel(t *testing.T) {
 	}
 }
 
-func TestSyncNoBackupFlag(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncNoBackupFlag(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -277,10 +262,7 @@ registries:
 	}
 }
 
-func TestBackupOnlyIncludesManagedPaths(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupOnlyIncludesManagedPaths(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -353,10 +335,7 @@ registries:
 	}
 }
 
-func TestBackupDisabledViaConfig(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupDisabledViaConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -399,10 +378,7 @@ registries:
 	}
 }
 
-func TestBackupRestoreNonexistentTarget(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupRestoreNonexistentTarget(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -415,10 +391,7 @@ func TestBackupRestoreNonexistentTarget(t *testing.T) {
 	}
 }
 
-func TestBackupRestoreRequiresTargetFlag(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupRestoreRequiresTargetFlag(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -431,10 +404,7 @@ func TestBackupRestoreRequiresTargetFlag(t *testing.T) {
 	}
 }
 
-func TestBackupPreservesSymlinks(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupPreservesSymlinks(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -566,10 +536,7 @@ registries:
 var _ = hcc.TargetFactory
 var _ = backup.ManagedPaths{}
 
-func TestBackupCreateOnDemand(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupCreateOnDemand(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -621,10 +588,7 @@ registries:
 	}
 }
 
-func TestBackupCreateUsesCodexLabel(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupCreateUsesCodexLabel(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "")
@@ -651,10 +615,7 @@ func TestBackupCreateUsesCodexLabel(t *testing.T) {
 	}
 }
 
-func TestBackupRestoreUsesCanonicalCodexLabel(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupRestoreUsesCanonicalCodexLabel(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	createEmptyCodexBackupSet(t, homeDir)
@@ -680,10 +641,7 @@ func createEmptyCodexBackupSet(t *testing.T, homeDir string) {
 	}
 }
 
-func TestBackupCreateWhenDisabled(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupCreateWhenDisabled(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -727,10 +685,7 @@ registries:
 	}
 }
 
-func TestBackupCreateNoManagedPaths(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioBackupCreateNoManagedPaths(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

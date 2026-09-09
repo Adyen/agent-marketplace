@@ -33,10 +33,7 @@ func pruneFixture(t *testing.T, bareName string, configBody func(origin string) 
 // includes; when the name is not in the entry's include it falls through to
 // "add an exclude". The CLI then prints `pruned stale skill "gone" from
 // config` while the selection is still there.
-func TestSyncPruneStaleRemovesTopLevelSelection(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncPruneStaleRemovesTopLevelSelection(t *testing.T) {
 	_, configPath := pruneFixture(t, "top-level-sel.git", func(origin string) string {
 		return `
 registries:
@@ -79,10 +76,7 @@ skills:
 // ATTACK B2: the same name appears in BOTH the top-level list and a
 // per-registry include. A single prune pass must clear both, otherwise the
 // next run finds it stale again.
-func TestAttackPruneSelectionInBothScopes(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneSelectionInBothScopes(t *testing.T) {
 	_, configPath := pruneFixture(t, "both-scopes.git", func(origin string) string {
 		return `
 registries:
@@ -124,10 +118,7 @@ skills:
 // .agents/config.yaml points at a shared file). writeConfigDocument renames a
 // temp file over configPath, which REPLACES the symlink with a regular file and
 // leaves the real target unedited.
-func TestAttackPruneThroughSymlinkedConfig(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneThroughSymlinkedConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -180,10 +171,7 @@ registries:
 // ATTACK B4: a multi-document YAML config. parseConfigDocument unmarshals into
 // a single yaml.Node, which captures only the FIRST document; writing it back
 // silently DELETES every subsequent document.
-func TestAttackPruneMultiDocumentConfig(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneMultiDocumentConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -243,10 +231,7 @@ notes: keep me
 // since landed on this branch, so the skip is gone and this must pass: a
 // malformed-but-present selection is reported as a parse failure, which is NOT a
 // SelectedNotFoundError and therefore is never prunable.
-func TestAttackPruneBrokenFrontmatter(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneBrokenFrontmatter(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -285,10 +270,7 @@ registries:
 // ATTACK B6: --strict --prune-stale where the re-sync surfaces a NEW stale
 // selection. Pruning `gone-a` removes it; the second pass must still promote
 // anything else that is stale, and the run must exit non-zero.
-func TestAttackStrictReSyncSurfacesNewStale(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackStrictReSyncSurfacesNewStale(t *testing.T) {
 	_, configPath := pruneFixture(t, "strict-new-stale.git", func(origin string) string {
 		return `
 registries:
@@ -321,10 +303,7 @@ collections:
 // something we can race deterministically, but we CAN check the weaker
 // invariant that matters: the prune must never remove a selection whose
 // resource is present in a DIFFERENT registry entry of the same config.
-func TestAttackPruneSelectionSatisfiedByAnotherRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneSelectionSatisfiedByAnotherRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

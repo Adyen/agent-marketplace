@@ -12,7 +12,7 @@ import (
 //   - Repo includes skill-b and skill-c from the same registry, but excludes skill-a.
 //   - After sync: skill-a should be excluded (repo exclude wins), skill-b and
 //     skill-c should be installed.
-func TestE2E007_ConfigMergeUserRepoLayers(t *testing.T) {
+func scenarioE2E007_ConfigMergeUserRepoLayers(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

@@ -34,10 +34,7 @@ func configContainsSkill(cfg *config.Config, name string) bool {
 // TestInstallThenRemove_RepoScope verifies the complete lifecycle for the
 // default (repo) scope: install writes to repo config, sync creates symlink,
 // remove deletes from repo config and de-syncs.
-func TestInstallThenRemove_RepoScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioInstallThenRemove_RepoScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -86,10 +83,7 @@ registries:
 
 // TestInstallThenRemove_UserScope verifies install --scope user → remove --scope user
 // writes to and cleans up ~/.agents/config.yaml, not the repo config.
-func TestInstallThenRemove_UserScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioInstallThenRemove_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -142,10 +136,7 @@ registries:
 // TestInstallThenRemove_LocalScope verifies install --scope local writes to
 // config.local.yaml and a subsequent remove de-selects the skill (by adding
 // to local exclude, since the remove path uses exclude for RepoPersonal skills).
-func TestInstallThenRemove_LocalScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioInstallThenRemove_LocalScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -190,10 +181,7 @@ registries:
 
 // TestRemoveSkillNotEnabled verifies that removing a skill that is not
 // configured (and not resolved) returns a clear error.
-func TestRemoveSkillNotEnabled(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveSkillNotEnabled(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -229,10 +217,7 @@ registries:
 // TestRemoveTagSelectedSkill_RepoScope verifies that when a skill is selected
 // via a tag match (not explicit skills: list), remove writes to the repo
 // config's exclude: list rather than the personal (local) exclude.
-func TestRemoveTagSelectedSkill_RepoScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveTagSelectedSkill_RepoScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -285,10 +270,7 @@ tags:
 // config can be excluded at the user scope. The remove creates a shadow
 // registry entry in ~/.agents/config.yaml with just the exclude, and the
 // resolver's cross-layer exclusion suppresses the org-level skill.
-func TestRemoveOrgSkillAtUserScope(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveOrgSkillAtUserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -381,10 +363,7 @@ harnesses:
 // remove --from round-trip
 // ---------------------------------------------------------------------------
 
-func TestRemoveFromFlagRemovesNamedResourceFromAdHocRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlagRemovesNamedResourceFromAdHocRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -414,10 +393,7 @@ registries: []
 	}
 }
 
-func TestRemoveFromFlagWithoutNameRemovesEntireRegistryEntry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlagWithoutNameRemovesEntireRegistryEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -451,10 +427,7 @@ registries: []
 	}
 }
 
-func TestRemoveFromFlagRefAndPathRequireFrom(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlagRefAndPathRequireFrom(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -481,10 +454,7 @@ registries: []
 	}
 }
 
-func TestRemoveFromFlagUsesResolvedKindNotFlagDefault(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlagUsesResolvedKindNotFlagDefault(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -541,10 +511,7 @@ registries: []
 // removed from via `remove --from --scope local`: the ad-hoc removal path
 // loaded the local config through the full Config loader, which demanded
 // apiVersion and failed with "missing apiVersion".
-func TestRemoveFromFlag_LocalScope_NoAPIVersion(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlag_LocalScope_NoAPIVersion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -600,10 +567,7 @@ registries: []
 // config.local.yaml (e.g. to satisfy the previous error) then hit a strict
 // decoder error: "field apiVersion not found in type config.LocalConfig".
 // The LocalConfig schema now tolerates an optional apiVersion.
-func TestRemove_LocalScope_WithManualAPIVersion(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemove_LocalScope_WithManualAPIVersion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -676,10 +640,7 @@ registries:
 // `remove --from <url> --scope local` failed with "registry entry ... not
 // found in local config". The registry is inherited, so it must be suppressed
 // with an exclude_all shadow entry in config.local.yaml.
-func TestRemoveFromFlag_LocalScope_ExcludesProjectRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlag_LocalScope_ExcludesProjectRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -731,10 +692,7 @@ registries:
 // named cross-layer case: a single resource from a project-level registry can
 // be excluded at local scope (writing a per-kind exclude shadow), leaving the
 // registry's other resources intact.
-func TestRemoveFromFlag_LocalScope_ExcludesNamedFromProjectRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlag_LocalScope_ExcludesNamedFromProjectRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -774,10 +732,7 @@ registries:
 // exclude_all, installing a resource must actually enable it. The install now
 // clears the contradictory exclude_all (which always wins in the resolver),
 // leaving a clean registry-scoped include.
-func TestInstallAfterExcludeAll_ReEnablesResource(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioInstallAfterExcludeAll_ReEnablesResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -842,10 +797,7 @@ registries:
 // with `remove --from <url>`. The registry was previously allowed and
 // materialized; after tightening the allowlist the remove command must still
 // remove the config entry and de-sync its resources.
-func TestRemoveFromFlag_BlockedRegistry_RemovesEntry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlag_BlockedRegistry_RemovesEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -903,10 +855,7 @@ allowed_registries: []
 // single resource can be removed from a registry that is now blocked by
 // allowed_registries. The registry entry remains, but the named resource is
 // excluded and de-synced while its siblings stay materialized.
-func TestRemoveFromFlag_BlockedRegistry_RemovesNamedResource(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioRemoveFromFlag_BlockedRegistry_RemovesNamedResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

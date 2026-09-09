@@ -12,7 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestDiagnosticFlagExportsPayload(t *testing.T) {
+func scenarioDiagnosticFlagExportsPayload(t *testing.T) {
 	home := setupTelemetryHome(t)
 
 	var mu sync.Mutex
@@ -76,7 +76,7 @@ func TestDiagnosticFlagExportsPayload(t *testing.T) {
 	}
 }
 
-func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
+func scenarioDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	home := setupTelemetryHome(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestDiagnosticFlagIgnoredWhenTelemetryBasic(t *testing.T) {
+func scenarioDiagnosticFlagIgnoredWhenTelemetryBasic(t *testing.T) {
 	setupTelemetryHome(t)
 
 	var requestCount int

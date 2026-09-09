@@ -88,11 +88,11 @@ Run direct real-terminal test typechecking with `make tui-qa-check` and all eigh
 
 ## Command test isolation
 
-For command scenarios that change environment, cwd, or internal hooks, enter `isolateCommandTest(t)` before setup and return when it reports parent execution. Keep the scenario body and assertions in the original test; matrices stay together in one child. Pure tests remain in-process.
+Command scenarios are named callbacks in `command_scenarios_test.go`, executed by `TestCommandIntegration`. Add a `scenario<Name>(t *testing.T)` function beside related scenarios and register it as `{"<Name>", scenario<Name>}`. Scenario bodies contain setup and assertions only; the suite supplies process isolation before setup. Matrices stay together in one child. `TestCommandScenarioRegistration` rejects unregistered callbacks, mismatched names, duplicate registrations, and unexpected top-level tests. Runner infrastructure, startup checks, checkout-policy checks, and the pure warning/version tests remain in-process.
 
-`go test ./cmd/agent-marketplace -count=1` defaults to four child slots; `-parallel=1` serializes children. Use `-args -command-tests-in-process` for the serial in-process baseline. Coverage builds automatically use that in-process path so scenario counters reach the report. `-run`, including subtest filters, and parent `-count`/`-shuffle` remain supported.
+Select a scenario with `go test ./cmd/agent-marketplace -run '^TestCommandIntegration$/^BackupCreatedOnInstall$' -count=1`; append another `/pattern` for its nested subtests. Old top-level scenario selectors no longer match. Normal `go test` defaults to four child slots; `-parallel=1` serializes children. `-count` repeats scenarios, and `-shuffle=<seed>` or `-shuffle=on` shuffles their registration order reproducibly. Use `-args -command-tests-in-process` for the serial baseline. Coverage builds automatically use that path so scenario counters reach the report.
 
-Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment are sandboxed. Fixtures that replace HOME and expect Codex beneath it must also set CODEX_HOME. Runner acceptance checks are `go test ./cmd/agent-marketplace -run '^TestCommandProcess' -count=1`; include `-race` and `-cover` when changing the runner.
+Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment are sandboxed. Fixtures that replace HOME and expect Codex beneath it must also set CODEX_HOME. Diagnostic-grouping fixtures use local directories when asserting registry-relative source locations; exact Git snapshots deliberately preserve absolute source paths. Runner and registration checks are `go test ./cmd/agent-marketplace -run '^TestCommand(Process|ScenarioRegistration)' -count=1`; include `-race` and `-cover` when changing the runner.
 
 ## E2E Test Suite
 

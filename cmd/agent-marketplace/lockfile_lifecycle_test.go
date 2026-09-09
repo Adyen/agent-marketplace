@@ -19,7 +19,7 @@ type lifecycleLock struct {
 	} `yaml:"registries"`
 }
 
-func TestSyncLockRetainsCommitUntilUpdate(t *testing.T) {
+func scenarioSyncLockRetainsCommitUntilUpdate(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -75,7 +75,7 @@ registries:
 	assertMaterializedSkillContains(t, repoRoot, "review", "Review v2")
 }
 
-func TestSyncRootRemovalProjectsOldCommit(t *testing.T) {
+func scenarioSyncRootRemovalProjectsOldCommit(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
@@ -121,7 +121,7 @@ registries:
 	}
 }
 
-func TestSyncEquivalentAutoAndExplicitRootsStayFresh(t *testing.T) {
+func scenarioSyncEquivalentAutoAndExplicitRootsStayFresh(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
@@ -185,7 +185,7 @@ registries:
 	}
 }
 
-func TestSyncLockedRefusesMissingLockWithoutMaterializing(t *testing.T) {
+func scenarioSyncLockedRefusesMissingLockWithoutMaterializing(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

@@ -57,7 +57,7 @@ func prepareDevinConflictFixture(t *testing.T, repoRoot string) (mcpPath string,
 // surface for the third repair class: it says THAT the values differ, names
 // enough identity to act (kind, key, aggregate path, resource), carries digests,
 // and carries no part of either value.
-func TestDoctorRepairPreviewsValueConflictWithoutLeakingValues(t *testing.T) {
+func scenarioDoctorRepairPreviewsValueConflictWithoutLeakingValues(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -106,7 +106,7 @@ func TestDoctorRepairPreviewsValueConflictWithoutLeakingValues(t *testing.T) {
 // TestDoctorRepairNeverReplacesUnderYes pins the asymmetry with adoption:
 // adoption is byte-neutral and batchable, replacing a user's entry is not. --yes
 // reports the conflict and leaves it alone.
-func TestDoctorRepairNeverReplacesUnderYes(t *testing.T) {
+func scenarioDoctorRepairNeverReplacesUnderYes(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -148,7 +148,7 @@ func TestDoctorRepairNeverReplacesUnderYes(t *testing.T) {
 // reason: the conflict loop does not consult opts.yes at all, so --yes on a
 // terminal still asks. A regression that made --yes batch conflicts the way it
 // batches adoptions would pass every other test in this file.
-func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
+func scenarioDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -186,7 +186,7 @@ func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 // TestDoctorRepairConflictPromptsPerEntry pins the interactive contract and the
 // full loop: on a TTY the user is asked per entry; declining leaves the file
 // byte-identical; confirming replaces the entry, and the next sync is clean.
-func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
+func scenarioDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 	tests := []struct {
 		name         string
 		answers      string
@@ -278,7 +278,7 @@ func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 // the dead end: "nothing to repair" has to be a statement about known files.
 // A beta tester who saw it could not tell whether the tool had even looked at
 // the aggregate they were staring at.
-func TestDoctorRepairReportsInspectedFilesWithNoCandidates(t *testing.T) {
+func scenarioDoctorRepairReportsInspectedFilesWithNoCandidates(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	selection := []resolver.ResolvedArtifact{devinMcpArtifact("managed", "managed-binary")}
 	if _, err := materialize.Run(context.Background(), repoRoot, selection); err != nil {

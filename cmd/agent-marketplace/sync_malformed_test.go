@@ -45,10 +45,7 @@ func assertNoRemovalGuessOutput(t *testing.T, output string) {
 // regression test for bead agent-marketplace-4pip: a selected skill that fails
 // ingest validation must be diagnosed with its file and parse error, not
 // reported as though it had been deleted upstream.
-func TestSyncCommandDiagnosesSelectedButMalformedSkill(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncCommandDiagnosesSelectedButMalformedSkill(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -97,10 +94,7 @@ registries:
 // TestSyncCommandDiagnosesMalformedSkillSelectedByFrontmatterName covers the
 // case that most resembles a rename: the selection uses the frontmatter name
 // while the dropped resource is only known to the ingester by its directory.
-func TestSyncCommandDiagnosesMalformedSkillSelectedByFrontmatterName(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncCommandDiagnosesMalformedSkillSelectedByFrontmatterName(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -142,10 +136,7 @@ registries:
 // TestSyncCommandGenuinelyAbsentSkillKeepsNotFoundRemediation pins the
 // behavior that must NOT change: a skill that really is gone upstream keeps the
 // existing warning and its remove-the-selection remediation.
-func TestSyncCommandGenuinelyAbsentSkillKeepsNotFoundRemediation(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncCommandGenuinelyAbsentSkillKeepsNotFoundRemediation(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -185,10 +176,7 @@ registries:
 // selection whose resource is present but unparseable is not stale. Pruning it
 // would delete a working selection over a registry-side syntax error, while the
 // genuinely-absent selection alongside it is still pruned.
-func TestSyncPruneStaleDoesNotPruneMalformedSelection(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncPruneStaleDoesNotPruneMalformedSelection(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -237,10 +225,7 @@ registries:
 // discoverability gap: default output reports only a count, so it must name the
 // command that explains it. It must NOT start dumping the detail itself —
 // TestSyncCommandIncludesMalformedSkillsInSummary pins that suppression.
-func TestSyncCommandDefaultOutputPointsAtMalformedDetail(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncCommandDefaultOutputPointsAtMalformedDetail(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

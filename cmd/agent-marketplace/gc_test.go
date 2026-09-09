@@ -14,7 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func TestGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting(t *testing.T) {
+func scenarioGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -69,7 +69,7 @@ registries:
 	}
 }
 
-func TestGcCommandWithoutConfigFailsClosedAndLeavesCachesUntouched(t *testing.T) {
+func scenarioGcCommandWithoutConfigFailsClosedAndLeavesCachesUntouched(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -97,7 +97,7 @@ func TestGcCommandWithoutConfigFailsClosedAndLeavesCachesUntouched(t *testing.T)
 	}
 }
 
-func TestGcCommandExactObjectsUseCurrentContext(t *testing.T) {
+func scenarioGcCommandExactObjectsUseCurrentContext(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -152,7 +152,7 @@ func TestGcCommandExactObjectsUseCurrentContext(t *testing.T) {
 	}
 }
 
-func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
+func scenarioGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
@@ -184,7 +184,7 @@ func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
 	}
 }
 
-func TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale(t *testing.T) {
+func scenarioGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		lock    string
@@ -235,7 +235,7 @@ func TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale(t 
 	}
 }
 
-func TestGcCommandMissingRequiredLockFailsClosedAndLeavesCacheUntouched(t *testing.T) {
+func scenarioGcCommandMissingRequiredLockFailsClosedAndLeavesCacheUntouched(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -257,7 +257,7 @@ registries:
 	}
 }
 
-func TestGcCommandRejectsOversizedLockAndLeavesCacheUntouched(t *testing.T) {
+func scenarioGcCommandRejectsOversizedLockAndLeavesCacheUntouched(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -294,7 +294,7 @@ registries:
 	}
 }
 
-func TestGcCommandRemovesInactiveHashDirectoriesAndIsIdempotent(t *testing.T) {
+func scenarioGcCommandRemovesInactiveHashDirectoriesAndIsIdempotent(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

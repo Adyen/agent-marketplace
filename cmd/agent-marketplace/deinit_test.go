@@ -14,7 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
-func TestDeinitPurgeLayerPair(t *testing.T) {
+func scenarioDeinitPurgeLayerPair(t *testing.T) {
 	for _, scope := range []string{"user", "repo", "local"} {
 		for _, mode := range []string{"purge", "orphan", "dry-run", "no-purge"} {
 			t.Run(scope+"/"+mode, func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestDeinitPurgeLayerPair(t *testing.T) {
 	}
 }
 
-func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
+func scenarioDeinitPurgePreservesPendingPublication(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -170,7 +170,7 @@ func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
 	}
 }
 
-func TestDeinitTable(t *testing.T) {
+func scenarioDeinitTable(t *testing.T) {
 	tests := []struct {
 		name            string
 		args            []string
@@ -333,7 +333,7 @@ func TestDeinitTable(t *testing.T) {
 	}
 }
 
-func TestDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
+func scenarioDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -356,7 +356,7 @@ func TestDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
 	}
 }
 
-func TestDeinitRemovesManagedMcpEntries(t *testing.T) {
+func scenarioDeinitRemovesManagedMcpEntries(t *testing.T) {
 	// Verify that deinit strips managed MCP entries from .factory/mcp.json
 	// while preserving user-owned entries.
 	homeDir := t.TempDir()
@@ -420,7 +420,7 @@ registries: []
 	_ = output
 }
 
-func TestDeinitKeepsEmptyMcpFileIfAllManaged(t *testing.T) {
+func scenarioDeinitKeepsEmptyMcpFileIfAllManaged(t *testing.T) {
 	// Verify that deinit keeps mcp.json with an empty mcpServers object when
 	// it only contains managed entries.
 	homeDir := t.TempDir()
@@ -489,7 +489,7 @@ registries: []
 	_ = output
 }
 
-func TestDeinitUserPreservesOrgOwnedArtifacts(t *testing.T) {
+func scenarioDeinitUserPreservesOrgOwnedArtifacts(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -542,7 +542,7 @@ registries:
 	assertSkillLinkPresent(t, homeDir, "org-skill")
 }
 
-func TestDeinitUserDryRunReportsUserOwnedChanges(t *testing.T) {
+func scenarioDeinitUserDryRunReportsUserOwnedChanges(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -594,7 +594,7 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func TestDeinitUserPurgeConfigDoesNotRemoveOrgConfig(t *testing.T) {
+func scenarioDeinitUserPurgeConfigDoesNotRemoveOrgConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -629,7 +629,7 @@ registries: []
 	}
 }
 
-func TestDeinitUserDryRunUsesCachedCatalog(t *testing.T) {
+func scenarioDeinitUserDryRunUsesCachedCatalog(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -688,7 +688,7 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func TestDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
+func scenarioDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -724,7 +724,7 @@ registries: []
 	}
 }
 
-func TestDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
+func scenarioDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

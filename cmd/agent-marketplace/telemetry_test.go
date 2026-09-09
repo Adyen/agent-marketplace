@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestTelemetryEnableAndDisable(t *testing.T) {
+func scenarioTelemetryEnableAndDisable(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -47,7 +47,7 @@ func TestTelemetryEnableAndDisable(t *testing.T) {
 	}
 }
 
-func TestTelemetryEnableEndpoint(t *testing.T) {
+func scenarioTelemetryEnableEndpoint(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -64,7 +64,7 @@ func TestTelemetryEnableEndpoint(t *testing.T) {
 	}
 }
 
-func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
+func scenarioTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -80,7 +80,7 @@ func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 	}
 }
 
-func TestTelemetryStatus(t *testing.T) {
+func scenarioTelemetryStatus(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -103,7 +103,7 @@ func TestTelemetryStatus(t *testing.T) {
 	}
 }
 
-func TestTelemetryResetID(t *testing.T) {
+func scenarioTelemetryResetID(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -119,7 +119,7 @@ func TestTelemetryResetID(t *testing.T) {
 	}
 }
 
-func TestTelemetryPurge(t *testing.T) {
+func scenarioTelemetryPurge(t *testing.T) {
 	home := setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -157,7 +157,7 @@ func TestTelemetryPurge(t *testing.T) {
 	}
 }
 
-func TestTelemetryPreview(t *testing.T) {
+func scenarioTelemetryPreview(t *testing.T) {
 	setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -197,7 +197,7 @@ func TestTelemetryPreview(t *testing.T) {
 	}
 }
 
-func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
+func scenarioTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -218,7 +218,7 @@ func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
 	}
 }
 
-func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
+func scenarioTelemetryEnableHonorsOrgLock(t *testing.T) {
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -248,7 +248,7 @@ func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
 	}
 }
 
-func TestTelemetryStatusManaged(t *testing.T) {
+func scenarioTelemetryStatusManaged(t *testing.T) {
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -309,7 +309,7 @@ func writeTelemetryTestFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
+func scenarioBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	_ = setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -390,7 +390,7 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	}
 }
 
-func TestTelemetryErrorOutcome(t *testing.T) {
+func scenarioTelemetryErrorOutcome(t *testing.T) {
 	_ = setupTelemetryHome(t)
 
 	var mu sync.Mutex
@@ -438,7 +438,7 @@ func TestTelemetryErrorOutcome(t *testing.T) {
 	}
 }
 
-func TestTelemetryCommandsDoNotSelfReport(t *testing.T) {
+func scenarioTelemetryCommandsDoNotSelfReport(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string

@@ -55,9 +55,9 @@ func isolateCommandTest(t *testing.T) bool {
 		return false
 	}
 	t.Parallel()
-	pattern := exactCommandTestPattern(t.Name())
-	if filter := strings.SplitN(flag.Lookup("test.run").Value.String(), "/", 2); len(filter) == 2 {
-		pattern += "/" + filter[1]
+	pattern, err := commandScenarioPattern(t.Name(), flag.Lookup("test.run").Value.String())
+	if err != nil {
+		t.Fatal(err)
 	}
 	result := runCommandProcess(t.Context(), t, t.Name(), pattern)
 	if result.err != nil {
@@ -129,7 +129,7 @@ func runCommandProcess(parent context.Context, t *testing.T, selector, pattern s
 	ctx, cancel := context.WithDeadline(parent, deadline)
 	defer cancel()
 	completionPath := filepath.Join(root, "completion.json")
-	cmd := exec.CommandContext(ctx, executable, "-test.run="+pattern, "-test.v", "-test.count=1", "-test.timeout=0")
+	cmd := exec.CommandContext(ctx, executable, "-test.run="+pattern, "-test.skip="+flag.Lookup("test.skip").Value.String(), "-test.short="+flag.Lookup("test.short").Value.String(), "-test.v", "-test.count=1", "-test.timeout=0")
 	cmd.Dir = filepath.Join(root, "repo")
 	cmd.Env = append(commandProcessEnvironment(root, completionPath, selector), extraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

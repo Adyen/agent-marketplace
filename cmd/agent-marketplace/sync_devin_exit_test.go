@@ -30,10 +30,7 @@ import (
 // ZERO, because the entry is written. Without that row the table would pass
 // just as happily if every interpolation loss had been escalated, which is the
 // outcome the split exists to prevent.
-func TestSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncExitCodeForSkippedDevinAggregateEntries(t *testing.T) {
 	tests := []struct {
 		name string
 		// resource is the extra registry content that cannot be represented.

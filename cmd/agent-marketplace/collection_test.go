@@ -18,10 +18,7 @@ func writeCollection(t *testing.T, repoDir, dirName, content string) {
 // TestCollectionInstallAndSync verifies the Phase 5 acceptance criterion:
 // install a local collection, opt out of one member via exclude, and confirm
 // the skills directory reflects the right state.
-func TestCollectionInstallAndSync(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioCollectionInstallAndSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -88,10 +85,7 @@ registries:
 
 // TestCollectionStatusViaColumn verifies that skills resolved via a collection
 // show a non-empty VIA column in status output.
-func TestCollectionStatusViaColumn(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioCollectionStatusViaColumn(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -148,10 +142,7 @@ collections:
 
 // TestCollectionRemove verifies that remove <collection> removes the
 // collection ref from config and de-syncs the member skills.
-func TestCollectionRemove(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioCollectionRemove(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -212,10 +203,7 @@ collections:
 // TestCollectionMemberExclude verifies that removing a single skill that is
 // provided by a collection writes an exclude rather than removing the
 // collection reference, and that the other member skills remain synced.
-func TestCollectionMemberExclude(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioCollectionMemberExclude(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -290,10 +278,7 @@ collections:
 
 // TestCollectionIncludesExpansion verifies that a collection that includes
 // another collection transitively installs all member skills.
-func TestCollectionIncludesExpansion(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioCollectionIncludesExpansion(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

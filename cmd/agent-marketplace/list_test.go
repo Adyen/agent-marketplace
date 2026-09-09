@@ -18,7 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
+func scenarioBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
 	const exactCatalogKey = "/cache/registry@sha1:0123456789abcdef"
 	const registryURL = "https://example.com/agents.git"
 
@@ -55,10 +55,7 @@ func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
 	}
 }
 
-func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListCommandPrintsCatalogWithStatuses(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -119,10 +116,7 @@ registries:
 	}
 }
 
-func TestListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -174,10 +168,7 @@ registries:
 	}
 }
 
-func TestListCommandShowsMalformedSkills(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListCommandShowsMalformedSkills(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -225,10 +216,7 @@ registries:
 	}
 }
 
-func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -566,10 +554,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestListFromFlagListsResourcesAtAdHocRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListFromFlagListsResourcesAtAdHocRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -600,10 +585,7 @@ registries: []
 	}
 }
 
-func TestListFromFlagWithKindFilter(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListFromFlagWithKindFilter(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -631,10 +613,7 @@ registries: []
 	}
 }
 
-func TestListFromFlagRefAndPathRequireFrom(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListFromFlagRefAndPathRequireFrom(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -661,10 +640,7 @@ registries: []
 	}
 }
 
-func TestListFromFlagBlockedURLReturnsError(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioListFromFlagBlockedURLReturnsError(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

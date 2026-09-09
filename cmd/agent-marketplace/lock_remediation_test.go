@@ -13,7 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
+func scenarioTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 	repoRoot := t.TempDir()
 	withWorkingDir(t, repoRoot)
 
@@ -53,7 +53,7 @@ func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 	}
 }
 
-func TestConfiguredInstallKeepsValidLayerExactWhenAnotherLayerLockIsMissing(t *testing.T) {
+func scenarioConfiguredInstallKeepsValidLayerExactWhenAnotherLayerLockIsMissing(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -96,7 +96,7 @@ registries:
 	assertFactorySkillExists(t, repoRoot, "bootstrap")
 }
 
-func TestReadOnlyCommandsPreserveWarmExactCacheBytesAndMetadata(t *testing.T) {
+func scenarioReadOnlyCommandsPreserveWarmExactCacheBytesAndMetadata(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "xdg-cache"))
@@ -169,7 +169,7 @@ func exactCacheTreeSnapshot(t *testing.T, root string) string {
 	return strings.Join(entries, "\n")
 }
 
-func TestCheckCommandsDoNotPopulateColdExactCacheOrState(t *testing.T) {
+func scenarioCheckCommandsDoNotPopulateColdExactCacheOrState(t *testing.T) {
 	homeDir := t.TempDir()
 	stateRoot := filepath.Join(homeDir, "state")
 	t.Setenv("HOME", homeDir)

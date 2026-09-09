@@ -26,10 +26,7 @@ func assertValidConfigYAML(t *testing.T, data []byte) {
 // but the catalog is EMPTY — every selection from that registry looks
 // "selected but not found". If CatalogTrusted() is true here, --prune-stale
 // deletes selections for resources that are perfectly fine upstream.
-func TestAttackPruneMissingRegistrySubdirectory(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneMissingRegistrySubdirectory(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -71,10 +68,7 @@ registries:
 // ATTACK A2: a registry that clones fine but whose bundle directory is EMPTY
 // (all resources deleted in one bad upstream commit, or the wrong ref). Zero
 // entries, zero catalog errors -> catalog "trusted" -> every selection pruned.
-func TestAttackPruneEmptyRegistry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneEmptyRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -111,10 +105,7 @@ registries:
 // is broken, so it lands in CatalogLoad.Malformed rather than Entries. It is
 // "selected but not found" while the catalog reports no error at all.
 // Deleting the selection is wrong: the fix is to repair the resource.
-func TestAttackPruneMalformedResource(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneMalformedResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -152,10 +143,7 @@ registries:
 // ATTACK A4: several registries, one unreachable, and the stale selection
 // belongs to a HEALTHY registry. This is the case the trust gate is supposed
 // to cover; assert the gate holds and the skip message is truthful.
-func TestAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -211,7 +199,7 @@ registries:
 //
 // Attack found during the agent-marketplace-tbjf review; fixed by
 // printSupersededErrors.
-func TestSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
+func scenarioSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
 	stalePruneCompoundRepo(t, "beads")
 
 	output, err := executeCommand("sync", "--prune-stale")
@@ -246,10 +234,7 @@ func TestSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
 // half of the same defect, and the one that produced a ZERO exit code: under
 // --strict the stale selections ARE the errors, so pass 1 printed "Errors 1",
 // pruned, re-synced clean and exited 0 having named nothing at all.
-func TestSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -289,10 +274,7 @@ registries:
 
 // ATTACK 6a: pruning the LAST remaining selection of a list. Does the YAML
 // stay valid, and does the surrounding structure survive?
-func TestAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -345,10 +327,7 @@ registries:
 }
 
 // ATTACK 6b: the same selection listed TWICE in the same list.
-func TestAttackPruneDuplicateSelectionEntries(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneDuplicateSelectionEntries(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -390,10 +369,7 @@ registries:
 }
 
 // ATTACK 6c: YAML anchors / aliases in the selection list.
-func TestAttackPruneWithYAMLAnchors(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneWithYAMLAnchors(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -434,10 +410,7 @@ registries:
 }
 
 // ATTACK 6d: CRLF line endings.
-func TestAttackPruneCRLFConfig(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioAttackPruneCRLFConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -476,7 +449,7 @@ registries:
 }
 
 // ATTACK 7: idempotency. Two consecutive prune runs must converge.
-func TestAttackPruneIdempotent(t *testing.T) {
+func scenarioAttackPruneIdempotent(t *testing.T) {
 	_, configPath := stalePruneCompoundRepo(t, "beads", "mayor")
 
 	out1, _ := executeCommand("sync", "--prune-stale")
@@ -500,12 +473,9 @@ func TestAttackPruneIdempotent(t *testing.T) {
 // ATTACK 4b: --strict --prune-stale where the config edit FAILS (read-only
 // config file). No selection can be removed, so no re-sync happens and the
 // original errs path runs. --strict must still fail the run.
-func TestAttackStrictPruneWithUnwritableConfig(t *testing.T) {
+func scenarioAttackStrictPruneWithUnwritableConfig(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory write permissions")
-	}
-	if isolateCommandTest(t) {
-		return
 	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -552,7 +522,7 @@ registries:
 }
 
 // ATTACK 5b: the skip message must never appear on a run that also pruned.
-func TestAttackSkipMessageNeverCoexistsWithPrune(t *testing.T) {
+func scenarioAttackSkipMessageNeverCoexistsWithPrune(t *testing.T) {
 	_, _ = stalePruneCompoundRepo(t, "beads")
 	output, _ := executeCommand("sync", "--prune-stale")
 	if strings.Contains(output, "prune-stale skipped") && strings.Contains(output, "pruned stale") {

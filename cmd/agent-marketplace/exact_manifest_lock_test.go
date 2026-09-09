@@ -44,7 +44,7 @@ registries:
 	return repoRoot, origin, working, lockPath
 }
 
-func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
+func scenarioLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
 	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
 	doc := readExactManifestLock(t, lockPath)
 	root := &doc.Registries[0].Roots[0]
@@ -102,7 +102,7 @@ func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
 	assertMaterializedSkillContains(t, repoRoot, "alpha", "Alpha locked")
 }
 
-func TestLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
+func scenarioLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
 	tests := []struct {
 		name   string
 		tamper func(*lockfile.GitRoot)
@@ -160,7 +160,7 @@ func TestLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
 	}
 }
 
-func TestReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
+func scenarioReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
 	for _, command := range []string{"status", "list"} {
 		t.Run(command, func(t *testing.T) {
 			repoRoot, _, _, lockPath := setupExactManifestRegistry(t)
@@ -198,7 +198,7 @@ func TestReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *testing.T) {
+func scenarioSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *testing.T) {
 	repoRoot, origin, _, lockPath := setupExactManifestRegistry(t)
 	beforeLock, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -232,7 +232,7 @@ registries:
 	}
 }
 
-func TestLockedInventoryVerificationPreservesMalformedDiagnostics(t *testing.T) {
+func scenarioLockedInventoryVerificationPreservesMalformedDiagnostics(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -268,7 +268,7 @@ registries:
 	}
 }
 
-func TestEmptyExactCacheReacquiresAndVerifiesLockedCommit(t *testing.T) {
+func scenarioEmptyExactCacheReacquiresAndVerifiesLockedCommit(t *testing.T) {
 	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
 	beforeLock, err := os.ReadFile(lockPath)
 	if err != nil {

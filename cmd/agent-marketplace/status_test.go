@@ -18,10 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -102,7 +99,7 @@ registries:
 	}
 }
 
-func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+func scenarioStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "status-gc.git")
 	writeSkill(t, working, "keeper", "Keeper", nil)
@@ -149,10 +146,7 @@ registries:
 	}
 }
 
-func TestStatusCommandMarksLockedCaches(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandMarksLockedCaches(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -191,10 +185,7 @@ registries:
 	}
 }
 
-func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -228,10 +219,7 @@ registries:
 	}
 }
 
-func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -282,10 +270,7 @@ skills:
 	}
 }
 
-func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -332,10 +317,7 @@ registries:
 	}
 }
 
-func TestStatusDriftSectionInSync(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusDriftSectionInSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -374,10 +356,7 @@ registries:
 	}
 }
 
-func TestStatusDriftSectionOutOfSync(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusDriftSectionOutOfSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -418,10 +397,7 @@ registries:
 	}
 }
 
-func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
+func scenarioStatusCommandBlockedRegistryReturnsError(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -444,14 +420,11 @@ registries:
 	}
 }
 
-func TestStatusReportsManagedInstallation(t *testing.T) {
+func scenarioStatusReportsManagedInstallation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission diagnostics are Unix-specific")
 	}
 
-	if isolateCommandTest(t) {
-		return
-	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -491,7 +464,7 @@ registries:
 	}
 }
 
-func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
+func scenarioBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -527,7 +500,7 @@ func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.
 	}
 }
 
-func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
+func scenarioBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", "relative/codex")
 	if _, err := buildHarnessTargetRows(t.TempDir(), []string{"codex"}); err == nil || !strings.Contains(err.Error(), "CODEX_HOME must be absolute") {
@@ -535,7 +508,7 @@ func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
 	}
 }
 
-func TestTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
+func scenarioTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
 	for input, want := range map[string]string{"codex": "Codex", "factory": "factory", "unknown": "unknown"} {
 		if got := targetDisplayName(input); got != want {
 			t.Errorf("targetDisplayName(%q) = %q, want %q", input, got, want)

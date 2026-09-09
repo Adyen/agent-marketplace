@@ -20,7 +20,7 @@ import (
 // the old all-candidates-required rule the personal entry turned the
 // org-mandated hard failure into a soft warning and `sync` exited 0. Any
 // candidate location being required must now keep the miss hard.
-func TestPersonalLayerCannotSoftenAnOrgRequiredMemberMiss(t *testing.T) {
+func scenarioPersonalLayerCannotSoftenAnOrgRequiredMemberMiss(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
