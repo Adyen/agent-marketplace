@@ -390,6 +390,9 @@ registries:
 }
 
 func TestGcCommandRunsRegistryAndMarketplaceGC(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -446,6 +449,9 @@ marketplaces:
 }
 
 func TestGcCommandMarketplacePreflightBlocksLegacyDeletion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	repoRoot := filepath.Join(t.TempDir(), "repo")

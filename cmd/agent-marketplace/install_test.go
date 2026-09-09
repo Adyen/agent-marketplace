@@ -18,6 +18,9 @@ import (
 )
 
 func TestInstallMarketplaceEndpointAddsItToUserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
@@ -42,6 +45,9 @@ func TestInstallMarketplaceEndpointAddsItToUserConfig(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointSupportsPathPrefix(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
@@ -60,6 +66,9 @@ func TestInstallMarketplaceEndpointSupportsPathPrefix(t *testing.T) {
 }
 
 func TestInstallBareGitProjectURLRetainsFromGuidance(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	requests := 0
@@ -81,6 +90,9 @@ func TestInstallBareGitProjectURLRetainsFromGuidance(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointUsesExplicitRepoAndLocalScopes(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, scope := range []string{"repo", "local"} {
 		t.Run(scope, func(t *testing.T) {
 			homeDir := t.TempDir()
@@ -120,6 +132,9 @@ func TestInstallMarketplaceEndpointUsesExplicitRepoAndLocalScopes(t *testing.T) 
 }
 
 func TestInstallMarketplaceEndpointRepeatPreservesUserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	requests := 0
@@ -155,6 +170,9 @@ func TestInstallMarketplaceEndpointRepeatPreservesUserConfig(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointIsIdempotentInBroaderScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
@@ -177,6 +195,9 @@ func TestInstallMarketplaceEndpointIsIdempotentInBroaderScope(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointPromotesFromNarrowerScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "", nil)
@@ -201,6 +222,9 @@ func TestInstallMarketplaceEndpointPromotesFromNarrowerScope(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointRejectsPolicyBeforeNetwork(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	requests := 0
@@ -224,6 +248,9 @@ func TestInstallMarketplaceEndpointRejectsPolicyBeforeNetwork(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointRejectsCanonicalURLMismatch(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	server := newMarketplaceEndpointServer(t, "marketplace-instance", "https://canonical.example", nil)
@@ -240,6 +267,9 @@ func TestInstallMarketplaceEndpointRejectsCanonicalURLMismatch(t *testing.T) {
 }
 
 func TestInstallMarketplaceEndpointRejectsInvalidWellKnownWithoutMutation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name   string
 		path   string
@@ -274,6 +304,9 @@ func TestInstallMarketplaceEndpointRejectsInvalidWellKnownWithoutMutation(t *tes
 }
 
 func TestInstallMarketplaceEndpointRejectsIdentityConflictsWithoutMutation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name          string
 		configuredURL string
@@ -337,6 +370,9 @@ func newMarketplaceEndpointServer(t *testing.T, instanceID, canonicalURL string,
 }
 
 func TestInstallCommandNormalizesMCPKindForMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	kind, ok, err := parseOptionalKind("mcp")
 	if err != nil {
 		t.Fatalf("parseOptionalKind: %v", err)
@@ -347,6 +383,9 @@ func TestInstallCommandNormalizesMCPKindForMarketplace(t *testing.T) {
 }
 
 func TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, flag := range []string{"--as=review-copy", "--yes", "--accept-risk"} {
 		t.Run(flag, func(t *testing.T) {
 			cmd := newInstallCmd()
@@ -370,6 +409,9 @@ func TestInstallValidationAllowsSelectorAndBareCoordinateWithMarketplaceFlags(t 
 }
 
 func TestInstallValidationRejectsMarketplaceSelectorCombinations(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name  string
 		flags map[string]string

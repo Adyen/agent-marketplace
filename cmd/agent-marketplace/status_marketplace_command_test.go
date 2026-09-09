@@ -12,6 +12,9 @@ import (
 )
 
 func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	contentDigest := "sha256:" + strings.Repeat("a", 64)

@@ -11,6 +11,9 @@ import (
 )
 
 func TestServeRequiresConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	cmd := newServeCmd()
 	cmd.SetArgs([]string{})
 	cmd.SetOut(&bytes.Buffer{})
@@ -26,6 +29,9 @@ func TestServeRequiresConfig(t *testing.T) {
 }
 
 func TestServeRejectsUnsupportedRole(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(minimalMarketplaceConfig()), 0o644); err != nil {
@@ -47,6 +53,9 @@ func TestServeRejectsUnsupportedRole(t *testing.T) {
 }
 
 func TestServeRejectsDigestOnlyRevisionRevocation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	contents := minimalMarketplaceConfig() + `
@@ -70,6 +79,9 @@ revocations:
 }
 
 func TestServeReindexRequiresConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	cmd := newServeReindexCmd()
 	cmd.SetArgs([]string{})
 	cmd.SetOut(&bytes.Buffer{})

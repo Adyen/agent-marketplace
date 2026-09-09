@@ -57,6 +57,9 @@ type marketplaceSearchResponse struct {
 }
 
 func TestSearchCommandJSONOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -89,6 +92,9 @@ marketplaces:
 }
 
 func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -134,6 +140,9 @@ marketplaces:
 }
 
 func TestSearchCommandAdHocURL(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -155,6 +164,9 @@ func TestSearchCommandAdHocURL(t *testing.T) {
 }
 
 func TestSearchCommandTableOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -187,6 +199,9 @@ marketplaces:
 }
 
 func TestSearchTableQuotesAdversarialRemoteFields(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	const hostile = "remote\x00\x1b[31m\nname\t\r\u202e"
 	results := []marketplace.SearchResult{{
 		Marketplace:      hostile,
@@ -218,6 +233,9 @@ func TestSearchTableQuotesAdversarialRemoteFields(t *testing.T) {
 }
 
 func TestSearchCommandPartialFailure(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -252,6 +270,9 @@ marketplaces:
 }
 
 func TestSearchCommandAllowlistBlock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -279,6 +300,9 @@ marketplaces:
 }
 
 func TestSearchCommandUsesContext(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -289,6 +313,9 @@ func TestSearchCommandUsesContext(t *testing.T) {
 }
 
 func TestSearchCommandNoMarketplaceConfigured(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

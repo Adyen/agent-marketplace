@@ -137,6 +137,9 @@ func TestVersionFlagPrintsVersion(t *testing.T) {
 }
 
 func TestSyncFlagsAreDocumentedAndValidated(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("sync", "--help")
 	if err != nil {
 		t.Fatalf("expected sync help to succeed: %v", err)
@@ -156,6 +159,9 @@ func TestSyncFlagsAreDocumentedAndValidated(t *testing.T) {
 }
 
 func TestSyncOfflineRejectsPruneStale(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("sync", "--offline", "--prune-stale")
 	if err == nil {
 		t.Fatalf("sync --offline --prune-stale unexpectedly succeeded with output %q", output)
@@ -169,6 +175,9 @@ func TestSyncOfflineRejectsPruneStale(t *testing.T) {
 }
 
 func TestSyncCheckRejectsRevocationOverride(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	validOverride := "marketplace/source/skill/review@sha256:" + strings.Repeat("0", 64)
 	output, err := executeCommand("sync", "--offline", "--check", "--allow-revoked", validOverride)
 	if err == nil {

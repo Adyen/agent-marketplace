@@ -9,6 +9,9 @@ import (
 )
 
 func TestMarketplaceStatusRowsQuoteControlledValues(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	rows := marketplaceStatusRowsToCells([]marketplace.PinStatus{{
 		Alias: "alias\t\x1b[31m", URL: "https://example.test/\r\n", InstanceID: "instance",
 		RegistryID: "source", RegistrySlug: "slug", Kind: "skill", Name: "name",

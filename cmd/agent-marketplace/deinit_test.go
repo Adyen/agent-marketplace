@@ -726,7 +726,7 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func TestDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
+func TestDeinitUserDryRunFailsClosedWhenOrgCatalogCacheIsCold(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -757,12 +757,11 @@ registries: []
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("deinit", "--dry-run")
-	if err != nil {
-		t.Fatalf("expected deinit --dry-run to succeed without fetching: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("expected deinit --dry-run to refuse a cold organization cache, output:\n%s", output)
 	}
-
-	if !strings.Contains(output, "No managed artifacts to remove") {
-		t.Fatalf("expected dry-run output to report no managed artifacts, got:\n%s", output)
+	if !strings.Contains(output, "refusing teardown") {
+		t.Fatalf("unexpected deinit --dry-run output: %v\n%s", err, output)
 	}
 }
 
@@ -926,6 +925,9 @@ registries:
 }
 
 func TestDeinitUserPreservesCachedOrganizationMarketplaceWithoutNetwork(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
@@ -1025,6 +1027,9 @@ marketplaces:
 }
 
 func TestDeinitUserFailsClosedForInvalidOrganizationMarketplaceCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, tc := range []struct {
 		name       string
 		breakCache func(t *testing.T, c *marketplace.Cache, revision store.ResourceRevision) string

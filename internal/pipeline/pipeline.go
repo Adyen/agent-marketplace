@@ -56,8 +56,8 @@ type ResolveOptions struct {
 	IgnoreBlockedRegistries bool
 	// SkipInventory suppresses recording for internal pre-mutation lookups. The
 	// post-mutation Resolve performed by sync remains the reported generation.
-	SkipInventory               bool
-	ReadOnlyExactLocks          bool
+	SkipInventory      bool
+	ReadOnlyExactLocks bool
 	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
 	// mutable registry cache for layers that have no lockfile. Present locks
 	// remain exact and malformed or stale locks still fail closed.

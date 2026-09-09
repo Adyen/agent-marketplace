@@ -726,6 +726,9 @@ registries:
 }
 
 func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	oldDigest := "sha256:" + strings.Repeat("a", 64)
 	newDigest := "sha256:" + strings.Repeat("b", 64)
 	result := &pipeline.UpdateResult{

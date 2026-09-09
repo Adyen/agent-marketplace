@@ -4,3 +4,15 @@ registries:
     ref: main
     path: skills
     default: true
+marketplaces:
+  - url: http://localhost:8080
+    instance_id: alex-agent-marketplace
+    resources:
+      - registry_id: humanlayer-skills
+        registry_slug: humanlayer-skills
+        kind: skill
+        name: show-me
+        revision: sha256:a1d7ce35e735a677dd4cc2ab8be0c6bbceb0f2a647b7e16b062b097fdec5a160
+        digest: sha256:a1d7ce35e735a677dd4cc2ab8be0c6bbceb0f2a647b7e16b062b097fdec5a160
+        acquisition: mirror
+        direct: true
