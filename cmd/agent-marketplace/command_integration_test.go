@@ -142,6 +142,10 @@ func startsWithIsolationGuard(function *ast.FuncDecl) bool {
 	if !ok || len(call.Args) != 1 {
 		return false
 	}
+	arg, ok := call.Args[0].(*ast.Ident)
+	if !ok || arg.Name != "t" {
+		return false
+	}
 	callee, ok := call.Fun.(*ast.Ident)
 	if !ok || callee.Name != "isolateCommandTest" {
 		return false
