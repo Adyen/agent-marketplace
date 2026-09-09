@@ -49,14 +49,16 @@ type readOnlyExactView struct {
 	exactSnapshot catalog.ExactSnapshotFunc
 	gitMetadata   []LockMetadata
 	errors        []error
+	warnings      []error
 	release       func()
 }
 
-func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) (context.Context, readOnlyExactView) {
+func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, allowMissingLocks bool) (context.Context, readOnlyExactView) {
 	bySource := make(map[string]readOnlyLockedGit)
 	byIdentity := make(map[string][]readOnlyLockedGit)
 	var metadata []LockMetadata
 	var viewErrors []error
+	var viewWarnings []error
 	var releases []func()
 	releaseAll := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -80,13 +82,25 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) (c
 		}
 		doc, layerErr := readOnlyLayerLock(layer.Path, lockPath, scope, registries)
 		if layerErr != nil {
-			viewErrors = append(viewErrors, layerErr)
+			var lockErr *LockViewError
+			missing := errors.As(layerErr, &lockErr) && lockErr.Code == "lock.missing"
+			if !allowMissingLocks || !missing {
+				viewErrors = append(viewErrors, layerErr)
+			}
+			if missing && allowMissingLocks {
+				viewWarnings = append(viewWarnings, layerErr)
+			}
 			for _, entry := range registries {
 				canonical, canonicalErr := readOnlyCanonicalURL(entry.URL)
 				if canonicalErr != nil {
 					canonical = entry.URL
 				}
-				locked := readOnlyLockedGit{err: layerErr}
+				var locked readOnlyLockedGit
+				if missing && allowMissingLocks {
+					locked = readOnlyLockedGit{unlocked: true}
+				} else {
+					locked = readOnlyLockedGit{err: layerErr}
+				}
 				bySource[readOnlySourceKey(layer.Source, canonical, entry.Ref)] = locked
 				identity := readOnlyGitIdentity(canonical, entry.Ref)
 				byIdentity[identity] = append(byIdentity[identity], locked)
@@ -170,7 +184,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig) (c
 		}
 		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
 	})
-	return ctx, readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, release: releaseAll}
+	return ctx, readOnlyExactView{catalogOption: catalog.WithExactSnapshots(exactSnapshot), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
 }
 
 func readOnlyLayerLock(configPath, path string, scope lockfile.Scope, registries []config.RegistryEntry) (lockfile.Document, error) {
