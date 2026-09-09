@@ -63,7 +63,7 @@ func resolveVersion(name string, fetch func(string) ([]byte, error)) (release, e
 		}
 		bundle := document.Platforms["x86_64-unknown-linux"]
 		if !trustedBundle(bundle.URL) || !regexp.MustCompile(`^[a-fA-F0-9]{64}$`).MatchString(bundle.SHA256) {
-			return release{}, fmt.Errorf("Devin manifest lacks a trusted Linux bundle URL and SHA256")
+			return release{}, fmt.Errorf("release manifest lacks a trusted Linux bundle URL and SHA256")
 		}
 		result.Version, result.BundleURL, result.BundleSHA256 = document.Version, bundle.URL, strings.ToLower(bundle.SHA256)
 	}
@@ -122,7 +122,7 @@ func fetchMetadata(client *http.Client, endpoint string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("metadata request failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("metadata HTTP status %d", response.StatusCode)
 	}

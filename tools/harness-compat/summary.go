@@ -42,7 +42,7 @@ func readSummaryReport(path string) (summaryReport, error) {
 	if err != nil {
 		return report, fmt.Errorf("compatibility report cannot be read")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	const limit = 32 << 20
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil || len(data) > limit || json.Unmarshal(data, &report) != nil {

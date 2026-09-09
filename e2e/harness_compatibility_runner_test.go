@@ -88,7 +88,7 @@ func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.
 		r.Error = "executable must be configured with an absolute path"
 		return r
 	}
-	for _, dir := range []string{".tmp", ".runtime", ".git-template", ".config-dirs", ".data-dirs"} {
+	for _, dir := range []string{".tmp", ".runtime", ".git-template", ".config-dirs", ".data-dirs", ".codex"} {
 		if err := os.MkdirAll(filepath.Join(e.home, dir), 0o700); err != nil {
 			r.Error = "cannot create isolated runtime directory"
 			return r
@@ -148,6 +148,14 @@ func requireCompatibilityObservation(r *compatibilityCommand, absent bool, value
 	for _, value := range values {
 		present := strings.Contains(r.output, value)
 		if value == "" || present == absent {
+			if !absent {
+				for end := len(value) - 1; end >= 8; end-- {
+					if strings.Contains(r.output, value[:end]+"…") || strings.Contains(r.output, value[:end]+"...") {
+						r.Diagnostics = append(r.Diagnostics, "cli.truncated-fixture-value")
+						return fmt.Errorf("native output truncated expected fixture value %q", value)
+					}
+				}
+			}
 			return fmt.Errorf("expected %q present=%t", value, !absent)
 		}
 	}

@@ -10,7 +10,7 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     FACTORY_DROID_AUTO_UPDATE_ENABLED=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git jq bsdutils \
+    ca-certificates curl git jq bsdutils \
     && rm -rf /var/lib/apt/lists/*
 
 ARG HARNESS_TARGET

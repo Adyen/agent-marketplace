@@ -11,6 +11,25 @@ import (
 	"time"
 )
 
+func TestCompatibilityRunnerCreatesExplicitCodexHome(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "internal-fake-native")
+	e.WriteFile(binary, "#!/bin/sh\ntest -d \"$CODEX_HOME\"\n")
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, ".codex")); !os.IsNotExist(err) {
+		t.Fatal("negative control requires a fresh sandbox without CODEX_HOME")
+	}
+	command := runCompatibilityCommand(e, binary, nil, time.Second)
+	if command.Error != "" || command.ExitCode != 0 {
+		t.Fatalf("explicit sandbox CODEX_HOME must exist before native startup: %+v", command)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatal("startup created native configuration instead of only the empty home directory")
+	}
+}
+
 func TestCompatibilityNativeProbeFailuresStayResourceLocal(t *testing.T) {
 	e := newEnv(t)
 	binary := filepath.Join(e.repos, "internal-fake-native")
@@ -26,6 +45,23 @@ func TestCompatibilityNativeProbeFailuresStayResourceLocal(t *testing.T) {
 	}
 	if native.probes[0].before.Error != "" || native.probes[1].before.Error == "" {
 		t.Fatal("per-resource negative-control evidence was not retained")
+	}
+}
+
+func TestCompatibilityTruncationIsDiagnosedWithoutClaimingDiscovery(t *testing.T) {
+	const name = "amcompat-factory-repo-symlink-mcp-a"
+	for _, suffix := range []string{"…", "..."} {
+		command := compatibilityCommand{ExitCode: 0, output: name[:len(name)-2] + suffix}
+		if err := requireCompatibilityObservation(&command, false, name); err == nil || !strings.Contains(err.Error(), "truncated") {
+			t.Fatal("truncated fixture display was accepted or not diagnosed")
+		}
+		if len(command.Observed) != 0 || len(command.Diagnostics) != 1 || command.Diagnostics[0] != "cli.truncated-fixture-value" {
+			t.Fatal("truncation lost its evidence boundary")
+		}
+	}
+	command := compatibilityCommand{ExitCode: 0, output: name}
+	if err := requireCompatibilityObservation(&command, false, name); err != nil || len(command.Diagnostics) != 0 {
+		t.Fatal("complete fixture identifier was not accepted")
 	}
 }
 
