@@ -180,6 +180,20 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 
 var testTable = []TestCase{
 	{
+		Name:       "locks/unlocked_organization_sync_parity",
+		Desc:       "Given an organization registry without a lock, when syncing and checking repeatedly, then resources stay synced without creating an organization lock.",
+		Registries: []RegistryDef{{Name: "org-parity", Skills: []Skill{{Name: "review"}}}},
+		OrgCfg:     "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:org-parity}}\n    ref: main\n    required: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/root/.factory/skills/review"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"status"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync", "--offline"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}, FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
+		},
+	},
+	{
 		Name:       "locks/equivalent_auto_explicit_inspection",
 		Desc:       "Given equivalent auto and explicit registry roots, When lock check, list and status run in either entry order, Then inspection agrees with reconciliation without changing config or locks",
 		Registries: []RegistryDef{{Name: "equivalent-roots", Skills: []Skill{{Name: "review", Description: "Review changes"}}, Files: map[string]string{".claude-plugin/plugin.json": `{"name":"equivalent-roots"}`}}},

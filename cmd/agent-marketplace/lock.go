@@ -129,6 +129,7 @@ type lockedGit struct {
 	ref       string
 	commit    lockfile.GitOID
 	snapshot  string
+	unlocked  bool
 }
 
 func newLockCmd() *cobra.Command {
@@ -820,6 +821,18 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if len(remote) == 0 && !exists {
 			continue
 		}
+		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
+		if implicitOrg && !exists {
+			for _, entry := range remote {
+				canonical, err := canonicalRegistryURL(entry.URL)
+				if err != nil {
+					return nil, changed, nil, err
+				}
+				set.bySource[sourceLockKey(layer.Source, canonical, entry.Ref)] = lockedGit{unlocked: true}
+			}
+			slog.Debug("organization registry layer remains unlocked", "registries", len(remote))
+			continue
+		}
 		if !selected && !mode.upgrade {
 			continue
 		}
@@ -833,7 +846,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, doc: *current})
 			continue
 		}
-		implicitOrg := scope == lockfile.ScopeOrganization && !mode.explicitOrganization
 		if !exists && mode.locked && !implicitOrg {
 			return nil, changed, nil, &lockLifecycleError{Code: "lock.missing", Scope: scope, Path: lockPath, Err: os.ErrNotExist}
 		}
@@ -987,10 +999,13 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 			locked = candidates[0]
 		}
+		if locked.unlocked {
+			return "", "", nil
+		}
 		catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
 		return locked.snapshot, catalogKey, nil
 	}, set.discover)
-	hasExactConsumers := len(set.bySource) > 0
+	hasExactConsumers := len(set.byIdentity) > 0
 	resultLease = func(ctx context.Context) (func(), error) {
 		if !hasExactConsumers {
 			return func() {}, nil
