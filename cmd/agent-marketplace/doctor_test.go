@@ -24,7 +24,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 )
 
-func scenarioDoctorCommandReportsDetectedHarnessAndInstallRoots(t *testing.T) {
+func TestDoctorCommandReportsDetectedHarnessAndInstallRoots(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -93,7 +96,10 @@ func staticResolve(selection []resolver.ResolvedArtifact) func(context.Context, 
 // reports compatibility with 3000.3+, and recommends selecting the harness when
 // installed but unconfigured", and "warns when its version is below 3000.3"
 // WITHOUT blocking anything (every case exits 0).
-func scenarioDoctorDevinVersionAndRecommendationLines(t *testing.T) {
+func TestDoctorDevinVersionAndRecommendationLines(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	supported := devincli.Probe{
 		Status:  devincli.StatusSupported,
 		Path:    "/opt/devin/bin/devin",
@@ -236,7 +242,10 @@ func devinRepairPreview(t *testing.T, repoRoot string, selection []resolver.Reso
 // TestDoctorRepairOffTTYIsPreviewOnly pins "off-TTY, `doctor --repair` is
 // preview-only" and "exit 0 means clean, repaired, or declined without
 // operational failure".
-func scenarioDoctorRepairOffTTYIsPreviewOnly(t *testing.T) {
+func TestDoctorRepairOffTTYIsPreviewOnly(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -286,7 +295,10 @@ func scenarioDoctorRepairOffTTYIsPreviewOnly(t *testing.T) {
 
 // TestDoctorRepairYesAdoptsWithoutPrompting pins "`doctor --repair --yes`
 // adopts exact current desired matches without prompting".
-func scenarioDoctorRepairYesAdoptsWithoutPrompting(t *testing.T) {
+func TestDoctorRepairYesAdoptsWithoutPrompting(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -327,7 +339,10 @@ func scenarioDoctorRepairYesAdoptsWithoutPrompting(t *testing.T) {
 // TestDoctorRepairYesNeverRemovesOrphans pins the asymmetry the plan requires:
 // --yes covers adoption, but "orphan-removal candidates require ... explicit
 // per-entry confirmation", which --yes cannot supply.
-func scenarioDoctorRepairYesNeverRemovesOrphans(t *testing.T) {
+func TestDoctorRepairYesNeverRemovesOrphans(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, _ := prepareDevinRepairFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -366,7 +381,10 @@ func scenarioDoctorRepairYesNeverRemovesOrphans(t *testing.T) {
 
 // TestDoctorRepairOnTTYPromptsPerAction pins "on a TTY it then prompts for each
 // authorized action" and that a decline is a clean exit 0 that changes nothing.
-func scenarioDoctorRepairOnTTYPromptsPerAction(t *testing.T) {
+func TestDoctorRepairOnTTYPromptsPerAction(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name        string
 		answers     string
@@ -430,7 +448,10 @@ func scenarioDoctorRepairOnTTYPromptsPerAction(t *testing.T) {
 
 // TestDoctorRepairExitsOneOnCorruptAggregate pins "exit 1 means corrupt
 // state/file or partial repair failure", and that the file is left as found.
-func scenarioDoctorRepairExitsOneOnCorruptAggregate(t *testing.T) {
+func TestDoctorRepairExitsOneOnCorruptAggregate(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -480,7 +501,10 @@ func scenarioDoctorRepairExitsOneOnCorruptAggregate(t *testing.T) {
 
 // TestDoctorRepairReportsNothingToRepair pins the clean path: no candidates,
 // exit 0, and an explicit statement rather than silence.
-func scenarioDoctorRepairReportsNothingToRepair(t *testing.T) {
+func TestDoctorRepairReportsNothingToRepair(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	// A synced-and-still-owned root has no adoption matches (everything is
 	// already proven ours) and no orphans (nothing is undesired).
@@ -515,7 +539,10 @@ func prepareDevinRepairFixtureOwned(t *testing.T, repoRoot string) []resolver.Re
 // reads as two problems. A line identical to one already printed adds nothing,
 // so it is printed once; a line that differs is a different fact and still
 // prints.
-func scenarioWriteRepairDiagnosticsPrintsEachLineOnce(t *testing.T) {
+func TestWriteRepairDiagnosticsPrintsEachLineOnce(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	duplicate := diag.Diagnostic{
 		Code:     diag.CodeOwnershipStateMissing,
 		Severity: diag.SeverityWarning,
@@ -565,7 +592,10 @@ func scenarioWriteRepairDiagnosticsPrintsEachLineOnce(t *testing.T) {
 // constant — rule.devin.unsupported says the same sentence for every rule and
 // distinguishes them only by Resource. Keying the dedup on the line alone would
 // silently turn "two rules were dropped" into "a rule was dropped".
-func scenarioWriteRepairDiagnosticsKeepsTwoResourcesWithOneMessage(t *testing.T) {
+func TestWriteRepairDiagnosticsKeepsTwoResourcesWithOneMessage(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	shared := diag.Diagnostic{
 		Code:     diag.CodeRuleDevinUnsupported,
 		Severity: diag.SeverityWarning,
@@ -627,7 +657,10 @@ func prepareDevinTwoAggregateRepairFixture(t *testing.T, repoRoot string) (outDi
 // TestDoctorRepairDistinguishesTwoAggregatesInOneRoot pins both halves of the
 // second defect: each aggregate's diagnostic names that aggregate, and no line
 // is printed twice.
-func scenarioDoctorRepairDistinguishesTwoAggregatesInOneRoot(t *testing.T) {
+func TestDoctorRepairDistinguishesTwoAggregatesInOneRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir, selection := prepareDevinTwoAggregateRepairFixture(t, repoRoot)
 
@@ -671,7 +704,10 @@ func scenarioDoctorRepairDistinguishesTwoAggregatesInOneRoot(t *testing.T) {
 
 // TestDoctorYesRequiresRepair pins that --yes cannot silently do nothing: it is
 // only meaningful for the repair contract.
-func scenarioDoctorYesRequiresRepair(t *testing.T) {
+func TestDoctorYesRequiresRepair(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	devinDoctorEnv(t)
 	output, err := executeCommand("doctor", "--yes")
 	if err == nil {
@@ -681,7 +717,10 @@ func scenarioDoctorYesRequiresRepair(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-func scenarioDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
+func TestDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission diagnostics are Unix-specific")
 	}

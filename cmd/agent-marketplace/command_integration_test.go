@@ -1,48 +1,32 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"math/rand"
 	"path/filepath"
-	"reflect"
 	"regexp"
-	"runtime"
-	"slices"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-type commandTest struct {
-	name string
-	run  func(*testing.T)
+// inProcessTestFiles hold runner infrastructure and pure unit tests that never
+// touch process-global state, so their top-level tests run in the parent.
+var inProcessTestFiles = map[string]bool{
+	"command_integration_test.go": true,
+	"process_runner_test.go":      true,
+	"process_suite_test.go":       true,
+	"warnings_test.go":            true,
+	"version_test.go":             true,
 }
 
-func TestCommandIntegration(t *testing.T) {
-	tests := slices.Clone(commandTests)
-	if shuffle := flag.Lookup("test.shuffle").Value.String(); shuffle != "off" {
-		seed, err := strconv.ParseInt(shuffle, 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rand.New(rand.NewSource(seed)).Shuffle(len(tests), func(i, j int) { tests[i], tests[j] = tests[j], tests[i] })
-	}
-	for _, scenario := range tests {
-		t.Run(scenario.name, func(t *testing.T) {
-			runIsolatedCommandTest(t, scenario.run)
-		})
-	}
-}
-
-func runIsolatedCommandTest(t *testing.T, run func(*testing.T)) {
-	t.Helper()
-	if !isolateCommandTest(t) {
-		run(t)
-	}
+// inProcessTests are individual tests in scenario files that intentionally
+// run in the parent process.
+var inProcessTests = map[string]bool{
+	"TestMainIsolatesHome":                                true,
+	"TestStartupTargetRegistrationsAreValid":              true,
+	"TestRepositoryIgnoresDependencyTransactionLockFiles": true,
 }
 
 func commandScenarioPattern(selector, filter string) (string, error) {
@@ -109,18 +93,11 @@ func splitCommandTestFilter(filter string) [][]string {
 	return branches
 }
 
-func TestCommandScenarioRegistration(t *testing.T) {
-	registered := map[string]bool{}
-	for _, scenario := range commandTests {
-		if scenario.name == "" || strings.ContainsAny(scenario.name, "/ \t\n") || scenario.run == nil || registered[scenario.name] {
-			t.Fatalf("invalid or duplicate scenario %q", scenario.name)
-		}
-		name := runtime.FuncForPC(reflect.ValueOf(scenario.run).Pointer()).Name()
-		if !strings.HasSuffix(name, ".scenario"+scenario.name) {
-			t.Errorf("scenario %q is bound to %s", scenario.name, name)
-		}
-		registered[scenario.name] = true
-	}
+// TestCommandIsolationGuard makes process isolation a suite invariant: every
+// top-level test in a scenario file must open with
+// `if isolateCommandTest(t) { return }` unless it is explicitly listed as an
+// in-process test.
+func TestCommandIsolationGuard(t *testing.T) {
 	files, err := filepath.Glob("*_test.go")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("read test sources: %v", err)
@@ -130,31 +107,49 @@ func TestCommandScenarioRegistration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, violation := range commandRegistrationViolations(filename, file, registered) {
+		for _, violation := range commandIsolationViolations(filename, file) {
 			t.Error(violation)
 		}
 	}
 }
 
-func commandRegistrationViolations(filename string, file *ast.File, registered map[string]bool) []string {
+func commandIsolationViolations(filename string, file *ast.File) []string {
 	var violations []string
+	if inProcessTestFiles[filename] {
+		return nil
+	}
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Recv != nil {
+		if !ok || function.Recv != nil || !strings.HasPrefix(function.Name.Name, "Test") || function.Name.Name == "TestMain" || inProcessTests[function.Name.Name] {
 			continue
 		}
-		name := function.Name.Name
-		if scenario, ok := strings.CutPrefix(name, "scenario"); ok && !registered[scenario] {
-			violations = append(violations, fmt.Sprintf("%s: scenario %s is not registered", filename, scenario))
-		}
-		if !strings.HasPrefix(name, "Test") || filename == "process_runner_test.go" || filename == "process_suite_test.go" || filename == "warnings_test.go" || filename == "version_test.go" {
-			continue
-		}
-		switch name {
-		case "TestMain", "TestMainIsolatesHome", "TestStartupTargetRegistrationsAreValid", "TestCommandIntegration", "TestCommandScenarioRegistration", "TestRepositoryIgnoresDependencyTransactionLockFiles":
-		default:
-			violations = append(violations, fmt.Sprintf("%s: %s bypasses command isolation; add a named scenario to commandTests", filename, name))
+		if !startsWithIsolationGuard(function) {
+			violations = append(violations, fmt.Sprintf("%s: %s bypasses command isolation; open with `if isolateCommandTest(t) { return }`", filename, function.Name.Name))
 		}
 	}
 	return violations
+}
+
+func startsWithIsolationGuard(function *ast.FuncDecl) bool {
+	if function.Body == nil || len(function.Body.List) == 0 {
+		return false
+	}
+	guard, ok := function.Body.List[0].(*ast.IfStmt)
+	if !ok || guard.Init != nil || guard.Else != nil || len(guard.Body.List) != 1 {
+		return false
+	}
+	call, ok := guard.Cond.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	arg, ok := call.Args[0].(*ast.Ident)
+	if !ok || arg.Name != "t" {
+		return false
+	}
+	callee, ok := call.Fun.(*ast.Ident)
+	if !ok || callee.Name != "isolateCommandTest" {
+		return false
+	}
+	ret, ok := guard.Body.List[0].(*ast.ReturnStmt)
+	return ok && len(ret.Results) == 0
 }

@@ -29,7 +29,10 @@ func instrumentSyncGit(t *testing.T, body string) string {
 	return bin
 }
 
-func scenarioSyncIndependentRegistriesOverlap(t *testing.T) {
+func TestSyncIndependentRegistriesOverlap(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, key := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
 		t.Setenv(key, "")
 	}
@@ -91,7 +94,10 @@ esac
 	}
 }
 
-func scenarioSyncConcurrentAcquisitionFailurePreservesDependenciesAndOutput(t *testing.T) {
+func TestSyncConcurrentAcquisitionFailurePreservesDependenciesAndOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repo := setupLocalGitSyncFixture(t, 2)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, output)
@@ -126,7 +132,10 @@ func scenarioSyncConcurrentAcquisitionFailurePreservesDependenciesAndOutput(t *t
 	}
 }
 
-func scenarioOfflineSyncRejectsUnsafeCacheCoordinationWithoutRepair(t *testing.T) {
+func TestOfflineSyncRejectsUnsafeCacheCoordinationWithoutRepair(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupLocalGitSyncFixture(t, 1)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, output)
@@ -144,7 +153,10 @@ func scenarioOfflineSyncRejectsUnsafeCacheCoordinationWithoutRepair(t *testing.T
 	}
 }
 
-func scenarioSyncWarmLockVerifiesSnapshotOnce(t *testing.T) {
+func TestSyncWarmLockVerifiesSnapshotOnce(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, name := range []string{"canonical", "symlink-root"} {
 		t.Run(name, func(t *testing.T) {
 			testSyncWarmLockVerifiesSnapshotOnce(t, name == "symlink-root")

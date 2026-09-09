@@ -16,12 +16,12 @@ func TestCommandProcessNestedPatterns(t *testing.T) {
 		want     string
 	}{
 		{"TestOne", "TestOne/case", "^TestOne$/case"},
-		{"TestCommandIntegration/Backup", "", "^TestCommandIntegration$/^Backup$"},
-		{"TestCommandIntegration/Backup", "^TestCommandIntegration$/^Backup$/^a\\[1\\]$", "^TestCommandIntegration$/^Backup$/^a\\[1\\]$"},
-		{"TestCommandIntegration/Backup", "TestCommandIntegration/(Backup|Sync)/case", "^TestCommandIntegration$/^Backup$/case"},
-		{"TestCommandIntegration/Backup", "TestCommandIntegration/[B/]ackup/case", "^TestCommandIntegration$/^Backup$/case"},
-		{"TestCommandIntegration/Backup", "Other/x|TestCommandIntegration/Backup/a|TestCommandIntegration/Backup/b", "^TestCommandIntegration$/^Backup$/a|^TestCommandIntegration$/^Backup$/b"},
-		{"TestCommandIntegration/Backup", "TestCommandIntegration", "^TestCommandIntegration$/^Backup$"},
+		{"TestBackup", "", "^TestBackup$"},
+		{"TestBackup", "^TestBackup$/^a\\[1\\]$", "^TestBackup$/^a\\[1\\]$"},
+		{"TestBackup", "Test(Backup|Sync)/case", "^TestBackup$/case"},
+		{"TestBackup", "Test[B/]ackup/case", "^TestBackup$/case"},
+		{"TestBackup", "Other/x|TestBackup/a|TestBackup/b", "^TestBackup$/a|^TestBackup$/b"},
+		{"TestBackup", "Backup", "^TestBackup$"},
 	} {
 		t.Run(tc.filter, func(t *testing.T) {
 			got, err := commandScenarioPattern(tc.selector, tc.filter)
@@ -31,13 +31,13 @@ func TestCommandProcessNestedPatterns(t *testing.T) {
 		})
 	}
 	for _, filter := range []string{"[", "Other/Backup"} {
-		if _, err := commandScenarioPattern("TestCommandIntegration/Backup", filter); err == nil {
+		if _, err := commandScenarioPattern("TestBackup", filter); err == nil {
 			t.Fatalf("invalid or nonmatching filter accepted: %q", filter)
 		}
 	}
 }
 
-func TestCommandProcessRegisteredSelectors(t *testing.T) {
+func TestCommandProcessTopLevelSelectors(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -47,31 +47,35 @@ func TestCommandProcessRegisteredSelectors(t *testing.T) {
 		run  string
 		skip string
 	}{
-		{"exact", "^TestCommandIntegration$/^ProcessIsolation$/^a\\[1\\]$", ""},
-		{"alternation", "Other/none|^TestCommandIntegration$/^ProcessIsolation$/^a\\[1\\]$", ""},
-		{"skip", "^TestCommandIntegration$/^ProcessIsolation$", "^TestCommandIntegration$/^ProcessIsolation$/^a1$"},
+		{"exact", "^TestProcessIsolation$/^a\\[1\\]$", ""},
+		{"alternation", "Other/none|^TestProcessIsolation$/^a\\[1\\]$", ""},
+		{"skip", "^TestProcessIsolation$", "^TestProcessIsolation$/^a1$"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), executable, "-test.run="+tc.run, "-test.skip="+tc.skip, "-test.count=2", "-test.shuffle=123", "-test.v", "-test.timeout=30s")
 			output, err := cmd.CombinedOutput()
 			if err != nil || strings.Count(string(output), "selected-suite-probe") != 2 || strings.Contains(string(output), "unselected-suite-probe") {
-				t.Fatalf("registered selection failed: %v\n%s", err, output)
+				t.Fatalf("top-level selection failed: %v\n%s", err, output)
 			}
 		})
 	}
 }
 
-func TestCommandProcessRegistrationGuard(t *testing.T) {
+func TestCommandProcessIsolationGuard(t *testing.T) {
+	const guard = "\tif isolateCommandTest(t) {\n\t\treturn\n\t}\n"
 	for _, tc := range []struct {
 		name        string
 		filename    string
 		declaration string
 		violations  int
 	}{
-		{"registered", "new_test.go", "func scenarioKnown(t *testing.T) {}", 0},
-		{"unregistered", "new_test.go", "func scenarioForgotten(t *testing.T) {}", 1},
-		{"top-level bypass", "new_test.go", "func TestForgotten(t *testing.T) {}", 1},
-		{"pure unit", "version_test.go", "func TestVersion(t *testing.T) {}", 0},
+		{"guarded", "new_test.go", "func TestKnown(t *testing.T) {\n" + guard + "}", 0},
+		{"unguarded", "new_test.go", "func TestForgotten(t *testing.T) {}", 1},
+		{"guard not first", "new_test.go", "func TestLate(t *testing.T) {\n\tt.Log(1)\n" + guard + "}", 1},
+		{"guard without return", "new_test.go", "func TestNoReturn(t *testing.T) {\n\tif isolateCommandTest(t) {\n\t\tt.Log(1)\n\t}\n}", 1},
+		{"guard with invalid arg", "new_test.go", "func TestInvalidArg(t *testing.T) {\n\tif isolateCommandTest(nil) {\n\t\treturn\n\t}\n}", 1},
+		{"helper", "new_test.go", "func testHelper(t *testing.T) {}", 0},
+		{"pure unit file", "version_test.go", "func TestVersion(t *testing.T) {}", 0},
 		{"policy", "policy_test.go", "func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {}", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,7 +83,7 @@ func TestCommandProcessRegistrationGuard(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			violations := commandRegistrationViolations(tc.filename, file, map[string]bool{"Known": true})
+			violations := commandIsolationViolations(tc.filename, file)
 			if len(violations) != tc.violations {
 				t.Fatalf("violations = %v, want %d", violations, tc.violations)
 			}
@@ -87,7 +91,10 @@ func TestCommandProcessRegistrationGuard(t *testing.T) {
 	}
 }
 
-func scenarioProcessIsolation(t *testing.T) {
+func TestProcessIsolation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	selector := os.Getenv(processIsolatedSelectorEnv)
 	if *commandTestsInProcess || testing.CoverMode() != "" {
 		if selector != "" {

@@ -34,7 +34,10 @@ registries:
 	return repo, origin, working, filepath.Join(repo, ".agents", "lock.yaml")
 }
 
-func scenarioConfiguredListUsesExactLockWithoutReconciliation(t *testing.T) {
+func TestConfiguredListUsesExactLockWithoutReconciliation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, _, working, lockPath := setupReadOnlyExactRegistry(t)
 	before, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -60,7 +63,10 @@ func scenarioConfiguredListUsesExactLockWithoutReconciliation(t *testing.T) {
 	}
 }
 
-func scenarioConfiguredListMissingLockNamesAffectedLayer(t *testing.T) {
+func TestConfiguredListMissingLockNamesAffectedLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	stateHome := filepath.Join(home, "state")
@@ -90,7 +96,10 @@ registries:
 	}
 }
 
-func scenarioStatusShowsLockMetadataWhenExactSnapshotIsMissing(t *testing.T) {
+func TestStatusShowsLockMetadataWhenExactSnapshotIsMissing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, _, _, lockPath := setupReadOnlyExactRegistry(t)
 	lockBytes, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -114,7 +123,10 @@ func scenarioStatusShowsLockMetadataWhenExactSnapshotIsMissing(t *testing.T) {
 	}
 }
 
-func scenarioDeinitDryRunUsesOrganizationExactLockWithoutReconciliation(t *testing.T) {
+func TestDeinitDryRunUsesOrganizationExactLockWithoutReconciliation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -162,7 +174,10 @@ registries:
 	}
 }
 
-func scenarioConfiguredListKeepsLocalRegistryLiveWithoutLock(t *testing.T) {
+func TestConfiguredListKeepsLocalRegistryLiveWithoutLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	registry := filepath.Join(t.TempDir(), "registry")

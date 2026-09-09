@@ -9,7 +9,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func scenarioLockAndUpdateTargetValidation(t *testing.T) {
+func TestLockAndUpdateTargetValidation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name string
 		args []string
@@ -28,7 +31,10 @@ func scenarioLockAndUpdateTargetValidation(t *testing.T) {
 	}
 }
 
-func scenarioParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
+func TestParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	target, err := parseUpgradeTargets(true, nil, "https://example.com/registry.git", "", "", "")
 	if err != nil {
 		t.Fatalf("whole-registry target: %v", err)
@@ -38,7 +44,10 @@ func scenarioParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
 	}
 }
 
-func scenarioLockUpgradeGitNameExpandsContainingSource(t *testing.T) {
+func TestLockUpgradeGitNameExpandsContainingSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -74,7 +83,10 @@ registries:
 	}
 }
 
-func scenarioLockUpgradeGitTargetCollapsesRootsIntoOneSourceOccurrence(t *testing.T) {
+func TestLockUpgradeGitTargetCollapsesRootsIntoOneSourceOccurrence(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -111,7 +123,10 @@ registries:
 	}
 }
 
-func scenarioUpdateAcceptsDirectGitTargetAndReportsExpansion(t *testing.T) {
+func TestUpdateAcceptsDirectGitTargetAndReportsExpansion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -147,7 +162,10 @@ registries:
 	}
 }
 
-func scenarioLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
+func TestLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -190,7 +208,10 @@ func scenarioLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
 	}
 }
 
-func scenarioLockUpgradeScopeLeavesStaleUnselectedLayerUntouched(t *testing.T) {
+func TestLockUpgradeScopeLeavesStaleUnselectedLayerUntouched(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

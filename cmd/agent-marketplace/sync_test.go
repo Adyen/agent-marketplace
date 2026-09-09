@@ -10,7 +10,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func scenarioSyncSummaryUsesTextLabelsInsteadOfEmoji(t *testing.T) {
+func TestSyncSummaryUsesTextLabelsInsteadOfEmoji(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	var output strings.Builder
 	if err := writeSyncSummary(&output, syncOutputStyle{}, 1, 2, 3, 4); err != nil {
 		t.Fatal(err)
@@ -20,7 +23,10 @@ func scenarioSyncSummaryUsesTextLabelsInsteadOfEmoji(t *testing.T) {
 	}
 }
 
-func scenarioSyncCommandMaterializesSkillsAndPrintsSummary(t *testing.T) {
+func TestSyncCommandMaterializesSkillsAndPrintsSummary(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -52,7 +58,10 @@ registries:
 	assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
 }
 
-func scenarioSyncCommandDoesNotWarnWhenDevinSupportFilesAreMaterialized(t *testing.T) {
+func TestSyncCommandDoesNotWarnWhenDevinSupportFilesAreMaterialized(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -90,7 +99,10 @@ registries:
 	assertFileExists(t, filepath.Join(homeDir, ".config", "devin", "skills", "review", "scripts", "review.sh"))
 }
 
-func scenarioSyncCommandGroupsWindsurfSubagentDropWarnings(t *testing.T) {
+func TestSyncCommandGroupsWindsurfSubagentDropWarnings(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -147,7 +159,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandReturnsNonZeroWhenRegistryCannotBeLoaded(t *testing.T) {
+func TestSyncCommandReturnsNonZeroWhenRegistryCannotBeLoaded(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -172,7 +187,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandPrintsHintWhenRegistriesConfiguredButNoSkills(t *testing.T) {
+func TestSyncCommandPrintsHintWhenRegistriesConfiguredButNoSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -199,7 +217,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
+func TestSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -224,7 +245,10 @@ func scenarioSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
 	}
 }
 
-func scenarioSyncCommandAddsLocalConfigAndLockToGitignore(t *testing.T) {
+func TestSyncCommandAddsLocalConfigAndLockToGitignore(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -262,7 +286,10 @@ skills:
 	}
 }
 
-func scenarioSyncCommandIncludesMalformedSkillsInSummary(t *testing.T) {
+func TestSyncCommandIncludesMalformedSkillsInSummary(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -321,7 +348,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandNoHintWhenSkillsAlreadySynced(t *testing.T) {
+func TestSyncCommandNoHintWhenSkillsAlreadySynced(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -361,7 +391,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandMonorepoSubdirectoryTopLevelSkillsIncludeSelectsLocalRegistry(t *testing.T) {
+func TestSyncCommandMonorepoSubdirectoryTopLevelSkillsIncludeSelectsLocalRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -396,7 +429,10 @@ skills:
 	assertFileExists(t, filepath.Join(paymentsDir, ".windsurf", "skills", "test-skill"))
 }
 
-func scenarioSyncCheckExitsZeroWhenInSync(t *testing.T) {
+func TestSyncCheckExitsZeroWhenInSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -431,7 +467,10 @@ registries:
 	}
 }
 
-func scenarioSyncCheckExitsNonZeroWhenDrifted(t *testing.T) {
+func TestSyncCheckExitsNonZeroWhenDrifted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -522,7 +561,10 @@ func assertSymlinkTarget(t *testing.T, linkPath, wantTarget string) {
 // TestE2E038_MonorepoSubdirectorySkillsIncludeFilter verifies that a registry
 // configured with a monorepo subdirectory path and a skills:include filter
 // only selects the included skills, not all skills in the registry.
-func scenarioE2E038_MonorepoSubdirectorySkillsIncludeFilter(t *testing.T) {
+func TestE2E038_MonorepoSubdirectorySkillsIncludeFilter(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -582,7 +624,10 @@ registries: []
 // TestSyncBundleRootDiscovery verifies that when path points at a bundle
 // root (e.g. .factory), a single discover() call finds all resource kinds
 // (skills, commands, subagents, hooks, MCP) without a second root scan.
-func scenarioSyncBundleRootDiscovery(t *testing.T) {
+func TestSyncBundleRootDiscovery(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -655,7 +700,10 @@ registries: []
 
 // TestSyncPathTraversalRejected verifies that a config with an absolute or
 // traversal path is rejected at validation time, not silently allowed.
-func scenarioSyncPathTraversalRejected(t *testing.T) {
+func TestSyncPathTraversalRejected(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -688,7 +736,10 @@ registries: []
 	}
 }
 
-func scenarioSyncPathTraversalDotDotRejected(t *testing.T) {
+func TestSyncPathTraversalDotDotRejected(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -725,7 +776,10 @@ registries: []
 // automatically removes stale (selected but not found) skill selections from
 // the repo config and re-syncs. A skill that exists in the registry should
 // remain installed; only the missing one is pruned.
-func scenarioSyncPruneStaleRemovesStaleSkillSelection(t *testing.T) {
+func TestSyncPruneStaleRemovesStaleSkillSelection(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -792,7 +846,10 @@ registries:
 
 // TestSyncPruneStaleDoesNotPruneRequiredResources verifies that
 // required:true resources are never pruned, even when not found.
-func scenarioSyncPruneStaleDoesNotPruneRequiredResources(t *testing.T) {
+func TestSyncPruneStaleDoesNotPruneRequiredResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -825,7 +882,10 @@ registries:
 
 // TestSyncPruneStaleNoopWithoutStaleSelections verifies that
 // sync --prune-stale is a no-op when there are no stale selections.
-func scenarioSyncPruneStaleNoopWithoutStaleSelections(t *testing.T) {
+func TestSyncPruneStaleNoopWithoutStaleSelections(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -853,7 +913,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandShowsOutputDirsWhenFilesAreWritten(t *testing.T) {
+func TestSyncCommandShowsOutputDirsWhenFilesAreWritten(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -894,7 +957,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandOutputDirsShowCountsAndVerboseDetail(t *testing.T) {
+func TestSyncCommandOutputDirsShowCountsAndVerboseDetail(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -944,7 +1010,10 @@ registries:
 	}
 }
 
-func scenarioSyncCommandDeduplicatesCollisionWarnings(t *testing.T) {
+func TestSyncCommandDeduplicatesCollisionWarnings(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -997,7 +1066,10 @@ registries: []
 	}
 }
 
-func scenarioSyncCheckReturnsClearErrorWhenTargetHarnessSetMissing(t *testing.T) {
+func TestSyncCheckReturnsClearErrorWhenTargetHarnessSetMissing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1026,7 +1098,10 @@ registries:
 	}
 }
 
-func scenarioSyncPrunesOrgOwnedArtifactsWhenOrgConfigDisappears(t *testing.T) {
+func TestSyncPrunesOrgOwnedArtifactsWhenOrgConfigDisappears(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

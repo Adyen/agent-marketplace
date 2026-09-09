@@ -16,7 +16,10 @@ import (
 // comparison used to flag every resource-attached diagnostic — including
 // lossy-but-successful warnings — as "error: not materialized". Only an
 // error-severity diagnostic may do that.
-func scenarioBuildStatusRowsOnlyErrorsMarkNotMaterialized(t *testing.T) {
+func TestBuildStatusRowsOnlyErrorsMarkNotMaterialized(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	const skillPath = "/cache/reg/skills/some-skill"
 
 	tests := []struct {

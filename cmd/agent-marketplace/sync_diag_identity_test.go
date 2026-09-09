@@ -61,7 +61,10 @@ func writeUndocumentedTransportMCP(t *testing.T, repoDir string, names ...string
 // mcp.devin.transport-unsupported, which pu6b deliberately left an error (see
 // writeUndocumentedTransportMCP). Do not point this test back at scoped
 // allowed-tools.
-func scenarioSyncNamesEachFailingResourceOnTheErrorPath(t *testing.T) {
+func TestSyncNamesEachFailingResourceOnTheErrorPath(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -136,7 +139,10 @@ registries:
 // installs the artifact anyway, so this test now asserts a zero exit and an
 // installed skill. Do not "restore" the old error expectations: the error-path
 // output shape lives in TestSyncNamesEachFailingResourceOnTheErrorPath.
-func scenarioSyncCollapsesIdenticalWarningDiagnosticsFromOneResource(t *testing.T) {
+func TestSyncCollapsesIdenticalWarningDiagnosticsFromOneResource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

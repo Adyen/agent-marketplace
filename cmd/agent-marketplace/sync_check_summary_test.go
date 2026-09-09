@@ -20,7 +20,10 @@ import (
 // with the actual error diagnostic never printed. Exit 1 is correct; the
 // message is not, and it is indistinguishable from the bug that was just fixed.
 
-func scenarioSyncCheckSummaryNamesTheErrorInsteadOfClaimingZeroDrift(t *testing.T) {
+func TestSyncCheckSummaryNamesTheErrorInsteadOfClaimingZeroDrift(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	report := &materialize.Report{
 		Diags: []diag.Diagnostic{
 			{Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning, Resource: "some-rule", Message: "rules are out of scope for devin"},
@@ -58,7 +61,10 @@ func scenarioSyncCheckSummaryNamesTheErrorInsteadOfClaimingZeroDrift(t *testing.
 
 // TestSyncCheckSummaryKeepsTheDriftWording preserves the existing, correct
 // message for real drift (files to write / remove).
-func scenarioSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
+func TestSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	report := driftOnlyReport(t)
 
 	var buf bytes.Buffer
@@ -78,7 +84,10 @@ func scenarioSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
 	}
 }
 
-func scenarioSyncCheckSummaryNamesCodexRootsAndArtifacts(t *testing.T) {
+func TestSyncCheckSummaryNamesCodexRootsAndArtifacts(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	report := &materialize.Report{PerRoot: []materialize.TargetReport{
 		{RootID: "machine-agents", OutDir: "/home/.agents", Removed: []string{"skills/machine-skill"}},
 		{RootID: "machine-codex", OutDir: "/opt/codex", Removed: []string{"agents/machine-agent.toml", "hooks.json", "config.toml"}},
@@ -112,7 +121,10 @@ func driftOnlyReport(t *testing.T) *materialize.Report {
 
 // TestSyncCheckSummarySilentWhenClean pins the in-sync contract: no output, no
 // error. A warning-only report is in sync.
-func scenarioSyncCheckSummarySilentWhenClean(t *testing.T) {
+func TestSyncCheckSummarySilentWhenClean(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	report := &materialize.Report{Diags: []diag.Diagnostic{
 		{Code: diag.CodeRuleDevinUnsupported, Severity: diag.SeverityWarning, Resource: "some-rule", Message: "rules are out of scope for devin"},
 	}}

@@ -11,7 +11,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-func scenarioSyncCLIAndTUIParity(t *testing.T) {
+func TestSyncCLIAndTUIParity(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, sharedRegistry := range []bool{false, true} {
 		name := "organization-only"
 		if sharedRegistry {

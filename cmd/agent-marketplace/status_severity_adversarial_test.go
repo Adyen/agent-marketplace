@@ -18,7 +18,10 @@ import (
 // TestBuildStatusRowsMarksRealCompileErrors is the "opposite direction"
 // control: the compile/write error path stamps Resource with the resolved
 // resource NAME, so it must still produce "error: not materialized".
-func scenarioBuildStatusRowsMarksRealCompileErrors(t *testing.T) {
+func TestBuildStatusRowsMarksRealCompileErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	resolved := []resolver.ResolvedArtifact{{
 		Entry:       catalog.Entry{Kind: ir.KindSkill, Name: "some-skill", Path: "/cache/reg/skills/some-skill"},
 		RegistryURL: "git@example.com:org/reg.git",
@@ -57,7 +60,10 @@ func scenarioBuildStatusRowsMarksRealCompileErrors(t *testing.T) {
 // same key mismatch — but it is the reason `status` cannot be used as evidence
 // that the fix did not silence real errors. The drift report, by contrast,
 // still surfaces the item (see the sibling test in internal/materialize).
-func scenarioBuildStatusRowsMissesPathShapedErrorResources(t *testing.T) {
+func TestBuildStatusRowsMissesPathShapedErrorResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	resolved := []resolver.ResolvedArtifact{{
 		Entry:       catalog.Entry{Kind: ir.KindMcpServer, Name: "some-mcp", Path: "/cache/reg/mcp/some-mcp"},
 		RegistryURL: "git@example.com:org/reg.git",
@@ -90,7 +96,10 @@ func scenarioBuildStatusRowsMissesPathShapedErrorResources(t *testing.T) {
 // ERRORS section, because internal/pipeline collects every SeverityError
 // diagnostic into result.Errors regardless of Resource shape. Losing the row
 // marker is cosmetic, not a hidden failure.
-func scenarioStatusIsNotTheOnlySurfaceForPathShapedErrors(t *testing.T) {
+func TestStatusIsNotTheOnlySurfaceForPathShapedErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	d := diag.Diagnostic{
 		Code:     "materialize.write.error",
 		Severity: diag.SeverityError,
