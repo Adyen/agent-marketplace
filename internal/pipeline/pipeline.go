@@ -56,7 +56,11 @@ type ResolveOptions struct {
 	// post-mutation Resolve performed by sync remains the reported generation.
 	SkipInventory      bool
 	ReadOnlyExactLocks bool
-	ExactLockLease     func(context.Context) (func(), error)
+	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
+	// mutable registry cache for layers that have no lockfile. Present locks
+	// remain exact and malformed or stale locks still fail closed.
+	AllowMissingReadOnlyLocks bool
+	ExactLockLease            func(context.Context) (func(), error)
 }
 
 type ResolveResult struct {
@@ -468,7 +472,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	catalogOpts := opts.CatalogOption
 	var readOnlyView readOnlyExactView
 	if opts.ReadOnlyExactLocks {
-		ctx, readOnlyView = exactLockViewWithContext(ctx, ec)
+		ctx, readOnlyView = exactLockViewWithContext(ctx, ec, opts.AllowMissingReadOnlyLocks)
 		previousRelease := releaseExactLease
 		releaseExactLease = func() {
 			readOnlyView.release()
@@ -476,6 +480,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
 		result.LockMetadata = readOnlyView.gitMetadata
+		result.Warnings = append(result.Warnings, readOnlyView.warnings...)
 	}
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
