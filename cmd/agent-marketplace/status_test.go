@@ -18,7 +18,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-func scenarioStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
+func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -99,7 +102,10 @@ registries:
 	}
 }
 
-func scenarioStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "status-gc.git")
 	writeSkill(t, working, "keeper", "Keeper", nil)
@@ -146,7 +152,10 @@ registries:
 	}
 }
 
-func scenarioStatusCommandMarksLockedCaches(t *testing.T) {
+func TestStatusCommandMarksLockedCaches(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -185,7 +194,10 @@ registries:
 	}
 }
 
-func scenarioStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
+func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -219,7 +231,10 @@ registries:
 	}
 }
 
-func scenarioStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
+func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -270,7 +285,10 @@ skills:
 	}
 }
 
-func scenarioStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -317,7 +335,10 @@ registries:
 	}
 }
 
-func scenarioStatusDriftSectionInSync(t *testing.T) {
+func TestStatusDriftSectionInSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -356,7 +377,10 @@ registries:
 	}
 }
 
-func scenarioStatusDriftSectionOutOfSync(t *testing.T) {
+func TestStatusDriftSectionOutOfSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -397,7 +421,10 @@ registries:
 	}
 }
 
-func scenarioStatusCommandBlockedRegistryReturnsError(t *testing.T) {
+func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -420,7 +447,10 @@ registries:
 	}
 }
 
-func scenarioStatusReportsManagedInstallation(t *testing.T) {
+func TestStatusReportsManagedInstallation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission diagnostics are Unix-specific")
 	}
@@ -464,7 +494,10 @@ registries:
 	}
 }
 
-func scenarioBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
+func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -500,7 +533,10 @@ func scenarioBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *test
 	}
 }
 
-func scenarioBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
+func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", "relative/codex")
 	if _, err := buildHarnessTargetRows(t.TempDir(), []string{"codex"}); err == nil || !strings.Contains(err.Error(), "CODEX_HOME must be absolute") {
@@ -508,7 +544,10 @@ func scenarioBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
 	}
 }
 
-func scenarioTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
+func TestTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for input, want := range map[string]string{"codex": "Codex", "factory": "factory", "unknown": "unknown"} {
 		if got := targetDisplayName(input); got != want {
 			t.Errorf("targetDisplayName(%q) = %q, want %q", input, got, want)

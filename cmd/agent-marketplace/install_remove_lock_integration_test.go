@@ -12,7 +12,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-func scenarioInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
+func TestInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "install-remove-lock.git")
@@ -44,7 +47,10 @@ func scenarioInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
 	}
 }
 
-func scenarioConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+func TestConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -94,7 +100,10 @@ func scenarioConfiguredInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.
 	}
 }
 
-func scenarioRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+func TestRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, from := range []bool{false, true} {
 		name := "ordinary"
 		if from {
@@ -175,7 +184,10 @@ func scenarioRemoveUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	}
 }
 
-func scenarioInstallMaterializationFailureKeepsCommittedConfigAndLock(t *testing.T) {
+func TestInstallMaterializationFailureKeepsCommittedConfigAndLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "committed-sync-failure.git")

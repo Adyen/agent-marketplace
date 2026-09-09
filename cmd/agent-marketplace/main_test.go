@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/testutil"
@@ -22,11 +21,6 @@ var testMainHome string
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	if flag.Lookup("test.shuffle").Value.String() == "on" {
-		if err := flag.Set("test.shuffle", strconv.FormatInt(time.Now().UnixNano(), 10)); err != nil {
-			panic(err)
-		}
-	}
 	parallelSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "test.parallel" {
@@ -128,7 +122,10 @@ func TestStartupTargetRegistrationsAreValid(t *testing.T) {
 	}
 }
 
-func scenarioVersionFlagPrintsVersion(t *testing.T) {
+func TestVersionFlagPrintsVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("--version")
 	if err != nil {
 		t.Fatalf("expected version flag to succeed: %v", err)
@@ -139,7 +136,10 @@ func scenarioVersionFlagPrintsVersion(t *testing.T) {
 	}
 }
 
-func scenarioHelpListsPlaceholderSubcommands(t *testing.T) {
+func TestHelpListsPlaceholderSubcommands(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("--help")
 	if err != nil {
 		t.Fatalf("expected help flag to succeed: %v", err)

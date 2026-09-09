@@ -9,7 +9,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func scenarioE2E002003ManualSkillsSurviveSync(t *testing.T) {
+func TestE2E002003ManualSkillsSurviveSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -58,7 +61,10 @@ registries:
 	}
 }
 
-func scenarioE2E019HarnessRemovalPrunesArtifacts(t *testing.T) {
+func TestE2E019HarnessRemovalPrunesArtifacts(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -119,7 +125,10 @@ registries:
 	}
 }
 
-func scenarioE2E006014033DuplicateURLInstallRemoveWithPathDisambiguation(t *testing.T) {
+func TestE2E006014033DuplicateURLInstallRemoveWithPathDisambiguation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -194,7 +203,10 @@ registries:
 	}
 }
 
-func scenarioE2E009WindsurfMachineScopePrunesOnUserScopeRemove(t *testing.T) {
+func TestE2E009WindsurfMachineScopePrunesOnUserScopeRemove(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

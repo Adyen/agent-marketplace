@@ -14,7 +14,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-func scenarioUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
+func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -68,7 +71,10 @@ registries:
 	}
 }
 
-func scenarioUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
+func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -145,7 +151,10 @@ registries:
 
 }
 
-func scenarioTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
+func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -218,7 +227,10 @@ registries:
 	}
 }
 
-func scenarioUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
+func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -270,7 +282,10 @@ func scenarioUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 	}
 }
 
-func scenarioUpdateBumpHonorsUserScope(t *testing.T) {
+func TestUpdateBumpHonorsUserScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -304,7 +319,10 @@ func scenarioUpdateBumpHonorsUserScope(t *testing.T) {
 	}
 }
 
-func scenarioUpdateBumpHonorsLocalScope(t *testing.T) {
+func TestUpdateBumpHonorsLocalScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -354,7 +372,10 @@ func scenarioUpdateBumpHonorsLocalScope(t *testing.T) {
 	}
 }
 
-func scenarioUpdateBumpSkipsOrganization(t *testing.T) {
+func TestUpdateBumpSkipsOrganization(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, tc := range []struct {
 		name  string
 		scope string
@@ -445,7 +466,10 @@ func scenarioUpdateBumpSkipsOrganization(t *testing.T) {
 	}
 }
 
-func scenarioScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
+func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -485,7 +509,10 @@ func scenarioScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) 
 	}
 }
 
-func scenarioUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
+func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -530,7 +557,10 @@ registries:
 	}
 }
 
-func scenarioUpdateBumpWithThreeSegmentSemver(t *testing.T) {
+func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -579,7 +609,10 @@ registries:
 	}
 }
 
-func scenarioUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
+func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -623,7 +656,10 @@ registries:
 	}
 }
 
-func scenarioUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
+func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -662,7 +698,10 @@ registries:
 	}
 }
 
-func scenarioUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
+func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

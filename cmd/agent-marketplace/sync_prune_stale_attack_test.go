@@ -26,7 +26,10 @@ func assertValidConfigYAML(t *testing.T, data []byte) {
 // but the catalog is EMPTY — every selection from that registry looks
 // "selected but not found". If CatalogTrusted() is true here, --prune-stale
 // deletes selections for resources that are perfectly fine upstream.
-func scenarioAttackPruneMissingRegistrySubdirectory(t *testing.T) {
+func TestAttackPruneMissingRegistrySubdirectory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -68,7 +71,10 @@ registries:
 // ATTACK A2: a registry that clones fine but whose bundle directory is EMPTY
 // (all resources deleted in one bad upstream commit, or the wrong ref). Zero
 // entries, zero catalog errors -> catalog "trusted" -> every selection pruned.
-func scenarioAttackPruneEmptyRegistry(t *testing.T) {
+func TestAttackPruneEmptyRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -105,7 +111,10 @@ registries:
 // is broken, so it lands in CatalogLoad.Malformed rather than Entries. It is
 // "selected but not found" while the catalog reports no error at all.
 // Deleting the selection is wrong: the fix is to repair the resource.
-func scenarioAttackPruneMalformedResource(t *testing.T) {
+func TestAttackPruneMalformedResource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -143,7 +152,10 @@ registries:
 // ATTACK A4: several registries, one unreachable, and the stale selection
 // belongs to a HEALTHY registry. This is the case the trust gate is supposed
 // to cover; assert the gate holds and the skip message is truthful.
-func scenarioAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
+func TestAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -199,7 +211,10 @@ registries:
 //
 // Attack found during the agent-marketplace-tbjf review; fixed by
 // printSupersededErrors.
-func scenarioSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
+func TestSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stalePruneCompoundRepo(t, "beads")
 
 	output, err := executeCommand("sync", "--prune-stale")
@@ -234,7 +249,10 @@ func scenarioSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
 // half of the same defect, and the one that produced a ZERO exit code: under
 // --strict the stale selections ARE the errors, so pass 1 printed "Errors 1",
 // pruned, re-synced clean and exited 0 having named nothing at all.
-func scenarioSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
+func TestSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -274,7 +292,10 @@ registries:
 
 // ATTACK 6a: pruning the LAST remaining selection of a list. Does the YAML
 // stay valid, and does the surrounding structure survive?
-func scenarioAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
+func TestAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -327,7 +348,10 @@ registries:
 }
 
 // ATTACK 6b: the same selection listed TWICE in the same list.
-func scenarioAttackPruneDuplicateSelectionEntries(t *testing.T) {
+func TestAttackPruneDuplicateSelectionEntries(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -369,7 +393,10 @@ registries:
 }
 
 // ATTACK 6c: YAML anchors / aliases in the selection list.
-func scenarioAttackPruneWithYAMLAnchors(t *testing.T) {
+func TestAttackPruneWithYAMLAnchors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -410,7 +437,10 @@ registries:
 }
 
 // ATTACK 6d: CRLF line endings.
-func scenarioAttackPruneCRLFConfig(t *testing.T) {
+func TestAttackPruneCRLFConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -449,7 +479,10 @@ registries:
 }
 
 // ATTACK 7: idempotency. Two consecutive prune runs must converge.
-func scenarioAttackPruneIdempotent(t *testing.T) {
+func TestAttackPruneIdempotent(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := stalePruneCompoundRepo(t, "beads", "mayor")
 
 	out1, _ := executeCommand("sync", "--prune-stale")
@@ -473,7 +506,10 @@ func scenarioAttackPruneIdempotent(t *testing.T) {
 // ATTACK 4b: --strict --prune-stale where the config edit FAILS (read-only
 // config file). No selection can be removed, so no re-sync happens and the
 // original errs path runs. --strict must still fail the run.
-func scenarioAttackStrictPruneWithUnwritableConfig(t *testing.T) {
+func TestAttackStrictPruneWithUnwritableConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory write permissions")
 	}
@@ -522,7 +558,10 @@ registries:
 }
 
 // ATTACK 5b: the skip message must never appear on a run that also pruned.
-func scenarioAttackSkipMessageNeverCoexistsWithPrune(t *testing.T) {
+func TestAttackSkipMessageNeverCoexistsWithPrune(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, _ = stalePruneCompoundRepo(t, "beads")
 	output, _ := executeCommand("sync", "--prune-stale")
 	if strings.Contains(output, "prune-stale skipped") && strings.Contains(output, "pruned stale") {

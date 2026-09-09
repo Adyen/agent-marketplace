@@ -14,7 +14,10 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
-func scenarioConvertHelpListsCodex(t *testing.T) {
+func TestConvertHelpListsCodex(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	cmd := newConvertCmd()
 	for _, name := range []string{"from", "to"} {
 		flag := cmd.Flags().Lookup(name)
@@ -27,7 +30,10 @@ func scenarioConvertHelpListsCodex(t *testing.T) {
 	}
 }
 
-func scenarioConvertCommandConvertsClaudeSkillToFactory(t *testing.T) {
+func TestConvertCommandConvertsClaudeSkillToFactory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	srcDir := t.TempDir()
 	writeClaudePluginSkill(t, srcDir, "demo-skill")
 
@@ -44,7 +50,10 @@ func scenarioConvertCommandConvertsClaudeSkillToFactory(t *testing.T) {
 	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
 }
 
-func scenarioConvertCommandRejectsMissingFrom(t *testing.T) {
+func TestConvertCommandRejectsMissingFrom(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("convert", "--to", "factory", t.TempDir())
 	if err == nil {
 		t.Fatalf("expected convert command to fail without --from, got output:\n%s", output)
@@ -54,7 +63,10 @@ func scenarioConvertCommandRejectsMissingFrom(t *testing.T) {
 	}
 }
 
-func scenarioConvertCommandCanonicalizesHarnessFlags(t *testing.T) {
+func TestConvertCommandCanonicalizesHarnessFlags(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	srcDir := t.TempDir()
 	writeClaudePluginSkill(t, srcDir, "demo-skill")
 
@@ -69,7 +81,10 @@ func scenarioConvertCommandCanonicalizesHarnessFlags(t *testing.T) {
 	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
 }
 
-func scenarioConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
+func TestConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stateRoot := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 
@@ -105,7 +120,10 @@ func scenarioConvertCommandToCodexPublishesCompleteSharedAggregates(t *testing.T
 	}
 }
 
-func scenarioConvertCommandToCodexEmitsOnlyPresentSharedKinds(t *testing.T) {
+func TestConvertCommandToCodexEmitsOnlyPresentSharedKinds(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	tests := []struct {
@@ -143,7 +161,10 @@ func scenarioConvertCommandToCodexEmitsOnlyPresentSharedKinds(t *testing.T) {
 	}
 }
 
-func scenarioConvertCommandToCodexRefusesExistingSharedFileBeforeWriting(t *testing.T) {
+func TestConvertCommandToCodexRefusesExistingSharedFileBeforeWriting(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	for _, sharedPath := range []string{".codex/hooks.json", ".codex/config.toml"} {
@@ -197,7 +218,10 @@ func scenarioConvertCommandToCodexRefusesExistingSharedFileBeforeWriting(t *test
 	}
 }
 
-func scenarioConvertCommandToCodexSerializesConcurrentWriters(t *testing.T) {
+func TestConvertCommandToCodexSerializesConcurrentWriters(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	outDir := filepath.Join(t.TempDir(), "codex-out")
 
@@ -266,7 +290,10 @@ func scenarioConvertCommandToCodexSerializesConcurrentWriters(t *testing.T) {
 	}
 }
 
-func scenarioConvertCommandToCodexDryRunDoesNotWrite(t *testing.T) {
+func TestConvertCommandToCodexDryRunDoesNotWrite(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stateRoot := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 	srcDir := t.TempDir()
@@ -284,7 +311,10 @@ func scenarioConvertCommandToCodexDryRunDoesNotWrite(t *testing.T) {
 	assertPathExistence(t, filepath.Join(stateRoot, "agent-marketplace"), false)
 }
 
-func scenarioConvertCommandToCodexSyncPrunesStaleOutput(t *testing.T) {
+func TestConvertCommandToCodexSyncPrunesStaleOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	srcDir := t.TempDir()
 	writeClaudePluginSkill(t, srcDir, "demo-skill")
@@ -303,7 +333,10 @@ func scenarioConvertCommandToCodexSyncPrunesStaleOutput(t *testing.T) {
 	assertFileExists(t, filepath.Join(outDir, ".agents", "skills", "demo-skill", "SKILL.md"))
 }
 
-func scenarioPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
+func TestPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir := t.TempDir()
 	outDir := t.TempDir()
 	const (
@@ -342,7 +375,10 @@ func scenarioPublishCodexConversionRollsBackOnlyConversionArtifacts(t *testing.T
 	assertPathExistence(t, filepath.Join(outDir, ".agents", "skills", "new"), false)
 }
 
-func scenarioPublishCodexConversionRollbackPreservesExternallyReplacedArtifact(t *testing.T) {
+func TestPublishCodexConversionRollbackPreservesExternallyReplacedArtifact(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, initiallyExists := range []bool{false, true} {
 		name := "created"
 		if initiallyExists {
@@ -388,7 +424,10 @@ func scenarioPublishCodexConversionRollbackPreservesExternallyReplacedArtifact(t
 	}
 }
 
-func scenarioPublishCodexConversionPreservesOrdinaryFileChangedAfterPlanning(t *testing.T) {
+func TestPublishCodexConversionPreservesOrdinaryFileChangedAfterPlanning(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir, outDir := t.TempDir(), t.TempDir()
 	const rel = ".agents/skills/demo/SKILL.md"
 	dst := filepath.Join(outDir, filepath.FromSlash(rel))
@@ -410,7 +449,10 @@ func scenarioPublishCodexConversionPreservesOrdinaryFileChangedAfterPlanning(t *
 	assertFileContents(t, dst, "external\n")
 }
 
-func scenarioPublishCodexConversionPreservesOrdinaryFileModifiedInPlaceAfterPlanning(t *testing.T) {
+func TestPublishCodexConversionPreservesOrdinaryFileModifiedInPlaceAfterPlanning(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir, outDir := t.TempDir(), t.TempDir()
 	const rel = ".agents/skills/demo/SKILL.md"
 	dst := filepath.Join(outDir, filepath.FromSlash(rel))
@@ -429,7 +471,10 @@ func scenarioPublishCodexConversionPreservesOrdinaryFileModifiedInPlaceAfterPlan
 	assertFileContents(t, dst, "external\n")
 }
 
-func scenarioPublishCodexConversionPreservesWriterThatWinsDuringPublication(t *testing.T) {
+func TestPublishCodexConversionPreservesWriterThatWinsDuringPublication(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir, outDir := t.TempDir(), t.TempDir()
 	const rel = ".agents/skills/demo/SKILL.md"
 	dst := filepath.Join(outDir, filepath.FromSlash(rel))
@@ -460,7 +505,10 @@ func scenarioPublishCodexConversionPreservesWriterThatWinsDuringPublication(t *t
 	assertFileContents(t, recoveryPath, "preimage\n")
 }
 
-func scenarioPublishCodexConversionRollbackPreservesInPlaceWriteAfterPublication(t *testing.T) {
+func TestPublishCodexConversionRollbackPreservesInPlaceWriteAfterPublication(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir, outDir := t.TempDir(), t.TempDir()
 	const (
 		firstRel  = ".agents/skills/first/SKILL.md"
@@ -499,7 +547,10 @@ func scenarioPublishCodexConversionRollbackPreservesInPlaceWriteAfterPublication
 	assertPathExistence(t, filepath.Join(outDir, filepath.FromSlash(secondRel)), false)
 }
 
-func scenarioReplaceCodexConversionFileRestoresOriginalWhenPublicationFails(t *testing.T) {
+func TestReplaceCodexConversionFileRestoresOriginalWhenPublicationFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	stageDir, outDir := t.TempDir(), t.TempDir()
 	const rel = "destination"
 	writeFile(t, filepath.Join(stageDir, rel), "replacement\n")
@@ -527,7 +578,10 @@ func scenarioReplaceCodexConversionFileRestoresOriginalWhenPublicationFails(t *t
 	assertFileContents(t, publication.src, "replacement\n")
 }
 
-func scenarioCodexConversionStageParentUsesExistingOutputDirectory(t *testing.T) {
+func TestCodexConversionStageParentUsesExistingOutputDirectory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	outDir := filepath.Join(t.TempDir(), "existing-output")
 	if err := os.Mkdir(outDir, 0o755); err != nil {
 		t.Fatalf("create output directory: %v", err)
@@ -542,7 +596,10 @@ func scenarioCodexConversionStageParentUsesExistingOutputDirectory(t *testing.T)
 	}
 }
 
-func scenarioPruneCodexConversionStaleReturnsAllErrors(t *testing.T) {
+func TestPruneCodexConversionStaleReturnsAllErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	outDir := t.TempDir()
 	for _, rel := range []string{"first.txt", "second.txt"} {
 		writeFile(t, filepath.Join(outDir, rel), "stale\n")
@@ -562,7 +619,10 @@ func scenarioPruneCodexConversionStaleReturnsAllErrors(t *testing.T) {
 	assertFileContents(t, filepath.Join(outDir, "second.txt"), "stale\n")
 }
 
-func scenarioPruneCodexConversionStaleStopsAtParentFixedPoint(t *testing.T) {
+func TestPruneCodexConversionStaleStopsAtParentFixedPoint(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	var removed []string
 	err := pruneCodexConversionStaleWith("root", []string{"../stale.txt"}, func(path string) error {
 		removed = append(removed, path)
@@ -579,7 +639,10 @@ func scenarioPruneCodexConversionStaleStopsAtParentFixedPoint(t *testing.T) {
 	}
 }
 
-func scenarioFinishCodexConversionReportsFailedPruneAfterCommit(t *testing.T) {
+func TestFinishCodexConversionReportsFailedPruneAfterCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	report := &hcc.WriteReport{Written: []string{codexConversionHooksPath}, Removed: []string{"stale.txt"}}
 	injected := errors.New("injected prune failure")
 	gotReport, err := finishCodexConversion("destination", report, nil, func(string, []string) error {

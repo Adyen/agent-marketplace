@@ -57,7 +57,10 @@ func diagHasErrors(report *materialize.Report) bool {
 	return report == nil || diag.HasErrors(report.Diags)
 }
 
-func scenarioDoctorHelpDescribesCodexRepair(t *testing.T) {
+func TestDoctorHelpDescribesCodexRepair(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	cmd := newDoctorCmd()
 	for _, want := range []string{"Devin and Codex shared aggregate files", ".codex/hooks.json", ".codex/config.toml"} {
 		if !strings.Contains(cmd.Long, want) {
@@ -69,7 +72,10 @@ func scenarioDoctorHelpDescribesCodexRepair(t *testing.T) {
 	}
 }
 
-func scenarioDoctorRepairIncludesCodexAndYesAdoptsExactMatch(t *testing.T) {
+func TestDoctorRepairIncludesCodexAndYesAdoptsExactMatch(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	configPath, selection := prepareCodexRepairFixture(t, repoRoot)
 	before, err := os.ReadFile(configPath)
@@ -117,7 +123,10 @@ func scenarioDoctorRepairIncludesCodexAndYesAdoptsExactMatch(t *testing.T) {
 	}
 }
 
-func scenarioDoctorCodexRepairRequiresInteractiveConflictConfirmationAndRedactsValues(t *testing.T) {
+func TestDoctorCodexRepairRequiresInteractiveConflictConfirmationAndRedactsValues(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	root := filepath.Join(repoRoot, ".codex")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -239,7 +248,10 @@ func scenarioDoctorCodexRepairRequiresInteractiveConflictConfirmationAndRedactsV
 	}
 }
 
-func scenarioDoctorCodexRepairCorruptStateFailsClosedWithNonzeroResult(t *testing.T) {
+func TestDoctorCodexRepairCorruptStateFailsClosedWithNonzeroResult(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	selection := []resolver.ResolvedArtifact{
 		{
@@ -318,7 +330,10 @@ func scenarioDoctorCodexRepairCorruptStateFailsClosedWithNonzeroResult(t *testin
 	}
 }
 
-func scenarioDoctorCodexRepairMissingDesiredAggregateWithCorruptStateFailsClosed(t *testing.T) {
+func TestDoctorCodexRepairMissingDesiredAggregateWithCorruptStateFailsClosed(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	root := filepath.Join(repoRoot, ".codex")
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -369,7 +384,10 @@ func scenarioDoctorCodexRepairMissingDesiredAggregateWithCorruptStateFailsClosed
 	}
 }
 
-func scenarioDoctorCodexRepairUnreadableAggregatePathFailsClosed(t *testing.T) {
+func TestDoctorCodexRepairUnreadableAggregatePathFailsClosed(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	const rootSecret = "not-a-directory-payload-must-not-print"
 	root := filepath.Join(repoRoot, ".codex")

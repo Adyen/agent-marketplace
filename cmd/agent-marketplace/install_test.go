@@ -11,7 +11,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func scenarioInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
+func TestInstallCommandAddsSkillToRepoConfigAndSyncsIt(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -49,7 +52,10 @@ registries:
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
 }
 
-func scenarioInstallCommandAddsSkillToExistingRegistrySpecificList(t *testing.T) {
+func TestInstallCommandAddsSkillToExistingRegistrySpecificList(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -86,7 +92,10 @@ registries:
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-onboarding"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-onboarding"))
 }
 
-func scenarioInstallCommandAddsTagToRepoConfigAndSyncsMatchingSkills(t *testing.T) {
+func TestInstallCommandAddsTagToRepoConfigAndSyncsMatchingSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -127,7 +136,10 @@ registries:
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "k8s-conventions"), filepath.Join(cache.RegistryCachePath(origin, "main"), "k8s-conventions"))
 }
 
-func scenarioInstallCommandAddsAllDiscoveredSkillsToRepoConfigAndSyncsThem(t *testing.T) {
+func TestInstallCommandAddsAllDiscoveredSkillsToRepoConfigAndSyncsThem(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -167,7 +179,10 @@ registries:
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
 }
 
-func scenarioInstallCommandAddsAllDiscoveredSkillsForSingleRegistryWhenRegistryFlagIsSet(t *testing.T) {
+func TestInstallCommandAddsAllDiscoveredSkillsForSingleRegistryWhenRegistryFlagIsSet(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -219,7 +234,10 @@ registries:
 	}
 }
 
-func scenarioInstallCommandFailsWhenInstallAllFindsCrossRegistryNameCollision(t *testing.T) {
+func TestInstallCommandFailsWhenInstallAllFindsCrossRegistryNameCollision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -267,7 +285,10 @@ registries:
 	}
 }
 
-func scenarioInstallCommandFailsWhenSkillDoesNotExist(t *testing.T) {
+func TestInstallCommandFailsWhenSkillDoesNotExist(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -309,7 +330,10 @@ registries:
 	}
 }
 
-func scenarioInstallCommandFailsWhenSkillIsMalformed(t *testing.T) {
+func TestInstallCommandFailsWhenSkillIsMalformed(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -367,7 +391,10 @@ registries:
 	}
 }
 
-func scenarioInstallCommandFailsWhenTagDoesNotExist(t *testing.T) {
+func TestInstallCommandFailsWhenTagDoesNotExist(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -409,7 +436,10 @@ registries:
 	}
 }
 
-func scenarioInstallSubagentWithWindsurfTargetReturnsSuccess(t *testing.T) {
+func TestInstallSubagentWithWindsurfTargetReturnsSuccess(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -447,7 +477,10 @@ registries:
 	}
 }
 
-func scenarioInstallFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
+func TestInstallFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -482,7 +515,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagInstallsNamedResourceFromAdHocRegistry(t *testing.T) {
+func TestInstallFromFlagInstallsNamedResourceFromAdHocRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -526,7 +562,10 @@ registries: []
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
 }
 
-func scenarioInstallFromFlagWithoutNameInstallsAllResources(t *testing.T) {
+func TestInstallFromFlagWithoutNameInstallsAllResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -561,7 +600,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagWithKindFilter(t *testing.T) {
+func TestInstallFromFlagWithKindFilter(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -597,7 +639,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagWithWebURLInfersResourceName(t *testing.T) {
+func TestInstallFromFlagWithWebURLInfersResourceName(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -638,7 +683,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagIncompatibleWithTagAndAll(t *testing.T) {
+func TestInstallFromFlagIncompatibleWithTagAndAll(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -665,7 +713,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagRefAndPathRequireFrom(t *testing.T) {
+func TestInstallFromFlagRefAndPathRequireFrom(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -692,7 +743,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagBlockedURLReturnsError(t *testing.T) {
+func TestInstallFromFlagBlockedURLReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -713,7 +767,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromFlagAcceptsScopeLocal(t *testing.T) {
+func TestInstallFromFlagAcceptsScopeLocal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	// --from --scope local is now allowed (LREG-005): the local config
 	// layer is visible during discovery. The command should proceed
 	// past scope validation and fail only for an invalid/bogus URL.
@@ -740,7 +797,10 @@ registries: []
 	}
 }
 
-func scenarioInstallAllDiscoversAllResourceKinds(t *testing.T) {
+func TestInstallAllDiscoversAllResourceKinds(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -789,7 +849,10 @@ registries:
 	}
 }
 
-func scenarioInstallAllPreservesExistingRepoConfigFields(t *testing.T) {
+func TestInstallAllPreservesExistingRepoConfigFields(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -859,7 +922,10 @@ registries:
 	}
 }
 
-func scenarioInstallAllWithKindFlagFiltersToSingleKind(t *testing.T) {
+func TestInstallAllWithKindFlagFiltersToSingleKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -897,7 +963,10 @@ registries:
 	}
 }
 
-func scenarioInstallFromBundleModeDiscoversAllResourceKinds(t *testing.T) {
+func TestInstallFromBundleModeDiscoversAllResourceKinds(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -936,7 +1005,10 @@ registries: []
 	}
 }
 
-func scenarioInstallFromBundleModeWithKindFilter(t *testing.T) {
+func TestInstallFromBundleModeWithKindFilter(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -970,7 +1042,10 @@ registries: []
 	}
 }
 
-func scenarioInstallAllWithNonexistentRegistryStillErrors(t *testing.T) {
+func TestInstallAllWithNonexistentRegistryStillErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -995,7 +1070,10 @@ registries:
 	}
 }
 
-func scenarioInstallFromMetaDirectoryInstallsAllSubBundleResources(t *testing.T) {
+func TestInstallFromMetaDirectoryInstallsAllSubBundleResources(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1058,7 +1136,10 @@ registries: []
 	}
 }
 
-func scenarioInstallNamedResourceFromMetaDirectory(t *testing.T) {
+func TestInstallNamedResourceFromMetaDirectory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1115,7 +1196,10 @@ registries: []
 	}
 }
 
-func scenarioInstallPositionalURLSuggestsFromFlag(t *testing.T) {
+func TestInstallPositionalURLSuggestsFromFlag(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1137,7 +1221,10 @@ registries: []
 // TestInstallCommandRejectsUserScopeForRepoRelativeRegistry verifies that
 // installing a skill from a repo-relative local registry at user scope is
 // refused before anything is written to ~/.agents/config.yaml.
-func scenarioInstallCommandRejectsUserScopeForRepoRelativeRegistry(t *testing.T) {
+func TestInstallCommandRejectsUserScopeForRepoRelativeRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1175,7 +1262,10 @@ registries:
 	}
 }
 
-func scenarioInstallCommandRejectsUserScopeCollectionFromRepoRelativeRegistry(t *testing.T) {
+func TestInstallCommandRejectsUserScopeCollectionFromRepoRelativeRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1219,7 +1309,10 @@ registries:
 // TestInstallCommandFailsFastOnMissingLocalRegistry verifies that installing
 // from a missing local ad-hoc registry fails before writing a broken entry to
 // the repo config.
-func scenarioInstallCommandFailsFastOnMissingLocalRegistry(t *testing.T) {
+func TestInstallCommandFailsFastOnMissingLocalRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1248,7 +1341,10 @@ registries: []
 	}
 }
 
-func scenarioInstallCommandRejectsTraversingLocalRegistryPathBeforeWrite(t *testing.T) {
+func TestInstallCommandRejectsTraversingLocalRegistryPathBeforeWrite(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1274,7 +1370,10 @@ registries: []
 	}
 }
 
-func scenarioInstallCommandFailsFastOnMissingLocalRegistryPath(t *testing.T) {
+func TestInstallCommandFailsFastOnMissingLocalRegistryPath(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

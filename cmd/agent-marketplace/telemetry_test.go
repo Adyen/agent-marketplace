@@ -19,7 +19,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func scenarioTelemetryEnableAndDisable(t *testing.T) {
+func TestTelemetryEnableAndDisable(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -47,7 +50,10 @@ func scenarioTelemetryEnableAndDisable(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryEnableEndpoint(t *testing.T) {
+func TestTelemetryEnableEndpoint(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -64,7 +70,10 @@ func scenarioTelemetryEnableEndpoint(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
+func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -80,7 +89,10 @@ func scenarioTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryStatus(t *testing.T) {
+func TestTelemetryStatus(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -103,7 +115,10 @@ func scenarioTelemetryStatus(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryResetID(t *testing.T) {
+func TestTelemetryResetID(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -119,7 +134,10 @@ func scenarioTelemetryResetID(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryPurge(t *testing.T) {
+func TestTelemetryPurge(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -157,7 +175,10 @@ func scenarioTelemetryPurge(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryPreview(t *testing.T) {
+func TestTelemetryPreview(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -197,7 +218,10 @@ func scenarioTelemetryPreview(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
+func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -218,7 +242,10 @@ func scenarioTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryEnableHonorsOrgLock(t *testing.T) {
+func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -248,7 +275,10 @@ func scenarioTelemetryEnableHonorsOrgLock(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryStatusManaged(t *testing.T) {
+func TestTelemetryStatusManaged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -309,7 +339,10 @@ func writeTelemetryTestFile(t *testing.T, path, content string) {
 	}
 }
 
-func scenarioBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
+func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_ = setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -390,7 +423,10 @@ func scenarioBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryErrorOutcome(t *testing.T) {
+func TestTelemetryErrorOutcome(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_ = setupTelemetryHome(t)
 
 	var mu sync.Mutex
@@ -438,7 +474,10 @@ func scenarioTelemetryErrorOutcome(t *testing.T) {
 	}
 }
 
-func scenarioTelemetryCommandsDoNotSelfReport(t *testing.T) {
+func TestTelemetryCommandsDoNotSelfReport(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name string
 		args []string

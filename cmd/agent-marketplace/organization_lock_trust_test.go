@@ -12,11 +12,17 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func scenarioSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, true, "sync")
 }
 
-func scenarioSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+func TestSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, false, "sync", "--locked")
 }
 
@@ -59,7 +65,10 @@ func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoReg
 	}
 }
 
-func scenarioReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
+func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -96,7 +105,10 @@ func scenarioReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 	}
 }
 
-func scenarioDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
+func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -139,7 +151,10 @@ func scenarioDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
 	}
 }
 
-func scenarioDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
+func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -165,7 +180,10 @@ func scenarioDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
 	}
 }
 
-func scenarioExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
+func TestExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

@@ -14,7 +14,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
-func scenarioDeinitPurgeLayerPair(t *testing.T) {
+func TestDeinitPurgeLayerPair(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, scope := range []string{"user", "repo", "local"} {
 		for _, mode := range []string{"purge", "orphan", "dry-run", "no-purge"} {
 			t.Run(scope+"/"+mode, func(t *testing.T) {
@@ -109,7 +112,10 @@ func scenarioDeinitPurgeLayerPair(t *testing.T) {
 	}
 }
 
-func scenarioDeinitPurgePreservesPendingPublication(t *testing.T) {
+func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -170,7 +176,10 @@ func scenarioDeinitPurgePreservesPendingPublication(t *testing.T) {
 	}
 }
 
-func scenarioDeinitTable(t *testing.T) {
+func TestDeinitTable(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name            string
 		args            []string
@@ -333,7 +342,10 @@ func scenarioDeinitTable(t *testing.T) {
 	}
 }
 
-func scenarioDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
+func TestDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -356,7 +368,10 @@ func scenarioDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
 	}
 }
 
-func scenarioDeinitRemovesManagedMcpEntries(t *testing.T) {
+func TestDeinitRemovesManagedMcpEntries(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	// Verify that deinit strips managed MCP entries from .factory/mcp.json
 	// while preserving user-owned entries.
 	homeDir := t.TempDir()
@@ -420,7 +435,10 @@ registries: []
 	_ = output
 }
 
-func scenarioDeinitKeepsEmptyMcpFileIfAllManaged(t *testing.T) {
+func TestDeinitKeepsEmptyMcpFileIfAllManaged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	// Verify that deinit keeps mcp.json with an empty mcpServers object when
 	// it only contains managed entries.
 	homeDir := t.TempDir()
@@ -489,7 +507,10 @@ registries: []
 	_ = output
 }
 
-func scenarioDeinitUserPreservesOrgOwnedArtifacts(t *testing.T) {
+func TestDeinitUserPreservesOrgOwnedArtifacts(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -542,7 +563,10 @@ registries:
 	assertSkillLinkPresent(t, homeDir, "org-skill")
 }
 
-func scenarioDeinitUserDryRunReportsUserOwnedChanges(t *testing.T) {
+func TestDeinitUserDryRunReportsUserOwnedChanges(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -594,7 +618,10 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func scenarioDeinitUserPurgeConfigDoesNotRemoveOrgConfig(t *testing.T) {
+func TestDeinitUserPurgeConfigDoesNotRemoveOrgConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -629,7 +656,10 @@ registries: []
 	}
 }
 
-func scenarioDeinitUserDryRunUsesCachedCatalog(t *testing.T) {
+func TestDeinitUserDryRunUsesCachedCatalog(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -688,7 +718,10 @@ registries:
 	assertFactorySkillExists(t, homeDir, "org-skill")
 }
 
-func scenarioDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
+func TestDeinitUserDryRunDoesNotFetchColdCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -724,7 +757,10 @@ registries: []
 	}
 }
 
-func scenarioDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
+func TestDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

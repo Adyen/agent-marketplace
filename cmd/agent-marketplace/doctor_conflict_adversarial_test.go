@@ -64,7 +64,10 @@ func prepareTwoDevinConflicts(t *testing.T, repoRoot string) (mcpPath string, se
 // then hits Ctrl-D (or a heredoc with a single line). The second entry must
 // survive untouched — an EOF is not consent, and a "y" already spent on entry A
 // is not consent for entry B.
-func scenarioAdversarialOneYesThenEOFReplacesExactlyOneEntry(t *testing.T) {
+func TestAdversarialOneYesThenEOFReplacesExactlyOneEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 
@@ -97,7 +100,10 @@ func scenarioAdversarialOneYesThenEOFReplacesExactlyOneEntry(t *testing.T) {
 // alignment across repair classes: one aggregate holding BOTH an exact adoption
 // match and a value conflict, with exactly one "y" on stdin. The "y" belongs to
 // the adoption prompt; the conflict must then hit EOF and be declined.
-func scenarioAdversarialYesToAdoptionDoesNotSweepAConflict(t *testing.T) {
+func TestAdversarialYesToAdoptionDoesNotSweepAConflict(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -167,7 +173,10 @@ func scenarioAdversarialYesToAdoptionDoesNotSweepAConflict(t *testing.T) {
 // non-nil reader wrapping a nil io.Reader. A prompt then dereferences nil.
 //
 // Whatever the answer is, it must be "no", and it must not be a panic.
-func scenarioAdversarialNilStdinOnATTYDeclinesInsteadOfPanicking(t *testing.T) {
+func TestAdversarialNilStdinOnATTYDeclinesInsteadOfPanicking(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -203,7 +212,10 @@ func scenarioAdversarialNilStdinOnATTYDeclinesInsteadOfPanicking(t *testing.T) {
 //
 // Debug matters because it is the level a user turns on when a repair goes
 // wrong, which is exactly when the aggregate is most likely to hold a token.
-func scenarioAdversarialWholeRepairFlowLeaksNoSecretAtDebugLevel(t *testing.T) {
+func TestAdversarialWholeRepairFlowLeaksNoSecretAtDebugLevel(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -257,7 +269,10 @@ func scenarioAdversarialWholeRepairFlowLeaksNoSecretAtDebugLevel(t *testing.T) {
 // entry is unmanaged, so the conflict class nominates entries it must never be
 // allowed to act on. Confirming must fail loudly and change nothing — a repair
 // may not become the one way to mutate a file while state is corrupt.
-func scenarioAdversarialCorruptOwnershipStateNeverReplaces(t *testing.T) {
+func TestAdversarialCorruptOwnershipStateNeverReplaces(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {

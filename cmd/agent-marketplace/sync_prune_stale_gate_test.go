@@ -77,7 +77,10 @@ registries:
 // selections stayed in the config forever. A materialize failure for an
 // unrelated resource is not evidence that the catalog lied, so pruning must
 // proceed — while the run still exits non-zero for that failure.
-func scenarioSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) {
+func TestSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, configPath := stalePruneCompoundRepo(t, "beads", "mayor", "openspec-to-beads")
 
 	output, err := executeCommand("sync", "--prune-stale")
@@ -121,7 +124,10 @@ func scenarioSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) 
 // the re-run. The recursive call passes pruneStale=false, so exactly one prune
 // round can ever happen. Asserted by counting rounds, and bounded by a
 // deadline so a regression fails instead of hanging the suite.
-func scenarioSyncPruneStaleReSyncTerminatesWhenErrorPersists(t *testing.T) {
+func TestSyncPruneStaleReSyncTerminatesWhenErrorPersists(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := stalePruneCompoundRepo(t, "beads", "mayor")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -181,7 +187,10 @@ func scenarioSyncPruneStaleReSyncTerminatesWhenErrorPersists(t *testing.T) {
 // promoted errors are NOT evidence of an unreadable catalog. Asking for both
 // flags therefore prunes and then re-syncs clean, instead of the old behavior
 // where --strict's own promotion suppressed the fix it was complaining about.
-func scenarioSyncPruneStaleStrictModePrunesTheSelectionsItPromoted(t *testing.T) {
+func TestSyncPruneStaleStrictModePrunesTheSelectionsItPromoted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -227,7 +236,10 @@ registries:
 // of the prune set — must still fail the run. Dropping strict on the recursive
 // call would exit 0 with the stale selection still in the config, silently
 // discarding the promotion the user asked for.
-func scenarioSyncPruneStaleStrictSurvivesTheReSync(t *testing.T) {
+func TestSyncPruneStaleStrictSurvivesTheReSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -284,7 +296,10 @@ collections:
 // entirely — a resource absent from a registry that failed to load is not
 // proof that it is gone. A silently skipped --prune-stale is indistinguishable
 // from one that found nothing, so the skip is now stated with its reason.
-func scenarioSyncPruneStaleSkipExplainsUntrustedCatalog(t *testing.T) {
+func TestSyncPruneStaleSkipExplainsUntrustedCatalog(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

@@ -44,7 +44,10 @@ registries:
 	return repoRoot, origin, working, lockPath
 }
 
-func scenarioLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
+func TestLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
 	doc := readExactManifestLock(t, lockPath)
 	root := &doc.Registries[0].Roots[0]
@@ -102,7 +105,10 @@ func scenarioLegacyRevisionRetainedUntilExplicitUpgrade(t *testing.T) {
 	assertMaterializedSkillContains(t, repoRoot, "alpha", "Alpha locked")
 }
 
-func scenarioLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
+func TestLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name   string
 		tamper func(*lockfile.GitRoot)
@@ -160,7 +166,10 @@ func scenarioLockedGitManifestTamperingBlocksMaterialization(t *testing.T) {
 	}
 }
 
-func scenarioReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
+func TestReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, command := range []string{"status", "list"} {
 		t.Run(command, func(t *testing.T) {
 			repoRoot, _, _, lockPath := setupExactManifestRegistry(t)
@@ -198,7 +207,10 @@ func scenarioReadOnlyGitViewsRejectManifestTamperingWithoutMutation(t *testing.T
 	}
 }
 
-func scenarioSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *testing.T) {
+func TestSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, origin, _, lockPath := setupExactManifestRegistry(t)
 	beforeLock, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -232,7 +244,10 @@ registries:
 	}
 }
 
-func scenarioLockedInventoryVerificationPreservesMalformedDiagnostics(t *testing.T) {
+func TestLockedInventoryVerificationPreservesMalformedDiagnostics(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -268,7 +283,10 @@ registries:
 	}
 }
 
-func scenarioEmptyExactCacheReacquiresAndVerifiesLockedCommit(t *testing.T) {
+func TestEmptyExactCacheReacquiresAndVerifiesLockedCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _, working, lockPath := setupExactManifestRegistry(t)
 	beforeLock, err := os.ReadFile(lockPath)
 	if err != nil {
