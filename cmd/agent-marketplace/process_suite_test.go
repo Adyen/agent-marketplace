@@ -73,6 +73,7 @@ func TestCommandProcessIsolationGuard(t *testing.T) {
 		{"unguarded", "new_test.go", "func TestForgotten(t *testing.T) {}", 1},
 		{"guard not first", "new_test.go", "func TestLate(t *testing.T) {\n\tt.Log(1)\n" + guard + "}", 1},
 		{"guard without return", "new_test.go", "func TestNoReturn(t *testing.T) {\n\tif isolateCommandTest(t) {\n\t\tt.Log(1)\n\t}\n}", 1},
+		{"guard with invalid arg", "new_test.go", "func TestInvalidArg(t *testing.T) {\n\tif isolateCommandTest(nil) {\n\t\treturn\n\t}\n}", 1},
 		{"helper", "new_test.go", "func testHelper(t *testing.T) {}", 0},
 		{"pure unit file", "version_test.go", "func TestVersion(t *testing.T) {}", 0},
 		{"policy", "policy_test.go", "func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {}", 0},
