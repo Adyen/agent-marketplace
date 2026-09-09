@@ -134,14 +134,11 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 		}
 		orgArtifacts, release, err := resolveOrgOwnedArtifactsMode(ctx, repoRoot, orgMode)
 		if err != nil {
-			if !dryRun || organizationLockFailure(err) {
-				slog.Error("deinit could not safely resolve organization-owned artifacts", "error", err)
-				return fmt.Errorf("resolve organization-owned artifacts before deinit: %w", err)
-			}
-			slog.Warn("deinit dry-run could not inspect uncached organization artifacts", "error", err)
-			if _, werr := fmt.Fprintf(out, "warning: could not inspect uncached organization-owned artifacts (%v); dry-run made no changes\n", err); werr != nil {
+			slog.Error("deinit could not safely resolve organization-owned artifacts", "error", err)
+			if _, werr := fmt.Fprintf(out, "error: could not resolve organization-owned artifacts; refusing teardown: %v\n", err); werr != nil {
 				return werr
 			}
+			return fmt.Errorf("resolve organization-owned artifacts before deinit: %w", err)
 		} else {
 			resolvedArtifacts = orgArtifacts
 			releaseExactLease = release
@@ -384,15 +381,6 @@ func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode cat
 	}
 	slog.Info("deinit: resolved organization-owned artifacts to preserve", "count", len(preserved))
 	return preserved, releaseExactLease, nil
-}
-
-func organizationLockFailure(err error) bool {
-	var trustErr *config.OrganizationTrustError
-	if errors.As(err, &trustErr) {
-		return true
-	}
-	var lockErr *pipeline.LockViewError
-	return errors.As(err, &lockErr)
 }
 
 // organizationUnresolvedSelections promotes soft unresolved selections from

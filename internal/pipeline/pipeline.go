@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -460,6 +461,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 	}
 	result.MergedCfg = mergedCfg
+	if opts.Offline && mergedCfg != nil && len(mergedCfg.Marketplaces) > 0 {
+		result.Warnings = append(result.Warnings, errors.New("offline Marketplace sync cannot observe newer revocations; cached revocation metadata is used"))
+	}
 	materializationModes, modeErr := config.ResolveMaterializationModes(result.GlobalCfg, result.RepoCfg, result.LocalCfg)
 	if modeErr != nil {
 		result.ConfigErrors = append(result.ConfigErrors, modeErr)
@@ -569,13 +573,14 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
 	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
 	for _, resolveErr := range result.ResolveErrors {
+		if opts.Offline && (resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr)) {
+			errs = append(errs, resolveErr)
+			continue
+		}
 		if resolver.IsWarning(resolveErr) {
 			continue
 		}
-		if resolver.IsSoftSelectedNotFound(resolveErr) {
-			continue
-		}
-		if resolver.IsSoftSelectedMalformed(resolveErr) {
+		if resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr) {
 			continue
 		}
 		errs = append(errs, resolveErr)
@@ -675,7 +680,12 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	resolveOpts.ExactLockLease = nil
 	resolved := Resolve(ctx, resolveOpts)
 	result.ResolveResult = resolved
-	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
+	for _, warning := range SoftWarnings(resolved) {
+		if opts.Offline && (resolver.IsSoftSelectedNotFound(warning) || resolver.IsSoftSelectedMalformed(warning)) {
+			continue
+		}
+		result.Warnings = append(result.Warnings, warning)
+	}
 
 	// Compute the materialization root once and reuse it for both the
 	// ancestor-exclude detection (below) and the actual materialize.Run
@@ -700,10 +710,10 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			if resolver.IsNameCollision(err) {
 				continue
 			}
-			if resolver.IsSoftSelectedNotFound(err) {
+			if !opts.Offline && resolver.IsSoftSelectedNotFound(err) {
 				continue
 			}
-			if resolver.IsSoftSelectedMalformed(err) {
+			if !opts.Offline && resolver.IsSoftSelectedMalformed(err) {
 				continue
 			}
 			filteredErrors = append(filteredErrors, err)

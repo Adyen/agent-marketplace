@@ -101,15 +101,6 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
-	if opts.DependencyReconcile == nil {
-		return nil, errors.New("update requires dependency lock reconciliation")
-	}
-	staging, err := newConfigStagingManager()
-	if err != nil {
-		return nil, err
-	}
-	defer closeConfigStaging(staging, "update", &retErr)
-
 	updatedRegistries := 0
 	if ec.Merged != nil {
 		updatedRegistries = len(ec.Merged.Registries)
@@ -122,6 +113,21 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		slog.Error("update aborted while preparing Marketplace pins", "error", err)
 		return nil, err
 	}
+	actionable := updatedRegistries > 0
+	for _, plan := range plans {
+		actionable = actionable || !plan.Skipped
+	}
+	if !actionable {
+		return updateResult(updatedRegistries, nil, plans), nil
+	}
+	if opts.DependencyReconcile == nil {
+		return nil, errors.New("update requires dependency lock reconciliation")
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		return nil, err
+	}
+	defer closeConfigStaging(staging, "update", &retErr)
 	for i := range plans {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -185,7 +191,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 		return nil, err
 	}
-	result = &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}
+	result = updateResult(updatedRegistries, bumps, plans)
+	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
+	return result, nil
+}
+
+func updateResult(updatedRegistries int, bumps []RefBump, plans []marketplaceUpdatePlan) *UpdateResult {
+	result := &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}
 	for _, plan := range plans {
 		result.MarketplacePins = append(result.MarketplacePins, plan.MarketplacePinUpdate)
 		if plan.Updated {
@@ -194,18 +206,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			result.SkippedMarketplacePins++
 		}
 	}
-	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
-	return result, nil
+	return result
 }
 
 func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.EffectiveConfig) ([]marketplaceUpdatePlan, error) {
 	if ec == nil || ec.Merged == nil || len(ec.Merged.Marketplaces) == 0 {
 		return nil, nil
 	}
-	if len(ec.TargetHarnesses) == 0 {
-		return nil, &TargetHarnessSetMissingError{}
-	}
-
 	resolverMP := opts.MarketplaceResolver
 	if resolverMP == nil {
 		resolverMP = marketplace.NewResolver()

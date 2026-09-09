@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -80,10 +81,6 @@ func newSyncCmd() *cobra.Command {
 type lockRunOptions struct {
 	locked            bool
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
-}
-
-func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool) error {
-	return runSyncWithLocks(ctx, out, noBackup, strict, pruneStale, verbose, false)
 }
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {

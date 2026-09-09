@@ -321,6 +321,8 @@ func gitEnv(cred Credentials, askpassDir string) ([]string, error) {
 		}
 		env[key] = value
 	}
+	delete(env, "GIT_SSL_CAINFO")
+	delete(env, "GIT_SSL_CAPATH")
 
 	if strings.TrimSpace(cred.SSHKeyFile) != "" {
 		ssh := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o BatchMode=yes", shQuote(cred.SSHKeyFile))

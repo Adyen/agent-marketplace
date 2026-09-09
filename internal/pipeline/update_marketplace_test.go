@@ -19,6 +19,18 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit) (DependencyLockView, error) {
+	for _, edit := range edits {
+		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
+			return DependencyLockView{}, err
+		}
+		if err := os.WriteFile(edit.Path, edit.Bytes, edit.Mode); err != nil {
+			return DependencyLockView{}, err
+		}
+	}
+	return DependencyLockView{}, nil
+}
+
 func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 	fixture := newMarketplaceUpdateFixture(t, false)
 	home := t.TempDir()
@@ -35,7 +47,7 @@ func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 	if err := os.WriteFile(fixture.configPath, []byte(configData), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Update(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot})
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: fixture.repoRoot, DependencyReconcile: testMarketplaceUpdateReconcile})
 	if err != nil {
 		t.Fatalf("update Marketplace pin: %v", err)
 	}
@@ -231,9 +243,8 @@ func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cause := context.Canceled
-	if err := rollbackConfigMutations([]configMutation{{path: fixture.configPath, snapshot: snapshot, commit: commit}}, cause); err != cause {
-		t.Fatalf("rollback error = %v, want %v", err, cause)
+	if err := snapshot.RestoreIfCurrent(commit); err != nil {
+		t.Fatalf("rollback error = %v", err)
 	}
 	after, err := os.ReadFile(fixture.configPath)
 	if err != nil {

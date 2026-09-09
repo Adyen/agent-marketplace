@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 func TestResolveStopsOnV3ConfigErrors(t *testing.T) {

@@ -200,7 +200,7 @@ func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 
 			exporter := newInventoryCommandExporter(t)
 			ctx, tel := exporter.context(t, "sync")
-			if err := runSync(ctx, io.Discard, false, false, true, false, false, nil); err != nil {
+			if err := runSyncWithLocks(ctx, io.Discard, false, false, true, false, false); err != nil {
 				t.Fatalf("runSync: %v", err)
 			}
 			snapshots := exporter.shutdown(t, tel)

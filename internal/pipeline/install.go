@@ -221,7 +221,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
-	if opts.DependencyReconcile != nil {
+	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
 			return nil, err
