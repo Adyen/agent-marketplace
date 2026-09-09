@@ -19,7 +19,7 @@ Other configuration layers use related schemas:
 | Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` | Shared project targets and resources |
 | Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` | Gitignored choices for one checkout |
 
-Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. This foundation does not define hosted Marketplace lock schema or adapters.
+Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
 
 This page describes the committed repository file. Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
 
@@ -91,6 +91,8 @@ Unknown top-level fields are rejected.
 | `apiVersion` | string | yes | Configuration schema. Use `agent-marketplace/v2`. |
 | `harnesses` | list of strings | no | Repository target harnesses. When omitted or empty, targets come from user configuration, then organization configuration. |
 | `registries` | list of registry entries | no | Git repositories or local directories that provide resources. |
+| `marketplaces` | list of Marketplace entries | no | Hosted Marketplace endpoints and exact installed resource pins. Entries accumulate across configuration layers. |
+| `allowed_marketplaces` | list of regular expressions | no | Restricts hosted Marketplace endpoint URLs. The first layer that declares the field, from organization downward, controls the policy. |
 | `skills` | selector | no | Default skill selection for registry entries that do not provide their own values. |
 | `commands` | selector | no | Default command selection. |
 | `subagents` | selector | no | Default subagent selection. |
@@ -282,6 +284,80 @@ collections:
 ```
 
 A selected collection expands to its members before resources are resolved. Collections themselves are not materialized into harness directories.
+
+## Hosted Marketplaces
+
+`marketplaces` records hosted Marketplace endpoints and immutable resource pins:
+
+```yaml
+marketplaces:
+  - url: https://marketplace.example.com
+    instance_id: team-marketplace
+    alias: team
+    resources:
+      - registry_id: shared-agents-id
+        registry_slug: shared-agents
+        kind: skill
+        name: review
+        revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        acquisition: mirror
+        installed_name: team-review
+        direct: true
+```
+
+Marketplace entries accumulate across organization, user, repository, and repository-personal layers. `agent-marketplace install <endpoint-url>` verifies and writes an endpoint entry. Installing a Marketplace locator writes its exact resource pins; hand-editing pin identity or digest fields bypasses the installation preview and is not equivalent to a verified install.
+
+### Marketplace entry fields
+
+| Field | Type | Required | Description |
+|---|---|:---:|---|
+| `url` | HTTP(S) endpoint URL | yes | Canonical Marketplace API base. Trailing slashes and scheme/host casing are normalized for identity comparisons. |
+| `instance_id` | route token | yes | Stable identity verified against `/.well-known/agent-marketplace.json`. |
+| `alias` | route token | no | Unique user-facing name for search and compact locators. `all` is reserved. |
+| `resources` | list of exact pins | no | Installed resource revisions owned by this endpoint. |
+
+An alias cannot contain `/`, `\\`, `@`, `:`, control characters, or leading or trailing whitespace. Duplicate non-empty aliases are rejected.
+
+### `marketplaces[].resources[]`
+
+| Field | Type | Required | Description |
+|---|---|:---:|---|
+| `registry_id` | route token | yes | Immutable registry identity. |
+| `registry_slug` | route token | no | Route-facing registry slug used by mirror endpoints and display output. |
+| `kind` | string | yes | `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
+| `name` | route token | yes | Marketplace resource name. |
+| `revision` | string | yes | Exact revision identifier. Newly installed resources use the content digest. |
+| `digest` | SHA-256 digest | yes | Lowercase `sha256:<64 hex>` content digest. |
+| `acquisition` | string | no | `mirror` or `index-only`. An omitted value is treated as `mirror`. |
+| `registry_commit` | Git commit | for `index-only` | Full lowercase commit for the exact registry occurrence. Forbidden on mirror pins. |
+| `registry_manifest_digest` | SHA-256 digest | for `index-only` | Manifest digest for the exact registry occurrence. Forbidden on mirror pins. |
+| `installed_name` | safe filename | no | Local generated name. Defaults to `name`; path separators, control characters, platform-invalid names, and trailing dots/spaces are rejected. |
+| `direct` | boolean | no | Marks a resource selected directly rather than only through a collection. |
+| `selected_by` | list of collection selectors | no | Exact collection revisions that retain this leaf. |
+
+Each `selected_by` item contains `registry_id`, `name`, and a lowercase SHA-256 `revision`. A leaf remains selected while it is direct or retained by at least one installed collection.
+
+### Marketplace allowlist
+
+`allowed_marketplaces` contains regular expressions matched against normalized Marketplace endpoint URLs:
+
+```yaml
+allowed_marketplaces:
+  - '^https://marketplace\.example\.com$'
+```
+
+The first layer that declares this field controls it, in authority order: organization, user, repository, then repository-personal. Lower-authority layers cannot relax a policy selected by a higher-authority layer.
+
+| Configuration | Effect |
+|---|---|
+| field omitted in every layer | All syntactically valid HTTP(S) Marketplace endpoints are allowed. |
+| `allowed_marketplaces: []` | All Marketplace endpoints are denied. |
+| one or more patterns | An endpoint must match at least one expression. |
+
+The policy is checked before endpoint registration, search, acquisition, and synchronization.
+
+For the workflow that creates these entries, see [How to install a resource from a hosted Marketplace](../how-to/install-from-a-marketplace.md).
 
 ## Registry allowlist
 
