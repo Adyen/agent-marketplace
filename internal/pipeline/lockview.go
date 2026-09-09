@@ -95,9 +95,11 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 				if canonicalErr != nil {
 					canonical = entry.URL
 				}
-				locked := readOnlyLockedGit{err: layerErr}
+				var locked readOnlyLockedGit
 				if missing && allowMissingLocks {
 					locked = readOnlyLockedGit{unlocked: true}
+				} else {
+					locked = readOnlyLockedGit{err: layerErr}
 				}
 				bySource[readOnlySourceKey(layer.Source, canonical, entry.Ref)] = locked
 				identity := readOnlyGitIdentity(canonical, entry.Ref)
