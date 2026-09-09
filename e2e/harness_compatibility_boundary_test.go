@@ -11,6 +11,42 @@ import (
 	"time"
 )
 
+func TestCompatibilityFixtureNamesAreIndependentOfInstallationMode(t *testing.T) {
+	server := filepath.Join(t.TempDir(), "local-fixture-server")
+	linked := newCompatibilityFixture(newEnv(t), "factory", server)
+	copied := newCompatibilityFixture(newEnv(t), "factory", server)
+	for _, kind := range []string{"skill", "command", "subagent", "mcp-a", "mcp-b"} {
+		want := "amcompat-factory-" + kind
+		if linked.name(kind) != want || copied.name(kind) != want {
+			t.Fatalf("fixture identity must not confound mode with name length: %q, %q", linked.name(kind), copied.name(kind))
+		}
+	}
+}
+
+func TestCompatibilityTrustBlockerIsResourceAndScopeSpecific(t *testing.T) {
+	row := compatibilityResult{Harness: "gemini", Resource: "skill", Scope: "repo"}
+	command := compatibilityCommand{ExitCode: 0, Diagnostics: []string{"cli.project-trust-required"}}
+	if !compatibilityTrustBlocksDiscovery(row, command) {
+		t.Fatal("explicit workspace trust blocker was not classified")
+	}
+	for _, candidate := range []compatibilityResult{
+		{Harness: "gemini", Resource: "skill", Scope: "user"},
+		{Harness: "gemini", Resource: "mcp", Scope: "repo"},
+		{Harness: "codex", Resource: "mcp", Scope: "repo"},
+	} {
+		if compatibilityTrustBlocksDiscovery(candidate, command) {
+			t.Fatalf("unrelated discovery failure misclassified as trust: %+v", candidate)
+		}
+	}
+	if compatibilityTrustBlocksDiscovery(row, compatibilityCommand{ExitCode: 0}) || compatibilityTrustBlocksDiscovery(row, compatibilityCommand{ExitCode: 1, Diagnostics: command.Diagnostics}) {
+		t.Fatal("trust classification requires a completed list and explicit native evidence")
+	}
+	command.Diagnostics = append(command.Diagnostics, "cli.config-parse-error")
+	if compatibilityTrustBlocksDiscovery(row, command) {
+		t.Fatal("trust warning hid a configuration parsing error")
+	}
+}
+
 func TestCompatibilityRunnerCreatesExplicitCodexHome(t *testing.T) {
 	e := newEnv(t)
 	binary := filepath.Join(e.repos, "internal-fake-native")
@@ -164,7 +200,7 @@ func TestCompatibilityRuntimeUpdatesDisabled(t *testing.T) {
 func TestCompatibilityDevinUpdateControlSurvivesMarketplaceHooks(t *testing.T) {
 	e := newEnv(t)
 	e.InitGitRepo()
-	f := newCompatibilityFixture(e, "devin", "user", "file", buildCompatibilityHelper(t, "compat-mcp"))
+	f := newCompatibilityFixture(e, "devin", buildCompatibilityHelper(t, "compat-mcp"))
 	if err := configureCompatibilityRuntime(e, "devin"); err != nil {
 		t.Fatal(err)
 	}

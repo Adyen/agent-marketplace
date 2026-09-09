@@ -135,7 +135,7 @@ func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.
 	return r
 }
 
-func requireCompatibilityObservation(r *compatibilityCommand, absent bool, values ...string) error {
+func compatibilityInspectionError(r compatibilityCommand) error {
 	if r.Error != "" || r.ExitCode != 0 {
 		return fmt.Errorf("%s", r.Error)
 	}
@@ -144,6 +144,13 @@ func requireCompatibilityObservation(r *compatibilityCommand, absent bool, value
 		case "cli.authentication-required", "cli.unknown-command", "cli.unknown-option", "cli.interactive-only", "cli.config-parse-error", "cli.permission-denied":
 			return fmt.Errorf("native inspection reported %s despite a successful exit", code)
 		}
+	}
+	return nil
+}
+
+func requireCompatibilityObservation(r *compatibilityCommand, absent bool, values ...string) error {
+	if err := compatibilityInspectionError(*r); err != nil {
+		return err
 	}
 	for _, value := range values {
 		present := strings.Contains(r.output, value)

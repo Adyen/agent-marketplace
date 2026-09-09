@@ -99,7 +99,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	if init.Error != "" {
 		t.Fatal(init.Error)
 	}
-	f := newCompatibilityFixture(e, first.Harness, first.Scope, first.Mode, server)
+	f := newCompatibilityFixture(e, first.Harness, server)
 	paths := compatibilityPaths(e, first.Harness, first.Scope, f)
 	otherScope := "user"
 	if first.Scope == "user" {

@@ -30,10 +30,10 @@ func buildCompatibilityHelper(t *testing.T, name string) string {
 	return binary
 }
 
-func newCompatibilityFixture(e *Env, target, scope, mode, server string) compatibilityFixture {
+func newCompatibilityFixture(e *Env, target, server string) compatibilityFixture {
 	f := compatibilityFixture{
 		registry:   filepath.Join(e.repos, "canonical"),
-		prefix:     "amcompat-" + target + "-" + scope + "-" + mode,
+		prefix:     "amcompat-" + target,
 		server:     server,
 		hookScript: filepath.Join(e.repos, "harmless-hook.sh"),
 		hookMarker: filepath.Join(e.repos, "hook-events"),

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,12 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 			row.Reason = "native discovery or observable value assertion failed after config verification"
 			command := runCompatibilityCommand(e, n.binary, probe.list, 20*time.Second)
 			err := requireCompatibilityObservation(&command, false, probe.names...)
+			if err != nil && compatibilityTrustBlocksDiscovery(*row, command) {
+				row.Status = "blocked"
+				row.Reason = "Gemini reported untrusted workspace; repository skill discovery is gated by native trust, which this suite does not grant"
+				row.Commands = append(row.Commands, command)
+				t.Fatal(row.Reason)
+			}
 			if err == nil && probe.kind == "mcp" {
 				row.Connection = compatibilityMCPConnection(&command, row.Harness)
 			}
@@ -149,6 +156,10 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 			row.Reason = "negative control plus native list confirmed fixture names; only observations recorded per command are verified, not unexposed fields, hook execution, or model behavior"
 		}
 	}
+}
+
+func compatibilityTrustBlocksDiscovery(row compatibilityResult, command compatibilityCommand) bool {
+	return row.Harness == "gemini" && row.Resource == "skill" && row.Scope == "repo" && compatibilityInspectionError(command) == nil && slices.Contains(command.Diagnostics, "cli.project-trust-required")
 }
 
 func configureCompatibilityRuntime(e *Env, target string) error {
