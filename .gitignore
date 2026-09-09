@@ -38,3 +38,4 @@ e2e/e2e-report.json
 /site/.vitepress/cache/
 
 .agents/lock.local.yaml
+.agents/config.local.yaml
