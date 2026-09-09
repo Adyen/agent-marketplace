@@ -122,18 +122,30 @@ func validateAllowedMarketplacePatterns(patterns *[]string) []error {
 
 // ValidateMarketplaceEntries validates a slice of marketplace entries.
 func ValidateMarketplaceEntries(entries []MarketplaceEntry) []error {
+	type aliasUse struct {
+		index      int
+		url        string
+		instanceID string
+		source     Source
+		valid      bool
+	}
 	var errs []error
-	aliases := make(map[string]int)
+	aliases := make(map[string]aliasUse)
 	for i, e := range entries {
 		errs = append(errs, validateMarketplaceEntry(i, e)...)
 		if e.Alias == "" {
 			continue
 		}
+		normalizedURL, normalizeErr := urlutil.NormalizeEndpointURL(e.URL)
+		current := aliasUse{index: i, url: normalizedURL, instanceID: e.InstanceID, source: e.Source, valid: normalizeErr == nil}
 		if previous, ok := aliases[e.Alias]; ok {
-			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous))
+			if previous.valid && current.valid && previous.source != SourceUnset && current.source != SourceUnset && previous.source != current.source && previous.url == current.url && previous.instanceID == current.instanceID {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates marketplaces[%d].alias", i, e.Alias, previous.index))
 			continue
 		}
-		aliases[e.Alias] = i
+		aliases[e.Alias] = current
 	}
 	return errs
 }

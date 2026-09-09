@@ -145,6 +145,7 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	if strings.Contains(config, "selected_by:") {
 		t.Fatalf("direct TUI scope copy retained collection selectors:\n%s", config)
 	}
+	waitForMarketplaceTUI(t, &output, func(value string) bool { return strings.Contains(value, "skill skill-one PL") })
 	for _, key := range []byte(" l") {
 		if _, err := terminal.Write([]byte{key}); err != nil {
 			t.Fatal(err)

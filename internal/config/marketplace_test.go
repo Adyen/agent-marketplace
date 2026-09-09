@@ -125,6 +125,20 @@ func TestValidateMarketplaceEntriesRejectsDuplicateAndReservedAliases(t *testing
 	}
 }
 
+func TestValidateMarketplaceEntriesAllowsLayeredAliasForSameIdentity(t *testing.T) {
+	entries := []MarketplaceEntry{
+		{URL: "HTTPS://MARKET.example/base/", InstanceID: "instance", Alias: "public", Source: RepoCommitted},
+		{URL: "https://market.example/base", InstanceID: "instance", Alias: "public", Source: RepoPersonal},
+	}
+	if errs := ValidateMarketplaceEntries(entries); len(errs) != 0 {
+		t.Fatalf("same-identity layered alias rejected: %v", errs)
+	}
+	entries[0].Source, entries[1].Source = SourceUnset, SourceUnset
+	if errs := ValidateMarketplaceEntries(entries); len(errs) == 0 {
+		t.Fatal("same-file duplicate alias accepted")
+	}
+}
+
 func TestValidateMarketplaceEntriesRejectsUnsafeIdentityAndEndpointFields(t *testing.T) {
 	for _, entry := range []MarketplaceEntry{
 		{URL: "http://market.example?token=secret", InstanceID: "instance"},

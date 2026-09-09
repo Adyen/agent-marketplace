@@ -151,15 +151,6 @@ func writeMarketplaceAllKindsSource(t *testing.T, root string) {
 	}
 }
 
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, output)
-	}
-}
-
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

@@ -128,6 +128,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+    env:
+      E2E_PARALLEL: "4"
+      GIT_TERMINAL_PROMPT: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,6 +142,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            e2e/go.sum
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -157,10 +163,24 @@ jobs:
         run: pnpm run e2e:install
 
       - name: Run Marketplace gate
+        shell: bash
         env:
           PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ vars.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }}
           AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}
-        run: make marketplace-gate
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/e2e-artifacts"
+          E2E_REPORT="$RUNNER_TEMP/e2e-artifacts/e2e-report.json" \
+            make marketplace-gate 2>&1 | tee "$RUNNER_TEMP/e2e-artifacts/marketplace-gate.log"
+
+      - name: Upload Marketplace gate diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: marketplace-gate-${{ runner.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
   benchmark:
     name: Benchmark
