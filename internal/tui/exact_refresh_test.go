@@ -73,6 +73,74 @@ func TestTUISnapshotDiscoversUnlockedOrganizationRegistry(t *testing.T) {
 	}
 }
 
+func TestTUISnapshotFallsBackToUnlockedRepoRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	repo := t.TempDir()
+	agentsDir := filepath.Join(repo, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := t.TempDir()
+	writeExactRefreshSkill(t, registry, "unlocked-repo")
+	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://example.invalid/unlocked-repo.git\n    ref: main\n    source_harness: factory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
+	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
+	originalClone := cloneOrPull
+	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	loadGlobalConfig = func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
+	}
+	loadRepoConfig = func() (*config.Config, error) {
+		return config.LoadConfigFromPath(filepath.Join(agentsDir, "config.yaml"))
+	}
+	loadLocalConfig = func() (*config.LocalConfig, error) { return nil, nil }
+	cloneOrPull = func(_, _ string) (string, error) { return registry, nil }
+	t.Cleanup(func() {
+		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
+		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
+		cloneOrPull = originalClone
+	})
+
+	snapshot := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
+	if len(snapshot.errs) > 0 {
+		t.Fatalf("TUI snapshot rejected unlocked repository registry: %v", snapshot.errs)
+	}
+	missingLockWarning := false
+	for _, warning := range snapshot.warnings {
+		if strings.Contains(warning.Error(), "lock.missing") {
+			missingLockWarning = true
+			break
+		}
+	}
+	if !missingLockWarning {
+		t.Fatalf("TUI snapshot did not report missing repository lock as a warning: %v", snapshot.warnings)
+	}
+	found := false
+	for _, row := range snapshot.rows {
+		if row.Artifact.Name == "unlocked-repo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("TUI snapshot rows do not contain unlocked repository resource: %#v", snapshot.rows)
+	}
+	if _, err := os.Lstat(filepath.Join(agentsDir, "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("TUI snapshot created repository lock: %v", err)
+	}
+}
+
 func TestAutomaticRefreshRemainsPinnedWhenRefMoves(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -159,7 +159,8 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			catalog.WithCloneOrPull(cloneOrPull),
 			catalog.WithDiscoverFunc(discoverCatalog),
 		},
-		ReadOnlyExactLocks: true,
+		ReadOnlyExactLocks:        true,
+		AllowMissingReadOnlyLocks: true,
 	})
 	defer releaseExactLease()
 
