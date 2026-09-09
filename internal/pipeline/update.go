@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	pathpkg "path"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 )
 
@@ -26,9 +28,24 @@ type RefBump struct {
 
 // UpdateOptions holds the arguments for an update operation.
 type UpdateOptions struct {
-	RepoRoot string
-	Bump     bool
+	RepoRoot            string
+	MaterializeRoot     string
+	LocalConfigDir      string
+	Bump                bool
+	BumpScopes          map[lockfile.Scope]bool
+	BumpTarget          *UpdateTarget
+	DependencyReconcile UpdateDependencyReconciler
 }
+
+type UpdateTarget struct {
+	Registry string
+	Ref      string
+	Path     string
+	Kind     string
+	Names    []string
+}
+
+type UpdateDependencyReconciler func(context.Context, string, string, []RefBump, []StagedConfigEdit) (DependencyLockView, error)
 
 // UpdateResult holds the outcome of an update operation.
 type UpdateResult struct {
@@ -36,8 +53,7 @@ type UpdateResult struct {
 	Bumps             []RefBump
 }
 
-// Update refreshes pinned registries and syncs enabled skills.
-// When bump is true, it also bumps repo registry refs to newer matching tags.
+// Update refreshes selected Git dependency locks and syncs enabled resources.
 func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retErr error) {
 	tel := telemetry.TelemetryFromContext(ctx)
 	var updateSpan telemetry.Span
@@ -53,52 +69,91 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 
 	repoRoot := opts.RepoRoot
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-
-	// Load the effective configuration to obtain the authoritative allowlist
-	// and validate all configured registries before any network access.
-	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot})
+	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir})
 	if len(ec.Errors) > 0 {
-		slog.Error("update aborted on effective config errors", "error_count", len(ec.Errors))
 		return nil, errors.Join(ec.Errors...)
 	}
+	if opts.DependencyReconcile == nil {
+		return nil, errors.New("update requires dependency lock reconciliation")
+	}
+	staging, err := newConfigStagingManager()
+	if err != nil {
+		return nil, err
+	}
+	defer closeConfigStaging(staging, "update", &retErr)
 
 	updatedRegistries := 0
 	if ec.Merged != nil {
 		updatedRegistries = len(ec.Merged.Registries)
 	}
-
 	var bumps []RefBump
 	if opts.Bump {
-		repoCfg := ec.Repo.Config
-		if repoCfg != nil && len(repoCfg.Registries) > 0 {
-			// Validate repo registries against the effective allowlist before
-			// fetching tags from remote.
-			if err := config.ValidateRegistryURLs(repoCfg.Registries, ec.Allowed); err != nil {
-				slog.Error("update blocked by allowed_registries", "error", err)
+		for _, layer := range ec.PresentLayers() {
+			if !layer.Source.IsWritable() {
+				continue
+			}
+			scope := lockfile.Scope(layer.Source.LockScope())
+			if !bumpScopeSelected(opts.BumpScopes, scope) {
+				continue
+			}
+			registries := layerRegistriesForUpdate(layer)
+			if len(registries) == 0 {
+				continue
+			}
+			if err := config.ValidateRegistryURLs(registries, ec.Allowed); err != nil {
 				return nil, err
 			}
-			configPath := config.ProjectConfigPath(repoRoot)
-			var err error
-			bumps, err = bumpRepoRegistryRefs(ctx, configPath, repoCfg)
+			configPath, err := staging.Path(layer.Path)
 			if err != nil {
 				return nil, err
 			}
-		} else {
-			slog.Info("update skipping bump", "reason", "no repository registries")
+			layerBumps, err := bumpRepoRegistryRefs(ctx, configPath, &config.Config{Registries: registries}, opts.BumpTarget)
+			if err != nil {
+				return nil, err
+			}
+			bumps = append(bumps, layerBumps...)
 		}
 	}
 
-	if err := silentSync(ctx, repoRoot); err != nil {
+	syncOpts := silentSyncOptsForPaths(repoRoot, opts.MaterializeRoot, opts.LocalConfigDir)
+	syncOpts = append(syncOpts, withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
+		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits)
+	}))
+	if _, err := silentSyncCollect(ctx, repoRoot, syncOpts...); err != nil {
 		return nil, err
 	}
-
 	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps))
 	return &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}, nil
 }
 
-func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config) (bumps []RefBump, retErr error) {
+func layerRegistriesForUpdate(layer config.LayerResult) []config.RegistryEntry {
+	if layer.Config != nil {
+		return layer.Config.Registries
+	}
+	if layer.Local != nil {
+		return layer.Local.Registries
+	}
+	return nil
+}
+
+func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) bool {
+	if scopes == nil {
+		return scope == lockfile.ScopeRepo
+	}
+	return scopes[scope]
+}
+
+func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, target *UpdateTarget) (bumps []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
 		return nil, nil
+	}
+	wantedURL := ""
+	if target != nil && strings.TrimSpace(target.Registry) != "" {
+		var err error
+		wantedURL, err = canonicalUpdateRegistryURL(target.Registry)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize update registry target: %w", err)
+		}
 	}
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -117,7 +172,7 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 	planned := make(map[string]string)
 
 	for _, entry := range repoCfg.Registries {
-		if entry.IsLocal() {
+		if entry.IsLocal() || !updateTargetMatchesEntry(entry, target, wantedURL) {
 			continue
 		}
 
@@ -157,6 +212,37 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 	}
 
 	return bumps, nil
+}
+
+func canonicalUpdateRegistryURL(raw string) (string, error) {
+	return lockfile.CanonicalGitConfigURL(raw)
+}
+
+func updateTargetMatchesEntry(entry config.RegistryEntry, target *UpdateTarget, wantedURL string) bool {
+	if target == nil {
+		return true
+	}
+	if wantedURL != "" {
+		entryURL, err := canonicalUpdateRegistryURL(entry.URL)
+		if err != nil || entryURL != wantedURL {
+			return false
+		}
+	}
+	if target.Ref != "" && target.Ref != entry.Ref {
+		return false
+	}
+	if target.Path != "" && normalizeUpdateRoot(target.Path) != normalizeUpdateRoot(entry.Path) {
+		return false
+	}
+	return true
+}
+
+func normalizeUpdateRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "."
+	}
+	return pathpkg.Clean(root)
 }
 
 func discoverTagBump(repoDir, currentRef string) (string, bool, error) {

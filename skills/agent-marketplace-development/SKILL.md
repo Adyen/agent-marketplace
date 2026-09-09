@@ -365,16 +365,17 @@ exposes `newFooCmd() *cobra.Command`. `main.go` registers them.
 
 ### Subcommand responsibilities
 
-| Command | Writes config? | Triggers sync? |
+| Command | Writes dependency state? | Triggers sync? |
 |---|---|---|
 | `list` | no | no |
-| `install <name>` / `install --tag` / `install --all [--registry URL]` | yes (repo) | yes |
-| `remove <name>` | yes (repo; resources or exclude) | yes |
-| `sync` | no | yes |
-| `update [--bump]` | sometimes (bump rewrites ref) | yes (via snapshot reload) |
-| `status` | no | no |
-| `gc` | no | no (cleans cache) |
-| `tui` (or bare invocation on TTY) | yes (via modal) | on demand (`s`) |
+| `install <name>` / `install --tag` / `install --all [--registry URL]` | config and its layer lock in one transaction | yes |
+| `remove <name>` | yes, transactionally with its layer lock | yes |
+| `lock [--check|--upgrade]` | generated locks unless checking | no |
+| `sync` | stale writable locks unless locked/check/offline | yes |
+| `update [--bump]` | locks; config too when bump rewrites a ref | yes (from exact snapshots) |
+| `status` | no | no (consumes exact lock views) |
+| `gc` | no | no (cleans only entries inactive in validated config and locks) |
+| `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 
 `remove` keeps machine- and repo-scoped occurrences distinct. If both copies
 are enabled, an unscoped same-kind removal is ambiguous; an explicit

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -103,12 +104,15 @@ type LoadResult struct {
 
 type CloneOrPullFunc func(url, ref string) (string, error)
 
+type ExactSnapshotFunc func(entry config.RegistryEntry) (snapshotPath, snapshotIdentity string, err error)
+
 type DiscoverFunc func(dir, sourceHarness string) (LoadedCatalog, error)
 
 type LoadOption func(*loadConfig)
 
 type loadConfig struct {
 	cloneOrPull    CloneOrPullFunc
+	exactSnapshot  ExactSnapshotFunc
 	discover       DiscoverFunc
 	localConfigDir string // base dir for resolving local-config entries' relative paths
 }
@@ -122,14 +126,24 @@ type fetchJob struct {
 }
 
 type loadRequest struct {
-	entry      config.RegistryEntry
-	catalogKey string
-	basePath   string
-	job        *fetchJob
+	entry           config.RegistryEntry
+	catalogKey      string
+	basePath        string
+	catalogBasePath string
+	job             *fetchJob
 }
 
 func WithCloneOrPull(fn CloneOrPullFunc) LoadOption {
 	return func(c *loadConfig) { c.cloneOrPull = fn }
+}
+
+func WithExactSnapshots(fn ExactSnapshotFunc, discover ...DiscoverFunc) LoadOption {
+	return func(c *loadConfig) {
+		c.exactSnapshot = fn
+		if len(discover) > 0 {
+			c.discover = discover[0]
+		}
+	}
 }
 
 func WithDiscoverFunc(fn DiscoverFunc) LoadOption {
@@ -162,7 +176,10 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 		// original load error so the caller knows discovery failed.
 		return LoadedCatalog{}, err
 	}
+	return cat.Discover(dir, sourceHarness)
+}
 
+func (cat *Catalog) Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	// Vacant-lot condition: zero entries and no warning/error diagnostics.
 	// HCC scanned the directory, found nothing, and had nothing to complain
 	// about. This can happen when the directory is a meta-directory containing
@@ -262,7 +279,7 @@ func Discover(dir, sourceHarness string) (LoadedCatalog, error) {
 	}
 
 	return LoadedCatalog{
-		Entries:   cat.Entries,
+		Entries:   slices.Clone(cat.Entries),
 		Malformed: malformed,
 		Resources: Resources(cat),
 	}, nil
@@ -709,7 +726,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 	}
 
 	// Phase 1: Prepare fetch jobs from registry entries.
-	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir)
+	requests, jobs, err := prepareFetchJobs(cfg, repoRoot, mode, lc.localConfigDir, lc.exactSnapshot)
 	result.Errors = append(result.Errors, err...)
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -731,8 +748,46 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 		_, ingestSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.catalog_ingest", nil)
 	}
 
-	// Phase 3: Discover skills in fetched registries.
-	discoverAll(&result, requests, lc.discover)
+	// Phase 3: Discover skills in fetched registries. Keep the read leases for
+	// the complete discovery pass so another process cannot collect a cache
+	// directory after fetching but before its contents are consumed. Exact
+	// snapshots use their own namespace lease because exact-git GC has a
+	// separate lock from the mutable registry cache.
+	var mutableURLs []string
+	hasExactRequest := false
+	for _, request := range requests {
+		// Exact snapshots have no fetch job and are protected by the exact
+		// namespace lease, not the mutable-cache lease.
+		if request.job != nil {
+			mutableURLs = append(mutableURLs, request.job.url)
+		}
+		if request.catalogBasePath != "" {
+			hasExactRequest = true
+		}
+	}
+	discover := func() {
+		if len(mutableURLs) > 0 {
+			if _, lockErr := cache.WithRegistryReadLockWithContext(ctx, mutableURLs, func() (struct{}, error) {
+				discoverAll(&result, requests, lc.discover)
+				return struct{}{}, nil
+			}); lockErr != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("acquire registry cache read lease: %w", lockErr))
+			}
+			return
+		}
+		discoverAll(&result, requests, lc.discover)
+	}
+	if hasExactRequest {
+		release, lockErr := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		if lockErr != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("acquire exact git read lease: %w", lockErr))
+		} else {
+			discover()
+			release()
+		}
+	} else {
+		discover()
+	}
 
 	if ingestSpan != (telemetry.Span{}) {
 		ingestSpan.SetAttributes(catalogIngestAttrs(result))
@@ -744,7 +799,7 @@ func LoadRegistriesWithContext(ctx context.Context, cfg *config.Config, repoRoot
 
 // prepareFetchJobs builds fetch jobs and load requests from registry entries.
 // Local entries get a nil job; remote entries get deduplicated fetch jobs.
-func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localConfigDir string) ([]loadRequest, []*fetchJob, []error) {
+func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localConfigDir string, exactSnapshot ...ExactSnapshotFunc) ([]loadRequest, []*fetchJob, []error) {
 	jobsByKey := make(map[string]*fetchJob)
 	requests := make([]loadRequest, 0, len(cfg.Registries))
 	var errs []error
@@ -790,6 +845,27 @@ func prepareFetchJobs(cfg *config.Config, repoRoot string, mode LoadMode, localC
 
 			requests = append(requests, loadRequest{entry: entry, catalogKey: catalogKey, basePath: localPath})
 			continue
+		}
+
+		if len(exactSnapshot) > 0 && exactSnapshot[0] != nil {
+			snapshotPath, snapshotIdentity, err := exactSnapshot[0](entry)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("open exact snapshot for registry %q (ref %q): %w", entry.URL, entry.Ref, err))
+				continue
+			}
+			if snapshotPath != "" {
+				catalogKey := snapshotIdentity
+				if catalogKey == "" {
+					catalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+				}
+				entry.CatalogKey = catalogKey
+				cfg.Registries[i].CatalogKey = catalogKey
+				requests = append(requests, loadRequest{
+					entry: entry, catalogKey: catalogKey, basePath: snapshotPath,
+					catalogBasePath: cache.RegistryCachePath(entry.URL, entry.Ref),
+				})
+				continue
+			}
 		}
 
 		// cachePath is the filesystem location for git clone/pull (shared by
@@ -890,6 +966,13 @@ func (w *OverlappingEntryWarning) Error() string {
 		w.Dir, redact.URL(w.FirstURL), redact.URL(w.FirstPath), redact.URL(w.SecondURL), redact.URL(w.SecondPath))
 }
 
+func (w *OverlappingEntryWarning) Resource() string          { return w.SecondPath }
+func (w *OverlappingEntryWarning) Source() string            { return redact.URL(w.SecondURL) }
+func (w *OverlappingEntryWarning) PresentationKey() string   { return "catalog.registry-overlap" }
+func (w *OverlappingEntryWarning) PresentationText() string  { return "registry entries overlap" }
+func (w *OverlappingEntryWarning) DiagnosticCode() string    { return "" }
+func (w *OverlappingEntryWarning) DiagnosticMessage() string { return "" }
+
 // IsOverlapWarning reports whether an error is an OverlappingEntryWarning.
 func IsOverlapWarning(err error) bool {
 	var w *OverlappingEntryWarning
@@ -900,6 +983,7 @@ func IsOverlapWarning(err error) bool {
 func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFunc) {
 	discoveredByKey := make(map[string]LoadedCatalog)
 	scannedDirs := make(map[string]struct{})
+	scannedDirEntries := make(map[string]config.RegistryEntry)
 	// scannedDirKeys maps each scanned skill directory to the catalogKey
 	// under which its catalog was stored. This allows overlapping entries
 	// to copy the catalog from the first scan instead of getting an empty one.
@@ -934,11 +1018,16 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 			// (one is a component-wise prefix of the other). Same-path entries
 			// from different URL forms (e.g. .git suffix) are URL dedup, not
 			// path overlap — no warning needed.
+			firstURL := findEntryURL(requests, firstKey)
 			firstPath := findEntryPath(requests, firstKey)
+			if firstURL == "" {
+				firstURL = scannedDirEntries[skillDir].URL
+				firstPath = scannedDirEntries[skillDir].Path
+			}
 			if isCatalogPathPrefix(firstPath, entry.Path) || isCatalogPathPrefix(entry.Path, firstPath) {
 				result.Errors = append(result.Errors, &OverlappingEntryWarning{
 					Dir:        skillDir,
-					FirstURL:   findEntryURL(requests, firstKey),
+					FirstURL:   firstURL,
 					FirstPath:  firstPath,
 					SecondURL:  entry.URL,
 					SecondPath: entry.Path,
@@ -948,12 +1037,16 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		}
 		scannedDirs[skillDir] = struct{}{}
 		scannedDirKeys[skillDir] = req.catalogKey
+		scannedDirEntries[skillDir] = entry
 
 		discovered, err := discover(skillDir, entry.SourceHarness)
 		if err != nil {
 			result.Config.Registries = append(result.Config.Registries, entry)
 			result.Errors = append(result.Errors, fmt.Errorf("registry %q (ref %q, path %q): %w", entry.URL, entry.Ref, entry.Path, err))
 			continue
+		}
+		if req.catalogBasePath != "" {
+			rebaseCatalogEntryPaths(&discovered, basePath, req.catalogBasePath)
 		}
 
 		// When recursive discovery split the result into per-sub-bundle
@@ -968,7 +1061,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 		// --from install path) can still look up resources without needing
 		// to know about the sub-bundle decomposition.
 		if len(discovered.SubBundles) > 0 {
-			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, requests, entry, req.catalogKey, basePath, discovered.SubBundles, discovered.Errors, discover)
+			processSubBundles(result, discoveredByKey, scannedDirs, scannedDirKeys, scannedDirEntries, requests, entry, req.catalogKey, basePath, discovered.SubBundles, discovered.Errors, discover)
 			discoveredByKey[req.catalogKey] = discovered
 			result.Catalogs[req.catalogKey] = discovered
 			if len(discovered.Resources) > 0 {
@@ -1033,12 +1126,31 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 	}
 }
 
+func rebaseCatalogEntryPaths(loaded *LoadedCatalog, fromRoot, toRoot string) {
+	for i := range loaded.Entries {
+		path := loaded.Entries[i].Path
+		if !filepath.IsAbs(path) {
+			continue
+		}
+		rel, err := filepath.Rel(fromRoot, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		preserveResourceSourcePath(loaded.Entries[i].Resource, path)
+		loaded.Entries[i].Path = filepath.Join(toRoot, rel)
+	}
+	for path, subBundle := range loaded.SubBundles {
+		rebaseCatalogEntryPaths(&subBundle, fromRoot, toRoot)
+		loaded.SubBundles[path] = subBundle
+	}
+}
+
 // processSubBundles creates a separate catalog entry for each sub-bundle
 // discovered from a meta-directory. Each sub-bundle gets its own catalog key
 // derived from the sub-bundle's path relative to the repo root, so the TUI
 // groups them under distinct sections. The parent registry entry's selectors
 // (default, skills, tags, etc.) are inherited by each sub-bundle entry.
-func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
+func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCatalog, scannedDirs map[string]struct{}, scannedDirKeys map[string]string, scannedDirEntries map[string]config.RegistryEntry, requests []loadRequest, parentEntry config.RegistryEntry, parentCatalogKey string, basePath string, subBundles map[string]LoadedCatalog, subBundleErrs []error, discover DiscoverFunc) {
 	// Sort sub-bundle directories for deterministic processing.
 	subDirs := make([]string, 0, len(subBundles))
 	for dir := range subBundles {
@@ -1090,11 +1202,16 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 			// Only emit an overlap warning when the paths genuinely overlap
 			// (one is a component-wise prefix of the other), consistent with
 			// the same check in discoverAll's scannedDirs path.
+			firstURL := findEntryURL(requests, firstKey)
 			firstPath := findEntryPath(requests, firstKey)
+			if firstURL == "" {
+				firstURL = scannedDirEntries[subSkillDir].URL
+				firstPath = scannedDirEntries[subSkillDir].Path
+			}
 			if isCatalogPathPrefix(firstPath, relPath) || isCatalogPathPrefix(relPath, firstPath) {
 				result.Errors = append(result.Errors, &OverlappingEntryWarning{
 					Dir:        subSkillDir,
-					FirstURL:   findEntryURL(requests, firstKey),
+					FirstURL:   firstURL,
 					FirstPath:  firstPath,
 					SecondURL:  parentEntry.URL,
 					SecondPath: relPath,
@@ -1104,6 +1221,9 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		}
 		scannedDirs[subSkillDir] = struct{}{}
 		scannedDirKeys[subSkillDir] = subKey
+		scannedEntry := parentEntry
+		scannedEntry.Path = relPath
+		scannedDirEntries[subSkillDir] = scannedEntry
 
 		// Create a synthetic RegistryEntry for this sub-bundle.
 		subEntry := parentEntry

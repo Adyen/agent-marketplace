@@ -1,19 +1,26 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-const compiledCacheDirName = "compiled"
+const (
+	compiledCacheDirName = "compiled"
+	exactGitCacheDirName = "exact-git"
+)
 
 // RegistryKey returns a stable, unique identifier for a registry entry's catalog.
 // For git registries it incorporates URL, ref, and path so that entries with
@@ -111,23 +118,213 @@ type GCResult struct {
 	Removed []string
 }
 
-func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
-	result := GCResult{}
-	active := activeRegistryHashes(cfgs...)
+// WithCacheMutationLock serializes cache writes and garbage collection within
+// and across processes sharing the cache root. The lock inode is persistent so
+// releasing a lock never creates an unlink/recreate race with another holder.
+func WithCacheMutationLock[T any](fn func() (T, error)) (T, error) {
+	return WithCacheMutationLockWithContext(context.Background(), fn)
+}
 
-	entries, err := os.ReadDir(CacheDir())
+// WithCacheMutationLockWithContext serializes a cache mutation while honoring
+// cancellation before waiting for either the process-local or cross-process
+// lock.
+func WithCacheMutationLockWithContext[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	return withContextCacheMutationLock(ctx, fn)
+}
+
+func withContextCacheMutationLock[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case cacheMutationMu <- struct{}{}:
+		defer func() { <-cacheMutationMu }()
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+	release, err := acquireCacheFileLockWithContext(ctx, lockfileExclusive)
 	if err != nil {
+		var zero T
+		return zero, err
+	}
+	defer release()
+	return fn()
+}
+
+// WithCacheReadLock keeps a cache-backed discovery operation alive while
+// garbage collection is excluded across processes.
+func WithCacheReadLock[T any](fn func() (T, error)) (T, error) {
+	release, err := acquireCacheFileLock(lockfileShared)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	defer release()
+	return fn()
+}
+
+func WithRegistryReadLockWithContext[T any](ctx context.Context, urls []string, fn func() (T, error)) (T, error) {
+	return withRegistryLocks(ctx, urls, lockfileShared, fn)
+}
+
+func withRegistryLocks[T any](ctx context.Context, urls []string, operation int, fn func() (T, error)) (T, error) {
+	release, err := acquireCacheFileLockWithContext(ctx, lockfileShared)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	defer release()
+	keys := make([]string, len(urls))
+	for i, url := range urls {
+		keys[i] = HashURL(url)
+	}
+	slices.Sort(keys)
+	for _, key := range slices.Compact(keys) {
+		release, err := acquireCachePathLockWithContext(ctx, CacheDir()+".registry-"+key+".lock", operation)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		defer release()
+	}
+	return fn()
+}
+
+func WithCacheMutation(fn func() error) error {
+	_, err := WithCacheMutationLock(func() (struct{}, error) {
+		return struct{}{}, fn()
+	})
+	return err
+}
+
+var cacheMutationMu = make(chan struct{}, 1)
+
+func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	return WithCacheMutationLock(func() (GCResult, error) {
+		return garbageCollect(dryRun, cfgs...)
+	})
+}
+
+// GCReachability is the complete configuration and lock inventory that keeps
+// legacy cache entries and immutable exact snapshots reachable.
+type GCReachability struct {
+	Locks   []lockfile.Document
+	Configs []*config.Config
+}
+
+// GCReachabilityReader reloads the complete inventory while GC holds the
+// exclusive exact-cache namespace lease.
+type GCReachabilityReader func(context.Context) (GCReachability, error)
+
+func GarbageCollectWithLocks(dryRun bool, locks []lockfile.Document, cfgs ...*config.Config) (GCResult, error) {
+	return GarbageCollectWithReachabilityAndContext(context.Background(), dryRun, func(context.Context) (GCReachability, error) {
+		return GCReachability{Locks: locks, Configs: cfgs}, nil
+	})
+}
+
+// GarbageCollectWithReachabilityAndContext reloads both configuration and lock
+// reachability under one exclusive namespace lease before deriving either set.
+// This closes the gap where a newly published config layer and its lock could be
+// omitted from a GC inventory captured before publication.
+func GarbageCollectWithReachabilityAndContext(ctx context.Context, dryRun bool, reader GCReachabilityReader) (GCResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if reader == nil {
+		return GCResult{}, errors.New("cache garbage collection reachability reader is required")
+	}
+	started := time.Now()
+	slog.Debug("registry cache garbage collection started", "dry_run", dryRun)
+	var lockLayers int
+	var result GCResult
+	err := withExactGitExclusiveLock(ctx, func() error {
+		var err error
+		result, err = withContextCacheMutationLock(ctx, func() (GCResult, error) {
+			reachability, err := reader(ctx)
+			if err != nil {
+				return GCResult{}, fmt.Errorf("reload cache garbage collection reachability: %w", err)
+			}
+			lockLayers = len(reachability.Locks)
+			for i := range reachability.Locks {
+				if err := lockfile.Validate(reachability.Locks[i]); err != nil {
+					return GCResult{}, fmt.Errorf("validate layer lock %d: %w", i, err)
+				}
+			}
+			sources, err := activeExactGitSources(reachability.Configs...)
+			if err != nil {
+				return GCResult{}, err
+			}
+			legacy, err := garbageCollectWithContext(ctx, dryRun, reachability.Configs...)
+			if err != nil {
+				return GCResult{}, err
+			}
+			exact, _, err := garbageCollectExactGitUnderLease(ctx, dryRun, reachability.Locks, sources)
+			legacy.Removed = append(legacy.Removed, exact.Removed...)
+			slices.Sort(legacy.Removed)
+			return legacy, err
+		})
+		return err
+	})
+	attrs := []any{"dry_run", dryRun, "lock_layers", lockLayers, "removed", len(result.Removed), "duration_ms", time.Since(started).Milliseconds()}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+		slog.Error("registry cache garbage collection failed", attrs...)
+	} else {
+		slog.Debug("registry cache garbage collection completed", attrs...)
+	}
+	return result, err
+}
+
+func garbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	return garbageCollectWithContext(context.Background(), dryRun, cfgs...)
+}
+
+func garbageCollectWithContext(ctx context.Context, dryRun bool, cfgs ...*config.Config) (GCResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := GCResult{}
+	defer slices.Sort(result.Removed)
+
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if !hasEffectiveConfig(cfgs...) {
+		err := errors.New("cache garbage collection requires effective configuration")
+		slog.Warn("cache garbage collection failed closed", "reason", err)
+		return result, err
+	}
+	active := activeRegistryHashes(cfgs...)
+	cacheRoot := CacheDir()
+	cacheBoundary := cacheRoot
+	if homeDir, homeErr := os.UserHomeDir(); homeErr == nil && homeDir != "" {
+		// Validate through HOME so a symlinked home/.cache ancestor cannot
+		// redirect this process into an external tree. Stop before unrelated
+		// system ancestors such as macOS's commonly symlinked /var.
+		cacheBoundary = homeDir
+	}
+	if err := ValidateDirectoryAncestry(cacheBoundary, cacheRoot); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return result, nil
 		}
-		return result, fmt.Errorf("read cache directory %q: %w", CacheDir(), err)
+		return result, fmt.Errorf("validate cache directory %q: %w", cacheRoot, err)
+	}
+
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return result, fmt.Errorf("read cache directory %q: %w", cacheRoot, err)
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if !entry.IsDir() {
 			continue
 		}
-		if entry.Name() == compiledCacheDirName {
+		if entry.Name() == compiledCacheDirName || entry.Name() == exactGitCacheDirName {
+			slog.Debug("cache garbage collection skipped reserved namespace", "namespace", entry.Name(), "dry_run", dryRun)
 			continue
 		}
 
@@ -135,20 +332,80 @@ func GarbageCollect(dryRun bool, cfgs ...*config.Config) (GCResult, error) {
 			continue
 		}
 
-		cachePath := filepath.Join(CacheDir(), entry.Name())
-		result.Removed = append(result.Removed, cachePath)
+		cachePath := filepath.Join(cacheRoot, entry.Name())
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if err := ValidateDirectoryAncestry(cacheRoot, cachePath); err != nil {
+			return result, fmt.Errorf("validate cache directory %q: %w", cachePath, err)
+		}
 		if dryRun {
+			result.Removed = append(result.Removed, cachePath)
 			continue
 		}
 
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if err := os.RemoveAll(cachePath); err != nil {
 			return result, fmt.Errorf("remove cache directory %q: %w", cachePath, err)
 		}
+		result.Removed = append(result.Removed, cachePath)
 	}
 
-	slices.Sort(result.Removed)
-
 	return result, nil
+}
+
+func hasEffectiveConfig(cfgs ...*config.Config) bool {
+	for _, cfg := range cfgs {
+		if cfg != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateDirectoryAncestry rejects symlinks and non-directories from path up
+// through root, inclusive. The check is intentionally path based: it is a
+// best-effort process-local guard, not an atomic replacement for openat-style
+// filesystem operations.
+func ValidateDirectoryAncestry(root, path string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing path outside cache root")
+	}
+
+	var missingErr error
+	for current := pathAbs; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if missingErr == nil {
+				missingErr = err
+			}
+		} else {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("path %q is a symlink", current)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("path %q is not a directory", current)
+			}
+		}
+		if current == rootAbs {
+			break
+		}
+	}
+	return missingErr
 }
 
 func activeRegistryHashes(cfgs ...*config.Config) map[string]struct{} {

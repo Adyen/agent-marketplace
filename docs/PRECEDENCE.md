@@ -25,6 +25,8 @@ include:
 
 Relative paths resolve from the directory containing the file that declares them; absolute paths are accepted. Includes are recursive. Files are identified by canonical path, so the same file reached more than once, including through a symlink or normalized relative path, contributes only at its first position. Glob patterns and remote URLs are not supported.
 
+Organization includes have an additional trust requirement, whether or not Git registries or an organization lock are present. External relative and absolute paths remain supported, but every included file must be a root-owned regular file with no group or other write permission. Every lexical ancestor directory through the filesystem root must also be root-owned, non-symlink, and not group- or other-writable. Validation precedes symlink resolution and deduplication; a symlink or writable directory before `..` is not bypassed by path normalization. Unsafe fragments fail the organization layer with an `organization.trust.*` diagnostic. System symlink aliases such as macOS `/etc`, `/var`, and `/tmp` are not exceptions for included paths; use trusted physical paths such as `/private/etc` instead. User, repository, and personal-local include behavior is unchanged.
+
 Each included fragment has lower precedence than the file containing it. For a list, the first fragment is merged first, later fragments merge over earlier ones, and the containing file merges last. Recursive includes follow the same rule. Merging continues to use field-specific rules; `include` does not turn every field into a simple replacement. For top-level collection selectors and local resource selectors, later files decide conflicts for the same name. Within one file, `exclude` wins over `include`. Once any contributing file sets `exclude_all: true`, it remains true.
 
 Loading the owning layer fails if any include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion` as described above; this exception does not relax validation for a regular root.
@@ -43,6 +45,8 @@ Effective merge order (low → high):
 4. `RepoPersonal` (`<repo>/.agents/config.local.yaml`, supports registries with per-entry selectors and top-level include/exclude)
 
 Higher layers override lower layers where applicable.
+
+Each layer's remote Git requirements are resolved only against that layer's generated lock: organization `/etc/agent-marketplace/lock.yaml`, user `~/.agents/lock.yaml`, repository `.agents/lock.yaml`, and personal-local `.agents/lock.local.yaml`. Lock composition does not change selection precedence: exact layer catalogs are composed before the normal merge and selection rules below. Plain local-directory registries remain live and unlocked. Hosted Marketplace lock schema and adapters are outside this Git-only foundation.
 
 Top-level target harnesses follow project-first precedence: `RepoCommitted`
 then `UserPersonal`, then `OrgMandatory`. A registry entry's `harnesses:`

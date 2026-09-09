@@ -179,6 +179,36 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 // ---------- test table ----------
 
 var testTable = []TestCase{
+	{
+		Name:       "locks/unlocked_organization_sync_parity",
+		Desc:       "Given an organization registry without a lock, when syncing and checking repeatedly, then resources stay synced without creating an organization lock.",
+		Registries: []RegistryDef{{Name: "org-parity", Skills: []Skill{{Name: "review"}}}},
+		OrgCfg:     "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: {{REG:org-parity}}\n    ref: main\n    required: true\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, Symlinks: []string{"/root/.factory/skills/review"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"status"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync", "--offline"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills"}, FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
+		},
+	},
+	{
+		Name:       "locks/equivalent_auto_explicit_inspection",
+		Desc:       "Given equivalent auto and explicit registry roots, When lock check, list and status run in either entry order, Then inspection agrees with reconciliation without changing config or locks",
+		Registries: []RegistryDef{{Name: "equivalent-roots", Skills: []Skill{{Name: "review", Description: "Review changes"}}, Files: map[string]string{".claude-plugin/plugin.json": `{"name":"equivalent-roots"}`}}},
+		RepoCfg:    "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n",
+		Steps: []Step{
+			{Args: []string{"lock", "--scope", "repo"}, MustPass: true},
+			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Action: ActionWriteRepoConfig, Body: "harnesses: [factory]\nregistries:\n  - url: {{REG:equivalent-roots}}\n    ref: main\n    source_harness: claude\n  - url: {{REG:equivalent-roots}}\n    ref: main\n"},
+			{Args: []string{"lock", "--check", "--scope", "repo"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"list"}, MustPass: true, OutContains: []string{"review"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"EXACT REGISTRY LOCKS", "available"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
+		},
+	},
 	// ===== logging =====
 	{
 		Name: "logging/file_and_debug",
@@ -198,6 +228,7 @@ registries:
       - logging-skill
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list"}, MustPass: true,
 				FilesExist: []string{"/root/.agent-marketplace/logs/agent-marketplace.log"},
 				FileContains: map[string]string{
@@ -815,7 +846,7 @@ skills:
 	},
 	{
 		Name: "precedence/org_config_sets_floor",
-		Desc: "Given org config with a required registry, When global config has no registries, Then the org-mandated skill is still materialized",
+		Desc: "Given an unlocked org config with a required registry, When locked sync runs without a global registry, Then the org skill is materialized without creating an org lock",
 		Registries: []RegistryDef{
 			{Name: "org-registry", Skills: []Skill{
 				{Name: "compliance-check", Description: "Org-mandated compliance"},
@@ -833,8 +864,9 @@ registries:
 `,
 		GlobalCfg: ``,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true,
-				FilesExist: []string{"/root/.factory/skills/compliance-check/SKILL.md"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true,
+				FilesExist:  []string{"/root/.factory/skills/compliance-check/SKILL.md"},
+				FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
 		},
 	},
 	{
@@ -2984,7 +3016,7 @@ registries:
 	},
 	{
 		Name: "list/shows_available_resources",
-		Desc: "Given a registry with a skill, When list is run, Then the skill name appears in the output",
+		Desc: "Given a locked registry with a skill, When list is run, Then the skill name appears in the output",
 		Registries: []RegistryDef{
 			{Name: "list-reg", Skills: []Skill{
 				{Name: "visible-skill", Description: "A visible skill"},
@@ -2996,13 +3028,14 @@ registries:
     ref: main
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list"}, MustPass: true,
 				OutContains: []string{"visible-skill"}},
 		},
 	},
 	{
 		Name: "list/kind_filter",
-		Desc: "Given a registry with skills and commands, When list --kind command is run, Then only commands appear (no skills)",
+		Desc: "Given a locked registry with skills and commands, When list --kind command is run, Then only commands appear (no skills)",
 		Registries: []RegistryDef{
 			{Name: "kind-list", Skills: []Skill{
 				{Name: "listed-skill"},
@@ -3016,6 +3049,7 @@ registries:
     ref: main
 `,
 		Steps: []Step{
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"list", "--kind", "command"}, MustPass: true,
 				OutContains:    []string{"listed-cmd"},
 				OutNotContains: []string{"listed-skill"}},
@@ -3503,6 +3537,7 @@ harnesses:
   - factory
 registries: []
 `},
+			{Args: []string{"lock"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, AssertExitCode: intPtr(1),
 				OutContains: []string{
 					"out of sync",
@@ -3616,8 +3651,8 @@ registries:
 		},
 	},
 	{
-		Name: "deinit/user_scope_removes_cache",
-		Desc: "Given a synced environment with cache, When deinit is run, Then the cache directory is removed",
+		Name: "deinit/user_scope_removes_artifacts",
+		Desc: "Given a synced environment with an exact locked cache, When deinit is run, Then machine-scoped artifacts are removed while reachable cache remains managed by GC",
 		Registries: []RegistryDef{
 			{Name: "deinit-cache-reg", Skills: []Skill{
 				{Name: "cached-skill", Description: "Skill to populate cache"},
@@ -3633,7 +3668,8 @@ registries:
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true},
 			{Args: []string{"deinit"}, MustPass: true,
-				OutContains: []string{"Removed cache"}},
+				OutContains: []string{"managed artifact"},
+				FilesAbsent: []string{"/root/.factory/skills/cached-skill/SKILL.md"}},
 		},
 	},
 	{
@@ -3661,7 +3697,7 @@ registries:
 	},
 	{
 		Name: "deinit/purge_config_removes_repo_config",
-		Desc: "Given a repo with config, When deinit --scope repo --purge-config is run, Then the repo config file is deleted",
+		Desc: "Given a synced repo with config and a generated lock, When deinit --scope repo --purge-config is run, Then both files are deleted and transaction coordination files remain",
 		Registries: []RegistryDef{
 			{Name: "deinit-purge-reg", Skills: []Skill{
 				{Name: "purge-skill", Description: "Skill for purge test"},
@@ -3675,10 +3711,12 @@ registries:
       - purge-skill
 `,
 		Steps: []Step{
-			{Args: []string{"sync"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesExist: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"deinit", "--scope", "repo", "--purge-config"}, MustPass: true,
-				OutContains: []string{"Removed config"},
-				FilesAbsent: []string{"/workspace/.agents/config.yaml"}},
+				OutContains: []string{"Removed config", "Removed lock"},
+				FilesAbsent: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"},
+				FilesExist:  []string{"/workspace/.agents/.config.yaml.dependencytxn.lock", "/workspace/.agents/.lock.yaml.dependencytxn.lock"}},
 		},
 	},
 	// ===== devin =====

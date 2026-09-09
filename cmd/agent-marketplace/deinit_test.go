@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +11,164 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
+
+func TestDeinitPurgeLayerPair(t *testing.T) {
+	for _, scope := range []string{"user", "repo", "local"} {
+		for _, mode := range []string{"purge", "orphan", "dry-run", "no-purge"} {
+			t.Run(scope+"/"+mode, func(t *testing.T) {
+				home, repo := t.TempDir(), t.TempDir()
+				t.Setenv("HOME", home)
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+				org := filepath.Join(home, "etc", "config.yaml")
+				config.SetTestV3OrganizationConfigPath(t, org)
+				configs := map[string]string{
+					"user":         filepath.Join(home, ".agents", "config.yaml"),
+					"repo":         filepath.Join(repo, ".agents", "config.yaml"),
+					"local":        filepath.Join(repo, ".agents", "config.local.yaml"),
+					"organization": org,
+				}
+				locks := map[string]string{
+					"user":         filepath.Join(home, ".agents", "lock.yaml"),
+					"repo":         filepath.Join(repo, ".agents", "lock.yaml"),
+					"local":        filepath.Join(repo, ".agents", "lock.local.yaml"),
+					"organization": filepath.Join(home, "etc", "lock.yaml"),
+				}
+				preserved := map[string][]byte{}
+				for layer, path := range configs {
+					writeConfig(t, path, "registries: []\ninclude: [fragment.yaml]\n")
+					fragment := filepath.Join(filepath.Dir(path), "fragment.yaml")
+					writeFile(t, fragment, "registries: []\n")
+					preserved[fragment] = []byte("registries: []\n")
+					writeFile(t, locks[layer], "apiVersion: agent-marketplace-lock/v1\nscope: "+layer+"\nregistries: []\n")
+					for _, name := range []string{path, locks[layer]} {
+						data, err := os.ReadFile(name)
+						if err != nil {
+							t.Fatal(err)
+						}
+						preserved[name] = data
+					}
+				}
+				sidecars := map[string]os.FileInfo{}
+				for _, path := range []string{configs[scope], locks[scope]} {
+					sidecar := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".dependencytxn.lock")
+					writeFile(t, sidecar, "stable coordination")
+					info, err := os.Stat(sidecar)
+					if err != nil {
+						t.Fatal(err)
+					}
+					sidecars[sidecar] = info
+					preserved[sidecar] = []byte("stable coordination")
+				}
+				marker := filepath.Join(home, "state", "agent-marketplace", "dependencies", "unrelated.json")
+				writeFile(t, marker, "shared state")
+				preserved[marker] = []byte("shared state")
+				if mode == "orphan" {
+					if err := os.Remove(configs[scope]); err != nil {
+						t.Fatal(err)
+					}
+				}
+				withWorkingDir(t, repo)
+				args := []string{"deinit", "--scope", scope}
+				if mode != "no-purge" {
+					args = append(args, "--purge-config")
+				}
+				if mode == "dry-run" {
+					args = append(args, "--dry-run")
+				}
+				out, err := executeCommand(args...)
+				if err != nil {
+					t.Fatalf("deinit: %v\n%s", err, out)
+				}
+				if mode == "purge" || mode == "orphan" {
+					for _, path := range []string{configs[scope], locks[scope]} {
+						delete(preserved, path)
+						if _, err := os.Lstat(path); !os.IsNotExist(err) {
+							t.Errorf("purged file remains: %s (%v)", path, err)
+						}
+					}
+				}
+				if mode == "dry-run" && !strings.Contains(out, "Would remove lock ") {
+					t.Errorf("missing lock preview: %s", out)
+				}
+				for path, want := range preserved {
+					got, err := os.ReadFile(path)
+					if err != nil || string(got) != string(want) {
+						t.Errorf("changed preserved file %s: %q, %v", path, got, err)
+					}
+				}
+				for path, before := range sidecars {
+					after, err := os.Stat(path)
+					if err != nil || !os.SameFile(before, after) {
+						t.Errorf("coordination inode changed: %s (%v)", path, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "registries: []\n")
+	writeFile(t, lockPath, "old-lock")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repo)
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := dependencytxn.ValidateDestination(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := dependencytxn.ReadGeneration(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interrupted := errors.New("interrupted lock publication")
+	_, err = dependencytxn.Commit(context.Background(), stateDir, []dependencytxn.DesiredFile{{Path: canonical, Expected: generation, Bytes: []byte("new-lock"), Mode: 0o644}}, dependencytxn.WithFaultHook(func(p dependencytxn.FaultPoint) error {
+		if p.Stage == dependencytxn.FaultAfterJournal {
+			return interrupted
+		}
+		return nil
+	}))
+	if !errors.Is(err, interrupted) {
+		t.Fatal(err)
+	}
+	out, err := executeCommand("deinit", "--scope", "repo", "--purge-config")
+	if !errors.Is(err, dependencytxn.ErrRecoveryRequired) {
+		t.Fatalf("pending publication: %v\n%s", err, out)
+	}
+	for path, want := range map[string]string{configPath: string(before), lockPath: "old-lock"} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("purge changed %s: %q, %v", path, got, err)
+		}
+	}
+	if err := dependencytxn.CheckPending(stateDir); !errors.Is(err, dependencytxn.ErrRecoveryRequired) {
+		t.Fatalf("lost pending journal: %v", err)
+	}
+	if err := dependencytxn.Recover(context.Background(), stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := executeCommand("deinit", "--scope", "repo", "--purge-config"); err != nil {
+		t.Fatalf("purge after recovery: %v\n%s", err, out)
+	}
+	for _, path := range []string{configPath, lockPath} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("purge after recovery retained %s: %v", path, err)
+		}
+	}
+}
 
 func TestDeinitTable(t *testing.T) {
 	tests := []struct {
@@ -364,6 +523,7 @@ registries:
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	output, err := executeCommand("sync")
 	if err != nil {
@@ -416,6 +576,7 @@ registries:
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)
@@ -502,6 +663,7 @@ registries:
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)
@@ -596,6 +758,7 @@ registries:
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected sync to succeed: %v", err)

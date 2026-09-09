@@ -1,13 +1,17 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 func TestGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting(t *testing.T) {
@@ -20,11 +24,13 @@ registries:
   - url: ssh://git@example.com/security.git
     ref: main
 `)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
   - url: ssh://git@example.com/repo-skills.git
     ref: main
 `)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
 	activeRepoCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/repo-skills.git"))
 	activeGlobalCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/security.git"))
@@ -63,6 +69,231 @@ registries:
 	}
 }
 
+func TestGcCommandWithoutConfigFailsClosedAndLeavesCachesUntouched(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+
+	registryURL := "https://registry.example/unused.git"
+	registryEntry := filepath.Join(cache.CacheDir(), cache.HashURL(registryURL), "main", ".gitkeep")
+	writeFile(t, registryEntry, "registry cache\n")
+
+	withWorkingDir(t, repoRoot)
+	output, err := executeCommand("gc")
+	if err == nil {
+		t.Fatalf("expected gc without configuration to fail, output:\n%s", output)
+	}
+	if !strings.Contains(err.Error(), "at least one effective configuration layer") {
+		t.Fatalf("unexpected gc error: %v", err)
+	}
+
+	if got, readErr := os.ReadFile(registryEntry); readErr != nil {
+		t.Fatalf("registry cache was removed: %v", readErr)
+	} else if string(got) != "registry cache\n" {
+		t.Fatalf("registry cache changed: %q", got)
+	}
+}
+
+func TestGcCommandExactObjectsUseCurrentContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	orgPath := filepath.Join(canonicalTempDir(t), "config.yaml")
+	writeConfig(t, orgPath, "include: [included.yaml]\nregistries:\n  - url: https://EXAMPLE.com/organization.git\n    ref: main\n")
+	writeConfig(t, filepath.Join(filepath.Dir(orgPath), "included.yaml"), "registries:\n  - url: https://example.com/included\n    ref: main\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	repos := []string{filepath.Join(t.TempDir(), "repo-a"), filepath.Join(t.TempDir(), "repo-b")}
+	for i, repo := range repos {
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), fmt.Sprintf("registries:\n  - url: https://example.com/repo-%d\n    ref: main\n", i))
+		writeFile(t, filepath.Join(repo, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
+	}
+	objectPath := func(source string) string {
+		return filepath.Join(cache.CacheDir(), "exact-git", "objects", fmt.Sprintf("%x.git", sha256.Sum256([]byte(source))))
+	}
+	retained := []string{objectPath("https://example.com/organization"), objectPath("https://example.com/included"), objectPath("https://example.com/repo-0")}
+	evicted := objectPath("https://example.com/repo-1")
+	for _, path := range append(append([]string{}, retained...), evicted) {
+		writeFile(t, filepath.Join(path, "marker"), "cached\n")
+	}
+	withWorkingDir(t, repos[0])
+	for _, args := range [][]string{{"gc", "--dry-run"}, {"gc"}} {
+		output, err := executeCommand(args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, output)
+		}
+		if !strings.Contains(output, evicted) || !strings.Contains(output, "1 cache entries") {
+			t.Fatalf("other repository store not nominated: %s", output)
+		}
+		for _, path := range retained {
+			if strings.Contains(output, path) {
+				t.Fatalf("active store nominated: %s", output)
+			}
+			raw, err := os.ReadFile(filepath.Join(path, "marker"))
+			if err != nil || string(raw) != "cached\n" {
+				t.Fatalf("active store changed: %q, %v", raw, err)
+			}
+		}
+		_, err = os.Stat(evicted)
+		if len(args) == 2 && err != nil || len(args) == 1 && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v eviction result: %v", args, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(orgPath), "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("organization lock created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repos[1], ".agents", "config.yaml")); err != nil {
+		t.Fatalf("other repository config changed: %v", err)
+	}
+}
+
+func TestGcCommandAllowsMissingOrganizationLockWithoutCreatingIt(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+
+	authority := canonicalTempDir(t)
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeConfig(t, orgPath, "registries:\n  - url: https://git.example.com/organization.git\n    ref: main\n    required: true\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	lockPath := filepath.Join(authority, "lock.yaml")
+	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	writeFile(t, orphan, "orphan\n")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("gc")
+	if err != nil {
+		t.Fatalf("gc rejected missing optional organization lock: %v\n%s", err, output)
+	}
+	if _, statErr := os.Lstat(lockPath); !os.IsNotExist(statErr) {
+		t.Fatalf("gc created or replaced organization lock: %v", statErr)
+	}
+	if _, statErr := os.Stat(orphan); !os.IsNotExist(statErr) {
+		t.Fatalf("gc did not remove orphan cache: %v", statErr)
+	}
+}
+
+func TestGcCommandRejectsPresentOrganizationLockWhenMalformedUntrustedOrStale(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		lock    string
+		symlink bool
+		want    error
+	}{
+		{name: "malformed", lock: "apiVersion: agent-marketplace-lock/v1\nscope: organization\nregistries: [\n", want: errors.New("organization.trust.lock.malformed")},
+		{name: "stale", lock: "apiVersion: agent-marketplace-lock/v1\nscope: organization\n", want: errors.New("lock.stale")},
+		{name: "untrusted symlink", lock: "apiVersion: agent-marketplace-lock/v1\nscope: organization\n", symlink: true, want: errors.New("organization.trust.lock.symlink")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+
+			authority := canonicalTempDir(t)
+			orgPath := filepath.Join(authority, "config.yaml")
+			writeConfig(t, orgPath, "registries:\n  - url: https://git.example.com/organization.git\n    ref: main\n    required: true\n")
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			lockPath := filepath.Join(authority, "lock.yaml")
+			if test.symlink {
+				target := filepath.Join(authority, "lock-target.yaml")
+				writeFile(t, target, test.lock)
+				if err := os.Symlink(target, lockPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeFile(t, lockPath, test.lock)
+			}
+			orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+			writeFile(t, orphan, "orphan\n")
+
+			repoRoot := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repoRoot)
+
+			output, err := executeCommand("gc")
+			if err == nil || !strings.Contains(err.Error(), test.want.Error()) {
+				t.Fatalf("gc error = %v, want %q\n%s", err, test.want, output)
+			}
+			if _, statErr := os.Stat(orphan); statErr != nil {
+				t.Fatalf("rejected organization lock mutated cache: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestGcCommandMissingRequiredLockFailsClosedAndLeavesCacheUntouched(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: https://git.example.com/required.git
+    ref: main
+`)
+	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	writeFile(t, orphan, "keep\n")
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("gc")
+	if err == nil || !strings.Contains(err.Error(), "required REPO layer lock") {
+		t.Fatalf("expected missing required lock error, got %v\n%s", err, output)
+	}
+	if raw, err := os.ReadFile(orphan); err != nil || string(raw) != "keep\n" {
+		t.Fatalf("missing lock mutated cache: raw=%q err=%v", raw, err)
+	}
+}
+
+func TestGcCommandRejectsOversizedLockAndLeavesCacheUntouched(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: https://git.example.com/required.git
+    ref: main
+`)
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(lockfile.MaxFileSize + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/orphan.git"), "main", ".gitkeep")
+	writeFile(t, orphan, "keep\n")
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("gc")
+	if !errors.Is(err, lockfile.ErrFileTooLarge) {
+		t.Fatalf("gc error = %v\n%s; want oversized lock", err, output)
+	}
+	if raw, readErr := os.ReadFile(orphan); readErr != nil || string(raw) != "keep\n" {
+		t.Fatalf("oversized lock mutated cache: raw=%q err=%v", raw, readErr)
+	}
+}
+
 func TestGcCommandRemovesInactiveHashDirectoriesAndIsIdempotent(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -73,11 +304,13 @@ registries:
   - url: ssh://git@example.com/security.git
     ref: main
 `)
+	writeFile(t, filepath.Join(homeDir, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: user\n")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
   - url: ssh://git@example.com/repo-skills.git
     ref: main
 `)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: repo\n")
 
 	activeCache := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/repo-skills.git"))
 	orphanCache := filepath.Join(cache.CacheDir(), cache.HashURL("https://git.example.com/legacy-skills.git"))

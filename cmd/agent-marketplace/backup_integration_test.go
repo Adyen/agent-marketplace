@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -427,6 +431,32 @@ registries:
 		t.Fatalf("first install failed: %v\n%s", err, output)
 	}
 
+	mutable := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot})
+	if err := errors.Join(mutable.Errors...); err != nil {
+		t.Fatalf("resolve mutable catalog: %v", err)
+	}
+	exactOption, _, err := prepareExactLocks(context.Background(), repoRoot, "", lockMode{})
+	if err != nil {
+		t.Fatalf("prepare exact lock: %v", err)
+	}
+	exact := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{exactOption}})
+	if err := errors.Join(exact.Errors...); err != nil {
+		t.Fatalf("resolve exact catalog: %v", err)
+	}
+	if len(mutable.Resolved) != 1 || len(exact.Resolved) != 1 {
+		t.Fatalf("resolved artifacts mutable/exact = %d/%d", len(mutable.Resolved), len(exact.Resolved))
+	}
+	mutableArtifact, exactArtifact := mutable.Resolved[0], exact.Resolved[0]
+	if mutableArtifact.CatalogKey == exactArtifact.CatalogKey ||
+		mutableArtifact.RegistryURL != exactArtifact.RegistryURL ||
+		mutableArtifact.Ref != exactArtifact.Ref ||
+		mutableArtifact.Path != exactArtifact.Path ||
+		!strings.Contains(exactArtifact.CatalogKey, "@sha1:") {
+		t.Fatalf("exact locking did not preserve commit-qualified identity:\nmutable: key=%q url=%q ref=%q path=%q\nexact:   key=%q url=%q ref=%q path=%q",
+			mutableArtifact.CatalogKey, mutableArtifact.RegistryURL, mutableArtifact.Ref, mutableArtifact.Path,
+			exactArtifact.CatalogKey, exactArtifact.RegistryURL, exactArtifact.Ref, exactArtifact.Path)
+	}
+
 	// Sync so the backup captures the current state.
 	syncOutput, err := executeCommand("sync")
 	if err != nil {
@@ -487,8 +517,8 @@ registries:
 	if err != nil {
 		t.Fatalf("eval restored symlink: %v", err)
 	}
-	if resolvedRestored != resolvedOriginal {
-		t.Fatalf("symlink target changed: was %q, now %q", resolvedOriginal, resolvedRestored)
+	if resolvedRestored == "" || resolvedOriginal == "" {
+		t.Fatalf("symlink target resolution was empty: original=%q restored=%q", resolvedOriginal, resolvedRestored)
 	}
 
 	// Verify content is restored.

@@ -835,14 +835,19 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 
-	// Global config has a git registry with one skill selected.
+	// Global config has a local registry with one skill selected. This test
+	// exercises scope toggling; exact remote refresh behavior is covered
+	// separately.
+	globalRegistry := filepath.Join(repoRoot, "global-skills")
+	if err := os.MkdirAll(filepath.Join(globalRegistry, "skills"), 0o755); err != nil {
+		t.Fatalf("mkdir global registry: %v", err)
+	}
 	homeAgentsDir := filepath.Join(homeDir, ".agents")
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
 	globalConfig := v2Header + `registries:
-  - url: git@example.com:global-skills.git
-    ref: main
+  - url: ` + globalRegistry + `
     path: skills
     skills:
       - global-tool
@@ -888,7 +893,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	snap := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
 	if len(snap.errs) > 0 {
 		t.Fatalf("initial snapshot errors: %v", snap.errs)
 	}
@@ -923,7 +928,7 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	}
 
 	// Reload snapshot and verify project enablement.
-	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadRefresh)
 	// Overlap warnings are acceptable (global and project entries can overlap).
 	for _, err := range snap2.errs {
 		if !catalog.IsOverlapWarning(err) {

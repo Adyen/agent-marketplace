@@ -527,6 +527,45 @@ func extraFromResource(r ir.Resource) map[string]any {
 	}
 }
 
+func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
+	if r == nil || !filepath.IsAbs(sourcePath) {
+		return
+	}
+	var source *ir.SourceRef
+	switch v := r.(type) {
+	case *ir.Skill:
+		source = &v.Source
+	case *ir.Command:
+		source = &v.Source
+	case *ir.Subagent:
+		source = &v.Source
+	case *ir.Hook:
+		source = &v.Source
+	case *ir.McpServer:
+		source = &v.Source
+	case *ir.Rule:
+		source = &v.Source
+	case *ir.Collection:
+		source = &v.Source
+	}
+	if source != nil && !filepath.IsAbs(source.File) {
+		source.File = sourcePath
+	}
+}
+
+// SourcePath returns the authoritative source path for detail inspection. Exact
+// catalogs may keep Entry.Path rebased to a logical legacy-cache location for
+// display compatibility, while the IR SourceRef remains pinned to the immutable
+// snapshot that was actually ingested.
+func SourcePath(entry Entry) string {
+	if entry.Resource != nil {
+		if source, ok := sourceRefFromResource(entry.Resource); ok {
+			return source
+		}
+	}
+	return entry.Path
+}
+
 // sourceRefFromResource extracts the source file path from an ir.Resource.
 // The ir.Resource interface only exposes Kind() and Name(); this helper checks
 // concrete resource types for their exported SourceRef fields.

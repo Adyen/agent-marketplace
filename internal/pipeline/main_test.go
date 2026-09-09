@@ -17,8 +17,21 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	config.SetTestV3OrganizationConfigPath(nil, filepath.Join(home, "missing-org-config.yaml"))
+	cwd, err := os.Getwd()
+	if err != nil {
+		slog.Error("resolve pipeline test working directory", "err", err)
+		os.Exit(1)
+	}
+	if err := os.Chdir(home); err != nil {
+		slog.Error("isolate pipeline test working directory", "err", err)
+		os.Exit(1)
+	}
 
 	code := m.Run()
+	if err := os.Chdir(cwd); err != nil {
+		slog.Error("restore pipeline test working directory", "err", err)
+		code = 1
+	}
 	if cleanupErr := cleanup(); cleanupErr != nil {
 		slog.Error("cleanup isolated test home", "err", cleanupErr)
 		if code == 0 {

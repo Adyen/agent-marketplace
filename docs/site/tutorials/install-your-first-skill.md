@@ -93,7 +93,7 @@ The command confirms the installation:
 Installed frontend-design user-wide
 ```
 
-User scope records the selection in `~/.agents/config.yaml` and makes the skill available wherever Claude Code is an effective target. The install command also synchronizes the generated Claude Code files; you do not need to run `agent-marketplace sync` separately.
+User scope records the selection in `~/.agents/config.yaml`, records its exact Git commit and source manifest in `~/.agents/lock.yaml`, and makes the skill available wherever Claude Code is an effective target. Config and lock are published as one dependency transaction. The install command also synchronizes the generated Claude Code files; you do not need to run `agent-marketplace sync` separately.
 
 ## 4. Verify the installation
 
@@ -103,7 +103,7 @@ Check the effective configuration and generated resources:
 agent-marketplace status
 ```
 
-Find the `frontend-design` row under **SYNCED RESOURCES**. It should report:
+First find the user entry under **EXACT REGISTRY LOCKS**; it shows the declared `main` ref and the exact commit used for this installation. Then find the `frontend-design` row under **SYNCED RESOURCES**. It should report:
 
 - kind: `skill`;
 - harness: `claude`;
@@ -138,7 +138,7 @@ You completed three operations:
 2. added Anthropic's repository and the `frontend-design` selection to your user configuration; and
 3. materialized the skill in Claude Code's native user directory.
 
-Your configuration is the source of truth. From your home directory, `agent-marketplace sync` recreates the generated skill if it is missing, while `agent-marketplace sync --check` reports drift without changing files.
+Configuration remains the source of selection policy, while `~/.agents/lock.yaml` records the exact Git acquisition. From your home directory, `agent-marketplace sync` recreates the generated skill from that verified snapshot if it is missing, while `agent-marketplace sync --check` reports lock or output drift without changing files.
 
 ## Next steps
 

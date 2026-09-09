@@ -226,7 +226,7 @@ func TestSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
 	}
 }
 
-func TestSyncCommandAddsLocalConfigToGitignore(t *testing.T) {
+func TestSyncCommandAddsLocalConfigAndLockToGitignore(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -242,9 +242,11 @@ skills:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("sync")
-	if err != nil {
-		t.Fatalf("expected sync command to succeed: %v\n%s", err, output)
+	for i := 0; i < 2; i++ {
+		output, err := executeCommand("sync")
+		if err != nil {
+			t.Fatalf("sync %d: %v\n%s", i+1, err, output)
+		}
 	}
 
 	gitignoreBytes, err := os.ReadFile(filepath.Join(repoRoot, ".gitignore"))
@@ -252,8 +254,13 @@ skills:
 		t.Fatalf("read .gitignore: %v", err)
 	}
 
-	if got := strings.Count(string(gitignoreBytes), ".agents/config.local.yaml"); got != 1 {
-		t.Fatalf("expected exactly one config.local.yaml gitignore entry, got %d in:\n%s", got, gitignoreBytes)
+	for _, entry := range []string{".agents/config.local.yaml", ".agents/lock.local.yaml"} {
+		if got := strings.Count(string(gitignoreBytes), entry); got != 1 {
+			t.Fatalf("expected exactly one %s gitignore entry, got %d in:\n%s", entry, got, gitignoreBytes)
+		}
+	}
+	if !strings.Contains(string(gitignoreBytes), ".agents/config.local.yaml\n.agents/lock.local.yaml\n") {
+		t.Fatalf("expected local config and lock entries beside each other:\n%s", gitignoreBytes)
 	}
 }
 
@@ -444,8 +451,13 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed synchronized output: %v\n%s", err, output)
+	}
+	if err := os.RemoveAll(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle")); err != nil {
+		t.Fatalf("remove materialized skill to create drift: %v", err)
+	}
 
-	// No sync yet — skill is configured but not on disk
 	output, err := executeCommand("sync", "--check")
 	if err == nil {
 		t.Fatalf("expected sync --check to fail when out of sync, got success")
@@ -1050,6 +1062,7 @@ registries:
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
 
 	withWorkingDir(t, repoRoot)
+	requireOrganizationLock(t, orgCfgPath)
 
 	output, err := executeCommand("sync")
 	if err != nil {

@@ -28,6 +28,14 @@ _Avoid_: Registry entry, partial compiler
 A command represented as a skill in a harness that has no command primitive while retaining its command identity.
 _Avoid_: Native command
 
+**Acquisition lock**:
+A generated, layer-owned record that binds a remote Git requirement to an exact commit and verified source revision manifest without changing selection precedence.
+_Avoid_: Effective configuration, Marketplace lock
+
+**Exact snapshot**:
+An immutable Git cache entry opened by an algorithm-qualified commit and verified against the acquisition lock's source manifest.
+_Avoid_: Mutable ref cache, working tree
+
 **Owned entry**:
 An element inside a shared harness configuration file that Agent Marketplace is demonstrably authorized to reconcile and prune.
 _Avoid_: Generated file, managed file

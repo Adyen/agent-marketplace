@@ -419,7 +419,7 @@ func warningResources(group *warningGroup, verbose bool) ([]string, string) {
 		for _, detail := range details {
 			resource := detail.resource
 			if detail.source != "" {
-				resource = fmt.Sprintf("%s (%s)", resource, detail.source)
+				resource = fmt.Sprintf("%s (%s)", resource, displayDiagnosticSource(detail.source))
 			}
 			resources = append(resources, resource)
 		}
@@ -436,6 +436,19 @@ func warningResources(group *warningGroup, verbose bool) ([]string, string) {
 		suffix = fmt.Sprintf(" (and %d more)", remaining)
 	}
 	return resources, suffix
+}
+
+func displayDiagnosticSource(source string) string {
+	const marker = "/exact-git/snapshots/"
+	_, suffix, ok := strings.Cut(source, marker)
+	if !ok {
+		return source
+	}
+	_, relative, ok := strings.Cut(suffix, "/")
+	if !ok || relative == "" {
+		return source
+	}
+	return relative
 }
 
 func warningRemediation(warning error) resolver.Remediable {

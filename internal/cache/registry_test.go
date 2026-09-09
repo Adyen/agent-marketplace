@@ -311,7 +311,7 @@ func TestGarbageCollectPreservesCompiledCache(t *testing.T) {
 		t.Fatalf("mkdir orphan cache: %v", err)
 	}
 
-	result, err := GarbageCollect(false)
+	result, err := GarbageCollect(false, &config.Config{})
 	if err != nil {
 		t.Fatalf("GarbageCollect: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/bubbles/cursor"
@@ -24,7 +25,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func NewModel(repoRoot, homeDir string) Model {
+type DependencyLifecycleFunc func(context.Context, string) error
+type DependencyMutationFunc func(context.Context, string, func(pipeline.ConfigPathMapper) error) error
+
+type DependencyLifecycle struct {
+	Sync   DependencyLifecycleFunc
+	Update DependencyLifecycleFunc
+	Mutate DependencyMutationFunc
+}
+
+type Option func(*Model)
+
+func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
+	return func(model *Model) { model.dependencyLifecycle = lifecycle }
+}
+
+func NewModel(repoRoot, homeDir string, options ...Option) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Line
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C47000", Dark: "#FD971F"})
@@ -52,6 +68,9 @@ func NewModel(repoRoot, homeDir string) Model {
 		errorsViewport: viewport.New(80, 23),
 		keys:           defaultKeyMap,
 		help:           newHelpModel(),
+	}
+	for _, option := range options {
+		option(&m)
 	}
 	if !testSkipInitModal && shouldShowInitModal(homeDir) {
 		slog.Info("init modal opened", "home_dir", homeDir)
@@ -329,6 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast = fmt.Sprintf("%s %s", action, msg.skillName)
 		m.toastExp = time.Now().Add(2 * time.Second)
 		m.refreshing = false
+		m.driftAssessment = driftUnknown
 		if msg.selectNext {
 			m.selectionAfterDisable = m.nextRowSelectionKey()
 		}
@@ -380,6 +400,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			recordControlledErrorSpan(m.ctx, "sync", msg.err)
 		} else {
 			m.recordOperationSuccess(operationSync)
+			m.driftReport = materialize.DriftReport{}
 			m.toast = "Sync complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
@@ -867,7 +888,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
 		recordActionSpan(m.ctx, "sync", nil)
-		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
+		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 
 	case key.Matches(msg, m.keys.Update):
 		if m.syncing {
@@ -877,7 +898,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		generation := m.beginRequest(requestSnapshot)
 		m.syncing = true
 		recordActionSpan(m.ctx, "update", nil)
-		return m, tea.Batch(runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
+		return m, tea.Batch(m.dependencyUpdateCmd(generation), m.spinner.Tick)
 	}
 
 	return m, nil
@@ -1021,6 +1042,9 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Preview scrolling remains available through page keys and viewport input.
 	m.detailStickyBottom = false
+	if m.handleViewportPageKey(msg, &m.detailViewport) {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.detailViewport, cmd = m.detailViewport.Update(msg)
 	return m, cmd
@@ -1143,7 +1167,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.quitAfterSync = true
 		slog.Debug("sync+quit confirmed, deferring quit until sync completes")
-		return m, tea.Batch(runSyncCmd(m.ctx, m.repoRoot), m.spinner.Tick)
+		return m, tea.Batch(m.dependencySyncCmd(), m.spinner.Tick)
 	case key.Matches(msg, m.keys.ConfirmNo):
 		m.pane = paneList
 		m.quitAfterSync = false
@@ -1393,11 +1417,11 @@ func (m Model) listVisibleHeight() int {
 	return max(1, screenLayoutFor(m.height, m.filterActive).mainHeight)
 }
 
-func Run(ctx context.Context, repoRoot, homeDir string) error {
+func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
 	applyTerminalBackground()
 	initRenderer()
 
-	model := NewModel(repoRoot, homeDir)
+	model := NewModel(repoRoot, homeDir, options...)
 	model.ctx = ctxOrBackground(ctx)
 	tel := telemetry.TelemetryFromContext(model.ctx)
 	if tel != nil {

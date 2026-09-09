@@ -96,17 +96,18 @@ func runInstall(ctx context.Context, out io.Writer, args []string, tag string, i
 
 	repoRoot := config.FindRepoRoot()
 	result, err := pipeline.Install(ctx, pipeline.InstallOptions{
-		RepoRoot:   repoRoot,
-		Args:       args,
-		Tag:        tag,
-		InstallAll: installAll,
-		Registry:   registry,
-		Kind:       kind,
-		HasKind:    hasKind,
-		Scope:      scope,
-		FromURL:    fromURL,
-		FromRef:    fromRef,
-		FromPath:   fromPath,
+		RepoRoot:            repoRoot,
+		Args:                args,
+		Tag:                 tag,
+		InstallAll:          installAll,
+		Registry:            registry,
+		Kind:                kind,
+		HasKind:             hasKind,
+		Scope:               scope,
+		FromURL:             fromURL,
+		FromRef:             fromRef,
+		FromPath:            fromPath,
+		DependencyReconcile: reconcileCommandDependencies,
 	})
 	if err != nil {
 		return err

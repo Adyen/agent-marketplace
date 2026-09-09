@@ -10,11 +10,9 @@ import (
 )
 
 // The unix half of the advisory lock. It is deliberately written against the
-// STANDARD LIBRARY's syscall package rather than golang.org/x/sys/unix:
-// golang.org/x/sys is present in go.mod only as an `// indirect` dependency of
-// the charm stack, and importing it here would promote it into the direct
-// require block, which `make ci-lint`'s `go mod tidy -diff` flags. It would buy
-// nothing: x/sys/unix.Flock is the same syscall with a nicer errno type.
+// standard library's syscall package rather than golang.org/x/sys/unix. The
+// repository now uses x/sys directly for other filesystem operations, but
+// x/sys/unix.Flock would still buy nothing here beyond a nicer errno type.
 // syscall.Flock is also a pure syscall, so CGO_ENABLED=0 is unaffected.
 
 // lockOpenFlags is how the lock file is opened. O_NOFOLLOW refuses a symlink in

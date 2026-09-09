@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -53,10 +54,14 @@ type bundleTree struct {
 }
 
 func bundleRootForRow(r row) (root, onlyFile string, err error) {
-	if r.Artifact.Path == "" {
+	path := catalog.SourcePath(r.Artifact.Entry)
+	if path == "" {
+		path = r.Artifact.Path
+	}
+	if path == "" {
 		return "", "", fmt.Errorf("resource has no source path")
 	}
-	info, err := os.Lstat(r.Artifact.Path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return "", "", err
 	}
@@ -67,12 +72,12 @@ func bundleRootForRow(r row) (root, onlyFile string, err error) {
 		if !info.Mode().IsRegular() {
 			return "", "", fmt.Errorf("resource source is not a regular file")
 		}
-		root = filepath.Dir(r.Artifact.Path)
-		onlyFile = filepath.Base(r.Artifact.Path)
+		root = filepath.Dir(path)
+		onlyFile = filepath.Base(path)
 	} else if info.IsDir() {
-		root = r.Artifact.Path
+		root = path
 	} else if info.Mode().IsRegular() {
-		root = filepath.Dir(r.Artifact.Path)
+		root = filepath.Dir(path)
 	} else {
 		return "", "", fmt.Errorf("resource source is not a directory or regular file")
 	}

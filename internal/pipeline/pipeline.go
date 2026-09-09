@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/backup"
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -22,6 +23,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
+
+// syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
+// Production callers never install it.
+type syncPhaseHookContextKey struct{}
 
 type Loaders struct {
 	Org    func() (*config.Config, error)
@@ -35,6 +40,7 @@ type ResolveOptions struct {
 	MaterializeRoot  string // where to materialize harness files; defaults to RepoRoot if empty
 	LocalConfigDir   string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
 	CatalogMode      catalog.LoadMode
+	Offline          bool
 	Loaders          Loaders
 	CatalogOption    []catalog.LoadOption
 	Gitignore        bool
@@ -48,7 +54,9 @@ type ResolveOptions struct {
 	IgnoreBlockedRegistries bool
 	// SkipInventory suppresses recording for internal pre-mutation lookups. The
 	// post-mutation Resolve performed by sync remains the reported generation.
-	SkipInventory bool
+	SkipInventory      bool
+	ReadOnlyExactLocks bool
+	ExactLockLease     func(context.Context) (func(), error)
 }
 
 type ResolveResult struct {
@@ -61,6 +69,7 @@ type ResolveResult struct {
 	MaterializationModes config.MaterializationModes
 	CatalogLoad          catalog.LoadResult
 	Resolved             []resolver.ResolvedArtifact
+	LockMetadata         []LockMetadata
 	ConfigErrors         []error
 	CatalogErrors        []error
 	ResolveErrors        []error
@@ -217,9 +226,26 @@ func filterBlockedRegistryErrors(errs []error) []error {
 	return filtered
 }
 
+// ResolveWithExactLockLease keeps the single read-only exact-cache lease used
+// by resolution alive until release is called. It is intended for callers that
+// consume resolved snapshot paths after Resolve returns.
+func ResolveWithExactLockLease(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
+	return resolve(ctx, opts)
+}
+
 func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
+	result, release := resolve(ctx, opts)
+	release()
+	return result
+}
+
+func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
+	releaseExactLease := func() {}
 	start := time.Now()
-	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode)
+	if opts.Offline {
+		opts.CatalogMode = catalog.LoadModeInspect
+	}
+	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -257,7 +283,18 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 
 	if ctx.Err() != nil {
 		result.Errors = []error{ctx.Err()}
-		return result
+		return result, releaseExactLease
+	}
+	if opts.ExactLockLease != nil {
+		release, err := opts.ExactLockLease(ctx)
+		if err != nil {
+			result.Errors = []error{fmt.Errorf("acquire and revalidate exact locks before resolution: %w", err)}
+			return result, releaseExactLease
+		}
+		if release != nil {
+			releaseExactLease = release
+		}
+		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 	}
 	var ec config.EffectiveConfig
 
@@ -305,9 +342,10 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			errs = append(errs, err)
 		}
 		ec = config.EffectiveConfig{
-			Organization: config.LayerResult{Source: config.Organization, Config: orgCfg},
-			User:         config.LayerResult{Source: config.UserPersonal, Config: globalCfg},
-			Repo:         config.LayerResult{Source: config.RepoCommitted, Config: repoCfg},
+			Organization: config.LayerResult{Source: config.Organization, Path: opts.EffectiveOpts.OrganizationPath, Config: orgCfg},
+			User:         config.LayerResult{Source: config.UserPersonal, Path: opts.EffectiveOpts.GlobalPath, Config: globalCfg},
+			Repo:         config.LayerResult{Source: config.RepoCommitted, Path: opts.EffectiveOpts.RepoPath, Config: repoCfg},
+			LocalLayer:   config.LayerResult{Source: config.RepoPersonal, Path: opts.EffectiveOpts.LocalPath, Local: localCfg},
 			Local:        localCfg,
 			Errors:       errs,
 		}
@@ -350,14 +388,14 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
-		return result
+		return result, releaseExactLease
 	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
-		return result
+		return result, releaseExactLease
 	}
 
 	var mergedCfg *config.Config
@@ -402,7 +440,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 			if len(ec.Errors) > 0 {
 				result.ConfigErrors = ec.Errors
 				result.Errors = ec.Errors
-				return result
+				return result, releaseExactLease
 			}
 		}
 	}
@@ -411,7 +449,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	if modeErr != nil {
 		result.ConfigErrors = append(result.ConfigErrors, modeErr)
 		result.Errors = append(result.Errors, modeErr)
-		return result
+		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
 	slog.Debug("config layers merged",
@@ -428,6 +466,17 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	}
 
 	catalogOpts := opts.CatalogOption
+	var readOnlyView readOnlyExactView
+	if opts.ReadOnlyExactLocks {
+		ctx, readOnlyView = exactLockViewWithContext(ctx, ec)
+		previousRelease := releaseExactLease
+		releaseExactLease = func() {
+			readOnlyView.release()
+			previousRelease()
+		}
+		catalogOpts = append(catalogOpts, readOnlyView.catalogOption)
+		result.LockMetadata = readOnlyView.gitMetadata
+	}
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
 		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
 	}
@@ -458,9 +507,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
-	result.ResolveErrors = resolveErrs
-	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(resolveErrs))
-	for _, resolveErr := range resolveErrs {
+	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
+	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
+	for _, resolveErr := range result.ResolveErrors {
 		if resolver.IsWarning(resolveErr) {
 			continue
 		}
@@ -477,14 +526,16 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 		selectionSpan.End()
 	}
 	result.Errors = errs
-	return result
+	return result, releaseExactLease
 }
 
 func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	start := time.Now()
-	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot)
-	opts.CatalogMode = catalog.LoadModeRefresh
-	opts.Gitignore = true
+	if !opts.Offline {
+		opts.CatalogMode = catalog.LoadModeRefresh
+		opts.Gitignore = true
+	}
+	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	opts.RequireTargetSet = true
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -492,9 +543,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	if tel != nil {
 		ctx, syncSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.sync", nil)
 	}
-
-	resolved := Resolve(ctx, opts)
-	result := SyncResult{ResolveResult: resolved}
+	var result SyncResult
 	defer func() {
 		written := 0
 		removed := 0
@@ -519,6 +568,36 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			syncSpan.End()
 		}
 	}()
+
+	var releaseExactLocks func()
+	if opts.ExactLockLease != nil {
+		release, err := opts.ExactLockLease(ctx)
+		if err != nil {
+			wrapped := fmt.Errorf("acquire and revalidate exact locks before sync: %w", err)
+			result = SyncResult{ResolveResult: ResolveResult{Errors: []error{wrapped}}, MaterializeErrors: []error{wrapped}}
+			return result
+		}
+		releaseExactLocks = release
+	} else if opts.ReadOnlyExactLocks {
+		release, err := cache.AcquireExactGitNamespaceReadOnlyLeaseWithContext(ctx)
+		if err != nil {
+			wrapped := fmt.Errorf("acquire exact cache read lease before sync: %w", err)
+			result = SyncResult{ResolveResult: ResolveResult{Errors: []error{wrapped}}, MaterializeErrors: []error{wrapped}}
+			return result
+		}
+		releaseExactLocks = release
+	}
+	if releaseExactLocks != nil {
+		defer releaseExactLocks()
+		ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+	}
+
+	resolveOpts := opts
+	// Sync already holds and revalidated the caller-provided lease above; do not
+	// acquire a second file description when delegating to resolution.
+	resolveOpts.ExactLockLease = nil
+	resolved := Resolve(ctx, resolveOpts)
+	result.ResolveResult = resolved
 	result.Warnings = append(result.Warnings, SoftWarnings(resolved)...)
 
 	// Compute the materialization root once and reuse it for both the
@@ -625,6 +704,10 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 				}
 			}
 		}
+	}
+
+	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
+		hook("before-materialization")
 	}
 
 	var materializeSpan telemetry.Span
@@ -809,7 +892,7 @@ func EnsureLocalConfigGitignored(repoRoot string) {
 	}
 
 	gitignorePath := filepath.Join(repoRoot, ".gitignore")
-	entry := ".agents/config.local.yaml"
+	entries := []string{".agents/config.local.yaml", ".agents/lock.local.yaml"}
 
 	data, err := os.ReadFile(gitignorePath)
 	if err != nil {
@@ -817,27 +900,28 @@ func EnsureLocalConfigGitignored(repoRoot string) {
 			slog.Warn("failed to read gitignore", "path", gitignorePath, "error", err)
 			return
 		}
-		if err := os.WriteFile(gitignorePath, []byte(entry+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(strings.Join(entries, "\n")+"\n"), 0o644); err != nil {
 			slog.Warn("failed to create gitignore", "path", gitignorePath, "error", err)
 		}
 		return
 	}
 
+	present := make(map[string]bool, len(entries))
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == entry {
-			return
-		}
+		present[strings.TrimSpace(line)] = true
 	}
-
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		slog.Warn("failed to open gitignore for appending", "path", gitignorePath, "error", err)
 		return
 	}
 	defer func() { _ = f.Close() }()
-
 	if !strings.HasSuffix(string(data), "\n") {
 		_, _ = f.WriteString("\n")
 	}
-	_, _ = f.WriteString(entry + "\n")
+	for _, entry := range entries {
+		if !present[entry] {
+			_, _ = f.WriteString(entry + "\n")
+		}
+	}
 }

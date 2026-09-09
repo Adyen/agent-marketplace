@@ -1,6 +1,7 @@
 /agent-marketplace
 /.agents/skills/
 /.agents/config.local.yaml
+/.agents/*.dependencytxn.lock
 /.claude
 /.codex
 /.devin
@@ -35,3 +36,6 @@ e2e/e2e-report.json
 /site/node_modules/
 /site/.vitepress/dist/
 /site/.vitepress/cache/
+
+.agents/lock.local.yaml
+.agents/config.local.yaml

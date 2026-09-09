@@ -42,7 +42,9 @@ type InstallOptions struct {
 	// goes to cwd, but the repo root (for catalog loading and
 	// materialization) stays as the parent. Empty means use the default
 	// (ScopedConfigPath).
-	LocalConfigDir string
+	LocalConfigDir      string
+	DependencyReconcile DependencyReconciler
+	configStaging       *configStagingManager
 }
 
 // silentSyncOptsForInstall builds silentSync options from InstallOptions.
@@ -51,13 +53,14 @@ type InstallOptions struct {
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
+	var syncOpts []silentSyncOpt
 	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		return []silentSyncOpt{
-			withMaterializeRoot(opts.LocalConfigDir),
-			withLocalConfigDir(opts.LocalConfigDir),
-		}
+		syncOpts = append(syncOpts, withMaterializeRoot(opts.LocalConfigDir), withLocalConfigDir(opts.LocalConfigDir))
 	}
-	return nil
+	if opts.DependencyReconcile != nil {
+		syncOpts = append(syncOpts, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
+	}
+	return syncOpts
 }
 
 // InstallResult holds the outcome of an install operation.
@@ -134,16 +137,18 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// genuinely absent. A non-NotExist stat error (permission, I/O)
 			// must be surfaced instead of clobbering an existing config.
 			if _, statErr := os.Stat(cwdProjectConfig); errors.Is(statErr, os.ErrNotExist) {
-				if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
-					return nil, fmt.Errorf("create .agents directory: %w", err)
-				}
-				skeleton := config.Config{APIVersion: config.APIVersionV2}
-				data, err := yaml.Marshal(&skeleton)
-				if err != nil {
-					return nil, fmt.Errorf("marshal skeleton config: %w", err)
-				}
-				if err := os.WriteFile(cwdProjectConfig, data, 0644); err != nil {
-					return nil, fmt.Errorf("create skeleton config: %w", err)
+				if opts.DependencyReconcile == nil {
+					if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
+						return nil, fmt.Errorf("create .agents directory: %w", err)
+					}
+					skeleton := config.Config{APIVersion: config.APIVersionV2}
+					data, err := yaml.Marshal(&skeleton)
+					if err != nil {
+						return nil, fmt.Errorf("marshal skeleton config: %w", err)
+					}
+					if err := os.WriteFile(cwdProjectConfig, data, 0644); err != nil {
+						return nil, fmt.Errorf("create skeleton config: %w", err)
+					}
 				}
 				repoRoot = filepath.Clean(cwd)
 				configPath = config.ProjectConfigPath(repoRoot)
@@ -180,6 +185,18 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
+	if opts.DependencyReconcile != nil {
+		opts.configStaging, err = newConfigStagingManager()
+		if err != nil {
+			return nil, err
+		}
+		defer closeConfigStaging(opts.configStaging, "install", &retErr)
+		configPath, err = opts.configStaging.Path(configPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Load the effective configuration once to validate config versions and resolve
 	// the registry allowlist before mutating any config files.
 	ec := config.LoadEffective(ctx, config.LoadEffectiveOptions{
@@ -200,7 +217,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	// If repo config doesn't exist (and we're writing to repo scope), create skeleton
 	if repoCfg == nil && opts.Scope == ScopeRepo {
-		repoConfigPath := config.ProjectConfigPath(repoRoot)
+		repoConfigPath := configPath
 		if err := os.MkdirAll(filepath.Dir(repoConfigPath), 0755); err != nil {
 			return nil, fmt.Errorf("create .agents directory: %w", err)
 		}
@@ -219,9 +236,17 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 		// The discovery helper needs the newly created repo layer to be
 		// reflected in the effective config.
+		var overlays map[string][]byte
+		if opts.configStaging != nil {
+			overlays, err = opts.configStaging.Overlays()
+			if err != nil {
+				return nil, err
+			}
+		}
 		ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
 			RepoRoot:       repoRoot,
 			LocalConfigDir: opts.LocalConfigDir,
+			FileOverlays:   overlays,
 		})
 		if len(ec.Errors) > 0 {
 			return nil, errors.Join(ec.Errors...)
@@ -237,7 +262,27 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, fmt.Errorf("no registries configured; add at least one registry to the config")
 	}
 
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
+	// Configured installs select only from the exact inventory represented by
+	// the current layer locks. A mutable ref may have advanced since the lock
+	// was written, but that must not make unreviewed resources installable.
+	ctx, exactView := exactLockViewWithContext(ctx, ec)
+	if len(exactView.errors) > 0 && !onlyMissingInstallLocks(exactView.errors) {
+		exactView.release()
+		return nil, errors.Join(exactView.errors...)
+	}
+	// Keep every available layer pinned to its exact inventory. Only an entry
+	// whose own layer lock is missing may bootstrap from its mutable ref.
+	installExactSnapshot := catalog.ExactSnapshotFunc(func(entry config.RegistryEntry) (string, string, error) {
+		snapshot, identity, snapshotErr := exactView.exactSnapshot(entry)
+		var lockErr *LockViewError
+		if errors.As(snapshotErr, &lockErr) && lockErr.Code == "lock.missing" {
+			return "", "", nil
+		}
+		return snapshot, identity, snapshotErr
+	})
+	discoveryOptions := []catalog.LoadOption{catalog.WithExactSnapshots(installExactSnapshot)}
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir, discoveryOptions...)
+	exactView.release()
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +438,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 				return nil, err
 			}
 		}
-		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName); err != nil {
+		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {
 			return nil, err
 		}
 	}
@@ -515,9 +560,17 @@ func loadInstallDiscoveryConfig(ctx context.Context, opts InstallOptions, ec *co
 	return ec.Merged, nil
 }
 
-func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfigDir string) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
-	repoRoot := config.FindRepoRoot()
-	var opts []catalog.LoadOption
+func onlyMissingInstallLocks(errs []error) bool {
+	for _, err := range errs {
+		var lockErr *LockViewError
+		if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
+			return false
+		}
+	}
+	return len(errs) > 0
+}
+
+func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, repoRoot, localConfigDir string, opts ...catalog.LoadOption) (map[string]catalog.LoadedCatalog, []collection.Collection, error) {
 	if localConfigDir != "" && localConfigDir != repoRoot {
 		opts = append(opts, catalog.WithLocalConfigDir(localConfigDir))
 	}
@@ -528,19 +581,39 @@ func loadCatalogsForInstall(ctx context.Context, cfg *config.Config, localConfig
 	return result.Catalogs, result.Collections, nil
 }
 
-func clearInstallExcludes(repoRoot string, scope Scope, kind ir.ResourceKind, name string) error {
-	if err := config.RemoveKindExcludeFromLocalConfig(repoRoot, kind, name); err != nil {
+func clearInstallExcludes(repoRoot string, scope Scope, kind ir.ResourceKind, name string, staging *configStagingManager) error {
+	stagedPath := func(path string) (string, error) {
+		if staging == nil {
+			return path, nil
+		}
+		return staging.Path(path)
+	}
+
+	localPath, err := stagedPath(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		return err
+	}
+	if err := config.RemoveKindExcludeFromConfig(localPath, kind, name); err != nil {
 		return err
 	}
 
+	var path string
 	switch scope {
 	case ScopeUser:
-		return config.RemoveKindExcludeFromGlobalConfig(kind, name)
+		path, err = config.GlobalConfigPath()
 	case ScopeRepo:
-		return config.RemoveAllKindExcludesFromRegistryEntries(config.ProjectConfigPath(repoRoot), kind, name)
+		path = config.ProjectConfigPath(repoRoot)
 	default:
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	path, err = stagedPath(path)
+	if err != nil {
+		return err
+	}
+	return config.RemoveAllKindExcludesFromRegistryEntries(path, kind, name)
 }
 
 func allDiscoveredResourceNames(registries []config.RegistryEntry, catalogs map[string]catalog.LoadedCatalog, registryFilter string, kind ir.ResourceKind) ([]string, error) {
@@ -860,15 +933,29 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if opts.LocalConfigDir != "" && opts.Scope == ScopeLocal {
 		configPath = config.LocalConfigPath(opts.LocalConfigDir)
 	}
+	if opts.configStaging != nil {
+		configPath, err = opts.configStaging.Path(configPath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := config.EnsureRegistryWithPathsInConfig(configPath, fromURL, fromRef, fromPath); err != nil {
 		return nil, fmt.Errorf("ensure registry in %s config: %w", opts.Scope, err)
 	}
 
 	// Reload the effective config so the discovery helper sees the newly
 	// persisted registry entry.
+	var overlays map[string][]byte
+	if opts.configStaging != nil {
+		overlays, err = opts.configStaging.Overlays()
+		if err != nil {
+			return nil, err
+		}
+	}
 	*ec = config.LoadEffective(ctx, config.LoadEffectiveOptions{
 		RepoRoot:       repoRoot,
 		LocalConfigDir: opts.LocalConfigDir,
+		FileOverlays:   overlays,
 	})
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -880,7 +967,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if err != nil {
 		return nil, err
 	}
-	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.LocalConfigDir)
+	catalogs, discoveredCollections, err := loadCatalogsForInstall(ctx, discoveryCfg, opts.RepoRoot, opts.LocalConfigDir)
 	if err != nil {
 		return nil, err
 	}
@@ -942,7 +1029,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, resourceName); err != nil {
 			return nil, err
 		}
-		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName); err != nil {
+		if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, resourceName, opts.configStaging); err != nil {
 			return nil, err
 		}
 		requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: resourceName}}, silentSyncOptsForInstall(opts)...)
@@ -979,7 +1066,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 				if err := config.AddResourceToExactRegistryEntry(configPath, fromURL, fromPath, match.kind, inferredName); err != nil {
 					return nil, err
 				}
-				if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, inferredName); err != nil {
+				if err := clearInstallExcludes(repoRoot, opts.Scope, match.kind, inferredName, opts.configStaging); err != nil {
 					return nil, err
 				}
 				requirementWarnings, err := syncAfterInstall(ctx, repoRoot, []resourceIdentity{{kind: match.kind, name: inferredName}}, silentSyncOptsForInstall(opts)...)

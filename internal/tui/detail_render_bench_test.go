@@ -7,6 +7,49 @@ import (
 	"testing"
 )
 
+// BenchmarkCaptureAggregateDetailDiskIO includes bounded local disk reads for a
+// refresh containing more maximum-sized entries than either aggregate budget.
+func BenchmarkCaptureAggregateDetailDiskIO(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "maximum.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1)), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(maxDetailCaptureBytes)
+	b.ResetTimer()
+	for b.Loop() {
+		var budget detailCaptureBudget
+		for i := 0; i < maxDetailCaptureEntries+16; i++ {
+			_ = budget.capture(path)
+		}
+		if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
+			b.Fatal("capture exceeded aggregate budget")
+		}
+	}
+}
+
+func BenchmarkCaptureSnapshotTraversalDiskIO(b *testing.B) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		size  int
+	}{
+		{"entries", 40, 32},
+		{"bytes", 5, 256 << 10},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			resolved, catalogs := captureTraversalFixture(b, tc.count, tc.size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if sources := captureSnapshotDetailSources(resolved, catalogs); len(sources) != 2*tc.count+5 {
+					b.Fatalf("captured %d source identities", len(sources))
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkRenderBoundedDetail(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "detail.md")
 	content := "# Detail\n\n" + strings.Repeat("content ", 200)
@@ -15,6 +58,7 @@ func BenchmarkRenderBoundedDetail(b *testing.B) {
 	}
 	r := mkRow("detail", withProject)
 	r.Artifact.Path = path
+	r.DetailSource = captureDetailSource(path)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {

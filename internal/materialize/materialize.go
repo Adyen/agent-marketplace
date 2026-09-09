@@ -36,6 +36,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -806,7 +807,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			result.Artifacts, compiledSkillArtifacts, installDirRel = splitSkillArtifacts(w.target, w.skill.Name, result.Artifacts)
 			installDirRel = machineSkillInstallDirRel(w.target, w.machineScope, installDirRel)
 			if len(compiledSkillArtifacts) > 0 {
-				sourceDir := w.skill.Path
+				sourceDir := materializationSourcePath(w.skill)
 				if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
 					sourceDir = filepath.Dir(sourceDir)
 				}
@@ -839,7 +840,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			// (which only removes symlinks, never the regular hooks.json file)
 			// when a hook is excluded.
 			if resourceKind == ir.KindHook {
-				result.Artifacts = append(result.Artifacts, collectHookSupportFiles(w.skill.Path, w.target)...)
+				result.Artifacts = append(result.Artifacts, collectHookSupportFiles(materializationSourcePath(w.skill), w.target)...)
 			}
 			var linked []compiledResourceLink
 			result.Artifacts, linked = splitResourceArtifacts(w.target, resourceKind, w.skill.Name, result.Artifacts)
@@ -1954,6 +1955,30 @@ func linkedComponents(groups map[string]*skillLinkGroup) map[string]bool {
 		components[componentName(installDirRel)] = true
 	}
 	return components
+}
+
+func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
+	var source string
+	switch resource := resolved.Resource.(type) {
+	case *ir.Skill:
+		source = resource.Source.File
+	case *ir.Command:
+		source = resource.Source.File
+	case *ir.Subagent:
+		source = resource.Source.File
+	case *ir.Hook:
+		source = resource.Source.File
+	case *ir.McpServer:
+		source = resource.Source.File
+	case *ir.Rule:
+		source = resource.Source.File
+	case *ir.Collection:
+		source = resource.Source.File
+	}
+	if filepath.IsAbs(source) {
+		return source
+	}
+	return resolved.Path
 }
 
 func cachedSkillDir(target hcc.Target, s resolver.ResolvedArtifact, _ []artifact.Artifact) string {
@@ -3289,7 +3314,7 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Ar
 		return nil
 	}
 	sourceDir := filepath.Dir(sourcePath)
-	entries, err := os.ReadDir(sourceDir)
+	names, err := catalog.HookSupportFiles(sourcePath)
 	if err != nil {
 		return nil
 	}
@@ -3298,11 +3323,7 @@ func collectHookSupportFiles(sourcePath string, target hcc.Target) []artifact.Ar
 		return nil
 	}
 	var artifacts []artifact.Artifact
-	for _, entry := range entries {
-		name := entry.Name()
-		if name == "hooks.json" || entry.IsDir() {
-			continue
-		}
+	for _, name := range names {
 		srcPath := filepath.Join(sourceDir, name)
 		data, err := os.ReadFile(srcPath)
 		if err != nil {

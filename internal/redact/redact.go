@@ -2,11 +2,15 @@ package redact
 
 import "regexp"
 
-var credentialRE = regexp.MustCompile(`://[^/\s?#]*@`)
+var (
+	credentialRE    = regexp.MustCompile(`://[^/\s?#]*@`)
+	scpCredentialRE = regexp.MustCompile(`^[^@\s/:]+:[^@\s]+@([^\s/:]+:)`)
+)
 
 // URL removes embedded URL credentials while preserving the host and path.
 func URL(value string) string {
-	return credentialRE.ReplaceAllString(value, "://***@")
+	value = credentialRE.ReplaceAllString(value, "://***@")
+	return scpCredentialRE.ReplaceAllString(value, "***@$1")
 }
 
 // Strings returns a copy with embedded URL credentials removed.

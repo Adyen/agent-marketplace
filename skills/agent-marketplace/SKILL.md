@@ -45,7 +45,7 @@ agent-marketplace sync
 agent-marketplace status
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of truth for marketplace-managed output; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
+The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry. Keep generated harness output out of source control:
 
 ```gitignore
 .agents/skills/
@@ -140,6 +140,10 @@ Devin is also a full conversion target: `convert --from devin`, `convert --to de
 - A raw-byte safety backup is always taken before an aggregate is mutated, even when configured backups are disabled; the five newest per file are kept.
 - Updates are atomic per file: a malformed `mcp_config.json` blocks only that file and is left exactly as found while skills, subagents, and a valid hooks file still materialize.
 
+## Git dependency locks
+
+Remote Git registries resolve into generated locks owned by the organization, user, repository, or personal-local config layer. Commit `.agents/lock.yaml` with repository config and keep `.agents/lock.local.yaml` ignored. Normal sync retains compatible exact commits and reconciles writable stale locks; locked/check modes do not write. Plain directory registries remain live and unlocked. This Git foundation does not provide hosted Marketplace lock records or acquisition adapters.
+
 ## Daily Commands
 
 ```bash
@@ -154,11 +158,14 @@ agent-marketplace install --all                # Install every discovered skill 
 agent-marketplace install --all --kind mcp     # Install every discovered MCP server
 agent-marketplace remove <resource|collection> # Remove selection or add an exclude
 agent-marketplace remove --kind subagent X     # Disambiguate a resource kind
-agent-marketplace sync                         # Materialize native harness outputs
-agent-marketplace sync --check                 # Check drift without writing
-agent-marketplace status                       # Show resources, HARNESS TARGETS, refs, cache, drift
-agent-marketplace update                       # Refresh registry caches
-agent-marketplace update --bump                # Bump pinned refs when newer refs exist
+agent-marketplace lock                         # Create/reconcile generated Git locks
+agent-marketplace lock --upgrade               # Advance Git requirements to current refs
+agent-marketplace sync                         # Materialize from exact Git snapshots
+agent-marketplace sync --locked                # Require fresh locks; write no config or locks
+agent-marketplace sync --check                 # Check lock and output drift without writing
+agent-marketplace status                       # Show exact locks, HARNESS TARGETS, refs, cache, drift
+agent-marketplace update                       # Advance Git locks and synchronize
+agent-marketplace update --bump                # Rewrite eligible refs before advancing locks
 agent-marketplace migrate --harnesses factory  # Remediate structural config issues
 agent-marketplace convert --from claude --to factory --out ./out ./plugin
 agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection

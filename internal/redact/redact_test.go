@@ -12,7 +12,9 @@ func TestURL(t *testing.T) {
 		{name: "token", value: "https://YOUR_TOKEN_HERE@example.com/repo.git", want: "https://***@example.com/repo.git"},
 		{name: "at sign in credentials", value: "https://YOUR_USER_HERE:YOUR_TOKEN@HERE@example.com/repo.git", want: "https://***@example.com/repo.git"},
 		{name: "file URL", value: "file:///tmp/repo", want: "file:///tmp/repo"},
-		{name: "SSH URL", value: "git@example.com:repo.git", want: "git@example.com:repo.git"},
+		{name: "SCP URL", value: "git@example.com:repo.git", want: "git@example.com:repo.git"},
+		{name: "SCP credentials", value: "user:token@example.com:repo.git", want: "***@example.com:repo.git"},
+		{name: "SSH URI credentials", value: "ssh://user:token@example.com/repo.git", want: "ssh://***@example.com/repo.git"},
 		{name: "query at sign", value: "https://example.com?email=user@example.net", want: "https://example.com?email=user@example.net"},
 		{name: "fragment at sign", value: "https://example.com#user@example.net", want: "https://example.com#user@example.net"},
 	}

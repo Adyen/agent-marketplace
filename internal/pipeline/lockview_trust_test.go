@@ -1,0 +1,57 @@
+//go:build !windows
+
+package pipeline
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+)
+
+func TestReadOnlyOrganizationLockViewAcceptsMissingLock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	lockPath := filepath.Join(dir, "lock.yaml")
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := config.RegistryEntry{URL: "https://example.invalid/org.git", Ref: "main", Source: config.Organization}
+	doc, err := readOnlyLayerLock(configPath, lockPath, lockfile.ScopeOrganization, []config.RegistryEntry{registry})
+	if err != nil || doc.APIVersion != "" {
+		t.Fatalf("missing optional organization lock returned doc=%#v err=%v", doc, err)
+	}
+	effective := config.EffectiveConfig{
+		Organization: config.LayerResult{Source: config.Organization, Path: configPath, Config: &config.Config{Registries: []config.RegistryEntry{registry}}},
+	}
+	_, view := exactLockViewWithContext(context.Background(), effective)
+	defer view.release()
+	if len(view.errors) != 0 {
+		t.Fatalf("unlocked organization view errors = %v", view.errors)
+	}
+	path, identity, err := view.exactSnapshot(registry)
+	if err != nil || path != "" || identity != "" {
+		t.Fatalf("unlocked organization snapshot = (%q, %q, %v), want mutable discovery", path, identity, err)
+	}
+}
+
+func TestReadOnlyOrganizationLockViewAcceptsTrustedFixture(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	lockPath := filepath.Join(dir, "lock.yaml")
+	for path, data := range map[string]string{
+		configPath: "apiVersion: agent-marketplace/v2\nregistries: []\n",
+		lockPath:   "apiVersion: agent-marketplace-lock/v1\nscope: organization\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doc, err := readOnlyLayerLock(configPath, lockPath, lockfile.ScopeOrganization, nil)
+	if err != nil || doc.Scope != lockfile.ScopeOrganization {
+		t.Fatalf("trusted read-only organization view failed: scope=%s err=%v", doc.Scope, err)
+	}
+}

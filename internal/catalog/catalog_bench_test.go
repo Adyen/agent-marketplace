@@ -143,3 +143,20 @@ metadata:
 		})
 	}
 }
+
+func BenchmarkHookSupportFiles(b *testing.B) {
+	root := b.TempDir()
+	for _, name := range []string{"check.sh", "hooks.json"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	source := filepath.Join(root, "hooks.json")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := HookSupportFiles(source); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

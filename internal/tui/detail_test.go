@@ -189,6 +189,7 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "myskill", Path: skillDir}},
 		EnabledGlobal: true,
 	}}
+	m.rows[0].DetailSource = captureDetailSource(skillDir)
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
@@ -215,16 +216,18 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 	}
 }
 
-func TestRenderDetailFullReadsNonSkillSourceFile(t *testing.T) {
+func TestRenderDetailFullRendersCapturedNonSkillSource(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "continue.md")
 	if err := os.WriteFile(commandPath, []byte("# Continue\n\nResume the work.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out := renderDetailFullContent(row{
-		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-	}, 80)
+	r := row{
+		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
+		DetailSource: captureDetailSource(commandPath),
+	}
+	out := renderDetailFullContent(r, 80)
 	stripped := ansi.Strip(out)
 	if !contains(stripped, "Continue") {
 		t.Fatalf("full view should contain command source content, got:\n%s", stripped)
@@ -543,6 +546,50 @@ func TestRenderDetailShowsWouldTargetForAvailableSkill(t *testing.T) {
 		if !contains(out, want) {
 			t.Fatalf("detail missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "maximum.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var budget detailCaptureBudget
+	var snapshots []*detailSourceSnapshot
+	for i := 0; i < maxDetailCaptureEntries+16; i++ {
+		snapshots = append(snapshots, budget.capture(path))
+	}
+	if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
+		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.bytes, budget.entries)
+	}
+	var truncated, omitted int
+	for _, snapshot := range snapshots {
+		if snapshot.truncationMarker != "" {
+			truncated++
+		}
+		if snapshot.omitted {
+			omitted++
+			if got := renderDetailFullContent(row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
+				t.Fatalf("omitted detail marker = %q, want %q", got, detailCaptureOmittedMarker)
+			}
+		}
+	}
+	if truncated == 0 || omitted == 0 {
+		t.Fatalf("budget must visibly mark both truncated and omitted details: truncated=%d omitted=%d", truncated, omitted)
+	}
+
+	var entryBudget detailCaptureBudget
+	small := filepath.Join(t.TempDir(), "small.md")
+	if err := os.WriteFile(small, []byte("small"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxDetailCaptureEntries; i++ {
+		if snapshot := entryBudget.capture(small); snapshot.omitted {
+			t.Fatalf("entry %d omitted before entry budget", i)
+		}
+	}
+	if snapshot := entryBudget.capture(small); !snapshot.omitted {
+		t.Fatal("entry beyond entry budget was captured")
 	}
 }
 

@@ -79,9 +79,17 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
+		return err
+	}
 
 	repoRoot := config.FindRepoRoot()
-	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{RepoRoot: repoRoot})
+	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
+		RepoRoot:           repoRoot,
+		CatalogMode:        catalog.LoadModeInspect,
+		ReadOnlyExactLocks: true,
+	})
+	defer releaseExactLease()
 
 	if len(result.TargetHarnesses) == 0 {
 		if _, err := fmt.Fprintf(errOut, "No machine-wide target harness set configured; add `harnesses` to your user config.\n"); err != nil {
@@ -121,7 +129,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		}
 	}
 
-	if len(result.Errors) > 0 {
+	if result.LoadedCfg == nil && len(result.Errors) > 0 {
 		return errors.Join(result.Errors...)
 	}
 
@@ -138,7 +146,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := materialize.Run(context.Background(), repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would
@@ -154,6 +162,9 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 			return err
 		}
 	}
+	if len(result.Errors) > 0 {
+		return errors.Join(result.Errors...)
+	}
 
 	return nil
 }
@@ -161,6 +172,9 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 // runListFrom lists resources available at an ad-hoc registry URL without
 // writing to any config. This is a browse-before-you-install feature.
 func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, fromRef, fromPath, kindFilter string) error {
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
+		return err
+	}
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
 		return err
@@ -245,6 +259,17 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	return writeListTable(out, rows)
 }
 
+func listCatalogKey(entry config.RegistryEntry, repoRoot string) string {
+	if entry.CatalogKey != "" {
+		return entry.CatalogKey
+	}
+	if entry.IsLocal() {
+		localPath, _ := entry.ResolveLocalPath(repoRoot)
+		return entry.BundlePath(localPath)
+	}
+	return cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
+}
+
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {
 	enabled := make(map[string]struct{}, len(resolved))
 	for _, resolvedSkill := range resolved {
@@ -287,13 +312,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 			continue
 		}
 
-		var catalogKey string
-		if entry.IsLocal() {
-			localPath, _ := entry.ResolveLocalPath(repoRoot)
-			catalogKey = entry.BundlePath(localPath)
-		} else {
-			catalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
-		}
+		catalogKey := listCatalogKey(entry, repoRoot)
 
 		byNormalizedKey[normalizedKey] = len(mergedEntries)
 		mergedEntries = append(mergedEntries, mergedRegistry{
@@ -307,19 +326,17 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 	emittedNormalizedKeys := make(map[string]struct{}, len(mergedEntries))
 	for _, entry := range cfg.Registries {
 		var normalizedKey string
-		var entryCatalogKey string
 		if entry.IsLocal() {
 			localPath, _ := entry.ResolveLocalPath(repoRoot)
 			normalizedKey = "local\x00" + entry.BundlePath(localPath)
-			entryCatalogKey = entry.BundlePath(localPath)
 		} else {
 			cleanPath := filepath.Clean(strings.TrimSpace(entry.Path))
 			if cleanPath == "." {
 				cleanPath = ""
 			}
 			normalizedKey = config.NormalizeGitURL(entry.URL) + "\x00" + entry.Ref + "\x00" + cleanPath
-			entryCatalogKey = cache.CatalogKeyForEntry(entry.URL, entry.Ref, entry.Path)
 		}
+		entryCatalogKey := listCatalogKey(entry, repoRoot)
 
 		if _, emitted := emittedNormalizedKeys[normalizedKey]; emitted {
 			continue

@@ -40,8 +40,9 @@ const (
 
 type row struct {
 	Artifact     resolver.ResolvedArtifact
-	IsAvailable  bool // not in resolved (available but not enabled)
-	IsExcluded   bool // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable  bool                  // not in resolved (available but not enabled)
+	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
 	IsMalformed  bool
 	MalformedMsg string
 	DriftItem    *materialize.DriftItem // nil if in sync or available-only
@@ -162,16 +163,17 @@ type Model struct {
 	searchInput   textinput.Model
 	loading       bool
 
-	pane            pane
-	driftReport     materialize.DriftReport
-	driftAssessment driftAssessment
-	diagnostics     diagnosticStore
-	errs            []error
-	warnings        []error
-	syncing         bool
-	refreshing      bool
-	requests        requestState
-	rowsStale       bool
+	pane                pane
+	driftReport         materialize.DriftReport
+	driftAssessment     driftAssessment
+	diagnostics         diagnosticStore
+	errs                []error
+	warnings            []error
+	syncing             bool
+	refreshing          bool
+	requests            requestState
+	rowsStale           bool
+	dependencyLifecycle DependencyLifecycle
 
 	// Cached config state for toggle/sync
 	mergedCfg        *config.Config

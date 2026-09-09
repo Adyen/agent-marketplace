@@ -170,8 +170,8 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation
-      BENCHMARK_PATTERN: Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge)$
+      BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation ./internal/dependencytxn ./internal/lockfile ./internal/sourcerevision ./internal/pipeline
+      BENCHMARK_PATTERN: ^Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge|SyncWarmUnchangedRemoteGitLock|SyncLocalGitDiskIONoNetwork|ResolveExactGitRef|CommitUnchanged|CheckPending|PlanUnchanged|Build|ProjectLockedRoots|LoadStableEffectiveIncludes|ExactGitGCDryRunFilesystem|MutableLocalGitBatchDiskIONoNetwork|VerifyExactGitTrackedTreeDiskNoNetwork|GitAuthEnvironment|ReadOnlyGitDocumentMatches|OrganizationIncludeTreeDiskReads|CaptureSnapshotTraversalDiskIO|CaptureAggregateDetailDiskIO|HookSupportFiles|DiscoverLegacyFallback)$
       BENCHSTAT_VERSION: v0.0.0-20260709024250-82a0b07e230d
       GOMAXPROCS: 2
     steps:
@@ -204,10 +204,22 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      - name: Select available benchmark packages
+        run: |
+          for checkout in base head; do
+            packages=()
+            for package in $BENCHMARK_PACKAGES; do
+              if [ -d "benchmark-$checkout/$package" ]; then
+                packages+=("$package")
+              fi
+            done
+            echo "BENCHMARK_${checkout^^}_PACKAGES=${packages[*]}" >> "$GITHUB_ENV"
+          done
+
       - name: Benchmark base
         working-directory: benchmark-base
         run: |
-          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-base.txt"; then
+          if ! go test -v -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_BASE_PACKAGES > "$GITHUB_WORKSPACE/benchmark-base.txt"; then
             cat "$GITHUB_WORKSPACE/benchmark-base.txt"
             exit 1
           fi
@@ -215,7 +227,7 @@ jobs:
       - name: Benchmark pull request
         working-directory: benchmark-head
         run: |
-          if ! go test -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_PACKAGES > "$GITHUB_WORKSPACE/benchmark-head.txt"; then
+          if ! go test -v -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_HEAD_PACKAGES > "$GITHUB_WORKSPACE/benchmark-head.txt"; then
             cat "$GITHUB_WORKSPACE/benchmark-head.txt"
             exit 1
           fi

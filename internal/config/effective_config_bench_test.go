@@ -38,6 +38,22 @@ func BenchmarkLoadEffectiveLargeConfig(b *testing.B) {
 	}
 }
 
+func BenchmarkOrganizationIncludeTreeDiskReads(b *testing.B) {
+	dir := b.TempDir()
+	root := filepath.Join(dir, "authority", "config.yaml")
+	middle := filepath.Join(dir, "external", "middle.yaml")
+	writeBenchFile(b, filepath.Join(dir, "external", "nested", "leaf.yaml"), "registries:\n  - path: /live-registry\n    skills: {include: [review]}\n")
+	writeBenchFile(b, middle, "include: nested/leaf.yaml\n")
+	writeBenchFile(b, root, "apiVersion: agent-marketplace/v2\ninclude: "+middle+"\n")
+	b.ReportAllocs()
+	for b.Loop() {
+		cfg, err := loadConfigTree(root, organizationLayer)
+		if err != nil || len(cfg.Registries) != 1 {
+			b.Fatalf("load organization include tree: %v", err)
+		}
+	}
+}
+
 func writeBenchConfig(b testing.TB, dir string, n int) {
 	b.Helper()
 	org := "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\nallowed_registries:\n  - ^gitlab\\.example\\.com/\nregistries:\n"

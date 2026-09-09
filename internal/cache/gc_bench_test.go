@@ -2,9 +2,12 @@ package cache
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 // BenchmarkActiveRegistryHashes measures the cost of building the active-hash
@@ -41,5 +44,39 @@ func BenchmarkActiveRegistryHashes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = activeRegistryHashes(cfgs...)
+	}
+}
+
+func BenchmarkExactGitGCDryRunFilesystem(b *testing.B) {
+	b.Setenv("HOME", b.TempDir())
+	cfg := &config.Config{}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo}
+	oid, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < 48; i++ {
+		source := fmt.Sprintf("https://example.com/catalog-%d", i)
+		if i < 16 {
+			doc.Registries = append(doc.Registries, lockfile.GitRegistry{URL: source, Ref: "main", Commit: oid})
+		} else if i < 32 {
+			cfg.Registries = append(cfg.Registries, config.RegistryEntry{URL: source, Ref: "main"})
+		}
+		for _, path := range []string{exactGitObjectStorePath(source), exactGitSnapshotPath(source, oid)} {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	docs := []lockfile.Document{doc}
+	if _, err := GarbageCollectWithLocks(true, docs, cfg); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := GarbageCollectWithLocks(true, docs, cfg); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

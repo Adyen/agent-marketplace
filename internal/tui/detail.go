@@ -228,75 +228,157 @@ func renderDetailFull(m Model) string {
 //     otherwise pin a renderer goroutine for minutes.
 //   - maxDetailRenderedLines caps the rendered expansion with a marker.
 const (
-	maxDetailSourceBytes   = 256 << 10 // 256 KiB of markdown/JSON source
-	maxDetailLineChars     = 1024
-	maxDetailRenderedLines = 5000
+	maxDetailSourceBytes    = 256 << 10 // per entry
+	maxDetailCaptureBytes   = 2 << 20   // across one snapshot refresh
+	maxDetailCaptureEntries = 64        // across one snapshot refresh
+	maxDetailLineChars      = 1024
+	maxDetailRenderedLines  = 5000
 
-	detailRenderLimitMarker = "[truncated: rendered output exceeds the line limit]"
+	detailRenderLimitMarker    = "[truncated: rendered output exceeds the line limit]"
+	detailCaptureOmittedMarker = "[content omitted: snapshot detail capture budget exhausted]"
 )
 
-var detailTruncationMarker = fmt.Sprintf("[truncated: source exceeds %d KiB; showing the first part only]", maxDetailSourceBytes/1024)
+var (
+	detailTruncationMarker       = fmt.Sprintf("[truncated: source exceeds %d KiB; showing the first part only]", maxDetailSourceBytes/1024)
+	detailBudgetTruncationMarker = fmt.Sprintf("[truncated: snapshot detail capture exceeds %d KiB or %d entries]", maxDetailCaptureBytes/1024, maxDetailCaptureEntries)
+)
 
-// renderDetailFullContent reads and renders a resource's source files at the
-// given word-wrap width (the actual detail viewport width in production).
-// Used internally by loadDetailContent (async tea.Cmd) and by tests.
-// Production code should call loadDetailContent instead of blocking the UI
-// thread.
+type detailSourceSnapshot struct {
+	content          string
+	truncationMarker string
+	json             bool
+	omitted          bool
+	err              error
+}
+
+type detailCaptureBudget struct {
+	bytes   int
+	entries int
+}
+
+func captureDetailSource(path string) *detailSourceSnapshot {
+	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker)
+}
+
+func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
+	if b.entries >= maxDetailCaptureEntries || b.bytes >= maxDetailCaptureBytes {
+		return &detailSourceSnapshot{json: isJSONPath(path), omitted: true}
+	}
+	remaining := maxDetailCaptureBytes - b.bytes
+	limit := min(maxDetailSourceBytes, remaining)
+	marker := detailTruncationMarker
+	if limit < maxDetailSourceBytes {
+		marker = detailBudgetTruncationMarker
+	}
+	snapshot := captureDetailSourceLimit(path, limit, marker)
+	b.entries++
+	b.bytes += len(snapshot.content)
+	return snapshot
+}
+
+func captureDetailSourceLimit(path string, limit int, marker string) *detailSourceSnapshot {
+	content, truncated, err := readDetailSourceLimit(path, limit)
+	if !truncated {
+		marker = ""
+	}
+	return &detailSourceSnapshot{content: content, truncationMarker: marker, json: isJSONPath(path), err: err}
+}
+
+func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
+	for i := range rows {
+		rows[i].DetailSource = byPath[rows[i].Artifact.Path]
+	}
+}
+
+// renderDetailFullContent renders the bounded source copy captured while the
+// exact snapshot lease was held at the given word-wrap width. Bundle-backed
+// skills retain their split multi-file view; other resources use the captured
+// source copy. Production code should call loadDetailContent instead of
+// blocking the UI thread.
 //
 // For JSON files (hooks, MCP servers), the content is pretty-printed and
 // wrapped in a markdown code block before being rendered through glamour,
 // so it displays with syntax highlighting instead of a raw minified blob.
 func renderDetailFullContent(r row, width int) string {
-	if r.Artifact.Path == "" {
+	if r.Artifact.Kind == ir.KindSkill && r.Artifact.Path != "" && r.DetailSource == nil {
+		sources, err := detailSourcePaths(r)
+		if err != nil {
+			return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
+		}
+		if len(sources) == 0 {
+			return "No content available"
+		}
+
+		var bundle strings.Builder
+		for i, source := range sources {
+			content, truncated, readErr := readDetailSource(source.path)
+			if i > 0 {
+				bundle.WriteString("\n\n---\n\n")
+			}
+			if len(sources) > 1 {
+				bundle.WriteString("## `")
+				bundle.WriteString(detailFileName(source.name))
+				bundle.WriteString("`\n\n")
+			}
+			if readErr != nil {
+				bundle.WriteString("Error reading file: ")
+				bundle.WriteString(sanitizeTerminalData(readErr.Error(), terminalSingleLine))
+				continue
+			}
+			if truncated {
+				content += "\n\n> " + detailTruncationMarker + "\n"
+				slog.Info("tui detail source truncated", "limit_bytes", maxDetailSourceBytes)
+			}
+			if len(sources) > 1 {
+				bundle.WriteString(prepareBundleSource(source.name, content))
+			} else {
+				bundle.WriteString(prepareDetailSource(source.name, content))
+			}
+		}
+
+		content := bundle.String()
+		rendered, err := renderMarkdownAtWidth(content, width)
+		if err != nil {
+			if len(sources) == 1 && isJSONPath(sources[0].name) {
+				// If glamour fails on the code block, return the pretty-printed
+				// JSON directly — it's still more readable than the minified form.
+				return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(content, "```"), "```json\n"))
+			}
+			return boundRenderedDetail(content)
+		}
+		return boundRenderedDetail(rendered)
+	}
+
+	if r.DetailSource == nil {
 		return "No content available"
 	}
+	content := r.DetailSource.content
+	if r.DetailSource.omitted {
+		return detailCaptureOmittedMarker
+	}
+	if r.DetailSource.err != nil {
+		return "Error reading resource: " + sanitizeTerminalData(r.DetailSource.err.Error(), terminalSingleLine)
+	}
+	if r.DetailSource.truncationMarker != "" {
+		content += "\n\n> " + r.DetailSource.truncationMarker + "\n"
+		slog.Info("tui detail source truncated", "captured_bytes", len(r.DetailSource.content))
+	}
 
-	sources, err := detailSourcePaths(r)
+	if r.DetailSource.json {
+		formatted, fmtErr := formatJSONContent(content)
+		if fmtErr == nil {
+			rendered, renderErr := renderMarkdownAtWidth(formatted, width)
+			if renderErr == nil {
+				return boundRenderedDetail(rendered)
+			}
+			return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(formatted, "```"), "```json\n"))
+		}
+	}
+
+	prepared := prepareDetailSource(filepath.Base(r.Artifact.Path), content)
+	rendered, err := renderMarkdownAtWidth(prepared, width)
 	if err != nil {
-		return "Error reading resource: " + sanitizeTerminalData(err.Error(), terminalSingleLine)
-	}
-	if len(sources) == 0 {
-		return "No content available"
-	}
-
-	var bundle strings.Builder
-	for i, source := range sources {
-		content, truncated, readErr := readDetailSource(source.path)
-		if i > 0 {
-			bundle.WriteString("\n\n---\n\n")
-		}
-		if len(sources) > 1 {
-			bundle.WriteString("## `")
-			bundle.WriteString(detailFileName(source.name))
-			bundle.WriteString("`\n\n")
-		}
-		if readErr != nil {
-			bundle.WriteString("Error reading file: ")
-			bundle.WriteString(sanitizeTerminalData(readErr.Error(), terminalSingleLine))
-			continue
-		}
-		if truncated {
-			content += "\n\n> " + detailTruncationMarker + "\n"
-			slog.Info("tui detail source truncated", "limit_bytes", maxDetailSourceBytes)
-		}
-		if len(sources) > 1 {
-			bundle.WriteString(prepareBundleSource(source.name, content))
-		} else {
-			// If the source file is JSON, pretty-print and wrap in a code block
-			// before handing off to the markdown renderer.
-			bundle.WriteString(prepareDetailSource(source.name, content))
-		}
-	}
-
-	content := bundle.String()
-	rendered, err := renderMarkdownAtWidth(content, width)
-	if err != nil {
-		if len(sources) == 1 && isJSONPath(sources[0].name) {
-			// If glamour fails on the code block, return the pretty-printed
-			// JSON directly — it's still more readable than the minified form.
-			return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(content, "```"), "```json\n"))
-		}
-		return boundRenderedDetail(content)
+		return boundRenderedDetail(prepared)
 	}
 	return boundRenderedDetail(rendered)
 }
@@ -391,6 +473,10 @@ func prepareBundleSource(name, content string) string {
 // cut at the cap so a hostile or corrupted multi-gigabyte source cannot
 // exhaust TUI memory or render time.
 func readDetailSource(path string) (content string, truncated bool, err error) {
+	return readDetailSourceLimit(path, maxDetailSourceBytes)
+}
+
+func readDetailSourceLimit(path string, limit int) (content string, truncated bool, err error) {
 	target := path
 	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
 		target = filepath.Join(path, "SKILL.md")
@@ -407,12 +493,12 @@ func readDetailSource(path string) (content string, truncated bool, err error) {
 	if !info.Mode().IsRegular() {
 		return "", false, fmt.Errorf("source is not a regular file")
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDetailSourceBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
 	if err != nil {
 		return "", false, err
 	}
-	if len(data) > maxDetailSourceBytes {
-		return string(data[:maxDetailSourceBytes]), true, nil
+	if len(data) > limit {
+		return string(data[:limit]), true, nil
 	}
 	return string(data), false, nil
 }

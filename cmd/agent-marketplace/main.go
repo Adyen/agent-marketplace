@@ -19,7 +19,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
-	"github.com/Adyen/agent-marketplace/internal/tui"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -53,12 +52,17 @@ func newRootCmd() *cobra.Command {
 	var noTUI bool
 	var debug bool
 
-	rootCmd := &cobra.Command{
+	var rootCmd *cobra.Command
+	rootCmd = &cobra.Command{
 		Use:           "agent-marketplace",
 		Short:         "Sync shared AI agent skills from configured registries",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
+			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
+				return err
+			}
 			start := time.Now()
 			initRootLogging(cmd, debug)
 			initTelemetry(cmd, start)
@@ -89,7 +93,7 @@ func newRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return tui.Run(cmd.Context(), repoRoot, homeDir)
+					return runProductionTUI(cmd.Context(), repoRoot, homeDir)
 				}
 			}
 
@@ -106,6 +110,7 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(
 		newInitCmd(),
+		newLockCmd(),
 		newSyncCmd(),
 		newListCmd(),
 		newInstallCmd(),
@@ -123,6 +128,26 @@ func newRootCmd() *cobra.Command {
 	)
 
 	return rootCmd
+}
+
+func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
+	if rootTUI {
+		return prepareDependencyTransactions(cmd.Context(), false)
+	}
+	switch cmd.Name() {
+	case "tui", "gc":
+		return prepareDependencyTransactions(cmd.Context(), false)
+	case "list", "status":
+		return prepareDependencyTransactions(cmd.Context(), true)
+	case "sync", "lock":
+		check, _ := cmd.Flags().GetBool("check")
+		locked, _ := cmd.Flags().GetBool("locked")
+		offline, _ := cmd.Flags().GetBool("offline")
+		if (lockMode{check: check, locked: locked, offline: offline}).readOnlyDependencies() {
+			return prepareDependencyTransactions(cmd.Context(), true)
+		}
+	}
+	return nil
 }
 
 func validateStartupTargetRegistrations() error {
@@ -382,17 +407,21 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 
 	repoRoot := config.FindRepoRoot()
 	result, err := pipeline.Remove(ctx, pipeline.RemoveOptions{
-		RepoRoot:       repoRoot,
-		ResourceName:   skillName,
-		Kind:           kind,
-		HasKind:        hasKind,
-		Scope:          scope,
-		ScopeSpecified: scopeSpecified,
-		FromURL:        fromURL,
-		FromRef:        fromRef,
-		FromPath:       fromPath,
+		RepoRoot:            repoRoot,
+		ResourceName:        skillName,
+		Kind:                kind,
+		HasKind:             hasKind,
+		Scope:               scope,
+		ScopeSpecified:      scopeSpecified,
+		FromURL:             fromURL,
+		FromRef:             fromRef,
+		FromPath:            fromPath,
+		DependencyReconcile: reconcileCommandDependencies,
 	})
 	if err != nil {
+		return err
+	}
+	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
 		return err
 	}
 

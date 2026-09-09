@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -31,6 +32,10 @@ func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
 	if t != nil {
 		t.Cleanup(func() { testOrganizationConfigPath = old })
 	}
+}
+
+func SetTestOrganizationConfigPath(t testing.TB, path string) {
+	SetTestV3OrganizationConfigPath(t, path)
 }
 
 // OrganizationConfigPath returns the fixed filesystem path of the externally
@@ -59,6 +64,14 @@ type LayerResult struct {
 	Config *Config
 	Local  *LocalConfig
 	Errors []error
+	Reads  []ConfigRead
+}
+
+type ConfigRead struct {
+	Path          string
+	RequestedPath string
+	Digest        string
+	Overlay       bool
 }
 
 // EffectiveConfig is the result of loading and merging all applicable
@@ -69,6 +82,7 @@ type EffectiveConfig struct {
 	Organization LayerResult
 	User         LayerResult
 	Repo         LayerResult
+	LocalLayer   LayerResult
 	Local        *LocalConfig
 	Merged       *Config
 	// Allowed is the resolved registry allowlist. It is nil when no layer
@@ -95,6 +109,22 @@ type LoadEffectiveOptions struct {
 	GlobalPath       string
 	RepoPath         string
 	LocalPath        string
+	FileOverlays     map[string][]byte
+}
+
+func (ec EffectiveConfig) LayerResults() []LayerResult {
+	return []LayerResult{ec.Organization, ec.User, ec.Repo, ec.LocalLayer}
+}
+
+func (ec EffectiveConfig) PresentLayers() []LayerResult {
+	all := ec.LayerResults()
+	present := make([]LayerResult, 0, len(all))
+	for _, layer := range all {
+		if layer.Config != nil || layer.Local != nil {
+			present = append(present, layer)
+		}
+	}
+	return present
 }
 
 // LoadEffective loads every applicable Configuration Layer, validates each
@@ -128,15 +158,15 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 	ec.Warnings = append(ec.Warnings, ec.Diagnostics.Warnings...)
 	LogManagedDiagnostics(ec.Diagnostics)
 
-	ec.User = loadEffectiveUser(opts.GlobalPath)
-	ec.Repo = loadEffectiveRepo(repoRoot, opts.RepoPath)
-	localCfg, localErrs := loadEffectiveLocal(localDir, opts.LocalPath)
-	ec.Local = localCfg
+	ec.User = loadEffectiveUser(opts.GlobalPath, opts.FileOverlays)
+	ec.Repo = loadEffectiveRepo(repoRoot, opts.RepoPath, opts.FileOverlays)
+	ec.LocalLayer = loadEffectiveLocal(localDir, opts.LocalPath, opts.FileOverlays)
+	ec.Local = ec.LocalLayer.Local
 
 	ec.Errors = append(ec.Errors, ec.Organization.Errors...)
 	ec.Errors = append(ec.Errors, ec.User.Errors...)
 	ec.Errors = append(ec.Errors, ec.Repo.Errors...)
-	ec.Errors = append(ec.Errors, localErrs...)
+	ec.Errors = append(ec.Errors, ec.LocalLayer.Errors...)
 
 	for _, err := range ec.Errors {
 		slog.Error("effective config layer error", "error", err)
@@ -236,22 +266,35 @@ func loadEffectiveOrganization(path string) (LayerResult, ManagedInstallationDia
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{canonicalErr}}
 		return lr, inspectManagedConfig(path, canonicalErr, nil, Organization, lr.Errors)
 	}
-	data, readErr := os.ReadFile(canonicalPath)
-	if readErr == nil {
-		cfg, err := loadConfigTreeFromRootData(canonicalPath, data, organizationLayer)
-		lr := LayerResult{Source: Organization, Path: path, Config: cfg}
-		if err != nil {
-			lr.Errors = []error{err}
-		}
-		return lr, inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
+	if trustErr := ValidateOrganizationConfigAuthority(path); trustErr != nil {
+		lr := LayerResult{Source: Organization, Path: path, Errors: []error{trustErr}}
+		d := inspectManagedConfig(path, nil, nil, Organization, lr.Errors)
+		d.Validation = "untrusted"
+		d.Warnings = append(d.Warnings, trustErr)
+		return lr, d
 	}
-	if !errors.Is(readErr, os.ErrNotExist) {
+
+	data, readErr := readConfigFile(canonicalPath)
+	if readErr != nil {
 		lr := LayerResult{Source: Organization, Path: path, Errors: []error{fmt.Errorf("read organization config %q: %w", path, readErr)}}
 		return lr, inspectManagedConfig(path, readErr, nil, Organization, lr.Errors)
 	}
-
-	lr := LayerResult{Source: SourceUnset, Path: path}
-	return lr, inspectManagedConfig(path, readErr, nil, SourceUnset, nil)
+	lr := loadOrganizationConfig(path, canonicalPath, data)
+	lr.Path = path
+	if len(lr.Reads) > 0 {
+		lr.Reads[0].RequestedPath, _ = filepath.Abs(path)
+	}
+	d := inspectManagedConfig(path, nil, lr.Config, lr.Source, lr.Errors)
+	if len(lr.Errors) == 0 && lr.Config != nil && organizationHasRemoteRequirements(lr.Config) {
+		if trustErr := ValidateOrganizationTrustUnit(path, true, true); trustErr != nil {
+			lr.Errors = append(lr.Errors, trustErr)
+			lr.Config = nil
+			d.State = ManagedInstallationUnmanaged
+			d.Validation = "blocked"
+			d.Warnings = append(d.Warnings, trustErr)
+		}
+	}
+	return lr, d
 }
 
 // LoadOrganizationConfig reads the externally managed organization config at
@@ -267,7 +310,25 @@ func LoadOrganizationConfig() (*Config, error) {
 	return lr.Config, nil
 }
 
-func loadEffectiveUser(override string) LayerResult {
+func organizationHasRemoteRequirements(cfg *Config) bool {
+	for _, entry := range cfg.Registries {
+		if !entry.IsLocal() {
+			return true
+		}
+	}
+	return false
+}
+
+func loadOrganizationConfig(path, canonicalPath string, data []byte) LayerResult {
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, organizationLayer, nil)
+	lr := LayerResult{Source: Organization, Path: path, Config: cfg, Reads: reads}
+	if err != nil {
+		lr.Errors = []error{err}
+	}
+	return lr
+}
+
+func loadEffectiveUser(override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		var err error
@@ -277,50 +338,105 @@ func loadEffectiveUser(override string) LayerResult {
 		}
 	}
 
-	cfg, err := loadConfigTree(path, userLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
+	canonicalPath, data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return LayerResult{Source: UserPersonal, Path: path}
 		}
-		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{err}}
+		return LayerResult{Source: UserPersonal, Path: path, Errors: []error{readErr}}
 	}
-	return LayerResult{Source: UserPersonal, Path: path, Config: cfg}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, userLayer, overlays)
+	lr := LayerResult{Source: UserPersonal, Path: path, Config: cfg, Reads: reads}
+	if err != nil {
+		lr.Errors = []error{err}
+	}
+	return lr
 }
 
-func loadEffectiveRepo(repoRoot, override string) LayerResult {
-	if IsHomeDir(repoRoot) {
-		return LayerResult{Source: RepoCommitted, Path: ""}
-	}
+func loadEffectiveRepo(repoRoot, override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		path = ProjectConfigPath(repoRoot)
 	}
+	if IsHomeDir(repoRoot) {
+		return LayerResult{Source: RepoCommitted, Path: path}
+	}
 
-	cfg, err := loadConfigTree(path, repoLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
+	canonicalPath, data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return LayerResult{Source: RepoCommitted, Path: path}
 		}
-		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{err}}
+		return LayerResult{Source: RepoCommitted, Path: path, Errors: []error{readErr}}
 	}
-	return LayerResult{Source: RepoCommitted, Path: path, Config: cfg}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, repoLayer, overlays)
+	lr := LayerResult{Source: RepoCommitted, Path: path, Config: cfg, Reads: reads}
+	if err != nil {
+		lr.Errors = []error{err}
+	}
+	return lr
 }
 
-func loadEffectiveLocal(localDir, override string) (*LocalConfig, []error) {
-	if IsHomeDir(localDir) {
-		return nil, nil
-	}
+func loadEffectiveLocal(localDir, override string, overlays map[string][]byte) LayerResult {
 	path := override
 	if path == "" {
 		path = LocalConfigPath(localDir)
 	}
-
-	loaded, err := loadConfigTree(path, localLayer)
-	if err != nil {
-		if rootConfigNotExist(path, err) {
-			return nil, nil
-		}
-		return nil, []error{err}
+	if IsHomeDir(localDir) {
+		return LayerResult{Source: RepoPersonal, Path: path}
 	}
-	return configAsLocal(loaded), nil
+
+	canonicalPath, data, readErr := readEffectiveLayer(path, overlays)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return LayerResult{Source: RepoPersonal, Path: path}
+		}
+		return LayerResult{Source: RepoPersonal, Path: path, Errors: []error{fmt.Errorf("read local config %q: %w", path, readErr)}}
+	}
+	cfg, reads, err := loadConfigTreeWithReads(path, canonicalPath, data, localLayer, overlays)
+	lr := LayerResult{Source: RepoPersonal, Path: path, Local: configAsLocal(cfg), Reads: reads}
+	if err != nil {
+		lr.Errors = []error{err}
+	}
+	return lr
+}
+
+func readEffectiveLayer(path string, overlays map[string][]byte) (string, []byte, error) {
+	canonical, err := canonicalEffectiveLayerPath(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if data, ok := overlays[path]; ok {
+		bounded, err := boundedConfigData(data)
+		return canonical, bounded, err
+	}
+	if data, ok := overlays[canonical]; ok {
+		bounded, err := boundedConfigData(data)
+		return canonical, bounded, err
+	}
+	data, err := readConfigFile(path)
+	return canonical, data, err
+}
+
+func canonicalEffectiveLayerPath(path string) (string, error) {
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path %q: %w", path, err)
+	}
+	missing := []string{}
+	for {
+		canonical, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			return filepath.Clean(canonical), nil
+		}
+		parent := filepath.Dir(current)
+		if !errors.Is(err, os.ErrNotExist) || parent == current {
+			return "", fmt.Errorf("resolve config path %q: %w", path, err)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }

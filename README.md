@@ -116,17 +116,18 @@ agent-marketplace install \
 Day-to-day operation comes down to a handful of commands:
 
 ```bash
-agent-marketplace sync          # reconcile config -> disk (idempotent)
-agent-marketplace sync --check  # report drift only; exits 1 if out of sync (CI/pre-commit)
-agent-marketplace status        # what's installed, from where, and any drift/errors
-agent-marketplace update        # pull the latest commit for each pinned ref
+agent-marketplace sync          # reconcile writable Git locks and materialized output
+agent-marketplace sync --check  # report lock/output drift only; exits 1 if out of sync
+agent-marketplace status        # exact locks, installed resources, and drift/errors
+agent-marketplace update        # advance Git locks, then synchronize
 agent-marketplace list          # browse resources from your configured registries
 ```
 
-> **`sync` is deterministic and idempotent.** The same config always produces
-> the same files. Delete the generated `.factory/` directory and re-run
-> `sync` — you get the identical result back. That is why `sync --check` is
-> safe to wire into pre-commit hooks and CI.
+> **Locked sync is deterministic and idempotent.** Once config and generated
+> locks agree, repeated syncs materialize the same exact Git snapshots and
+> files. Delete the generated `.factory/` directory and re-run `sync` — it is
+> recreated from those snapshots. Use `sync --locked` when config or lock
+> changes must be refused, and `sync --check` for a non-mutating CI check.
 
 ---
 
@@ -160,8 +161,11 @@ How it works from a user's point of view:
 - The CLI stamps every resource with the layer it came from, which is why
   `status` can show you the exact origin (and `--scope` lets you pick which
   file an `install`/`remove` writes to).
-- `sync` automatically adds `.agents/config.local.yaml` to `.gitignore` so your
-  personal overrides never get committed.
+- `.agents/config.local.yaml` and `.agents/lock.local.yaml` are personal and
+  gitignored. The repository ignore rule also covers transient
+  `/.agents/*.dependencytxn.lock` handles used while config and lock pairs are
+  committed; those transaction handles are not lockfiles and must not be
+  committed.
 
 A minimal committed repo config looks like this — note that the resource
 selection lives **inside** the registry entry, namespaced by `url` + `ref`
@@ -618,8 +622,10 @@ Instead of a Git URL, a registry entry can point at a local directory — handy
 for developing or testing resources before publishing them. A URL is treated as
 a local path when it is `.`, starts with `./`, `/`, or `~/`, and does **not**
 end in `.git`. Parent traversal (`..` or a path containing a `..` component) is
-rejected. A `ref` on an accepted local directory is simply ignored rather than
-making it remote:
+rejected. A hostless `file://` URL is local only when its decoded path does not
+end in `.git`; `file:///path/to/registry.git` is a remote Git registry, requires
+a `ref`, and participates in lockfiles. A `ref` on an accepted local directory
+is ignored rather than making it remote:
 
 ```yaml
 registries:
@@ -641,7 +647,42 @@ registries:
 
 When `url` is present, `path` instead means a subdirectory within that registry.
 Local registries are read directly from disk (no clone or fetch), are excluded
-from `update`, and show `local` as their cache freshness in `status`.
+from `update` and Git lockfiles, and show `local` as their cache freshness in
+`status`.
+
+---
+
+## Git lockfiles
+
+Remote Git registries resolve to exact commits in a generated lock owned by the
+same configuration layer:
+
+| Configuration layer | Generated lock |
+|---|---|
+| `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` |
+| `~/.agents/config.yaml` | `~/.agents/lock.yaml` |
+| `.agents/config.yaml` | `.agents/lock.yaml` |
+| `.agents/config.local.yaml` | `.agents/lock.local.yaml` |
+
+Commit `.agents/lock.yaml` with the repository config. The personal-local lock
+is gitignored. An organization may deploy its lock beside its config. When that
+lock is absent, consumer commands treat the organization requirements as
+intentionally unlocked and may inspect or refresh the mutable cache without
+creating a lock. A present organization lock is exact and fail-closed.
+
+A normal `sync` retains compatible resolutions, reconciles writable stale
+locks, and materializes from verified exact snapshots, except for intentionally
+unlocked organization requirements. Use `sync --locked` when config and lock
+changes must be refused, or `sync --check` to check lock and output drift without
+writing. Use `lock --upgrade` or `update` to advance Git resolutions intentionally.
+Lock reconciliation holds the shared exact-cache lease from snapshot acquisition
+through config-and-lock publication, so garbage collection cannot remove a new
+snapshot before its lock becomes reachable. Config edits made by install, remove,
+update, and the TUI publish config and lock state as one dependency transaction.
+
+Locking in this foundation applies only to Git registries. Plain filesystem
+registries stay live, and hosted Marketplace lock schema, acquisition adapters,
+and integration are not implemented.
 
 ---
 
@@ -666,11 +707,17 @@ agent-marketplace remove --from <url> [--path <dir>]         Remove an entire ad
 agent-marketplace remove <collection>            Remove a collection reference
 agent-marketplace remove ... --scope {user,repo,local}      Choose which config layer to edit
 
-agent-marketplace sync                           Deterministic materialization from merged config
-agent-marketplace sync --check                   Report drift only; exits 1 if out of sync
-agent-marketplace update                         Pull the latest commit for each pinned ref
-agent-marketplace update --bump                  Discover and bump to newer refs
-agent-marketplace status                         Resources, harnesses, targets, refs, source layer, drift
+agent-marketplace lock                           Create or reconcile user, repo, and local Git locks
+agent-marketplace lock --check                   Report lock changes without writing
+agent-marketplace lock --scope organization      Admin-only organization lock generation/verification
+agent-marketplace lock --upgrade                 Advance Git resolutions to current refs
+agent-marketplace sync                           Materialize from exact Git snapshots; reconcile stale writable locks
+agent-marketplace sync --locked                  Require fresh locks; never update config or locks
+agent-marketplace sync --check                   Report lock or output drift only; exits 1 if out of sync
+agent-marketplace sync --offline                 Use only plain local directories and verified exact caches
+agent-marketplace update                         Advance Git locks and synchronize resources
+agent-marketplace update --bump                  Rewrite eligible refs, advance locks, and synchronize
+agent-marketplace status                         Exact locks, resources, harnesses, refs, source layer, drift
 agent-marketplace convert --from <h> --to <h> --out <dir> <path>   One-shot layout conversion
 agent-marketplace doctor                         Local harness/root diagnostics, Devin CLI detection
 agent-marketplace doctor --repair                Preview (and on a terminal, confirm) Devin/Codex ownership recovery
@@ -706,6 +753,8 @@ agent-marketplace tui                            Launch the interactive browser 
 `status` runs a dry-run materialization, so it reports the exact paths `sync`
 would write. It includes:
 
+- **EXACT REGISTRY LOCKS** — each locked Git source with its configuration
+  layer, canonical origin, declared ref, exact commit, and immutable snapshot.
 - **SYNCED RESOURCES** — each selected resource with its `KIND`, `NAME`,
   `HARNESS`, `TARGET`, `SOURCE` layer, originating registry ref, and cache
   freshness.

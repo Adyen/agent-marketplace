@@ -117,6 +117,26 @@ func TestHelpListsPlaceholderSubcommands(t *testing.T) {
 	}
 }
 
+func canonicalTempDir(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("canonicalize temporary directory: %v", err)
+	}
+	return canonical
+}
+
+func requireOrganizationLock(t testing.TB, configPath string) {
+	t.Helper()
+	if err := os.Chmod(configPath, 0o600); err != nil {
+		t.Fatalf("secure organization config: %v", err)
+	}
+	if output, err := executeCommand("lock", "--scope", "organization"); err != nil {
+		t.Fatalf("create trusted organization lock: %v\n%s", err, output)
+	}
+}
+
 func executeCommand(args ...string) (string, error) {
 	return executeCommandContext(context.Background(), args...)
 }

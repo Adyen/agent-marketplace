@@ -53,8 +53,8 @@ registries:
     mcp:
       - %s
 `
-	env.WriteFile("/etc/agent-marketplace/org-alpha.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
-	env.WriteFile("/etc/agent-marketplace/org-beta.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
+	env.WriteFile("/etc/agent-marketplace/devin-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
+	env.WriteFile("/etc/agent-marketplace/devin-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
 
 	// Given: A FIFO makes the first sync block while reading the aggregate, which is
 	// inside the ownership critical section. Once its writer opens, replace the
@@ -75,15 +75,18 @@ registries:
 
 	// When: Run the alpha sync into the FIFO, then overlap it with a fail-fast beta sync.
 	results := make([]ExecResult, 2)
-	orgAlpha, err := env.resolvePath("/etc/agent-marketplace/org-alpha.yaml")
+	orgAlpha, err := env.resolvePath("/etc/agent-marketplace/devin-alpha/config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgBeta, err := env.resolvePath("/etc/agent-marketplace/org-beta.yaml")
+	orgBeta, err := env.resolvePath("/etc/agent-marketplace/devin-beta/config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	orgs := []string{orgAlpha, orgBeta}
+	for _, org := range orgs {
+		env.MustLockOrganizationConfig(org)
+	}
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
@@ -92,10 +95,7 @@ registries:
 		}, "sync")
 	}()
 
-	fifoWriter, err := os.OpenFile(mcpPath, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fifoWriter := openFIFOWriter(t, mcpPath, alphaDone, &results[0])
 	seedPath := mcpPath + ".seed"
 	if err := os.WriteFile(seedPath, []byte(seed), 0o600); err != nil {
 		_ = fifoWriter.Close()
@@ -124,7 +124,7 @@ registries:
 	if err := fifoWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	<-alphaDone
+	waitForProcess(t, "alpha", alphaDone)
 
 	// After the forced overlap proves exclusion, beta succeeds normally and
 	// exercises the serialized stale-entry prune that the original test covered.

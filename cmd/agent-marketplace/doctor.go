@@ -299,10 +299,12 @@ func writeDoctorDevinSection(out io.Writer, opts doctorOptions, ec config.Effect
 
 func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot string) error {
 	slog.Debug("doctor prerequisite resolve start")
-	resolved := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		RepoRoot:    repoRoot,
-		CatalogMode: catalog.LoadModeInspect,
+	resolved, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
+		RepoRoot:           repoRoot,
+		CatalogMode:        catalog.LoadModeInspect,
+		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 	var requirementDiagnostics []error
 	for _, resolveErr := range resolved.ResolveErrors {
 		var warning *resolver.UnmetRequirementWarning

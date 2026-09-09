@@ -197,6 +197,10 @@ registries:
 `)
 	withWorkingDir(t, repoRoot)
 
+	if out, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("seed repo lock: %v\n%s", err, out)
+	}
+
 	_, err := executeCommand("remove", "does-not-exist")
 	if err == nil {
 		t.Fatal("expected error removing a skill that is not enabled, got nil")
@@ -585,6 +589,11 @@ registries:
         - vm-lifecycle
 `)
 	withWorkingDir(t, repoRoot)
+
+	if out, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed local lock and materialization: %v\n%s", err, out)
+	}
+	assertFileExists(t, filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle", "SKILL.md"))
 
 	// Any command that loads the local config must accept the apiVersion line.
 	if out, err := executeCommand("remove", "vm-lifecycle", "--scope", "local"); err != nil {

@@ -146,6 +146,27 @@ func TestBundleTreeFileBackedResourceHasOneEntry(t *testing.T) {
 	}
 }
 
+func TestBundleTreeUsesAuthoritativeResourceSourcePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(t.TempDir(), "removed-cache", "skill", "SKILL.md")
+	r := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{
+		Kind:     ir.KindSkill,
+		Name:     "skill",
+		Path:     stalePath,
+		Resource: ir.NewSkill("skill", "", "", nil, nil, ir.SourceRef{File: filepath.Join(root, "SKILL.md")}),
+	}}}
+	tree, err := bundleTreeForRow(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree.selectedPath() != "SKILL.md" {
+		t.Fatalf("selected path = %q, want SKILL.md", tree.selectedPath())
+	}
+}
+
 func TestRenderBundleFileCapsAndRendersSelectedPath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "selected.md"), []byte("# Selected\n\ncontent"), 0o644); err != nil {

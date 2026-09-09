@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -2006,69 +2008,220 @@ metadata:
 	}
 }
 
-func TestLoadRegistries_MissingLocalPathReportsClearError(t *testing.T) {
-	repoRoot := t.TempDir()
-	missing := filepath.Join(repoRoot, "missing-dir")
+func TestExactSnapshotDiscoveryDoesNotAcquireLegacyCacheLease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prepareExactLease, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepareExactLease()
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./missing-dir",
-			Source: config.RepoCommitted,
-		}},
-	}
+	legacyLeaseHeld := make(chan struct{})
+	releaseLegacyLease := make(chan struct{})
+	legacyLeaseDone := make(chan error, 1)
+	go func() {
+		_, lockErr := cache.WithCacheMutationLock(func() (struct{}, error) {
+			close(legacyLeaseHeld)
+			<-releaseLegacyLease
+			return struct{}{}, nil
+		})
+		legacyLeaseDone <- lockErr
+	}()
+	<-legacyLeaseHeld
 
-	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
-	if len(result.Errors) != 1 {
-		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
+	discovered := make(chan struct{}, 1)
+	loadDone := make(chan LoadResult, 1)
+	repoRoot, snapshotRoot := t.TempDir(), t.TempDir()
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: "https://example.invalid/exact.git", Ref: "main"}}}
+	go func() {
+		loadDone <- LoadRegistries(cfg, repoRoot, LoadModeInspect,
+			WithExactSnapshots(func(config.RegistryEntry) (string, string, error) {
+				return snapshotRoot, "exact-snapshot", nil
+			}),
+			WithDiscoverFunc(func(string, string) (LoadedCatalog, error) {
+				discovered <- struct{}{}
+				return LoadedCatalog{}, nil
+			}),
+		)
+	}()
+
+	var result LoadResult
+	select {
+	case result = <-loadDone:
+	case <-time.After(time.Second):
+		close(releaseLegacyLease)
+		<-loadDone
+		<-legacyLeaseDone
+		t.Fatal("exact snapshot discovery blocked on the legacy mutable-cache lease")
 	}
-	want := fmt.Sprintf("local registry path does not exist: %s", missing)
-	if !strings.Contains(result.Errors[0].Error(), want) {
-		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	close(releaseLegacyLease)
+	if err := <-legacyLeaseDone; err != nil {
+		t.Fatal(err)
 	}
-	if len(result.Catalogs) != 0 {
-		t.Fatalf("expected no catalogs for missing local path, got %d", len(result.Catalogs))
+	if len(result.Errors) > 0 {
+		t.Fatalf("exact snapshot discovery errors: %v", result.Errors)
+	}
+	select {
+	case <-discovered:
+	default:
+		t.Fatal("exact snapshot was not discovered")
 	}
 }
 
-func TestLoadRegistries_MissingLocalPathSkippedInCachedNoFetch(t *testing.T) {
-	repoRoot := t.TempDir()
-
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./missing-dir",
-			Source: config.RepoCommitted,
-		}},
+func TestPrepareFetchJobsExactSnapshotPreservesCommitQualifiedCatalogKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	entry := config.RegistryEntry{
+		URL:  "https://example.invalid/team/resources.git",
+		Ref:  "main",
+		Path: "bundles/review",
 	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{entry}}
+	commitQualifiedKey := entry.URL + "@sha1:" + strings.Repeat("a", 40) + ":" + entry.Path
 
-	result := LoadRegistries(cfg, repoRoot, LoadModeCachedNoFetch)
+	requests, jobs, errs := prepareFetchJobs(cfg, "", LoadModeRefresh, "", func(config.RegistryEntry) (string, string, error) {
+		return "/exact/snapshot", commitQualifiedKey, nil
+	})
+	if len(errs) != 0 || len(jobs) != 0 || len(requests) != 1 {
+		t.Fatalf("prepareFetchJobs exact result = %d requests, %d jobs, errors %v", len(requests), len(jobs), errs)
+	}
+	if got := cfg.Registries[0].CatalogKey; got != commitQualifiedKey {
+		t.Fatalf("exact snapshot catalog key = %q, want commit-qualified key %q", got, commitQualifiedKey)
+	}
+	if got := requests[0].catalogKey; got != commitQualifiedKey {
+		t.Fatalf("exact snapshot request key = %q, want commit-qualified key %q", got, commitQualifiedKey)
+	}
+	if requests[0].basePath != "/exact/snapshot" {
+		t.Fatalf("exact snapshot base path = %q", requests[0].basePath)
+	}
+}
+
+func TestExactSnapshotDoesNotInventSyntheticEntryOverlap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	pluginDir := filepath.Join(snapshot, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	url := "https://example.invalid/team/resources.git"
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "main", SourceHarness: "factory"},
+		{URL: url, Ref: "main", Path: "plugin", SourceHarness: "factory"},
+	}}
+	plugin := LoadedCatalog{Entries: []Entry{{Kind: ir.KindSkill, Name: "review"}}}
+	root := LoadedCatalog{Entries: plugin.Entries, SubBundles: map[string]LoadedCatalog{pluginDir: plugin}}
+	result := LoadRegistries(cfg, "", LoadModeRefresh,
+		WithExactSnapshots(func(entry config.RegistryEntry) (string, string, error) {
+			return snapshot, url + "@sha1:" + strings.Repeat("a", 40) + ":" + entry.Path, nil
+		}),
+		WithDiscoverFunc(func(dir, _ string) (LoadedCatalog, error) {
+			if dir == snapshot {
+				return root, nil
+			}
+			return plugin, nil
+		}),
+	)
 	if len(result.Errors) != 0 {
-		t.Fatalf("expected no errors in CachedNoFetch mode, got %v", result.Errors)
-	}
-	if len(result.Catalogs) != 0 {
-		t.Fatalf("expected no catalogs when skipping missing local path, got %d", len(result.Catalogs))
+		t.Fatalf("exact snapshot invented overlap errors: %v", result.Errors)
 	}
 }
 
-func TestLoadRegistries_LocalPathFileReportsNotDir(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, "not-a-dir"), []byte("hi"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
+func TestLoadRegistriesKeepsDistinctExactSnapshotCatalogs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	release, err := cache.AcquireExactGitNamespaceLease()
+	if err != nil {
+		t.Fatal(err)
 	}
+	release()
+	snapshot := filepath.Join(t.TempDir(), "snapshot")
+	skillDir := filepath.Join(snapshot, "bundles", "review", "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+name: review
+description: Review skill
+metadata:
+  tags: []
+---
 
-	cfg := &config.Config{
-		Registries: []config.RegistryEntry{{
-			URL:    "./not-a-dir",
-			Source: config.RepoCommitted,
-		}},
-	}
+# Review
+`)
 
-	result := LoadRegistries(cfg, repoRoot, LoadModeInspect)
-	if len(result.Errors) != 1 {
-		t.Fatalf("expected exactly 1 error, got %d: %v", len(result.Errors), result.Errors)
+	url := "https://example.invalid/team/resources.git"
+	path := "bundles/review"
+	firstIdentity := url + "@sha1:" + strings.Repeat("a", 40) + ":" + path
+	secondIdentity := url + "@sha1:" + strings.Repeat("b", 40) + ":" + path
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: url, Ref: "main", Path: path, Source: config.UserPersonal, SourceHarness: "factory"},
+		{URL: url, Ref: "main", Path: path, Source: config.UserPersonal, SourceHarness: "factory"},
+	}}
+	calls := 0
+	result := LoadRegistries(cfg, "", LoadModeRefresh, WithExactSnapshots(func(config.RegistryEntry) (string, string, error) {
+		calls++
+		if calls == 1 {
+			return snapshot, firstIdentity, nil
+		}
+		return snapshot, secondIdentity, nil
+	}))
+	if len(result.Errors) != 0 {
+		t.Fatalf("exact snapshot load errors = %v", result.Errors)
 	}
-	want := "local registry path is not a directory:"
-	if !strings.Contains(result.Errors[0].Error(), want) {
-		t.Fatalf("expected error containing %q, got %q", want, result.Errors[0].Error())
+	if len(result.Catalogs) != 2 {
+		t.Fatalf("exact snapshot catalogs = %d, want 2: %v", len(result.Catalogs), catalogKeyList(result.Catalogs))
+	}
+	for _, identity := range []string{firstIdentity, secondIdentity} {
+		loaded, ok := result.Catalogs[identity]
+		if !ok {
+			t.Fatalf("missing catalog for exact snapshot identity %q", identity)
+		}
+		if len(loaded.Entries) != 1 || loaded.Entries[0].Name != "review" {
+			t.Fatalf("catalog %q entries = %#v", identity, loaded.Entries)
+		}
+	}
+	if cfg.Registries[0].CatalogKey != firstIdentity || cfg.Registries[1].CatalogKey != secondIdentity {
+		t.Fatalf("configured exact catalog keys = %q, %q", cfg.Registries[0].CatalogKey, cfg.Registries[1].CatalogKey)
+	}
+}
+
+func TestPrepareFetchJobsAllowsMutableSnapshotFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	entry := config.RegistryEntry{URL: "https://example.invalid/team/resources.git", Ref: "main"}
+	cfg := &config.Config{Registries: []config.RegistryEntry{entry}}
+
+	requests, jobs, errs := prepareFetchJobs(cfg, "", LoadModeRefresh, "", func(config.RegistryEntry) (string, string, error) {
+		return "", "", nil
+	})
+	if len(errs) != 0 || len(jobs) != 1 || len(requests) != 1 {
+		t.Fatalf("prepareFetchJobs fallback result = %d requests, %d jobs, errors %v", len(requests), len(jobs), errs)
+	}
+	if requests[0].job != jobs[0] || requests[0].basePath != "" {
+		t.Fatalf("mutable fallback request = %#v, job=%#v", requests[0], jobs[0])
+	}
+}
+
+func TestRebaseCatalogEntryPathsPreservesExactResourceSource(t *testing.T) {
+	snapshotRoot := t.TempDir()
+	logicalRoot := filepath.Join(t.TempDir(), "mutable", "main")
+	sourceFile := filepath.Join(snapshotRoot, "skills", "review", "SKILL.md")
+	skill := ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{File: "skills/review/SKILL.md", Line: 1})
+	skill.SupportFiles = []string{"scripts/review.sh"}
+	loaded := LoadedCatalog{Entries: []Entry{{Kind: ir.KindSkill, Name: "review", Resource: skill, Path: sourceFile}}}
+
+	rebaseCatalogEntryPaths(&loaded, snapshotRoot, logicalRoot)
+
+	if got, want := loaded.Entries[0].Path, filepath.Join(logicalRoot, "skills", "review", "SKILL.md"); got != want {
+		t.Fatalf("rebased entry path = %q, want %q", got, want)
+	}
+	if got := skill.Source.File; got != sourceFile {
+		t.Fatalf("resource source path = %q, want immutable snapshot path %q", got, sourceFile)
+	}
+	if got := skill.SupportFiles; len(got) != 1 || got[0] != "scripts/review.sh" {
+		t.Fatalf("resource support files = %v, want intrinsic support path", got)
 	}
 }
 

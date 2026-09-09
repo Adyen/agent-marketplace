@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,32 +13,36 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
+	infraOrigin, infraWorking := createBareRepoWithWorkingClone(t, "status-infra.git")
+	writeSkill(t, infraWorking, "vm-lifecycle", "VM lifecycle", []string{"ops"})
+	writeSkill(t, infraWorking, "shared-skill", "Shared", []string{"shared"})
+	commitAndPushAll(t, infraWorking, "infra resources")
+	securityOrigin, securityWorking := createBareRepoWithWorkingClone(t, "status-security.git")
+	writeSkill(t, securityWorking, "shared-skill", "Shared", []string{"shared"})
+	commitAndPushAll(t, securityWorking, "security resources")
+
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
-  - url: https://example.com/infra.git
+  - url: `+infraOrigin+`
     ref: main
     skills:
       - vm-lifecycle
       - shared-skill
-  - url: https://example.com/security.git
+  - url: `+securityOrigin+`
     ref: main
     skills:
       - shared-skill
 `)
-
-	vmLifecycleTarget := writeCachedSkill(t, "https://example.com/infra.git", "main", "vm-lifecycle", []string{"ops"})
-	writeCachedSkill(t, "https://example.com/infra.git", "main", "shared-skill", []string{"shared"})
-	writeCachedSkill(t, "https://example.com/security.git", "main", "shared-skill", []string{"shared"})
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/infra.git", "main"), time.Now().Add(-2*time.Hour))
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/security.git", "main"), time.Now().Add(-2*time.Hour))
 
 	// Create an orphaned skill as a managed SYMLINK (pointing to the cache so
 	// it is recognized as agent-marketplace-managed). User-owned symlinks
@@ -59,6 +64,7 @@ registries:
 	}
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("status")
 	if err != nil {
@@ -75,18 +81,17 @@ registries:
 		"REF",
 		"CACHE",
 		"vm-lifecycle",
-		vmLifecycleTarget,
-		"https://example.com/infra.git",
+		infraOrigin,
 		"main",
-		"last fetched:",
+		"locked: sha1:",
 		"ORPHANED FILES",
 		"orphaned-skill",
 		filepath.Join(repoRoot, ".factory", "skills", "orphaned-skill"),
 		"NAME COLLISIONS",
 		"shared-skill",
 		"using",
-		"https://example.com/infra",
-		"https://example.com/security",
+		strings.TrimSuffix(infraOrigin, ".git"),
+		strings.TrimSuffix(securityOrigin, ".git"),
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", needle, output)
@@ -94,41 +99,89 @@ registries:
 	}
 }
 
-func TestStatusCommandMarksFreshAndStaleCaches(t *testing.T) {
+func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "status-gc.git")
+	writeSkill(t, working, "keeper", "Keeper", nil)
+	commitAndPushAll(t, working, "keeper")
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills: [keeper]
+`)
+	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
+
+	entered := make(chan struct{})
+	resume := make(chan struct{})
+	previous := runStatusMaterialize
+	runStatusMaterialize = func(ctx context.Context, root string, artifacts []resolver.ResolvedArtifact, opts ...materialize.RunOption) (*materialize.Report, error) {
+		close(entered)
+		<-resume
+		return previous(ctx, root, artifacts, opts...)
+	}
+	t.Cleanup(func() { runStatusMaterialize = previous })
+
+	statusDone := make(chan error, 1)
+	go func() { statusDone <- runStatus(context.Background(), &bytes.Buffer{}, time.Now()) }()
+	<-entered
+	gcDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		gcDone <- err
+	}()
+	select {
+	case err := <-gcDone:
+		t.Fatalf("GC completed while status consumed exact snapshot: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(resume)
+	if err := <-statusDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-gcDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusCommandMarksLockedCaches(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+
+	freshOrigin, freshWorking := createBareRepoWithWorkingClone(t, "status-fresh.git")
+	writeSkill(t, freshWorking, "fresh-skill", "Fresh", []string{"fresh"})
+	commitAndPushAll(t, freshWorking, "fresh resource")
+	staleOrigin, staleWorking := createBareRepoWithWorkingClone(t, "status-stale.git")
+	writeSkill(t, staleWorking, "stale-skill", "Stale", []string{"stale"})
+	commitAndPushAll(t, staleWorking, "stale resource")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
-  - url: https://example.com/fresh.git
+  - url: `+freshOrigin+`
     ref: main
     skills:
       - fresh-skill
-  - url: https://example.com/stale.git
+  - url: `+staleOrigin+`
     ref: main
     skills:
       - stale-skill
 `)
 
-	writeCachedSkill(t, "https://example.com/fresh.git", "main", "fresh-skill", []string{"fresh"})
-	writeCachedSkill(t, "https://example.com/stale.git", "main", "stale-skill", []string{"stale"})
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/fresh.git", "main"), time.Now().Add(-2*time.Hour))
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/stale.git", "main"), time.Now().Add(-48*time.Hour))
-
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("status")
 	if err != nil {
 		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "fresh-skill") || !strings.Contains(output, "last fetched:") {
-		t.Fatalf("expected fresh skill to report last fetched time, got:\n%s", output)
-	}
-
-	if !strings.Contains(output, "stale-skill") || !strings.Contains(output, "stale") {
-		t.Fatalf("expected stale skill to be marked stale, got:\n%s", output)
+	for _, skill := range []string{"fresh-skill", "stale-skill"} {
+		if !strings.Contains(output, skill) || !strings.Contains(output, "locked: sha1:") {
+			t.Fatalf("expected %s to report exact lock freshness, got:\n%s", skill, output)
+		}
 	}
 }
 
@@ -136,22 +189,22 @@ func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
+	origin, working := createBareRepoWithWorkingClone(t, "status-path-specific.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"ops"})
+	commitAndPushAll(t, working, "path-specific resource")
+
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
-  - url: https://example.com/awesome-ai.git
+  - url: `+origin+`
     ref: main
     path: skills
     skills:
       - vm-lifecycle
 `)
 
-	// Create the cache at the base path (no ":HASH" suffix on disk).
-	cachePath := cache.RegistryCachePath("https://example.com/awesome-ai.git", "main")
-	writeSkill(t, cachePath, "vm-lifecycle", "vm-lifecycle", []string{"ops"})
-	setCacheModTime(t, cachePath, time.Now().Add(-2*time.Hour))
-
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("status")
 	if err != nil {
@@ -161,8 +214,8 @@ registries:
 	if strings.Contains(output, "missing") {
 		t.Fatalf("path-specific entry should NOT show 'missing' cache, got:\n%s", output)
 	}
-	if !strings.Contains(output, "last fetched:") {
-		t.Fatalf("expected cache freshness to report 'last fetched:', got:\n%s", output)
+	if !strings.Contains(output, "locked: sha1:") {
+		t.Fatalf("expected path-specific cache to report its exact lock, got:\n%s", output)
 	}
 }
 
@@ -170,10 +223,15 @@ func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
+	origin, working := createBareRepoWithWorkingClone(t, "status-excluded.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"ops"})
+	writeSkill(t, working, "log-triage", "Log triage", []string{"ops"})
+	commitAndPushAll(t, working, "excluded resources")
+
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
-  - url: https://example.com/infra.git
+  - url: `+origin+`
     ref: main
     skills:
       - vm-lifecycle
@@ -185,11 +243,8 @@ skills:
     - log-triage
 `)
 
-	writeCachedSkill(t, "https://example.com/infra.git", "main", "vm-lifecycle", []string{"ops"})
-	writeCachedSkill(t, "https://example.com/infra.git", "main", "log-triage", []string{"ops"})
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/infra.git", "main"), time.Now().Add(-2*time.Hour))
-
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("status")
 	if err != nil {
@@ -202,7 +257,7 @@ skills:
 		"REGISTRY",
 		"REF",
 		"log-triage",
-		"https://example.com/infra.git",
+		origin,
 		"main",
 	} {
 		if !strings.Contains(output, needle) {
@@ -219,18 +274,9 @@ func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: https://example.com/awesome-ai.git
-    ref: main
-    skills:
-      - valid-skill
-`)
-
-	cachePath := cache.RegistryCachePath("https://example.com/awesome-ai.git", "main")
-	writeSkill(t, cachePath, "valid-skill", "Valid skill", []string{"tested"})
-	writeFile(t, filepath.Join(cachePath, "skills", "broken-skill", "SKILL.md"), `---
+	origin, working := createBareRepoWithWorkingClone(t, "status-malformed.git")
+	writeSkill(t, working, "valid-skill", "Valid skill", []string{"tested"})
+	writeFile(t, filepath.Join(working, "skills", "broken-skill", "SKILL.md"), `---
 name: broken-skill
 description: [unterminated
 metadata:
@@ -240,9 +286,19 @@ metadata:
 
 # Broken
 `)
-	setCacheModTime(t, cachePath, time.Now().Add(-2*time.Hour))
+	commitAndPushAll(t, working, "malformed resource")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+registries:
+  - url: `+origin+`
+    ref: main
+    skills:
+      - valid-skill
+`)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("status")
 	if err != nil {
@@ -252,7 +308,7 @@ metadata:
 	for _, needle := range []string{
 		"ERRORS",
 		"broken-skill",
-		filepath.Join(cachePath, "skills", "broken-skill", "SKILL.md"),
+		filepath.Join("skills", "broken-skill", "SKILL.md"),
 		"did not find expected ',' or ']'",
 	} {
 		if !strings.Contains(output, needle) {
@@ -304,21 +360,27 @@ func TestStatusDriftSectionOutOfSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
+	origin, working := createBareRepoWithWorkingClone(t, "status-drift.git")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"ops"})
+	commitAndPushAll(t, working, "drift resource")
+
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 registries:
-  - url: https://example.com/infra.git
+  - url: `+origin+`
     ref: main
     skills:
       - vm-lifecycle
 `)
 
-	writeCachedSkill(t, "https://example.com/infra.git", "main", "vm-lifecycle", []string{"ops"})
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/infra.git", "main"), time.Now().Add(-2*time.Hour))
-
 	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed synchronized output: %v\n%s", err, output)
+	}
+	if err := os.RemoveAll(filepath.Join(repoRoot, ".factory", "skills", "vm-lifecycle")); err != nil {
+		t.Fatalf("remove materialized skill to create drift: %v", err)
+	}
 
-	// No sync yet — skill is configured but not on disk.
 	output, err := executeCommand("status")
 	if err != nil {
 		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
@@ -382,44 +444,23 @@ registries:
 	}
 	config.SetTestV3OrganizationConfigPath(t, orgPath)
 
-	writeCachedSkill(t, "https://example.com/org.git", "main", "managed-skill", []string{"ops"})
-	setCacheModTime(t, cache.RegistryCachePath("https://example.com/org.git", "main"), time.Now().Add(-2*time.Hour))
-
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("status")
-	if err != nil {
-		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("expected status to reject an untrusted organization authority:\n%s", output)
 	}
 
 	for _, needle := range []string{
-		"MANAGED INSTALLATION",
-		"true",
-		"validation: valid",
-		"managed-skill",
+		"organization.trust.config.writable",
 		"is writable by group or other (mode",
+		"wrong owner",
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", needle, output)
 		}
-	}
-}
-
-func writeCachedSkill(t *testing.T, url, ref, name string, tags []string) string {
-	t.Helper()
-
-	cachePath := cache.RegistryCachePath(url, ref)
-	writeSkill(t, cachePath, name, name, tags)
-	return filepath.Join(cachePath, "skills", name)
-}
-
-func setCacheModTime(t *testing.T, path string, modTime time.Time) {
-	t.Helper()
-
-	if err := os.Chtimes(path, modTime, modTime); err != nil {
-		t.Fatalf("chtimes %q: %v", path, err)
 	}
 }
 

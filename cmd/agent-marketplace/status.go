@@ -87,6 +87,7 @@ type statusView struct {
 	targetHarnesses []string
 	targetSource    config.Source
 	harnessTargets  []harnessTargetRow
+	lockMetadata    []pipeline.LockMetadata
 }
 
 func newStatusCmd() *cobra.Command {
@@ -99,13 +100,20 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
+var runStatusMaterialize = materialize.Run
+
 func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
+	if err := prepareDependencyTransactions(ctx, true); err != nil {
+		return err
+	}
 	repoRoot := config.FindRepoRoot()
 
-	result := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		RepoRoot:    repoRoot,
-		CatalogMode: catalog.LoadModeInspect,
+	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
+		RepoRoot:           repoRoot,
+		CatalogMode:        catalog.LoadModeInspect,
+		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -133,10 +141,14 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	if err != nil {
 		materializeErrs = append(materializeErrs, err)
 	}
-	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
-	if dryRunErr != nil {
-		slog.Warn("status drift check failed", "error", dryRunErr)
-		materializeErrs = append(materializeErrs, dryRunErr)
+	var dryRunReport *materialize.Report
+	if len(result.Errors) == 0 && err == nil {
+		var dryRunErr error
+		dryRunReport, dryRunErr = runStatusMaterialize(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		if dryRunErr != nil {
+			slog.Warn("status drift check failed", "error", dryRunErr)
+			materializeErrs = append(materializeErrs, dryRunErr)
+		}
 	}
 
 	// Build orphaned rows from files that would be removed.
@@ -197,6 +209,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 
 	statusRows := buildStatusRows(repoRoot, result.Resolved, cacheFreshness, dryRunReport)
+	applyExactLockFreshness(statusRows, result.LockMetadata)
 	requirementRows, resolveErrs := splitRequirementWarnings(result.ResolveErrors)
 	collisionRows := splitResolveErrors(resolveErrs)
 
@@ -239,6 +252,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		targetHarnesses: targetHarnesses,
 		targetSource:    result.TargetHarnessSource,
 		harnessTargets:  harnessTargets,
+		lockMetadata:    result.LockMetadata,
 	}); err != nil {
 		return err
 	}
@@ -300,6 +314,19 @@ func malformedSkillErrors(skills []skill.MalformedSkill) []error {
 		errs = append(errs, fmt.Errorf("malformed skill %q (%s/SKILL.md): %w", malformed.DirName, malformed.Path, malformed.Error))
 	}
 	return errs
+}
+
+func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
+	for i := range rows {
+		rowURL, rowErr := canonicalRegistryURL(rows[i].Registry)
+		for _, locked := range metadata {
+			lockedURL, lockedErr := canonicalRegistryURL(locked.URL)
+			if rows[i].Source == locked.Source && rows[i].Ref == locked.Ref && rowErr == nil && lockedErr == nil && rowURL == lockedURL {
+				rows[i].Cache = "locked: " + locked.Commit
+				break
+			}
+		}
+	}
 }
 
 func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cacheFreshness map[string]string, report *materialize.Report) []statusRow {
@@ -617,6 +644,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	targetHarnesses := view.targetHarnesses
 	targetSource := view.targetSource
 	harnessTargets := view.harnessTargets
+	lockMetadata := view.lockMetadata
 
 	if diag.Managed() {
 		if _, err := fmt.Fprintln(out, "MANAGED INSTALLATION"); err != nil {
@@ -652,6 +680,12 @@ func writeStatusSections(out io.Writer, view statusView) error {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+	}
+
+	if len(lockMetadata) > 0 {
+		if err := writeStatusTable(out, "EXACT REGISTRY LOCKS", []string{"SOURCE", "REGISTRY", "REF", "COMMIT", "SNAPSHOT"}, lockMetadataRowsToCells(lockMetadata)); err != nil {
 			return err
 		}
 	}
@@ -703,10 +737,17 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	}
 
 	// DRIFT section
-	if dryRunReport != nil {
-		if _, err := fmt.Fprintln(out, "DRIFT"); err != nil {
+	if _, err := fmt.Fprintln(out, "DRIFT"); err != nil {
+		return err
+	}
+	if dryRunReport == nil {
+		if _, err := fmt.Fprintln(out, "Unknown (exact registry view incomplete)"); err != nil {
 			return err
 		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+	} else {
 		if dryRunReport.InSync() {
 			if _, err := fmt.Fprintln(out, "In sync"); err != nil {
 				return err
@@ -791,6 +832,18 @@ func writeStatusTable(out io.Writer, title string, header []string, rows [][]str
 
 	_, err := fmt.Fprintln(out)
 	return err
+}
+
+func lockMetadataRowsToCells(rows []pipeline.LockMetadata) [][]string {
+	cells := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		snapshot := "missing"
+		if row.SnapshotAvailable {
+			snapshot = "available"
+		}
+		cells = append(cells, []string{row.Source.String(), row.URL, row.Ref, row.Commit, snapshot})
+	}
+	return cells
 }
 
 func statusRowsToCells(rows []statusRow) [][]string {

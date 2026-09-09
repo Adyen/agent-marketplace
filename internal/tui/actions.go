@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,10 +139,16 @@ func refreshSnapshot(ctx context.Context, repoRoot, homeDir string, generation r
 }
 
 func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
-	resolvedResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+	resolvedResult, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		RepoRoot:      repoRoot,
 		CatalogMode:   tuiCatalogLoadMode(mode),
 		SkipInventory: true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			OrganizationPath: config.OrganizationConfigPath(),
+			GlobalPath:       filepath.Join(homeDir, ".agents", "config.yaml"),
+			RepoPath:         config.ProjectConfigPath(repoRoot),
+			LocalPath:        config.LocalConfigPath(repoRoot),
+		},
 		Loaders: pipeline.Loaders{
 			Org:    loadOrgConfig,
 			Global: loadGlobalConfig,
@@ -152,7 +159,9 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			catalog.WithCloneOrPull(cloneOrPull),
 			catalog.WithDiscoverFunc(discoverCatalog),
 		},
+		ReadOnlyExactLocks: true,
 	})
+	defer releaseExactLease()
 
 	base := snapshotLoadedMsg{
 		catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
@@ -203,6 +212,9 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	var resolvedNames []string
+	// Copy detail bytes before any downstream work can yield long enough for a
+	// waiting GC to run immediately after the resolution lease is released.
+	detailSources := captureSnapshotDetailSources(resolvedResult.Resolved, resolvedResult.CatalogLoad.Catalogs)
 	for _, resolved := range resolvedResult.Resolved {
 		resolvedNames = append(resolvedNames, skill.ResourceKey(resolved.Kind, resolved.Name))
 	}
@@ -239,6 +251,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	}
 
 	base.rows = buildRows(resolvedResult.LoadedCfg, resolvedResult.CatalogLoad.Catalogs, resolvedResult.Resolved, resolvedResult.LocalCfg, driftReport, harnessDefaultsBySource(resolvedResult.GlobalCfg, resolvedResult.RepoCfg))
+	attachDetailSources(base.rows, detailSources)
 	base.driftReport = driftReport
 	base.driftAssessment = driftState
 	base.diagnostics = deduplicateDiagnostics(diagnostics)
@@ -246,6 +259,55 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 	base.warnings = diagnosticValues(base.diagnostics, diagnosticWarning)
 	base.refreshAfterLoad = resolvedResult.CatalogLoad.RefreshAfterLoad
 	return base
+}
+
+func captureSnapshotDetailSources(resolved []resolver.ResolvedArtifact, catalogs map[string]catalogInfo) map[string]*detailSourceSnapshot {
+	detailSources := make(map[string]*detailSourceSnapshot, len(resolved))
+	var detailBudget detailCaptureBudget
+	capturePath := func(key, sourcePath string) {
+		if key == "" {
+			return
+		}
+		if _, ok := detailSources[key]; !ok {
+			detailSources[key] = detailBudget.capture(sourcePath)
+		}
+	}
+	captureEntry := func(entry catalog.Entry) {
+		capturePath(entry.Path, catalog.SourcePath(entry))
+	}
+	for _, artifact := range resolved {
+		captureEntry(artifact.Entry)
+	}
+	for _, key := range slices.Sorted(maps.Keys(catalogs)) {
+		loaded := catalogs[key]
+		entries := slices.Clone(loaded.Entries)
+		slices.SortFunc(entries, func(a, b catalog.Entry) int {
+			if order := strings.Compare(a.Kind.String(), b.Kind.String()); order != 0 {
+				return order
+			}
+			if order := strings.Compare(a.Name, b.Name); order != 0 {
+				return order
+			}
+			if order := strings.Compare(a.Path, b.Path); order != 0 {
+				return order
+			}
+			return strings.Compare(catalog.SourcePath(a), catalog.SourcePath(b))
+		})
+		for _, entry := range entries {
+			captureEntry(entry)
+		}
+		malformedEntries := slices.Clone(loaded.Malformed)
+		slices.SortFunc(malformedEntries, func(a, b skill.MalformedSkill) int {
+			if order := strings.Compare(a.DirName, b.DirName); order != 0 {
+				return order
+			}
+			return strings.Compare(a.Path, b.Path)
+		})
+		for _, malformed := range malformedEntries {
+			capturePath(malformed.Path, malformed.Path)
+		}
+	}
+	return detailSources
 }
 
 func isSoftResolutionIssue(err error) bool {
@@ -809,6 +871,40 @@ var runSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
 		result := runPipelineSync(ctx, tuiPipelineOptions(repoRoot))
 		return syncDoneMsg{err: errors.Join(result.Errors...)}
 	}
+}
+
+func runDependencySyncCmd(ctx context.Context, repoRoot string, sync DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg { return syncDoneMsg{err: sync(ctx, repoRoot)} }
+}
+
+func runDependencyUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration, update DependencyLifecycleFunc) tea.Cmd {
+	return func() tea.Msg {
+		lifecycleErr := update(ctx, repoRoot)
+		current := readSnapshotForUpdate(ctx, repoRoot, homeDir, catalogLoadCached)
+		current.generation = generation
+		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh}
+		if lifecycleErr != nil {
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, lifecycleErr)
+		} else if reloadErr := errors.Join(diagnosticErrors(current.diagnostics)...); reloadErr != nil {
+			result.stage = updateStageReload
+			result.err = fmt.Errorf("update %s failed: %w", result.stage, reloadErr)
+		}
+		return result
+	}
+}
+
+func (m Model) dependencySyncCmd() tea.Cmd {
+	if m.dependencyLifecycle.Sync != nil {
+		return runDependencySyncCmd(ctxOrBackground(m.ctx), m.repoRoot, m.dependencyLifecycle.Sync)
+	}
+	return runSyncCmd(ctxOrBackground(m.ctx), m.repoRoot)
+}
+
+func (m Model) dependencyUpdateCmd(generation requestGeneration) tea.Cmd {
+	if m.dependencyLifecycle.Update != nil {
+		return runDependencyUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation, m.dependencyLifecycle.Update)
+	}
+	return runUpdateCmd(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 }
 
 func runUpdateCmd(ctx context.Context, repoRoot, homeDir string, generation requestGeneration) tea.Cmd {

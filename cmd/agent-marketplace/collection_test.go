@@ -48,6 +48,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	// list --kind collection should find the collection.
 	output, err := executeCommand("list", "--kind", "collection")

@@ -14,6 +14,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -34,7 +36,8 @@ By default (--scope user), removes all machine-scoped materialized artifacts
 and cleans the registry cache. Use --scope repo or --scope local to remove
 repo-scoped artifacts only.
 
-Use --purge-config to also delete the config file(s) for the target scope.`,
+Use --purge-config to also delete the config file(s) and owning generated YAML
+lockfile(s) for the target scope. Transaction coordination files are retained.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, err := parseDeinitScope(scopeStr)
@@ -46,7 +49,7 @@ Use --purge-config to also delete the config file(s) for the target scope.`,
 	}
 
 	cmd.Flags().StringVar(&scopeStr, "scope", "user", "Scope to deinit: user (default), repo, or local")
-	cmd.Flags().BoolVar(&purgeConfig, "purge-config", false, "Also delete config file(s) for the target scope")
+	cmd.Flags().BoolVar(&purgeConfig, "purge-config", false, "Also delete config file(s) and owning generated YAML lockfile(s) for the target scope")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be removed without deleting")
 
 	return cmd
@@ -121,24 +124,36 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	var resolvedArtifacts []resolver.ResolvedArtifact
+	releaseExactLease := func() {}
 	switch scope {
 	case deinitScopeUser:
 		opts = append(opts, materialize.WithMachineScopeOnly())
-		orgArtifacts, err := resolveOrgOwnedArtifacts(ctx, repoRoot)
+		orgMode := catalog.LoadModeRefresh
+		if dryRun {
+			orgMode = catalog.LoadModeInspect
+		}
+		orgArtifacts, release, err := resolveOrgOwnedArtifactsMode(ctx, repoRoot, orgMode)
 		if err != nil {
-			slog.Warn("deinit could not resolve organization-owned artifacts; organization output may be removed or may survive", "error", err)
-			if _, werr := fmt.Fprintf(out, "warning: could not resolve organization-owned artifacts (%v); organization output may be removed or may survive\n", err); werr != nil {
+			if !dryRun || organizationLockFailure(err) {
+				slog.Error("deinit could not safely resolve organization-owned artifacts", "error", err)
+				return fmt.Errorf("resolve organization-owned artifacts before deinit: %w", err)
+			}
+			slog.Warn("deinit dry-run could not inspect uncached organization artifacts", "error", err)
+			if _, werr := fmt.Fprintf(out, "warning: could not inspect uncached organization-owned artifacts (%v); dry-run made no changes\n", err); werr != nil {
 				return werr
 			}
 		} else {
 			resolvedArtifacts = orgArtifacts
+			releaseExactLease = release
 		}
 	case deinitScopeRepo, deinitScopeLocal:
 		opts = append(opts, materialize.WithRepoScopeOnly())
 	}
-
 	opts = append(opts, materialize.WithMaterializationModes(modes))
-	report, err := materialize.Run(context.Background(), repoRoot, resolvedArtifacts, opts...)
+	report, err := func() (*materialize.Report, error) {
+		defer releaseExactLease()
+		return materialize.Run(context.WithoutCancel(ctx), repoRoot, resolvedArtifacts, opts...)
+	}()
 	if err != nil {
 		return fmt.Errorf("removing artifacts: %w", err)
 	}
@@ -200,22 +215,8 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 		if cfgErr != nil {
 			return cfgErr
 		}
-		for _, path := range configFiles {
-			if _, statErr := os.Stat(path); statErr != nil {
-				continue
-			}
-			if dryRun {
-				if _, err := fmt.Fprintf(out, "Would remove config %s\n", path); err != nil {
-					return err
-				}
-			} else {
-				if err := os.Remove(path); err != nil {
-					return fmt.Errorf("removing config %s: %w", path, err)
-				}
-				if _, err := fmt.Fprintf(out, "Removed config %s\n", path); err != nil {
-					return err
-				}
-			}
+		if err := purgeConfigPairs(context.WithoutCancel(ctx), out, configFiles, dryRun); err != nil {
+			return err
 		}
 		// Clean up empty .agents directory after config removal.
 		if !dryRun {
@@ -240,6 +241,61 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	}
 
 	slog.Info("deinit end", "scope", scope.String(), "dry_run", dryRun, "removed", totalRemoved, "purge_config", purgeConfig)
+	return nil
+}
+
+func purgeConfigPairs(ctx context.Context, out io.Writer, configFiles []string, dryRun bool) error {
+	var desired []dependencytxn.DesiredFile
+	var existing []string
+	kinds := make(map[string]string)
+	for _, configPath := range configFiles {
+		lockPath, err := lockfile.PathForConfig(configPath)
+		if err != nil {
+			return err
+		}
+		var pair []dependencytxn.DesiredFile
+		for i, path := range []string{configPath, lockPath} {
+			path, err = dependencytxn.ValidateDestination(path)
+			if err != nil {
+				return err
+			}
+			generation, mode, err := dependencytxn.ReadGenerationAndMode(path)
+			if err != nil {
+				return err
+			}
+			pair = append(pair, dependencytxn.DesiredFile{Path: path, Expected: generation, ExpectedMode: mode, Delete: true})
+			kinds[path] = "config"
+			if i == 1 {
+				kinds[path] = "lock"
+			}
+			if generation.Exists {
+				existing = append(existing, path)
+			}
+		}
+		if pair[0].Expected.Exists || pair[1].Expected.Exists {
+			desired = append(desired, pair...)
+		}
+	}
+	if !dryRun && len(desired) > 0 {
+		stateDir, err := dependencyStateDir()
+		if err != nil {
+			return err
+		}
+		result, err := dependencytxn.Commit(ctx, stateDir, desired)
+		if err != nil {
+			return fmt.Errorf("purge config and generated lock: %w", err)
+		}
+		existing = result.Changed
+	}
+	action := "Removed"
+	if dryRun {
+		action = "Would remove"
+	}
+	for _, path := range existing {
+		if _, err := fmt.Fprintf(out, "%s %s %s\n", action, kinds[path], path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -275,31 +331,45 @@ func removeEmptyDir(dir string) {
 // artifacts that a user-scoped deinit must preserve (organization and
 // mandatory policy output).
 //
-// It uses LoadModeCachedNoFetch so teardown never refreshes remote registries
-// or writes the cache (including during --dry-run). When no machine-wide target
-// harness set is configured, there is no org-owned output to preserve, so the
-// function returns an empty slice rather than defaulting artifacts to a target
-// the user never requested.
-func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, error) {
+// It uses the read-only exact lock view. A present organization lock is exact
+// and fail-closed; an intentionally absent organization lock follows unlocked
+// mutable acquisition/cache rules so organization output can still be preserved.
+// When no machine-wide target harness set is configured, there is no organization-
+// owned output to preserve, so the function returns an empty slice rather than
+// defaulting artifacts to a target the user never requested.
+// On success the caller must release the returned exact-cache lease after its
+// final use of the artifacts.
+func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.ResolvedArtifact, func(), error) {
+	return resolveOrgOwnedArtifactsMode(ctx, repoRoot, catalog.LoadModeInspect)
+}
+
+func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode catalog.LoadMode) ([]resolver.ResolvedArtifact, func(), error) {
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:         repoRoot,
-		LocalConfigDir:   config.FindLocalConfigDir(),
-		CatalogMode:      catalog.LoadModeCachedNoFetch,
-		RequireTargetSet: true,
-		SkipInventory:    true,
+		RepoRoot:           repoRoot,
+		LocalConfigDir:     config.FindLocalConfigDir(),
+		CatalogMode:        mode,
+		RequireTargetSet:   true,
+		SkipInventory:      true,
+		ReadOnlyExactLocks: true,
 	}
-	res := pipeline.Resolve(ctx, resolveOpts)
+	res, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, resolveOpts)
 	if len(res.Errors) > 0 {
+		releaseExactLease()
 		var missingErr *pipeline.TargetHarnessSetMissingError
 		if len(res.Errors) == 1 && errors.As(res.Errors[0], &missingErr) {
 			slog.Info("deinit: no machine-wide target harness set configured; no organization-owned artifacts to preserve")
-			return nil, nil
+			return nil, func() {}, nil
 		}
-		return nil, errors.Join(res.Errors...)
+		return nil, nil, errors.Join(res.Errors...)
+	}
+	if unresolved := organizationUnresolvedSelections(res); len(unresolved) > 0 {
+		releaseExactLease()
+		return nil, nil, errors.Join(unresolved...)
 	}
 	if len(res.TargetHarnesses) == 0 {
+		releaseExactLease()
 		slog.Info("deinit: target harness set is empty; no organization-owned artifacts to preserve")
-		return nil, nil
+		return nil, func() {}, nil
 	}
 	var preserved []resolver.ResolvedArtifact
 	for _, r := range res.Resolved {
@@ -308,7 +378,49 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 		}
 	}
 	slog.Info("deinit: resolved organization-owned artifacts to preserve", "count", len(preserved))
-	return preserved, nil
+	return preserved, releaseExactLease, nil
+}
+
+func organizationLockFailure(err error) bool {
+	var trustErr *config.OrganizationTrustError
+	if errors.As(err, &trustErr) {
+		return true
+	}
+	var lockErr *pipeline.LockViewError
+	return errors.As(err, &lockErr)
+}
+
+// organizationUnresolvedSelections promotes soft unresolved selections from
+// organization registries to teardown-blocking errors. Resolve normally keeps
+// these as warnings because online sync can distinguish a removed resource
+// from a transient catalog failure; deinit cannot safely make that assumption
+// while deciding which organization output and caches to preserve.
+func organizationUnresolvedSelections(res pipeline.ResolveResult) []error {
+	if res.MergedCfg == nil {
+		return nil
+	}
+	var unresolved []error
+	for _, issue := range res.ResolveErrors {
+		var notFound *resolver.SelectedNotFoundError
+		if errors.As(issue, &notFound) && isOrganizationRegistry(res.MergedCfg, notFound.URL, notFound.Path, notFound.Ref) {
+			unresolved = append(unresolved, issue)
+			continue
+		}
+		var malformed *resolver.SelectedMalformedError
+		if errors.As(issue, &malformed) && isOrganizationRegistry(res.MergedCfg, malformed.URL, malformed.Path, malformed.Ref) {
+			unresolved = append(unresolved, issue)
+		}
+	}
+	return unresolved
+}
+
+func isOrganizationRegistry(cfg *config.Config, url, path, ref string) bool {
+	for _, entry := range cfg.Registries {
+		if entry.Source == config.Organization && entry.URL == url && entry.Path == path && entry.Ref == ref {
+			return true
+		}
+	}
+	return false
 }
 
 // preservedCacheConfig builds a minimal config containing the registries that

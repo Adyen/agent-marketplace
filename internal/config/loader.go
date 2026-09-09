@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -251,8 +252,12 @@ type configIncludeLoader struct {
 	visiting           map[string]struct{}
 	files              []*Config
 	rootPath           string
+	organizationPath   string
 	rootData           []byte
 	nextFilePrecedence int
+	reads              []ConfigRead
+	readByPath         map[string]ConfigRead
+	overlays           map[string][]byte
 }
 
 func newConfigIncludeLoader(kind layerKind) *configIncludeLoader {
@@ -287,6 +292,20 @@ func sourceForLayer(kind layerKind) Source {
 }
 
 func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
+	if l.kind == organizationLayer {
+		if !filepath.IsAbs(path) {
+			wd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("resolve organization config path %q: %w", path, err)
+			}
+			path = wd + string(filepath.Separator) + path
+		}
+		if root {
+			l.organizationPath = path
+		} else if err := validateOrganizationInclude(path, l.organizationPath); err != nil {
+			return nil, err
+		}
+	}
 	canonical := l.rootPath
 	var err error
 	if !root || canonical == "" {
@@ -299,6 +318,14 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 		return nil, fmt.Errorf("config include cycle at %q", canonical)
 	}
 	if _, ok := l.loaded[canonical]; ok {
+		if l.readByPath != nil {
+			read := l.readByPath[canonical]
+			read.RequestedPath, err = filepath.Abs(path)
+			if err != nil {
+				return nil, err
+			}
+			l.reads = append(l.reads, read)
+		}
 		slog.Debug("config include skipped", "path", canonical, "reason", "duplicate")
 		return nil, nil
 	}
@@ -306,11 +333,26 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 	l.visiting[canonical] = struct{}{}
 	defer delete(l.visiting, canonical)
 	data := l.rootData
-	if !root || data == nil {
+	overlay, staged := l.overlays[canonical]
+	if !staged {
+		overlay, staged = l.overlays[path]
+	}
+	if staged {
+		data, err = boundedConfigData(overlay)
+	} else if !root || data == nil {
 		data, err = os.ReadFile(canonical)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read config %q: %w", canonical, err)
+	}
+	if l.readByPath != nil {
+		requested, err := filepath.Abs(path)
 		if err != nil {
-			return nil, fmt.Errorf("read config %q: %w", canonical, err)
+			return nil, err
 		}
+		read := ConfigRead{Path: canonical, RequestedPath: requested, Digest: fmt.Sprintf("%x", sha256.Sum256(data)), Overlay: staged}
+		l.reads = append(l.reads, read)
+		l.readByPath[canonical] = read
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root && l.kind != localLayer)
 	if len(errs) > 0 {
@@ -325,7 +367,11 @@ func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
 		}
 		includePath := include
 		if !filepath.IsAbs(includePath) {
-			includePath = filepath.Join(filepath.Dir(canonical), includePath)
+			if l.kind == organizationLayer {
+				includePath = lexicalConfigParent(path) + string(filepath.Separator) + includePath
+			} else {
+				includePath = filepath.Join(filepath.Dir(canonical), includePath)
+			}
 		}
 		slog.Debug("loading config include", "owner", canonical, "path", includePath)
 		if _, err := l.collect(includePath, false); err != nil {
@@ -420,6 +466,16 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 	loader.rootPath = canonicalPath
 	loader.rootData = data
 	return loadCollectedConfigTree(canonicalPath, loader)
+}
+
+func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
+	loader := newConfigIncludeLoader(kind)
+	loader.rootPath = canonicalPath
+	loader.rootData = data
+	loader.overlays = overlays
+	loader.readByPath = make(map[string]ConfigRead)
+	cfg, err := loadCollectedConfigTree(path, loader)
+	return cfg, loader.reads, err
 }
 
 func configWithCascadingDefaults(files []*Config, index int) *Config {

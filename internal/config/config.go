@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,6 +63,40 @@ func (s Source) IsMachineScope() bool { return s == Organization || s == UserPer
 // source's config file.
 func (s Source) IsWritable() bool {
 	return s == UserPersonal || s == RepoCommitted || s == RepoPersonal
+}
+
+func (s Source) LockScope() string {
+	switch s {
+	case Organization:
+		return "organization"
+	case UserPersonal:
+		return "user"
+	case RepoCommitted:
+		return "repo"
+	case RepoPersonal:
+		return "local"
+	default:
+		return ""
+	}
+}
+
+func (s Source) LockFilename() string {
+	switch s {
+	case Organization, UserPersonal, RepoCommitted:
+		return "lock.yaml"
+	case RepoPersonal:
+		return "lock.local.yaml"
+	default:
+		return ""
+	}
+}
+
+func (s Source) LockPath(configPath string) string {
+	filename := s.LockFilename()
+	if filename == "" || configPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(configPath), filename)
 }
 
 // CanConfigureTelemetry reports whether this source may contain telemetry
@@ -724,17 +759,20 @@ func (e *RegistryEntry) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, b
 //   - It is a relative path (".", "..", "./x", "../x") — always local,
 //     since relative paths cannot be git clone URLs
 //   - It starts with '/' or '~/' and does NOT end with '.git'
-//   - It does NOT end with '.git' (which signals a git repository)
+//   - It is a hostless file URL whose decoded path does NOT end with '.git'
 //
 // The .git suffix is the sole signal that a local path is a git bare repo
-// (e.g. /path/to/repo.git). Without the .git suffix, an absolute or
-// home-relative path is treated as a plain directory and ref is optional
-// (and ignored). This ensures ref is optional for local paths, since ref
-// does not make sense on a plain local directory.
+// (e.g. /path/to/repo.git or file:///path/to/repo.git). Without the .git
+// suffix, a filesystem path is treated as a plain directory and ref is
+// optional (and ignored).
 func (e RegistryEntry) IsLocal() bool {
 	u := strings.TrimSpace(e.URL)
 	if u == "" {
 		return false
+	}
+	if strings.HasPrefix(strings.ToLower(u), "file://") {
+		path, err := parseLocalFileURL(u)
+		return err != nil || !strings.HasSuffix(path, ".git")
 	}
 	if strings.HasSuffix(u, ".git") {
 		return false
@@ -819,6 +857,21 @@ func ValidateLocalRegistryPath(path string) error {
 	return nil
 }
 
+// parseLocalFileURL decodes an absolute, hostless file URL into its filesystem
+// path. Invalid file URLs remain local so ResolveLocalPath can report the
+// configuration error instead of treating them as git remotes.
+func parseLocalFileURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host != "" || parsed.Path == "" || !filepath.IsAbs(parsed.Path) {
+		return "", fmt.Errorf("invalid local registry file URL %q", rawURL)
+	}
+	path, err := url.PathUnescape(parsed.Path)
+	if err != nil {
+		return "", fmt.Errorf("decode local registry file URL %q: %w", rawURL, err)
+	}
+	return path, nil
+}
+
 // urlContainsPathTraversal reports whether a registry URL contains a ".." path
 // component. This applies to local paths, home-relative paths, and absolute paths;
 // it also catches relative-looking URLs that are not valid git remotes. The check
@@ -857,6 +910,14 @@ func (e RegistryEntry) ResolveLocalPath(baseDir string) (string, error) {
 	}
 
 	u := strings.TrimSpace(e.URL)
+	fileURL := strings.HasPrefix(strings.ToLower(u), "file://")
+	if fileURL {
+		var err error
+		u, err = parseLocalFileURL(u)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	if strings.HasPrefix(u, "~/") {
 		homeDir, err := os.UserHomeDir()
@@ -876,7 +937,7 @@ func (e RegistryEntry) ResolveLocalPath(baseDir string) (string, error) {
 	}
 	u = filepath.Clean(u)
 
-	if !filepath.IsAbs(e.URL) && !isSubPath(u, baseDir) {
+	if !filepath.IsAbs(e.URL) && !fileURL && !isSubPath(u, baseDir) {
 		return "", fmt.Errorf("local registry %q resolves outside the base directory %q", e.URL, baseDir)
 	}
 

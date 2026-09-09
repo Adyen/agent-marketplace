@@ -11,7 +11,49 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
+	const exactCatalogKey = "/cache/registry@sha1:0123456789abcdef"
+	const registryURL = "https://example.com/agents.git"
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:        registryURL,
+		Ref:        "main",
+		CatalogKey: exactCatalogKey,
+	}}}
+	catalogs := map[string]loadedCatalog{
+		exactCatalogKey: {
+			Entries: []catalog.Entry{{
+				Kind: ir.KindSkill,
+				Name: "locked-skill",
+				Tags: []string{"exact"},
+			}},
+		},
+	}
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:       catalogs[exactCatalogKey].Entries[0],
+		RegistryURL: registryURL,
+		Ref:         "main",
+		CatalogKey:  exactCatalogKey,
+	}}
+
+	rows := buildListRows(cfg, catalogs, resolved)
+	if len(rows) != 1 {
+		t.Fatalf("expected one list row, got %d: %#v", len(rows), rows)
+	}
+	if got, want := rows[0].Status, "enabled"; got != want {
+		t.Fatalf("exact catalog entry status = %q, want %q", got, want)
+	}
+	if got, want := rows[0].Name, "locked-skill"; got != want {
+		t.Fatalf("exact catalog entry name = %q, want %q", got, want)
+	}
+}
 
 func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
 	homeDir := t.TempDir()
@@ -47,6 +89,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -105,6 +148,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -152,6 +196,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -189,6 +234,7 @@ registries:
 `)
 
 	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
 
 	// No sync yet — skill is enabled in config but not on disk
 	output, err := executeCommand("list")
@@ -209,6 +255,13 @@ registries:
 	}
 	if strings.Contains(output, "out of sync") {
 		t.Fatalf("expected no drift footer after sync, got:\n%s", output)
+	}
+}
+
+func requireExactLocks(t *testing.T) {
+	t.Helper()
+	if output, err := executeCommand("lock"); err != nil {
+		t.Fatalf("create exact read lock: %v\n%s", err, output)
 	}
 }
 
@@ -252,8 +305,7 @@ func createBareRepoWithWorkingCloneOnBranch(t *testing.T, bareName, branch strin
 	working := filepath.Join(baseDir, "working")
 
 	runGit(t, "", "init", "--initial-branch="+branch, working)
-	runGit(t, working, "commit", "--allow-empty", "-m", "seed")
-	runGit(t, "", "clone", "--bare", working, origin)
+	runGit(t, "", "init", "--bare", "--initial-branch="+branch, origin)
 
 	gitConfig := filepath.Join(working, ".git", "config")
 	config, err := os.OpenFile(gitConfig, os.O_APPEND|os.O_WRONLY, 0)

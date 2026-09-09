@@ -32,7 +32,7 @@ EOF_CONFIG
 
 agent-marketplace sync
 agent-marketplace status
-git add .agents/config.yaml
+git add .agents/config.yaml .agents/lock.yaml
 git commit -m "Add shared infrastructure skills"
 ```
 
@@ -176,20 +176,17 @@ skills:
   exclude: [some-skill-you-dont-want]
 ```
 
-`agent-marketplace sync` adds `.agents/config.local.yaml` to `.gitignore` automatically when the file exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
+`agent-marketplace sync` adds `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore` automatically when the personal-local layer exists. Local excludes apply only to non-required repo-scoped resources; machine-scoped resources and required resources cannot be locally excluded.
 
-When a non-required resource is enabled in both machine and repo scopes,
-`remove` without `--scope` reports the ambiguity. Use `remove --scope user` or
-`remove --scope repo` to remove only the selected occurrence; the other scope
-remains enabled. An explicit scope never falls back to another scope when that
-scope has no occurrence; it reports that the resource is not enabled (and a
-machine-owned occurrence targeted from repo/local scope produces a boundary
-error). `--scope local` is for checkout-local selections/excludes, and cannot
-bypass the machine/repo boundary. An unscoped removal with one unambiguous
-occurrence infers its effective layer (machine resources use user config),
-except that a repo-scoped auto-selected resource that is not explicitly selected
-by committed repo config is recorded as a checkout-local exclusion. Use
-`--scope repo` to edit committed repo config.
+## Git dependency locks
+
+Remote Git requirements resolve to generated lockfiles owned by their configuration layers: `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock with `.agents/config.yaml`; keep the personal-local lock private. A deployed organization lock is validated with the organization config and used exactly. When it is absent, consumer commands may inspect or refresh that intentionally unlocked layer through the mutable cache but do not create the organization lock; an invalid present lock never falls back to this path.
+
+Normal sync retains compatible exact commits and minimally reconciles writable locks after configuration changes. `sync --locked` fails instead of changing config or locks. `sync --check` and `lock --check` are read-only: they do not recover transactions, resolve mutable refs, fetch or populate a cold cache, or create state roots. If a required exact snapshot is absent locally, check mode reports it as unavailable. Use `lock --upgrade` or `update` to advance Git resolutions deliberately. Lock reconciliation protects exact snapshots with a shared cache lease from acquisition through config-and-lock publication. Install, remove, update, and TUI config changes publish config and lock state transactionally; configured install discovery uses exact inventory for each valid locked layer and falls back to a mutable ref only for a registry whose own layer lock is missing.
+
+Plain local-directory registries are read live and never locked. This foundation does not include hosted Marketplace lock records, acquisition adapters, or integration.
+
+When a non-required resource is enabled in both machine and repo scopes, `remove` without `--scope` reports the ambiguity. Use `remove --scope user` or `remove --scope repo` to remove only the selected occurrence; the other scope remains enabled. An explicit scope never falls back to another scope when that scope has no occurrence. A machine-owned occurrence targeted from repo or local scope produces a boundary error. `--scope local` is for checkout-local selections and excludes and cannot bypass the machine/repo boundary. An unscoped removal with one unambiguous occurrence infers its effective layer, except that a repo-scoped auto-selected resource not explicitly selected by committed repo config is recorded as a checkout-local exclusion. Use `--scope repo` to edit committed repo config.
 
 ## Daily commands
 
@@ -197,7 +194,10 @@ by committed repo config is recorded as a checkout-local exclusion. Use
 agent-marketplace list
 agent-marketplace install <skill>
 agent-marketplace remove <skill>
+agent-marketplace lock
+agent-marketplace lock --upgrade
 agent-marketplace sync
+agent-marketplace sync --locked
 agent-marketplace sync --check
 agent-marketplace status
 agent-marketplace update
@@ -234,12 +234,13 @@ Flag rules: `--ref` and `--path` require `--from`; `install --from` is incompati
 
 ## How sync works
 
-1. Load org, user, repo, and local config.
-2. Fetch registry caches under `~/.cache/agent-marketplace/`.
-3. Ingest registry content through `harness-compilation`.
-4. Resolve the five target-materialized kinds (skills, commands, subagents,
+1. Load org, user, repo, and local config with their layer provenance.
+2. Validate existing locks, retain compatible Git resolutions, and reconcile stale writable locks unless locked/check mode forbids writes.
+3. Open each Git source by exact commit and verify its source manifest; read plain directory registries live.
+4. Ingest registry content through `harness-compilation`.
+5. Resolve the five target-materialized kinds (skills, commands, subagents,
    hooks, and MCP servers), plus collections, tags, and excludes.
-5. Compile each resolved resource to each configured harness.
-6. Materialize native harness files with prune-stale enabled.
+6. Compile each resolved resource to each configured harness.
+7. Materialize native harness files and prune stale generated output.
 
 Run `agent-marketplace status` to see the selected harnesses, native targets, cache freshness, local excludes, orphaned files, collisions, and errors.

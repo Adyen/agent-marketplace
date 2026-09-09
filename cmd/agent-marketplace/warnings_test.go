@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -181,6 +182,33 @@ func TestWriteSyncIssuesGroupsResolverWarningsByProblem(t *testing.T) {
 	}
 	if !strings.Contains(errorOutput, "resources are provided by multiple registries (2 resources)") {
 		t.Fatalf("grouped resolver error is missing its category and count:\n%s", errorOutput)
+	}
+}
+
+func TestWriteSyncIssuesCompactsLockfileWarnings(t *testing.T) {
+	issues := []error{
+		sourcerevision.ResourceWarning{Kind: "rule", Name: "linting", Reason: "unsupported resource kind"},
+		sourcerevision.ResourceWarning{Kind: "rule", Name: "testing", Reason: "unsupported resource kind"},
+		&catalog.OverlappingEntryWarning{Dir: "/snapshot/plugin-a", FirstURL: "registry", FirstPath: "plugin-a", SecondURL: "registry", SecondPath: "plugin-a"},
+		&catalog.OverlappingEntryWarning{Dir: "/snapshot/plugin-b", FirstURL: "registry", FirstPath: "plugin-b", SecondURL: "registry", SecondPath: "plugin-b"},
+	}
+
+	var out bytes.Buffer
+	if err := writeSyncIssues(&out, issues, false, "warning:"); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if count := strings.Count(got, "warning: "); count != 2 {
+		t.Fatalf("lockfile warnings rendered as %d top-level problems, want 2:\n%s", count, got)
+	}
+	for _, want := range []string{
+		"source revision omitted resources: unsupported resource kind (2 resources)",
+		"registry entries overlap (2 resources)",
+		"rule/linting", "rule/testing", "plugin-a", "plugin-b",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("compacted warning output is missing %q:\n%s", want, got)
+		}
 	}
 }
 

@@ -715,10 +715,11 @@ registries: []
 	}
 
 	for _, needle := range []string{
-		"org managed: true",
+		"org managed: false",
 		"MANAGED INSTALLATION",
-		"state: managed",
-		"validation: valid",
+		"state: unmanaged",
+		"validation: untrusted",
+		"organization.trust.config.writable",
 		"is writable by group or other (mode",
 	} {
 		if !strings.Contains(output, needle) {

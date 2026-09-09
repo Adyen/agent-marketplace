@@ -112,18 +112,53 @@ func TestReadOnlyCommandsNeitherBlockNorCreateStateWhileTheLockIsHeld(t *testing
 	}
 }
 
-// TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll is the same property
-// on a machine that has never synced, where it is strongest: the state root must
-// not come into existence, so nothing — not a record, not a safety backup, and not
-// the locks/ directory acquisition would create — is written by a read.
+// TestSyncCheckFirstEverLocalDirectoryOnlyCreatesNoCacheOrState proves a
+// check with no exact Git consumers does not bootstrap coordination metadata.
+func TestSyncCheckFirstEverLocalDirectoryOnlyCreatesNoCacheOrState(t *testing.T) {
+	home := t.TempDir()
+	cacheRoot := filepath.Join(home, "cache")
+	stateRoot := filepath.Join(home, "state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", cacheRoot)
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+
+	registry := filepath.Join(t.TempDir(), "registry")
+	writeSkill(t, registry, "local-only", "Local only", nil)
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+harnesses:
+  - factory
+registries:
+  - url: `+registry+`
+    skills:
+      include: [local-only]
+`)
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("sync", "--check")
+	if err == nil || !strings.Contains(err.Error(), "out of sync") {
+		t.Fatalf("sync --check error = %v, want materialization drift\n%s", err, output)
+	}
+	for _, root := range []string{cacheRoot, stateRoot} {
+		if _, statErr := os.Lstat(root); !os.IsNotExist(statErr) {
+			t.Fatalf("sync --check created read-only root %s (%v)", root, statErr)
+		}
+	}
+}
+
+// TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll proves read-only
+// commands do not create durable ownership state before the first sync.
 func TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll(t *testing.T) {
 	_, stateRoot := devinLockRepo(t)
 
 	for _, args := range [][]string{{"sync", "--check"}, {"status"}} {
 		name := strings.Join(args, " ")
 		output, err := executeCommand(args...)
-		if err != nil && strings.Contains(err.Error(), "lock") {
-			t.Fatalf("%s reported a locking failure: %v\noutput:\n%s", name, err, output)
+		if err != nil && strings.Contains(err.Error(), "ownership.lock") {
+			t.Fatalf("%s reported an ownership locking failure: %v\noutput:\n%s", name, err, output)
+		}
+		if args[0] == "sync" && (err == nil || !strings.Contains(err.Error(), "lock.missing")) {
+			t.Fatalf("%s must report missing lock freshness on a first run: %v\noutput:\n%s", name, err, output)
 		}
 		if _, statErr := os.Lstat(stateRoot); !os.IsNotExist(statErr) {
 			t.Fatalf("%s created the durable state root %s (%v)", name, stateRoot, statErr)
