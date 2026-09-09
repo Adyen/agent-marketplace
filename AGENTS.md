@@ -122,6 +122,13 @@ Add a standalone test function in a separate file when:
 
 Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
 
+## Harness Compatibility CI
+
+- `.github/workflows/harness-images.yml` rebuilds repository-owned Linux/amd64 harness images daily and on manual dispatch from the default branch. It resolves the newest stable CLI release immediately, without a release-age buffer, while leaving existing dependency-update policies unchanged. Only trusted default-branch jobs publish to GHCR. Version/run tags are immutable by convention; `ci` advances after an offline version smoke check, independently of compiler compatibility results.
+- `.github/workflows/harness-compatibility.yml` runs informational checks on every PR and after daily publication. It is not a release dependency and does not configure branch protection. It derives the harness matrix from `pkg/harness-compilation/target`, reuses published image digests, and builds unpublished bootstrap images when images are unavailable or the image recipe/Go version changed. Image source, versions, digests, creation times, stale-image warnings, and coverage gaps appear in job summaries and artifacts.
+- Native execution belongs in GitHub Actions, not local verification. The native test container has no network, no model credentials, and disabled auto-updates. Isolated HOME/XDG/Codex roots and local stdio MCP fixtures prevent host configuration and external service dependencies. Cursor/Windsurf remain explicitly config-only until a credential-free noninteractive inspection surface is established. MCP recognition and connection evidence are separate; blocked/failed probes stay failures rather than successful skips.
+- `make harness-compat-check` verifies metadata, reporting, sandbox/fake-executable boundaries, and shell scripts without invoking vendor CLIs. `make harness-compat-config` verifies the canonical fixture registry against all seven targets, repo/user scopes, and symlink/file modes without invoking vendor CLIs. `TestHarnessCompatibility` otherwise skips unless `HARNESS_COMPAT_TARGET` is explicitly set. `HARNESS_COMPAT_REPORT_DIR` retains structured evidence. Default tests never install or require harness executables.
+
 ## Performance & Benchmarking Policy
 
 This project treats performance as **data-driven, not narrative-driven**. Optimizations and
