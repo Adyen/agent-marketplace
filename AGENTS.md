@@ -86,6 +86,14 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 Run direct real-terminal test typechecking with `make tui-qa-check` and all eight deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
+## Command test isolation
+
+For command scenarios that change environment, cwd, or internal hooks, enter `isolateCommandTest(t)` before setup and return when it reports parent execution. Keep the scenario body and assertions in the original test; matrices stay together in one child. Pure tests remain in-process.
+
+`go test ./cmd/agent-marketplace -count=1` defaults to four child slots; `-parallel=1` serializes children. Use `-args -command-tests-in-process` for the serial in-process baseline. Coverage builds automatically use that in-process path so scenario counters reach the report. `-run`, including subtest filters, and parent `-count`/`-shuffle` remain supported.
+
+Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment are sandboxed. Fixtures that replace HOME and expect Codex beneath it must also set CODEX_HOME. Runner acceptance checks are `go test ./cmd/agent-marketplace -run '^TestCommandProcess' -count=1`; include `-race` and `-cover` when changing the runner.
+
 ## E2E Test Suite
 
 The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.

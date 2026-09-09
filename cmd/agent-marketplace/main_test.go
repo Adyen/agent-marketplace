@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +18,30 @@ import (
 var testMainHome string
 
 func TestMain(m *testing.M) {
+	flag.Parse()
+	parallelSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "test.parallel" {
+			parallelSet = true
+		}
+	})
+	if !parallelSet {
+		if err := flag.Set("test.parallel", "4"); err != nil {
+			panic(err)
+		}
+	}
+	commandProcessTempDir = os.TempDir()
+	if git, err := exec.LookPath("git"); err == nil {
+		commandProcessGit, _ = filepath.Abs(git)
+	}
+	if root := os.Getenv(processIsolatedRootEnv); os.Getenv(processIsolatedSelectorEnv) != "" {
+		if !filepath.IsAbs(root) {
+			os.Exit(2)
+		}
+		testMainHome = os.Getenv("HOME")
+		config.SetTestV3OrganizationConfigPath(nil, filepath.Join(root, "org", "config.yaml"))
+		os.Exit(m.Run())
+	}
 	// Use a visible stderr logger for TestMain diagnostics. Command tests
 	// re-configure the default logger, so it is reset before cleanup.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -94,6 +120,9 @@ func TestStartupTargetRegistrationsAreValid(t *testing.T) {
 }
 
 func TestVersionFlagPrintsVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("--version")
 	if err != nil {
 		t.Fatalf("expected version flag to succeed: %v", err)

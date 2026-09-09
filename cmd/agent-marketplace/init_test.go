@@ -12,6 +12,9 @@ import (
 )
 
 func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -92,6 +95,9 @@ func TestInitIsIdempotent(t *testing.T) {
 }
 
 func TestInitValidatesHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -133,6 +139,9 @@ func TestInitHelp(t *testing.T) {
 }
 
 func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")

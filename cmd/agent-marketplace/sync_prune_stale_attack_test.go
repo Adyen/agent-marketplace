@@ -27,6 +27,9 @@ func assertValidConfigYAML(t *testing.T, data []byte) {
 // "selected but not found". If CatalogTrusted() is true here, --prune-stale
 // deletes selections for resources that are perfectly fine upstream.
 func TestAttackPruneMissingRegistrySubdirectory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -69,6 +72,9 @@ registries:
 // (all resources deleted in one bad upstream commit, or the wrong ref). Zero
 // entries, zero catalog errors -> catalog "trusted" -> every selection pruned.
 func TestAttackPruneEmptyRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -106,6 +112,9 @@ registries:
 // "selected but not found" while the catalog reports no error at all.
 // Deleting the selection is wrong: the fix is to repair the resource.
 func TestAttackPruneMalformedResource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -144,6 +153,9 @@ registries:
 // belongs to a HEALTHY registry. This is the case the trust gate is supposed
 // to cover; assert the gate holds and the skip message is truthful.
 func TestAttackSkipMessageCountsAgreeWithPrintedErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -235,6 +247,9 @@ func TestSyncPruneStaleNamesTheErrorsItCounted(t *testing.T) {
 // --strict the stale selections ARE the errors, so pass 1 printed "Errors 1",
 // pruned, re-synced clean and exited 0 having named nothing at all.
 func TestSyncPruneStaleStrictCleanReSyncNamesThePromotedErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -275,6 +290,9 @@ registries:
 // ATTACK 6a: pruning the LAST remaining selection of a list. Does the YAML
 // stay valid, and does the surrounding structure survive?
 func TestAttackPruneLastSelectionKeepsValidYAML(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -328,6 +346,9 @@ registries:
 
 // ATTACK 6b: the same selection listed TWICE in the same list.
 func TestAttackPruneDuplicateSelectionEntries(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -370,6 +391,9 @@ registries:
 
 // ATTACK 6c: YAML anchors / aliases in the selection list.
 func TestAttackPruneWithYAMLAnchors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -411,6 +435,9 @@ registries:
 
 // ATTACK 6d: CRLF line endings.
 func TestAttackPruneCRLFConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -476,6 +503,9 @@ func TestAttackPruneIdempotent(t *testing.T) {
 func TestAttackStrictPruneWithUnwritableConfig(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory write permissions")
+	}
+	if isolateCommandTest(t) {
+		return
 	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

@@ -19,6 +19,9 @@ import (
 )
 
 func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -147,6 +150,9 @@ registries:
 }
 
 func TestStatusCommandMarksLockedCaches(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -186,6 +192,9 @@ registries:
 }
 
 func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -220,6 +229,9 @@ registries:
 }
 
 func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -271,6 +283,9 @@ skills:
 }
 
 func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -318,6 +333,9 @@ registries:
 }
 
 func TestStatusDriftSectionInSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -357,6 +375,9 @@ registries:
 }
 
 func TestStatusDriftSectionOutOfSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -398,6 +419,9 @@ registries:
 }
 
 func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -425,6 +449,9 @@ func TestStatusReportsManagedInstallation(t *testing.T) {
 		t.Skip("file permission diagnostics are Unix-specific")
 	}
 
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

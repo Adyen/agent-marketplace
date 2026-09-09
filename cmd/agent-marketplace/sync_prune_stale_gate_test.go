@@ -78,6 +78,9 @@ registries:
 // unrelated resource is not evidence that the catalog lied, so pruning must
 // proceed — while the run still exits non-zero for that failure.
 func TestSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, configPath := stalePruneCompoundRepo(t, "beads", "mayor", "openspec-to-beads")
 
 	output, err := executeCommand("sync", "--prune-stale")
@@ -122,6 +125,9 @@ func TestSyncPruneStalePrunesDespiteUnrelatedMaterializeError(t *testing.T) {
 // round can ever happen. Asserted by counting rounds, and bounded by a
 // deadline so a regression fails instead of hanging the suite.
 func TestSyncPruneStaleReSyncTerminatesWhenErrorPersists(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := stalePruneCompoundRepo(t, "beads", "mayor")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -182,6 +188,9 @@ func TestSyncPruneStaleReSyncTerminatesWhenErrorPersists(t *testing.T) {
 // flags therefore prunes and then re-syncs clean, instead of the old behavior
 // where --strict's own promotion suppressed the fix it was complaining about.
 func TestSyncPruneStaleStrictModePrunesTheSelectionsItPromoted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -228,6 +237,9 @@ registries:
 // call would exit 0 with the stale selection still in the config, silently
 // discarding the promotion the user asked for.
 func TestSyncPruneStaleStrictSurvivesTheReSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -285,6 +297,9 @@ collections:
 // proof that it is gone. A silently skipped --prune-stale is indistinguishable
 // from one that found nothing, so the skip is now stated with its reason.
 func TestSyncPruneStaleSkipExplainsUntrustedCatalog(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

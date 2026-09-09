@@ -109,6 +109,9 @@ func requireLockIsFree(t *testing.T, outDir, when string) {
 // the proof that a completed action RELEASES rather than leaking a depth level
 // into the next prompt.
 func TestDoctorRepairHoldsNoOwnershipLockWhileAwaitingConfirmation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 	outDir := filepath.Join(repoRoot, ".devin")
@@ -177,6 +180,9 @@ func TestDoctorRepairHoldsNoOwnershipLockWhileAwaitingConfirmation(t *testing.T)
 // replacement must be refused and the user's file must be byte-identical. Failing
 // closed is the contract: a repair that could not serialize must not write.
 func TestDoctorRepairIsRefusedWhileAnotherProcessHoldsTheLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)

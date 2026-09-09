@@ -15,6 +15,9 @@ import (
 )
 
 func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -69,6 +72,9 @@ registries:
 }
 
 func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -486,6 +492,9 @@ func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 }
 
 func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -531,6 +540,9 @@ registries:
 }
 
 func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -580,6 +592,9 @@ registries:
 }
 
 func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -624,6 +639,9 @@ registries:
 }
 
 func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -663,6 +681,9 @@ registries:
 }
 
 func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
