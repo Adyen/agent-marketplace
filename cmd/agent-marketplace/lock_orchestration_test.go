@@ -79,7 +79,7 @@ func setupDependencyInspection(t *testing.T) (string, string, string) {
 	return root, repo, state
 }
 
-func TestReadOnlyDependencyEntrypointsPreservePendingTransactions(t *testing.T) {
+func scenarioReadOnlyDependencyEntrypointsPreservePendingTransactions(t *testing.T) {
 	entrypoints := dependencyReadOnlyEntrypoints()
 	entrypoints["direct-list-from"] = func() error {
 		return runListFrom(context.Background(), io.Discard, io.Discard, ".", "", "", "")
@@ -126,7 +126,7 @@ func TestReadOnlyDependencyEntrypointsPreservePendingTransactions(t *testing.T) 
 	}
 }
 
-func TestReadOnlyDependencyEntrypointsWithoutPendingState(t *testing.T) {
+func scenarioReadOnlyDependencyEntrypointsWithoutPendingState(t *testing.T) {
 	for name, run := range dependencyReadOnlyEntrypoints() {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/existing-%t", name, existing), func(t *testing.T) {
@@ -151,7 +151,7 @@ func TestReadOnlyDependencyEntrypointsWithoutPendingState(t *testing.T) {
 	}
 }
 
-func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
+func scenarioLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -197,7 +197,7 @@ func TestLockPublicationHoldsExactLeaseFromSnapshotThroughCommit(t *testing.T) {
 	}
 }
 
-func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
+func scenarioDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -237,7 +237,7 @@ func TestDependencyRecoveryWaitsForExactGCNamespace(t *testing.T) {
 	}
 }
 
-func TestDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
+func scenarioDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -288,7 +288,7 @@ func TestDeinitOrganizationResolutionReturnsHeldExactLease(t *testing.T) {
 	}
 }
 
-func TestSyncCheckExactConsumerLeasePreventsSnapshotDeletion(t *testing.T) {
+func scenarioSyncCheckExactConsumerLeasePreventsSnapshotDeletion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "check-contention.git")
@@ -364,7 +364,7 @@ registries:
 	}
 }
 
-func TestSyncLocalRegistryDoesNotCreateLock(t *testing.T) {
+func scenarioSyncLocalRegistryDoesNotCreateLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	registry := filepath.Join(t.TempDir(), "registry")
@@ -385,7 +385,7 @@ registries:
 	}
 }
 
-func TestLockOmitsUnsupportedRuleAndPrintsWarning(t *testing.T) {
+func scenarioLockOmitsUnsupportedRuleAndPrintsWarning(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -422,7 +422,7 @@ func TestLockOmitsUnsupportedRuleAndPrintsWarning(t *testing.T) {
 	}
 }
 
-func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
+func scenarioRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -493,7 +493,7 @@ func TestRuntimeRecoversDependencyTransactionBeforeLoadingConfig(t *testing.T) {
 	}
 }
 
-func TestConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T) {
+func scenarioConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T) {
 	for command, expected := range map[string]error{"list": dependencytxn.ErrRecoveryRequired, "status": dependencytxn.ErrRecoveryRequired, "gc": dependencytxn.ErrRecoveryBlocked, "tui": dependencytxn.ErrRecoveryBlocked} {
 		t.Run(command, func(t *testing.T) {
 			home := t.TempDir()
@@ -514,7 +514,7 @@ func TestConfiguredCommandsHandlePendingRecoveryBeforeLoadingConfig(t *testing.T
 	}
 }
 
-func TestConfiguredListDoesNotCreateDependencyState(t *testing.T) {
+func scenarioConfiguredListDoesNotCreateDependencyState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -532,7 +532,7 @@ func TestConfiguredListDoesNotCreateDependencyState(t *testing.T) {
 	}
 }
 
-func TestLockCommitRejectsConcurrentConfigEdit(t *testing.T) {
+func scenarioLockCommitRejectsConcurrentConfigEdit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -561,7 +561,7 @@ func TestLockCommitRejectsConcurrentConfigEdit(t *testing.T) {
 	}
 }
 
-func TestSyncMalformedExistingLockIsNotOverwritten(t *testing.T) {
+func scenarioSyncMalformedExistingLockIsNotOverwritten(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "malformed-lock.git")

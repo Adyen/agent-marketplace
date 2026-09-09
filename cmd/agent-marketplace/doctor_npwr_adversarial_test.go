@@ -76,7 +76,7 @@ func prepareDoctorHookIdentityTwins(t *testing.T, repoRoot string) (hooksPath st
 // The user is offered exactly ONE orphan candidate, answers y once, and must not
 // see any other element disappear. The hand-written element was never nominated,
 // never printed, and never described by any evidence, so it must survive.
-func TestAdversarialDoctorRepairMustNotDeleteAnUnshownHookElement(t *testing.T) {
+func scenarioAdversarialDoctorRepairMustNotDeleteAnUnshownHookElement(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	hooksPath, _ := prepareDoctorHookIdentityTwins(t, repoRoot)
 
@@ -121,7 +121,7 @@ func TestAdversarialDoctorRepairMustNotDeleteAnUnshownHookElement(t *testing.T) 
 //
 // Both are confirmation invariants, which the review brief ranks with --yes: the
 // only route to a deletion is an explicit interactive y.
-func TestAdversarialDoctorRepairOrphanLoopDeclinesOnEOFAndOffTTY(t *testing.T) {
+func scenarioAdversarialDoctorRepairOrphanLoopDeclinesOnEOFAndOffTTY(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		in    string

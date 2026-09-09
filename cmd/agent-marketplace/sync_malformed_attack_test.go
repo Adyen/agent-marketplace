@@ -12,7 +12,7 @@ import (
 // malformed in one and genuinely absent from the other. The absent one is
 // stale and prunable; the malformed one must survive, and pruning the first
 // must not take the second with it.
-func TestSyncPruneStaleKeepsMalformedSelectionWhenAnotherRegistryLacksIt(t *testing.T) {
+func scenarioSyncPruneStaleKeepsMalformedSelectionWhenAnotherRegistryLacksIt(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -85,7 +85,7 @@ func splitConfigAtRegistry(cfg, url string) (before, after string) {
 // TestSyncStrictPruneStaleDoesNotDeleteMalformedSelection combines the two
 // flags: strict promotes the malformed warning to an error, which must not open
 // a path to deleting the selection.
-func TestSyncStrictPruneStaleDoesNotDeleteMalformedSelection(t *testing.T) {
+func scenarioSyncStrictPruneStaleDoesNotDeleteMalformedSelection(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -122,7 +122,7 @@ registries:
 // TestSyncRepeatedRunsNeverPruneMalformedSelection attacks the "second sync"
 // path: pruning re-runs sync, and a malformed selection must not become
 // prunable on any subsequent pass.
-func TestSyncRepeatedRunsNeverPruneMalformedSelection(t *testing.T) {
+func scenarioSyncRepeatedRunsNeverPruneMalformedSelection(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -166,7 +166,7 @@ registries:
 // not reclassify a genuinely stale COMMAND selection of the same name as
 // "present but broken" — which would both misname the file to fix and stop
 // --prune-stale from cleaning up a truly dead selection.
-func TestSyncMalformedSkillDoesNotBlockPruningAStaleCommandOfTheSameName(t *testing.T) {
+func scenarioSyncMalformedSkillDoesNotBlockPruningAStaleCommandOfTheSameName(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -214,7 +214,7 @@ registries:
 // root as the path, so neither names the resource — only the recovered
 // frontmatter name does. Without it the user is told a skill that is sitting
 // right there was removed upstream.
-func TestSyncDiagnosesMalformedRootLevelSkill(t *testing.T) {
+func scenarioSyncDiagnosesMalformedRootLevelSkill(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -247,7 +247,7 @@ registries:
 // TestSyncMalformedSkillDoesNotFailAnUnrelatedUsersSync pins the blast radius
 // end to end: a broken resource in a shared registry that this user never
 // selected must not change the exit code or emit a selection warning.
-func TestSyncMalformedSkillDoesNotFailAnUnrelatedUsersSync(t *testing.T) {
+func scenarioSyncMalformedSkillDoesNotFailAnUnrelatedUsersSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -280,7 +280,7 @@ registries:
 // TestSyncRequiredRegistryMalformedSelectionFailsTheRun keeps policy
 // enforcement intact: a required registry whose selected resource cannot be
 // parsed is a hard failure, not a warning.
-func TestSyncRequiredRegistryMalformedSelectionFailsTheRun(t *testing.T) {
+func scenarioSyncRequiredRegistryMalformedSelectionFailsTheRun(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

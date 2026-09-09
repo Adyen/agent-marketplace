@@ -14,7 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
-func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
+func scenarioConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	t.Setenv("HOME", canonicalTempDir(t))
 	repo := canonicalTempDir(t)
 	root := filepath.Join(repo, ".agents", "config.yaml")
@@ -39,7 +39,7 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
+func scenarioPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 	for _, change := range []string{"unchanged", "edit", "delete", "retarget"} {
 		t.Run(change, func(t *testing.T) {
 			home := canonicalTempDir(t)
@@ -151,7 +151,7 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
+func scenarioPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
 	home := canonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -186,7 +186,7 @@ func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staging-generation-race.git")
@@ -241,7 +241,7 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
+func scenarioPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "lock-generation-race.git")
@@ -264,7 +264,7 @@ func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := canonicalTempDir(t)
@@ -302,7 +302,7 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
@@ -345,7 +345,7 @@ func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "ancestor-symlink.git")
@@ -381,7 +381,7 @@ func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T)
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staged-ancestor-symlink.git")
@@ -422,7 +422,7 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
@@ -451,7 +451,7 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
+func scenarioPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 	home := canonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -472,7 +472,7 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 	}
 }
 
-func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
+func scenarioPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staged-config-lock.git")

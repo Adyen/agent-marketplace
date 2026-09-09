@@ -17,7 +17,7 @@ import (
 // install --scope user
 // ---------------------------------------------------------------------------
 
-func TestInstallScopeUserWritesToGlobalConfig(t *testing.T) {
+func scenarioInstallScopeUserWritesToGlobalConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -76,7 +76,7 @@ registries:
 // install --scope local
 // ---------------------------------------------------------------------------
 
-func TestInstallScopeLocalWritesToLocalConfig(t *testing.T) {
+func scenarioInstallScopeLocalWritesToLocalConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -120,7 +120,7 @@ registries:
 	)
 }
 
-func TestInstallScopeLocalUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
+func scenarioInstallScopeLocalUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -160,7 +160,7 @@ registries: []
 	)
 }
 
-func TestInstallScopeRepoUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
+func scenarioInstallScopeRepoUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -202,7 +202,7 @@ registries: []
 	)
 }
 
-func TestInstallScopeRepoOrLocalRemovesLocalExclude(t *testing.T) {
+func scenarioInstallScopeRepoOrLocalRemovesLocalExclude(t *testing.T) {
 	testCases := []struct {
 		name        string
 		scopeArg    string
@@ -269,7 +269,7 @@ skills:
 	}
 }
 
-func TestInstallScopeRepoRemovesRepoExclude(t *testing.T) {
+func scenarioInstallScopeRepoRemovesRepoExclude(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -309,7 +309,7 @@ registries:
 	)
 }
 
-func TestInstallScopeRepoOrLocalOverridesUserPlacement(t *testing.T) {
+func scenarioInstallScopeRepoOrLocalOverridesUserPlacement(t *testing.T) {
 	testCases := []struct {
 		name          string
 		scopeArg      string
@@ -383,7 +383,7 @@ registries:
 // remove: required skill → error
 // ---------------------------------------------------------------------------
 
-func TestRemoveRequiredSkillFails(t *testing.T) {
+func scenarioRemoveRequiredSkillFails(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -424,7 +424,7 @@ registries: []
 // remove: machine-scope non-required skill at default scope → succeeds via user scope
 // ---------------------------------------------------------------------------
 
-func TestRemoveMachineScopeNonRequiredAtDefaultScopeSucceeds(t *testing.T) {
+func scenarioRemoveMachineScopeNonRequiredAtDefaultScopeSucceeds(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -478,7 +478,7 @@ registries: []
 // remove: default:true repo skill → adds to personal exclude
 // ---------------------------------------------------------------------------
 
-func TestRemoveDefaultSkillAddsToPersonalExclude(t *testing.T) {
+func scenarioRemoveDefaultSkillAddsToPersonalExclude(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -529,7 +529,7 @@ registries:
 // remove --scope user: remove machine-scope skill from global config
 // ---------------------------------------------------------------------------
 
-func TestRemoveScopeUserRemovesFromGlobalConfig(t *testing.T) {
+func scenarioRemoveScopeUserRemovesFromGlobalConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -570,7 +570,7 @@ registries:
 	}
 }
 
-func TestInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
+func scenarioInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
 	testCases := []struct {
 		name          string
 		scopeArg      string
@@ -659,7 +659,7 @@ registries:
 	}
 }
 
-func TestRemoveScopeMatrixForRepoSelectedSkill(t *testing.T) {
+func scenarioRemoveScopeMatrixForRepoSelectedSkill(t *testing.T) {
 	testCases := []struct {
 		name                string
 		scopeArg            string
@@ -768,7 +768,7 @@ registries:
 	}
 }
 
-func TestRemoveScopeMatrixForUserSelectedSkill(t *testing.T) {
+func scenarioRemoveScopeMatrixForUserSelectedSkill(t *testing.T) {
 	testCases := []struct {
 		name               string
 		scopeArg           string
@@ -865,7 +865,7 @@ registries:
 // install --from <local-path> --scope local: registry entry in config.local.yaml
 // ---------------------------------------------------------------------------
 
-func TestInstallFromFlagScopeLocalWritesRegistryEntryToLocalConfig(t *testing.T) {
+func scenarioInstallFromFlagScopeLocalWritesRegistryEntryToLocalConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -934,7 +934,7 @@ registries: []
 // remove --scope local for RepoPersonal-sourced resource
 // ---------------------------------------------------------------------------
 
-func TestRemoveScopeLocalRemovesRepoPersonalResource(t *testing.T) {
+func scenarioRemoveScopeLocalRemovesRepoPersonalResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1002,7 +1002,7 @@ registries:
 // install <name> --scope local: writes to registry entry when source is RepoPersonal
 // ---------------------------------------------------------------------------
 
-func TestInstallScopeLocalWritesToRegistryEntryForRepoPersonalSource(t *testing.T) {
+func scenarioInstallScopeLocalWritesToRegistryEntryForRepoPersonalSource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

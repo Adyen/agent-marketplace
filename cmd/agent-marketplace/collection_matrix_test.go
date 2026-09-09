@@ -13,7 +13,7 @@ import (
 
 // TestCollectionMemberExclude_LocalScope verifies that remove --scope local
 // for a collection-provided skill writes to config.local.yaml (not repo config).
-func TestCollectionMemberExclude_LocalScope(t *testing.T) {
+func scenarioCollectionMemberExclude_LocalScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -68,7 +68,7 @@ collections:
 
 // TestCollectionMemberExclude_UserScope verifies that remove --scope user
 // for a collection-provided skill writes to ~/.agents/config.yaml.
-func TestCollectionMemberExclude_UserScope(t *testing.T) {
+func scenarioCollectionMemberExclude_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -132,7 +132,7 @@ registries: []
 
 // TestCollectionInstall_UserScope verifies install --scope user writes the
 // collection ref to ~/.agents/config.yaml, not the repo config.
-func TestCollectionInstall_UserScope(t *testing.T) {
+func scenarioCollectionInstall_UserScope(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -176,7 +176,7 @@ registries:
 
 // TestCollectionNotFoundInRegistry verifies that a config referencing a
 // collection name not present in any registry produces a clear error.
-func TestCollectionNotFoundInRegistry(t *testing.T) {
+func scenarioCollectionNotFoundInRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -206,7 +206,7 @@ collections:
 
 // TestCollectionCycleDetection verifies that a collection including itself
 // (directly or transitively) produces an error rather than an infinite loop.
-func TestCollectionCycleDetection(t *testing.T) {
+func scenarioCollectionCycleDetection(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -248,7 +248,7 @@ collections:
 
 // TestCollectionExcludePersistsAcrossSync verifies that an exclude written
 // for a collection member is still respected after a subsequent sync.
-func TestCollectionExcludePersistsAcrossSync(t *testing.T) {
+func scenarioCollectionExcludePersistsAcrossSync(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -298,7 +298,7 @@ collections:
 // TestCollectionMemberExclude_StatusReflects verifies that after excluding a
 // collection member, status shows the remaining members with a VIA label and
 // does not list the excluded skill.
-func TestCollectionMemberExclude_StatusReflects(t *testing.T) {
+func scenarioCollectionMemberExclude_StatusReflects(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -357,7 +357,7 @@ collections:
 
 // TestCollectionMultiRegistry verifies that a collection can bundle skills
 // from two different configured registries and both are synced.
-func TestCollectionMultiRegistry(t *testing.T) {
+func scenarioCollectionMultiRegistry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -409,7 +409,7 @@ collections:
 // directly listed in a registry entry AND provided by a collection, Via is
 // NOT set (direct selection takes precedence) and remove removes it from the
 // direct skills list rather than writing an exclude.
-func TestDirectSkillAndCollectionOverlap(t *testing.T) {
+func scenarioDirectSkillAndCollectionOverlap(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -464,7 +464,7 @@ collections:
 
 // TestCollectionRemove_DirectSkillSurvives verifies that removing a collection
 // does not de-sync a skill that was also independently listed directly.
-func TestCollectionRemove_DirectSkillSurvives(t *testing.T) {
+func scenarioCollectionRemove_DirectSkillSurvives(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

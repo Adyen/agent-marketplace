@@ -86,6 +86,14 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 Run direct real-terminal test typechecking with `make tui-qa-check` and all eight deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
+## Command test isolation
+
+Command scenarios are named callbacks in `command_scenarios_test.go`, executed by `TestCommandIntegration`. Add a `scenario<Name>(t *testing.T)` function beside related scenarios and register it as `{"<Name>", scenario<Name>}`. Scenario bodies contain setup and assertions only; the suite supplies process isolation before setup. Matrices stay together in one child. `TestCommandScenarioRegistration` rejects unregistered callbacks, mismatched names, duplicate registrations, and unexpected top-level tests. Runner infrastructure, startup checks, checkout-policy checks, and the pure warning/version tests remain in-process.
+
+Select a scenario with `go test ./cmd/agent-marketplace -run '^TestCommandIntegration$/^BackupCreatedOnInstall$' -count=1`; append another `/pattern` for its nested subtests. Old top-level scenario selectors no longer match. Normal `go test` defaults to four child slots; `-parallel=1` serializes children. `-count` repeats scenarios, and `-shuffle=<seed>` or `-shuffle=on` shuffles their registration order reproducibly. Use `-args -command-tests-in-process` for the serial baseline. Coverage builds automatically use that path so scenario counters reach the report.
+
+Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment are sandboxed. Fixtures that replace HOME and expect Codex beneath it must also set CODEX_HOME. Diagnostic-grouping fixtures use local directories when asserting registry-relative source locations; exact Git snapshots deliberately preserve absolute source paths. Runner and registration checks are `go test ./cmd/agent-marketplace -run '^TestCommand(Process|ScenarioRegistration)' -count=1`; include `-race` and `-cover` when changing the runner.
+
 ## E2E Test Suite
 
 The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.

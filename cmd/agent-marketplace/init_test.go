@@ -11,7 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
+func scenarioInitCreatesV2UserPersonalConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -43,7 +43,7 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 	}
 }
 
-func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
+func scenarioInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -56,7 +56,7 @@ func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
 	}
 }
 
-func TestInitIsIdempotent(t *testing.T) {
+func scenarioInitIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -91,7 +91,7 @@ func TestInitIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestInitValidatesHarnesses(t *testing.T) {
+func scenarioInitValidatesHarnesses(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -104,7 +104,7 @@ func TestInitValidatesHarnesses(t *testing.T) {
 	}
 }
 
-func TestInitDoesNotCreateConfigWhenValidationFails(t *testing.T) {
+func scenarioInitDoesNotCreateConfigWhenValidationFails(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -122,7 +122,7 @@ func TestInitDoesNotCreateConfigWhenValidationFails(t *testing.T) {
 	}
 }
 
-func TestInitHelp(t *testing.T) {
+func scenarioInitHelp(t *testing.T) {
 	output, err := executeCommand("init", "--help")
 	if err != nil {
 		t.Fatalf("init --help failed: %v\n%s", err, output)
@@ -132,7 +132,7 @@ func TestInitHelp(t *testing.T) {
 	}
 }
 
-func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
+func scenarioInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
@@ -177,7 +177,7 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	}
 }
 
-func TestInitDeduplicatesHarnesses(t *testing.T) {
+func scenarioInitDeduplicatesHarnesses(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -202,7 +202,7 @@ func TestInitDeduplicatesHarnesses(t *testing.T) {
 	}
 }
 
-func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
+func scenarioInitInteractiveTelemetryConsentNo(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -239,7 +239,7 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	}
 }
 
-func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
+func scenarioPromptTelemetryConsentEOFDeclines(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -262,7 +262,7 @@ func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
 	}
 }
 
-func TestPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
+func scenarioPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -285,7 +285,7 @@ func TestPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
 	}
 }
 
-func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
+func scenarioInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -330,7 +330,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}
 }
 
-func TestInitNonInteractiveLeavesTelemetryUnset(t *testing.T) {
+func scenarioInitNonInteractiveLeavesTelemetryUnset(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

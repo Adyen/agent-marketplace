@@ -108,7 +108,7 @@ func (e *inventoryCommandExporter) shutdown(t *testing.T, tel *telemetry.Telemet
 	return append([]map[string]string(nil), e.snapshots...)
 }
 
-func TestDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
+func scenarioDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
 	tests := []struct {
 		name  string
 		scope deinitScope
@@ -151,7 +151,7 @@ func TestDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
 	}
 }
 
-func TestDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
+func scenarioDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -169,7 +169,7 @@ func TestDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
 	}
 }
 
-func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
+func scenarioSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 	tests := []struct {
 		name          string
 		selection     string
@@ -206,7 +206,7 @@ func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 	}
 }
 
-func TestDeinitFinalInventoryResolutionFailureIsBestEffort(t *testing.T) {
+func scenarioDeinitFinalInventoryResolutionFailureIsBestEffort(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")

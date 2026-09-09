@@ -12,7 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestManualRegressionMatrix(t *testing.T) {
+func scenarioManualRegressionMatrix(t *testing.T) {
 	t.Run("branch ref gates skill discovery", func(t *testing.T) {
 		homeDir := t.TempDir()
 		t.Setenv("HOME", homeDir)

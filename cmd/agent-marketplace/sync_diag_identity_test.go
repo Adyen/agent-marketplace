@@ -61,16 +61,15 @@ func writeUndocumentedTransportMCP(t *testing.T, repoDir string, names ...string
 // mcp.devin.transport-unsupported, which pu6b deliberately left an error (see
 // writeUndocumentedTransportMCP). Do not point this test back at scoped
 // allowed-tools.
-func TestSyncNamesEachFailingResourceOnTheErrorPath(t *testing.T) {
+func scenarioSyncNamesEachFailingResourceOnTheErrorPath(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
 
-	origin, working := createBareRepoWithWorkingClone(t, "bad-transport.git")
+	registry := t.TempDir()
 	names := []string{"alpha", "beta", "gamma"}
-	writeUndocumentedTransportMCP(t, working, names...)
-	writeSkill(t, working, "keeper", "Compiles fine", nil)
-	commitAndPushAll(t, working, "Add MCP servers with an undocumented transport")
+	writeUndocumentedTransportMCP(t, registry, names...)
+	writeSkill(t, registry, "keeper", "Compiles fine", nil)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
@@ -78,8 +77,7 @@ apiVersion: agent-marketplace/v2
 harnesses:
   - devin
 registries:
-  - url: `+origin+`
-    ref: main
+  - url: `+registry+`
     skills:
       - keeper
     mcp:
@@ -138,7 +136,7 @@ registries:
 // installs the artifact anyway, so this test now asserts a zero exit and an
 // installed skill. Do not "restore" the old error expectations: the error-path
 // output shape lives in TestSyncNamesEachFailingResourceOnTheErrorPath.
-func TestSyncCollapsesIdenticalWarningDiagnosticsFromOneResource(t *testing.T) {
+func scenarioSyncCollapsesIdenticalWarningDiagnosticsFromOneResource(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

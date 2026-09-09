@@ -14,7 +14,7 @@ import (
 // with pairs of diagnostics that render identically or nearly so but state
 // DIFFERENT facts. Losing a per-file (or per-target, or per-resource) failure is
 // the failure mode; printing one line twice is only noise.
-func TestWriteRepairDiagnosticsNeverCollapsesTwoDifferentFacts(t *testing.T) {
+func scenarioWriteRepairDiagnosticsNeverCollapsesTwoDifferentFacts(t *testing.T) {
 	base := diag.Diagnostic{
 		Code:     diag.CodeOwnershipStateMissing,
 		Severity: diag.SeverityWarning,

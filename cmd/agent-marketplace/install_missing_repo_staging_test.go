@@ -11,7 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
-func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
+func scenarioRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
