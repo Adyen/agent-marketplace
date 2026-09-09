@@ -43,27 +43,33 @@ export function safeCanonicalUrl(value: string | undefined): string {
   }
 }
 
+export function resourceLatestRoute(item: ResourceListItem): string {
+  const registry = item.registry_slug || item.registry_id
+  if (!isSafeRouteToken(item.registry_id) || (item.registry_slug !== undefined && !isSafeRouteToken(item.registry_slug)) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
+  return `/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
+}
+
 export function resourceLatestLocator(item: ResourceListItem, browserBase: string): string {
   const canonical = safeCanonicalUrl(browserBase)
-  const registry = item.registry_slug || item.registry_id
-  if (!canonical || !isSafeRouteToken(item.registry_id) || (item.registry_slug !== undefined && !isSafeRouteToken(item.registry_slug)) || !isSafeResourceRoute(registry, item.kind, item.name)) return ''
-  return `${canonical}/r/${encodeURIComponent(registry)}/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.name)}`
+  const route = resourceLatestRoute(item)
+  return canonical && route ? `${canonical}${route}` : ''
+}
+
+export function resourceRoute(item: ResourceListItem): string {
+  const latest = resourceLatestRoute(item)
+  if (!latest || !isSha256Digest(item.content_digest)) return ''
+  return `${latest}/revisions/${encodeURIComponent(item.content_digest)}`
 }
 
 export function resourceLocator(item: ResourceListItem, browserBase: string): string {
-  const latest = resourceLatestLocator(item, browserBase)
-  if (!latest || !isSha256Digest(item.content_digest)) return ''
-  return `${latest}/revisions/${encodeURIComponent(item.content_digest)}`
+  const canonical = safeCanonicalUrl(browserBase)
+  const route = resourceRoute(item)
+  return canonical && route ? `${canonical}${route}` : ''
 }
 
 export function installCommand(item: ResourceListItem, browserBase: string): string {
   const locator = resourceLocator(item, browserBase)
   return locator ? `agent-marketplace install "${locator}"` : ''
-}
-
-export function marketplaceInstallCommand(canonicalUrl: string): string {
-  const canonical = safeCanonicalUrl(canonicalUrl)
-  return canonical ? `agent-marketplace install ${canonical}` : ''
 }
 
 /**
@@ -227,6 +233,8 @@ export type ListAvailability = NonNullable<ResourceListItem['availability']>
 const LIST_AVAILABILITY: Record<ListAvailability, ResourceAvailabilityCopy> = {
   available: RESOURCE_AVAILABILITY.available,
   revoked: RESOURCE_AVAILABILITY.revoked,
+  'policy-blocked': RESOURCE_AVAILABILITY['policy-blocked'],
+  'no-artifact': RESOURCE_AVAILABILITY['no-artifact'],
   blocked: {
     label: 'Not installable',
     color: 'warning',

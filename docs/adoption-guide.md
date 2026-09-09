@@ -188,6 +188,26 @@ Plain local-directory registries are read live and never locked. This foundation
 
 When a non-required resource is enabled in both machine and repo scopes, `remove` without `--scope` reports the ambiguity. Use `remove --scope user` or `remove --scope repo` to remove only the selected occurrence; the other scope remains enabled. An explicit scope never falls back to another scope when that scope has no occurrence. A machine-owned occurrence targeted from repo or local scope produces a boundary error. `--scope local` is for checkout-local selections and excludes and cannot bypass the machine/repo boundary. An unscoped removal with one unambiguous occurrence infers its effective layer, except that a repo-scoped auto-selected resource not explicitly selected by committed repo config is recorded as a checkout-local exclusion. Use `--scope repo` to edit committed repo config.
 
+## Install from a Marketplace
+
+First install the CLI and configure at least one target harness as described in
+[30-second setup](#30-second-setup). A Marketplace resource page provides an
+install command with a full URL pinned to one exact revision:
+
+```bash
+agent-marketplace install "https://marketplace.example/r/example/skill/review/revisions/sha256%3A..."
+```
+
+Run that command directly. The Marketplace does not need to be registered
+first. To make the Marketplace available for later CLI discovery and shorter
+locators, optionally register its base URL:
+
+```bash
+agent-marketplace install "https://marketplace.example"
+```
+
+Registration adds a Marketplace source. It does not install a resource.
+
 ## Daily commands
 
 ```bash

@@ -41,71 +41,76 @@ test.describe('Marketplace browser discovery', () => {
     expect(detailStyle).toEqual(homepageStyle)
   })
 
-  test('identifies this Marketplace with its CLI install command', async ({ page }) => {
+  test('links to CLI setup without making Marketplace registration a prerequisite', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: appURL })
     await page.goto('/')
 
-    await expect(page.getByRole('heading', { name: 'Install this Marketplace' })).toBeVisible()
-    await expect(page.locator('[data-testid="command-text"]')).toHaveText(`agent-marketplace install ${appURL}`)
-    const copyButton = page.getByRole('button', { name: 'Copy Marketplace install command' })
-    await expect(copyButton).toBeEnabled()
-
-    // The copy control must look clickable before it is hovered and must react
-    // when it is. This theme resolves bg-muted and bg-elevated to the same ink
-    // shade, so a hover fill can be perfectly valid CSS and still be invisible
-    // against the block behind it. Only comparing rendered colour catches that.
-    const styles = () => copyButton.evaluate((el) => {
-      const s = getComputedStyle(el)
-      return { bg: s.backgroundColor, color: s.color, cursor: s.cursor }
-    })
-    const blockBg = await page.locator('[data-testid="command-text"]').evaluate(el => getComputedStyle(el.parentElement as Element).backgroundColor)
-    const rest = await styles()
-    expect(rest.cursor).toBe('pointer')
-    expect(rest.bg).not.toBe(blockBg)
-
-    // The fill is transitioned, so it settles a frame after the pointer arrives.
-    await copyButton.hover()
-    await expect.poll(async () => (await styles()).bg).not.toBe(rest.bg)
-    const hovered = await styles()
-    expect(hovered.bg).not.toBe(blockBg)
-    expect(hovered.color).not.toBe(rest.color)
-
-    await copyButton.click()
-    await expect(page.getByRole('button', { name: 'Marketplace install command copied' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Browse AI resources', exact: true })).toBeVisible()
+    await expect(page.getByText(/Every revision is pinned and analyzed before publication.*sync them across your AI tools/)).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Use this Marketplace from the CLI', exact: true })).toBeAttached()
+    await expect(page.getByRole('link', { name: 'agent-marketplace CLI', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace/blob/main/docs/adoption-guide.md#install-from-a-marketplace')
+    await expect(page.getByText(/Want to discover resources from the CLI.*Connect this Marketplace/)).toBeVisible()
+    await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
+    const copyMarketplace = page.getByRole('button', { name: 'Copy Marketplace connection command', exact: true })
+    await copyMarketplace.click()
+    await expect(page.getByRole('button', { name: 'Marketplace connection command copied', exact: true })).toHaveText('Copied')
+    await expect(page.getByRole('link', { name: 'Open agent-marketplace CLI on GitHub', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace')
+    await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
+    await expect(page.getByText('01 / connect', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('02 / discover', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('agent-marketplace search', { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/read-only/i)).toHaveCount(0)
+    const lastResource = page.locator('article').last()
+    const unavailableStatus = lastResource.getByRole('button', { name: 'Revoked for deploy-preview. More information' })
+    await expect(unavailableStatus).toHaveText('Revoked')
+    const unavailableRestBackground = await unavailableStatus.evaluate(el => getComputedStyle(el).backgroundColor)
+    await unavailableStatus.hover()
+    await expect(unavailableStatus).toHaveCSS('background-color', unavailableRestBackground)
+    await expect(page.locator('[data-slot="content"]')).toContainText('Installation is disabled because this revision is revoked.')
+    await expect(lastResource.getByText('review', { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/on this page cannot be installed/)).toHaveCount(0)
   })
 
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
 
     await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)
     await page.getByRole('combobox', { name: 'Registry', exact: true }).click()
+    const longRegistry = page.getByRole('option', { name: 'registry-with-an-extremely-long-name', exact: true })
+    await expect(longRegistry).toBeVisible()
+    await expect(longRegistry.locator('[data-slot="itemLabel"]')).toHaveCSS('text-overflow', 'ellipsis')
     await page.getByRole('option', { name: 'team-tools', exact: true }).click()
     await page.getByRole('option', { name: 'community-tools', exact: true }).click()
+    await page.keyboard.press('Escape')
 
     await expect(page).toHaveURL(/registry=team-tools&registry=community-tools/)
-    await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
+    await expect(page.locator('#search-registry')).toContainText('team-tools')
+    await expect(page.locator('#search-registry')).toContainText('+1 more')
+    await expect(page.getByText('· 1 total', { exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Clear search', exact: true }).click()
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
     await expect(page.getByLabel('Search', { exact: true })).toHaveValue('')
     await expect(page).not.toHaveURL(/[?&]q=/)
   })
 
-  test('filters by kind and omits the all-kinds sentinel from the URL', async ({ page }) => {
+  test('filters by kind and uses the empty placeholder for all kinds', async ({ page }) => {
     const response = await page.goto('/')
     expect(response?.status()).toBe(200)
     await expect(page.locator('#search-kind')).toHaveText('All resource kinds')
 
     await page.locator('#search-kind').click()
+    await expect(page.getByRole('option', { name: 'All resource kinds', exact: true })).toHaveCount(0)
     await page.getByRole('option', { name: 'Command', exact: true }).click()
     await expect(page).toHaveURL(/kind=command/)
-    await expect(page.getByRole('heading', { name: '1', exact: true })).toBeVisible()
+    await expect(page.getByText('· 1 total', { exact: true })).toBeVisible()
 
-    await page.locator('#search-kind').click()
-    await page.getByRole('option', { name: 'All resource kinds', exact: true }).click()
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
     await expect(page).not.toHaveURL(/[?&]kind=/)
-    await expect(page.getByRole('heading', { name: '2', exact: true })).toBeVisible()
+    await expect(page.getByText('· 2 total', { exact: true })).toBeVisible()
   })
 
   test('renders hostile text as text and preserves safe resource links', async ({ page }) => {
@@ -115,7 +120,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(card.getByText(hostileDescription, { exact: true })).toBeVisible()
     await expect(card.locator('script')).toHaveCount(0)
     await expect(card.locator('[onerror]')).toHaveCount(0)
-    await expect(card.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveAttribute('href', /\/r\/team-tools\/skill\/secure-review$/)
+    await expect(card.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
   })
 
   test('keeps browser routes Nuxt-owned while the API remains API-only', async ({ page, request }) => {
@@ -131,22 +136,29 @@ test.describe('Marketplace browser discovery', () => {
     expect(exact?.headers()['content-type']).toContain('text/html')
   })
 
-  test('follows a latest resource link and exposes an exact install pin', async ({ page }) => {
+  test('follows an exact resource link and exposes the same install pin', async ({ page }) => {
+    const previousDigest = `sha256:${'9'.repeat(64)}`
     await page.goto('/')
     await page.getByRole('link', { name: 'team-tools/secure-review', exact: true }).click()
 
-    await expect(page).toHaveURL(/\/r\/team-tools\/skill\/secure-review$/)
+    await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: previousDigest, exact: true })).toBeVisible()
     await expect(page.locator('code')).toHaveText(`agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`)
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeEnabled()
-    await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toBeEnabled()
     await expect(page.getByRole('heading', { name: 'Security findings', exact: true })).toBeVisible()
     await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
     await expect(page.getByText(`sha256:${'6'.repeat(64)}`, { exact: true })).toBeVisible()
     await expect(page.getByText('remote-reference', { exact: true })).toBeVisible()
+
+    const exactRevisionResponse = page.waitForResponse(response => response.url().includes(`/revisions/${encodeURIComponent(previousDigest)}`) && !response.url().includes('/inspection'))
+    await page.getByRole('link', { name: previousDigest, exact: true }).click()
+    expect((await exactRevisionResponse).status()).toBe(200)
+    await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}`)
+    await expect(page.getByRole('alert', { name: 'This revision is revoked' })).toContainText('superseded policy')
   })
 
   test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
@@ -160,7 +172,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('heading', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
     await expect(page.getByText(digest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Revision history', exact: true })).toBeVisible()
-    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `${appURL}/r/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
+    await expect(page.getByRole('link', { name: `sha256:${'9'.repeat(64)}`, exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/sha256%3A${'9'.repeat(64)}`)
     await expect(page.getByRole('heading', { name: 'Inspection preview', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Safe review', exact: true })).toBeVisible()
     await expect(page.locator('[data-testid="safe-markdown"] a')).toHaveAttribute('href', 'https://example.com/docs')
@@ -209,7 +221,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('alert')).toContainText('This revision is revoked')
     await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
-    await expect(page.getByRole('button', { name: /Copy pinned browser URL/ })).toBeEnabled()
+    await expect(page.getByRole('button', { name: /Copy detail URL/ })).toBeEnabled()
   })
 
   test('shows the registry history empty state', async ({ page }) => {
@@ -252,10 +264,7 @@ test.describe('Marketplace browser discovery', () => {
     const response = await page.goto('/')
     const csp = response?.headers()['content-security-policy'] ?? ''
     expect(csp).toContain(`img-src 'self' data: ${mockURL}`)
-    await expect(page.getByText(`searches ${mockURL}/api/v1/search`, { exact: true })).toBeVisible()
-    const searchInput = page.getByLabel('Search', { exact: true })
-    await searchInput.fill('secure')
-    await searchInput.press('Enter')
+    await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)
     expect(absoluteRequests.some(url => url.startsWith(`${mockURL}/api/v1/`))).toBe(true)
 
@@ -270,11 +279,9 @@ test.describe('Marketplace browser discovery', () => {
       body: JSON.stringify(searchResult()),
     }))
     await relativePage.goto(relativeAppURL)
-    await expect(relativePage.getByRole('heading', { name: '2', exact: true })).toBeVisible()
-    const relativeSearchInput = relativePage.getByLabel('Search', { exact: true })
-    await relativeSearchInput.fill('secure')
-    await relativeSearchInput.press('Enter')
-    await expect(relativePage.getByRole('heading', { name: '1', exact: true })).toBeVisible()
+    await expect(relativePage.getByText('· 2 total', { exact: true })).toBeVisible()
+    await relativePage.getByLabel('Search', { exact: true }).fill('secure')
+    await expect(relativePage.getByText('· 1 total', { exact: true })).toBeVisible()
     expect(sameOriginRequests.some(url => {
       const requestURL = new URL(url)
       return requestURL.origin === relativeAppURL && requestURL.pathname === '/api/v1/search'

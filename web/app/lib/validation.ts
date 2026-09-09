@@ -21,6 +21,10 @@ export const MAX_REGISTRY_HISTORY_ENTRIES = 1_000
 // cannot make the browser render an unbounded history.
 export const MAX_RESOURCE_REVISION_ENTRIES = 100
 
+// The analyzer emits at most 1,000 findings by default. Keep that complete
+// security record renderable while still bounding an untrusted API response.
+export const MAX_ASSESSMENT_FINDINGS = 1_000
+
 export function isSha256Digest(value: string): boolean {
   return DIGEST_PATTERN.test(value)
 }
@@ -101,7 +105,7 @@ export function normalizeRegistryHistory(input: unknown): RegistryOccurrence[] {
 }
 
 export function normalizeResourceRevisions(input: unknown, expected: ExpectedResourceCoordinate): ResourceRevision[] {
-  return boundedArray(input, 'resource revisions', MAX_RESOURCE_REVISION_ENTRIES).map(item => normalizeResourceRevision(item, { kind: expected.kind, name: expected.name }))
+  return boundedArray(input, 'resource revisions', MAX_RESOURCE_REVISION_ENTRIES).map(item => normalizeResourceRevisionValue(item, { kind: expected.kind, name: expected.name }, false))
 }
 
 export function normalizeRegistryOccurrence(input: unknown, label = 'registry occurrence'): RegistryOccurrence {
@@ -153,7 +157,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
   }
 }
 
-const LIST_AVAILABILITIES = ['available', 'blocked', 'revoked'] as const
+const LIST_AVAILABILITIES = ['available', 'blocked', 'policy-blocked', 'no-artifact', 'revoked'] as const
 
 /**
  * Keep only an availability value this client understands. A value a newer
@@ -180,6 +184,10 @@ export type ExpectedResourceCoordinate = {
 }
 
 export function normalizeResourceRevision(input: unknown, expected?: ExpectedResourceCoordinate): ResourceRevision {
+  return normalizeResourceRevisionValue(input, expected, true)
+}
+
+function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResourceCoordinate | undefined, includeFindings: boolean): ResourceRevision {
   const object = asObject(input, 'resource revision')
   for (const legacyField of ['analyzer_version', 'findings', 'provenance', 'acquisition']) {
     if (object[legacyField] !== undefined) throw new ApiValidationError(`${legacyField} is unsupported; use assessment or occurrence`)
@@ -196,7 +204,8 @@ export function normalizeResourceRevision(input: unknown, expected?: ExpectedRes
   const assessmentContentDigest = matchingDigest(assessmentObject.content_digest, digest, 'assessment.content_digest')
   const decision = requiredString(assessmentObject.decision, 'assessment.decision')
   if (!['allow', 'warn', 'reject'].includes(decision)) throw new ApiValidationError('assessment.decision is unsupported')
-  const findings = assessmentObject.findings === undefined ? undefined : boundedArray(assessmentObject.findings, 'assessment.findings').map((value, index) => {
+  const findingValues = assessmentObject.findings === undefined ? undefined : boundedArray(assessmentObject.findings, 'assessment.findings', MAX_ASSESSMENT_FINDINGS)
+  const findings = !includeFindings || findingValues === undefined ? undefined : findingValues.map((value, index) => {
     const finding = asObject(value, `assessment.findings[${index}]`)
     const locationObject = finding.location === undefined ? undefined : asObject(finding.location, `assessment.findings[${index}].location`)
     const startByte = locationObject?.start_byte === undefined ? undefined : boundedInteger(locationObject.start_byte, `assessment.findings[${index}].location.start_byte`)

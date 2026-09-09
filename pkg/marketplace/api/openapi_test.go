@@ -274,9 +274,11 @@ func TestOpenAPIAvailabilityMatchesServerConstants(t *testing.T) {
 		got[value.(string)] = true
 	}
 	want := map[string]bool{
-		string(AvailabilityAvailable): true,
-		string(AvailabilityBlocked):   true,
-		string(AvailabilityRevoked):   true,
+		string(AvailabilityAvailable):     true,
+		string(AvailabilityBlocked):       true,
+		string(AvailabilityPolicyBlocked): true,
+		string(AvailabilityNoArtifact):    true,
+		string(AvailabilityRevoked):       true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("availability enum = %#v, want %#v", got, want)

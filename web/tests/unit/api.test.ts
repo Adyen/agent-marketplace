@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { apiPath, createMarketplaceApi, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
+import { apiPath, createMarketplaceApi, devApiProxyTargets, isRasterMediaType, isResourceKind, normalizeApiBase, resourceInspectionContentPath, resourceInspectionPath, resourcePath, resourceRevisionPath, resourceRevisionsPath, selectMarketplaceApiBase, selectMarketplaceFetcher, selectMarketplacePublicApiBase, serializeSearchQuery, registryHistoryPath, registryPath, wellKnownPath } from '../../app/lib/api'
 import { RESOURCE_KINDS } from '../../app/types/marketplace'
-import { ApiValidationError, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
+import { ApiValidationError, MAX_ASSESSMENT_FINDINGS, MAX_RESOURCE_REVISION_ENTRIES, MAX_REGISTRY_HISTORY_ENTRIES, normalizeInspectionManifest, normalizeResourceRevision, normalizeResourceRevisions, normalizeSearchResult, normalizeRegistry, normalizeRegistryHistory, normalizeRegistrySummaries, normalizeWellKnown } from '../../app/lib/validation'
 import type { ApiFetcher, SearchParams } from '../../app/types/marketplace'
 
 function revisionPayload(contentDigest: string, overrides: Record<string, unknown> = {}) {
@@ -69,6 +69,21 @@ describe('Marketplace API URL handling', () => {
     expect(selectMarketplaceApiBase(true, '/', '')).toBe('/')
   })
 
+  it('routes an absolute development API base through the same-origin proxy', () => {
+    expect(selectMarketplacePublicApiBase(true, 'http://localhost:8081')).toBe('/')
+    expect(selectMarketplacePublicApiBase(false, 'https://api.example')).toBe('https://api.example')
+    expect(selectMarketplacePublicApiBase(true, '/')).toBe('/')
+    expect(devApiProxyTargets('https://market.example/prefix')).toEqual({
+      api: 'https://market.example/prefix/api/v1',
+      wellKnown: 'https://market.example/prefix/.well-known/agent-marketplace.json',
+    })
+    expect(devApiProxyTargets('https://market.example/prefix/api/v1')).toEqual({
+      api: 'https://market.example/prefix/api/v1',
+      wellKnown: 'https://market.example/prefix/.well-known/agent-marketplace.json',
+    })
+    expect(devApiProxyTargets('https://market.example/prefix?token=secret')).toBeNull()
+  })
+
   it('uses request-bound fetch only for SSR relative API bases', () => {
     const requestFetcher: ApiFetcher = async <T>() => 'request' as T
     const clientFetcher: ApiFetcher = async <T>() => 'client' as T
@@ -89,15 +104,18 @@ describe('Marketplace API URL handling', () => {
     const latestDigest = 'sha256:' + 'a'.repeat(64)
     const revokedDigest = 'sha256:' + 'b'.repeat(64)
     expect(resourceRevisionsPath('/api/v1', 'team/tools', 'skill', 'code review')).toBe('/api/v1/resources/team%2Ftools/skill/code%20review/revisions')
+    const latest = revisionPayload(latestDigest)
     const payload = [
-      revisionPayload(latestDigest),
+      { ...latest, assessment: { ...latest.assessment, findings: [{ code: 'review', severity: 'warn' }] } },
       revisionPayload(revokedDigest, { revocation: { kind: 'revision', target_id: revokedDigest, reason: 'policy', applied_at: '2026-01-03T03:04:05Z' } }),
     ]
     const api = createMarketplaceApi(async request => request.endsWith('/revisions') ? payload : payload[0])
-    await expect(api.listResourceRevisions('team/tools', 'skill', 'code review')).resolves.toMatchObject([
+    const revisions = await api.listResourceRevisions('team/tools', 'skill', 'code review')
+    expect(revisions).toMatchObject([
       { content_digest: latestDigest },
       { content_digest: revokedDigest, revocation: { reason: 'policy' } },
     ])
+    expect(revisions[0]?.assessment.findings).toBeUndefined()
     expect(() => normalizeResourceRevisions(Array.from({ length: MAX_RESOURCE_REVISION_ENTRIES + 1 }, () => payload[0]), { kind: 'skill', name: 'code review' })).toThrow(/at most 100 entries/)
   })
 
@@ -171,6 +189,22 @@ describe('Marketplace API URL handling', () => {
     const mismatched = revisionPayload(requestedDigest)
     mismatched.assessment.content_digest = returnedDigest
     expect(() => normalizeResourceRevision(mismatched)).toThrow(/assessment.content_digest does not match/)
+  })
+
+  it('accepts the analyzer finding budget and rejects larger responses', () => {
+    const digest = 'sha256:' + 'a'.repeat(64)
+    const base = revisionPayload(digest)
+    const finding = { code: 'review', severity: 'warn', message: 'Review this file.' }
+    const atLimit = {
+      ...base,
+      assessment: { ...base.assessment, findings: Array.from({ length: MAX_ASSESSMENT_FINDINGS }, () => finding) },
+    }
+
+    expect(normalizeResourceRevision(atLimit).assessment.findings).toHaveLength(MAX_ASSESSMENT_FINDINGS)
+    expect(() => normalizeResourceRevision({
+      ...atLimit,
+      assessment: { ...atLimit.assessment, findings: [...atLimit.assessment.findings, finding] },
+    })).toThrow(/assessment\.findings must be a bounded array of at most 1000 entries/)
   })
 
   it('selects text and raster response handling for inspection content', async () => {

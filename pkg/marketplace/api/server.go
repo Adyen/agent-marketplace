@@ -1233,14 +1233,14 @@ func resourceAvailability(rev store.AssessedResourceRevision, registry store.Reg
 		return AvailabilityRevoked
 	}
 	if rev.Assessment.Decision == store.AssessmentDecisionReject {
-		return AvailabilityBlocked
+		return AvailabilityPolicyBlocked
 	}
 	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
 			"coordinate", rev.Coordinate,
 			"content_digest", rev.ContentDigest,
 		)
-		return AvailabilityBlocked
+		return AvailabilityNoArtifact
 	}
 	return AvailabilityAvailable
 }

@@ -1,3 +1,9 @@
+import { devApiProxyTargets } from './app/lib/api-base'
+
+const devApiProxy = process.env.NODE_ENV === 'development'
+  ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
+  : null
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
@@ -26,5 +32,11 @@ export default defineNuxtConfig({
   },
   nitro: {
     preset: 'node-server',
+    devProxy: devApiProxy
+      ? {
+          '/api/v1': { target: devApiProxy.api, changeOrigin: true },
+          '/.well-known/agent-marketplace.json': { target: devApiProxy.wellKnown, changeOrigin: true },
+        }
+      : {},
   },
 })

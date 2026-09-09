@@ -1,19 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, marketplaceInstallCommand, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLocator, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
+import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLatestRoute, resourceLocator, resourceRoute, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
 import type { ResourceAvailability } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
   it('creates the documented browser locator and CLI command for route-safe values', () => {
     const item = { registry_id: 'registry-id', registry_slug: 'registry-team', kind: 'skill' as const, name: 'code review', revision: 'sha256:' + 'c'.repeat(64), content_digest: 'sha256:' + 'a'.repeat(64) }
     const url = resourceLocator(item, 'https://market.example/')
+    expect(resourceLatestRoute(item)).toBe('/r/registry-team/skill/code%20review')
+    expect(resourceRoute(item)).toBe('/r/registry-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
     expect(resourceLatestLocator(item, 'https://market.example')).toBe('https://market.example/r/registry-team/skill/code%20review')
     expect(url).toBe('https://market.example/r/registry-team/skill/code%20review/revisions/sha256%3A' + 'a'.repeat(64))
     expect(installCommand(item, 'https://market.example')).toBe(`agent-marketplace install "${url}"`)
-  })
-
-  it('builds an install command for this Marketplace endpoint', () => {
-    expect(marketplaceInstallCommand('https://market.example/')).toBe('agent-marketplace install https://market.example')
-    expect(marketplaceInstallCommand('https://market.example/path?token=secret')).toBe('')
   })
 
   it('does not generate a copy link for a registry ID with an encoded slash', () => {
@@ -142,14 +139,16 @@ describe('resourceAvailability', () => {
 })
 
 describe('listAvailabilityCopy', () => {
-  it('reuses the revision copy for the states the listing shares with the resource page', () => {
+  it('keeps available listings actionable and explains revoked listings separately', () => {
     expect(listAvailabilityCopy({ availability: 'available' })).toMatchObject({ label: 'Available', installable: true })
-    expect(listAvailabilityCopy({ availability: 'revoked' })).toMatchObject({ label: 'Revoked', installable: false })
+    expect(listAvailabilityCopy({ availability: 'revoked' })).toMatchObject({ label: 'Revoked', color: 'error', installable: false })
+    expect(listAvailabilityCopy({ availability: 'policy-blocked' })).toMatchObject({ label: 'Blocked by policy', color: 'error', installable: false })
+    expect(listAvailabilityCopy({ availability: 'no-artifact' })).toMatchObject({ label: 'No installable artifact', color: 'warning', installable: false })
   })
 
   it('states the outcome for the collapsed blocked state without guessing the reason', () => {
     const copy = listAvailabilityCopy({ availability: 'blocked' })
-    expect(copy).toMatchObject({ label: 'Not installable', installable: false })
+    expect(copy).toMatchObject({ label: 'Not installable', color: 'warning', installable: false })
     // The listing cannot tell policy rejection from a missing artifact, so the
     // notice must not claim either one.
     expect(copy?.installNotice).not.toContain('policy')

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
-import { resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, revisionAsyncDataKey, routeParam } from '~/lib/routes'
+import { resourceAsyncDataKey, resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, revisionAsyncDataKey, routeParam } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 import type { InspectionFile } from '~/types/marketplace'
 
@@ -25,7 +25,7 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   () => api.getResourceRevision(registry, kind, name, revision),
 )
 const { data: revisions, error: revisionsError } = await useAsyncData(
-  `${revisionAsyncDataKey(registry, kind, name, revision)}:history`,
+  `${resourceAsyncDataKey(registry, kind, name)}:revisions`,
   () => api.listResourceRevisions(registry, kind, name),
 )
 const { data: inspection } = await useAsyncData(
