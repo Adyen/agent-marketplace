@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,7 +34,8 @@ func TestMain(m *testing.M) {
 		}
 	})
 	if !parallelSet {
-		if err := flag.Set("test.parallel", "4"); err != nil {
+		parallel := min(max(runtime.GOMAXPROCS(0), 4), 12)
+		if err := flag.Set("test.parallel", strconv.Itoa(parallel)); err != nil {
 			panic(err)
 		}
 	}

@@ -129,7 +129,11 @@ func runCommandProcess(parent context.Context, t *testing.T, selector, pattern s
 	ctx, cancel := context.WithDeadline(parent, deadline)
 	defer cancel()
 	completionPath := filepath.Join(root, "completion.json")
-	cmd := exec.CommandContext(ctx, executable, "-test.run="+pattern, "-test.skip="+flag.Lookup("test.skip").Value.String(), "-test.short="+flag.Lookup("test.short").Value.String(), "-test.v", "-test.count=1", "-test.timeout=0")
+	args := []string{"-test.run=" + pattern, "-test.skip=" + flag.Lookup("test.skip").Value.String(), "-test.short=" + flag.Lookup("test.short").Value.String(), "-test.count=1", "-test.timeout=0"}
+	if testing.Verbose() {
+		args = append(args, "-test.v")
+	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir = filepath.Join(root, "repo")
 	cmd.Env = append(commandProcessEnvironment(root, completionPath, selector), extraEnv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
