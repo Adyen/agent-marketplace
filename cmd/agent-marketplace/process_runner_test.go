@@ -225,13 +225,20 @@ func TestCommandProcessRealLockContention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	for _, want := range []string{"blocked", "free"} {
 		result := runCommandProcess(t.Context(), t, "TestCommandProcessFixture", "^TestCommandProcessFixture$", "COMMAND_PROCESS_FIXTURE=lock", "COMMAND_PROCESS_LOCK="+root, "COMMAND_PROCESS_WANT="+want, "XDG_STATE_HOME="+state, ownership.LockTimeoutEnvVar+"=0")
 		if result.err != nil {
 			t.Fatalf("lock %s: %v\n%s", want, result.err, result.output)
 		}
-		release()
+		if release != nil {
+			release()
+			release = nil
+		}
 	}
 }
 
