@@ -38,7 +38,7 @@ Snapshot diagnostics and operation diagnostics have separate lifecycles. An acce
 
 Hard configuration, catalog, resolution, dry-run, or materialization errors make drift unavailable or failed, never `in sync`. Rows produced by a hard-failed snapshot remain inspectable but cannot initiate config mutation until a healthy snapshot is accepted.
 
-Automatic snapshot loads, reloads, and refreshes consume every present valid layer lock as an exact snapshot. An intentionally absent organization lock instead permits mutable discovery without creating a lock; this never downgrades an invalid present lock. Mutable movement cannot replace inventory protected by a lock. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved exact snapshot while it is still being consumed.
+Automatic snapshot loads, reloads, and refreshes consume every present valid layer lock as an exact snapshot. A missing layer lock permits the TUI to fall back to mutable discovery without creating a lock and is reported as a warning; this never downgrades an invalid present lock. Mutable movement cannot replace inventory protected by a lock. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved exact snapshot while it is still being consumed.
 
 TUI update uses the shared sync pipeline and applies an authoritative post-operation snapshot. Copy distinguishes refresh, materialization, and state-reload failures; success is shown only when the pipeline and resulting snapshot are healthy.
 
