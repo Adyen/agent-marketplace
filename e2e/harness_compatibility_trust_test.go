@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,9 @@ func (n *compatibilityNative) prepareFixtureTrust(e *Env, f compatibilityFixture
 	setup := rows["native-cli"]
 	if !n.trustFixtures || setup == nil {
 		return nil, nil
+	}
+	if setup.Harness == "cursor" && setup.Scope == "repo" {
+		return n.prepareCursorFixtureApproval(e, f, rows)
 	}
 	if setup.Harness != "claude" && setup.Harness != "codex" && setup.Harness != "gemini" {
 		return nil, nil
@@ -66,6 +70,32 @@ func (n *compatibilityNative) prepareFixtureTrust(e *Env, f compatibilityFixture
 			row.Trust = "repository-only"
 		}
 	}
+	return nil, nil
+}
+
+func (n *compatibilityNative) prepareCursorFixtureApproval(e *Env, f compatibilityFixture, rows map[string]*compatibilityResult) (*compatibilityResult, error) {
+	row := rows["mcp"]
+	if row == nil || row.Status != "config-only-verified" {
+		return nil, nil
+	}
+	root, err := openCompatibilityTrustRoot(e)
+	if err != nil {
+		return row, err
+	}
+	defer root.Close()
+	for _, name := range []string{f.name("mcp-a"), f.name("mcp-b")} {
+		before := runCompatibilityCommand(e, n.binary, []string{"mcp", "list-tools", name}, 20*time.Second)
+		row.Commands = append(row.Commands, before)
+		if before.Error == "" || before.TimedOut || !slices.Contains(before.Diagnostics, "cli.mcp-approval-required") {
+			return row, fmt.Errorf("Cursor did not reject the unapproved fixture MCP server")
+		}
+		approved := runCompatibilityCommand(e, n.binary, []string{"mcp", "enable", name}, 20*time.Second)
+		row.Commands = append(row.Commands, approved)
+		if err := compatibilityInspectionError(approved); err != nil {
+			return row, err
+		}
+	}
+	row.Trust = "repository-only"
 	return nil, nil
 }
 
@@ -197,6 +227,38 @@ func patchCompatibilityTrustJSON(root *os.Root, path string, patch func(map[stri
 		return err
 	}
 	return root.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func TestCompatibilityCursorApprovalOnlyEnablesFixtureServers(t *testing.T) {
+	e := newEnv(t)
+	e.InitGitRepo()
+	f := compatibilityFixture{prefix: "amcompat-cursor"}
+	binary := filepath.Join(e.repos, "internal-fake-cursor")
+	e.WriteFile(binary, `#!/bin/sh
+case "$3" in amcompat-cursor-mcp-a|amcompat-cursor-mcp-b) ;; *) exit 75;; esac
+case "$2" in
+  list-tools) if [ -f "$HOME/$3-enabled" ]; then printf '%s\n' amcompat_echo; else printf '%s\n' 'MCP server is not approved; use mcp enable'; exit 1; fi;;
+  enable) printf '%s' approved > "$HOME/$3-enabled";;
+  *) exit 76;;
+esac
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	native := compatibilityNative{binary: binary, trustFixtures: true}
+	row := &compatibilityResult{Harness: "cursor", Resource: "mcp", Scope: "repo", Status: "config-only-verified"}
+	rows := map[string]*compatibilityResult{"native-cli": {Harness: "cursor", Scope: "repo"}, "mcp": row}
+	if _, err := native.prepareFixtureTrust(e, f, rows); err != nil {
+		t.Fatal(err)
+	}
+	if row.Trust != "repository-only" || len(row.Commands) != 4 {
+		t.Fatal("fixture approval did not preserve its negative-control and enable evidence")
+	}
+	for _, name := range []string{f.name("mcp-a"), f.name("mcp-b")} {
+		if _, err := os.Stat(filepath.Join(e.home, name+"-enabled")); err != nil {
+			t.Fatal("fixture server was not individually approved")
+		}
+	}
 }
 
 func TestCompatibilityFixtureTrustRequiresObservedGate(t *testing.T) {

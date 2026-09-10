@@ -57,7 +57,7 @@ func readSummaryReport(path string) (summaryReport, error) {
 		if !target.IsValid(row.Harness) || report.Target != "all" && row.Harness != report.Target || row.Resource == "" || row.Reason == "" || !slices.Contains([]string{"repo", "user"}, row.Scope) || !slices.Contains([]string{"symlink", "file"}, row.Mode) || !slices.Contains(statuses, row.Status) || row.Status == "native-verified" && row.Version == "" {
 			return report, fmt.Errorf("compatibility report contains incomplete or invalid evidence")
 		}
-		if row.Trust != "" && (row.Trust != "repository-only" || !slices.Contains([]string{"claude", "codex", "gemini"}, row.Harness)) {
+		if row.Trust != "" && (row.Trust != "repository-only" || !slices.Contains([]string{"claude", "codex", "gemini", "cursor"}, row.Harness)) {
 			return report, fmt.Errorf("compatibility report contains invalid fixture trust evidence")
 		}
 		if row.Connection != nil && (row.Connection.Reason == "" || !slices.Contains([]string{"native-verified", "blocked", "failed", "not-probed"}, row.Connection.Status)) {

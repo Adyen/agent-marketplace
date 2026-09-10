@@ -93,10 +93,13 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 }
 
 func inspectFactoryMetadata(encoder *json.Encoder, decoder *json.Decoder, workspace, method string) (json.RawMessage, error) {
-	if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "droid.initialize_session", "params": map[string]any{"machineId": "amcompat-fixture", "cwd": workspace}}); err != nil {
+	const initializeID = "00000000-0000-4000-8000-000000000001"
+	const inspectID = "00000000-0000-4000-8000-000000000002"
+	request := map[string]any{"jsonrpc": "2.0", "factoryApiVersion": "1.0.0", "factoryProtocolVersion": "1.192.0", "type": "request", "id": initializeID, "method": "droid.initialize_session", "params": map[string]any{"machineId": "amcompat-fixture", "cwd": workspace}}
+	if err := encoder.Encode(request); err != nil {
 		return nil, fmt.Errorf("write native session initialization request")
 	}
-	initialized, err := readCompatibilityRPCResponse(decoder, 1)
+	initialized, err := readCompatibilityRPCResponse(decoder, initializeID)
 	if err != nil {
 		return nil, err
 	}
@@ -106,10 +109,11 @@ func inspectFactoryMetadata(encoder *json.Encoder, decoder *json.Decoder, worksp
 	if json.Unmarshal(initialized, &session) != nil || session.ID == "" {
 		return nil, fmt.Errorf("native session initialization omitted session identity")
 	}
-	if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": map[string]any{}}); err != nil {
+	request["id"], request["method"], request["params"] = inspectID, method, map[string]any{}
+	if err := encoder.Encode(request); err != nil {
 		return nil, fmt.Errorf("write native resource inspection request")
 	}
-	return readCompatibilityRPCResponse(decoder, 2)
+	return readCompatibilityRPCResponse(decoder, inspectID)
 }
 
 func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.RawMessage, error) {
@@ -174,10 +178,14 @@ func inspectCodexMetadata(encoder *json.Encoder, decoder *json.Decoder, workspac
 	return readCompatibilityRPCResponse(decoder, 2)
 }
 
-func readCompatibilityRPCResponse(decoder *json.Decoder, id int) (json.RawMessage, error) {
+func readCompatibilityRPCResponse(decoder *json.Decoder, id any) (json.RawMessage, error) {
+	expected, err := json.Marshal(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid native inspection request identity")
+	}
 	for {
 		var response struct {
-			ID     *int            `json:"id"`
+			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Result json.RawMessage `json:"result"`
 			Error  json.RawMessage `json:"error"`
@@ -188,7 +196,7 @@ func readCompatibilityRPCResponse(decoder *json.Decoder, id int) (json.RawMessag
 		if response.ID == nil && response.Method != "" {
 			continue
 		}
-		if response.ID == nil || *response.ID != id || response.Method != "" {
+		if string(response.ID) != string(expected) || response.Method != "" {
 			return nil, fmt.Errorf("native protocol returned an unexpected response or server request")
 		}
 		if len(response.Error) != 0 && string(response.Error) != "null" {
@@ -207,10 +215,11 @@ func TestCompatibilityProtocolReadsFactoryResourcesWithoutUserMessages(t *testin
 	e.WriteFile(binary, `#!/bin/sh
 IFS= read -r request || exit 70
 case "$request" in *'"method":"droid.initialize_session"'*) ;; *) exit 71;; esac
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"fixture-session"}}'
+case "$request" in *'"factoryApiVersion":"1.0.0"'*'"factoryProtocolVersion":"1.192.0"'*'"type":"request"'*) ;; *) exit 75;; esac
+printf '%s\n' '{"jsonrpc":"2.0","type":"response","id":"00000000-0000-4000-8000-000000000001","result":{"sessionId":"fixture-session"}}'
 IFS= read -r request || exit 72
 case "$request" in *'"method":"droid.list_skills"'*) ;; *) exit 73;; esac
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"skills":[{"name":"fixture-skill","description":"Fixture description","enabled":true,"filePath":"fixture-path","location":"project"}]}}'
+printf '%s\n' '{"jsonrpc":"2.0","type":"response","id":"00000000-0000-4000-8000-000000000002","result":{"skills":[{"name":"fixture-skill","description":"Fixture description","enabled":true,"filePath":"fixture-path","location":"project"}]}}'
 if IFS= read -r request; then exit 74; fi
 `)
 	if err := os.Chmod(binary, 0o755); err != nil {

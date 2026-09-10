@@ -193,6 +193,9 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 			}
 		})
 		if ok {
+			if row.Harness == "cursor" && probe.kind == "mcp" {
+				row.Connection = &compatibilityConnection{Status: "native-verified", Reason: "native list-tools returned the local fixture tool for both servers; no tool was invoked"}
+			}
 			row.Status = "native-verified"
 			row.Reason = "negative control plus native list confirmed fixture names; only observations recorded per command are verified, not unexposed fields, hook execution, or model behavior"
 		}
