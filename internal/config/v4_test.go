@@ -192,6 +192,42 @@ resources:
 	}
 }
 
+func TestV4DecisionPrecedenceUsesDecisionStreamOffset(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "child.yaml")
+	root := filepath.Join(dir, "config.yaml")
+	write := func(path, data string) {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(child, `sources: {shared: {git: https://example.test/shared.git, ref: main}}
+resources:
+  shared:
+    include: [skill/first, skill/second]
+`)
+	write(root, `apiVersion: agent-marketplace/v4
+include: child.yaml
+resources:
+  shared:
+    include: [skill/third]
+`)
+
+	cfg, err := LoadV4ConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions := cfg.Groups["shared"].Decisions
+	if got, want := len(decisions), 3; got != want {
+		t.Fatalf("decisions = %#v, want %d decisions", decisions, want)
+	}
+	for i, want := range []string{"skill/first", "skill/second", "skill/third"} {
+		if decisions[i].Locator != want || decisions[i].Provenance.Precedence != i {
+			t.Fatalf("decision[%d] = %#v, want %q at precedence %d", i, decisions[i], want, i)
+		}
+	}
+}
+
 func TestV4SharedIncludeDAGExpandsPerBranch(t *testing.T) {
 	dir := t.TempDir()
 	shared := filepath.Join(dir, "shared.yaml")

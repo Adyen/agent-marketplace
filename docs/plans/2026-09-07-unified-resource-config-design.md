@@ -1,10 +1,10 @@
 # Unified resource configuration design
 
-**Status:** Proposed specification; not implemented. The core schema and migration choices were agreed in the design discussion. Detailed validation and implementation contracts below are proposals for review.
+**Status:** Implemented slice with remaining Marketplace lock proposals. The repository now implements strict v4 parsing and include composition, Git/directory runtime adaptation, and explicit legacy migration; hosted Marketplace acquisition remains unsupported at runtime until the lock extension described below is available.
 
-**Prerequisite:** [PR #123: layer-owned Git lockfiles](https://github.com/Adyen/agent-marketplace/pull/123) merges before Marketplace consumer functionality. The lockfile baseline inspected for this design is commit `24123dbf5a8d55a1569094f6dcfc8dbc13685fab`.
+**Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below. The lockfile baseline inspected for this design is historical context for that remaining proposal.
 
-**Audience:** Client implementers and reviewers. This document fixes the proposed consumer config v4 syntax and specifies its required relationship with acquisition locks. It is not documentation of currently supported CLI behavior.
+**Audience:** Client implementers and reviewers. This document records the v4 syntax and the implemented relationship with acquisition locks, while marking the hosted Marketplace portions that remain proposals rather than claiming the whole design is shipped.
 
 ## 1. Scope and agreed decisions
 
@@ -337,7 +337,7 @@ Reconciliation verifies every new artifact and collection member before publishi
 
 ## 7. Command and editor behavior
 
-These are required behaviors, not claims that the current CLI implements v4. New migration flags shown below are proposed syntax.
+The Git/directory parser, adapter, include composition, and explicit migration rows below are implemented behavior; hosted Marketplace rows remain proposed until their lock extension ships.
 
 | Operation | Required behavior |
 |---|---|
@@ -366,7 +366,7 @@ Existing legacy files retain their legacy editing behavior until migration. A le
 | Situation | Behavior |
 |---|---|
 | Existing v2 root or v3 compatibility alias | Accepted through the legacy reader with existing semantics |
-| New config root | V4 after the compatibility implementation ships |
+| New config root | V4 for the implemented parser/adapter slice; hosted Marketplace remains gated by its lock extension |
 | User layer v2, repo layer v4 | Supported; independently normalized and independently locked |
 | V4 root containing legacy selection keys | Rejected with migration/field diagnostics |
 | Legacy root containing v4 selection keys | Rejected with migration-required guidance |
@@ -426,7 +426,7 @@ Diagnostics identify the owning layer, declaring file, source name, and resource
 | Migration | Positive legacy examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic alias generation, byte-preserved content pins |
 | End to end | Isolated install/remove/update/check/migrate workflows across all writable scopes; no developer-home or live organization dependencies |
 
-Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. Documentation-only adoption of this proposal does not imply these implementation tests have passed.
+Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and migration slice is covered by the repository tests; hosted Marketplace acceptance remains pending its lock extension.
 
 ## 10. Integration boundaries and release conditions
 
@@ -439,7 +439,7 @@ Implementation depends on these boundaries, in order:
 5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
 6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.
 
-These are dependency boundaries, not tracked execution state. No implementation, commit, push, or feature activation is authorized merely by the existence of this document.
+These are remaining dependency boundaries for hosted Marketplace functionality, not tracked execution state. The implemented parser/adapter and migration slice is already active in the repository; no hosted feature activation is authorized merely by the existence of this document.
 
 The current glossary and ADRs describe pins stored in consumer config. During implementation, the storage consequences in ADRs 0002 and 0005 and the corresponding glossary entries must be explicitly superseded: identity/occurrence/collection semantics remain, but generated bindings and selection edges move to acquisition locks. This proposal does not silently rewrite the accepted descriptions of currently implemented behavior.
 

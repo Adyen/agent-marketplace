@@ -132,6 +132,11 @@ type V4Config struct {
 	Decisions  []V4SelectionDecision
 	Files      []string
 
+	// decisionStreamOffset tracks the next precedence position in the ordered
+	// decision stream. It is independent from Files because one file can author
+	// multiple decisions and included trees can repeat a file per branch.
+	decisionStreamOffset int
+
 	// Auxiliary policy is retained so the strict v4 parser never accepts and
 	// silently discards configuration. Pointer fields preserve omitted values.
 	Harnesses           []string
@@ -826,6 +831,7 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 		reqs, err := parseV4Includes(source, n, file)
 		g.Include = reqs
 		g.Decisions = decisionsForIncludes(source, reqs, file)
+		assignV4DecisionPrecedence(&g)
 		return g, err
 	}
 	if n.Kind != yaml.MappingNode {
@@ -898,6 +904,7 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 	// mapping key order. Include-tree precedence is represented by the order in
 	// which groups are merged, not by YAML map order.
 	g.Decisions = append(decisionsForIncludes(source, g.Include, file), decisionsForExclusions(source, g.Exclude, excludeNode, file)...)
+	assignV4DecisionPrecedence(&g)
 	if err := validateV4Dynamic(g, source); err != nil {
 		return g, err
 	}
@@ -1113,6 +1120,34 @@ func decisionsForExclusions(source string, values []string, node *yaml.Node, fil
 	return out
 }
 
+func assignV4DecisionPrecedence(group *V4ResourceGroup) {
+	if group == nil {
+		return
+	}
+	for i := range group.Decisions {
+		group.Decisions[i].Provenance.Precedence = i
+		if group.Decisions[i].Request != nil {
+			group.Decisions[i].Request.Provenance = append([]V4Provenance(nil), group.Decisions[i].Request.Provenance...)
+			if len(group.Decisions[i].Request.Provenance) == 0 {
+				group.Decisions[i].Request.Provenance = []V4Provenance{{File: group.Decisions[i].Provenance.File, Line: group.Decisions[i].Provenance.Line}}
+			}
+			group.Decisions[i].Request.Provenance[0].Precedence = i
+		}
+	}
+	includeIndex := 0
+	for i := range group.Decisions {
+		if group.Decisions[i].Action != V4SelectionExplicit || includeIndex >= len(group.Include) {
+			continue
+		}
+		group.Include[includeIndex].Provenance = append([]V4Provenance(nil), group.Include[includeIndex].Provenance...)
+		if len(group.Include[includeIndex].Provenance) == 0 {
+			group.Include[includeIndex].Provenance = []V4Provenance{{File: group.Decisions[i].Provenance.File, Line: group.Decisions[i].Provenance.Line}}
+		}
+		group.Include[includeIndex].Provenance[0].Precedence = i
+		includeIndex++
+	}
+}
+
 func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, error) {
 	return loadV4TreeWithOverlays(file, root, visiting, nil, nil)
 }
@@ -1195,7 +1230,14 @@ func yamlNodeRoot(data []byte) *yaml.Node {
 }
 
 func mergeV4Config(dst, src *V4Config) error {
-	offset := len(dst.Files)
+	// Precedence belongs to the decision stream, not the file stream: a single
+	// included file may contribute several decisions, while a shared fragment
+	// may be visited once per include branch.
+	offset := dst.decisionStreamOffset
+	srcDecisionCount := 0
+	for _, group := range src.Groups {
+		srcDecisionCount += len(group.Decisions)
+	}
 	dst.Files = append(dst.Files, src.Files...)
 	if src.HasHarnesses {
 		dst.Harnesses, dst.HasHarnesses = append([]string(nil), src.Harnesses...), true
@@ -1246,6 +1288,7 @@ func mergeV4Config(dst, src *V4Config) error {
 		mergeV4Group(dst, name, g)
 	}
 	dst.Decisions = append(dst.Decisions, src.Decisions...)
+	dst.decisionStreamOffset += srcDecisionCount
 	return nil
 }
 func mergeV4Backup(dst, src *BackupConfig) *BackupConfig {
@@ -1583,6 +1626,9 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 	}
 	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
 		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
+	}
+	if kind == organizationLayer && c.Materialization != nil {
+		return nil, v4err("v4.layer-field", "materialization", 0, "materialization is not valid in organization configuration")
 	}
 	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
 	if c.AllowedRegistries != nil {

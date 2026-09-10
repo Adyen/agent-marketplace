@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,6 +153,129 @@ func TestMigrateConfigFilesToV4ValidatesAlreadyV4LayerFieldsBeforePublishing(t *
 				t.Fatalf("already-v4 invalid config was written: %q", got)
 			}
 		})
+	}
+}
+
+func TestMigrateConfigFilesToV4PreservesTenRegistryOrderAndPolicies(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	var input strings.Builder
+	input.WriteString("apiVersion: agent-marketplace/v2\nregistries:\n")
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&input, "  - url: https://example.test/registry-%02d.git\n    ref: main\n    required: %t\n    skills: {include: [shared]}\n", i, i == 10)
+	}
+	writeV2Config(t, path, input.String())
+
+	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
+		t.Fatal(err)
+	}
+	v4, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := v4.ToLegacyConfig(repoLayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(legacy.Registries), 10; got != want {
+		t.Fatalf("registry count = %d, want %d", got, want)
+	}
+	for i, entry := range legacy.Registries {
+		wantURL := fmt.Sprintf("https://example.test/registry-%02d.git", i+1)
+		if entry.URL != wantURL {
+			t.Fatalf("registry[%d] URL = %q, want %q", i, entry.URL, wantURL)
+		}
+		if entry.Required != (i == 9) {
+			t.Fatalf("registry[%d] required = %t, want %t", i, entry.Required, i == 9)
+		}
+	}
+}
+
+func TestMigrateConfigFilesToV4LocalScopePreservesModeAndContent(t *testing.T) {
+	dir := t.TempDir()
+	agentsDir := filepath.Join(dir, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resourceDir := filepath.Join(dir, "resources")
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(agentsDir, "config.local.yaml")
+	before := `apiVersion: agent-marketplace/v2
+materialization: {mode: file, targets: {factory: symlink}}
+registries:
+  - url: ./resources
+    skills: {include: [review]}
+`
+	writeV2Config(t, path, before)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := MigrateConfigFilesToV4(MigratePaths{Local: path}, V4MigrationLocal, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.LocalMigrated {
+		t.Fatalf("result = %+v", result)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("mode = %o, want %o", got, want)
+	}
+	v4, err := LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v4.Materialization == nil || v4.Materialization.Mode != "file" || v4.Materialization.Targets["factory"] != "symlink" {
+		t.Fatalf("materialization = %#v", v4.Materialization)
+	}
+	if got := v4.Groups["registry"].Include[0].Locator; got != "skill/review" {
+		t.Fatalf("migrated content locator = %q", got)
+	}
+}
+
+func TestMigrateConfigFilesToV4AllScopeLeavesLockfilesUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	userPath := filepath.Join(dir, "user.yaml")
+	repoPath := filepath.Join(dir, "repo.yaml")
+	localPath := filepath.Join(dir, "local.yaml")
+	for path, body := range map[string]string{
+		userPath:  "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nmaterialization: {mode: file}\nregistries:\n  - url: https://example.test/user.git\n    ref: main\n    skills: {include: [user-skill]}\n",
+		repoPath:  "apiVersion: agent-marketplace/v2\nmaterialization: {mode: symlink}\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n    commands: {include: [repo-command]}\n",
+		localPath: "apiVersion: agent-marketplace/v2\nmaterialization: {mode: file}\nregistries:\n  - url: /tmp/local-resources\n    skills: {include: [local-skill]}\n",
+	} {
+		writeV2Config(t, path, body)
+	}
+	lockPaths := []string{filepath.Join(dir, "user-lock.yaml"), filepath.Join(dir, "repo-lock.yaml"), filepath.Join(dir, "local-lock.yaml")}
+	for _, path := range lockPaths {
+		writeV2Config(t, path, "lock-before\n")
+	}
+	if _, err := MigrateConfigFilesToV4(MigratePaths{User: userPath, Repo: repoPath, Local: localPath}, V4MigrationAll, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range lockPaths {
+		if got := readConfigString(t, path); got != "lock-before\n" {
+			t.Fatalf("lockfile %q changed to %q", path, got)
+		}
+	}
+	for path, want := range map[string]string{
+		userPath:  "user-skill",
+		repoPath:  "repo-command",
+		localPath: "local-skill",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, "apiVersion: agent-marketplace/v4") || !strings.Contains(text, want) || !strings.Contains(text, "materialization:") {
+			t.Fatalf("%q lost migrated mode/content: %s", path, data)
+		}
 	}
 }
 

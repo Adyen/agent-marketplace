@@ -143,6 +143,21 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
+func TestV4OrganizationRejectsMaterializationLayerField(t *testing.T) {
+	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
+materialization: {mode: file}
+sources: {shared: {git: https://example.test/agents.git, ref: main}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.ToLegacyConfig(organizationLayer)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.layer-field" || validation.Path != "materialization" {
+		t.Fatalf("error = %v, want v4.layer-field for materialization", err)
+	}
+}
+
 func TestV4MigrationPublishesAllFilesOrRollsBack(t *testing.T) {
 	dir := t.TempDir()
 	user := filepath.Join(dir, "user.yaml")

@@ -992,7 +992,10 @@ func v4MigrationSourceName(index int) string {
 	if index == 0 {
 		return "registry"
 	}
-	return fmt.Sprintf("registry-%d", index+1)
+	// YAML mappings are serialized in key order. Pad generated suffixes so
+	// ToLegacyConfig's deterministic source traversal retains authored order
+	// for migrations with ten or more registries.
+	return fmt.Sprintf("registry-%02d", index+1)
 }
 
 func v4ResourceKindName(kind ir.ResourceKind) string {
