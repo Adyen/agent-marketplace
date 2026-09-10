@@ -305,7 +305,7 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 			return nil, err
 		}
 		if err := cmd.Run(); err != nil {
-			return []byte("git.auth-transport-failed: transport diagnostics withheld to protect authentication data"), err
+			return gitTransportFailureDiagnostic(source), err
 		}
 		return nil, nil
 	}
