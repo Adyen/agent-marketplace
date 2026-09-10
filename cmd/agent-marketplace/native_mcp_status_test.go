@@ -7,6 +7,9 @@ import (
 )
 
 func TestNativeMCPStatusDestinations(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	rows, err := buildHarnessTargetRows(repo, []string{"claude", "gemini"})

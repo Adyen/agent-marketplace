@@ -66,6 +66,29 @@ func TestCompatibilityRunnerCreatesExplicitCodexHome(t *testing.T) {
 	}
 }
 
+func TestCompatibilityClaudeDetailRequiresOnlyExposedFields(t *testing.T) {
+	e := newEnv(t)
+	f := compatibilityFixture{prefix: "amcompat-claude", server: filepath.Join(e.repos, "fixture-server")}
+	binary := filepath.Join(e.repos, "internal-fake-native")
+	e.WriteFile(binary, "#!/bin/sh\ncase \"$2\" in list) printf '%s\\n' '"+f.name("mcp-a")+": Connected' '"+f.name("mcp-b")+": Connected';; get) printf '%s\\n' \"$3\";; esac\n")
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := &compatibilityResult{Harness: "claude", Resource: "mcp", Scope: "user", Mode: "file", Status: "config-only-verified"}
+	native := compatibilityNative{binary: binary, probes: []compatibilityNativeProbe{{kind: "mcp", list: []string{"mcp", "list"}, names: []string{f.name("mcp-a"), f.name("mcp-b")}}}}
+	native.verify(t, e, f, map[string]*compatibilityResult{"mcp": row}, nil)
+	if row.Status != "native-verified" || row.Connection == nil || row.Connection.Status != "native-verified" || len(row.Commands) != 4 {
+		t.Fatalf("observed identities and both connections must remain required: %+v", row)
+	}
+	for _, command := range row.Commands {
+		for _, value := range command.Observed {
+			if value == f.server {
+				t.Fatal("unexposed command path was claimed as native evidence")
+			}
+		}
+	}
+}
+
 func TestCompatibilityNativeProbeFailuresStayResourceLocal(t *testing.T) {
 	e := newEnv(t)
 	binary := filepath.Join(e.repos, "internal-fake-native")

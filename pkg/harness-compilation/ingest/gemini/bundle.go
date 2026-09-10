@@ -482,6 +482,54 @@ type hookRule struct {
 	Timeout     *int   `json:"timeout,omitempty"`
 	Matcher     string `json:"matcher,omitempty"`
 	ExtraFields map[string]any
+	GroupExtra  map[string]any
+}
+
+type hookDefinition struct {
+	Matcher    string
+	Hooks      []hookRule
+	GroupExtra map[string]any
+	Flat       *hookRule
+}
+
+func (r *hookDefinition) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if nested, grouped := raw["hooks"]; grouped {
+		if err := json.Unmarshal(nested, &r.Hooks); err != nil {
+			return err
+		}
+		if r.Hooks == nil {
+			return fmt.Errorf("gemini hook group hooks must be an array")
+		}
+		if matcher, ok := raw["matcher"]; ok {
+			var value *string
+			if err := json.Unmarshal(matcher, &value); err != nil {
+				return err
+			}
+			if value == nil {
+				return fmt.Errorf("gemini hook group matcher must be a string")
+			}
+			r.Matcher = *value
+		}
+		delete(raw, "hooks")
+		delete(raw, "matcher")
+		if len(raw) > 0 {
+			r.GroupExtra = make(map[string]any, len(raw))
+			for key, value := range raw {
+				var decoded any
+				if err := json.Unmarshal(value, &decoded); err != nil {
+					return err
+				}
+				r.GroupExtra[key] = decoded
+			}
+		}
+		return nil
+	}
+	r.Flat = &hookRule{}
+	return json.Unmarshal(data, r.Flat)
 }
 
 func (r *hookRule) UnmarshalJSON(data []byte) error {
@@ -489,7 +537,6 @@ func (r *hookRule) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-
 	if v, ok := raw["type"]; ok {
 		if err := json.Unmarshal(v, &r.Type); err != nil {
 			return err
@@ -546,7 +593,7 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 	}
 
 	var doc struct {
-		Hooks map[string][]hookRule `json:"hooks"`
+		Hooks map[string][]hookDefinition `json:"hooks"`
 	}
 	if err := jsonc.Unmarshal(path, data, &doc); err != nil {
 		return nil, nil, fmt.Errorf("ingest/gemini: parse: %w", err)
@@ -559,8 +606,27 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 		events = append(events, event)
 	}
 	sort.Strings(events)
+	usedNames := make(map[string]bool)
 	for _, event := range events {
-		for _, rule := range doc.Hooks[event] {
+		var rules []hookRule
+		for _, entry := range doc.Hooks[event] {
+			if entry.Flat != nil {
+				rules = append(rules, *entry.Flat)
+				continue
+			}
+			for _, rule := range entry.Hooks {
+				if rule.Matcher != "" {
+					if rule.ExtraFields == nil {
+						rule.ExtraFields = make(map[string]any)
+					}
+					rule.ExtraFields["matcher"] = rule.Matcher
+				}
+				rule.Matcher = entry.Matcher
+				rule.GroupExtra = entry.GroupExtra
+				rules = append(rules, rule)
+			}
+		}
+		for _, rule := range rules {
 			hookType := rule.Type
 			if hookType == "" {
 				hookType = "command"
@@ -590,22 +656,26 @@ func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 				extra = nil
 			}
 
-			name := strings.ToLower(strings.ReplaceAll(claudeEvent, " ", "-")) + "-" + hookType
+			baseName := strings.ToLower(strings.ReplaceAll(claudeEvent, " ", "-")) + "-" + hookType
+			name := baseName
+			for suffix := 2; usedNames[name]; suffix++ {
+				name = fmt.Sprintf("%s-%d", baseName, suffix)
+			}
+			usedNames[name] = true
 			command := normalizeEnvTokens(rule.Command)
 			options := []ir.HookOption{ir.WithHookPrompt(rule.Prompt)}
 			if rule.Timeout != nil {
 				options = append(options, ir.WithHookTimeoutPtr(rule.Timeout))
 			}
 
-			if matcher != "" {
-				hooks = append(hooks, ir.NewHookWithMatcherOptions(name, claudeEvent, matcher, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...))
-				continue
+			if matcher == "" {
+				matcher = rule.Matcher
 			}
-			if rule.Matcher != "" {
-				hooks = append(hooks, ir.NewHookWithMatcherOptions(name, claudeEvent, rule.Matcher, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...))
-				continue
+			hook := ir.NewHookWithMatcherOptions(name, claudeEvent, matcher, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...)
+			if len(rule.GroupExtra) > 0 {
+				hook.Ext.Gemini = &extpkg.Gemini{HookGroupExtra: rule.GroupExtra}
 			}
-			hooks = append(hooks, ir.NewHookWithOptions(name, claudeEvent, command, hookType, extra, ir.SourceRef{File: path, Line: 0}, options...))
+			hooks = append(hooks, hook)
 		}
 	}
 

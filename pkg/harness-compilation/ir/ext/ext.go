@@ -79,6 +79,7 @@ type Gemini struct {
 	TOMLCommand      *GeminiTOMLCommand         `json:"tomlCommand,omitempty"`
 	HookTimeout      *int                       `json:"hookTimeout,omitempty"`
 	HookName         string                     `json:"hookName,omitempty"`
+	HookGroupExtra   map[string]any             `json:"hookGroupExtra,omitempty"`
 }
 
 // GeminiMCPServer preserves inline Gemini subagent MCP definitions without

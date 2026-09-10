@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -29,6 +30,171 @@ func nativeMCPResources(target hcc.Target, source config.Source) []resolver.Reso
 		result = append(result, resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "audit", Kind: ir.KindHook, Resource: resource}, Source: source, Harnesses: []hcc.Target{target}})
 	}
 	return result
+}
+
+func TestGeminiNativeMCPUsesStrictFieldsAndDurableOwnership(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+	report, err := Run(context.Background(), repo, desired)
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("sync: %v %+v", err, report)
+	}
+	root := filepath.Join(repo, ".gemini")
+	raw, err := os.ReadFile(filepath.Join(root, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := nativeMCPDocument(t, raw)
+	allowed := map[string]bool{"command": true, "args": true, "env": true, "cwd": true, "url": true, "httpUrl": true, "headers": true, "tcp": true, "type": true, "timeout": true, "trust": true, "description": true, "includeTools": true, "excludeTools": true, "extension": true, "oauth": true, "authProviderType": true, "targetAudience": true, "targetServiceAccount": true}
+	servers := settings["mcpServers"].(map[string]any)
+	if len(servers) != 2 {
+		t.Fatalf("servers = %v", servers)
+	}
+	for name, value := range servers {
+		for field := range value.(map[string]any) {
+			if !allowed[field] {
+				t.Fatalf("Gemini 0.59.0 MCPServerConfig rejects %s.%s", name, field)
+			}
+		}
+	}
+	groups := settings["hooks"].(map[string]any)["AfterTool"].([]any)
+	if len(groups) != 1 || len(groups[0].(map[string]any)["hooks"].([]any)) != 1 {
+		t.Fatalf("native hook groups missing: %s", raw)
+	}
+	store, err := ownership.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := store.Proof("settings.json")
+	if err != nil || len(proof.OwnedIDs()) != 2 {
+		t.Fatalf("MCP ownership missing: %v %+v", err, proof)
+	}
+	if _, err := Run(context.Background(), repo, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(filepath.Join(root, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nativeMCPDocument(t, raw)["mcpServers"].(map[string]any)) != 0 {
+		t.Fatalf("owned MCP servers not pruned: %s", raw)
+	}
+}
+
+func TestGeminiNativeMCPOwnershipLossAndLegacyMarkersFailClosed(t *testing.T) {
+	for _, mode := range []string{"missing", "corrupt", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			home, repo := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			root := filepath.Join(home, ".gemini")
+			file := filepath.Join(root, "settings.json")
+			desired := nativeMCPResources(hcc.TargetGemini, config.UserPersonal)
+			if mode == "legacy" {
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte(`{"theme":"manual","mcpServers":{"first":{"_managed_by":"agent-marketplace","command":"echo"}}}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				report, err := Run(context.Background(), repo, desired)
+				if err != nil || hasErrorDiagnostics(report.Diags) {
+					t.Fatalf("initial: %v %+v", err, report)
+				}
+				store, err := ownership.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == "missing" {
+					if err := os.Remove(store.StateFile()); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(store.StateFile(), []byte(`{`), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			before, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, dry := range []bool{true, false} {
+				var opts []RunOption
+				if dry {
+					opts = append(opts, WithDryRun())
+				}
+				report, err := Run(context.Background(), repo, desired, opts...)
+				code := map[string]string{"missing": "ownership.state-missing", "corrupt": "ownership.state-corrupt", "legacy": "materialize.collision.user-owned"}[mode]
+				if err != nil || !hasErrorDiagnostics(report.Diags) || !hasDiagCode(report.Diags, code) {
+					t.Fatalf("unproven state not refused: %v %+v", err, report)
+				}
+				after, err := os.ReadFile(file)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("unproven native file changed: %s %v", after, err)
+				}
+			}
+		})
+	}
+}
+
+func TestGeminiNativeMCPResumesAfterMalformedFileIsFixed(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	root := filepath.Join(repo, ".gemini")
+	file := filepath.Join(root, "settings.json")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"mcpServers":`)
+	if err := os.WriteFile(file, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	desired := nativeMCPResources(hcc.TargetGemini, config.RepoCommitted)
+	report, err := Run(context.Background(), repo, desired)
+	if err != nil || !hasDiagCode(report.Diags, "json.malformed") {
+		t.Fatalf("malformed file not refused: %v %+v", err, report)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil || !bytes.Equal(got, original) {
+		t.Fatal("malformed bytes changed")
+	}
+	store, err := ownership.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backups, err := store.SafetyBackups("settings.json")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("raw safety backup missing: %v %+v", err, backups)
+	}
+	raw, err := backups[0].RawBytes()
+	if err != nil || !bytes.Equal(raw, original) {
+		t.Fatalf("malformed backup differs: %v", err)
+	}
+	if err := os.WriteFile(file, []byte(`{"theme":"fixed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err = Run(context.Background(), repo, desired)
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("fixed file still blocked: %v %+v", err, report)
+	}
+	got, err = os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nativeMCPDocument(t, got)["mcpServers"].(map[string]any)) != 2 || !bytes.Contains(got, []byte(`"theme":"fixed"`)) {
+		t.Fatalf("fixed config not composed: %s", got)
+	}
 }
 
 func TestNativeMCPLifecycle(t *testing.T) {

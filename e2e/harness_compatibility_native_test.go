@@ -140,7 +140,10 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 					values = []string{name, f.description(probe.kind)}
 				} else if probe.kind == "mcp" && (row.Harness == "devin" || row.Harness == "codex" || row.Harness == "claude") {
 					args = []string{"mcp", "get", name}
-					values = []string{name, f.server, "--label=" + name, "AMCOMPAT_SETTING"}
+					values = []string{name}
+					if row.Harness != "claude" {
+						values = append(values, f.server, "--label="+name, "AMCOMPAT_SETTING")
+					}
 					if row.Harness == "codex" {
 						args = append(args, "--json")
 					}
