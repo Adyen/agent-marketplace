@@ -90,6 +90,84 @@ tags:
 	}
 }
 
+func TestMigrateCommandToV4IsExplicitAndSupportsDryRun(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+	agentsDir := filepath.Join(repoRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(agentsDir, "config.yaml")
+	before := "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/agents.git\n    ref: main\n    skills: {include: [review]}\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"migrate", "--to", "v4", "--scope", "repo", "--dry-run"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "Would migrate repository config") {
+		t.Fatalf("dry-run output = %q", out.String())
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != before {
+		t.Fatalf("dry-run changed config: %q, %v", got, err)
+	}
+
+	cmd = newRootCmd()
+	cmd.SetArgs([]string{"migrate", "--to", "v4", "--scope", "repo"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("v4 migration failed: %v", err)
+	}
+	migrated, err := config.LoadV4ConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("migrated config is not v4: %v", err)
+	}
+	if migrated.Sources["registry"].Git != "https://example.test/agents.git" {
+		t.Fatalf("migrated source = %#v", migrated.Sources["registry"])
+	}
+}
+
+func TestMigrateCommandToV4FailureLeavesBytesUnchanged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	repoRoot := t.TempDir()
+	agentsDir := filepath.Join(repoRoot, ".agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(agentsDir, "config.yaml")
+	before := "apiVersion: agent-marketplace/v2\ninclude: child.yaml\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "child.yaml"), []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"migrate", "--to", "v4", "--scope", "repo"})
+	var out strings.Builder
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "v4.migration-unsupported") {
+		t.Fatalf("error = %v, output = %q", err, out.String())
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || string(got) != before {
+		t.Fatalf("failed migration changed config: %q, %v", got, readErr)
+	}
+}
+
 func TestMigrateCommandUsesExplicitHarnesses(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

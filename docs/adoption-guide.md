@@ -2,7 +2,7 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated files use canonical v2.
+Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`); the loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. V4 is a separate `sources`/`resources` schema (`apiVersion: agent-marketplace/v4`) that normal CLI readers can consume. `agent-marketplace migrate` does not convert v2/v3 implicitly: omit `--to` for legacy structural remediation, or use the explicit `--to v4` conversion described below.
 
 ## 30-second setup
 
@@ -84,7 +84,7 @@ allowed_registries:
 
 ## Remediating structurally invalid config
 
-v1 configs with no `apiVersion` are rejected and must first be converted to a v2 document. Use `migrate` for structural issues in v2/v3 files, such as legacy collection syntax:
+v1 configs with no `apiVersion` are rejected and must be converted to a supported legacy v2 document before they can be loaded. Use `migrate` without `--to` for structural issues in v2/v3 files, such as legacy collection syntax:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
@@ -112,7 +112,27 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
+`migrate` without `--to` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
+
+## Explicitly migrate v2/v3 to v4
+
+V4 migration is opt-in and format-only. Preview it before publishing:
+
+```bash
+agent-marketplace migrate --to v4 --dry-run
+```
+
+By default this validates the writable user, repository, and repository-personal files together. To limit the operation to one layer, use `--scope user`, `--scope repo`, or `--scope local`:
+
+```bash
+agent-marketplace migrate --to v4 --scope repo
+```
+
+Organization configuration is never touched, and the migration never changes lockfiles. A successful conversion writes `apiVersion: agent-marketplace/v4` with named `sources` and `resources`; normal CLI readers then consume Git/directory v4 roots for discovery, status, and synchronization. A Marketplace source is parsed, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. V4 roots and fragments must use the v4 document shape; legacy keys such as `registries`, `skills`, and `marketplaces` are not mixed into them.
+
+The conversion is fail-closed and lossless. It refuses legacy `include` trees rather than flattening or editing their fragments, and refuses hosted Marketplace selections when their saved pin does not prove the provenance needed for a v4 request. Unsupported source or selector forms are also refused. Every selected input is validated before publication, so a failure leaves the legacy files unchanged. `--dry-run` performs these checks without writing.
+
+After conversion, legacy configuration writers protect the v4 root: install/remove and other legacy edits return a `v4.writer-opt-in` diagnostic rather than rewriting v4 as legacy YAML. Edit the v4 source/resource declarations directly for subsequent changes.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated
@@ -221,6 +241,7 @@ agent-marketplace sync --locked
 agent-marketplace sync --check
 agent-marketplace status
 agent-marketplace update
+agent-marketplace migrate --to v4 --dry-run
 agent-marketplace convert --from claude --to factory --out ./factory-plugin ./claude-plugin
 agent-marketplace doctor
 agent-marketplace doctor --repair

@@ -17,6 +17,9 @@ import (
 
 func newMigrateCmd() *cobra.Command {
 	var harnesses []string
+	var targetVersion string
+	var scope string
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "migrate",
@@ -34,14 +37,27 @@ project config.
 
 Migration is transactional: all inputs are validated before any file is
 written. Configs that contain legacy identity or team_profiles fields are
-refused without modification.`,
+refused without modification.
+
+Use --to v4 for explicit lossless source/resource migration. V4 migration
+validates all writable layers by default, supports --scope and --dry-run, and
+never edits organization configuration or lockfiles.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runMigrate(cmd.OutOrStdout(), os.Stdin, harnesses)
+			if targetVersion == "" {
+				return runMigrate(cmd.OutOrStdout(), os.Stdin, harnesses)
+			}
+			if targetVersion != "v4" {
+				return fmt.Errorf("unsupported migration target %q; supported target: v4", targetVersion)
+			}
+			return runMigrateV4(cmd.OutOrStdout(), config.V4MigrationScope(scope), dryRun)
 		},
 	}
 
 	cmd.Flags().StringSliceVar(&harnesses, "harnesses", nil,
 		"Target harnesses for the remediated user personal config")
+	cmd.Flags().StringVar(&targetVersion, "to", "", "Explicit target configuration version (v4)")
+	cmd.Flags().StringVar(&scope, "scope", string(config.V4MigrationAll), "Writable layer to migrate (all, user, repo, local)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview an explicit format migration without writing config files")
 
 	return cmd
 }
@@ -92,6 +108,44 @@ func runMigrate(out io.Writer, in io.Reader, explicitHarnesses []string) error {
 
 	return fmt.Errorf("non-interactive migration requires --harnesses; supported values: %s",
 		strings.Join(config.SupportedHarnessTargets(), ", "))
+}
+
+func runMigrateV4(out io.Writer, scope config.V4MigrationScope, dryRun bool) error {
+	repoRoot := config.FindRepoRoot()
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		return fmt.Errorf("resolve user personal config path: %w", err)
+	}
+	localDir := config.FindLocalConfigDir()
+	paths := config.MigratePaths{User: userPath, Repo: config.ProjectConfigPath(repoRoot), Local: config.LocalConfigPath(localDir)}
+	result, err := config.MigrateConfigFilesToV4(paths, scope, dryRun)
+	if err != nil {
+		return err
+	}
+	verb := "Migrated"
+	if dryRun {
+		verb = "Would migrate"
+	}
+	if result.UserMigrated {
+		if _, err := fmt.Fprintf(out, "%s user personal config: %s\n", verb, result.UserPath); err != nil {
+			return err
+		}
+	}
+	if result.RepoMigrated {
+		if _, err := fmt.Fprintf(out, "%s repository config: %s\n", verb, result.RepoPath); err != nil {
+			return err
+		}
+	}
+	if result.LocalMigrated {
+		if _, err := fmt.Fprintf(out, "%s repository personal config: %s\n", verb, result.LocalPath); err != nil {
+			return err
+		}
+	}
+	if !result.UserMigrated && !result.RepoMigrated && !result.LocalMigrated {
+		_, err := fmt.Fprintln(out, "No legacy config files require v4 migration")
+		return err
+	}
+	return nil
 }
 
 func promptMigrateHarnesses(out io.Writer, in io.Reader) ([]string, error) {

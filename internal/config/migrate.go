@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
 )
 
@@ -610,4 +611,304 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// V4MigrationScope limits an explicit format migration to one writable layer.
+// The default command scope is V4MigrationAll, which validates every writable
+// layer before publishing any of them.
+type V4MigrationScope string
+
+const (
+	V4MigrationAll   V4MigrationScope = "all"
+	V4MigrationUser  V4MigrationScope = "user"
+	V4MigrationRepo  V4MigrationScope = "repo"
+	V4MigrationLocal V4MigrationScope = "local"
+)
+
+type V4MigrationResult struct {
+	Scope         V4MigrationScope
+	DryRun        bool
+	UserMigrated  bool
+	RepoMigrated  bool
+	LocalMigrated bool
+	UserPath      string
+	RepoPath      string
+	LocalPath     string
+}
+
+type v4MigrationSource struct {
+	Git           string `yaml:"git,omitempty"`
+	Directory     string `yaml:"directory,omitempty"`
+	Ref           string `yaml:"ref,omitempty"`
+	Path          string `yaml:"path,omitempty"`
+	SourceHarness string `yaml:"source_harness,omitempty"`
+}
+
+type v4MigrationGroup struct {
+	Include   []any    `yaml:"include,omitempty"`
+	Exclude   []string `yaml:"exclude,omitempty"`
+	Tags      []string `yaml:"tags,omitempty"`
+	All       *bool    `yaml:"all,omitempty"`
+	Required  *bool    `yaml:"required,omitempty"`
+	Harnesses []string `yaml:"harnesses,omitempty"`
+}
+
+type v4MigrationDocument struct {
+	APIVersion          string                       `yaml:"apiVersion"`
+	Sources             map[string]v4MigrationSource `yaml:"sources,omitempty"`
+	Resources           map[string]v4MigrationGroup  `yaml:"resources,omitempty"`
+	Harnesses           []string                     `yaml:"harnesses,omitempty"`
+	AllowedRegistries   *[]string                    `yaml:"allowed_registries,omitempty"`
+	AllowedMarketplaces *[]string                    `yaml:"allowed_marketplaces,omitempty"`
+	Backup              *BackupConfig                `yaml:"backup,omitempty"`
+	Logging             *LoggingConfig               `yaml:"logging,omitempty"`
+	Telemetry           any                          `yaml:"telemetry,omitempty"`
+	Materialization     *MaterializationConfig       `yaml:"materialization,omitempty"`
+}
+
+type v4MigrationInput struct {
+	name string
+	path string
+	kind layerKind
+	mode os.FileMode
+	cfg  *Config
+}
+
+// MigrateConfigFilesToV4 performs the explicitly requested, lossless legacy
+// conversion. It never reads or writes organization configuration and never
+// changes locks. Every selected file is parsed and converted before any temp
+// file is published; unsupported constructs therefore leave all inputs intact.
+func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun bool) (*V4MigrationResult, error) {
+	if scope != V4MigrationAll && scope != V4MigrationUser && scope != V4MigrationRepo && scope != V4MigrationLocal {
+		return nil, v4err("v4.migration-scope", "scope", 0, "unsupported migration scope %q", scope)
+	}
+	slog.Info("v4 migration start", "scope", scope, "dry_run", dryRun)
+	selected := []struct {
+		name string
+		path string
+		kind layerKind
+	}{
+		{"user", paths.User, userLayer},
+		{"repo", paths.Repo, repoLayer},
+		{"local", paths.Local, localLayer},
+	}
+	inputs := make([]v4MigrationInput, 0, len(selected))
+	for _, item := range selected {
+		if scope != V4MigrationAll && string(scope) != item.name {
+			continue
+		}
+		if item.path == "" {
+			continue
+		}
+		data, err := os.ReadFile(item.path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s config %q: %w", item.name, item.path, err)
+		}
+		info, err := os.Stat(item.path)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s config %q: %w", item.name, item.path, err)
+		}
+		if PeekAPIVersion(data) == APIVersionV4 {
+			if _, err := LoadV4ConfigFromPath(item.path); err != nil {
+				return nil, err
+			}
+			// An already-v4 file is valid input and needs no rewrite.
+			continue
+		}
+		cfg, errs := loadV3ConfigWithAPIVersion(data, item.kind, false, item.kind != localLayer)
+		if len(errs) > 0 {
+			return nil, v4err("v4.migration-input", item.path, 0, "%v", errors.Join(errs...))
+		}
+		if len(cfg.Include) > 0 {
+			return nil, v4err("v4.migration-unsupported", item.path, 0, "include trees cannot be converted without editing included files")
+		}
+		if len(cfg.Marketplaces) > 0 {
+			return nil, v4err("v4.migration-marketplace", item.path, 0, "Marketplace selections have no lossless pin provenance")
+		}
+		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, kind: item.kind, mode: info.Mode().Perm(), cfg: cfg})
+	}
+
+	result := &V4MigrationResult{Scope: scope, DryRun: dryRun, UserPath: paths.User, RepoPath: paths.Repo, LocalPath: paths.Local}
+	staged := make([]stagedV4MigrationFile, 0, len(inputs))
+	for _, input := range inputs {
+		data, err := encodeV4Migration(input.cfg, input.path, input.kind)
+		if err != nil {
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, err
+		}
+		// Parse the generated bytes again so publication is gated by the same
+		// strict v4 validator normal readers use.
+		parsed, err := ParseV4Config(data, input.path, true)
+		if err != nil {
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("validate v4 migration for %q: %w", input.path, err)
+		}
+		if _, err := parsed.ToLegacyConfig(input.kind); err != nil {
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("validate v4 runtime configuration for %q: %w", input.path, err)
+		}
+		if dryRun {
+			markV4MigrationResult(result, input.name)
+			continue
+		}
+		tmp, err := os.CreateTemp(filepath.Dir(input.path), filepath.Base(input.path)+".tmp-v4-*")
+		if err != nil {
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("create v4 migration temp for %q: %w", input.path, err)
+		}
+		if err := tmp.Chmod(input.mode); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("chmod v4 migration temp for %q: %w", input.path, err)
+		}
+		if _, err := tmp.Write(data); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("write v4 migration temp for %q: %w", input.path, err)
+		}
+		if err := tmp.Close(); err != nil {
+			_ = os.Remove(tmp.Name())
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("close v4 migration temp for %q: %w", input.path, err)
+		}
+		staged = append(staged, stagedV4MigrationFile{name: input.name, temp: tmp.Name(), path: input.path})
+	}
+	if dryRun {
+		slog.Info("v4 migration preview complete", "files", len(inputs))
+		return result, nil
+	}
+	for _, file := range staged {
+		if err := os.Rename(file.temp, file.path); err != nil {
+			cleanupStagedV4MigrationFiles(staged)
+			return nil, fmt.Errorf("publish v4 migration %q: %w", file.path, err)
+		}
+		markV4MigrationResult(result, file.name)
+	}
+	slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
+	return result, nil
+}
+
+type stagedV4MigrationFile struct {
+	name string
+	temp string
+	path string
+}
+
+func cleanupStagedV4MigrationFiles(files []stagedV4MigrationFile) {
+	for _, file := range files {
+		_ = os.Remove(file.temp)
+	}
+}
+
+func markV4MigrationResult(result *V4MigrationResult, name string) {
+	switch name {
+	case "user":
+		result.UserMigrated = true
+	case "repo":
+		result.RepoMigrated = true
+	case "local":
+		result.LocalMigrated = true
+	}
+}
+
+func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, error) {
+	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
+	for index, original := range cfg.Registries {
+		entry := resolveRegistryEntry(cfg, original)
+		name := v4MigrationSourceName(index)
+		source := v4MigrationSource{Ref: entry.Ref, Path: NormalizeRegistryPath(entry.Path), SourceHarness: entry.SourceHarness}
+		if entry.IsLocal() {
+			if kind == userLayer && entry.IsRepoRelativeLocal() {
+				return nil, v4err("v4.migration-unsupported", configPath, 0, "repository-relative local source %q cannot be migrated into user scope", entry.URL)
+			}
+			base := legacyLocalBase(configPath, kind)
+			localPath, err := entry.ResolveLocalPath(base)
+			if err != nil {
+				return nil, v4err("v4.migration-unsupported", configPath, 0, "local source %q cannot be represented: %v", entry.URL, err)
+			}
+			source.Directory = localPath
+			source.Ref, source.Path = "", ""
+		} else {
+			source.Git = entry.URL
+		}
+		doc.Sources[name] = source
+		group := v4MigrationGroup{Harnesses: append([]string(nil), entry.Harnesses...)}
+		hasExplicit := false
+		for _, resourceKind := range AllKinds {
+			selector := entry.SelectorForKind(resourceKind)
+			for _, resourceName := range selector.Include {
+				hasExplicit = true
+				if strings.TrimSpace(resourceName) == "" || strings.Contains(resourceName, "/") {
+					return nil, v4err("v4.migration-unsupported", configPath, 0, "resource name %q is not a v4 locator segment", resourceName)
+				}
+				group.Include = append(group.Include, fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
+			}
+			for _, resourceName := range selector.Exclude {
+				if strings.TrimSpace(resourceName) == "" || strings.Contains(resourceName, "/") {
+					return nil, v4err("v4.migration-unsupported", configPath, 0, "resource exclusion %q is not a v4 locator segment", resourceName)
+				}
+				group.Exclude = append(group.Exclude, fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
+			}
+			if selector.ExcludeAll || entry.ExcludeAll {
+				group.Exclude = append(group.Exclude, v4ResourceKindName(resourceKind)+"/*")
+			}
+		}
+		if entry.Tags != nil {
+			group.Tags = append([]string(nil), entry.Tags...)
+		}
+		if entry.Required {
+			value := true
+			group.Required = &value
+		}
+		if (entry.Required || entry.Default) && !hasExplicit && entry.Tags == nil {
+			value := true
+			group.All = &value
+		}
+		if len(group.Include) > 0 || len(group.Exclude) > 0 || len(group.Tags) > 0 || group.Required != nil || group.All != nil || len(group.Harnesses) > 0 {
+			doc.Resources[name] = group
+		}
+	}
+	data, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("encode v4 config %q: %w", configPath, err)
+	}
+	return data, nil
+}
+
+func legacyLocalBase(configPath string, kind layerKind) string {
+	if kind == userLayer {
+		return filepath.Dir(configPath)
+	}
+	return filepath.Dir(filepath.Dir(configPath))
+}
+
+func v4MigrationSourceName(index int) string {
+	if index == 0 {
+		return "registry"
+	}
+	return fmt.Sprintf("registry-%d", index+1)
+}
+
+func v4ResourceKindName(kind ir.ResourceKind) string {
+	switch kind {
+	case ir.KindSkill:
+		return "skill"
+	case ir.KindCommand:
+		return "command"
+	case ir.KindSubagent:
+		return "subagent"
+	case ir.KindHook:
+		return "hook"
+	case ir.KindMcpServer:
+		return "mcp"
+	case ir.KindCollection:
+		return "collection"
+	default:
+		return "unknown"
+	}
 }

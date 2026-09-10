@@ -299,23 +299,38 @@ Fatal resolution errors return exit status 1 after the report is printed.
 
 ## `migrate`
 
-Performs transactional structural remediation across user, repository, and repository-personal configuration files. Valid v2 and v3 `apiVersion` values are preserved. Files containing legacy `identity` or `team_profiles` fields are refused without modification.
+With no target flag, `migrate` performs the existing structural remediation for legacy configuration. It preserves valid v2 and v3 `apiVersion` values, and files containing legacy `identity` or `team_profiles` fields are refused without modification. This mode does **not** convert a legacy file to v4.
+
+Use the explicit v4 form to convert legacy source and resource declarations:
 
 ```text
-agent-marketplace migrate [flags]
+agent-marketplace migrate --to v4 [--scope all|user|repo|local] [--dry-run]
 ```
+
+`--to v4` is the only migration target currently supported. The conversion is lossless or it does not publish: it validates every selected input, validates the generated v4 document with the normal v4 reader, and stages all output before replacing any file. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees and hosted Marketplace selections without proven pin provenance. A refusal leaves the selected configuration files unchanged.
+
+By default, the explicit v4 form examines all writable layers: user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). It never reads or writes organization configuration (`/etc/agent-marketplace/config.yaml`) and never changes lockfiles. Use `--scope` to select exactly one writable layer; a missing file in the selected scope is skipped. With `--dry-run`, validation and conversion run as a preview and no configuration file is written.
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Supplies the user harness set when remediation requires one. Accepted values are the seven supported harness targets. |
+| `--to` | string | no | none | Explicit migration target. The only supported value is `v4`; omitting it selects legacy structural remediation. |
+| `--scope` | string | no | `all` (with `--to v4`) | Writable layer for explicit v4 migration: `all`, `user`, `repo`, or `local`. Organization is never a target. |
+| `--dry-run` | boolean | no | `false` | With `--to v4`, validates and previews the selected conversion without writing configuration files or locks. |
+| `--harnesses` | comma-separated strings | conditionally | existing user harnesses | Legacy structural-remediation option. Supplies the user harness set when that remediation requires one. |
 
-When a harness set is required but absent, terminal execution prompts and non-terminal execution requires `--harnesses`. All inputs are validated before any file is written.
+When a harness set is required but absent, terminal execution prompts and non-terminal execution requires `--harnesses`. All legacy-remediation inputs are validated before any file is written.
 
-Output identifies each changed file, or reports:
+A successful explicit conversion reports each changed (or, for `--dry-run`, planned) writable file. If nothing needs conversion it reports:
 
 ```text
-No structural remediation needed; config files are already valid
+No legacy config files require v4 migration
 ```
+
+### Reading and writing v4 configuration
+
+Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. V4 roots may use local include trees; a v4 root must declare v4, while an included fragment may omit `apiVersion`. Legacy v2/v3 keys are not valid in a v4 document, and a v4 document is not silently rewritten by normal commands. Marketplace sources are parsed as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available.
+
+Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate` without `--to v4` is not a v4 editor.
 
 ## `convert`
 

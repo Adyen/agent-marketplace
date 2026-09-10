@@ -109,6 +109,9 @@ func readOrInitConfig(configPath string) (*yaml.Node, os.FileMode, error) {
 		return nil, 0, fmt.Errorf("read config %q: %w", configPath, err)
 	}
 
+	if PeekAPIVersion(data) == APIVersionV4 {
+		return nil, 0, v4err("v4.writer-opt-in", configPath, 0, "legacy config writers do not edit v4 files; use an explicit v4-aware operation")
+	}
 	info, err := os.Stat(configPath)
 	if err != nil {
 		return nil, 0, fmt.Errorf("stat config %q: %w", configPath, err)

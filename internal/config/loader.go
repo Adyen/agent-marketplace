@@ -441,6 +441,13 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 }
 
 func loadConfigTree(path string, kind layerKind) (*Config, error) {
+	if data, err := os.ReadFile(path); err == nil && PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := LoadV4ConfigFromPath(path)
+		if err != nil {
+			return nil, err
+		}
+		return v4.ToLegacyConfig(kind)
+	}
 	return loadCollectedConfigTree(path, newConfigIncludeLoader(kind))
 }
 
@@ -452,6 +459,25 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 }
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
+	if PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := LoadV4ConfigFromPath(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg, err := v4.ToLegacyConfig(kind)
+		if err != nil {
+			return nil, nil, err
+		}
+		reads := make([]ConfigRead, 0, len(v4.Files))
+		for _, file := range v4.Files {
+			contents, readErr := os.ReadFile(file)
+			if readErr != nil {
+				return nil, nil, fmt.Errorf("read v4 config %q: %w", file, readErr)
+			}
+			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents))})
+		}
+		return cfg, reads, nil
+	}
 	loader := newConfigIncludeLoader(kind)
 	loader.rootPath = canonicalPath
 	loader.rootData = data
@@ -618,6 +644,13 @@ func LoadRootConfigFromPath(path string) (*Config, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+	if PeekAPIVersion(data) == APIVersionV4 {
+		v4, err := ParseV4Config(data, path, true)
+		if err != nil {
+			return nil, err
+		}
+		return v4.ToLegacyConfig(kind)
 	}
 	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
 	if len(errs) > 0 {

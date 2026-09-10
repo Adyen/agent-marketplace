@@ -15,14 +15,13 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/giturl"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 
 	"gopkg.in/yaml.v3"
 )
-
-const APIVersionV4 = "agent-marketplace/v4"
 
 // V4SourceKind identifies how a v4 source is acquired.
 type V4SourceKind string
@@ -414,7 +413,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		"backup":          {"enabled": true, "max_days": true, "max_per_day": true},
 		"logging":         {"enabled": true, "level": true, "file": true, "max_size_mb": true, "max_backups": true, "max_age_days": true, "compress": true},
 		"telemetry":       {"level": true, "endpoint": true, "community_reporting": true, "retention_policy": true, "ca_file": true, "allow_insecure": true, "headers": true},
-		"materialization": {"mode": true},
+		"materialization": {"mode": true, "targets": true},
 	}
 	for key, allowed := range auxiliaryKeys {
 		n := mappingValue(root, key)
@@ -1554,4 +1553,124 @@ func v4ExclusionMatches(exclude, locator string) bool {
 		}
 	}
 	return exclude == locator
+}
+
+// ToLegacyConfig adapts a validated v4 document to the internal requirement
+// model used by catalog loading and resolution. It deliberately keeps the
+// v4 schema version on the returned value so writers can reject legacy edits;
+// the adapter is read-only compatibility, not a second v4 serializer.
+func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
+	if c == nil {
+		return nil, v4err("v4.runtime", "", 0, "nil configuration")
+	}
+	if kind == localLayer && c.HasHarnesses {
+		return nil, v4err("v4.layer-field", "harnesses", 0, "harnesses are not valid in repository personal configuration")
+	}
+	if kind == localLayer && (c.AllowedRegistries != nil || c.AllowedMarketplaces != nil) {
+		return nil, v4err("v4.layer-field", "allowed_registries", 0, "allowlists are not valid in repository personal configuration")
+	}
+	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
+		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
+	}
+	out := &Config{APIVersion: APIVersionV4, Harnesses: append([]string(nil), c.Harnesses...), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
+	if c.AllowedRegistries != nil {
+		values := append([]string(nil), (*c.AllowedRegistries)...)
+		out.AllowedRegistries = &values
+	}
+	if c.AllowedMarketplaces != nil {
+		values := append([]string(nil), (*c.AllowedMarketplaces)...)
+		out.AllowedMarketplaces = &values
+	}
+	if kind == localLayer {
+		out.Backup, out.Logging, out.Telemetry = nil, nil, nil
+	}
+
+	names := make([]string, 0, len(c.Sources))
+	for name := range c.Sources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		src := c.Sources[name]
+		if src.Kind == V4SourceMarketplace {
+			return nil, v4err("v4.marketplace-lock-required", "sources."+name, src.Line, "Marketplace resources require an acquisition lock and cannot be resolved by the legacy runtime")
+		}
+		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL}
+		if src.Kind == V4SourceDirectory {
+			entry.Ref = ""
+			entry.Path = ""
+		}
+		if group, ok := c.Groups[name]; ok {
+			if group.Required != nil {
+				entry.Required = *group.Required
+			}
+			if group.HasAll && group.All != nil && *group.All {
+				entry.Default = true
+			}
+			if group.HasTags {
+				entry.Tags = append([]string(nil), group.Tags...)
+			}
+			if group.HasHarnesses {
+				entry.Harnesses = append([]string(nil), group.Harnesses...)
+			}
+			for _, request := range group.Include {
+				if request.Options.HasAs && request.Options.As != request.Name {
+					return nil, v4err("v4.runtime-option", "resources."+name+".include", 0, "installed aliases are not supported by the legacy runtime")
+				}
+				selector := entry.SelectorForKindPtr(v4KindToIR(request.Kind))
+				if selector == nil {
+					return nil, v4err("v4.locator", request.Locator, 0, "unsupported resource kind %q", request.Kind)
+				}
+				selector.Include = append(selector.Include, request.Name)
+			}
+			for _, exclusion := range group.Exclude {
+				if exclusion == "*" {
+					entry.ExcludeAll = true
+					continue
+				}
+				kindName, resourceName := v4ExclusionKindName(exclusion)
+				selector := entry.SelectorForKindPtr(v4KindToIR(kindName))
+				if selector == nil {
+					return nil, v4err("v4.exclusion", "resources."+name+".exclude", 0, "unsupported exclusion %q", exclusion)
+				}
+				if resourceName == "*" {
+					selector.ExcludeAll = true
+				} else {
+					selector.Exclude = append(selector.Exclude, resourceName)
+				}
+			}
+		}
+		out.Registries = append(out.Registries, entry)
+	}
+	return out, nil
+}
+
+func v4KindToIR(kind string) ir.ResourceKind {
+	switch kind {
+	case "skill":
+		return ir.KindSkill
+	case "command":
+		return ir.KindCommand
+	case "subagent":
+		return ir.KindSubagent
+	case "hook":
+		return ir.KindHook
+	case "mcp":
+		return ir.KindMcpServer
+	case "collection":
+		return ir.KindCollection
+	default:
+		return ir.ResourceKind(-1)
+	}
+}
+
+func v4ExclusionKindName(value string) (string, string) {
+	parts := strings.Split(strings.TrimSuffix(value, "/*"), "/")
+	if len(parts) == 1 {
+		return parts[0], "*"
+	}
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", ""
 }

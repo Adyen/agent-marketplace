@@ -4,7 +4,11 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical for organization, user, and committed repository configs. `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but regular roots without it are rejected. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated output uses canonical v2.
+Legacy configuration uses the **v2 schema** (`apiVersion: agent-marketplace/v2`); `agent-marketplace/v3` remains accepted as a compatibility alias. Generated legacy `config.local.yaml` roots may omit `apiVersion`; if present, it must be v2 or v3. Legacy included fragments may also omit `apiVersion`, but regular legacy roots without it are rejected.
+
+V4 is a separate, explicit source/resource schema. A v4 root must declare `apiVersion: agent-marketplace/v4`; v4 included fragments may omit the version, but an explicit v2/v3 version or legacy installation key is rejected. Normal CLI readers recognize v4 and adapt each layer into the runtime requirement model. V4 sources and resource groups are composed within their root/include tree before the normal layer order is applied; v4 does not make legacy `registries`, `skills`, or `marketplaces` keys valid.
+
+`agent-marketplace migrate` retains its legacy structural-remediation behavior when `--to` is omitted. It does not rewrite valid v2/v3 files to v4 implicitly. Use `agent-marketplace migrate --to v4` for explicit conversion.
 
 ## Config includes
 
@@ -35,7 +39,13 @@ The CLI reads included content when calculating effective configuration, but con
 
 When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Config editors and removals preserve this alias-versus-subdirectory interpretation; use the authored URL/path spelling when targeting an entry. Resolver matching is separate: equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
 
+## Explicit v4 migration safety
 
+`agent-marketplace migrate --to v4` is a format-only conversion, not a selection upgrade. Without `--scope`, it validates the writable user, repository, and repository-personal roots as one transaction; `--scope user|repo|local` limits validation and publication to that layer. Organization configuration is never read or written by this conversion, and generated lockfiles are never changed. `--dry-run` performs the same representability and v4-reader checks without publishing configuration files.
+
+Conversion is fail-closed. The migrator refuses a legacy include tree because flattening it or editing its fragments would change provenance, and refuses legacy hosted Marketplace selections when their pin provenance cannot be proven. It also refuses any source, selector, or policy that cannot be represented without semantic loss. A refusal or validation failure publishes none of the selected files; the legacy configuration remains usable unchanged.
+
+V4 roots are read-compatible with normal CLI discovery, status, and synchronization for Git and directory sources. Marketplace sources are parsed, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. Legacy configuration writers do not rewrite v4 roots into the legacy shape; they return `v4.writer-opt-in`. Edit v4 source/resource declarations directly; this keeps normal installs, removals, and other legacy edits from silently destroying them.
 
 ## Layer order
 

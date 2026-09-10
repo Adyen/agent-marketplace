@@ -1,8 +1,10 @@
 # Repository configuration reference
 
-The committed `.agents/config.yaml` file defines which registries a repository uses, which resources it selects, and which coding harnesses receive those resources. A configuration file can compose local YAML fragments with the `include` field.
+The committed `.agents/config.yaml` file defines which sources a repository uses, which resources it selects, and which coding harnesses receive those resources. Legacy v2/v3 configuration uses `registries` and per-kind selectors; v4 uses named `sources` and `resources`. A configuration file can compose local YAML fragments with the `include` field.
 
 For task-oriented guidance, see [How to adopt agent-marketplace in a repository](../how-to/adopt-agent-marketplace-in-a-repository.md) and [How to keep resources reproducible](../how-to/keep-resources-reproducible.md).
+
+Agent Marketplace treats configuration as the source of selection policy and generated layer locks as the exact Git acquisition record. Normal readers accept v4 roots and adapt them for discovery and synchronization. After editing a legacy root, run `agent-marketplace sync` to reconcile its writable lock and generated harness files, or run `agent-marketplace sync --check` to report lock and output drift without changing files. Legacy config writers refuse to edit a v4 root; use an explicit v4-aware operation instead.
 
 ## File location and scope
 
@@ -22,6 +24,30 @@ Other configuration layers use related schemas:
 Commit the repository lock with its configuration. The personal-local lock is ignored, and consumer commands never create an absent organization lock. Plain directory registries are live and do not appear in Git locks. Hosted Marketplace resources use exact pins under `marketplaces[].resources` and do not appear in the generated Git lockfiles.
 
 Fields that are exclusive to organization, user, or repository-personal configuration are outside its scope. The `include` field is available in all four layers and follows the rules below.
+
+## Schema versions and v4 compatibility
+
+Legacy configuration documents use `apiVersion: agent-marketplace/v2`; `agent-marketplace/v3` remains a read-compatible alias. V4 is an explicit source/resource schema:
+
+```yaml
+apiVersion: agent-marketplace/v4
+sources:
+  shared:
+    git: https://github.com/example-org/agent-resources.git
+    ref: v1.4.0
+    path: resources
+resources:
+  shared:
+    include:
+      - skill/code-review
+      - command/release
+```
+
+A v4 root must declare exactly `agent-marketplace/v4`. Its `sources` map names Git or live directory sources, and its `resources` map binds typed locators and selection policy to those source names. V4 accepts local include trees; a child fragment may omit `apiVersion`, but an explicit non-v4 version or a legacy key such as `registries`, `skills`, or `marketplaces` is rejected rather than guessed or merged across formats.
+
+Normal CLI reads—including discovery, status, synchronization, and configuration loading—recognize v4 and adapt Git/directory sources to the runtime requirement model. Marketplace sources are syntactically read as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. This is read compatibility, not permission for legacy editors to rewrite the file. Install/remove and other legacy configuration writers refuse with `v4.writer-opt-in` when their target root is v4. Edit the v4 source/resource declarations directly; the normal CLI does not migrate v2/v3 implicitly.
+
+To convert legacy declarations, run `agent-marketplace migrate --to v4`. The command validates all writable user, repository, and repository-personal layers by default; `--scope user|repo|local` selects one. Organization configuration is never a migration target, and migration does not change lockfiles. Use `--dry-run` to preview. Conversion is fail-closed: legacy include trees and hosted Marketplace selections without proven pin provenance are refused, and a failed conversion leaves the input files unchanged. See the [CLI migration reference](cli.md#migrate).
 
 ## `include`
 
@@ -44,9 +70,9 @@ Relative paths resolve from the directory containing the file that declares them
 
 Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](https://github.com/Adyen/agent-marketplace/blob/main/docs/PRECEDENCE.md) for the complete merge rules.
 
-The loader rejects a layer when an include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion`, but they must use fields allowed by the layer that includes them. A regular organization, user, or repository root still requires `apiVersion: agent-marketplace/v2` (or the accepted `agent-marketplace/v3` compatibility alias); a local root may omit it.
+The loader rejects a layer when an include is missing, unreadable, malformed, invalid for that layer, or part of a direct or indirect cycle. Included fragments may omit `apiVersion`, but they must use fields allowed by the layer that includes them. A regular organization, user, or repository legacy root still requires `apiVersion: agent-marketplace/v2` (or the accepted `agent-marketplace/v3` compatibility alias); a legacy local root may omit it. A v4 root requires `apiVersion: agent-marketplace/v4`; v4 fragments may omit the version but cannot declare v2/v3 or legacy installation keys.
 
-The CLI reads included content when calculating effective configuration. Configuration-editing commands modify only the selected root file; they do not rewrite included fragments. Removing an include-owned resource records the exclusion in the selected root, leaving the included file unchanged.
+The CLI reads included content when calculating effective configuration. Legacy configuration-editing commands modify only the selected root file and do not rewrite included fragments; they refuse rather than rewriting a v4 root. Removing an include-owned resource records the exclusion in the selected root, leaving the included file unchanged.
 
 ## Example
 
@@ -88,10 +114,12 @@ Unknown top-level fields are rejected.
 | Field | Type | Required | Description |
 |---|---|---:|---|
 | `include` | path or list of paths | no | Local YAML fragments composed into this configuration layer. Relative paths resolve from the declaring file; absolute paths are accepted. |
-| `apiVersion` | string | yes | Configuration schema. Use `agent-marketplace/v2`. |
+| `apiVersion` | string | yes | Configuration schema. Legacy roots use `agent-marketplace/v2`; v4 roots use `agent-marketplace/v4`. |
 | `harnesses` | list of strings | no | Repository target harnesses. When omitted or empty, targets come from user configuration, then organization configuration. |
-| `registries` | list of registry entries | no | Git repositories or local directories that provide resources. |
-| `marketplaces` | list of Marketplace entries | no | Hosted Marketplace endpoints and exact installed resource pins. Entries accumulate across configuration layers. |
+| `registries` | list of registry entries | no | Legacy v2/v3 Git repositories or local directories that provide resources. Not valid in a v4 document. |
+| `sources` | mapping | no | V4 named Git, directory, or Marketplace source declarations. Not valid in a legacy document. |
+| `resources` | mapping | no | V4 resource groups bound to named sources. Not valid in a legacy document. |
+| `marketplaces` | list of Marketplace entries | no | Legacy v2/v3 hosted Marketplace endpoints and exact installed resource pins. Entries accumulate across configuration layers; not valid in a v4 document. |
 | `allowed_marketplaces` | list of regular expressions | no | Restricts hosted Marketplace endpoint URLs. The first layer that declares the field, from organization downward, controls the policy. |
 | `skills` | selector | no | Default skill selection for registry entries that do not provide their own values. |
 | `commands` | selector | no | Default command selection. |
@@ -105,13 +133,19 @@ Unknown top-level fields are rejected.
 
 ### `apiVersion`
 
-Use the canonical schema value:
+Use the legacy canonical value for a v2/v3 document:
 
 ```yaml
 apiVersion: agent-marketplace/v2
 ```
 
-`agent-marketplace/v3` is accepted as a compatibility alias, but new configuration and documentation should use v2. A repository configuration without `apiVersion` is rejected.
+`agent-marketplace/v3` is accepted as a compatibility alias. A repository configuration without `apiVersion` is rejected. A v4 document must instead use the exact value:
+
+```yaml
+apiVersion: agent-marketplace/v4
+```
+
+V4 replaces `registries` and per-kind top-level selectors with named `sources` and `resources`; do not mix the two document shapes. The v4 parser rejects legacy installation keys and unknown fields rather than dropping them.
 
 ### `harnesses`
 
@@ -287,7 +321,7 @@ A selected collection expands to its members before resources are resolved. Coll
 
 ## Hosted Marketplaces
 
-`marketplaces` records hosted Marketplace endpoints and immutable resource pins:
+`marketplaces` records hosted Marketplace endpoints and immutable resource pins in the legacy v2/v3 configuration shape. It is not a v4 top-level field. The explicit v2/v3-to-v4 migration refuses files containing these selections because a saved pin does not by itself prove the provenance required to recreate a v4 Marketplace request and acquisition record. Keep the legacy file unchanged and remediate the Marketplace selections separately. The legacy shape is:
 
 ```yaml
 marketplaces:
