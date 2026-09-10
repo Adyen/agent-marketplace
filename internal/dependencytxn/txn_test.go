@@ -16,6 +16,26 @@ import (
 	"time"
 )
 
+func TestCommitStoresCoordinationOutsideDestinationDirectory(t *testing.T) {
+	root, state := testDirs(t)
+	path := filepath.Join(root, "config.yaml")
+	mustWrite(t, path, []byte("old"), 0o600)
+
+	if _, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Bytes: []byte("new"), Mode: 0o600}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".config.yaml.dependencytxn.lock")); !os.IsNotExist(err) {
+		t.Fatalf("coordination file remains beside destination: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(state, "locks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].IsDir() {
+		t.Fatalf("coordination entries = %v", entries)
+	}
+}
+
 func TestDeleteRecovery(t *testing.T) {
 	for _, stage := range []FaultStage{FaultAfterCAS, FaultAfterStage, FaultAfterJournal, FaultAfterPublish} {
 		for _, orphan := range []bool{false, true} {
@@ -61,7 +81,7 @@ func TestDeleteRecovery(t *testing.T) {
 					if _, err := os.Lstat(path); !os.IsNotExist(err) {
 						t.Fatalf("deleted path remains %s: %v", path, err)
 					}
-					if _, err := os.Stat(lockPath(path)); err != nil {
+					if _, err := os.Stat(lockPath(filepath.Join(state, "locks"), path)); err != nil {
 						t.Fatalf("lost coordination: %v", err)
 					}
 				}
@@ -186,7 +206,7 @@ func TestDeleteRecoveryWaiterIgnoresFinalizedJournal(t *testing.T) {
 		t.Fatalf("expected interruption after deletion: %v", err)
 	}
 	journalPath := journals(t, state)[0]
-	locks, err := acquireLocks(context.Background(), []string{path})
+	locks, err := acquireLocks(context.Background(), state, []string{path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -834,7 +854,8 @@ func TestCommitDesiredSizeBoundary(t *testing.T) {
 				root, state := testDirs(t)
 				first, second := filepath.Join(root, "config.yaml"), filepath.Join(root, "lock.yaml")
 				mustWrite(t, first, []byte("old-config"), 0o600)
-				mustWrite(t, lockPath(first), []byte("coordination"), 0o600)
+				coordination := filepath.Join(root, ".config.yaml.dependencytxn.lock")
+				mustWrite(t, coordination, []byte("coordination"), 0o600)
 				if exists {
 					mustWrite(t, second, []byte("old-lock"), 0o640)
 				}
@@ -854,7 +875,7 @@ func TestCommitDesiredSizeBoundary(t *testing.T) {
 				if !reflect.DeepEqual(desired, before) {
 					t.Fatal("Commit mutated desired files")
 				}
-				assertFile(t, lockPath(first), "coordination", 0o600)
+				assertFile(t, coordination, "coordination", 0o600)
 				if size <= 4194304 {
 					if err != nil || !reflect.DeepEqual(result.Changed, []string{first, second}) {
 						t.Fatalf("Commit result = %v, error = %v", result, err)
@@ -1058,7 +1079,7 @@ func TestMultiProcessSerialization(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	before, err := os.Stat(lockPath(path))
+	before, err := os.Stat(lockPath(filepath.Join(state, "locks"), path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1082,7 +1103,7 @@ func TestMultiProcessSerialization(t *testing.T) {
 	if _, err := Commit(context.Background(), state, []DesiredFile{{Path: path, Expected: generation(t, path), Delete: true}}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := os.Stat(lockPath(path))
+	after, err := os.Stat(lockPath(filepath.Join(state, "locks"), path))
 	if err != nil || !os.SameFile(before, after) {
 		t.Fatalf("coordination inode changed: %v", err)
 	}

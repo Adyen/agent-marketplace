@@ -16,10 +16,14 @@ type heldLock struct {
 	file *os.File
 }
 
-func acquireLocks(ctx context.Context, paths []string) ([]heldLock, error) {
+func acquireLocks(ctx context.Context, stateDir string, paths []string) ([]heldLock, error) {
+	lockDir, err := prepareStateDir(filepath.Join(stateDir, "locks"))
+	if err != nil {
+		return nil, err
+	}
 	locks := make([]heldLock, 0, len(paths))
 	for _, path := range paths {
-		lock, err := acquireLock(ctx, lockPath(path))
+		lock, err := acquireLock(ctx, lockPath(lockDir, path))
 		if err != nil {
 			releaseLocks(locks)
 			return nil, err
@@ -72,6 +76,6 @@ func releaseLocks(locks []heldLock) {
 	}
 }
 
-func lockPath(path string) string {
-	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".dependencytxn.lock")
+func lockPath(lockDir, path string) string {
+	return filepath.Join(lockDir, "sha256-"+Digest([]byte(path))+".lock")
 }

@@ -208,7 +208,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 		return Result{}, err
 	}
 	paths := desiredPaths(files)
-	locks, err := acquireLocks(ctx, paths)
+	locks, err := acquireLocks(ctx, stateDir, paths)
 	if err != nil {
 		return Result{}, err
 	}
@@ -447,7 +447,7 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 		paths = append(paths, j.Assertions[i].Path)
 	}
 	sort.Strings(paths)
-	locks, err := acquireLocks(ctx, paths)
+	locks, err := acquireLocks(ctx, stateDir, paths)
 	if err != nil {
 		return err
 	}
