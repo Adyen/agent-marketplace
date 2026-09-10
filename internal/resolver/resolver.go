@@ -3046,8 +3046,10 @@ func ResourcesSelected(entry config.RegistryEntry, catalog []catalog.Entry) []Se
 func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entry) resourceSelections {
 	selected := make(map[resourceSelection]struct{})
 
-	// required:true or default:true with no explicit selection → include everything.
-	autoSelectAll := (entry.Required || entry.Default) && !hasExplicitSelection(entry)
+	// v4 all:true is additive, including when the group also has explicit
+	// includes or tags. Legacy required/default selection retains its historical
+	// explicit-selection guard.
+	autoSelectAll := entry.V4All || ((entry.Required || entry.Default) && !hasExplicitSelection(entry))
 	if autoSelectAll {
 		for _, candidate := range catalog {
 			name := strings.TrimSpace(candidate.Name)

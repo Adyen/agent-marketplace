@@ -636,7 +636,10 @@ type RegistryEntry struct {
 	// V4Kind preserves an explicit v4 source discriminator for the read-only
 	// legacy adapter. It is never serialized and prevents a directory named
 	// ".git" from being reclassified as a Git source at runtime.
-	V4Kind      V4SourceKind          `yaml:"-"`
+	V4Kind V4SourceKind `yaml:"-"`
+	// V4All preserves v4 all:true as an additive selection policy for the
+	// runtime resolver; Default alone cannot distinguish it from legacy policy.
+	V4All       bool                  `yaml:"-"`
 	V4Decisions []V4SelectionDecision `yaml:"-"`
 
 	// Harnesses overrides the top-level harnesses list for this entry.

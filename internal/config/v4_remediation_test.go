@@ -69,6 +69,36 @@ resources: {shared: {required: true}}
 	}
 }
 
+func TestV4AllSelectionSurvivesLegacyAdapter(t *testing.T) {
+	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
+sources: {shared: {git: https://example.test/agents.git, ref: main}}
+resources:
+  shared:
+    include: [skill/keep]
+    tags: [platform]
+    all: true
+    exclude: [skill/blocked]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := v4.ToLegacyConfig(repoLayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := legacy.Registries[0]
+	if !entry.V4All || !entry.Default {
+		t.Fatalf("all-selection adapter lost v4 all marker: %#v", entry)
+	}
+	if len(entry.V4Decisions) != 2 || entry.V4Decisions[0].Action != V4SelectionExplicit || entry.V4Decisions[1].Action != V4SelectionExclude {
+		t.Fatalf("all-selection decisions = %#v", entry.V4Decisions)
+	}
+	merged := MergeLayers([]Layer{{Source: RepoCommitted, Config: legacy}})
+	if len(merged.Registries) != 1 || !merged.Registries[0].V4All {
+		t.Fatalf("all-selection marker lost during layer merge: %#v", merged.Registries)
+	}
+}
+
 func TestV4DirectoryKindSurvivesGitSuffixedResolvedPath(t *testing.T) {
 	dir := t.TempDir()
 	sourceDir := filepath.Join(dir, "registry.git")

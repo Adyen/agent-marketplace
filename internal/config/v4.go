@@ -1632,6 +1632,7 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 			}
 			if group.HasAll && group.All != nil && *group.All {
 				entry.Default = true
+				entry.V4All = true
 			}
 			if group.HasTags {
 				entry.Tags = cloneV4StringList(group.Tags)

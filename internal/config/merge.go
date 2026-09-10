@@ -176,6 +176,7 @@ func resolveRegistryEntry(cfg *Config, entry RegistryEntry) RegistryEntry {
 		Default:        entry.Default,
 		SourceHarness:  entry.SourceHarness,
 		V4Kind:         entry.V4Kind,
+		V4All:          entry.V4All,
 		V4Decisions:    entry.V4Decisions,
 		FilePrecedence: entry.FilePrecedence,
 		Tags:           resolveInheritedList(cfg.Tags, entry.Tags),
