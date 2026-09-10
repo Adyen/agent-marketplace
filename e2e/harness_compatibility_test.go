@@ -205,6 +205,13 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	if native != nil {
 		native.verify(t, e, f, rows, paths)
+		check := runCompatibilityCommand(e, e.binary, []string{"sync", "--check"}, 30*time.Second)
+		rows["collection"].Commands = append(rows["collection"].Commands, check)
+		if check.Error != "" {
+			rows["collection"].Status = "failed"
+			rows["collection"].Reason = "native inspection or fixture-only trust introduced materialization drift"
+			t.Errorf("post-native sync --check failed: %s", check.Error)
+		}
 	}
 	if _, err := os.Lstat(f.hookMarker); !os.IsNotExist(err) {
 		rows["hook"].Status = "failed"

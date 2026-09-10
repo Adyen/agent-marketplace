@@ -153,6 +153,7 @@ jobs:
               --env GOTOOLCHAIN=local --env CGO_ENABLED=0 \
               --env "HARNESS_COMPAT_TARGET=$TARGET" \
               --env HARNESS_COMPAT_NATIVE_MODE=probe \
+              --env HARNESS_COMPAT_TRUST_FIXTURE=1 \
               --env "HARNESS_COMPAT_NATIVE_BINARY=/usr/local/bin/$NATIVE_CLI" \
               --env "HARNESS_COMPAT_NATIVE_VERSION=$version" \
               --env HARNESS_COMPAT_REPORT_DIR=/artifacts \

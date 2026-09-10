@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,11 +138,13 @@ func TestDevinAllFiveKindsMaterializeAtCanonicalPaths(t *testing.T) {
 				if !strings.Contains(hooks, "PostToolUse") {
 					t.Fatalf("%s does not contain the compiled hook event:\n%s", hooksFile, hooks)
 				}
-				if machineScope && !strings.Contains(hooks, `"hooks"`) {
-					t.Fatalf("user-scope hooks must live under config.json#hooks:\n%s", hooks)
+				var document map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(hooks), &document); err != nil {
+					t.Fatal(err)
 				}
-				if !machineScope && strings.Contains(hooks, `"hooks"`) {
-					t.Fatalf("project-scope hooks.v1.json must hold the hook object directly:\n%s", hooks)
+				_, wrapped := document["hooks"]
+				if wrapped != machineScope {
+					t.Fatalf("only user-scope hooks belong under the top-level hooks member:\n%s", hooks)
 				}
 
 				mcp := readFileString(t, filepath.Join(root, harness.DevinMcpConfigFile))
@@ -416,8 +419,8 @@ func TestDevinHandwrittenHooksKeepOrderAndSatisfyIdenticalDesiredEntries(t *test
 	hooksPath := filepath.Join(root, harness.DevinProjectHooksFile)
 	original := `{
   "PostToolUse": [
-    { "command": "first-handwritten", "type": "command" },
-    { "command": "second-handwritten", "type": "command" }
+    { "hooks": [{ "command": "first-handwritten", "type": "command" }] },
+    { "hooks": [{ "command": "second-handwritten", "type": "command" }] }
   ]
 }
 `
@@ -1009,8 +1012,8 @@ func TestDevinAggregatesAreProtectedFromMarkerStripping(t *testing.T) {
 	}
 	// Non-Devin targets keep the marker-merge path: excluding their aggregates
 	// would silently stop pruning them.
-	if got := aggregateProtectedPaths(hcc.TargetClaude, true); len(got) != 0 {
-		t.Fatalf("aggregateProtectedPaths(claude) = %v, want empty", got)
+	if got := aggregateProtectedPaths(hcc.TargetFactory, true); len(got) != 0 {
+		t.Fatalf("aggregateProtectedPaths(factory) = %v, want empty", got)
 	}
 }
 

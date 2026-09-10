@@ -140,6 +140,19 @@ func (g *geminiIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	mcpPath := workspaceMCPPath
 	if hasManifest {
 		mcpPath = extensionManifestPath
+	} else if fileExists(src, ".gemini/gemini-extension.json") {
+		mcpPath = ".gemini/gemini-extension.json"
+	}
+	if raw, err := fs.ReadFile(src, settingsPath); err == nil {
+		doc, err := jsonc.Parse(settingsPath, raw)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := doc.Root().Member("mcpServers"); ok {
+			mcpPath = settingsPath
+		}
+	} else if !isNotExist(err) {
+		return nil, fmt.Errorf("ingest/gemini: read %s: %w", settingsPath, err)
 	}
 	servers, mcpDiags, err := LoadMcpServers(src, mcpPath)
 	if err != nil && !isNotExist(err) {
@@ -727,6 +740,9 @@ func loadManifest(src fs.FS) (ir.Manifest, error) {
 }
 
 func hasWorkspaceMarkers(src fs.FS) bool {
+	if _, err := fs.Stat(src, ".gemini/gemini-extension.json"); err == nil {
+		return true
+	}
 	if _, err := fs.Stat(src, settingsPath); err == nil {
 		return true
 	}

@@ -8,6 +8,28 @@ import (
 	"time"
 )
 
+func TestSummaryReportsFixtureOnlyTrust(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	for _, scope := range []string{"repo", "user"} {
+		body := `{"target":"gemini","native_mode":"probe","results":[{"harness":"gemini","resource":"skill","scope":"` + scope + `","materialization_mode":"file","status":"native-verified","observed_version":"1.2.3","reason":"discovered fixture","fixture_trust":"repository-only"}]}`
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		now := time.Now()
+		err := summarize(&out, path, "fixture-image", now.Add(-time.Hour).Format(time.RFC3339), "bootstrap", now)
+		if err != nil || !strings.Contains(out.String(), "untrusted gate verified before repository-only fixture trust was granted") {
+			t.Fatalf("execution-workspace trust must remain visible independently of resource scope: %v\n%s", err, out.String())
+		}
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(body, "repository-only", "all-repositories")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := summarize(&strings.Builder{}, path, "fixture-image", now.Format(time.RFC3339), "bootstrap", now); err == nil {
+			t.Fatal("broad trust was accepted as fixture-only trust")
+		}
+	}
+}
+
 func TestSummaryFailedResourcesAndFreshBootstrap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.json")
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

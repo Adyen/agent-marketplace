@@ -564,6 +564,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 	// Include previously materialized targets even when they have no
 	// resolved artifacts in this run, so stale managed files get pruned.
 	addExistingOutputKeys(repoRoot, allOutputs)
+	addExistingNativeAggregateKeys(repoRoot, allOutputs)
 	// A file-mode manifest may be the only remaining record after a harness
 	// root is deleted. Include its known targets so deinit can still process
 	// that state instead of silently skipping it.
@@ -1046,6 +1047,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		// capability. All targets use the same file-copy or symlink path;
 		// shared aggregates retain their separate ownership reconciliation.
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
+		artifacts = materializeNativeAggregates(report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
 		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
 			report = aggregateHandler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, codexDestinations, dryRun)
@@ -1260,7 +1262,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, artifacts 
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, aggregateProtectedPaths(key.target, key.machineScope))
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, nativeAggregatePruneFence(key.target, key.machineScope))
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}

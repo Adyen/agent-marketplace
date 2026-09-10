@@ -13,8 +13,9 @@ import (
 )
 
 type compatibilityNative struct {
-	binary string
-	probes []compatibilityNativeProbe
+	binary        string
+	probes        []compatibilityNativeProbe
+	trustFixtures bool
 }
 
 type compatibilityNativeProbe struct {
@@ -51,7 +52,7 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 		row.Reason = "version output did not identify the expected pinned version"
 		return nil
 	}
-	native := &compatibilityNative{binary: binary}
+	native := &compatibilityNative{binary: binary, trustFixtures: os.Getenv("HARNESS_COMPAT_TRUST_FIXTURE") == "1"}
 	switch row.Harness {
 	case "devin":
 		native.probes = append(native.probes,
@@ -87,6 +88,10 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 }
 
 func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixture, rows map[string]*compatibilityResult, paths map[string][]string) {
+	if row, err := n.prepareFixtureTrust(e, f, rows); err != nil {
+		row.Status, row.Reason = "failed", err.Error()
+		t.Errorf("native trust boundary: %v", err)
+	}
 	for _, probe := range n.probes {
 		row := rows[probe.kind]
 		if row.Status != "config-only-verified" {
@@ -106,7 +111,11 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 			err := requireCompatibilityObservation(&command, false, probe.names...)
 			if err != nil && compatibilityTrustBlocksDiscovery(*row, command) {
 				row.Status = "blocked"
-				row.Reason = "Gemini reported untrusted workspace; repository skill discovery is gated by native trust, which this suite does not grant"
+				row.Reason = "Gemini reported untrusted workspace; repository skill discovery remains gated by native trust"
+				if row.Trust != "" {
+					row.Status = "failed"
+					row.Reason = "native workspace remained untrusted after fixture-only trust setup"
+				}
 				row.Commands = append(row.Commands, command)
 				t.Fatal(row.Reason)
 			}

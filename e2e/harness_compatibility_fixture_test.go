@@ -108,13 +108,16 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 	}
 	switch target {
 	case "claude":
-		paths["mcp"] = []string{root + "/.mcp.json"}
+		paths["mcp"] = []string{".mcp.json"}
+		if scope == "user" {
+			paths["mcp"] = []string{".claude.json"}
+		}
 	case "factory":
 		paths["subagent"] = []string{root + "/droids/" + f.name("subagent") + ".md"}
 	case "gemini":
 		paths["command"] = []string{root + "/commands/" + f.name("command") + ".toml"}
 		paths["hook"] = []string{root + "/settings.json"}
-		paths["mcp"] = []string{root + "/gemini-extension.json"}
+		paths["mcp"] = []string{root + "/settings.json"}
 	case "windsurf":
 		workflow := "workflows"
 		if scope == "user" {

@@ -13,6 +13,7 @@ type compatibilityResult struct {
 	Status     string                   `json:"status"`
 	Version    string                   `json:"observed_version,omitempty"`
 	Reason     string                   `json:"reason"`
+	Trust      string                   `json:"fixture_trust,omitempty"`
 	Commands   []compatibilityCommand   `json:"commands,omitempty"`
 	Files      map[string]string        `json:"generated_fixture_files,omitempty"`
 	Connection *compatibilityConnection `json:"connection,omitempty"`

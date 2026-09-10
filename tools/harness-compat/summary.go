@@ -26,6 +26,7 @@ type summaryResult struct {
 	Status     string           `json:"status"`
 	Version    string           `json:"observed_version"`
 	Reason     string           `json:"reason"`
+	Trust      string           `json:"fixture_trust"`
 	Connection *summaryEvidence `json:"connection"`
 }
 
@@ -55,6 +56,9 @@ func readSummaryReport(path string) (summaryReport, error) {
 	for _, row := range report.Results {
 		if !target.IsValid(row.Harness) || report.Target != "all" && row.Harness != report.Target || row.Resource == "" || row.Reason == "" || !slices.Contains([]string{"repo", "user"}, row.Scope) || !slices.Contains([]string{"symlink", "file"}, row.Mode) || !slices.Contains(statuses, row.Status) || row.Status == "native-verified" && row.Version == "" {
 			return report, fmt.Errorf("compatibility report contains incomplete or invalid evidence")
+		}
+		if row.Trust != "" && (row.Trust != "repository-only" || !slices.Contains([]string{"claude", "codex", "gemini"}, row.Harness)) {
+			return report, fmt.Errorf("compatibility report contains invalid fixture trust evidence")
 		}
 		if row.Connection != nil && (row.Connection.Reason == "" || !slices.Contains([]string{"native-verified", "blocked", "failed", "not-probed"}, row.Connection.Status)) {
 			return report, fmt.Errorf("compatibility report contains invalid connection evidence")
@@ -114,6 +118,9 @@ func summarize(out io.Writer, reportPath, image, created, source string, now tim
 			version = "not observed"
 		}
 		connection, reason := "not probed", row.Reason
+		if row.Trust != "" {
+			reason += "; untrusted gate verified before repository-only fixture trust was granted"
+		}
 		if row.Connection != nil {
 			connection = row.Connection.Status
 			reason += "; connection: " + row.Connection.Reason
