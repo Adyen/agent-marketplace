@@ -82,29 +82,36 @@ func compatibilityEnv(e *Env) []string {
 	}
 }
 
-func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
-	r := compatibilityCommand{Args: append([]string{binary}, args...), ExitCode: -1}
+func compatibilityProcess(ctx context.Context, e *Env, binary string, args []string) (*exec.Cmd, error) {
 	if !filepath.IsAbs(binary) {
-		r.Error = "executable must be configured with an absolute path"
-		return r
+		return nil, fmt.Errorf("executable must be configured with an absolute path")
 	}
 	for _, dir := range []string{".tmp", ".runtime", ".git-template", ".config-dirs", ".data-dirs", ".codex"} {
 		if err := os.MkdirAll(filepath.Join(e.home, dir), 0o700); err != nil {
-			r.Error = "cannot create isolated runtime directory"
-			return r
+			return nil, fmt.Errorf("cannot create isolated runtime directory")
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = e.workspace
 	cmd.Env = compatibilityEnv(e)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
+	r := compatibilityCommand{Args: append([]string{binary}, args...), ExitCode: -1}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd, err := compatibilityProcess(ctx, e, binary, args)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
 	var output compatibilityOutput
 	cmd.Stdout, cmd.Stderr = &output, &output
-	err := cmd.Run()
+	err = cmd.Run()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}

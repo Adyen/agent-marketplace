@@ -19,10 +19,25 @@ type compatibilityNative struct {
 }
 
 type compatibilityNativeProbe struct {
-	kind   string
-	list   []string
-	names  []string
-	before compatibilityCommand
+	kind     string
+	list     []string
+	names    []string
+	protocol string
+	before   compatibilityCommand
+}
+
+func (p compatibilityNativeProbe) run(e *Env, binary string) compatibilityCommand {
+	if p.protocol != "" {
+		return runCompatibilityProtocol(e, binary, p.protocol, 30*time.Second)
+	}
+	return runCompatibilityCommand(e, binary, p.list, 20*time.Second)
+}
+
+func (p compatibilityNativeProbe) observe(command *compatibilityCommand, e *Env, f compatibilityFixture, scope string, paths []string, absent bool) error {
+	if p.protocol != "" {
+		return requireCompatibilityProtocolInventory(command, e, f, p, scope, paths, absent)
+	}
+	return requireCompatibilityObservation(command, absent, p.names...)
 }
 
 func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibilityResult, mode, reason, expectedVersion string) *compatibilityNative {
@@ -61,7 +76,16 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 		)
 	case "gemini":
 		native.probes = append(native.probes, compatibilityNativeProbe{kind: "skill", list: []string{"skills", "list"}, names: []string{f.name("skill")}})
-	case "claude", "codex", "factory":
+	case "claude":
+		for _, kind := range []string{"skill", "command", "subagent"} {
+			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: "claude-initialize", names: []string{f.name(kind)}})
+		}
+	case "codex":
+		for _, kind := range []string{"skill", "command"} {
+			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: "codex-skills", names: []string{f.name(kind)}})
+		}
+		native.probes = append(native.probes, compatibilityNativeProbe{kind: "hook", protocol: "codex-hooks", names: []string{f.name("hook-a"), f.name("hook-b")}})
+	case "factory":
 	case "cursor":
 		row.Reason = "Cursor agent mcp list is interactive; no verified noninteractive credential-free inspection command is enabled"
 		return nil
@@ -76,8 +100,8 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 	native.probes = append(native.probes, compatibilityNativeProbe{kind: "mcp", list: list, names: []string{f.name("mcp-a"), f.name("mcp-b")}})
 	for i := range native.probes {
 		probe := &native.probes[i]
-		probe.before = runCompatibilityCommand(e, binary, probe.list, 20*time.Second)
-		if err := requireCompatibilityObservation(&probe.before, true, probe.names...); err != nil {
+		probe.before = probe.run(e, binary)
+		if err := probe.observe(&probe.before, e, f, row.Scope, nil, true); err != nil {
 			probe.before.Error = "native negative control failed: " + err.Error()
 		}
 		row.Commands = append(row.Commands, probe.before)
@@ -107,8 +131,8 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 		ok := t.Run("native-"+probe.kind, func(t *testing.T) {
 			row.Status = "failed"
 			row.Reason = "native discovery or observable value assertion failed after config verification"
-			command := runCompatibilityCommand(e, n.binary, probe.list, 20*time.Second)
-			err := requireCompatibilityObservation(&command, false, probe.names...)
+			command := probe.run(e, n.binary)
+			err := probe.observe(&command, e, f, row.Scope, paths[probe.kind], false)
 			if err != nil && compatibilityTrustBlocksDiscovery(*row, command) {
 				row.Status = "blocked"
 				row.Reason = "Gemini reported untrusted workspace; repository skill discovery remains gated by native trust"

@@ -25,6 +25,9 @@ func (n *compatibilityNative) prepareFixtureTrust(e *Env, f compatibilityFixture
 	var checked []*compatibilityResult
 	for _, probe := range n.probes {
 		row := rows[probe.kind]
+		if setup.Harness != "gemini" && probe.kind != "mcp" {
+			continue
+		}
 		if row == nil || row.Status != "config-only-verified" || probe.before.Error != "" || setup.Scope == "user" && probe.kind == "skill" {
 			continue
 		}
