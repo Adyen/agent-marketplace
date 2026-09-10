@@ -645,12 +645,12 @@ type v4MigrationSource struct {
 }
 
 type v4MigrationGroup struct {
-	Include   []any    `yaml:"include,omitempty"`
-	Exclude   []string `yaml:"exclude,omitempty"`
-	Tags      []string `yaml:"tags,omitempty"`
-	All       *bool    `yaml:"all,omitempty"`
-	Required  *bool    `yaml:"required,omitempty"`
-	Harnesses []string `yaml:"harnesses,omitempty"`
+	Include   []any     `yaml:"include,omitempty"`
+	Exclude   []string  `yaml:"exclude,omitempty"`
+	Tags      *[]string `yaml:"tags,omitempty"`
+	All       *bool     `yaml:"all,omitempty"`
+	Required  *bool     `yaml:"required,omitempty"`
+	Harnesses *[]string `yaml:"harnesses,omitempty"`
 }
 
 type v4MigrationDocument struct {
@@ -782,11 +782,11 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 		slog.Info("v4 migration preview complete", "files", len(inputs))
 		return result, nil
 	}
+	if err := publishV4Migration(&staged); err != nil {
+		cleanupStagedV4MigrationFiles(staged)
+		return nil, err
+	}
 	for _, file := range staged {
-		if err := os.Rename(file.temp, file.path); err != nil {
-			cleanupStagedV4MigrationFiles(staged)
-			return nil, fmt.Errorf("publish v4 migration %q: %w", file.path, err)
-		}
 		markV4MigrationResult(result, file.name)
 	}
 	slog.Info("v4 migration complete", "user", result.UserMigrated, "repo", result.RepoMigrated, "local", result.LocalMigrated)
@@ -794,15 +794,97 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 }
 
 type stagedV4MigrationFile struct {
-	name string
-	temp string
-	path string
+	name      string
+	temp      string
+	path      string
+	backup    string
+	backedUp  bool
+	published bool
 }
+
+// v4MigrationRename is a narrow seam for deterministic publication failure
+// tests. Rollback deliberately uses os.Rename directly so an injected publish
+// failure cannot also hide whether already-published files were restored.
+var v4MigrationRename = os.Rename
 
 func cleanupStagedV4MigrationFiles(files []stagedV4MigrationFile) {
 	for _, file := range files {
 		_ = os.Remove(file.temp)
+		_ = os.Remove(file.backup)
 	}
+}
+
+func stageV4MigrationBackup(path string) (string, error) {
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".bak-v4-*")
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := os.Remove(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func rollbackV4Migration(files []stagedV4MigrationFile) error {
+	var rollbackErr error
+	for i := len(files) - 1; i >= 0; i-- {
+		file := &files[i]
+		if file.published {
+			if err := os.Remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) && rollbackErr == nil {
+				rollbackErr = fmt.Errorf("remove published v4 migration %q: %w", file.path, err)
+			}
+		}
+		if file.backedUp {
+			if err := os.Rename(file.backup, file.path); err != nil && rollbackErr == nil {
+				rollbackErr = fmt.Errorf("restore v4 migration %q: %w", file.path, err)
+			}
+			file.backedUp = false
+		}
+	}
+	return rollbackErr
+}
+
+func publishV4Migration(staged *[]stagedV4MigrationFile) error {
+	files := *staged
+	for i := range files {
+		backup, err := stageV4MigrationBackup(files[i].path)
+		if err != nil {
+			rollbackErr := rollbackV4Migration(files)
+			if rollbackErr != nil {
+				return fmt.Errorf("stage v4 migration backup for %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
+			}
+			return fmt.Errorf("stage v4 migration backup for %q: %w", files[i].path, err)
+		}
+		files[i].backup = backup
+		if err := v4MigrationRename(files[i].path, backup); err != nil {
+			rollbackErr := rollbackV4Migration(files)
+			if rollbackErr != nil {
+				return fmt.Errorf("backup v4 migration %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
+			}
+			return fmt.Errorf("backup v4 migration %q: %w", files[i].path, err)
+		}
+		files[i].backedUp = true
+	}
+	for i := range files {
+		if err := v4MigrationRename(files[i].temp, files[i].path); err != nil {
+			rollbackErr := rollbackV4Migration(files)
+			if rollbackErr != nil {
+				return fmt.Errorf("publish v4 migration %q: %w (rollback failed: %v)", files[i].path, err, rollbackErr)
+			}
+			return fmt.Errorf("publish v4 migration %q: %w", files[i].path, err)
+		}
+		files[i].published = true
+	}
+	for i := range files {
+		_ = os.Remove(files[i].backup)
+		files[i].backup = ""
+	}
+	return nil
 }
 
 func markV4MigrationResult(result *V4MigrationResult, name string) {
@@ -837,8 +919,21 @@ func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, 
 			source.Git = entry.URL
 		}
 		doc.Sources[name] = source
-		group := v4MigrationGroup{Harnesses: append([]string(nil), entry.Harnesses...)}
+		group := v4MigrationGroup{}
+		if entry.Harnesses != nil {
+			values := cloneV4StringList(entry.Harnesses)
+			group.Harnesses = &values
+		}
 		hasExplicit := false
+		exclusions := make([]string, 0)
+		exclusionSeen := map[string]bool{}
+		addExclusion := func(value string) {
+			if exclusionSeen[value] {
+				return
+			}
+			exclusionSeen[value] = true
+			exclusions = append(exclusions, value)
+		}
 		for _, resourceKind := range AllKinds {
 			selector := entry.SelectorForKind(resourceKind)
 			for _, resourceName := range selector.Include {
@@ -852,14 +947,16 @@ func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, 
 				if strings.TrimSpace(resourceName) == "" || strings.Contains(resourceName, "/") {
 					return nil, v4err("v4.migration-unsupported", configPath, 0, "resource exclusion %q is not a v4 locator segment", resourceName)
 				}
-				group.Exclude = append(group.Exclude, fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
+				addExclusion(fmt.Sprintf("%s/%s", v4ResourceKindName(resourceKind), resourceName))
 			}
 			if selector.ExcludeAll || entry.ExcludeAll {
-				group.Exclude = append(group.Exclude, v4ResourceKindName(resourceKind)+"/*")
+				addExclusion(v4ResourceKindName(resourceKind) + "/*")
 			}
 		}
+		group.Exclude = append(group.Exclude, exclusions...)
 		if entry.Tags != nil {
-			group.Tags = append([]string(nil), entry.Tags...)
+			values := cloneV4StringList(entry.Tags)
+			group.Tags = &values
 		}
 		if entry.Required {
 			value := true
@@ -869,7 +966,7 @@ func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, 
 			value := true
 			group.All = &value
 		}
-		if len(group.Include) > 0 || len(group.Exclude) > 0 || len(group.Tags) > 0 || group.Required != nil || group.All != nil || len(group.Harnesses) > 0 {
+		if len(group.Include) > 0 || len(group.Exclude) > 0 || group.Tags != nil || group.Required != nil || group.All != nil || group.Harnesses != nil {
 			doc.Resources[name] = group
 		}
 	}

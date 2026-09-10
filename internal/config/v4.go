@@ -1114,6 +1114,10 @@ func decisionsForExclusions(source string, values []string, node *yaml.Node, fil
 }
 
 func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, error) {
+	return loadV4TreeWithOverlays(file, root, visiting, nil, nil)
+}
+
+func loadV4TreeWithOverlays(file string, root bool, visiting map[string]bool, overlays map[string][]byte, rootData []byte) (*V4Config, error) {
 	canonical, err := canonicalConfigPath(file)
 	if err != nil {
 		return nil, err
@@ -1121,7 +1125,7 @@ func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, er
 	if visiting[canonical] {
 		return nil, v4err("v4.include-cycle", canonical, 0, "config include cycle")
 	}
-	data, err := os.ReadFile(canonical)
+	data, _, err := v4ConfigData(canonical, file, root, rootData, overlays)
 	if err != nil {
 		return nil, fmt.Errorf("read v4 config %q: %w", canonical, err)
 	}
@@ -1147,7 +1151,7 @@ func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, er
 			if !filepath.IsAbs(childPath) {
 				childPath = filepath.Join(filepath.Dir(canonical), childPath)
 			}
-			child, e := loadV4Tree(childPath, false, visiting)
+			child, e := loadV4TreeWithOverlays(childPath, false, visiting, overlays, nil)
 			if e != nil {
 				return nil, fmt.Errorf("load v4 include %q from %q: %w", childPath, canonical, e)
 			}
@@ -1165,6 +1169,21 @@ func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, er
 		}
 	}
 	return result, nil
+}
+
+func v4ConfigData(canonical, requested string, root bool, rootData []byte, overlays map[string][]byte) ([]byte, bool, error) {
+	if root && rootData != nil {
+		data, err := boundedConfigData(rootData)
+		return data, true, err
+	}
+	for _, key := range []string{canonical, requested} {
+		if data, ok := overlays[key]; ok {
+			bounded, err := boundedConfigData(data)
+			return bounded, true, err
+		}
+	}
+	data, err := os.ReadFile(canonical)
+	return data, false, err
 }
 
 func yamlNodeRoot(data []byte) *yaml.Node {
@@ -1569,20 +1588,20 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 	if kind == localLayer && (c.AllowedRegistries != nil || c.AllowedMarketplaces != nil) {
 		return nil, v4err("v4.layer-field", "allowed_registries", 0, "allowlists are not valid in repository personal configuration")
 	}
+	if kind == localLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
+		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository personal configuration")
+	}
 	if kind == repoLayer && (c.Backup != nil || c.Logging != nil || c.Telemetry != nil) {
 		return nil, v4err("v4.layer-field", "auxiliary", 0, "backup, logging, and telemetry are not valid in repository configuration")
 	}
-	out := &Config{APIVersion: APIVersionV4, Harnesses: append([]string(nil), c.Harnesses...), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
+	out := &Config{APIVersion: APIVersionV4, Harnesses: cloneV4StringList(c.Harnesses), Backup: c.Backup, Logging: c.Logging, Telemetry: c.Telemetry, Materialization: c.Materialization}
 	if c.AllowedRegistries != nil {
-		values := append([]string(nil), (*c.AllowedRegistries)...)
+		values := cloneV4StringList(*c.AllowedRegistries)
 		out.AllowedRegistries = &values
 	}
 	if c.AllowedMarketplaces != nil {
-		values := append([]string(nil), (*c.AllowedMarketplaces)...)
+		values := cloneV4StringList(*c.AllowedMarketplaces)
 		out.AllowedMarketplaces = &values
-	}
-	if kind == localLayer {
-		out.Backup, out.Logging, out.Telemetry = nil, nil, nil
 	}
 
 	names := make([]string, 0, len(c.Sources))
@@ -1595,12 +1614,19 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 		if src.Kind == V4SourceMarketplace {
 			return nil, v4err("v4.marketplace-lock-required", "sources."+name, src.Line, "Marketplace resources require an acquisition lock and cannot be resolved by the legacy runtime")
 		}
-		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL}
+		entry := RegistryEntry{SourceHarness: src.SourceHarness, Ref: src.Ref, Path: src.Path, URL: src.URL, V4Kind: src.Kind}
 		if src.Kind == V4SourceDirectory {
 			entry.Ref = ""
 			entry.Path = ""
 		}
 		if group, ok := c.Groups[name]; ok {
+			// Keep the ordered v4 stream as runtime state. Reconstructing policy
+			// from Include/Exclude sets loses a later root include after a child
+			// exclusion, and cannot represent re-inclusion after a wildcard.
+			entry.V4Decisions = cloneV4Decisions(group.Decisions)
+			if entry.V4Decisions == nil {
+				entry.V4Decisions = []V4SelectionDecision{}
+			}
 			if group.Required != nil {
 				entry.Required = *group.Required
 			}
@@ -1608,12 +1634,18 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 				entry.Default = true
 			}
 			if group.HasTags {
-				entry.Tags = append([]string(nil), group.Tags...)
+				entry.Tags = cloneV4StringList(group.Tags)
 			}
 			if group.HasHarnesses {
-				entry.Harnesses = append([]string(nil), group.Harnesses...)
+				entry.Harnesses = cloneV4StringList(group.Harnesses)
 			}
-			for _, request := range group.Include {
+			// A required-only group is a valid empty selection in v4. Legacy
+			// Required implies auto-select-all, so only retain Required when the
+			// v4 group has an actual selection policy.
+			if entry.Required && len(group.Include) == 0 && (!group.HasTags || len(group.Tags) == 0) && (!group.HasAll || group.All == nil || !*group.All) {
+				entry.Required = false
+			}
+			for _, request := range effectiveV4Requests(group) {
 				if request.Options.HasAs && request.Options.As != request.Name {
 					return nil, v4err("v4.runtime-option", "resources."+name+".include", 0, "installed aliases are not supported by the legacy runtime")
 				}
@@ -1623,7 +1655,7 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 				}
 				selector.Include = append(selector.Include, request.Name)
 			}
-			for _, exclusion := range group.Exclude {
+			for _, exclusion := range effectiveV4Exclusions(group) {
 				if exclusion == "*" {
 					entry.ExcludeAll = true
 					continue
@@ -1643,6 +1675,92 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 		out.Registries = append(out.Registries, entry)
 	}
 	return out, nil
+}
+
+func cloneV4StringList(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append(make([]string, 0, len(values)), values...)
+}
+
+func cloneV4Decisions(values []V4SelectionDecision) []V4SelectionDecision {
+	if values == nil {
+		return nil
+	}
+	out := make([]V4SelectionDecision, len(values))
+	copy(out, values)
+	for i := range out {
+		if values[i].Request != nil {
+			r := *values[i].Request
+			r.Harnesses = cloneV4StringList(r.Harnesses)
+			r.Provenance = append([]V4Provenance(nil), r.Provenance...)
+			out[i].Request = &r
+		}
+	}
+	return out
+}
+
+// effectiveV4Requests applies the ordered decision stream to explicit
+// locators, preserving a later include after an earlier exclusion.
+func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
+	requests := map[string]V4ResourceRequest{}
+	excluded := map[string]bool{}
+	for _, decision := range group.Decisions {
+		if decision.Action == V4SelectionExclude {
+			for locator, request := range requests {
+				if !request.Required && v4ExclusionMatches(decision.Exclusion, locator) {
+					excluded[locator] = true
+				}
+			}
+			continue
+		}
+		if decision.Request != nil {
+			requests[decision.Locator] = *decision.Request
+			excluded[decision.Locator] = false
+		}
+	}
+	locators := make([]string, 0, len(requests))
+	for locator, request := range requests {
+		if !excluded[locator] {
+			_ = request
+			locators = append(locators, locator)
+		}
+	}
+	sort.Strings(locators)
+	out := make([]V4ResourceRequest, 0, len(locators))
+	for _, locator := range locators {
+		out = append(out, requests[locator])
+	}
+	return out
+}
+
+func effectiveV4Exclusions(group V4ResourceGroup) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, decision := range group.Decisions {
+		if decision.Action != V4SelectionExclude || seen[decision.Exclusion] {
+			continue
+		}
+		// An exact exclusion superseded by a later include is no longer active.
+		_, resourceName := v4ExclusionKindName(decision.Exclusion)
+		if resourceName != "*" {
+			reincluded := false
+			for _, request := range effectiveV4Requests(group) {
+				if request.Locator == decision.Exclusion {
+					reincluded = true
+					break
+				}
+			}
+			if reincluded {
+				seen[decision.Exclusion] = true
+				continue
+			}
+		}
+		seen[decision.Exclusion] = true
+		out = append(out, decision.Exclusion)
+	}
+	return out
 }
 
 func v4KindToIR(kind string) ir.ResourceKind {

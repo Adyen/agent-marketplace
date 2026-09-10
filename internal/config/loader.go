@@ -460,7 +460,7 @@ func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKin
 
 func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
 	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := LoadV4ConfigFromPath(path)
+		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -470,11 +470,11 @@ func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layer
 		}
 		reads := make([]ConfigRead, 0, len(v4.Files))
 		for _, file := range v4.Files {
-			contents, readErr := os.ReadFile(file)
+			contents, overlaid, readErr := v4ConfigData(file, file, false, nil, overlays)
 			if readErr != nil {
 				return nil, nil, fmt.Errorf("read v4 config %q: %w", file, readErr)
 			}
-			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents))})
+			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents)), Overlay: overlaid})
 		}
 		return cfg, reads, nil
 	}

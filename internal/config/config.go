@@ -633,6 +633,12 @@ type RegistryEntry struct {
 	// Optional; defaults to hcc.Autodetect at sync time.
 	SourceHarness string `yaml:"source_harness,omitempty"`
 
+	// V4Kind preserves an explicit v4 source discriminator for the read-only
+	// legacy adapter. It is never serialized and prevents a directory named
+	// ".git" from being reclassified as a Git source at runtime.
+	V4Kind      V4SourceKind          `yaml:"-"`
+	V4Decisions []V4SelectionDecision `yaml:"-"`
+
 	// Harnesses overrides the top-level harnesses list for this entry.
 	// Optional; inherits from Config.Harnesses if unset.
 	Harnesses []string `yaml:"harnesses,omitempty"`
@@ -771,6 +777,12 @@ func (e *RegistryEntry) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, b
 // suffix, a filesystem path is treated as a plain directory and ref is
 // optional (and ignored).
 func (e RegistryEntry) IsLocal() bool {
+	if e.V4Kind == V4SourceDirectory {
+		return true
+	}
+	if e.V4Kind == V4SourceGit {
+		return false
+	}
 	u := strings.TrimSpace(e.URL)
 	if u == "" {
 		return false

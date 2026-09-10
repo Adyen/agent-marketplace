@@ -3058,28 +3058,53 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 		}
 	}
 
-	selections := resourceSelections{}
-	for _, kind := range config.AllKinds {
-		selections = appendSelections(selections, kind, entry.SelectorForKind(kind).Include)
-	}
-	for _, s := range selections {
-		selected[s] = struct{}{}
-	}
-
+	// Tag selection participates in the ordered v4 stream: exclusions must be
+	// able to suppress tagged resources just as they suppress explicit includes.
 	for _, candidate := range catalog {
 		name := strings.TrimSpace(candidate.Name)
 		if name == "" {
 			continue
 		}
-
 		if config.HasMatchingTag(candidate.Tags, entry.Tags) {
 			selected[resourceSelection{kind: candidate.Kind, name: name}] = struct{}{}
 		}
 	}
 
+	// V4 carries an ordered decision stream. Apply it after dynamic tag/all
+	// selection so an exclusion can suppress inherited selections while a later
+	// include can explicitly re-enable the same resource.
+	if entry.V4Decisions != nil {
+		for _, decision := range entry.V4Decisions {
+			switch decision.Action {
+			case config.V4SelectionExplicit:
+				if decision.Request == nil {
+					continue
+				}
+				selected[resourceSelection{kind: v4DecisionKind(decision.Request.Kind), name: decision.Request.Name}] = struct{}{}
+			case config.V4SelectionExclude:
+				if entry.Required {
+					continue
+				}
+				for candidate := range selected {
+					if v4DecisionExclusionMatches(decision.Exclusion, candidate) {
+						delete(selected, candidate)
+					}
+				}
+			}
+		}
+	} else {
+		selections := resourceSelections{}
+		for _, kind := range config.AllKinds {
+			selections = appendSelections(selections, kind, entry.SelectorForKind(kind).Include)
+		}
+		for _, s := range selections {
+			selected[s] = struct{}{}
+		}
+	}
+
 	// required:true is immune to entry-level excludes; default:true and explicit
-	// selections respect them.
-	if !entry.Required {
+	// selections respect them. V4's ordered stream already applied its excludes.
+	if !entry.Required && entry.V4Decisions == nil {
 		excludeAllKinds := entryExcludeAllKinds(entry)
 		for _, excluded := range entryResourceExcludes(entry) {
 			for candidate := range selected {
@@ -3088,7 +3113,6 @@ func resolveSelectedResources(entry config.RegistryEntry, catalog []catalog.Entr
 				}
 			}
 		}
-		// Remove all resources of kinds with ExcludeAll=true.
 		for kind := range excludeAllKinds {
 			for candidate := range selected {
 				if candidate.kind == kind {
@@ -3154,7 +3178,56 @@ func appendSelections(out resourceSelections, kind ir.ResourceKind, names []stri
 	return out
 }
 
+func v4DecisionKind(kind string) ir.ResourceKind {
+	switch kind {
+	case "skill":
+		return ir.KindSkill
+	case "command":
+		return ir.KindCommand
+	case "subagent":
+		return ir.KindSubagent
+	case "hook":
+		return ir.KindHook
+	case "mcp":
+		return ir.KindMcpServer
+	case "collection":
+		return ir.KindCollection
+	default:
+		return ir.ResourceKind(-1)
+	}
+}
+
+func v4DecisionExclusionMatches(exclusion string, selected resourceSelection) bool {
+	if exclusion == "*" {
+		return true
+	}
+	parts := strings.Split(strings.TrimSuffix(exclusion, "/*"), "/")
+	if strings.HasSuffix(exclusion, "/*") {
+		if len(parts) == 1 {
+			return v4DecisionKind(parts[0]) == selected.kind
+		}
+		if len(parts) == 2 {
+			return v4DecisionKind(parts[1]) == selected.kind
+		}
+		return false
+	}
+	if len(parts) == 2 {
+		return v4DecisionKind(parts[0]) == selected.kind && parts[1] == selected.name
+	}
+	if len(parts) == 3 {
+		return parts[2] == selected.name && v4DecisionKind(parts[1]) == selected.kind
+	}
+	return false
+}
+
 func hasExplicitSelection(entry config.RegistryEntry) bool {
+	// A v4 decision stream is explicit only when it contains an include; an
+	// exclude-only group must not disable required/default dynamic selection.
+	for _, decision := range entry.V4Decisions {
+		if decision.Action == config.V4SelectionExplicit && decision.Request != nil {
+			return true
+		}
+	}
 	// A selector is explicit only when it has a non-empty Include list,
 	// not merely an Exclude. Exclude-only selectors should not disable autoSelectAll.
 	for _, kind := range config.AllKinds {
