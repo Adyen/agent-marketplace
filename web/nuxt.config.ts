@@ -14,6 +14,7 @@ export default defineNuxtConfig({
   // small controller so both applications can honor the same stored values.
   ui: {
     colorMode: false,
+    fonts: false,
   },
   app: {
     head: {

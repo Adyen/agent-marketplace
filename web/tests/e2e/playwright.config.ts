@@ -61,6 +61,7 @@ export default defineConfig({
         E2E_SHARED_ORIGIN_PORT: sharedOriginPort,
         E2E_SITE_ORIGIN: siteURL,
         E2E_RELATIVE_APP_ORIGIN: relativeAppURL,
+        E2E_API_ORIGIN: mockURL,
       },
     },
   ],

@@ -141,14 +141,14 @@ describe('resourceAvailability', () => {
 describe('listAvailabilityCopy', () => {
   it('keeps available listings actionable and explains revoked listings separately', () => {
     expect(listAvailabilityCopy({ availability: 'available' })).toMatchObject({ label: 'Available', installable: true })
-    expect(listAvailabilityCopy({ availability: 'revoked' })).toMatchObject({ label: 'Revoked', color: 'error', installable: false })
-    expect(listAvailabilityCopy({ availability: 'policy-blocked' })).toMatchObject({ label: 'Blocked by policy', color: 'error', installable: false })
-    expect(listAvailabilityCopy({ availability: 'no-artifact' })).toMatchObject({ label: 'No installable artifact', color: 'warning', installable: false })
+    expect(listAvailabilityCopy({ availability: 'revoked' })).toMatchObject({ label: 'Not available', color: 'neutral', installable: false })
+    expect(listAvailabilityCopy({ availability: 'policy-blocked' })).toMatchObject({ label: 'Not available', color: 'neutral', installable: false })
+    expect(listAvailabilityCopy({ availability: 'no-artifact' })).toMatchObject({ label: 'Not available', color: 'neutral', installable: false })
   })
 
   it('states the outcome for the collapsed blocked state without guessing the reason', () => {
     const copy = listAvailabilityCopy({ availability: 'blocked' })
-    expect(copy).toMatchObject({ label: 'Not installable', color: 'warning', installable: false })
+    expect(copy).toMatchObject({ label: 'Not available', color: 'neutral', installable: false })
     // The listing cannot tell policy rejection from a missing artifact, so the
     // notice must not claim either one.
     expect(copy?.installNotice).not.toContain('policy')

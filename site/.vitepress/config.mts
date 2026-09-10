@@ -26,6 +26,7 @@ export default defineConfig({
   },
 
   head: [
+    ['link', { rel: 'prefetch', href: MARKETPLACE_PATH }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace — built at Adyen' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]

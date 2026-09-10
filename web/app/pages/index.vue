@@ -1,15 +1,12 @@
 <script setup lang="ts">
-import CopyButton from '~/components/CopyButton.vue'
 import { RESOURCE_KINDS } from '~/types/marketplace'
 import type { ResourceKind, SearchParams } from '~/types/marketplace'
 import { safeCanonicalUrl } from '~/lib/presentation'
 import { parseSearchQuery, toLocationQuery } from '~/composables/useSearchQuery'
-import { useCopyText } from '~/composables/useCopyText'
 
 const route = useRoute()
 const router = useRouter()
 const api = useMarketplaceApi()
-const { copied: copiedMarketplaceCommand, copyError: marketplaceCopyError, copy: copyMarketplaceCommand } = useCopyText()
 
 const { data: metadata, error: metadataError } = await useAsyncData('marketplace-metadata', () => api.getWellKnown())
 const { data: registries } = await useAsyncData('marketplace-registries', () => api.listRegistries())
@@ -53,10 +50,6 @@ const currentPage = computed(() => Math.floor(searchParams.value.offset / search
 const hasPreviousPage = computed(() => searchParams.value.offset > 0)
 const hasNextPage = computed(() => currentPage.value < totalPages.value)
 const canonicalUrl = computed(() => safeCanonicalUrl(metadata.value?.browser_base))
-const marketplaceCommand = computed(() => {
-  const endpoint = safeCanonicalUrl(metadata.value?.canonical_url)
-  return endpoint ? `agent-marketplace install "${endpoint}"` : ''
-})
 const hasDraftFilters = computed(() => Boolean(draft.q || draft.kind || draft.registry.length))
 const searchUpdating = computed(() => {
   const applied = searchParams.value
@@ -131,54 +124,32 @@ useHead({
 </script>
 
 <template>
-  <div class="min-h-screen bg-default text-default">
+  <div class="min-h-[calc(100vh-4rem)] bg-default text-default">
     <main id="main-content" ref="mainContent" tabindex="-1">
-      <!-- The index is the page. One line says what this instance is, then the
-           controls, then the entries. There is no marketing hero to scroll past. -->
       <section class="border-b border-default bg-muted/40">
         <div class="mx-auto max-w-6xl px-4 py-5 sm:px-6">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <h1 class="max-w-2xl text-base leading-6 text-toned">
-              A verified index of agent resources. Every entry is pinned to a content digest and analyzed before it is offered.
-              <span class="text-muted">Installation happens in your CLI.</span>
-            </h1>
-            <div class="flex items-baseline gap-3 font-mono text-xs text-muted">
-              <span v-if="metadata?.instance_id">{{ metadata.instance_id }}</span>
-              <span v-if="metadata?.instance_id" aria-hidden="true">·</span>
-              <span>read-only</span>
-            </div>
+          <h1 class="text-3xl font-bold leading-[1.12] tracking-[-0.035em] text-default sm:text-4xl">
+            {{ metadata?.instance_id ?? 'Agent Marketplace' }}
+          </h1>
+          <div class="mt-3 max-w-4xl text-lg leading-[1.66] text-muted">
+            <p>Browse resources for AI agents, with every revision pinned and analyzed before publication.</p>
+            <p class="mt-1">
+              To use a resource, install the
+              <a href="/" class="whitespace-nowrap font-medium text-primary underline underline-offset-4">agent-marketplace</a>
+              CLI, then copy and run its install command.
+            </p>
           </div>
-
-          <section
-            v-if="marketplaceCommand"
-            class="mt-2 text-sm leading-6 text-muted"
-            aria-labelledby="use-cli-heading"
-          >
-            <h2 id="use-cli-heading" class="sr-only">Use this Marketplace from the CLI</h2>
-            <span>
-              Want to discover resources from the CLI?
-              <span class="font-medium text-toned">Connect this Marketplace</span>
-              <CopyButton
-                class="ml-1 align-middle"
-                :copied="copiedMarketplaceCommand === 'marketplace'"
-                copy-label="Copy Marketplace connection command"
-                copied-label="Marketplace connection command copied"
-                @click="copyMarketplaceCommand(marketplaceCommand, 'marketplace')"
-              />
-            </span>
-            <span v-if="marketplaceCopyError === 'marketplace'" role="alert" class="text-xs text-error">Clipboard access failed.</span>
-          </section>
         </div>
       </section>
 
       <section class="mx-auto max-w-6xl px-4 sm:px-6" aria-labelledby="results-heading">
-        <header class="border-b border-default py-3">
-          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <header class="border-b border-default py-4 sm:py-5">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
             <div class="flex items-baseline gap-2">
               <h2
                 id="results-heading"
                 tabindex="-1"
-                class="rounded text-sm font-semibold text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+                class="rounded text-base font-semibold tracking-tight text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
               >
                 Resources
               </h2>
@@ -195,8 +166,13 @@ useHead({
             </div>
           </div>
 
-          <form id="marketplace-search" class="mt-2" role="search" @submit.prevent="submitSearch">
-              <div class="grid grid-cols-[minmax(0,1fr)_auto_5.5rem] gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_11rem_5.5rem]">
+          <form id="marketplace-search" class="mt-3" role="search" @submit.prevent="submitSearch">
+              <div
+                class="grid gap-2 sm:gap-3"
+                :class="hasDraftFilters
+                  ? 'grid-cols-[minmax(0,1fr)_auto_5.5rem] sm:grid-cols-[minmax(0,1fr)_11rem_11rem_5.5rem]'
+                  : 'grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_11rem_11rem]'"
+              >
                 <div class="min-w-0">
                   <label for="search-query" class="sr-only">Search</label>
                   <UInput
@@ -205,8 +181,10 @@ useHead({
                     size="lg"
                     placeholder="Search resources"
                     autocomplete="off"
+                    icon="i-lucide-search"
+                    color="primary"
                     class="w-full"
-                    :ui="{ base: 'h-9' }"
+                    :ui="{ base: 'h-9 ring-default focus-visible:ring-primary' }"
                   />
                 </div>
 
@@ -225,13 +203,12 @@ useHead({
                 </UButton>
 
                 <UButton
+                  v-if="hasDraftFilters"
                   type="button"
                   size="sm"
                   color="primary"
                   variant="link"
-                  class="col-start-3 row-start-1 h-9 min-h-9 self-center whitespace-nowrap px-1 text-sm font-medium underline-offset-4 disabled:text-dimmed disabled:opacity-40 disabled:no-underline sm:col-start-4"
-                  :class="hasDraftFilters ? 'cursor-pointer' : 'cursor-not-allowed'"
-                  :disabled="!hasDraftFilters"
+                  class="col-start-3 row-start-1 h-9 min-h-9 cursor-pointer self-center whitespace-nowrap px-1 text-sm font-medium underline-offset-4 sm:col-start-4"
                   @click="resetSearch"
                 >
                   Clear filters
@@ -239,7 +216,11 @@ useHead({
 
                 <div
                   id="resource-filters"
-                  :class="[filtersOpen ? 'flex' : 'hidden', 'col-span-3 row-start-2 flex-col gap-2 sm:contents']"
+                  :class="[
+                    filtersOpen ? 'flex' : 'hidden',
+                    hasDraftFilters ? 'col-span-3' : 'col-span-2',
+                    'row-start-2 flex-col gap-2 sm:contents',
+                  ]"
                 >
                   <SearchKindFilter
                     id="search-kind"

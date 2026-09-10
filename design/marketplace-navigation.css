@@ -36,7 +36,7 @@
 .am-site-header {
   position: relative;
   z-index: 50;
-  background: var(--am-color-bg-canvas);
+  background: var(--am-color-code-bg-raised);
   color: var(--am-color-text-primary);
 }
 

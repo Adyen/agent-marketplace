@@ -22,7 +22,8 @@ const statusTextClass = computed(() => {
   switch (availability.value?.color) {
     case 'success': return 'text-success'
     case 'error': return 'text-error'
-    default: return 'text-warning'
+    case 'warning': return 'text-warning'
+    default: return 'text-muted'
   }
 })
 
@@ -34,7 +35,7 @@ const commandLabel = computed(() => {
 
 <template>
   <article class="group relative border-b border-default px-3 py-2.5 transition-colors hover:bg-muted/60 motion-reduce:transition-none sm:px-4 sm:py-3">
-    <div class="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-x-3 sm:grid-cols-[24px_minmax(0,1fr)_auto] sm:gap-x-8">
+    <div class="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-x-4 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
       <ResourceFingerprint :digest="item.content_digest" :size="24" />
 
       <div class="min-w-0">
@@ -45,7 +46,7 @@ const commandLabel = computed(() => {
             <NuxtLink
               v-if="browserUrl"
               :to="browserUrl"
-              class="rounded after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              class="group/resource-link cursor-pointer rounded decoration-primary underline-offset-4 after:absolute after:inset-0 hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
               <span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
             </NuxtLink>

@@ -9,8 +9,12 @@
  */
 
 @theme static {
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-sans: system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, monospace;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.375rem;
 
   --color-ink-50: var(--am-scale-light-end);
   --color-ink-100: color-mix(in srgb, var(--am-color-text-secondary) 15%, var(--am-scale-light-end));
@@ -114,4 +118,10 @@
   color-scheme: dark;
   --am-scale-light-end: var(--am-color-text-primary);
   --am-scale-dark-end: var(--am-color-bg-canvas);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }

@@ -444,11 +444,7 @@ kbd {
 .demo.is-focused {
   --am-terminal-border: var(--tui-green);
   --am-terminal-shadow:
-<<<<<<< HEAD
-    0 34px 72px -34px rgba(0, 0, 0, 0.92),
-=======
     0 34px 72px -34px var(--am-terminal-shadow-strong),
->>>>>>> 389282c (Unify Marketplace styling and shared-origin routing)
     0 0 0 3px var(--vp-c-brand-soft),
     0 0 70px color-mix(in srgb, var(--am-color-action-active) 15%, transparent);
 }

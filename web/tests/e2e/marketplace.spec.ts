@@ -45,6 +45,18 @@ test.describe('Marketplace browser discovery', () => {
   })
 
   test('shares navigation and appearance across both frontends', async ({ page }) => {
+    const fontStatus = () => page.evaluate(() => {
+      const bodyStyle = getComputedStyle(document.body)
+      return {
+        bodyFamily: bodyStyle.fontFamily,
+        fontSmoothing: bodyStyle.getPropertyValue('-webkit-font-smoothing'),
+        textRendering: bodyStyle.textRendering,
+        downloadedFonts: performance.getEntriesByType('resource')
+          .filter(entry => /\.(?:woff2?|ttf|otf)(?:\?|$)/.test(entry.name))
+          .length,
+      }
+    })
+
     await page.goto(sharedOriginURL)
     await page.evaluate(key => localStorage.setItem(key, 'light'), sharedAppearanceKey)
     await page.reload()
@@ -55,7 +67,14 @@ test.describe('Marketplace browser discovery', () => {
     await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
     await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '../marketplace/')
     await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.locator('link[rel="prefetch"][href="/marketplace/"]')).toHaveCount(1)
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect.poll(fontStatus).toEqual({
+      bodyFamily: 'system-ui, sans-serif',
+      fontSmoothing: 'antialiased',
+      textRendering: 'optimizelegibility',
+      downloadedFonts: 0,
+    })
 
     await page.goto(`${sharedOriginURL}/README`)
     await expect(page.locator('.VPNav')).toHaveCount(1)
@@ -78,6 +97,13 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
+    await expect.poll(fontStatus).toEqual({
+      bodyFamily: 'system-ui, sans-serif',
+      fontSmoothing: 'antialiased',
+      textRendering: 'optimizelegibility',
+      downloadedFonts: 0,
+    })
 
     const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to light theme' })
     await expect(marketplaceSwitch).toHaveAttribute('aria-checked', 'true')
@@ -129,6 +155,40 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
+  test('keeps dense Marketplace copy readable in dark mode', async ({ page }) => {
+    await page.goto('/')
+    await page.evaluate(key => localStorage.setItem(key, 'dark'), sharedAppearanceKey)
+    await page.reload()
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+
+    const typography = await page.evaluate(() => {
+      const metrics = (selector: string) => {
+        const element = document.querySelector(selector)
+        if (!element) throw new Error(`Missing typography probe: ${selector}`)
+        const style = getComputedStyle(element)
+        return {
+          size: Number.parseFloat(style.fontSize),
+          weight: Number.parseInt(style.fontWeight, 10),
+        }
+      }
+
+      return {
+        kind: metrics('article:first-of-type span.font-mono'),
+        coordinate: metrics('article:first-of-type h2'),
+        description: metrics('article:first-of-type p.text-toned'),
+        copyAction: metrics('article:first-of-type button'),
+      }
+    })
+
+    expect(typography.kind.size).toBeGreaterThanOrEqual(13)
+    expect(typography.coordinate.size).toBeGreaterThanOrEqual(15)
+    expect(typography.description.size).toBeGreaterThanOrEqual(15)
+    expect(typography.copyAction.size).toBeGreaterThanOrEqual(13)
+    expect(typography.kind.weight).toBeGreaterThanOrEqual(450)
+    expect(typography.coordinate.weight).toBeGreaterThanOrEqual(450)
+    expect(typography.description.weight).toBeGreaterThanOrEqual(450)
+  })
+
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
 
@@ -167,26 +227,28 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
-  test('identifies the index and exposes its Marketplace connection action', async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: appURL })
+  test('identifies the index and exposes its Marketplace onboarding links', async ({ page }) => {
     await page.goto('/')
 
-    await expect(page.getByRole('heading', { name: /A verified index of agent resources/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Use this Marketplace from the CLI', exact: true })).toBeAttached()
-    await expect(page.getByText(/Want to discover resources from the CLI.*Connect this Marketplace/)).toBeVisible()
-    await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
-    const copyMarketplace = page.getByRole('button', { name: 'Copy Marketplace connection command', exact: true })
-    await copyMarketplace.click()
-    await expect(page.getByRole('button', { name: 'Marketplace connection command copied', exact: true })).toHaveText('Copied')
+    const marketplaceHeading = page.getByRole('heading', { name: 'e2e-marketplace', exact: true })
+    await expect(marketplaceHeading).toBeVisible()
+    await expect(marketplaceHeading).toHaveCSS('font-family', 'system-ui, sans-serif')
+    await expect(marketplaceHeading).toHaveCSS('font-size', '36px')
+    const heroCopy = page.getByText(/Browse resources for AI agents, with every revision pinned and analyzed before publication/)
+    await expect(heroCopy).toBeVisible()
+    await expect(heroCopy).toHaveCSS('font-size', '18px')
+    await expect(page.getByRole('link', { name: 'install the agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(page.getByRole('link', { name: 'Get started →', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.getByText(/Want to discover resources from the CLI/)).toHaveCount(0)
+    await expect(page.getByText('Connect this Marketplace', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('link', { name: 'View agent-marketplace on GitHub', exact: true })).toHaveAttribute('href', 'https://github.com/Adyen/agent-marketplace')
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
     await expect(page.getByText('01 / connect', { exact: true })).toHaveCount(0)
     await expect(page.getByText('02 / discover', { exact: true })).toHaveCount(0)
     await expect(page.getByText('agent-marketplace search', { exact: true })).toHaveCount(0)
-    await expect(page.getByText('read-only', { exact: true })).toBeVisible()
     const lastResource = page.locator('article').last()
-    const unavailableStatus = lastResource.getByRole('button', { name: 'Revoked for deploy-preview. More information' })
-    await expect(unavailableStatus).toHaveText('Revoked')
+    const unavailableStatus = lastResource.getByRole('button', { name: 'Not available for deploy-preview. More information' })
+    await expect(unavailableStatus).toHaveText('Not available')
     const unavailableRestBackground = await unavailableStatus.evaluate(el => getComputedStyle(el).backgroundColor)
     await unavailableStatus.hover()
     await expect(unavailableStatus).toHaveCSS('background-color', unavailableRestBackground)
@@ -198,6 +260,7 @@ test.describe('Marketplace browser discovery', () => {
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Clear filters', exact: true })).toHaveCount(0)
 
     await page.getByLabel('Search', { exact: true }).fill('secure')
     await expect(page).toHaveURL(/q=secure/)

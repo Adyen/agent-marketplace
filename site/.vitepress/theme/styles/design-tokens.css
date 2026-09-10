@@ -10,8 +10,8 @@
 :root {
   color-scheme: light;
 
-  --vp-font-family-base: Inter, "Avenir Next", "Segoe UI", sans-serif;
-  --vp-font-family-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --vp-font-family-base: system-ui, sans-serif;
+  --vp-font-family-mono: ui-monospace, SFMono-Regular, monospace;
   --vp-c-brand-1: var(--am-color-action-primary);
   --vp-c-brand-2: var(--am-color-action-hover);
   --vp-c-brand-3: var(--am-color-action-active);

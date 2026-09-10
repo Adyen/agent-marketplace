@@ -587,6 +587,7 @@ func TestMarketplaceProxyRoutingContract(t *testing.T) {
 			"location /api/ {\n        proxy_pass http://marketplace_api;",
 			"location = /marketplace {\n        return 308 /marketplace/;",
 			"location /marketplace/ {\n        proxy_pass http://marketplace_web;",
+			"location /_fonts/ {\n        proxy_pass http://marketplace_web;",
 			"location / {\n        proxy_pass http://landing_site;",
 			"absolute_redirect off;",
 			"location = /readyz { return 404; }",

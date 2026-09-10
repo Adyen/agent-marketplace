@@ -24,7 +24,9 @@ const items = computed(() => props.kinds.map(kind => ({ label: kindLabel(kind), 
     :items="items"
     value-key="value"
     placeholder="All resource kinds"
+    color="primary"
+    :highlight="Boolean(modelValue)"
     :content="{ bodyLock: false }"
-    :ui="{ base: 'h-9 w-full px-3 text-sm', value: 'min-w-0 flex-1 truncate text-left', placeholder: 'min-w-0 flex-1 truncate text-left text-dimmed', itemLabel: 'truncate' }"
+    :ui="{ base: 'h-9 w-full px-3 text-sm ring-default focus-visible:ring-primary', value: 'min-w-0 flex-1 truncate text-left', placeholder: 'min-w-0 flex-1 truncate text-left text-dimmed', itemLabel: 'truncate' }"
   />
 </template>

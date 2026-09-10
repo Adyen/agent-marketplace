@@ -165,7 +165,7 @@ export type ResourceAvailability = 'available' | 'revoked' | 'policy-blocked' | 
 export type ResourceAvailabilityCopy = {
   /** Text that states the revision's install status. */
   label: string
-  color: 'success' | 'error' | 'warning'
+  color: 'success' | 'error' | 'warning' | 'neutral'
   /** True only when the pinned install command may be offered as usable. */
   installable: boolean
   /** Sentence shown in place of the install command. Empty when installable. */
@@ -232,12 +232,24 @@ export type ListAvailability = NonNullable<ResourceListItem['availability']>
 
 const LIST_AVAILABILITY: Record<ListAvailability, ResourceAvailabilityCopy> = {
   available: RESOURCE_AVAILABILITY.available,
-  revoked: RESOURCE_AVAILABILITY.revoked,
-  'policy-blocked': RESOURCE_AVAILABILITY['policy-blocked'],
-  'no-artifact': RESOURCE_AVAILABILITY['no-artifact'],
+  revoked: {
+    ...RESOURCE_AVAILABILITY.revoked,
+    label: 'Not available',
+    color: 'neutral',
+  },
+  'policy-blocked': {
+    ...RESOURCE_AVAILABILITY['policy-blocked'],
+    label: 'Not available',
+    color: 'neutral',
+  },
+  'no-artifact': {
+    ...RESOURCE_AVAILABILITY['no-artifact'],
+    label: 'Not available',
+    color: 'neutral',
+  },
   blocked: {
-    label: 'Not installable',
-    color: 'warning',
+    label: 'Not available',
+    color: 'neutral',
     installable: false,
     installNotice: 'This revision is listed for inspection but cannot be installed from this Marketplace. Open the resource to see why.',
   },
