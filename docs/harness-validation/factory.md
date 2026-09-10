@@ -1,31 +1,45 @@
 # Factory Droid validation
 
-## Native installation contract
+[Shared validation contract](README.md)
 
-Factory MCP configuration is materialized in the target's native aggregate:
+## Installed resources
 
-- Repository scope: `<repo>/.factory/mcp.json`
-- User scope: `~/.factory/mcp.json`
+The fixture uses the scope's `.factory` directory: skills under `skills/`, commands under `commands/`, droids under `droids/`, and MCP entries in `mcp.json`. Both repository/user scopes and symlink/file modes are tested. Native inspection reads this output directly; it does not register another plugin or force a different materialization mode.
 
-The materializer preserves handwritten servers and refuses unmanaged name collisions. Skills, commands, droids, hooks, and rules have separate generated-layout assertions.
+## Skills, commands, and droids: native resource RPCs
 
-## Native probe
-
-The CI image contains the pinned `droid` CLI. The probe runs:
+The driver launches the pinned executable as:
 
 ```text
-droid --version
-droid mcp list
+droid exec --input-format stream-jsonrpc --output-format stream-jsonrpc
 ```
 
-A negative control requires the two fixture names to be absent before synchronization. After collection installation and `sync`, both names must appear in `droid mcp list`. The test records configuration recognition only; it does not claim a server connection or tool execution because the probe is intentionally offline.
+It sends `droid.initialize_session` with the disposable workspace and a fixture machine identifier. This initializes the metadata session without sending a user message. Factory's envelope includes `type: "request"`, `factoryApiVersion`, `factoryProtocolVersion`, and a string request ID; bare numeric-ID JSON-RPC requests are not equivalent.
 
-Factory MCP listing may render status text differently between CLI versions. Assertions therefore use stable fixture identities and explicit failure words rather than full-output goldens.
+After successful initialization, the driver calls one resource method:
 
-## Configuration-only coverage
+| Resource | RPC | Assertions |
+|---|---|---|
+| Skill | `droid.list_skills` | Exact name/description, enabled state, project/personal location, installed or symlink-resolved file path |
+| Command | `droid.list_commands` | Exact fixture name and description |
+| Subagent/droid | `droid.get_context_breakdown` | Exact fixture name in the `droids` inventory and expected location; token estimates are not treated as execution evidence |
 
-Skills, converted commands, custom droids, hooks, and rules are verified through the generated filesystem and compiler contracts. Factory command files use the file materialization workaround required by the current CLI; the test must continue to cover both configured symlink/file policy and the target-specific command representation.
+Each inventory must omit the fixture before installation and contain it exactly once afterward. A process error, RPC rejection, missing inventory, or mismatched field fails the resource probe. No user-message RPC, model request, permission bypass, or inline replacement droid is sent.
 
-## Adding Factory coverage
+Factory returns built-in skill bodies with its skill inventory. Its protocol response has a separate 10 MiB bound, matching the SDK transport's documented multi-megabyte response support; stderr remains bounded to the normal diagnostic limit. Tests cover both valid larger content and an over-limit response. Bodies are not copied into compatibility reports.
 
-Use a short, stable fixture name when comparing materialization modes. Keep a separate long-name case if a future CLI appears to truncate or wrap list output. Do not treat a partially rendered name as discovery success.
+Implementation: [protocol transport](../../e2e/harness_compatibility_protocol_test.go) and [inventory validation](../../e2e/harness_compatibility_inventory_test.go).
+
+## MCP servers
+
+`droid mcp list` must omit both fixture names before installation and show them after `sync`. This is configuration-recognition evidence; transport remains `not-probed`. It is not a claim that a model invoked either server.
+
+## Remaining limits
+
+- **Hooks:** `/hooks` is an interactive session manager. The documented resource RPC surface does not expose an installed-hook inventory.
+- **Rules:** no named rule-file inventory is exposed by these CLI/RPC methods. Tool lists and context-token totals are not rule-discovery evidence.
+- **Collections:** virtual selections; validate expanded members instead.
+
+Keep stable fixture identities across materialization modes. Do not accept truncated names or replace a failing native probe with a file-only check.
+
+Reference: [Factory Python SDK's native protocol and resource methods](https://github.com/Factory-AI/droid-sdk-python).

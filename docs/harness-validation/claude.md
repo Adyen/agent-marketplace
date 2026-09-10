@@ -1,42 +1,48 @@
 # Claude Code validation
 
-## Native installation contract
+[Shared validation contract](README.md)
 
-Agent Marketplace installs MCP servers into Claude's native locations:
+## Installed resources
 
-- Repository scope: `<repo>/.mcp.json`
-- User scope: `~/.claude.json`, under `mcpServers`
+Skills, commands, and subagent definitions are installed below the scope's `.claude` directory. MCP servers are installed at `<repo>/.mcp.json` or `~/.claude.json#mcpServers`. Native installation is distinct from compiling a plugin bundle; validation does not register an alternate plugin or inject replacement definitions to make discovery succeed.
 
-The plugin-shaped `.claude/.mcp.json` output remains supported for compilation and ingestion compatibility, but native validation does not treat it as a registered workspace MCP configuration. Legacy plugin-style files are not implicitly moved or deleted.
+## Skills, commands, and subagents: CLI initialization
 
-## Native probe
-
-The CI image contains the pinned `claude` CLI. The probe runs:
+The driver starts the installed `claude` executable with:
 
 ```text
-claude --version
-claude mcp list
-claude mcp get <fixture-name>
+--print --input-format stream-json --output-format stream-json
+--verbose --setting-sources user,project,local
 ```
 
-The negative control requires both fixture names to be absent before synchronization. After synchronization, both names must appear. The list must report both local stdio fixture servers as connected after the isolated approval setup. Each `get` result must expose the server identity; fields that the CLI does not display are not claimed as verified.
+It sends one control request on stdin:
 
-## Trust and approval
+```json
+{"type":"control_request","request_id":"amcompat-initialize","request":{"subtype":"initialize"}}
+```
 
-The test first observes the untrusted project state. It then writes trust and approval state only inside the disposable fixture:
+This is the CLI protocol used by the Agent SDK. No SDK dependency, user prompt, custom `--agents` definition, or model turn is supplied. After reading the matching successful response, the driver closes stdin and requires a successful process exit.
 
-- `~/.claude.json` receives a trust record for the temporary workspace.
-- The untracked workspace settings receive an explicit allow-list containing only the two fixture server names.
+- **Skills and commands:** inspect the response's `commands` inventory. Each fixture name must appear exactly once and retain its fixture description. Claude can add presentation text to command descriptions; the assertion still requires the complete expected description content.
+- **Subagents:** inspect the `agents` inventory, requiring the exact fixture name and description.
+- **Negative control:** run the same initialization before installation; the fixture entries must be absent from those inventories.
 
-The helper preserves unrelated JSON settings and refuses malformed or escaping paths. Agent Marketplace itself never grants Claude workspace trust or MCP approval.
+Initialization lists available resources, not resources invoked by a model. A command name appearing elsewhere in an error or startup message does not satisfy the inventory assertion.
 
-## Configuration-only coverage
+Implementation: [probe selection](../../e2e/harness_compatibility_coverage_test.go), [control transport](../../e2e/harness_compatibility_protocol_test.go), and [inventory assertions](../../e2e/harness_compatibility_inventory_test.go).
 
-Skills, commands, subagents, and hooks are validated through generated files, paths, support files, and compiler diagnostics. The native CLI job does not claim that those resources executed in a model session. Rules are checked through the compiler/conversion path.
+## MCP servers
 
-## Failure interpretation
+The driver runs `claude --version`, `claude mcp list`, and `claude mcp get <fixture-name>`. Before installation the fixture names must be absent. After installation both names must be present, and the list must report both local stdio fixtures connected. The `get` checks require server identity, not unexposed executable/environment values; generated configuration is checked separately.
 
-- Missing MCP names indicate a native destination or approval problem, not a successful empty list.
-- `Pending approval` before the fixture-only approval step is expected evidence of the trust boundary.
-- A failed local fixture connection is distinct from a missing configuration entry.
-- Existing handwritten `.mcp.json` or `~/.claude.json` entries must survive sync, and a name collision must fail closed.
+For repository scope, the driver first verifies pending approval and no established fixture connections. It then trusts only the disposable workspace in its isolated user config and adds only the two fixture server names to untracked workspace settings. User-scope MCP entries do not use this project approval transition. Agent Marketplace itself never grants trust.
+
+## Remaining limits
+
+- **Hooks:** initialization does not return an inventory of installed hooks. SDK `hook_callback` messages are calls to client-provided callbacks, not proof that an on-disk hook was discovered. Hook output remains configuration-verified; the fixture asserts that inspection did not fire it.
+- **Rules:** the compiler reports the absence of this target's rule primitive and suppresses the artifact.
+- **Collections:** virtual Marketplace selections; validation covers their expanded members.
+
+Do not substitute `claude agents --json`: that command lists background sessions, not custom subagent definitions.
+
+Reference: [Agent SDK initialization and resource metadata](https://code.claude.com/docs/en/agent-sdk/typescript).

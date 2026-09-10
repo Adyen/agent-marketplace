@@ -47,7 +47,7 @@ func compatibilityDiagnostics(output string) []string {
 		{`(?i)interactive (terminal|session)|requires.*tty|not a tty`, "cli.interactive-only"},
 		{`(?i)(parse|invalid|malformed).*(config|json|toml)|configuration.*error`, "cli.config-parse-error"},
 		{`(?i)failed to connect|connection failed|disconnected`, "cli.mcp-connection-failed"},
-		{`(?i)not approved|approval required|not enabled|mcp enable`, "cli.mcp-approval-required"},
+		{`(?i)not (?:been )?approved|needs approval|approval required|not enabled|mcp enable`, "cli.mcp-approval-required"},
 		{`(?i)no (configured |mcp )?servers|no mcp servers configured`, "cli.mcp-no-servers"},
 		{`(?i)no skills (found|installed|available)`, "cli.skills-no-resources"},
 		{`(?i)permission denied|operation not permitted`, "cli.permission-denied"},

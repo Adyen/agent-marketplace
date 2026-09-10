@@ -237,7 +237,7 @@ func TestCompatibilityCursorApprovalOnlyEnablesFixtureServers(t *testing.T) {
 	e.WriteFile(binary, `#!/bin/sh
 case "$3" in amcompat-cursor-mcp-a|amcompat-cursor-mcp-b) ;; *) exit 75;; esac
 case "$2" in
-  list-tools) if [ -f "$HOME/$3-enabled" ]; then printf '%s\n' amcompat_echo; else printf '%s\n' 'MCP server is not approved; use mcp enable'; exit 1; fi;;
+  list-tools) if [ -f "$HOME/$3-enabled" ]; then printf '%s\n' amcompat_echo; else printf '%s\n' 'MCP server has not been approved'; exit 1; fi;;
   enable) printf '%s' approved > "$HOME/$3-enabled";;
   *) exit 76;;
 esac

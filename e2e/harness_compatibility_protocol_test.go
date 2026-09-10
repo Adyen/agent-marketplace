@@ -51,7 +51,11 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 		r.Error = "configured protocol executable could not be started"
 		return r
 	}
-	reader := io.LimitReader(io.TeeReader(output, &stdout), compatibilityOutputLimit+1)
+	limit := compatibilityOutputLimit
+	if strings.HasPrefix(protocol, "factory-") {
+		limit = 10 << 20
+	}
+	reader := io.LimitReader(io.TeeReader(output, &stdout), int64(limit)+1)
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(reader)
 	var result json.RawMessage
 	var exchangeErr error
@@ -75,7 +79,7 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	r.output = string(result)
 	r.Diagnostics = compatibilityDiagnostics(string(stderr.data))
 	r.OutputBytes = stdout.total + stderr.total
-	r.OutputTruncated = r.OutputBytes > compatibilityOutputLimit
+	r.OutputTruncated = stdout.total > limit || stderr.total > compatibilityOutputLimit
 	switch {
 	case r.OutputTruncated:
 		r.Error = "native protocol output exceeded bounded capture limit"
@@ -206,6 +210,31 @@ func readCompatibilityRPCResponse(decoder *json.Decoder, id any) (json.RawMessag
 			return nil, fmt.Errorf("native protocol omitted the inspection result")
 		}
 		return response.Result, nil
+	}
+}
+
+func TestCompatibilityFactoryProtocolAcceptsBoundedBuiltinContent(t *testing.T) {
+	for _, test := range []struct {
+		size      int
+		truncated bool
+	}{{300 << 10, false}, {11 << 20, true}} {
+		t.Run(fmt.Sprint(test.size), func(t *testing.T) {
+			e := newEnv(t)
+			binary := filepath.Join(e.repos, "internal-fake-large-droid")
+			e.WriteFile(binary, "#!/bin/sh\nIFS= read -r request\nprintf '%s\\n' '{\"id\":\"00000000-0000-4000-8000-000000000001\",\"result\":{\"sessionId\":\"fixture\"}}'\nIFS= read -r request\nprintf '%s\\n' '{\"id\":\"00000000-0000-4000-8000-000000000002\",\"result\":{\"skills\":[{\"name\":\"fixture-skill\",\"content\":\""+strings.Repeat("x", test.size)+"\"}]}}'\n")
+			if err := os.Chmod(binary, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			result := runCompatibilityProtocol(e, binary, "factory-skills", 5*time.Second)
+			if result.OutputTruncated != test.truncated || (result.Error != "") != test.truncated {
+				t.Fatalf("native content bound was not enforced: %+v", result)
+			}
+			if !test.truncated {
+				if err := requireCompatibilityObservation(&result, false, "fixture-skill"); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

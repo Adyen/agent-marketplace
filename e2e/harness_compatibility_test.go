@@ -213,6 +213,19 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 			t.Errorf("post-native sync --check failed: %s", check.Error)
 		}
 	}
+	for i := range results {
+		row := &results[i]
+		if row.Status != "config-only-verified" {
+			continue
+		}
+		if gap := compatibilityNativeGap(row.Harness, row.Resource); gap != "" {
+			row.Reason += "; native coverage gap: " + gap
+		} else if native != nil {
+			row.Status = "failed"
+			row.Reason = "declared native resource probe did not produce an outcome"
+			t.Errorf("native coverage missing for %s/%s", row.Harness, row.Resource)
+		}
+	}
 	if _, err := os.Lstat(f.hookMarker); !os.IsNotExist(err) {
 		rows["hook"].Status = "failed"
 		t.Error("inspection unexpectedly executed a hook")

@@ -30,7 +30,14 @@ Skills and converted commands are natively inspected by name, description, and s
 
 ## Configuration-only coverage
 
-Hooks and custom subagents are validated through generated files and compiler/ingester contracts. Devin has no suitable credential-free read-only hook execution surface, so the test does not claim that hooks fired. Known session-only or authenticated gaps remain listed by the existing Devin probe documentation.
+- **Hooks:** Devin documents `/hooks` as an in-session inventory. There is no documented standalone hook-listing subcommand for the credential-free driver. SDK-provided hooks or merely parsing user settings would not prove discovery of the project hook file.
+- **Subagents:** custom profiles are used by `run_subagent`; the inspected CLI reference does not expose a standalone profile-definition inventory. Starting an agent is not a metadata-only check.
+- **Rules:** `devin rules list/show` exists, but this compiler intentionally does not emit Devin rules. The suite tests the explicit omission diagnostic rather than pretending that a negative-only rule check proves support.
+- **Collections:** virtual Marketplace selections, not native resources.
+
+The ACP interface was also considered: it documents credential acquisition and a session command palette, not a credential-free hook/profile inventory. Hooks and subagents therefore remain covered by generated-file and compiler/ingester contracts; they are not certified as natively invoked.
+
+References: [Devin command reference](https://docs.devin.ai/cli/reference/commands), [hook verification](https://docs.devin.ai/cli/extensibility/hooks/overview).
 
 ## Safety requirements
 

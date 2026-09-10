@@ -55,12 +55,12 @@ func resolveVersion(name string, fetch func(string) ([]byte, error)) (release, e
 		pattern := regexp.MustCompile(`(?m)^DOWNLOAD_URL="https://downloads\.cursor\.com/lab/([0-9]{4}\.[0-9]{2}\.[0-9]{2}-[a-f0-9]{7,40})/\$\{OS\}/\$\{ARCH\}/agent-cli-package\.tar\.gz"\r?$`)
 		matches := pattern.FindAllSubmatch(body, -1)
 		if len(matches) != 1 {
-			return release{}, fmt.Errorf("Cursor installer does not identify one pinned release bundle")
+			return release{}, fmt.Errorf("cursor installer does not identify one pinned release bundle")
 		}
 		result.Version = string(matches[0][1])
 		date, _, _ := strings.Cut(result.Version, "-")
 		if _, err := time.Parse("2006.01.02", date); err != nil {
-			return release{}, fmt.Errorf("Cursor release date is invalid")
+			return release{}, fmt.Errorf("cursor release date is invalid")
 		}
 		result.BundleURL = "https://downloads.cursor.com/lab/" + result.Version + "/linux/x64/agent-cli-package.tar.gz"
 		return result, nil

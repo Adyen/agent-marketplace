@@ -67,39 +67,11 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 		row.Reason = "version output did not identify the expected pinned version"
 		return nil
 	}
-	native := &compatibilityNative{binary: binary, trustFixtures: os.Getenv("HARNESS_COMPAT_TRUST_FIXTURE") == "1"}
-	switch row.Harness {
-	case "devin":
-		native.probes = append(native.probes,
-			compatibilityNativeProbe{kind: "skill", list: []string{"skills", "list"}, names: []string{f.name("skill")}},
-			compatibilityNativeProbe{kind: "command", list: []string{"skills", "list"}, names: []string{f.name("command")}},
-		)
-	case "gemini":
-		native.probes = append(native.probes, compatibilityNativeProbe{kind: "skill", list: []string{"skills", "list"}, names: []string{f.name("skill")}})
-	case "claude":
-		for _, kind := range []string{"skill", "command", "subagent"} {
-			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: "claude-initialize", names: []string{f.name(kind)}})
-		}
-	case "codex":
-		for _, kind := range []string{"skill", "command"} {
-			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: "codex-skills", names: []string{f.name(kind)}})
-		}
-		native.probes = append(native.probes, compatibilityNativeProbe{kind: "hook", protocol: "codex-hooks", names: []string{f.name("hook-a"), f.name("hook-b")}})
-	case "factory":
-		for kind, protocol := range map[string]string{"skill": "factory-skills", "command": "factory-commands", "subagent": "factory-droids"} {
-			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: protocol, names: []string{f.name(kind)}})
-		}
-		slices.SortFunc(native.probes, func(a, b compatibilityNativeProbe) int { return strings.Compare(a.kind, b.kind) })
-	case "cursor":
-	case "windsurf":
-		row.Reason = "no verified credential-free Windsurf CLI inspection surface"
+	native := &compatibilityNative{binary: binary, probes: compatibilityResourceProbes(row.Harness, f), trustFixtures: os.Getenv("HARNESS_COMPAT_TRUST_FIXTURE") == "1"}
+	if len(native.probes) == 0 {
+		row.Reason = "no native inspection probes are declared for this harness"
 		return nil
 	}
-	list := []string{"mcp", "list"}
-	if row.Harness == "codex" {
-		list = append(list, "--json")
-	}
-	native.probes = append(native.probes, compatibilityNativeProbe{kind: "mcp", list: list, names: []string{f.name("mcp-a"), f.name("mcp-b")}})
 	for i := range native.probes {
 		probe := &native.probes[i]
 		probe.before = probe.run(e, binary)

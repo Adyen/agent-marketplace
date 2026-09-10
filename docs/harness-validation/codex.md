@@ -1,43 +1,65 @@
 # Codex validation
 
-## Native installation contract
+[Shared validation contract](README.md)
 
-Codex is a partitioned target:
+## Installed resources
 
-- Skills and converted commands: `<repo>/.agents/skills/` or `~/.agents/skills/`
-- Subagents: `<repo>/.codex/agents/` or `$CODEX_HOME/agents/`
-- Hooks: `.codex/hooks.json`
-- MCP: `.codex/config.toml`
+Codex has two native partitions:
 
-`CODEX_HOME` relocates only the machine `.codex` partition. It never relocates skills. Repository partitions must remain inside the repository; machine destinations require absolute roots.
+| Resource | Repository | User |
+|---|---|---|
+| Skills and converted command skills | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
+| Subagents | `.codex/agents/<name>.toml` | `$CODEX_HOME/agents/<name>.toml` |
+| Hooks | `.codex/hooks.json` | `$CODEX_HOME/hooks.json` |
+| MCP servers | `.codex/config.toml` | `$CODEX_HOME/config.toml` |
 
-## Native probe
+Repository paths are relative to the disposable workspace. In CI, `CODEX_HOME` is explicitly set to the isolated HOME's `.codex` directory. In the application it can relocate the machine Codex partition, never the skills partition.
 
-The CI image installs a pinned `codex` CLI. The probe runs:
+## Native app-server inventories
+
+The driver launches `codex app-server` and exchanges newline-delimited protocol messages over stdin/stdout. The handshake is `initialize` followed by `initialized`. It then sends one read-only inventory request and closes input. It never sends `thread/start`, `turn/start`, or a user message.
+
+### Skills and converted commands
+
+Request `skills/list` with `cwds` containing only the fixture workspace and `forceReload: true`.
+
+Before installation, neither fixture entry may appear. After installation, each expected entry must appear exactly once and have:
+
+- the fixture name and description;
+- `enabled: true`;
+- the expected `repo` or `user` scope;
+- the installed `SKILL.md` path or its actual symlink-resolved source.
+
+The returned workspace must match the request and the resource error inventory must be empty. Names appearing in loading errors do not count as discovery.
+
+### Hooks
+
+Request `hooks/list` for the same workspace. Match the two fixture handlers by their exact command payloads, then verify the native event name, command-handler type, matcher, and source file.
+
+Hooks are discoverable even when not approved to run. This check does not enable or execute them, does not approve hook hashes, and does not claim execution merely because `hooks/list` succeeds. The shared fixture separately asserts that its hook marker was not written.
+
+Implementation: [protocol transport](../../e2e/harness_compatibility_protocol_test.go) and [typed inventory checks](../../e2e/harness_compatibility_inventory_test.go).
+
+## MCP servers and trust
+
+The driver runs:
 
 ```text
 codex --version
 codex mcp list --json
-codex mcp get <name> --json
+codex mcp get <fixture-name> --json
 ```
 
-Before materialization, both fixture names must be absent. After `sync`, both names must appear in the list, and each `get` result must expose the name, fixture executable, label argument, and fixture environment setting.
+Fixture names must be absent before materialization. Repository-scoped MCP entries must also be absent after installation while the workspace remains untrusted. Only then does the test add one trust record for the disposable workspace to its isolated user config. It repeats list/get and requires both names, executable path, label arguments, and the fixture environment key.
 
-Codex validation currently covers native MCP configuration recognition only. The report marks connection status `not-probed`; no model session or MCP tool call is executed.
+User-scoped MCP inspection does not need this repository trust transition. Agent Marketplace never writes trust state. Both scopes finish with `sync --check`.
 
-## Trust boundary
+MCP connection status is `not-probed`: list/get certify configuration recognition, not a transport handshake or tool call.
 
-Codex ignores project `.codex` configuration until the project is trusted. For repository scope, CI first verifies that the untrusted project does not expose the fixture MCP entries. It then writes a trust entry for only the disposable workspace in the isolated user config and repeats the native probe.
+## Remaining limits
 
-User-scope MCP validation does not require repository trust because the configuration is machine-scoped. The application never changes Codex trust; fixture trust exists only inside the CI sandbox.
+- **Subagents:** `codex agents` lists running sessions, not configured custom agent definitions. The inspected app-server inventories do not expose a custom-definition listing. Generated TOML and compilation remain checked, without claiming native agent invocation.
+- **Rules:** intentionally outside the compiler's Codex scope; the omission diagnostic is asserted.
+- **Collections:** virtual selections whose members are validated individually.
 
-## Configuration-only coverage
-
-Skills, commands, subagents, hooks, collections, and rules are validated through Agent Marketplace paths, aggregate files, materialization modes, and compiler diagnostics. Their execution is not claimed by `codex mcp list`.
-
-## Failure interpretation
-
-- Missing MCP names before installation fail the negative-control contract.
-- Missing names after installation indicate a destination, scope, trust, or native parser problem.
-- A successful CLI exit without the expected names is still a failure.
-- Trust state must preserve unrelated user configuration and must not escape the disposable fixture root.
+Reference: [Codex app-server protocol, including skills/list and hooks/list](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server/README.md).

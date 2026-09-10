@@ -4,7 +4,7 @@
 
 Windsurf is a supported compiler and materialization target, but it is currently **config-only** in native compatibility CI. No verified credential-free noninteractive Windsurf CLI inspection surface is enabled.
 
-The matrix records this as `unavailable`, with a capability-gap reason. It is not a skipped test and does not become a false success.
+The matrix records this as `unavailable`, with a capability-gap reason for each resource kind. Configuration assertions still run; the result is not native verification. Cascade's documented skills, workflows, rules, hooks, and MCP management surfaces are editor-hosted. An editor launcher or extension-package listing does not establish that those resource definitions were loaded.
 
 ## Configuration coverage
 
