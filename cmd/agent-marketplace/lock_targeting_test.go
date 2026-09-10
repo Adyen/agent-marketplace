@@ -10,6 +10,9 @@ import (
 )
 
 func TestLockAndUpdateTargetValidation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name string
 		args []string
@@ -29,6 +32,9 @@ func TestLockAndUpdateTargetValidation(t *testing.T) {
 }
 
 func TestParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	target, err := parseUpgradeTargets(true, nil, "https://example.com/registry.git", "", "", "")
 	if err != nil {
 		t.Fatalf("whole-registry target: %v", err)
@@ -39,6 +45,9 @@ func TestParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
 }
 
 func TestLockUpgradeGitNameExpandsContainingSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -75,6 +84,9 @@ registries:
 }
 
 func TestLockUpgradeGitTargetCollapsesRootsIntoOneSourceOccurrence(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -112,6 +124,9 @@ registries:
 }
 
 func TestUpdateAcceptsDirectGitTargetAndReportsExpansion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -148,6 +163,9 @@ registries:
 }
 
 func TestLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -191,6 +209,9 @@ func TestLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
 }
 
 func TestLockUpgradeScopeLeavesStaleUnselectedLayerUntouched(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

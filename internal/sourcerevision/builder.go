@@ -324,7 +324,16 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 			return data, nil
 		}
 	}
-	data, err := json.Marshal(entry.Resource)
+	resource := entry.Resource
+	if collection, ok := resource.(*ir.Collection); ok {
+		copy := *collection
+		copy.SourceRegistryURL = ""
+		copy.SourceRef = ""
+		copy.SourceCatalogKey = ""
+		copy.SourcePath = ""
+		resource = &copy
+	}
+	data, err := json.Marshal(resource)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical resource: %w", err)
 	}

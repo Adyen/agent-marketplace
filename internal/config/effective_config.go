@@ -19,13 +19,12 @@ const defaultOrganizationConfigPath = "/etc/agent-marketplace/config.yaml"
 // defaultOrganizationConfigPath.
 var testOrganizationConfigPath string
 
-// SetTestV3OrganizationConfigPath overrides the organization config path for
-// the duration of a test. The name is retained for test compatibility. It
-// panics if called outside a test binary.
+// SetTestOrganizationConfigPath overrides the organization config path
+// for the duration of a test. It panics if called outside a test binary.
 // Pass nil as the testing.TB when calling from TestMain.
-func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
+func SetTestOrganizationConfigPath(t testing.TB, path string) {
 	if !testing.Testing() {
-		panic("SetTestV3OrganizationConfigPath: not in tests")
+		panic("SetTestOrganizationConfigPath: not in tests")
 	}
 	old := testOrganizationConfigPath
 	testOrganizationConfigPath = path
@@ -34,8 +33,9 @@ func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
 	}
 }
 
-func SetTestOrganizationConfigPath(t testing.TB, path string) {
-	SetTestV3OrganizationConfigPath(t, path)
+// SetTestV3OrganizationConfigPath retains compatibility with existing tests.
+func SetTestV3OrganizationConfigPath(t testing.TB, path string) {
+	SetTestOrganizationConfigPath(t, path)
 }
 
 // OrganizationConfigPath returns the fixed filesystem path of the externally
@@ -44,14 +44,32 @@ func OrganizationConfigPath() string {
 	return organizationConfigPath("")
 }
 
+// unsetTestOrganizationConfigPath stands in for the organization layer when a
+// test binary never chose a path. It names a file no test creates, so the
+// layer reads as absent instead of as whatever the machine happens to have.
+var unsetTestOrganizationConfigPath = filepath.Join(os.TempDir(), "agent-marketplace-tests-must-not-read-the-real-organization-config.yaml")
+
 // organizationConfigPath returns the fixed organization config path, honoring
 // the explicit override and the test-only package-level override.
+//
+// Under `go test` an unset override resolves to a path that does not exist
+// rather than to the real file. The organization layer lives at an absolute
+// path outside HOME, so isolating HOME does not isolate it, and a test that
+// reaches it stops testing the code and starts testing the developer's
+// machine: it inherits real registries and fetches them over the network.
+// Defaulting to the real file made that the reward for forgetting to opt out,
+// which is the wrong way round, and every package pays for one omission.
+// Tests that mean to exercise an organization config still name one through
+// SetTestOrganizationConfigPath or LoadEffectiveOptions.OrganizationPath.
 func organizationConfigPath(override string) string {
 	if override != "" {
 		return override
 	}
 	if testOrganizationConfigPath != "" {
 		return testOrganizationConfigPath
+	}
+	if testing.Testing() {
+		return unsetTestOrganizationConfigPath
 	}
 	return defaultOrganizationConfigPath
 }
@@ -90,6 +108,7 @@ type EffectiveConfig struct {
 	// layer explicitly sets an empty allowlist (denying all remote origins),
 	// and non-empty when an allowlist is configured.
 	Allowed             []string
+	AllowedMarketplaces []string
 	TargetHarnesses     []string
 	TargetHarnessSource Source
 	Errors              []error
@@ -220,6 +239,22 @@ func LoadEffective(ctx context.Context, opts LoadEffectiveOptions) EffectiveConf
 
 	if err := ValidateRegistryURLs(merged.Registries, allowed); err != nil {
 		slog.Error("registry allowlist rejected one or more URLs", "error", err)
+		ec.Errors = append(ec.Errors, err)
+	}
+
+	var allowedMarketplaces []string
+	if merged.AllowedMarketplaces != nil {
+		allowedMarketplaces = *merged.AllowedMarketplaces
+	}
+	ec.AllowedMarketplaces = allowedMarketplaces
+
+	if err := ValidateMarketplaceURLs(merged.Marketplaces, allowedMarketplaces); err != nil {
+		slog.Error("marketplace allowlist rejected one or more URLs", "error", err)
+		ec.Errors = append(ec.Errors, err)
+	}
+	if errs := ValidateMarketplaceEntries(merged.Marketplaces); len(errs) > 0 {
+		err := errors.Join(errs...)
+		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
 

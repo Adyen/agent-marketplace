@@ -1,0 +1,40 @@
+ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22
+ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1
+
+FROM --platform=$BUILDPLATFORM ${GO_BUILD_IMAGE} AS build
+
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /out/agent-marketplace ./cmd/agent-marketplace
+
+FROM ${ALPINE_RUNTIME_IMAGE} AS api
+RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
+    && apk add --no-cache ca-certificates wget \
+    && mkdir -p /var/lib/agent-marketplace /tmp \
+    && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
+WORKDIR /app
+COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
+USER marketplace
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O - -T 5 http://127.0.0.1:9090/readyz >/dev/null || exit 1
+ENTRYPOINT ["/app/agent-marketplace"]
+CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
+
+FROM ${ALPINE_RUNTIME_IMAGE} AS worker
+RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
+    && apk add --no-cache ca-certificates git wget \
+    && mkdir -p /var/lib/agent-marketplace /tmp \
+    && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
+WORKDIR /app
+COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
+USER marketplace
+ENTRYPOINT ["/app/agent-marketplace"]
+CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "worker"]

@@ -1,0 +1,32 @@
+# Optional override for a file-mounted PostgreSQL DSN.
+# Create secrets/marketplace-postgres-dsn locally before using this file. The
+# target defaults to /run/secrets/marketplace-postgres-dsn, matching the config.
+services:
+  api:
+    # The file-mounted configuration reads the DSN from the Compose secret;
+    # do not also pass the value through the environment from .env.
+    environment:
+      MARKETPLACE_POSTGRES_DSN: ""
+    volumes:
+      - ./config.dsn-file.example.yaml:/app/marketplace.yaml:ro
+    secrets:
+      - source: marketplace_postgres_dsn
+        target: marketplace-postgres-dsn
+        uid: "1000"
+        gid: "1000"
+        mode: "0400"
+  worker:
+    environment:
+      MARKETPLACE_POSTGRES_DSN: ""
+    volumes:
+      - ./config.dsn-file.example.yaml:/app/marketplace.yaml:ro
+    secrets:
+      - source: marketplace_postgres_dsn
+        target: marketplace-postgres-dsn
+        uid: "1000"
+        gid: "1000"
+        mode: "0400"
+
+secrets:
+  marketplace_postgres_dsn:
+    file: ./secrets/marketplace-postgres-dsn

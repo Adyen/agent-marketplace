@@ -12,9 +12,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -69,6 +73,9 @@ registries:
 }
 
 func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -146,6 +153,9 @@ registries:
 }
 
 func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -219,6 +229,9 @@ registries:
 }
 
 func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -271,6 +284,9 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 }
 
 func TestUpdateBumpHonorsUserScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -305,6 +321,9 @@ func TestUpdateBumpHonorsUserScope(t *testing.T) {
 }
 
 func TestUpdateBumpHonorsLocalScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -355,6 +374,9 @@ func TestUpdateBumpHonorsLocalScope(t *testing.T) {
 }
 
 func TestUpdateBumpSkipsOrganization(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, tc := range []struct {
 		name  string
 		scope string
@@ -446,6 +468,9 @@ func TestUpdateBumpSkipsOrganization(t *testing.T) {
 }
 
 func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -486,6 +511,9 @@ func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 }
 
 func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -531,6 +559,9 @@ registries:
 }
 
 func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -580,6 +611,9 @@ registries:
 }
 
 func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -624,6 +658,9 @@ registries:
 }
 
 func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -663,6 +700,9 @@ registries:
 }
 
 func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -682,6 +722,35 @@ registries:
 	}
 	if !strings.Contains(err.Error(), "blocked by allowed_registries") {
 		t.Fatalf("expected error to contain 'blocked by allowed_registries', got: %v", err)
+	}
+}
+
+func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	oldDigest := "sha256:" + strings.Repeat("a", 64)
+	newDigest := "sha256:" + strings.Repeat("b", 64)
+	result := &pipeline.UpdateResult{
+		UpdatedRegistries: 2, Bumps: []pipeline.RefBump{{URL: "https://git.example/repo.git", OldRef: "v1", NewRef: "v2"}},
+		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 1,
+		MarketplacePins: []pipeline.MarketplacePinUpdate{
+			{Entry: config.MarketplaceEntry{URL: "https://market.example\nunsafe"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Digest: oldDigest}, NewPin: config.MarketplaceResourcePin{Digest: newDigest}, Updated: true},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+		},
+	}
+	var out bytes.Buffer
+	if err := writeUpdateOutput(&out, result, true); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{"Updated 2 registries, bumped 1 refs", "Marketplace pins: updated 1, skipped 1", "updated \"" + oldDigest + "\" -> \"" + newDigest + "\"", "skipped (required)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "unsafe\\n") || strings.ContainsAny(text, "\x00\x1b\r\t") {
+		t.Fatalf("output contains unsafe terminal data: %q", text)
 	}
 }
 

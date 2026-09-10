@@ -159,7 +159,8 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 			catalog.WithCloneOrPull(cloneOrPull),
 			catalog.WithDiscoverFunc(discoverCatalog),
 		},
-		ReadOnlyExactLocks: true,
+		ReadOnlyExactLocks:        true,
+		AllowMissingReadOnlyLocks: true,
 	})
 	defer releaseExactLease()
 
@@ -176,6 +177,7 @@ func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoa
 		targetHarnessSource:  resolvedResult.TargetHarnessSource,
 		pendingMigration:     pendingMigrationFor(repoRoot, homeDir),
 		driftAssessment:      driftFailed,
+		refreshAfterLoad:     resolvedResult.CatalogLoad.RefreshAfterLoad,
 	}
 	if resolvedResult.MergedCfg != nil {
 		base.configuredRegistries = append([]config.RegistryEntry(nil), resolvedResult.MergedCfg.Registries...)
@@ -420,6 +422,79 @@ func localSelectorCounts(cfg *config.LocalConfig) (enabledCount int, excludedCou
 	return enabledCount, excludedCount
 }
 
+func marketplaceProtocolKind(kind ir.ResourceKind) string {
+	if kind == ir.KindMcpServer {
+		return "mcpserver"
+	}
+	return kind.String()
+}
+
+func marketplaceInstalledName(pin config.MarketplaceResourcePin) string {
+	if pin.InstalledName != "" {
+		return pin.InstalledName
+	}
+	return pin.Name
+}
+
+func marketplaceCatalogKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
+	url := entry.URL
+	if normalized, err := config.NormalizeMarketplaceURL(url); err == nil {
+		url = normalized
+	}
+	key := fmt.Sprintf("marketplace:%s:%s:%s:%s:%s", url, entry.InstanceID, pin.RegistryID, pin.Digest, pin.Revision)
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		key += fmt.Sprintf(":occurrence:%s:%s", pin.RegistryCommit, pin.RegistryManifestDigest)
+	}
+	return key
+}
+
+func marketplaceSelectionKey(catalogKey, kind, installedName string) string {
+	return catalogKey + "\x00" + kind + "\x00" + installedName
+}
+
+func indexMarketplaceSelections(cfg *config.Config) map[string]map[config.Source]marketplaceSelection {
+	if cfg == nil || len(cfg.Marketplaces) == 0 {
+		return nil
+	}
+	indexed := make(map[string]map[config.Source]marketplaceSelection)
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			key := marketplaceSelectionKey(marketplaceCatalogKey(entry, pin), pin.Kind, marketplaceInstalledName(pin))
+			if indexed[key] == nil {
+				indexed[key] = make(map[config.Source]marketplaceSelection)
+			}
+			indexed[key][entry.Source] = marketplaceSelection{Entry: entry, Pin: pin}
+		}
+	}
+	return indexed
+}
+
+func marketplaceScopeFlags(selections map[config.Source]marketplaceSelection) (global, project, local bool) {
+	for source := range selections {
+		switch source {
+		case config.Organization, config.UserPersonal:
+			global = true
+		case config.RepoCommitted:
+			project = true
+		case config.RepoPersonal:
+			local = true
+		}
+	}
+	return global, project, local
+}
+
+func marketplaceCollectionOnly(selections map[config.Source]marketplaceSelection) bool {
+	if len(selections) == 0 {
+		return false
+	}
+	for _, selection := range selections {
+		if selection.Pin.Direct || len(selection.Pin.SelectedBy.List()) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []resolver.ResolvedArtifact, localCfg *config.LocalConfig, driftReport materialize.DriftReport, harnessDefaults ...map[config.Source][]string) []row {
 	// Compute per-scope enablement by walking registries and asking each one
 	// which skill names it selects. Global vs project scope is distinguished
@@ -432,6 +507,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		totalMalformed += len(cat.Malformed)
 	}
 	localEnabledCount, localExcludedCount := localSelectorCounts(localCfg)
+	marketplaceSelectionsByArtifact := indexMarketplaceSelections(cfg)
 
 	globalEnabled := make(map[string]map[string]struct{}, len(resolved))
 	projectEnabled := make(map[string]map[string]struct{}, len(resolved))
@@ -596,6 +672,11 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		_, enabledProject := projectEnabled[key][s.CatalogKey]
 		enabledLocal := localScopedContains(localEnabled, localEnabledAny, key, s.CatalogKey)
 		excludedLocally := localScopedContains(localExcluded, localExcludedAny, key, s.CatalogKey)
+		var marketplaceSelections map[config.Source]marketplaceSelection
+		if s.IsMarketplace {
+			marketplaceSelections = marketplaceSelectionsByArtifact[marketplaceSelectionKey(s.CatalogKey, marketplaceProtocolKind(s.Kind), s.Name)]
+			enabledGlobal, enabledProject, enabledLocal = marketplaceScopeFlags(marketplaceSelections)
+		}
 
 		// When a resource comes from a collection (Via is set), it inherits
 		// the collection's per-scope enablement. The collection itself is
@@ -629,20 +710,22 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 
 		rows = append(rows, row{
-			Artifact:        s,
-			IsAvailable:     false,
-			IsExcluded:      excludedLocally,
-			DriftItem:       driftItem,
-			EnabledGlobal:   enabledGlobal,
-			EnabledProject:  enabledProject,
-			EnabledLocal:    enabledLocal,
-			ExcludedLocally: excludedLocally,
-			RegistryURL:     s.RegistryURL,
-			RegistryName:    registryDisplayName(s.RegistryURL),
-			RegistryPath:    registryEntryPathFor(entry),
-			RegistryRef:     registryEntryRefFor(entry),
-			Harnesses:       targetsToHarnesses(s.Harnesses),
-			HarnessSource:   harnessSource,
+			Artifact:                  s,
+			IsAvailable:               false,
+			IsExcluded:                excludedLocally,
+			DriftItem:                 driftItem,
+			EnabledGlobal:             enabledGlobal,
+			EnabledProject:            enabledProject,
+			EnabledLocal:              enabledLocal,
+			ExcludedLocally:           excludedLocally,
+			RegistryURL:               s.RegistryURL,
+			RegistryName:              registryDisplayName(s.RegistryURL),
+			RegistryPath:              registryEntryPathFor(entry),
+			RegistryRef:               registryEntryRefFor(entry),
+			Harnesses:                 targetsToHarnesses(s.Harnesses),
+			HarnessSource:             harnessSource,
+			MarketplaceSelections:     marketplaceSelections,
+			MarketplaceCollectionOnly: marketplaceCollectionOnly(marketplaceSelections),
 		})
 	}
 

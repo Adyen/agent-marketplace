@@ -1,0 +1,247 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/*
+ * This instance is an index, not a storefront. Every entry is content-addressed
+ * and analyzed, and most are withheld. Two rules follow, and the rest of this
+ * file only makes sense with them in mind:
+ *
+ *   1. Saturated colour means a verdict, and nothing else. Ink on paper carries
+ *      all remaining structure, so a coloured mark in a row is always a claim
+ *      about whether that revision can be installed. The three verdict scales
+ *      below are the only saturated colour in the interface, plus one blue that
+ *      exists solely for focus and links so interaction can never be misread
+ *      as status.
+ *   2. Identity is typeset in mono. A coordinate, a digest and a command are
+ *      the things a reader compares character by character or retypes.
+ *
+ * Scales are full 11-shade @theme colours rather than one-off hex values so
+ * that Nuxt UI components inherit the system instead of carrying their own
+ * colours. They are wired to semantic names in app.config.ts.
+ */
+
+@theme static {
+  /* Prose and UI. A grotesque with more character than the usual default,
+     still legible at the 11-13px this index runs at. */
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  /* Load-bearing, not ornamental: coordinates, digests, commands, counts. */
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* ink — warm neutral. Paper at 50, rule at 200, muted text at 500, ink at 900. */
+  --color-ink-50: #fbfbf9;
+  --color-ink-100: #f4f4f1;
+  --color-ink-200: #e3e4e0;
+  --color-ink-300: #cbcdc7;
+  --color-ink-400: #9a9ea3;
+  --color-ink-500: #6b6f76;
+  --color-ink-600: #565a61;
+  --color-ink-700: #43464c;
+  --color-ink-800: #2e3136;
+  --color-ink-900: #14161a;
+  --color-ink-950: #0c0d10;
+
+  /* focus — interaction only: links, focus rings, the search affordance. */
+  --color-focus-50: #eef1fd;
+  --color-focus-100: #dde3fb;
+  --color-focus-200: #c0cbf7;
+  --color-focus-300: #9cacf1;
+  --color-focus-400: #7085e6;
+  --color-focus-500: #4a63da;
+  --color-focus-600: #2a4dd0;
+  --color-focus-700: #223ca6;
+  --color-focus-800: #1d3282;
+  --color-focus-900: #1a2c69;
+  --color-focus-950: #111c42;
+
+  /* ready — the revision is analyzed, allowed, and installable. */
+  --color-ready-50: #ecf8f3;
+  --color-ready-100: #d2efe4;
+  --color-ready-200: #a6dec9;
+  --color-ready-300: #71c7a9;
+  --color-ready-400: #3faa87;
+  --color-ready-500: #1b8f6c;
+  --color-ready-600: #0f7a5a;
+  --color-ready-700: #0c6249;
+  --color-ready-800: #0a4e3b;
+  --color-ready-900: #094032;
+  --color-ready-950: #04241c;
+
+  /* withheld — indexed for inspection, but policy removed the artifact. */
+  --color-withheld-50: #fcf5ec;
+  --color-withheld-100: #f8e8d0;
+  --color-withheld-200: #f0ce9e;
+  --color-withheld-300: #e5af69;
+  --color-withheld-400: #d8913f;
+  --color-withheld-500: #c07726;
+  --color-withheld-600: #a6631b;
+  --color-withheld-700: #854d16;
+  --color-withheld-800: #6a3e14;
+  --color-withheld-900: #573413;
+  --color-withheld-950: #301b08;
+
+  /* revoked — an operator withdrew this revision after the fact. */
+  --color-revoked-50: #fcefef;
+  --color-revoked-100: #f9dbdb;
+  --color-revoked-200: #f2baba;
+  --color-revoked-300: #e88f8f;
+  --color-revoked-400: #da6060;
+  --color-revoked-500: #c43a3a;
+  --color-revoked-600: #a32020;
+  --color-revoked-700: #841a1a;
+  --color-revoked-800: #6b1717;
+  --color-revoked-900: #591616;
+  --color-revoked-950: #300a0a;
+}
+
+:root {
+  /* An index reads as one continuous surface, so corners stay nearly square.
+     Not zero: hairline-sharp everywhere reads as a broadsheet pastiche. */
+  --ui-radius: 0.25rem;
+
+  /* Paper rather than pure white, and body copy set in full ink instead of
+     Nuxt UI's default neutral-700, because this page is dense and small. */
+  --ui-bg: var(--color-ink-50);
+  --ui-bg-muted: var(--color-ink-100);
+  --ui-text: var(--color-ink-800);
+  --ui-text-highlighted: var(--color-ink-900);
+}
+
+.marketplace-markdown {
+  max-width: 72ch;
+  margin-inline: auto;
+  color: var(--ui-text);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.marketplace-markdown > :first-child {
+  margin-top: 0;
+}
+
+.marketplace-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.marketplace-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1.75em 0.65em;
+  color: var(--ui-text-highlighted);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.marketplace-markdown h1 {
+  font-size: 1.75rem;
+}
+
+.marketplace-markdown h2 {
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: 1.375rem;
+}
+
+.marketplace-markdown h3 {
+  font-size: 1.125rem;
+}
+
+.marketplace-markdown :where(h4, h5, h6) {
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.marketplace-markdown :where(p, ul, ol, blockquote, pre, hr) {
+  margin-block: 1em;
+}
+
+.marketplace-markdown :where(ul, ol) {
+  padding-left: 1.5rem;
+}
+
+.marketplace-markdown ul {
+  list-style: disc;
+}
+
+.marketplace-markdown ol {
+  list-style: decimal;
+}
+
+.marketplace-markdown :where(ul, ol) :where(ul, ol) {
+  margin-block: 0.35em;
+}
+
+.marketplace-markdown li + li {
+  margin-top: 0.35em;
+}
+
+.marketplace-markdown blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid var(--ui-border);
+  color: var(--ui-text-muted);
+}
+
+.marketplace-markdown a {
+  color: var(--ui-primary);
+  font-weight: 550;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--ui-primary) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.marketplace-markdown a:hover {
+  text-decoration-color: currentColor;
+}
+
+.marketplace-markdown a:focus-visible {
+  border-radius: 0.125rem;
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 3px;
+}
+
+.marketplace-markdown :not(pre) > code {
+  border: 1px solid var(--ui-border);
+  border-radius: 0.25rem;
+  background: var(--ui-bg-muted);
+  padding: 0.1em 0.35em;
+  color: var(--ui-text-highlighted);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+.marketplace-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.375rem;
+  background: var(--ui-bg-muted);
+  padding: 1rem;
+  color: var(--ui-text-highlighted);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  overflow-wrap: normal;
+}
+
+.marketplace-markdown pre code {
+  font: inherit;
+}
+
+.marketplace-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--ui-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+::selection {
+  background: var(--color-focus-100);
+  color: var(--color-ink-900);
+}

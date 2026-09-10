@@ -12,6 +12,9 @@ import (
 )
 
 func TestSyncCLIAndTUIParity(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, sharedRegistry := range []bool{false, true} {
 		name := "organization-only"
 		if sharedRegistry {

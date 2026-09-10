@@ -66,6 +66,9 @@ registries:
 // ownership lock, with the DEFAULT 30 s timeout — so a command that acquired would
 // take half a minute and then fail rather than flake.
 func TestReadOnlyCommandsNeitherBlockNorCreateStateWhileTheLockIsHeld(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, stateRoot := devinLockRepo(t)
 
 	if output, err := executeCommand("sync"); err != nil {
@@ -115,6 +118,9 @@ func TestReadOnlyCommandsNeitherBlockNorCreateStateWhileTheLockIsHeld(t *testing
 // TestSyncCheckFirstEverLocalDirectoryOnlyCreatesNoCacheOrState proves a
 // check with no exact Git consumers does not bootstrap coordination metadata.
 func TestSyncCheckFirstEverLocalDirectoryOnlyCreatesNoCacheOrState(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	cacheRoot := filepath.Join(home, "cache")
 	stateRoot := filepath.Join(home, "state")
@@ -149,6 +155,9 @@ registries:
 // TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll proves read-only
 // commands do not create durable ownership state before the first sync.
 func TestReadOnlyCommandsOnAFirstEverRunCreateNoStateRootAtAll(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, stateRoot := devinLockRepo(t)
 
 	for _, args := range [][]string{{"sync", "--check"}, {"status"}} {

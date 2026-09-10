@@ -21,6 +21,9 @@ import (
 // org-mandated hard failure into a soft warning and `sync` exited 0. Any
 // candidate location being required must now keep the miss hard.
 func TestPersonalLayerCannotSoftenAnOrgRequiredMemberMiss(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -56,7 +59,7 @@ registries:
     path: teams/security
     required: true
 `)
-	config.SetTestV3OrganizationConfigPath(t, orgCfgPath)
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
 apiVersion: agent-marketplace/v2

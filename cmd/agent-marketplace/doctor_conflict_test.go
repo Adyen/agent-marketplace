@@ -58,6 +58,9 @@ func prepareDevinConflictFixture(t *testing.T, repoRoot string) (mcpPath string,
 // enough identity to act (kind, key, aggregate path, resource), carries digests,
 // and carries no part of either value.
 func TestDoctorRepairPreviewsValueConflictWithoutLeakingValues(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -107,6 +110,9 @@ func TestDoctorRepairPreviewsValueConflictWithoutLeakingValues(t *testing.T) {
 // adoption is byte-neutral and batchable, replacing a user's entry is not. --yes
 // reports the conflict and leaves it alone.
 func TestDoctorRepairNeverReplacesUnderYes(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -149,6 +155,9 @@ func TestDoctorRepairNeverReplacesUnderYes(t *testing.T) {
 // terminal still asks. A regression that made --yes batch conflicts the way it
 // batches adoptions would pass every other test in this file.
 func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -187,6 +196,9 @@ func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 // full loop: on a TTY the user is asked per entry; declining leaves the file
 // byte-identical; confirming replaces the entry, and the next sync is clean.
 func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name         string
 		answers      string
@@ -279,6 +291,9 @@ func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 // A beta tester who saw it could not tell whether the tool had even looked at
 // the aggregate they were staring at.
 func TestDoctorRepairReportsInspectedFilesWithNoCandidates(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	selection := []resolver.ResolvedArtifact{devinMcpArtifact("managed", "managed-binary")}
 	if _, err := materialize.Run(context.Background(), repoRoot, selection); err != nil {

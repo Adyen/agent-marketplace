@@ -12,6 +12,9 @@ import (
 )
 
 func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

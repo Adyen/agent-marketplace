@@ -20,6 +20,9 @@ import (
 )
 
 func TestTelemetryEnableAndDisable(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -48,6 +51,9 @@ func TestTelemetryEnableAndDisable(t *testing.T) {
 }
 
 func TestTelemetryEnableEndpoint(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -65,6 +71,9 @@ func TestTelemetryEnableEndpoint(t *testing.T) {
 }
 
 func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -81,6 +90,9 @@ func TestTelemetryEnableRejectsInsecureEndpoint(t *testing.T) {
 }
 
 func TestTelemetryStatus(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -104,6 +116,9 @@ func TestTelemetryStatus(t *testing.T) {
 }
 
 func TestTelemetryResetID(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -120,6 +135,9 @@ func TestTelemetryResetID(t *testing.T) {
 }
 
 func TestTelemetryPurge(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -158,6 +176,9 @@ func TestTelemetryPurge(t *testing.T) {
 }
 
 func TestTelemetryPreview(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -198,6 +219,9 @@ func TestTelemetryPreview(t *testing.T) {
 }
 
 func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
@@ -219,6 +243,9 @@ func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
 }
 
 func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -249,6 +276,9 @@ func TestTelemetryEnableHonorsOrgLock(t *testing.T) {
 }
 
 func TestTelemetryStatusManaged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	orgDir := t.TempDir()
@@ -310,6 +340,9 @@ func writeTelemetryTestFile(t *testing.T, path, content string) {
 }
 
 func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_ = setupTelemetryHome(t)
 	originalVersion := version
 	version = "3.0.4"
@@ -391,6 +424,9 @@ func TestBasicTelemetryEmitsOneCommandMetric(t *testing.T) {
 }
 
 func TestTelemetryErrorOutcome(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_ = setupTelemetryHome(t)
 
 	var mu sync.Mutex
@@ -439,6 +475,9 @@ func TestTelemetryErrorOutcome(t *testing.T) {
 }
 
 func TestTelemetryCommandsDoNotSelfReport(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name string
 		args []string

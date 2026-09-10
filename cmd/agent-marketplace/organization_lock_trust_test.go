@@ -13,10 +13,16 @@ import (
 )
 
 func TestSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, true, "sync")
 }
 
 func TestSyncLockedAllowsOrganizationRequirementsWithoutLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testSyncAllowsOrganizationRequirementsWithoutLock(t, false, "sync", "--locked")
 }
 
@@ -60,6 +66,9 @@ func testSyncAllowsOrganizationRequirementsWithoutLock(t *testing.T, withRepoReg
 }
 
 func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -97,6 +106,9 @@ func TestReadOnlyViewsDiscoverUnlockedOrganizationRegistry(t *testing.T) {
 }
 
 func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -140,6 +152,9 @@ func TestDeinitPreservesUnlockedOrganizationOutputAndCache(t *testing.T) {
 }
 
 func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
@@ -166,6 +181,9 @@ func TestDeinitBlocksOnPresentInvalidOrganizationLock(t *testing.T) {
 }
 
 func TestExplicitOrganizationLockCreatesTrustedRegularFile(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

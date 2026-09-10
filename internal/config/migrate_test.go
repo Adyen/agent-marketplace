@@ -432,7 +432,7 @@ registries:
 
 	repoCfg, errs := loadV3Config([]byte(readConfigString(t, repoPath)), repoLayer, false)
 	if len(errs) > 0 {
-		t.Fatalf("expected valid migrated repo config: %v", errors.Join(errs...))
+		t.Fatalf("expected valid repo config: %v", errors.Join(errs...))
 	}
 	if len(repoCfg.Collections.Include) != 0 || len(repoCfg.Collections.Exclude) != 0 {
 		t.Fatalf("expected empty collections selector, got %+v", repoCfg.Collections)
@@ -442,7 +442,7 @@ registries:
 	if err != nil {
 		t.Fatalf("expected second migration to succeed: %v", err)
 	}
-	if result.RepoMigrated {
+	if result.UserMigrated || result.RepoMigrated {
 		t.Fatalf("expected second migration to be idempotent: %+v", result)
 	}
 }

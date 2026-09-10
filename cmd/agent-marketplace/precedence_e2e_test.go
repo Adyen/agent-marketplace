@@ -13,6 +13,9 @@ import (
 //   - After sync: skill-a should be excluded (repo exclude wins), skill-b and
 //     skill-c should be installed.
 func TestE2E007_ConfigMergeUserRepoLayers(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

@@ -15,6 +15,9 @@ import (
 // DIFFERENT facts. Losing a per-file (or per-target, or per-resource) failure is
 // the failure mode; printing one line twice is only noise.
 func TestWriteRepairDiagnosticsNeverCollapsesTwoDifferentFacts(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	base := diag.Diagnostic{
 		Code:     diag.CodeOwnershipStateMissing,
 		Severity: diag.SeverityWarning,

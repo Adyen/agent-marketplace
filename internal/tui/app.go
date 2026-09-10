@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,20 +55,21 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		Foreground(lipgloss.AdaptiveColor{Light: "#1A8AAF", Dark: "#66D9EF"})
 
 	m := Model{
-		repoRoot:       repoRoot,
-		homeDir:        homeDir,
-		width:          80,
-		height:         24,
-		loading:        true,
-		activeTab:      tabScope,
-		tabStates:      newTabStates(),
-		spinner:        sp,
-		searchInput:    si,
-		detailViewport: viewport.New(80, 24),
-		helpViewport:   viewport.New(80, 23),
-		errorsViewport: viewport.New(80, 23),
-		keys:           defaultKeyMap,
-		help:           newHelpModel(),
+		repoRoot:                   repoRoot,
+		homeDir:                    homeDir,
+		width:                      80,
+		height:                     24,
+		loading:                    true,
+		activeTab:                  tabScope,
+		tabStates:                  newTabStates(),
+		spinner:                    sp,
+		searchInput:                si,
+		detailViewport:             viewport.New(80, 24),
+		helpViewport:               viewport.New(80, 23),
+		errorsViewport:             viewport.New(80, 23),
+		marketplaceConsentViewport: viewport.New(80, 22),
+		keys:                       defaultKeyMap,
+		help:                       newHelpModel(),
 	}
 	for _, option := range options {
 		option(&m)
@@ -171,10 +173,26 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
 }
 
+func marketplaceInstallSnapshotError(msg snapshotLoadedMsg) error {
+	if msg.pendingMigration.hasConfigs() {
+		return errors.New("configuration migration is required")
+	}
+	hardErrors := append([]error(nil), msg.errs...)
+	hardErrors = append(hardErrors, diagnosticErrors(msg.diagnostics)...)
+	if len(hardErrors) > 0 {
+		return errors.Join(hardErrors...)
+	}
+	if msg.driftAssessment != driftReady {
+		return errors.New("post-install state could not be verified")
+	}
+	return nil
+}
+
 func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.selectionKeyForRebuild()
 	selectionAfterDisable := m.selectionAfterDisable
 	m.selectionAfterDisable = ""
+	m.authoritativeRows = msg.rows
 	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
@@ -182,7 +200,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.localExcludes = msg.localExcludes
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
-	m.recomputeView()
+	m.mergeDiscoveryRows()
 	if !m.restoreSelectionKey(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
@@ -206,6 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helpViewport.Height = max(1, msg.Height-1)
 		m.errorsViewport.Width = msg.Width
 		m.errorsViewport.Height = max(1, msg.Height-1)
+		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
 		layout := screenLayoutFor(m.height, m.filterActive)
 		listWidth, detailWidth := paneWidths(m.width)
@@ -258,20 +277,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
 			m.refreshing = false
-			return m, nil
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.refreshing = false
-			return m, nil
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg)
+		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
+		installCmd := m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg))
 		if msg.refreshAfterLoad {
 			m.refreshing = true
 			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), m.spinner.Tick)
+			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation), discoveryCmd, installCmd, m.spinner.Tick)
 		}
 		m.refreshing = false
-		return m, nil
+		return m, tea.Batch(discoveryCmd, installCmd)
 
 	case refreshLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -282,13 +305,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.pendingMigration.hasConfigs() {
 			m.migrationPrompt = msg.pendingMigration
 			m.pane = paneMigrationModal
-			return m, nil
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg))
 		}
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
-			return m, nil
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...))
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, nil
+		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshotLoadedMsg)))
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
@@ -304,10 +329,89 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = false
 		m.refreshing = false
 		m.applySnapshotStatus(snapshot)
+		if snapshot.pendingMigration.hasConfigs() {
+			m.migrationPrompt = snapshot.pendingMigration
+			m.pane = paneMigrationModal
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot))
+		}
+		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.clearMarketplaceDiscovery(true)
+			return m, m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...))
+		}
 		m.applySnapshotData(snapshot)
 		m.toast = "Reloaded"
 		m.toastExp = time.Now().Add(2 * time.Second)
-		return m, toastExpiryCmd(2 * time.Second)
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, marketplaceInstallSnapshotError(snapshot)))
+
+	case discoveryDebounceMsg:
+		if m.requests.active(requestDiscovery) != msg.generation {
+			return m, nil
+		}
+		ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
+		m.discoveryCancel = cancel
+		return m, loadMarketplaceDiscovery(ctx, m.mergedCfg, msg.query, msg.generation)
+
+	case discoveryLoadedMsg:
+		if msg.done {
+			if !m.acceptsRequest(requestDiscovery, msg.generation) {
+				return m, nil
+			}
+			if m.discoveryCancel != nil {
+				m.discoveryCancel()
+				m.discoveryCancel = nil
+			}
+			m.discoveryLoading = false
+			if msg.err != nil {
+				m.discoveryErrs = []error{msg.err}
+				return m, nil
+			}
+			if msg.outcomes != nil {
+				m.applyDiscovery(msg.query, msg.outcomes)
+			}
+			return m, nil
+		}
+		if m.requests.active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
+			return m, nil
+		}
+		m.discoverySequence = msg.sequence
+		m.applyDiscovery(msg.query, msg.outcomes)
+		return m, waitMarketplaceDiscoveryUpdate(msg.generation, msg.sequence+1, msg.query, msg.updates)
+
+	case discoveryInstallMsg:
+		if !m.acceptsOperation(msg.operation) {
+			return m, nil
+		}
+		if msg.err == nil && msg.prepared != nil && msg.result == nil {
+			m.marketplaceInstallOptions = msg.options
+			m.marketplaceInstallOperation = msg.operation
+			m.marketplacePreparedInstall = msg.prepared
+			m.setMarketplaceConsentPreview(msg.preview)
+			m.pane = paneMarketplaceConsent
+			return m, nil
+		}
+		var consent *pipeline.MarketplaceConsentError
+		if errors.As(msg.err, &consent) {
+			m.marketplaceInstallOptions = msg.options
+			m.marketplaceInstallOperation = msg.operation
+			m.marketplacePreparedInstall = consent.Prepared
+			m.setMarketplaceConsentPreview(consent.Preview)
+			m.pane = paneMarketplaceConsent
+			return m, nil
+		}
+		m.marketplacePreparedInstall = nil
+		m.marketplaceInstallPreview = ""
+		if msg.err != nil {
+			m.finishOperation(msg.operation)
+			m.marketplaceInstallOperation = 0
+			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
+			m.toast = "Marketplace install failed: " + msg.err.Error()
+			m.toastExp = time.Now().Add(5 * time.Second)
+			return m, toastExpiryCmd(5 * time.Second)
+		}
+		generation := m.beginRequest(requestSnapshot)
+		m.marketplaceInstallReload = generation
+		return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 
 	case toastMsg:
 		m.toast = msg.text
@@ -426,9 +530,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.repoRoot, m.homeDir, generation)
 		}
 		m.syncing = false
+		var installCmd tea.Cmd
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
 			m.applySnapshotData(msg.snapshot)
+			if msg.snapshot.pendingMigration.hasConfigs() {
+				m.migrationPrompt = msg.snapshot.pendingMigration
+				m.pane = paneMigrationModal
+				m.clearMarketplaceDiscovery(true)
+			} else if msg.snapshot.mergedCfg == nil && len(m.errs) > 0 {
+				m.clearMarketplaceDiscovery(true)
+			}
 		}
 		// Clear quitAfterSync so a stale flag from a previous sync+quit
 		// confirm doesn't cause a later unrelated sync to quit.
@@ -439,13 +551,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toastExp = time.Now().Add(5 * time.Second)
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
-			return m, toastExpiryCmd(5 * time.Second)
+			if msg.snapshot.generation != 0 {
+				installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+			}
+			return m, tea.Batch(toastExpiryCmd(5*time.Second), installCmd)
 		} else {
 			m.recordOperationSuccess(operationUpdate)
 			m.toast = "Update complete"
 			m.toastExp = time.Now().Add(2 * time.Second)
 		}
-		return m, toastExpiryCmd(2 * time.Second)
+		if msg.snapshot.generation != 0 {
+			installCmd = m.finishMarketplaceInstallReload(msg.generation, marketplaceInstallSnapshotError(msg.snapshot))
+		}
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), installCmd)
 
 	case migrationDoneMsg:
 		if msg.err != nil {
@@ -519,7 +637,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		// Only keep ticking while there is in-flight work.
-		if m.loading || m.syncing || m.refreshing {
+		if m.loading || m.syncing || m.refreshing || m.discoveryLoading {
 			return m, cmd
 		}
 		return m, nil
@@ -653,6 +771,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case paneConfirm:
 		return m.handleConfirmKey(msg)
 
+	case paneMarketplaceConsent:
+		return m.handleMarketplaceConsentKey(msg)
+
 	case paneToggleModal:
 		return m.handleToggleModalKey(msg)
 
@@ -748,10 +869,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Search):
+		resetRemoteSearch := m.filter != ""
 		m.filterActive = true
 		m.searchInput.SetValue("")
 		cmd := m.searchInput.Focus()
 		m.filter = ""
+		if resetRemoteSearch {
+			m.restoreBrowseDiscovery()
+			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false))
+		}
 		return m, cmd
 
 	case key.Matches(msg, m.keys.Help):
@@ -759,7 +885,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Errors):
-		if len(m.errs) > 0 || len(m.warnings) > 0 {
+		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
 			m.pane = paneErrors
 		}
 		return m, nil
@@ -864,6 +990,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r.IsMalformed {
 			return m, nil
 		}
+		if discovery := r.MarketplaceDiscovery; discovery != nil && discovery.Item.Availability != "available" {
+			return m, func() tea.Msg {
+				return toastMsg{text: "this Marketplace resource is not installable", duration: 2 * time.Second}
+			}
+		}
+		if r.MarketplaceCollectionOnly {
+			return m, func() tea.Msg {
+				return toastMsg{text: "collection-selected Marketplace items must be toggled through their collection", duration: 2 * time.Second}
+			}
+		}
 		if r.Artifact.Required {
 			return m, func() tea.Msg {
 				return toastMsg{text: "required items cannot be toggled", duration: 2 * time.Second}
@@ -904,6 +1040,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) restoreBrowseDiscovery() {
+	if m.authoritativeRows != nil {
+		m.discoveryRows = slices.Clone(m.browseDiscoveryRows)
+		m.mergeDiscoveryRows()
+	} else {
+		m.recomputeView()
+	}
+}
+
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Clear):
@@ -911,9 +1056,9 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = ""
 		m.searchInput.SetValue("")
 		m.searchInput.Blur()
-		m.recomputeView()
+		m.restoreBrowseDiscovery()
 		recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
-		return m, nil
+		return m, m.beginMarketplaceDiscovery("", false)
 
 	case key.Matches(msg, m.keys.SearchConfirm):
 		m.filterActive = false
@@ -925,10 +1070,18 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Delegate to textinput for cursor movement, backspace,
 		// paste, and character input.
 		var cmd tea.Cmd
+		previous := m.filter
 		m.searchInput, cmd = m.searchInput.Update(msg)
 		m.filter = m.searchInput.Value()
 		m.recomputeView()
-		return m, cmd
+		if m.filter == previous {
+			return m, cmd
+		}
+		if m.filter == "" {
+			m.restoreBrowseDiscovery()
+			return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false), m.spinner.Tick)
+		}
+		return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
 	}
 }
 
@@ -1201,6 +1354,8 @@ func (m Model) View() string {
 		return fitTerminalWithFooter(m.errorsViewport.View(), "↑/↓ or ctrl-d/u scroll · esc/e close · Ctrl+C quit", m.width, m.height)
 	case paneConfirm:
 		return fitTerminalWithFooter(renderConfirm(m), "y sync+quit · n quit · esc cancel", m.width, m.height)
+	case paneMarketplaceConsent:
+		return fitTerminalWithFooter(renderMarketplaceConsent(m), "↑/↓/page · y install · n/esc cancel · ^C quit", m.width, m.height)
 	case paneDetail:
 		listWidth, previewWidth := paneWidths(m.width)
 		bodyHeight := max(1, m.height-1)
@@ -1252,7 +1407,11 @@ func (m Model) renderBaseScreen() string {
 		parts = append(parts, renderTabBar(m.activeTab))
 	}
 	if layout.search {
-		parts = append(parts, m.searchInput.View())
+		searchInput := m.searchInput
+		if m.discoveryLoading {
+			searchInput.Prompt = m.spinner.View() + " "
+		}
+		parts = append(parts, searchInput.View())
 	}
 	if layout.mainHeight > 0 {
 		listWidth, detailWidth := paneWidths(m.width)

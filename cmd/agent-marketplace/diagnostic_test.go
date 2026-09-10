@@ -13,6 +13,9 @@ import (
 )
 
 func TestDiagnosticFlagExportsPayload(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := setupTelemetryHome(t)
 
 	var mu sync.Mutex
@@ -77,6 +80,9 @@ func TestDiagnosticFlagExportsPayload(t *testing.T) {
 }
 
 func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := setupTelemetryHome(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +118,9 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 }
 
 func TestDiagnosticFlagIgnoredWhenTelemetryBasic(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	setupTelemetryHome(t)
 
 	var requestCount int

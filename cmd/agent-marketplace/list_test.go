@@ -19,6 +19,9 @@ import (
 )
 
 func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	const exactCatalogKey = "/cache/registry@sha1:0123456789abcdef"
 	const registryURL = "https://example.com/agents.git"
 
@@ -56,6 +59,9 @@ func TestBuildListRowsUsesLoadedExactCatalogKey(t *testing.T) {
 }
 
 func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -117,6 +123,9 @@ registries:
 }
 
 func TestListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -169,6 +178,9 @@ registries:
 }
 
 func TestListCommandShowsMalformedSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -217,6 +229,9 @@ registries:
 }
 
 func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -555,6 +570,9 @@ func runGit(t *testing.T, dir string, args ...string) {
 }
 
 func TestListFromFlagListsResourcesAtAdHocRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -586,6 +604,9 @@ registries: []
 }
 
 func TestListFromFlagWithKindFilter(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -614,6 +635,9 @@ registries: []
 }
 
 func TestListFromFlagRefAndPathRequireFrom(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -641,6 +665,9 @@ registries: []
 }
 
 func TestListFromFlagBlockedURLReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

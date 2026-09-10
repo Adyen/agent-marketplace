@@ -25,7 +25,7 @@ func newMigrateCmd() *cobra.Command {
 		Long: `Migrate performs structural remediation on user, repository, and
 repository-personal config files. It preserves valid v2 and v3 apiVersion
 values, accepts v3 as a compatibility alias, and only changes files when
-structural remediation is needed.
+structural remediation is needed. New or remediated files use canonical v2.
 
 Existing user-personal harnesses are preserved. If a user config needs a
 harness set, migration uses the --harnesses flag in non-interactive mode, or

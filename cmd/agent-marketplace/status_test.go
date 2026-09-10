@@ -19,6 +19,9 @@ import (
 )
 
 func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -100,6 +103,9 @@ registries:
 }
 
 func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "status-gc.git")
 	writeSkill(t, working, "keeper", "Keeper", nil)
@@ -147,6 +153,9 @@ registries:
 }
 
 func TestStatusCommandMarksLockedCaches(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -186,6 +195,9 @@ registries:
 }
 
 func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -220,6 +232,9 @@ registries:
 }
 
 func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -271,6 +286,9 @@ skills:
 }
 
 func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -318,6 +336,9 @@ registries:
 }
 
 func TestStatusDriftSectionInSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -357,6 +378,9 @@ registries:
 }
 
 func TestStatusDriftSectionOutOfSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -398,6 +422,9 @@ registries:
 }
 
 func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -421,6 +448,9 @@ registries:
 }
 
 func TestStatusReportsManagedInstallation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("file permission diagnostics are Unix-specific")
 	}
@@ -442,7 +472,7 @@ registries:
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
@@ -465,6 +495,9 @@ registries:
 }
 
 func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -501,6 +534,9 @@ func TestBuildHarnessTargetRowsPresentsCodexPartitionsAndLegacyRoots(t *testing.
 }
 
 func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", "relative/codex")
 	if _, err := buildHarnessTargetRows(t.TempDir(), []string{"codex"}); err == nil || !strings.Contains(err.Error(), "CODEX_HOME must be absolute") {
@@ -509,6 +545,9 @@ func TestBuildHarnessTargetRowsRejectsRelativeCodexHome(t *testing.T) {
 }
 
 func TestTargetDisplayNameLabelsOnlyCodex(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for input, want := range map[string]string{"codex": "Codex", "factory": "factory", "unknown": "unknown"} {
 		if got := targetDisplayName(input); got != want {
 			t.Errorf("targetDisplayName(%q) = %q, want %q", input, got, want)

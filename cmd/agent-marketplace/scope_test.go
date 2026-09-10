@@ -18,6 +18,9 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestInstallScopeUserWritesToGlobalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -77,6 +80,9 @@ registries:
 // ---------------------------------------------------------------------------
 
 func TestInstallScopeLocalWritesToLocalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -121,6 +127,9 @@ registries:
 }
 
 func TestInstallScopeLocalUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -161,6 +170,9 @@ registries: []
 }
 
 func TestInstallScopeRepoUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -203,6 +215,9 @@ registries: []
 }
 
 func TestInstallScopeRepoOrLocalRemovesLocalExclude(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testCases := []struct {
 		name        string
 		scopeArg    string
@@ -270,6 +285,9 @@ skills:
 }
 
 func TestInstallScopeRepoRemovesRepoExclude(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -310,6 +328,9 @@ registries:
 }
 
 func TestInstallScopeRepoOrLocalOverridesUserPlacement(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testCases := []struct {
 		name          string
 		scopeArg      string
@@ -384,6 +405,9 @@ registries:
 // ---------------------------------------------------------------------------
 
 func TestRemoveRequiredSkillFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -425,6 +449,9 @@ registries: []
 // ---------------------------------------------------------------------------
 
 func TestRemoveMachineScopeNonRequiredAtDefaultScopeSucceeds(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -479,6 +506,9 @@ registries: []
 // ---------------------------------------------------------------------------
 
 func TestRemoveDefaultSkillAddsToPersonalExclude(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -530,6 +560,9 @@ registries:
 // ---------------------------------------------------------------------------
 
 func TestRemoveScopeUserRemovesFromGlobalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -571,6 +604,9 @@ registries:
 }
 
 func TestInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testCases := []struct {
 		name          string
 		scopeArg      string
@@ -660,6 +696,9 @@ registries:
 }
 
 func TestRemoveScopeMatrixForRepoSelectedSkill(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testCases := []struct {
 		name                string
 		scopeArg            string
@@ -769,6 +808,9 @@ registries:
 }
 
 func TestRemoveScopeMatrixForUserSelectedSkill(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	testCases := []struct {
 		name               string
 		scopeArg           string
@@ -866,6 +908,9 @@ registries:
 // ---------------------------------------------------------------------------
 
 func TestInstallFromFlagScopeLocalWritesRegistryEntryToLocalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -935,6 +980,9 @@ registries: []
 // ---------------------------------------------------------------------------
 
 func TestRemoveScopeLocalRemovesRepoPersonalResource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -1003,6 +1051,9 @@ registries:
 // ---------------------------------------------------------------------------
 
 func TestInstallScopeLocalWritesToRegistryEntryForRepoPersonalSource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

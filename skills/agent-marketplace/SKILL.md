@@ -4,8 +4,8 @@ description: >
   How to use the agent-marketplace CLI to install shared AI agent resources
   from Git-based or local registries and materialize them into native harness
   layouts. Use when setting up a repo, installing/removing skills, commands,
-  subagents, hooks, or MCP servers, checking sync state, migrating v2 configs,
-  or updating pinned registry refs.
+  subagents, hooks, or MCP servers, checking sync state, remediating config
+  structure, or updating pinned registry refs.
 metadata:
   tags:
     - cli
@@ -82,7 +82,7 @@ Typical native outputs:
 
 ## Codex
 
-Select `codex` in the TUI harness modal (`H`) or add it to the machine-wide
+Select `codex` in the TUI harness modal (`H`) or add it to the effective
 `harnesses:` list. Existing configs and `migrate` do not opt in automatically.
 
 | Scope | Skill/command root | Subagent/hook/MCP root |

@@ -34,6 +34,9 @@ func pruneFixture(t *testing.T, bareName string, configBody func(origin string) 
 // "add an exclude". The CLI then prints `pruned stale skill "gone" from
 // config` while the selection is still there.
 func TestSyncPruneStaleRemovesTopLevelSelection(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := pruneFixture(t, "top-level-sel.git", func(origin string) string {
 		return `
 registries:
@@ -77,6 +80,9 @@ skills:
 // per-registry include. A single prune pass must clear both, otherwise the
 // next run finds it stale again.
 func TestAttackPruneSelectionInBothScopes(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := pruneFixture(t, "both-scopes.git", func(origin string) string {
 		return `
 registries:
@@ -119,6 +125,9 @@ skills:
 // temp file over configPath, which REPLACES the symlink with a regular file and
 // leaves the real target unedited.
 func TestAttackPruneThroughSymlinkedConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -172,6 +181,9 @@ registries:
 // a single yaml.Node, which captures only the FIRST document; writing it back
 // silently DELETES every subsequent document.
 func TestAttackPruneMultiDocumentConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -232,6 +244,9 @@ notes: keep me
 // malformed-but-present selection is reported as a parse failure, which is NOT a
 // SelectedNotFoundError and therefore is never prunable.
 func TestAttackPruneBrokenFrontmatter(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
@@ -271,6 +286,9 @@ registries:
 // selection. Pruning `gone-a` removes it; the second pass must still promote
 // anything else that is stale, and the run must exit non-zero.
 func TestAttackStrictReSyncSurfacesNewStale(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	_, configPath := pruneFixture(t, "strict-new-stale.git", func(origin string) string {
 		return `
 registries:
@@ -304,6 +322,9 @@ collections:
 // invariant that matters: the prune must never remove a selection whose
 // resource is present in a DIFFERENT registry entry of the same config.
 func TestAttackPruneSelectionSatisfiedByAnotherRegistry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))

@@ -109,6 +109,9 @@ func (e *inventoryCommandExporter) shutdown(t *testing.T, tel *telemetry.Telemet
 }
 
 func TestDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name  string
 		scope deinitScope
@@ -152,6 +155,9 @@ func TestDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
 }
 
 func TestDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -170,6 +176,9 @@ func TestDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
 }
 
 func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	tests := []struct {
 		name          string
 		selection     string
@@ -191,7 +200,7 @@ func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 
 			exporter := newInventoryCommandExporter(t)
 			ctx, tel := exporter.context(t, "sync")
-			if err := runSync(ctx, io.Discard, false, false, true, false); err != nil {
+			if err := runSyncWithLocks(ctx, io.Discard, false, false, true, false, false); err != nil {
 				t.Fatalf("runSync: %v", err)
 			}
 			snapshots := exporter.shutdown(t, tel)
@@ -207,6 +216,9 @@ func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 }
 
 func TestDeinitFinalInventoryResolutionFailureIsBestEffort(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")

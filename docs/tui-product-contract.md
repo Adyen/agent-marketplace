@@ -28,6 +28,12 @@ Rejected stale completions do not change the active pane, input focus, selected 
 
 Accepted snapshot rebuilds restore stable row or section selection and retain the identity of an open detail resource when rows are inserted or reordered. After disabling a resource, the mutation-triggered rebuild instead selects the next resource that was below it, so the cursor does not follow the disabled resource to its new section.
 
+Marketplace discovery is replaceable and non-authoritative. The TUI renders the authoritative local snapshot first. Each configured Marketplace may then add a first page of at most 50 results to the existing Available group. Search filters loaded rows immediately and starts a remote search after approximately 250 milliseconds without input. A new request cancels and supersedes the prior generation. Clearing search restores the empty-query browse results. Discovery has no pagination and does not change the command-line `search` interface.
+
+The cache isolates records by endpoint and query. Records are fresh for five minutes and may remain stale for up to 24 hours. Stale rows remain visible during revalidation and after an endpoint fails. Each endpoint and its diagnostics update independently. Loading, stale data, truncation, and partial failures must not change snapshot health or drift state.
+
+Discovery rows show their Marketplace and Registry identity. The TUI sanitizes remote text before rendering it. Blocked and revoked rows remain inspectable but cannot be installed. Search and cache metadata must never authorize installation. Installation must use the exact selected locator for Marketplace preparation and require confirmation of a verified preview. Confirmation commits that same prepared plan; before mutation, the pipeline reloads effective configuration and rejects changed Marketplace or Registry policy, target harnesses, endpoint identity, or collisions. It writes exact pins atomically to an explicit user, project, or local scope. The mutation operation remains active until the subsequent authoritative snapshot reload succeeds or reports failure.
+
 ## Mutation operations
 
 Config-changing TUI interactions are serialized. Resource toggles, target saves, and editor sessions carry operation identity in their completion messages. A second mutation is blocked while one is active, and late or duplicated completions cannot clear or overwrite the active operation. Collision follow-up writes retain the primary toggle's operation identity.
@@ -38,7 +44,7 @@ Snapshot diagnostics and operation diagnostics have separate lifecycles. An acce
 
 Hard configuration, catalog, resolution, dry-run, or materialization errors make drift unavailable or failed, never `in sync`. Rows produced by a hard-failed snapshot remain inspectable but cannot initiate config mutation until a healthy snapshot is accepted.
 
-Automatic snapshot loads, reloads, and refreshes consume every present valid layer lock as an exact snapshot. An intentionally absent organization lock instead permits mutable discovery without creating a lock; this never downgrades an invalid present lock. Mutable movement cannot replace inventory protected by a lock. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved exact snapshot while it is still being consumed.
+Automatic snapshot loads, reloads, and refreshes consume every present valid layer lock as an exact snapshot. A missing layer lock permits the TUI to fall back to mutable discovery without creating a lock and is reported as a warning; this never downgrades an invalid present lock. Mutable movement cannot replace inventory protected by a lock. The TUI holds the exact-cache read lease through catalog discovery and materialization so garbage collection cannot remove a resolved exact snapshot while it is still being consumed.
 
 TUI update uses the shared sync pipeline and applies an authoritative post-operation snapshot. Copy distinguishes refresh, materialization, and state-reload failures; success is shown only when the pipeline and resulting snapshot are healthy.
 

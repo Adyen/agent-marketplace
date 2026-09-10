@@ -95,29 +95,65 @@ When configured output is out of sync, the command appends a summary with this f
 3 resources out of sync — run 'agent-marketplace sync'
 ```
 
+## `search`
+
+Searches hosted Marketplace endpoints without editing configuration. An empty query lists the endpoint's default result page.
+
+```text
+agent-marketplace search [query] [flags]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--marketplace` | alias, URL, or `all` | no | all configured | Searches one configured alias, one configured or ad hoc HTTP(S) endpoint, or every configured endpoint. |
+| `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
+| `--output` | string | no | `table` | `table` or `json`. JSON includes successful results and per-endpoint errors. |
+| `--limit` | non-negative integer | no | server default `100` | Maximum results after federating endpoint responses. |
+| `--offset` | non-negative integer | no | `0` | Result offset after federating endpoint responses. |
+
+Table output has `MARKETPLACE`, `SOURCE`, `KIND`, `NAME`, and `DESCRIPTION` columns. Relevance scores determine ordering but are not printed. Searches across multiple endpoints succeed when at least one endpoint returns results; failed endpoints produce warnings and appear under `errors` in JSON. An explicitly selected single endpoint failure returns an error.
+
 ## `install`
 
-Adds selections to one configuration layer and synchronizes materialized output. It supports one named resource, one collection, tag selection, all resources of one kind, or an ad hoc registry.
+Adds selections to one configuration layer and synchronizes materialized output. It also registers hosted Marketplace endpoints and installs exact Marketplace resource revisions.
 
 ```text
 agent-marketplace install <resource-name> [flags]
+agent-marketplace install <marketplace-endpoint> [--scope user|repo|local]
+agent-marketplace install <marketplace-locator> [flags]
+agent-marketplace install --marketplace <alias-or-url> <resource-locator> [flags]
 agent-marketplace install --tag <tag> [flags]
 agent-marketplace install --all [flags]
 agent-marketplace install --from <registry> [<resource-name>] [flags]
 ```
 
+Marketplace locators have one of these forms:
+
+```text
+alias:registry/kind/name[@sha256:<64 lowercase hex>]
+https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
+```
+
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | `repo` | Configuration layer: `repo`, `user`, or `local`. |
-| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`; also disambiguates a named resource. |
-| `--tag` | string | no | none | Installs resources whose metadata contains the tag. Mutually exclusive with a resource name, `--all`, and `--from`. |
-| `--all` | boolean | no | `false` | Installs every discovered resource of the selected kind. Valid only in `repo` scope and mutually exclusive with a resource name, `--tag`, and `--from`. |
-| `--registry` | string | no | all configured registries | Limits `--all` to one configured registry URL. Valid only with `--all`. |
+| `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
+| `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`; also disambiguates a named registry resource. |
+| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Mutually exclusive with a resource name, `--all`, `--from`, and Marketplace locators. |
+| `--all` | boolean | no | `false` | Installs every discovered registry resource of the selected kind. Valid only in `repo` scope. |
+| `--registry` | string | no | all configured registries | Limits `--all` to one configured Git registry URL. |
 | `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the registry bundle. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
+| `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |
+| `--as` | safe local name | no | resource name | Changes the generated local name while retaining the Marketplace coordinate. |
+| `--accept-risk` | boolean | no | `false` | Accepts the verified revision's warning findings and active capabilities. |
+| `--yes` | boolean | no | `false` | Automation spelling of `--accept-risk`. |
 
-A successful named installation prints a scope-specific confirmation:
+Registering an endpoint verifies its well-known identity and canonical URL before writing it. Re-registering the same identity in the same or a broader scope is a no-op.
+
+A Marketplace resource install resolves and verifies the exact artifact before configuration mutation, prints its digest, license, findings, capabilities, provenance, and acquisition mode, and writes an exact pin under `marketplaces[].resources`. Rejected or revoked resources cannot be installed. Warning findings and active capabilities require `--accept-risk` or `--yes`; consent applies only to that verified invocation.
+
+A successful resource installation prints a scope-specific confirmation:
 
 ```text
 Installed frontend-design in this repo
@@ -127,11 +163,11 @@ Installed frontend-design locally
 
 Collection installation prints `Installed collection <name> <scope-label>`. Unmet resource prerequisites are reported as warnings and do not install prerequisite resources automatically.
 
-For configured registries, discovery stays on the exact inventory of every layer that already has a valid lock. A registry may bootstrap from its mutable ref only when its own configuration layer has no lock; a missing lock in one layer does not make another layer's post-lock content installable.
+For configured Git registries, discovery stays on the exact inventory of every layer that already has a valid lock. A registry may bootstrap from its mutable ref only when its own configuration layer has no lock; a missing lock in one layer does not make another layer's post-lock content installable.
 
 ## `remove`
 
-Removes an explicit selection or records an exclusion, then synchronizes materialized output. Required organization resources cannot be removed or excluded.
+Removes an explicit selection or records an exclusion, then synchronizes materialized output. For hosted Marketplace pins, removing a direct resource clears its direct selection while preserving any collection ownership; removing a collection clears that collection selector and prunes leaves no longer retained. Required organization resources cannot be removed or excluded.
 
 ```text
 agent-marketplace remove <resource-name> [flags]
@@ -177,7 +213,7 @@ Resource names and the registry targeting flags require `--upgrade`; names also 
 
 `lock --check` inspects existing config, lock, and exact-snapshot bytes without transaction recovery, remote resolution, or cache population. A fresh lock whose exact snapshot is absent from a cold cache reports `lock.snapshot-unavailable`; a stale or missing lock reports the required change without fetching it. A writing reconciliation holds the shared exact-cache lease from before its first snapshot acquisition or verification through config-and-lock publication, preventing garbage collection from deleting a new snapshot before the published lock makes it reachable.
 
-The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. An absent organization lock leaves that layer intentionally unlocked: consumer commands may use mutable acquisition or cache inspection but do not create the organization lock. A present organization lock is exact and fail-closed; malformed or untrusted lock state is not downgraded to mutable discovery. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace locking is not part of this foundation.
+The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml`, `.agents/lock.yaml`, and `.agents/lock.local.yaml`. Commit the repository lock and keep the personal-local lock ignored. An absent organization lock leaves that layer intentionally unlocked: consumer commands may use mutable acquisition or cache inspection but do not create the organization lock. A present organization lock is exact and fail-closed; malformed or untrusted lock state is not downgraded to mutable discovery. Plain directory registries are live and are not represented in these Git locks. Hosted Marketplace resources use exact pins in consumer configuration rather than entries in these Git lockfiles.
 
 ## `sync`
 
@@ -191,10 +227,11 @@ agent-marketplace sync [flags]
 |---|---|:---:|---|---|
 | `--check` | boolean | no | `false` | Computes lock and output drift without reconciling either. Returns exit status 1 when state is out of sync. |
 | `--locked` | boolean | no | `false` | Requires fresh lockfiles and forbids config or lock writes. |
-| `--offline` | boolean | no | `false` | Uses only trusted local Git caches and never fetches remote endpoints; implies locked dependency behavior. |
+| `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts remote endpoints; implies locked dependency behavior. Cached revocation data may be stale. |
+| `--allow-revoked` | exact Marketplace revision target; repeatable | no | none | Allows one revoked pin for this execution: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
 | `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. Mandatory shared-aggregate safety backups are unaffected. |
 | `--strict` | boolean | no | `false` | Promotes selected-but-missing and selected-but-malformed warnings to errors. |
-| `--prune-stale` | boolean | no | `false` | Removes direct, non-required stale selections from configuration after catalogs load successfully, then synchronizes again. |
+| `--prune-stale` | boolean | no | `false` | Removes direct, non-required stale selections from configuration after catalogs load successfully, then synchronizes again. Cannot be combined with `--locked` or `--offline`. |
 | `-v`, `--verbose` | boolean | no | `false` | Prints affected files and malformed-resource details instead of summary-only output. |
 
 Normal synchronization prints counts for installed, removed, malformed, and failed resources:
@@ -224,10 +261,12 @@ agent-marketplace update [flags]
 | `--path` | string | no | none | Narrows `--registry` to a locked source root. |
 | `--kind` | string | conditionally | none | Resource kind for named registry targets. |
 
-Output reports the number of refreshed registries and, with `--bump`, the number of rewritten refs:
+Output reports the number of refreshed Git registries and, with `--bump`, the number of rewritten refs. Marketplace mirror pins are independently checked for newer usable revisions; index-only pins and organization-required pins are reported as skipped when the consumer cannot rewrite them.
 
 ```text
 Updated 2 registries, bumped 1 refs
+Marketplace pins: updated 1, skipped 1
+Marketplace https://marketplace.example.com source/skill/review: updated sha256:... -> sha256:...
 ```
 
 ## `status`
@@ -244,6 +283,7 @@ The report can contain these sections:
 |---|---|
 | `TARGET HARNESS SET` | Effective harness list and the configuration layer that supplied it. |
 | `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and immutable snapshot path. |
+| `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation/current state, cache state, and update availability. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
 | `SYNCED RESOURCES` | Resource kind, name, harness, target path, registry, ref, cache state, source, and collection origin. |
 | `LOCALLY EXCLUDED` | Resources removed by repository-personal exclusions. |
@@ -361,7 +401,7 @@ The command refuses a non-directory target root and a target root that is a symb
 
 ## `gc`
 
-Removes mutable and exact Git cache entries that are no longer referenced by validated configuration and active locks in the **current context**: organization, user, current repository, and personal-local layers, including their applicable includes. Exact snapshots are retained by locked source and commit; Git object stores are retained by canonical source URL from either a lock or configuration, including organization sources with no organization lock. Unreferenced object stores and abandoned staging directories are collected. Protected derived-cache namespaces and persistent coordination locks are retained.
+Removes mutable and exact Git cache entries and unreferenced hosted Marketplace artifacts that are no longer reachable from validated configuration and active locks in the **current context**: organization, user, current repository, and personal-local layers, including their applicable includes. Exact Git snapshots are retained by locked source and commit; Git object stores are retained by canonical source URL from either a lock or configuration, including organization sources with no organization lock. Marketplace blobs, manifests, revision metadata, and index-only occurrence snapshots are retained by exact configured pins. Unreferenced object stores and abandoned staging directories are collected. Protected derived-cache namespaces and persistent coordination locks are retained.
 
 The cache is shared across repositories, but `gc` does not inventory other repositories. Running it in repository A can evict a source used only by repository B. Later use in B may require reacquisition from the remote and can fail offline or if the remote no longer serves the locked commit. Use `--dry-run` to inspect current-context eviction before deleting.
 
@@ -381,6 +421,35 @@ The final line reports the number of affected entries:
 Removed 2 cache entries
 Would remove 2 cache entries
 ```
+
+## `serve`
+
+Runs a hosted Marketplace from a separate [Marketplace operator configuration](marketplace-operator-configuration.md).
+
+```text
+agent-marketplace serve --config <path> [--role api|worker|all]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+| `--role` | string | no | `all` | `api` runs the public and operations listeners, `worker` runs background indexing, and `all` runs both. |
+
+Startup opens the configured stores, ensures the Marketplace instance exists, and applies configured revocations before either role becomes ready. The command runs until its context is cancelled or a role fails.
+
+### `serve reindex`
+
+Enqueues and processes refresh work outside the scheduler.
+
+```text
+agent-marketplace serve reindex [registry-slug-or-id] --config <path>
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+
+With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before acquisition and performs a store readiness check after processing.
 
 ## `deinit`
 
@@ -475,13 +544,15 @@ Output includes the newly generated installation ID.
 
 ## `tui`
 
-Launches the interactive terminal UI for browsing catalogs, editing selections, selecting harnesses, and synchronizing.
+Launches the interactive terminal UI for browsing Git registries and hosted Marketplaces, editing selections, selecting harnesses, and synchronizing.
 
 ```text
 agent-marketplace tui
 ```
 
-The command resolves the repository root from the current directory and uses the current user's home directory for machine-scoped configuration and output.
+The command resolves the repository root from the current directory and uses the current user's home directory for machine-scoped configuration and output. It renders configured resources before network discovery, loads up to 50 results from each Marketplace, and starts federated Marketplace search 250 milliseconds after search input settles. Discovery cache entries are fresh for five minutes and may be used as stale fallback for up to 24 hours.
+
+Marketplace installation verifies the exact revision and displays its findings, capabilities, provenance, and digest before confirmation. Blocked and revoked resources remain visible but cannot be installed.
 
 ## `completion`
 

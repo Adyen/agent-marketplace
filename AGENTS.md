@@ -52,7 +52,11 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace list --kind command` — browse one resource kind (skill, command, subagent, hook, mcp, collection)
 - `agent-marketplace list --kind collection` — list available collections from configured registries
 - `agent-marketplace list --from <url> [--ref <ref>] [--path <path>] [--kind <kind>]` — browse resources at an ad-hoc URL without pre-configuring it
+- `agent-marketplace search [query]` — search configured Marketplace endpoints
+- `agent-marketplace search [query] --marketplace <alias|url|all>` — search one or all Marketplace endpoints
+- `agent-marketplace search [query] --output json` — structured search output with per-endpoint errors
 - `agent-marketplace install <resource>` / `install --tag <tag>` / `install --scope {user,repo,local}` — add resource to target config layer and sync
+- `agent-marketplace install <marketplace-endpoint>` — register a Marketplace endpoint; defaults to user scope, honors an explicit scope, and is a no-op when the same identity exists in that scope or a broader one
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
@@ -87,9 +91,17 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 
 Run direct real-terminal test typechecking with `make tui-qa-check` and all eight deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
+## Command test isolation
+
+Command tests in `cmd/agent-marketplace` are ordinary top-level `Test<Name>(t *testing.T)` functions, each run in its own sandboxed child process. Every such test opens with exactly `if isolateCommandTest(t) { return }` as its first statement; in the parent that call marks the test parallel, spawns the child, relays its result, and returns true. In the child it returns false and the body runs. Matrices stay together in one child. `TestCommandIsolationGuard` parses the package's test sources and fails on any top-level test that does not start with the guard, except tests in the runner/pure-unit files (`inProcessTestFiles`) and the explicit `inProcessTests` allowlist in `command_integration_test.go`.
+
+Select a test with `go test ./cmd/agent-marketplace -run '^TestBackupCreatedOnInstall$' -count=1`; append `/pattern` for nested subtests. `-run` alternations, `-skip`, `-count`, and `-shuffle` behave as for any Go test; the parent translates the filter into an exact child selector. The default child slot count is `min(max(GOMAXPROCS, 4), 12)`; `-parallel=1` serializes children. Use `-args -command-tests-in-process` for the serial baseline. Coverage builds automatically use that path so counters reach the report.
+
+Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment are sandboxed. Fixtures that replace HOME and expect Codex beneath it must also set CODEX_HOME. Diagnostic-grouping fixtures use local directories when asserting registry-relative source locations; exact Git snapshots deliberately preserve absolute source paths. Runner and guard checks are `go test ./cmd/agent-marketplace -run '^TestCommand(Process|IsolationGuard)' -count=1`; include `-race` and `-cover` when changing the runner.
+
 ## E2E Test Suite
 
-The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. They run directly in CI through `make marketplace-gate`; local runs can optionally use a Docker container for host isolation.
 
 There are **two types** of E2E tests:
 
@@ -99,9 +111,9 @@ There are **two types** of E2E tests:
 ### Running
 
 ```bash
-make e2e                    # run locally inside Docker
-E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
-E2E_PARALLEL=8 make e2e     # control concurrency (default 4, set to 1 for serial)
+make e2e                  # runs inside Docker (isolated from host env)
+E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
+E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
 ### Architecture

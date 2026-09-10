@@ -20,6 +20,9 @@ type lifecycleLock struct {
 }
 
 func TestSyncLockRetainsCommitUntilUpdate(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -76,6 +79,9 @@ registries:
 }
 
 func TestSyncRootRemovalProjectsOldCommit(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
@@ -122,6 +128,9 @@ registries:
 }
 
 func TestSyncEquivalentAutoAndExplicitRootsStayFresh(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
@@ -186,6 +195,9 @@ registries:
 }
 
 func TestSyncLockedRefusesMissingLockWithoutMaterializing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

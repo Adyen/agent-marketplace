@@ -1,0 +1,44 @@
+{
+  "name": "agent-marketplace-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "lint": "eslint .",
+    "check": "nuxt prepare && eslint . && nuxt typecheck && pnpm run api:drift && vitest run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "nuxt typecheck",
+    "api:generate": "node scripts/generate-api.mjs",
+    "api:drift": "node scripts/generate-api.mjs --check",
+    "e2e:install": "node scripts/playwright-e2e.mjs install",
+    "test:e2e": "node scripts/playwright-e2e.mjs test"
+  },
+  "dependencies": {
+    "@nuxt/ui": "4.10.0",
+    "markdown-it": "14.1.0",
+    "nuxt": "4.5.1",
+    "sanitize-html": "2.17.6",
+    "vue": "3.5.22",
+    "vue-router": "4.6.3"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "1.2.121",
+    "@nuxt/eslint": "1.16.0",
+    "@playwright/test": "1.55.1",
+    "@types/markdown-it": "14.1.2",
+    "@types/sanitize-html": "2.16.1",
+    "@vitejs/plugin-vue": "6.0.8",
+    "@vue/test-utils": "2.4.11",
+    "eslint": "10.8.0",
+    "happy-dom": "20.11.1",
+    "openapi-typescript": "7.9.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.0.0"
+  }
+}

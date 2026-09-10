@@ -184,7 +184,7 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 
 func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	ec, snapshot := exactLockViewGCFixture(t)
-	_, view := exactLockViewWithContext(context.Background(), ec)
+	_, view := exactLockViewWithContext(context.Background(), ec, false)
 	defer view.release()
 	if len(view.errors) > 0 {
 		t.Fatal(errors.Join(view.errors...))
@@ -267,7 +267,7 @@ func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(mutableRoot, ".factory", "skills", "organization", "SKILL.md"), []byte("---\nname: organization\ndescription: unlocked\n---\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			viewCtx, view := exactLockViewWithContext(context.Background(), ec)
+			viewCtx, view := exactLockViewWithContext(context.Background(), ec, false)
 			defer view.release()
 			if len(view.errors) > 0 {
 				t.Fatal(errors.Join(view.errors...))

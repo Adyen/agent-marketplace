@@ -12,6 +12,9 @@ import (
 )
 
 func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -44,6 +47,9 @@ func TestInitCreatesV2UserPersonalConfig(t *testing.T) {
 }
 
 func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -57,6 +63,9 @@ func TestInitRequiresHarnessesInNonInteractiveMode(t *testing.T) {
 }
 
 func TestInitIsIdempotent(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -92,6 +101,9 @@ func TestInitIsIdempotent(t *testing.T) {
 }
 
 func TestInitValidatesHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -105,6 +117,9 @@ func TestInitValidatesHarnesses(t *testing.T) {
 }
 
 func TestInitDoesNotCreateConfigWhenValidationFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -123,6 +138,9 @@ func TestInitDoesNotCreateConfigWhenValidationFails(t *testing.T) {
 }
 
 func TestInitHelp(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	output, err := executeCommand("init", "--help")
 	if err != nil {
 		t.Fatalf("init --help failed: %v\n%s", err, output)
@@ -133,6 +151,9 @@ func TestInitHelp(t *testing.T) {
 }
 
 func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
@@ -178,6 +199,9 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 }
 
 func TestInitDeduplicatesHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -203,6 +227,9 @@ func TestInitDeduplicatesHarnesses(t *testing.T) {
 }
 
 func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -240,6 +267,9 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 }
 
 func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -263,6 +293,9 @@ func TestPromptTelemetryConsentEOFDeclines(t *testing.T) {
 }
 
 func TestPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -286,6 +319,9 @@ func TestPromptTelemetryConsentEOFWithReplyEnables(t *testing.T) {
 }
 
 func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -331,6 +367,9 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 }
 
 func TestInitNonInteractiveLeavesTelemetryUnset(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

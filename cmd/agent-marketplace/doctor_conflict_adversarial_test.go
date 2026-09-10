@@ -65,6 +65,9 @@ func prepareTwoDevinConflicts(t *testing.T, repoRoot string) (mcpPath string, se
 // survive untouched — an EOF is not consent, and a "y" already spent on entry A
 // is not consent for entry B.
 func TestAdversarialOneYesThenEOFReplacesExactlyOneEntry(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 
@@ -98,6 +101,9 @@ func TestAdversarialOneYesThenEOFReplacesExactlyOneEntry(t *testing.T) {
 // match and a value conflict, with exactly one "y" on stdin. The "y" belongs to
 // the adoption prompt; the conflict must then hit EOF and be declined.
 func TestAdversarialYesToAdoptionDoesNotSweepAConflict(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -168,6 +174,9 @@ func TestAdversarialYesToAdoptionDoesNotSweepAConflict(t *testing.T) {
 //
 // Whatever the answer is, it must be "no", and it must not be a panic.
 func TestAdversarialNilStdinOnATTYDeclinesInsteadOfPanicking(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinConflictFixture(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
@@ -204,6 +213,9 @@ func TestAdversarialNilStdinOnATTYDeclinesInsteadOfPanicking(t *testing.T) {
 // Debug matters because it is the level a user turns on when a repair goes
 // wrong, which is exactly when the aggregate is most likely to hold a token.
 func TestAdversarialWholeRepairFlowLeaksNoSecretAtDebugLevel(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -258,6 +270,9 @@ func TestAdversarialWholeRepairFlowLeaksNoSecretAtDebugLevel(t *testing.T) {
 // allowed to act on. Confirming must fail loudly and change nothing — a repair
 // may not become the one way to mutate a file while state is corrupt.
 func TestAdversarialCorruptOwnershipStateNeverReplaces(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	repoRoot, _ := devinDoctorEnv(t)
 	outDir := filepath.Join(repoRoot, ".devin")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {

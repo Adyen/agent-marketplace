@@ -9,7 +9,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func TestMigrateCommandPreservesValidV2UserAndRepo(t *testing.T) {
+func TestMigrateCommandRemediatesV2UserAndRepo(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -88,6 +91,9 @@ tags:
 }
 
 func TestMigrateCommandUsesExplicitHarnesses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -127,6 +133,9 @@ registries:
 }
 
 func TestMigrateCommandRejectsV1(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -194,6 +203,9 @@ func equalStrings(a, b []string) bool {
 }
 
 func TestMigrateCommandRequiresHarnessesNonInteractive(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 

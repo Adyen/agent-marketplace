@@ -281,7 +281,7 @@ registries: []
 
 	t.Setenv("HOME", filepath.Join(dir, "home"))
 	t.Setenv("AGENT_MARKETPLACE_ORG_CONFIG", legacyPath)
-	SetTestV3OrganizationConfigPath(t, filepath.Join(dir, "missing-v3.yaml"))
+	SetTestOrganizationConfigPath(t, filepath.Join(dir, "missing-org.yaml"))
 
 	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
 		GlobalPath: filepath.Join(dir, "missing-global.yaml"),
@@ -293,10 +293,10 @@ registries: []
 		t.Fatalf("legacy organization environment variable should be ignored, got %v", ec.Organization.Config)
 	}
 	if len(ec.Errors) != 0 {
-		t.Fatalf("expected no errors for missing v3 org config, got %v", ec.Errors)
+		t.Fatalf("expected no errors for missing org config, got %v", ec.Errors)
 	}
 	if ec.Managed {
-		t.Fatalf("expected unmanaged when selected v3 org config is missing")
+		t.Fatalf("expected unmanaged when selected org config is missing")
 	}
 }
 

@@ -15,6 +15,9 @@ import (
 )
 
 func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", canonicalTempDir(t))
 	repo := canonicalTempDir(t)
 	root := filepath.Join(repo, ".agents", "config.yaml")
@@ -40,6 +43,9 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	for _, change := range []string{"unchanged", "edit", "delete", "retarget"} {
 		t.Run(change, func(t *testing.T) {
 			home := canonicalTempDir(t)
@@ -152,6 +158,9 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := canonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
@@ -187,6 +196,9 @@ func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staging-generation-race.git")
@@ -242,6 +254,9 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "lock-generation-race.git")
@@ -265,6 +280,9 @@ func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := canonicalTempDir(t)
@@ -303,6 +321,9 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
@@ -346,6 +367,9 @@ func TestRepositoryIgnoresDependencyTransactionLockFiles(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "ancestor-symlink.git")
@@ -382,6 +406,9 @@ func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T)
 }
 
 func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staged-ancestor-symlink.git")
@@ -423,6 +450,9 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
@@ -452,6 +482,9 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	home := canonicalTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -473,6 +506,9 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 }
 
 func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	origin, working := createBareRepoWithWorkingClone(t, "staged-config-lock.git")

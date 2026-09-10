@@ -137,7 +137,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 	}
 	slog.Info("resolved migration target harnesses", "harnesses", targetHarnesses)
 
-	// Build the migrated document for each existing file.
+	// Build the remediated document for each existing file.
 	for _, name := range layerOrder {
 		f := files[name]
 		if f == nil || !f.exists {
@@ -161,7 +161,7 @@ func MigrateConfigFiles(paths MigratePaths, explicitHarnesses []string) (*Migrat
 			if err := migrateFileNode(f, nil); err != nil {
 				return nil, err
 			}
-			for _, key := range []string{"harnesses", "backup", "logging", "allowed_registries"} {
+			for _, key := range []string{"harnesses", "backup", "logging", "allowed_registries", "allowed_marketplaces"} {
 				if removeMappingKeyByName(f.root, key) {
 					f.modified = true
 				}
@@ -432,8 +432,8 @@ func joinCommentText(existing, addition string) string {
 	return existing + "\n" + addition
 }
 
-// validateMigratedFiles serializes each migrated document and validates it
-// against the strict v3 rules for its layer.
+// validateMigratedFiles serializes each remediated document and validates it
+// against the strict layer rules.
 func validateMigratedFiles(files map[string]*migrationFile) error {
 	layerOrder := []string{"user", "repo", "local"}
 	for _, name := range layerOrder {

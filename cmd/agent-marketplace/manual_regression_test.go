@@ -13,6 +13,9 @@ import (
 )
 
 func TestManualRegressionMatrix(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
 	t.Run("branch ref gates skill discovery", func(t *testing.T) {
 		homeDir := t.TempDir()
 		t.Setenv("HOME", homeDir)

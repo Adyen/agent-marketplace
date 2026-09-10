@@ -13,11 +13,11 @@ import (
 
 // --- Attack surface 3: cross-registry and cross-kind bleed ------------------
 
-// TestResolveMalformedInOneRegistryDoesNotBlameAnotherRegistrysAbsence is the
+// TestResolveMalformedInOneRegistryDoesNotBlameAnotherRegistryAbsence is the
 // core scoping guarantee: registry A has a malformed "foo", registry B simply
 // does not have "foo". B's selection is genuinely stale and must keep the
 // not-found diagnosis; A's must be the parse failure.
-func TestResolveMalformedInOneRegistryDoesNotBlameAnotherRegistrysAbsence(t *testing.T) {
+func TestResolveMalformedInOneRegistryDoesNotBlameAnotherRegistryAbsence(t *testing.T) {
 	cfg := &config.Config{
 		Registries: []config.RegistryEntry{
 			{URL: "git@example.com:a.git", Ref: "main", Skills: ks("foo")},

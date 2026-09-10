@@ -27,7 +27,7 @@ func TestReadOnlyOrganizationLockViewAcceptsMissingLock(t *testing.T) {
 	effective := config.EffectiveConfig{
 		Organization: config.LayerResult{Source: config.Organization, Path: configPath, Config: &config.Config{Registries: []config.RegistryEntry{registry}}},
 	}
-	_, view := exactLockViewWithContext(context.Background(), effective)
+	_, view := exactLockViewWithContext(context.Background(), effective, false)
 	defer view.release()
 	if len(view.errors) != 0 {
 		t.Fatalf("unlocked organization view errors = %v", view.errors)
@@ -35,6 +35,27 @@ func TestReadOnlyOrganizationLockViewAcceptsMissingLock(t *testing.T) {
 	path, identity, err := view.exactSnapshot(registry)
 	if err != nil || path != "" || identity != "" {
 		t.Fatalf("unlocked organization snapshot = (%q, %q, %v), want mutable discovery", path, identity, err)
+	}
+}
+
+func TestReadOnlyLockViewAllowsMissingRepoLockWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	registry := config.RegistryEntry{URL: "https://example.invalid/repo.git", Ref: "main", Source: config.RepoCommitted}
+	effective := config.EffectiveConfig{
+		Repo: config.LayerResult{Source: config.RepoCommitted, Path: configPath, Config: &config.Config{Registries: []config.RegistryEntry{registry}}},
+	}
+	_, view := exactLockViewWithContext(context.Background(), effective, true)
+	defer view.release()
+	if len(view.errors) != 0 {
+		t.Fatalf("missing repo lock returned errors = %v", view.errors)
+	}
+	if len(view.warnings) != 1 {
+		t.Fatalf("missing repo lock warnings = %v, want one warning", view.warnings)
+	}
+	path, identity, err := view.exactSnapshot(registry)
+	if err != nil || path != "" || identity != "" {
+		t.Fatalf("missing repo lock snapshot = (%q, %q, %v), want mutable discovery", path, identity, err)
 	}
 }
 
