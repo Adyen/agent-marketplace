@@ -19,6 +19,8 @@ type compatibilityNativeEntry struct {
 	Handler     string `json:"handlerType"`
 	Matcher     string `json:"matcher"`
 	SourcePath  string `json:"sourcePath"`
+	FilePath    string `json:"filePath"`
+	Location    string `json:"location"`
 }
 
 func compatibilityProtocolInventory(raw, protocol, kind, workspace string) ([]compatibilityNativeEntry, error) {
@@ -29,6 +31,12 @@ func compatibilityProtocolInventory(raw, protocol, kind, workspace string) ([]co
 	key := "commands"
 	if kind == "subagent" {
 		key = "agents"
+	}
+	if protocol == "factory-skills" {
+		key = "skills"
+	}
+	if protocol == "factory-droids" {
+		key = "droids"
 	}
 	if strings.HasPrefix(protocol, "codex-") {
 		var data []struct {
@@ -93,18 +101,71 @@ func requireCompatibilityProtocolInventory(command *compatibilityCommand, e *Env
 			command.Observed = append(command.Observed, entry.Command, "event: "+event, "source: "+entry.SourcePath, "hook discovery only; execution not requested")
 			continue
 		}
-		if entry.Description != f.description(probe.kind) {
+		if probe.protocol == "factory-skills" || probe.protocol == "factory-droids" {
+			location := "project"
+			if scope == "user" {
+				location = "personal"
+			}
+			if entry.Location != location {
+				return fmt.Errorf("native Factory resource location differs from the fixture")
+			}
+			command.Observed = append(command.Observed, name, "location: "+location)
+			if probe.kind == "subagent" {
+				continue
+			}
+			if !entry.Enabled || len(paths) != 1 || !compatibilitySameSource(entry.FilePath, paths[0]) {
+				return fmt.Errorf("native Factory skill source or enablement differs from the fixture")
+			}
+			command.Observed = append(command.Observed, "source: "+entry.FilePath, "enabled: true")
+		}
+		expectedDescription := f.description(probe.kind)
+		descriptionMatches := entry.Description == expectedDescription
+		if probe.protocol == "claude-initialize" && probe.kind != "subagent" {
+			descriptionMatches = strings.Contains(entry.Description, expectedDescription)
+		}
+		if !descriptionMatches {
 			return fmt.Errorf("native resource description differs from the fixture")
 		}
 		if probe.protocol == "codex-skills" {
-			if !entry.Enabled || entry.Scope != scope || len(paths) != 1 || filepath.Clean(entry.Path) != filepath.Clean(paths[0]) {
+			if !entry.Enabled || entry.Scope != scope || len(paths) != 1 || !compatibilitySameSource(entry.Path, paths[0]) {
 				return fmt.Errorf("native skill source, scope, or enablement differs from the fixture")
 			}
 			command.Observed = append(command.Observed, "source: "+entry.Path, "scope: "+entry.Scope, "enabled: true")
 		}
-		command.Observed = append(command.Observed, name, entry.Description)
+		command.Observed = append(command.Observed, name, expectedDescription)
 	}
 	return nil
+}
+
+func compatibilitySameSource(actual, expected string) bool {
+	if actual == "" || expected == "" {
+		return false
+	}
+	if filepath.Clean(actual) == filepath.Clean(expected) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(expected)
+	return err == nil && filepath.Clean(actual) == resolved
+}
+
+func TestCompatibilityClaudeDescriptionRequiresFixtureContent(t *testing.T) {
+	e := newEnv(t)
+	f := compatibilityFixture{prefix: "amcompat-claude"}
+	probe := compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{f.name("skill")}}
+	for _, test := range []struct {
+		description string
+		accepted    bool
+	}{{f.description("skill") + " (project)", true}, {"unrelated description", false}} {
+		raw, err := json.Marshal(map[string]any{"commands": []map[string]string{{"name": f.name("skill"), "description": test.description}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := compatibilityCommand{output: string(raw)}
+		err = requireCompatibilityProtocolInventory(&command, e, f, probe, "repo", nil, false)
+		if (err == nil) != test.accepted {
+			t.Fatalf("CLI presentation must retain the fixture description: %v", err)
+		}
+	}
 }
 
 func TestCompatibilityProtocolInventoryRejectsNamesOutsideDiscoveredResources(t *testing.T) {

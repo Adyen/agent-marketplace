@@ -18,6 +18,8 @@ func TestImageScriptsRejectUnsafeInputsBeforeInstallation(t *testing.T) {
 		{"unknown-target", []string{"install.sh"}, []string{"HARNESS_TARGET=unknown", "CLI_VERSION=1.2.3"}},
 		{"wrong-package", []string{"install.sh"}, []string{"HARNESS_TARGET=claude", "CLI_VERSION=1.2.3", "NPM_PACKAGE=untrusted"}},
 		{"invalid-checksum", []string{"install.sh"}, []string{"HARNESS_TARGET=devin", "CLI_VERSION=1.2.3", "BUNDLE_SHA256=invalid"}},
+		{"cursor-untrusted-bundle", []string{"install.sh"}, []string{"HARNESS_TARGET=cursor", "CLI_VERSION=2026.09.08-6caf4ff", "BUNDLE_URL=https://untrusted.invalid/archive"}},
+		{"cursor-invalid-version", []string{"install.sh"}, []string{"HARNESS_TARGET=cursor", "CLI_VERSION=2026.09.08-6caf4ff;invalid"}},
 		{"untrusted-image", []string{"build-image.sh", "devin", "untrusted.example/image:ci"}, nil},
 		{"unexpected-option", []string{"build-image.sh", "devin", "ghcr.io/example/repo/harness-devin:ci", "--unknown"}, nil},
 	} {

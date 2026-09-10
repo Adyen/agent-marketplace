@@ -50,7 +50,11 @@ version_output=$(docker run --rm --init --network none --cap-drop ALL \
   --security-opt no-new-privileges --env HOME=/tmp/harness-smoke \
   "$local_image" "/usr/local/bin/$cli" --version)
 printf '%s\n' "$version_output"
-[[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+([+][A-Za-z0-9.-]+)?) ]] || exit 1
+if [[ "$target" == cursor ]]; then
+  [[ "$version_output" =~ ([0-9]{4}\.[0-9]{2}\.[0-9]{2}-[a-f0-9]{7,40}) ]] || exit 1
+else
+  [[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+([+][A-Za-z0-9.-]+)?) ]] || exit 1
+fi
 test "${BASH_REMATCH[1]}" = "$version"
 
 if [[ "$publish" == --push ]]; then

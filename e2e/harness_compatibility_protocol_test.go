@@ -15,9 +15,12 @@ import (
 
 func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration) compatibilityCommand {
 	r := compatibilityCommand{Args: []string{binary, "app-server"}, ExitCode: -1}
-	method := map[string]string{"codex-skills": "skills/list", "codex-hooks": "hooks/list", "claude-initialize": "initialize"}[protocol]
+	method := map[string]string{"codex-skills": "skills/list", "codex-hooks": "hooks/list", "claude-initialize": "initialize", "factory-skills": "droid.list_skills", "factory-commands": "droid.list_commands", "factory-droids": "droid.get_context_breakdown"}[protocol]
 	if protocol == "claude-initialize" {
 		r.Args = append([]string{binary}, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--setting-sources", "user,project,local")
+	}
+	if strings.HasPrefix(protocol, "factory-") {
+		r.Args = append([]string{binary}, "exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc")
 	}
 	if method == "" {
 		r.Error = "unsupported native inspection protocol"
@@ -52,9 +55,12 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(reader)
 	var result json.RawMessage
 	var exchangeErr error
-	if protocol == "claude-initialize" {
+	switch {
+	case protocol == "claude-initialize":
 		result, exchangeErr = inspectClaudeMetadata(encoder, decoder)
-	} else {
+	case strings.HasPrefix(protocol, "factory-"):
+		result, exchangeErr = inspectFactoryMetadata(encoder, decoder, e.workspace, method)
+	default:
 		result, exchangeErr = inspectCodexMetadata(encoder, decoder, e.workspace, method)
 	}
 	_ = input.Close()
@@ -84,6 +90,26 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 		r.Observed = []string{"protocol response: " + method}
 	}
 	return r
+}
+
+func inspectFactoryMetadata(encoder *json.Encoder, decoder *json.Decoder, workspace, method string) (json.RawMessage, error) {
+	if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "droid.initialize_session", "params": map[string]any{"machineId": "amcompat-fixture", "cwd": workspace}}); err != nil {
+		return nil, fmt.Errorf("write native session initialization request")
+	}
+	initialized, err := readCompatibilityRPCResponse(decoder, 1)
+	if err != nil {
+		return nil, err
+	}
+	var session struct {
+		ID string `json:"sessionId"`
+	}
+	if json.Unmarshal(initialized, &session) != nil || session.ID == "" {
+		return nil, fmt.Errorf("native session initialization omitted session identity")
+	}
+	if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": 2, "method": method, "params": map[string]any{}}); err != nil {
+		return nil, fmt.Errorf("write native resource inspection request")
+	}
+	return readCompatibilityRPCResponse(decoder, 2)
 }
 
 func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.RawMessage, error) {
@@ -172,6 +198,27 @@ func readCompatibilityRPCResponse(decoder *json.Decoder, id int) (json.RawMessag
 			return nil, fmt.Errorf("native protocol omitted the inspection result")
 		}
 		return response.Result, nil
+	}
+}
+
+func TestCompatibilityProtocolReadsFactoryResourcesWithoutUserMessages(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "internal-fake-droid")
+	e.WriteFile(binary, `#!/bin/sh
+IFS= read -r request || exit 70
+case "$request" in *'"method":"droid.initialize_session"'*) ;; *) exit 71;; esac
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"fixture-session"}}'
+IFS= read -r request || exit 72
+case "$request" in *'"method":"droid.list_skills"'*) ;; *) exit 73;; esac
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"skills":[{"name":"fixture-skill","description":"Fixture description","enabled":true,"filePath":"fixture-path","location":"project"}]}}'
+if IFS= read -r request; then exit 74; fi
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := runCompatibilityProtocol(e, binary, "factory-skills", 2*time.Second)
+	if err := requireCompatibilityObservation(&result, false, "fixture-skill"); err != nil {
+		t.Fatal(err)
 	}
 }
 

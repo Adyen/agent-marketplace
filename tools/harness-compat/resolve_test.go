@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+func TestResolveCursorStableInstallerWithoutExecutingIt(t *testing.T) {
+	got, err := resolveVersion("cursor", func(endpoint string) ([]byte, error) {
+		if endpoint != "https://cursor.com/install" {
+			t.Fatal("Cursor release must come from its public installer metadata")
+		}
+		return []byte(`DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.09.08-6caf4ff/${OS}/${ARCH}/agent-cli-package.tar.gz"`), nil
+	})
+	if err != nil || got.Version != "2026.09.08-6caf4ff" || got.CLI != "agent" || got.BundleURL != "https://downloads.cursor.com/lab/2026.09.08-6caf4ff/linux/x64/agent-cli-package.tar.gz" {
+		t.Fatalf("wrong pinned Cursor release: %+v %v", got, err)
+	}
+	for _, body := range []string{`DOWNLOAD_URL="https://untrusted.invalid/archive"`, `DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.99.99-abcdef1/${OS}/${ARCH}/agent-cli-package.tar.gz"`, `echo unsupported`} {
+		if _, err := resolveVersion("cursor", func(string) ([]byte, error) { return []byte(body), nil }); err == nil {
+			t.Fatal("unrecognized Cursor release source accepted")
+		}
+	}
+}
+
 func TestResolveLatestStable(t *testing.T) {
 	for target, npm := range map[string]string{"claude": "@anthropic-ai/claude-code", "factory": "droid", "gemini": "@google/gemini-cli", "codex": "@openai/codex"} {
 		t.Run(target, func(t *testing.T) {
@@ -46,7 +63,7 @@ func TestResolveMetadataFailsClosed(t *testing.T) {
 	if _, err := resolveVersion("factory", func(string) ([]byte, error) { return nil, errors.New("private response must not leak") }); err == nil || strings.Contains(err.Error(), "private response") {
 		t.Fatalf("fetch failure was hidden or leaked unsafe details: %v", err)
 	}
-	for _, target := range []string{"cursor", "windsurf", "unknown"} {
+	for _, target := range []string{"windsurf", "unknown"} {
 		if _, err := resolveVersion(target, func(string) ([]byte, error) { t.Fatal("unexpected fetch"); return nil, nil }); err == nil {
 			t.Errorf("non-native target accepted: %s", target)
 		}

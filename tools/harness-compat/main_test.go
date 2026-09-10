@@ -14,9 +14,8 @@ func TestMatrixIncludesEveryTarget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := map[string]string{"claude": "claude", "factory": "droid", "cursor": "", "windsurf": "", "gemini": "gemini", "devin": "devin", "codex": "codex"}
+		want := map[string]string{"claude": "claude", "factory": "droid", "cursor": "agent", "windsurf": "", "gemini": "gemini", "devin": "devin", "codex": "codex"}
 		if native {
-			delete(want, "cursor")
 			delete(want, "windsurf")
 		}
 		if len(got.Include) != len(want) {
@@ -52,7 +51,7 @@ func TestMatrixCommandJSON(t *testing.T) {
 	var document struct {
 		Include []map[string]string `json:"include"`
 	}
-	if err := json.Unmarshal([]byte(out.String()), &document); err != nil || len(document.Include) != 5 {
+	if err := json.Unmarshal([]byte(out.String()), &document); err != nil || len(document.Include) != 6 {
 		t.Fatalf("invalid matrix JSON: %s (%v)", out.String(), err)
 	}
 	for _, args := range [][]string{{}, {"unknown"}, {"matrix"}, {"matrix", "--repository", "owner/repo", "extra"}, {"matrix", "--bad-flag"}} {

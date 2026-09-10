@@ -86,9 +86,11 @@ func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibili
 		}
 		native.probes = append(native.probes, compatibilityNativeProbe{kind: "hook", protocol: "codex-hooks", names: []string{f.name("hook-a"), f.name("hook-b")}})
 	case "factory":
+		for kind, protocol := range map[string]string{"skill": "factory-skills", "command": "factory-commands", "subagent": "factory-droids"} {
+			native.probes = append(native.probes, compatibilityNativeProbe{kind: kind, protocol: protocol, names: []string{f.name(kind)}})
+		}
+		slices.SortFunc(native.probes, func(a, b compatibilityNativeProbe) int { return strings.Compare(a.kind, b.kind) })
 	case "cursor":
-		row.Reason = "Cursor agent mcp list is interactive; no verified noninteractive credential-free inspection command is enabled"
-		return nil
 	case "windsurf":
 		row.Reason = "no verified credential-free Windsurf CLI inspection surface"
 		return nil
@@ -159,7 +161,10 @@ func (n *compatibilityNative) verify(t *testing.T, e *Env, f compatibilityFixtur
 			}
 			for _, name := range probe.names {
 				var args, values []string
-				if row.Harness == "devin" && probe.kind != "mcp" {
+				if row.Harness == "cursor" && probe.kind == "mcp" {
+					args = []string{"mcp", "list-tools", name}
+					values = []string{"amcompat_echo"}
+				} else if row.Harness == "devin" && probe.kind != "mcp" {
 					args = []string{"skills", "show", name}
 					values = []string{name, f.description(probe.kind)}
 				} else if probe.kind == "mcp" && (row.Harness == "devin" || row.Harness == "codex" || row.Harness == "claude") {
