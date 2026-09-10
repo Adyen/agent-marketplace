@@ -21,7 +21,7 @@ ARG BUNDLE_SHA256
 COPY install.sh /opt/harness-install.sh
 RUN bash /opt/harness-install.sh
 
-USER node
+USER 1000:1000
 WORKDIR /workspace
 ENTRYPOINT []
 CMD ["bash"]
