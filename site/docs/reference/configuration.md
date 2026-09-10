@@ -66,7 +66,7 @@ include:
   - profiles/payments-team.yaml
 ```
 
-Relative paths resolve from the directory containing the file that declares them. Absolute paths are also accepted. Includes are recursive, so an included fragment may include other fragments. The same file contributes only at its first position when reached more than once; canonical paths are used for this check. Glob patterns and remote URLs are not supported.
+Relative paths resolve from the directory containing the file that declares them. Absolute paths are also accepted. Includes are recursive, so an included fragment may include other fragments. In legacy include trees, the same file contributes only at its first position when reached more than once; canonical paths are used for this check. V4 include trees retain branch-local ancestry instead: shared fragments expand once per include branch, and only an ancestor repeated on the current branch is a cycle. Glob patterns and remote URLs are not supported.
 
 Included fragments have lower precedence than their containing file. For an ordered list, the first fragment is merged first, later fragments merge over earlier fragments, and the containing file merges last. The normal field-specific merge rules still apply; `include` does not make every field a simple replacement. See the [selection and precedence reference](https://github.com/Adyen/agent-marketplace/blob/main/docs/PRECEDENCE.md) for the complete merge rules.
 
