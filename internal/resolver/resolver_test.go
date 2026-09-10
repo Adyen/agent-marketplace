@@ -964,6 +964,55 @@ func TestResolveDeduplicatesSameCatalogKey(t *testing.T) {
 	}
 }
 
+func TestResolveCatalogViewUsesResolutionWinners(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{
+				URL: "git@host:awesome-ai.git", Ref: "main", Path: "teams", Source: config.Organization, CatalogKey: "parent",
+				MCP: ks("genai-atlassian"),
+			},
+			{
+				URL: "git@host:awesome-ai", Ref: "main", Path: "teams/common/genai", Source: config.UserPersonal, CatalogKey: "child",
+				MCP: ks("genai-atlassian"),
+			},
+		},
+	}
+	entries := []catalog.Entry{
+		{Kind: ir.KindMcpServer, Name: "genai-airflow"},
+		{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
+	}
+	catalogs := map[string][]catalog.Entry{"parent": entries, "child": entries}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+	view := ResolveCatalogView(cfg, catalogs, resolved)
+	if len(view) != 2 {
+		t.Fatalf("ResolveCatalogView() returned %d resources, want 2: %#v", len(view), view)
+	}
+
+	byName := make(map[string]CatalogArtifact, len(view))
+	for _, artifact := range view {
+		byName[artifact.Name] = artifact
+	}
+	for _, name := range []string{"genai-airflow", "genai-atlassian"} {
+		artifact, ok := byName[name]
+		if !ok {
+			t.Fatalf("ResolveCatalogView() omitted %q: %#v", name, view)
+		}
+		if artifact.RegistryPath != "teams/common/genai" {
+			t.Fatalf("%s winner path = %q, want child path", name, artifact.RegistryPath)
+		}
+	}
+	if byName["genai-airflow"].Selected {
+		t.Fatal("genai-airflow should remain available")
+	}
+	if !byName["genai-atlassian"].Selected {
+		t.Fatal("genai-atlassian should remain selected")
+	}
+}
+
 func TestResolveDeduplicatePrefersHigherPrecedence(t *testing.T) {
 	global := &config.Config{
 		Registries: []config.RegistryEntry{

@@ -776,6 +776,63 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	return resolved, errs
 }
 
+type CatalogArtifact struct {
+	ResolvedArtifact
+	Selected bool
+}
+
+func ResolveCatalogView(cfg *config.Config, catalogs map[string][]catalog.Entry, resolved []ResolvedArtifact) []CatalogArtifact {
+	if cfg == nil {
+		return nil
+	}
+
+	selectedResources := make(map[resourceSelection]struct{}, len(resolved))
+	view := make([]CatalogArtifact, 0, len(resolved))
+	for _, artifact := range resolved {
+		key := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
+		if _, duplicate := selectedResources[key]; duplicate {
+			continue
+		}
+		selectedResources[key] = struct{}{}
+		view = append(view, CatalogArtifact{ResolvedArtifact: artifact, Selected: true})
+	}
+
+	occurrences := make(map[resourceSelection][]skillOccurrence)
+	order := 0
+	for entryIndex, entry := range cfg.Registries {
+		entries, ok := catalogs[entry.CatalogKey]
+		if !ok {
+			continue
+		}
+		seen := make(map[resourceSelection]struct{}, len(entries))
+		for _, candidate := range entries {
+			name := strings.TrimSpace(candidate.Name)
+			key := resourceSelection{kind: candidate.Kind, name: name}
+			if name == "" {
+				continue
+			}
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			occurrences[key] = append(occurrences[key], newSkillOccurrence(entry, entryIndex, candidate, nil, harnessTargetsFromEntry(entry), order))
+			order++
+		}
+	}
+
+	filterShadowedOccurrences(occurrences, cfg.Registries)
+	winners, _ := pickWinnersReporting(occurrences, false)
+	for _, winner := range winners {
+		artifact := winner.resolved
+		key := resourceSelection{kind: artifact.Kind, name: strings.TrimSpace(artifact.Name)}
+		if _, selected := selectedResources[key]; selected {
+			continue
+		}
+		view = append(view, CatalogArtifact{ResolvedArtifact: artifact})
+	}
+	return view
+}
+
 func validateRequirements(resolved []ResolvedArtifact) []error {
 	firstRequirementIndex := -1
 	var firstRequirements []catalog.Requirement
@@ -1853,6 +1910,25 @@ func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSe
 	}
 }
 
+func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate catalog.Entry, resources map[string]map[string]ir.Resource, harnessTargets []hcc.Target, order int) skillOccurrence {
+	return skillOccurrence{
+		resolved: ResolvedArtifact{
+			Entry:          attachResource(candidate, resources, entry.CatalogKey),
+			RegistryURL:    entry.URL,
+			RegistryPath:   normalizedEntryPath(entry.Path),
+			Ref:            entry.Ref,
+			Source:         entry.Source,
+			FilePrecedence: entry.FilePrecedence,
+			Required:       entry.Required,
+			CatalogKey:     entry.CatalogKey,
+			Harnesses:      harnessTargets,
+		},
+		source: config.RegistrySelectionKey(entry, entryIndex),
+		url:    entry.URL,
+		order:  order,
+	}
+}
+
 // buildOccurrences iterates over registry entries and catalogs to build a map
 // of skill occurrences keyed by (kind, name).
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
@@ -1929,22 +2005,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				continue
 			}
 
-			occurrencesByName[selected] = append(occurrencesByName[selected], skillOccurrence{
-				resolved: ResolvedArtifact{
-					Entry:          attachResource(selectedSkill, resources, catalogKey),
-					RegistryURL:    entry.URL,
-					RegistryPath:   normalizedEntryPath(entry.Path),
-					Ref:            entry.Ref,
-					Source:         entry.Source,
-					FilePrecedence: entry.FilePrecedence,
-					Required:       entry.Required,
-					CatalogKey:     entry.CatalogKey,
-					Harnesses:      harnessTargets,
-				},
-				source: config.RegistrySelectionKey(entry, entryIndex),
-				url:    entry.URL,
-				order:  order,
-			})
+			occurrencesByName[selected] = append(occurrencesByName[selected], newSkillOccurrence(entry, entryIndex, selectedSkill, resources, harnessTargets, order))
 			order++
 		}
 	}
@@ -1982,6 +2043,10 @@ func newNameCollisionWarning(winner skillOccurrence, occurrences []skillOccurren
 // pickWinners deduplicates occurrences and detects multi-registry collisions.
 // Returns the winning occurrences in insertion order.
 func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]skillOccurrence, []error) {
+	return pickWinnersReporting(occurrencesByName, true)
+}
+
+func pickWinnersReporting(occurrencesByName map[resourceSelection][]skillOccurrence, reportCollisions bool) ([]skillOccurrence, []error) {
 	var errs []error
 	winners := make([]skillOccurrence, 0, len(occurrencesByName))
 
@@ -2005,9 +2070,11 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			// Pick a deterministic winner instead of skipping the resource.
 			// Precedence: required > higher source precedence > alphabetically-first URL.
 			winner := pickCollisionWinner(deduped)
-			warning := newNameCollisionWarning(winner, occurrences)
-			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-			errs = append(errs, warning)
+			if reportCollisions {
+				warning := newNameCollisionWarning(winner, occurrences)
+				slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+				errs = append(errs, warning)
+			}
 			winners = append(winners, winner)
 			continue
 		}
@@ -2025,12 +2092,14 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 		if len(deduped) > 1 && scopesSeparated(deduped) {
 			winners = append(winners, deduped...)
 			// Classify all occurrences, including paths deduplicated for output.
-			for _, group := range groupByScope(occurrences) {
-				if len(group) > 1 && pathsDiffer(group) {
-					winner := pickCollisionWinner(group)
-					warning := newNameCollisionWarning(winner, group)
-					slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-					errs = append(errs, warning)
+			if reportCollisions {
+				for _, group := range groupByScope(occurrences) {
+					if len(group) > 1 && pathsDiffer(group) {
+						winner := pickCollisionWinner(group)
+						warning := newNameCollisionWarning(winner, group)
+						slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+						errs = append(errs, warning)
+					}
 				}
 			}
 		} else if len(deduped) > 1 && pathsDiffer(deduped) {
@@ -2041,10 +2110,12 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			// status/TUI, but emit a warning since the materializer can
 			// only install one to the shared target directory.
 			winners = append(winners, deduped...)
-			winner := pickCollisionWinner(deduped)
-			warning := newNameCollisionWarning(winner, occurrences)
-			slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
-			errs = append(errs, warning)
+			if reportCollisions {
+				winner := pickCollisionWinner(deduped)
+				warning := newNameCollisionWarning(winner, occurrences)
+				slog.Warn("resource collision resolved", "kind", warning.Kind.String(), "name", warning.Name, "winner", warning.Winner, "runners_up", warning.RunnersUp)
+				errs = append(errs, warning)
+			}
 		} else {
 			winners = append(winners, deduped[0])
 		}

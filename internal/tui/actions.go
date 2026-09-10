@@ -647,50 +647,41 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		})
 	}
 
-	// Add available skills not in resolved, iterating per-registry so each
-	// occurrence gets its correct registry URL.
-	if cfg != nil {
-		for i := range cfg.Registries {
-			entry := &cfg.Registries[i]
-			cat, ok := catalogs[entry.CatalogKey]
-			if !ok {
-				continue
-			}
-			for _, s := range cat.Entries {
-				key := skill.ResourceKey(s.Kind, s.Name)
-				seenKey := key + "\x01" + entry.CatalogKey
-				if _, dup := seen[seenKey]; dup {
-					continue
-				}
-				seen[seenKey] = struct{}{}
-
-				excludedLocally := localScopedContains(localExcluded, localExcludedAny, skill.ResourceKey(s.Kind, s.Name), entry.CatalogKey)
-
-				var harnessSource string
-				if val, ok := harnessSourceBySeenKey[seenKey]; ok {
-					harnessSource = val
-				} else {
-					harnessSource = harnessSourceByKeyURL[key+"\x01"+entry.URL]
-				}
-
-				rows = append(rows, row{
-					Artifact: resolver.ResolvedArtifact{
-						Entry:       s,
-						RegistryURL: entry.URL,
-						CatalogKey:  entry.CatalogKey,
-					},
-					IsAvailable:     true,
-					IsExcluded:      excludedLocally,
-					ExcludedLocally: excludedLocally,
-					RegistryURL:     entry.URL,
-					RegistryName:    registryDisplayName(entry.URL),
-					RegistryPath:    registryEntryPathFor(entry),
-					RegistryRef:     registryEntryRefFor(entry),
-					Harnesses:       append([]string(nil), entry.Harnesses...),
-					HarnessSource:   harnessSource,
-				})
-			}
+	// Add available skills not in resolved, using the resolver's collision
+	// winners so the catalog view matches materialization selection.
+	for _, available := range resolver.ResolveCatalogView(cfg, entriesFromCatalogs(catalogs), resolved) {
+		if available.Selected {
+			continue
 		}
+		s := available.ResolvedArtifact
+		key := skill.ResourceKey(s.Kind, s.Name)
+		seenKey := key + "\x01" + s.CatalogKey
+		if _, dup := seen[seenKey]; dup {
+			continue
+		}
+		seen[seenKey] = struct{}{}
+
+		excludedLocally := localScopedContains(localExcluded, localExcludedAny, key, s.CatalogKey)
+
+		var harnessSource string
+		if val, ok := harnessSourceBySeenKey[seenKey]; ok {
+			harnessSource = val
+		} else {
+			harnessSource = harnessSourceByKeyURL[key+"\x01"+s.RegistryURL]
+		}
+
+		rows = append(rows, row{
+			Artifact:        s,
+			IsAvailable:     true,
+			IsExcluded:      excludedLocally,
+			ExcludedLocally: excludedLocally,
+			RegistryURL:     s.RegistryURL,
+			RegistryName:    registryDisplayName(s.RegistryURL),
+			RegistryPath:    s.RegistryPath,
+			RegistryRef:     s.Ref,
+			Harnesses:       targetsToHarnesses(s.Harnesses),
+			HarnessSource:   harnessSource,
+		})
 	}
 
 	// Add malformed skills. Deduplicate by (catalogKey, DirName) so

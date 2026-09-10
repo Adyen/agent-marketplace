@@ -472,6 +472,54 @@ func TestBuildRowsLocalCollectionMembersEnabled(t *testing.T) {
 	}
 }
 
+func TestBuildRowsUsesResolverCatalogWinners(t *testing.T) {
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{
+				URL: "git@example.com:awesome-ai.git", Ref: "main", Path: "teams", Source: config.Organization, CatalogKey: "parent",
+				MCP: ks("genai-atlassian"),
+			},
+			{
+				URL: "git@example.com:awesome-ai", Ref: "main", Path: "teams/common/genai", Source: config.UserPersonal, CatalogKey: "child",
+				MCP: ks("genai-atlassian"),
+			},
+		},
+	}
+	entries := []pkgcatalog.Entry{
+		{Kind: ir.KindMcpServer, Name: "genai-airflow"},
+		{Kind: ir.KindMcpServer, Name: "genai-atlassian"},
+	}
+	catalogs := map[string]catalogInfo{
+		"parent": {Entries: entries},
+		"child":  {Entries: entries},
+	}
+	catalogEntries := entriesFromCatalogs(catalogs)
+	resolved, errs := resolver.Resolve(cfg, catalogEntries, nil)
+	if len(errs) != 0 {
+		t.Fatalf("Resolve() errors = %v, want none", errs)
+	}
+
+	rows := buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{})
+	if len(rows) != 2 {
+		t.Fatalf("buildRows() returned %d rows, want 2: %#v", len(rows), rows)
+	}
+	byName := make(map[string]row, len(rows))
+	for _, candidate := range rows {
+		byName[candidate.Artifact.Name] = candidate
+	}
+	if !byName["genai-airflow"].IsAvailable {
+		t.Fatalf("genai-airflow row = %#v, want available", byName["genai-airflow"])
+	}
+	if byName["genai-atlassian"].IsAvailable {
+		t.Fatalf("genai-atlassian row = %#v, want enabled", byName["genai-atlassian"])
+	}
+	for _, name := range []string{"genai-airflow", "genai-atlassian"} {
+		if got := byName[name].RegistryPath; got != "teams/common/genai" {
+			t.Fatalf("%s registry path = %q, want child path", name, got)
+		}
+	}
+}
+
 func TestBuildRowsIncludesAllResourceKinds(t *testing.T) {
 	cfg := &config.Config{
 		Registries: []config.RegistryEntry{
@@ -889,7 +937,7 @@ func testTargets(names ...string) []hcc.Target {
 	return targets
 }
 
-func TestBuildRowsShowsSameNameSkillFromDifferentRegistries(t *testing.T) {
+func TestBuildRowsUsesSelectedResolverWinnerAcrossRegistries(t *testing.T) {
 	cfg := &config.Config{
 		Registries: []config.RegistryEntry{
 			{
@@ -923,37 +971,21 @@ func TestBuildRowsShowsSameNameSkillFromDifferentRegistries(t *testing.T) {
 
 	rows := buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{})
 
-	// Both smith entries should appear: one enabled (from primary), one
-	// available (from local smith repo).
-	smithRows := make([]row, 0, 2)
+	// The selected resolver winner should suppress the available runner-up.
+	smithRows := make([]row, 0, 1)
 	for _, r := range rows {
 		if r.Artifact.Name == "smith" {
 			smithRows = append(smithRows, r)
 		}
 	}
-	if len(smithRows) != 2 {
-		t.Fatalf("expected 2 smith rows (one per registry), got %d: %+v", len(smithRows), smithRows)
+	if len(smithRows) != 1 {
+		t.Fatalf("expected 1 smith resolver winner, got %d: %+v", len(smithRows), smithRows)
 	}
-
-	byRegistry := make(map[string]row, len(smithRows))
-	for _, r := range smithRows {
-		byRegistry[r.RegistryName] = r
+	if smithRows[0].RegistryName != "primary" {
+		t.Fatalf("smith registry = %q, want primary", smithRows[0].RegistryName)
 	}
-
-	primary, ok := byRegistry["primary"]
-	if !ok {
-		t.Fatal("missing smith row from primary registry")
-	}
-	if primary.IsAvailable {
-		t.Fatalf("primary smith should be enabled, got available")
-	}
-
-	local, ok := byRegistry["smith"]
-	if !ok {
-		t.Fatal("missing smith row from local smith registry")
-	}
-	if !local.IsAvailable {
-		t.Fatalf("local smith should be available, got enabled")
+	if smithRows[0].IsAvailable {
+		t.Fatal("primary smith should be enabled, got available")
 	}
 }
 
@@ -993,34 +1025,25 @@ func TestBuildRowsEnablementFlagsScopedByRegistry(t *testing.T) {
 
 	rows := buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{})
 
-	smithRows := make([]row, 0, 2)
+	smithRows := make([]row, 0, 1)
 	for _, r := range rows {
 		if r.Artifact.Name == "smith" {
 			smithRows = append(smithRows, r)
 		}
 	}
-	if len(smithRows) != 2 {
-		t.Fatalf("expected 2 smith rows, got %d", len(smithRows))
+	if len(smithRows) != 1 {
+		t.Fatalf("expected 1 smith resolver winner, got %d", len(smithRows))
 	}
 
-	for _, r := range smithRows {
-		if r.RegistryURL == "git@example.com:org/global.git" {
-			// Global smith: EnabledGlobal=true, EnabledProject=false
-			if !r.EnabledGlobal {
-				t.Fatalf("global smith should be EnabledGlobal=true")
-			}
-			if r.EnabledProject {
-				t.Fatalf("global smith should be EnabledProject=false (cross-contamination)")
-			}
-		}
-		if r.RegistryURL == "git@example.com:org/project.git" {
-			// Project smith (available): both flags false
-			if r.EnabledGlobal {
-				t.Fatalf("available project smith should be EnabledGlobal=false (cross-contamination)")
-			}
-			if r.EnabledProject {
-				t.Fatalf("available project smith should be EnabledProject=false")
-			}
-		}
+	winner := smithRows[0]
+	if winner.RegistryURL != "git@example.com:org/global.git" {
+		t.Fatalf("smith registry = %q, want selected global registry", winner.RegistryURL)
+	}
+	// Global smith: EnabledGlobal=true, EnabledProject=false
+	if !winner.EnabledGlobal {
+		t.Fatal("global smith should be EnabledGlobal=true")
+	}
+	if winner.EnabledProject {
+		t.Fatal("global smith should be EnabledProject=false (cross-contamination)")
 	}
 }
