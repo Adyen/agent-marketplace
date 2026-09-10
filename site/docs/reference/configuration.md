@@ -149,7 +149,7 @@ V4 replaces `registries` and per-kind top-level selectors with named `sources` a
 
 ### V4 resource groups
 
-A resource group may be compact or expanded with `include`, `exclude`, `tags`, `all`, `required`, and `harnesses`. Named `include` and `exclude` decisions accumulate across fragments; presence-aware policy fields such as `tags: []` and `harnesses: []` explicitly replace inherited values. `required: true` protects selections but selects nothing by itself; ordered exclusions can be overridden by a later explicit include.
+A resource group may be compact or expanded with `include`, `exclude`, `tags`, `all`, `registries`, `required`, and `harnesses`. `registries` is valid only for Marketplace sources and is required with a non-empty list when `all: true` or non-empty `tags` would otherwise select dynamically. Named `include` and `exclude` decisions accumulate across fragments; presence-aware policy fields such as `tags: []` and `harnesses: []` explicitly replace inherited values. `required: true` protects selections but selects nothing by itself; ordered exclusions can be overridden by a later explicit include.
 
 ### `harnesses`
 
