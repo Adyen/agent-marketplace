@@ -15,7 +15,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/google/licensecheck v0.3.1
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
