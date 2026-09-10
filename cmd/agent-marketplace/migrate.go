@@ -39,9 +39,11 @@ Migration is transactional: all inputs are validated before any file is
 written. Configs that contain legacy identity or team_profiles fields are
 refused without modification.
 
-Use --to v4 for explicit lossless source/resource migration. V4 migration
-validates all writable layers by default, supports --scope and --dry-run, and
-never edits organization configuration or lockfiles.`,
+Use --to v4 for explicit semantic/selection-preserving source/resource
+migration. It regenerates canonical v4 YAML and does not promise authored
+comments or formatting. V4 migration validates all writable layers by default,
+supports --scope and --dry-run, and never edits organization configuration or
+lockfiles.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if targetVersion == "" {
 				return runMigrate(cmd.OutOrStdout(), os.Stdin, harnesses)

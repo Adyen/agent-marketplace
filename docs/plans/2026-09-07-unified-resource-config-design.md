@@ -1,6 +1,6 @@
 # Unified resource configuration design
 
-**Status:** Implemented slice with remaining Marketplace lock proposals. The repository now implements strict v4 parsing and include composition, Git/directory runtime adaptation, and explicit legacy migration; hosted Marketplace acquisition remains unsupported at runtime until the lock extension described below is available.
+**Status:** Implemented slice with remaining Marketplace lock proposals. The repository now implements strict v4 parsing and include composition, Git/directory runtime adaptation, and explicit semantic/selection-preserving migration for representable standalone legacy files. Migration regenerates canonical v4 YAML and does not promise authored comments or formatting. Hosted Marketplace acquisition remains unsupported at runtime until the lock extension described below is available.
 
 **Prerequisite:** Hosted Marketplace consumer functionality still requires the layer-owned lock extension described below. The lockfile baseline inspected for this design is historical context for that remaining proposal.
 
@@ -106,7 +106,7 @@ V4 roots include `config.local.yaml`; they carry the version explicitly. Unversi
 
 V4 rejects legacy top-level `registries`, `marketplaces`, `skills`, `commands`, `subagents`, `hooks`, `mcp`, `collections`, and `tags`. It also rejects nested legacy selectors inside source declarations. A document cannot mix both installation schemas.
 
-Unknown keys, duplicate mapping keys, wrong node types, multiple YAML documents, and malformed resource items are errors. YAML merge keys or aliases must not provide an alternative include or override mechanism. Config serialization remains comment-preserving and node-based.
+Unknown keys, duplicate mapping keys, wrong node types, multiple YAML documents, and malformed resource items are errors. YAML merge keys or aliases must not provide an alternative include or override mechanism. Node-based parsing supports semantic editing; explicit v4 migration is a canonical YAML regeneration and does not promise authored comments or formatting.
 
 ## 3. Source declarations
 
@@ -180,7 +180,7 @@ The expanded group accepts the following fields. `required`, `harnesses`, and th
 
 Omitted fields express no override during include composition. An explicit empty `tags` list disables inherited tag selection. An explicit `all: false` disables inherited all-selection. Neither removes inherited named requests. An explicit empty `harnesses` list selects no targets.
 
-`required` is selection protection, not a selection expression: `required: true` alone selects nothing in v4. Legacy implicit all-selection is translated to explicit `all: true` during a lossless migration. Required selections remain immune to exclusions and consumer removal under the existing authority rules.
+`required` is selection protection, not a selection expression: `required: true` alone selects nothing in v4. Legacy implicit all-selection is translated to explicit `all: true` during a semantic/selection-preserving migration. Required selections remain immune to exclusions and consumer removal under the existing authority rules.
 
 There is no v4 `default` field. Its legacy selection effect is represented by the appropriate explicit selectors, without adding mandatory protection.
 
@@ -337,7 +337,7 @@ Reconciliation verifies every new artifact and collection member before publishi
 
 ## 7. Command and editor behavior
 
-The Git/directory parser, adapter, include composition, and explicit migration rows below are implemented behavior; hosted Marketplace rows remain proposed until their lock extension ships.
+The Git/directory parser, adapter, include composition, and representable standalone migration rows below are implemented behavior; hosted Marketplace rows and unsupported migration constructs remain proposed or refused until their lock extension and conversion rules ship.
 
 | Operation | Required behavior |
 |---|---|
@@ -350,12 +350,12 @@ The Git/directory parser, adapter, include composition, and explicit migration r
 | `update` / lock upgrade | Advance eligible unpinned resolutions and dynamic memberships; retain explicit exact constraints and immutable identity bindings |
 | `update --bump` | Existing Git ref-bump behavior through the config-plus-lock transaction; no implicit release of Marketplace exact revision constraints |
 | `list`, `status`, automatic TUI refresh | Use existing exact lock views without advancing dependencies; surface config/lock errors distinctly from output drift |
-| `migrate --to v4 --scope <scope> --dry-run` | Preview the selected layer's representable config transformation and lock reuse, with no writes or acquisition |
-| `migrate --to v4 --scope <scope>` | Explicit lossless conversion and transactional publication; no content upgrade |
+| `migrate --to v4 --scope <scope> --dry-run` | Preview the selected layer's representable semantic/selection-preserving config transformation, with no writes, lock changes, or acquisition |
+| `migrate --to v4 --scope <scope>` | Explicit semantic/selection-preserving conversion to canonical v4 YAML and transactional publication; no content upgrade or authored comment/formatting guarantee |
 
 Removing an exact `revision` constraint is an explicit config edit or future dedicated operation, not an interpretation of ordinary `update`.
 
-CLI and TUI share one resource-request editor and normalization pipeline. They do not independently implement Git and Marketplace selection rules. Serialization chooses compact groups and string items where possible, retaining authored expanded forms and comments rather than repeatedly normalizing the entire document on each edit.
+CLI and TUI share one resource-request editor and normalization pipeline. They do not independently implement Git and Marketplace selection rules. Editor serialization chooses compact groups and string items where possible, retaining authored expanded forms and comments rather than repeatedly normalizing the entire document on each edit. This editor behavior does not extend to migration, which regenerates canonical v4 YAML without promising authored comments or formatting.
 
 Existing legacy files retain their legacy editing behavior until migration. A legacy operation that cannot represent new functionality returns a migration-required diagnostic. Interactive UX may offer migration, but no rewritten v4 file is published without affirmative consent. Noninteractive execution never migrates incidentally.
 
@@ -376,9 +376,9 @@ Existing legacy files retain their legacy editing behavior until migration. A le
 
 The existing default behavior of `migrate` is not silently repurposed. The new format migration is named explicitly through `--to v4`. No deprecation deadline or automatic v2/v3 removal is part of this design.
 
-### 8.2 Lossless conversion rules
+### 8.2 Semantic and selection-preserving conversion rules
 
-Migration works from authored declarations and selector expressions, not a list of currently materialized resources.
+Migration works from authored declarations and selector expressions, not a list of currently materialized resources. This is semantic/selection losslessness, not byte or presentation losslessness: migration regenerates canonical v4 YAML and does not promise to preserve authored comments or formatting.
 
 - Each legacy Git/directory entry becomes a named source plus a resource group. Source names are stable for the preview and committed transformation; generated names must be unique and readable, with deterministic suffixes when needed.
 - Legacy per-kind named selections become typed locators. Collections remain collection requests, not enumerated leaves.
@@ -386,13 +386,13 @@ Migration works from authored declarations and selector expressions, not a list 
 - Legacy `required` protection becomes `required: true`. Legacy implicit all-selection becomes `all: true` only when the old resolver would actually auto-select all. A legacy `default: true` with explicit named/tag selection is not mechanically rewritten to all-selection.
 - Legacy named exclusions become locators; kind/source `exclude_all` becomes the corresponding bounded exclusion pattern where that preserves behavior.
 - Top-level selectors applying to several legacy sources are translated as source-qualified expressions without choosing today's collision winner as the only surviving provider.
-- Source roots, requested refs, source layouts, target restrictions, authority, scope, stable collision order, and comments remain intact. A transformation that cannot preserve them is refused.
-- Existing Git lock records are matched by normalized acquisition requirements and reused byte-for-byte where possible. No branch/tag resolution, Git fetch, or Marketplace latest lookup is part of a format-only migration.
+- Source roots, requested refs, source layouts, target restrictions, authority, scope, stable collision order, and selection semantics remain intact. A transformation that cannot preserve them is refused. Authored comments and formatting are not part of this guarantee because migration regenerates canonical v4 YAML.
+- The implemented migration does not read, write, or reconcile lock records. No branch/tag resolution, Git fetch, or Marketplace latest lookup is part of this format-only migration; lock-aware reuse remains a future extension.
 - Local directories remain live. Migration must not snapshot them or turn them into lockable Git sources.
 
 The initial automatic migration must refuse include trees or policy combinations for which an equivalent, provenance-preserving transformation has not been implemented and tested. In particular, it must not flatten includes into the root or edit included files merely to complete the conversion. The diagnostic lists the files/constructs requiring a separately reviewed conversion; the legacy config continues to work unchanged.
 
-A failed migration leaves config and lock unchanged. Config and required lock-format changes use #123's dependency transaction and recovery guarantees. A missing/stale lock that would require acquisition is diagnosed as a prerequisite rather than resolved implicitly by migration.
+A failed migration leaves config unchanged, and the implemented migration leaves lockfiles untouched. Any future config-plus-lock migration must use #123's dependency transaction and recovery guarantees. A missing/stale lock that would require acquisition is diagnosed as a prerequisite rather than resolved implicitly by this format-only migration.
 
 ### 8.3 Unreleased Marketplace pin format
 
@@ -406,7 +406,7 @@ Legacy-reader support is an adapter into one internal requirement model, not per
 
 ### 9.1 Required diagnostic distinctions
 
-Stable codes must distinguish at least: unsupported schema; legacy/new key mixing; unknown field; invalid source declaration; undefined source name; conflicting included source definitions; invalid locator/options; duplicate resource request; unbounded Marketplace dynamic selector; invalid exclusion pattern; missing/stale/corrupt lock; identity mismatch; incomplete selector enumeration; unsupported lossless migration; and consent required.
+Stable codes must distinguish at least: unsupported schema; legacy/new key mixing; unknown field; invalid source declaration; undefined source name; conflicting included source definitions; invalid locator/options; duplicate resource request; unbounded Marketplace dynamic selector; invalid exclusion pattern; missing/stale/corrupt lock; identity mismatch; incomplete selector enumeration; unsupported semantic migration; and consent required.
 
 Diagnostics identify the owning layer, declaring file, source name, and resource locator where applicable. They do not expose credentials or suggest unsafe mutable fallback. Scope/required/collision diagnostics retain existing behavior rather than being replaced by generic config errors.
 
@@ -423,18 +423,18 @@ Diagnostics identify the owning layer, declaring file, source name, and resource
 | Collections | Direct plus collection selection, shared/nested members, removal of one reason, leaf exclusions, exact constraints, conflicting revisions, mirror/index-only mixed members |
 | Locks | Git v1 reuse, hosted-version refusal by old readers, no user-wide merged lock, live directories excluded, exact-constraint retention, presentation-only changes not upgrading content |
 | Transactions | Failure before publication, split-publication recovery, rollback, concurrent config edits, immutable-cache leases and GC reachability |
-| Migration | Positive legacy examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic alias generation, byte-preserved content pins |
+| Migration | Positive legacy examples plus empty overrides, defaults/tags/required, per-kind excludes, collisions, refused include conversion, deterministic alias generation, semantic/selection-preserving content |
 | End to end | Isolated install/remove/update/check/migrate workflows across all writable scopes; no developer-home or live organization dependencies |
 
 Parser/editor/resolver tests must assert independently authored expected results, not compare one production normalization helper with itself. Golden tests cover config edits and generated lock bytes. Relevant hot-path changes need baseline/post-change benchmarks. The implemented parser/adapter and migration slice is covered by the repository tests; hosted Marketplace acceptance remains pending its lock extension.
 
 ## 10. Integration boundaries and release conditions
 
-Implementation depends on these boundaries, in order:
+Implementation depends on these boundaries, in order. The current repository implements the Git/directory portions of the first three boundaries and the semantic/selection-preserving migration for representable standalone inputs; hosted Marketplace boundaries remain pending:
 
 1. Merge #123 without broadening its Git-only scope.
 2. Add v4 parsing, a source-bound requirement model, and a legacy normalization adapter with semantic-equivalence tests.
-3. Add shared node-level editors and explicit, lossless migration. Legacy config writes remain supported.
+3. Add shared node-level editors and explicit semantic/selection-preserving migration for representable standalone inputs. Migration regenerates canonical v4 YAML rather than promising authored comments or formatting; legacy config writes remain supported.
 4. Specify and implement the versioned hosted lock codec, identity bindings, selector snapshots, and acquisition adapters on #123's transaction/lease lifecycle.
 5. Route Marketplace installs and all CLI/TUI config edits through the common model; remove generated pin bookkeeping from new config writes.
 6. Release Marketplace consumer functionality only when its config, lock, consent, collection, update, check, and GC paths operate together.

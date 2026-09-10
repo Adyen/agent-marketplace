@@ -156,13 +156,13 @@ func TestMigrateConfigFilesToV4ValidatesAlreadyV4LayerFieldsBeforePublishing(t *
 	}
 }
 
-func TestMigrateConfigFilesToV4PreservesTenRegistryOrderAndPolicies(t *testing.T) {
+func TestMigrateConfigFilesToV4PreservesHundredRegistryOrderAndPolicies(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	var input strings.Builder
 	input.WriteString("apiVersion: agent-marketplace/v2\nregistries:\n")
-	for i := 1; i <= 10; i++ {
-		fmt.Fprintf(&input, "  - url: https://example.test/registry-%02d.git\n    ref: main\n    required: %t\n    skills: {include: [shared]}\n", i, i == 10)
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&input, "  - url: https://example.test/registry-%03d.git\n    ref: main\n    required: %t\n    skills: {include: [shared]}\n", i, i == 100)
 	}
 	writeV2Config(t, path, input.String())
 
@@ -177,16 +177,19 @@ func TestMigrateConfigFilesToV4PreservesTenRegistryOrderAndPolicies(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(legacy.Registries), 10; got != want {
+	if got, want := len(legacy.Registries), 100; got != want {
 		t.Fatalf("registry count = %d, want %d", got, want)
 	}
 	for i, entry := range legacy.Registries {
-		wantURL := fmt.Sprintf("https://example.test/registry-%02d.git", i+1)
+		wantURL := fmt.Sprintf("https://example.test/registry-%03d.git", i+1)
 		if entry.URL != wantURL {
 			t.Fatalf("registry[%d] URL = %q, want %q", i, entry.URL, wantURL)
 		}
-		if entry.Required != (i == 9) {
-			t.Fatalf("registry[%d] required = %t, want %t", i, entry.Required, i == 9)
+		if entry.Required != (i == 99) {
+			t.Fatalf("registry[%d] required = %t, want %t", i, entry.Required, i == 99)
+		}
+		if got := entry.Skills.Include; len(got) != 1 || got[0] != "shared" {
+			t.Fatalf("registry[%d] collision selection = %v, want [shared]", i, got)
 		}
 	}
 }

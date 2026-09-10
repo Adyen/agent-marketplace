@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -674,8 +675,10 @@ type v4MigrationInput struct {
 	cfg  *Config
 }
 
-// MigrateConfigFilesToV4 performs the explicitly requested, lossless legacy
-// conversion. It never reads or writes organization configuration and never
+// MigrateConfigFilesToV4 performs the explicitly requested semantic and
+// selection-preserving legacy conversion for representable inputs. It
+// regenerates canonical v4 YAML and does not promise authored comments or
+// formatting. It never reads or writes organization configuration and never
 // changes locks. Every selected file is parsed and converted before any temp
 // file is published; unsupported constructs therefore leave all inputs intact.
 func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun bool) (*V4MigrationResult, error) {
@@ -730,7 +733,7 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 			return nil, v4err("v4.migration-unsupported", item.path, 0, "include trees cannot be converted without editing included files")
 		}
 		if len(cfg.Marketplaces) > 0 {
-			return nil, v4err("v4.migration-marketplace", item.path, 0, "Marketplace selections have no lossless pin provenance")
+			return nil, v4err("v4.migration-marketplace", item.path, 0, "Marketplace selections have no semantically lossless pin provenance")
 		}
 		inputs = append(inputs, v4MigrationInput{name: item.name, path: item.path, kind: item.kind, mode: info.Mode().Perm(), cfg: cfg})
 	}
@@ -904,9 +907,10 @@ func markV4MigrationResult(result *V4MigrationResult, name string) {
 
 func encodeV4Migration(cfg *Config, configPath string, kind layerKind) ([]byte, error) {
 	doc := v4MigrationDocument{APIVersion: APIVersionV4, Sources: map[string]v4MigrationSource{}, Resources: map[string]v4MigrationGroup{}, Harnesses: append([]string(nil), cfg.Harnesses...), AllowedRegistries: cfg.AllowedRegistries, AllowedMarketplaces: cfg.AllowedMarketplaces, Backup: cfg.Backup, Logging: cfg.Logging, Telemetry: cfg.Telemetry, Materialization: cfg.Materialization}
+	registryCount := len(cfg.Registries)
 	for index, original := range cfg.Registries {
 		entry := resolveRegistryEntry(cfg, original)
-		name := v4MigrationSourceName(index)
+		name := v4MigrationSourceName(index, registryCount)
 		source := v4MigrationSource{Ref: entry.Ref, Path: NormalizeRegistryPath(entry.Path), SourceHarness: entry.SourceHarness}
 		if entry.IsLocal() {
 			if kind == userLayer && entry.IsRepoRelativeLocal() {
@@ -988,14 +992,15 @@ func legacyLocalBase(configPath string, kind layerKind) string {
 	return filepath.Dir(filepath.Dir(configPath))
 }
 
-func v4MigrationSourceName(index int) string {
+func v4MigrationSourceName(index, registryCount int) string {
 	if index == 0 {
 		return "registry"
 	}
-	// YAML mappings are serialized in key order. Pad generated suffixes so
-	// ToLegacyConfig's deterministic source traversal retains authored order
-	// for migrations with ten or more registries.
-	return fmt.Sprintf("registry-%02d", index+1)
+	// YAML mappings are serialized in key order. Pad generated suffixes to the
+	// width of the total registry count so ToLegacyConfig's deterministic source
+	// traversal retains authored order for any registry count.
+	width := len(strconv.Itoa(registryCount))
+	return fmt.Sprintf("registry-%0*d", width, index+1)
 }
 
 func v4ResourceKindName(kind ir.ResourceKind) string {
