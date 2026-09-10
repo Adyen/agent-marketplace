@@ -151,6 +151,8 @@ V4 replaces `registries` and per-kind top-level selectors with named `sources` a
 
 A resource group may be compact or expanded with `include`, `exclude`, `tags`, `all`, `registries`, `required`, and `harnesses`. `registries` is valid only for Marketplace sources and is required with a non-empty list when `all: true` or non-empty `tags` would otherwise select dynamically. Named `include` and `exclude` decisions accumulate across fragments; presence-aware policy fields such as `tags: []` and `harnesses: []` explicitly replace inherited values. `required: true` protects selections but selects nothing by itself; ordered exclusions can be overridden by a later explicit include.
 
+Resource items may use an options mapping with `as` or Marketplace-only `revision`. The current legacy runtime rejects non-default `as` aliases with `v4.runtime-option` rather than silently materializing under the wrong name; aliases are therefore parser-valid but not a supported Git/directory runtime feature in this slice.
+
 ### `harnesses`
 
 Supported targets are:
