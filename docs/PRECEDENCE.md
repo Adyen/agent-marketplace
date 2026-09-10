@@ -45,7 +45,15 @@ When `url` is omitted, a registry entry uses `path` as its location alias (for e
 
 Conversion is fail-closed. The migrator refuses a legacy include tree because flattening it or editing its fragments would change provenance, and refuses legacy hosted Marketplace selections when their pin provenance cannot be proven. It also refuses any source, selector, or policy that cannot be represented without semantic loss. A refusal or validation failure publishes none of the selected files; the legacy configuration remains usable unchanged.
 
-V4 roots are read-compatible with normal CLI discovery, status, and synchronization for Git and directory sources. Marketplace sources are parsed, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. Legacy configuration writers do not rewrite v4 roots into the legacy shape; they return `v4.writer-opt-in`. Edit v4 source/resource declarations directly; this keeps normal installs, removals, and other legacy edits from silently destroying them.
+V4 roots are read-compatible with normal CLI discovery, status, and synchronization for Git and directory sources. Source kinds are explicit: use `git`, `directory`, or `marketplace`; a live directory is not inferred from a `.git` suffix. Directory sources resolve relative to the declaring config file, remain live and unlocked, and do not accept Git-only `ref` or `path` fields. Marketplace sources are parsed, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. Legacy configuration writers return `v4.writer-opt-in` instead of rewriting v4 roots.
+
+When an effective configuration is reloaded during a staged edit, v4 roots and includes are read from supplied in-memory overlays while retaining their canonical paths and provenance. The overlay is not written to disk.
+
+## V4 selection decision order
+
+Within a v4 resource group, decisions retain include-tree order: included fragments contribute first and the containing file contributes last. The runtime considers dynamic `all`/tag candidates, then applies the ordered stream. An exclusion suppresses matching selections except required resources; a later explicit include can re-enable the same resource.
+
+`required: true` protects selections but is not itself a selection expression, so a required-only group selects zero catalog resources. Explicit `tags: []` disables inherited tags, and `harnesses: []` selects no targets; both remain distinct from omitted fields.
 
 ## Layer order
 

@@ -307,7 +307,7 @@ Use the explicit v4 form to convert legacy source and resource declarations:
 agent-marketplace migrate --to v4 [--scope all|user|repo|local] [--dry-run]
 ```
 
-`--to v4` is the only migration target currently supported. The conversion is lossless or it does not publish: it validates every selected input, validates the generated v4 document with the normal v4 reader, and stages all output before replacing any file. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees and hosted Marketplace selections without proven pin provenance. A refusal leaves the selected configuration files unchanged.
+`--to v4` is the only migration target currently supported. The conversion is lossless or it does not publish: it validates every selected input and the generated v4 document with the normal v4 reader and runtime adapter. Publication preserves each original before replacing files, and rolls back already-published files if a later replacement fails. Temporary files and successful-publication backups are cleaned up. It refuses constructs whose meaning or provenance cannot be preserved, including legacy include trees and hosted Marketplace selections without proven pin provenance.
 
 By default, the explicit v4 form examines all writable layers: user (`~/.agents/config.yaml`), repository (`.agents/config.yaml`), and repository-personal (`.agents/config.local.yaml`). It never reads or writes organization configuration (`/etc/agent-marketplace/config.yaml`) and never changes lockfiles. Use `--scope` to select exactly one writable layer; a missing file in the selected scope is skipped. With `--dry-run`, validation and conversion run as a preview and no configuration file is written.
 
@@ -328,9 +328,9 @@ No legacy config files require v4 migration
 
 ### Reading and writing v4 configuration
 
-Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. V4 roots may use local include trees; a v4 root must declare v4, while an included fragment may omit `apiVersion`. Legacy v2/v3 keys are not valid in a v4 document, and a v4 document is not silently rewritten by normal commands. Marketplace sources are parsed as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available.
+Normal CLI readers accept a v4 root (`apiVersion: agent-marketplace/v4`) and adapt its Git/directory `sources` and `resources` model for normal discovery and synchronization. Source kinds are explicit, and directory sources are live, relative to the declaring file, and never acquire a Git lock. V4 roots may use local include trees; a root must declare v4, while an included fragment may omit `apiVersion`. Marketplace sources are parsed as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. Repository-personal v4 roots reject disallowed layer fields with `v4.layer-field`.
 
-Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate` without `--to v4` is not a v4 editor.
+Effective reloads used by staged configuration operations consume staged v4 root/include bytes through in-memory overlays while retaining canonical paths. Legacy config writers protect v4 files. Configuration-editing operations that use the legacy writer refuse with a `v4.writer-opt-in` diagnostic instead of rewriting a v4 root into the legacy shape. Edit the v4 source/resource declarations directly; `migrate` without `--to v4` is not a v4 editor.
 
 ## `convert`
 

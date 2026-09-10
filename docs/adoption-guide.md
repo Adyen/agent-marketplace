@@ -128,11 +128,11 @@ By default this validates the writable user, repository, and repository-personal
 agent-marketplace migrate --to v4 --scope repo
 ```
 
-Organization configuration is never touched, and the migration never changes lockfiles. A successful conversion writes `apiVersion: agent-marketplace/v4` with named `sources` and `resources`; normal CLI readers then consume Git/directory v4 roots for discovery, status, and synchronization. A Marketplace source is parsed, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. V4 roots and fragments must use the v4 document shape; legacy keys such as `registries`, `skills`, and `marketplaces` are not mixed into them.
+Organization configuration is never touched, and the migration never changes lockfiles. A successful conversion writes `apiVersion: agent-marketplace/v4` with named `sources` and `resources`; normal CLI readers then consume explicit Git/directory v4 roots for discovery, status, and synchronization. Use `directory` for live local content even when its name ends in `.git`; it is resolved from the declaring file, does not use a Git lock, and does not accept Git-only `ref` or `path`.
 
-The conversion is fail-closed and lossless. It refuses legacy `include` trees rather than flattening or editing their fragments, and refuses hosted Marketplace selections when their saved pin does not prove the provenance needed for a v4 request. Unsupported source or selector forms are also refused. Every selected input is validated before publication, so a failure leaves the legacy files unchanged. `--dry-run` performs these checks without writing.
+The conversion is fail-closed and lossless. It refuses legacy `include` trees, hosted Marketplace selections without proven pin provenance, and any unrepresentable selector or policy. It validates generated v4 documents with the normal runtime adapter before publication, preserves originals, and rolls back earlier replacements if a later replacement fails. `--dry-run` performs these checks without writing. The migrated model preserves ordered decisions, required-only zero selection, and explicit empty `tags: []`/`harnesses: []` overrides.
 
-After conversion, legacy configuration writers protect the v4 root: install/remove and other legacy edits return a `v4.writer-opt-in` diagnostic rather than rewriting v4 as legacy YAML. Edit the v4 source/resource declarations directly for subsequent changes.
+After conversion, legacy configuration writers return `v4.writer-opt-in` rather than rewriting v4 as legacy YAML. A repository-personal v4 root rejects disallowed `harnesses`, allowlists, `backup`, `logging`, and `telemetry` fields with `v4.layer-field`. Edit v4 source/resource declarations directly.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated

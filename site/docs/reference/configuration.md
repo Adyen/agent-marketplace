@@ -43,9 +43,9 @@ resources:
       - command/release
 ```
 
-A v4 root must declare exactly `agent-marketplace/v4`. Its `sources` map names Git or live directory sources, and its `resources` map binds typed locators and selection policy to those source names. V4 accepts local include trees; a child fragment may omit `apiVersion`, but an explicit non-v4 version or a legacy key such as `registries`, `skills`, or `marketplaces` is rejected rather than guessed or merged across formats.
+A v4 root must declare exactly `agent-marketplace/v4`. Its `sources` map names explicit Git, live directory, or Marketplace sources, and its `resources` map binds typed locators and selection policy to those source names. Use exactly one source discriminator: `git` requires `ref`, `directory` is live and relative to the declaring file, and `marketplace` accepts no Git-only fields. A directory source is not inferred from a `.git` suffix. V4 accepts local include trees; a child fragment may omit `apiVersion`, but an explicit non-v4 version or legacy key is rejected rather than guessed.
 
-Normal CLI reads—including discovery, status, synchronization, and configuration loading—recognize v4 and adapt Git/directory sources to the runtime requirement model. Marketplace sources are syntactically read as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. This is read compatibility, not permission for legacy editors to rewrite the file. Install/remove and other legacy configuration writers refuse with `v4.writer-opt-in` when their target root is v4. Edit the v4 source/resource declarations directly; the normal CLI does not migrate v2/v3 implicitly.
+Normal CLI reads—including discovery, status, synchronization, and configuration loading—recognize v4 and adapt Git/directory sources to the runtime requirement model. Marketplace sources are syntactically read as v4, but the legacy runtime adapter requires an acquisition lock and reports `v4.marketplace-lock-required` when one is not available. Effective staged reloads consume v4 root/include bytes from in-memory overlays without changing disk files. Legacy editors refuse with `v4.writer-opt-in`; repository-personal v4 roots reject disallowed fields with `v4.layer-field`.
 
 To convert legacy declarations, run `agent-marketplace migrate --to v4`. The command validates all writable user, repository, and repository-personal layers by default; `--scope user|repo|local` selects one. Organization configuration is never a migration target, and migration does not change lockfiles. Use `--dry-run` to preview. Conversion is fail-closed: legacy include trees and hosted Marketplace selections without proven pin provenance are refused, and a failed conversion leaves the input files unchanged. See the [CLI migration reference](cli.md#migrate).
 
@@ -146,6 +146,10 @@ apiVersion: agent-marketplace/v4
 ```
 
 V4 replaces `registries` and per-kind top-level selectors with named `sources` and `resources`; do not mix the two document shapes. The v4 parser rejects legacy installation keys and unknown fields rather than dropping them.
+
+### V4 resource groups
+
+A resource group may be compact or expanded with `include`, `exclude`, `tags`, `all`, `required`, and `harnesses`. Named `include` and `exclude` decisions accumulate across fragments; presence-aware policy fields such as `tags: []` and `harnesses: []` explicitly replace inherited values. `required: true` protects selections but selects nothing by itself; ordered exclusions can be overridden by a later explicit include.
 
 ### `harnesses`
 
