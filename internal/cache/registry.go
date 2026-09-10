@@ -259,6 +259,9 @@ func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string
 
 	trimmedOutput := redactSecrets(strings.TrimSpace(string(output)))
 	slog.Debug("git command end", "dir", repoDir, "args", redactedSafe, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", trimmedOutput)
+	if isGitTransportFailure(err) {
+		return "", err
+	}
 
 	redactedCmd := strings.Join(redactedSafe, " ")
 	if trimmedOutput == "" {
@@ -305,7 +308,8 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 			return nil, err
 		}
 		if err := cmd.Run(); err != nil {
-			return gitTransportFailureDiagnostic(source), err
+			diagnostic := gitTransportFailureDiagnostic(source)
+			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
 		}
 		return nil, nil
 	}

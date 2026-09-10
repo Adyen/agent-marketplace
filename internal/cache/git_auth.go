@@ -36,12 +36,30 @@ func gitAcquisition(args []string) (string, bool) {
 	return "", true
 }
 
-func gitTransportFailureDiagnostic(source string) []byte {
+type gitTransportFailure struct {
+	message string
+	cause   error
+}
+
+func (e *gitTransportFailure) Error() string {
+	return e.message
+}
+
+func (e *gitTransportFailure) Unwrap() error {
+	return e.cause
+}
+
+func isGitTransportFailure(err error) bool {
+	var failure *gitTransportFailure
+	return errors.As(err, &failure)
+}
+
+func gitTransportFailureDiagnostic(source string) string {
 	canonical, err := lockfile.CanonicalGitURL(redactSecrets(source))
 	if err == nil && (strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://")) {
-		return []byte("git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access")
+		return "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
 	}
-	return []byte("git.auth-transport-failed: transport diagnostics withheld to protect authentication data")
+	return "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"
 }
 
 func gitAuthKey(key string) bool {
