@@ -1315,17 +1315,7 @@ func mergeV4Logging(dst, src *LoggingConfig) *LoggingConfig {
 }
 
 func mergeV4Materialization(dst, src *MaterializationConfig) *MaterializationConfig {
-	if dst == nil && src == nil {
-		return nil
-	}
-	out := &MaterializationConfig{}
-	if dst != nil {
-		*out = *dst
-	}
-	if src != nil && src.Mode != "" {
-		out.Mode = src.Mode
-	}
-	return out
+	return mergeMaterializationConfig(dst, src)
 }
 
 func mergeV4TelemetryFields(dst, src v4TelemetryFields) v4TelemetryFields {

@@ -27,6 +27,7 @@ type ResolvedArtifact struct {
 	RegistryURL    string
 	RegistryPath   string // path from the registry entry; empty for root
 	Ref            string
+	V4Kind         config.V4SourceKind // explicit v4 source kind, when authored by v4
 	Source         config.Source
 	FilePrecedence int
 	Required       bool
@@ -1410,6 +1411,7 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 		RegistryURL:    parent.RegistryURL,
 		RegistryPath:   parent.RegistryPath,
 		Ref:            parent.Ref,
+		V4Kind:         parent.V4Kind,
 		Source:         parent.Source,
 		FilePrecedence: parent.FilePrecedence,
 		Required:       parent.Required,
@@ -1420,6 +1422,7 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 		artifact.RegistryURL = candidate.owner.URL
 		artifact.RegistryPath = normalizedEntryPath(candidate.owner.Path)
 		artifact.Ref = candidate.owner.Ref
+		artifact.V4Kind = candidate.owner.V4Kind
 		artifact.Source = candidate.owner.Source
 		artifact.FilePrecedence = candidate.owner.FilePrecedence
 		artifact.Required = candidate.owner.Required
@@ -1488,6 +1491,7 @@ func expandMembersRecursive(
 		memberRegistryURL := artifact.RegistryURL
 		memberRegistryPath := artifact.RegistryPath
 		memberRef := artifact.Ref
+		memberV4Kind := artifact.V4Kind
 		memberSource := artifact.Source
 		memberFilePrecedence := artifact.FilePrecedence
 		memberRequired := artifact.Required
@@ -1658,6 +1662,7 @@ func expandMembersRecursive(
 				memberRegistryPath = normalizedEntryPath(entry.Path)
 			}
 			memberRef = entry.Ref
+			memberV4Kind = entry.V4Kind
 			memberSource = entry.Source
 			memberFilePrecedence = entry.FilePrecedence
 			memberRequired = entry.Required
@@ -1673,6 +1678,7 @@ func expandMembersRecursive(
 				memberRegistryURL = entry.URL
 				memberRegistryPath = normalizedEntryPath(entry.Path)
 				memberRef = entry.Ref
+				memberV4Kind = entry.V4Kind
 				memberSource = entry.Source
 				memberFilePrecedence = entry.FilePrecedence
 				memberRequired = entry.Required
@@ -1683,6 +1689,8 @@ func expandMembersRecursive(
 			Entry:          catalog.Entry{Kind: member.Kind, Name: memberName},
 			RegistryURL:    memberRegistryURL,
 			RegistryPath:   memberRegistryPath,
+			Ref:            memberRef,
+			V4Kind:         memberV4Kind,
 			Source:         memberSource,
 			FilePrecedence: memberFilePrecedence,
 			Required:       memberRequired,
@@ -1753,6 +1761,7 @@ func expandMembersRecursive(
 			RegistryURL:    memberRegistryURL,
 			RegistryPath:   memberRegistryPath,
 			Ref:            memberRef,
+			V4Kind:         memberV4Kind,
 			Source:         memberSource,
 			FilePrecedence: memberFilePrecedence,
 			Required:       memberRequired,
@@ -2118,6 +2127,8 @@ func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSe
 		Entry:          catalog.Entry{Kind: selected.kind, Name: selected.name},
 		RegistryURL:    entry.URL,
 		RegistryPath:   normalizedEntryPath(entry.Path),
+		Ref:            entry.Ref,
+		V4Kind:         entry.V4Kind,
 		Source:         entry.Source,
 		FilePrecedence: entry.FilePrecedence,
 		Required:       entry.Required,
@@ -2131,6 +2142,7 @@ func newSkillOccurrence(entry config.RegistryEntry, entryIndex int, candidate ca
 			RegistryURL:    entry.URL,
 			RegistryPath:   normalizedEntryPath(entry.Path),
 			Ref:            entry.Ref,
+			V4Kind:         entry.V4Kind,
 			Source:         entry.Source,
 			FilePrecedence: entry.FilePrecedence,
 			Required:       entry.Required,
@@ -2620,6 +2632,7 @@ func localCandidateArtifact(candidate localOwnerCandidate) ResolvedArtifact {
 		RegistryURL:    candidate.entry.URL,
 		RegistryPath:   normalizedEntryPath(candidate.entry.Path),
 		Ref:            candidate.entry.Ref,
+		V4Kind:         candidate.entry.V4Kind,
 		Source:         candidate.entry.Source,
 		FilePrecedence: candidate.entry.FilePrecedence,
 		Required:       candidate.entry.Required,
@@ -3548,7 +3561,7 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 
 // IsLocal reports whether the resolved artifact came from a local (non-git) registry.
 func (r ResolvedArtifact) IsLocal() bool {
-	return r.RegistryURL != "" && config.RegistryEntry{URL: r.RegistryURL, Ref: r.Ref}.IsLocal()
+	return r.RegistryURL != "" && config.RegistryEntry{URL: r.RegistryURL, Ref: r.Ref, V4Kind: r.V4Kind}.IsLocal()
 }
 
 // IsGlobal reports whether the artifact is installed into the machine-wide

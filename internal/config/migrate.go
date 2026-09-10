@@ -712,7 +712,11 @@ func MigrateConfigFilesToV4(paths MigratePaths, scope V4MigrationScope, dryRun b
 			return nil, fmt.Errorf("stat %s config %q: %w", item.name, item.path, err)
 		}
 		if PeekAPIVersion(data) == APIVersionV4 {
-			if _, err := LoadV4ConfigFromPath(item.path); err != nil {
+			v4, err := LoadV4ConfigFromPath(item.path)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := v4.ToLegacyConfig(item.kind); err != nil {
 				return nil, err
 			}
 			// An already-v4 file is valid input and needs no rewrite.

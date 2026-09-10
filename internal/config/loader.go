@@ -434,7 +434,7 @@ func mergeLocalIncludeLayers(layers []Layer) *Config {
 			merged.APIVersion = cfg.APIVersion
 		}
 		if cfg.Materialization != nil {
-			merged.Materialization = &MaterializationConfig{Mode: cfg.Materialization.Mode}
+			merged.Materialization = mergeMaterializationConfig(merged.Materialization, cfg.Materialization)
 		}
 	}
 	return merged

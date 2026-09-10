@@ -780,10 +780,10 @@ func (e *RegistryEntry) SelectorForKindOk(kind ir.ResourceKind) (KindSelector, b
 // suffix, a filesystem path is treated as a plain directory and ref is
 // optional (and ignored).
 func (e RegistryEntry) IsLocal() bool {
-	if e.V4Kind == V4SourceDirectory {
+	switch e.V4Kind {
+	case V4SourceDirectory:
 		return true
-	}
-	if e.V4Kind == V4SourceGit {
+	case V4SourceGit, V4SourceMarketplace:
 		return false
 	}
 	u := strings.TrimSpace(e.URL)

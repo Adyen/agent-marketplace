@@ -10,6 +10,25 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func TestV4DirectorySourceKindControlsLocalIdentityAndDeduplication(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.git")
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: path, Ref: "first", V4Kind: config.V4SourceDirectory, Skills: config.KindSelector{Include: []string{"review"}}},
+		{URL: path, Ref: "second", V4Kind: config.V4SourceDirectory, Skills: config.KindSelector{Include: []string{"review"}}},
+	}}
+	setCatalogKeys(cfg)
+	resolved, errs := Resolve(cfg, map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "review"}},
+	}, nil)
+	if len(errs) != 0 {
+		t.Fatalf("local identity resolution errors = %v", errs)
+	}
+	if len(resolved) != 1 || !resolved[0].IsLocal() || resolved[0].V4Kind != config.V4SourceDirectory {
+		t.Fatalf("local identity/deduplication = %#v", resolved)
+	}
+}
+
 func TestV4DirectorySourceWithGitSuffixResolvesAsLocal(t *testing.T) {
 	dir := t.TempDir()
 	sourceDir := filepath.Join(dir, "registry.git")

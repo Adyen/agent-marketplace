@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -102,6 +103,54 @@ func TestMigrateConfigFilesToV4RefusesIncludeWithoutWrites(t *testing.T) {
 	}
 	if got := readConfigString(t, path); got != before {
 		t.Fatalf("config changed after refused migration: %q", got)
+	}
+}
+
+func TestMigrateConfigFilesToV4ValidatesAlreadyV4LayerFieldsBeforePublishing(t *testing.T) {
+	tests := []struct {
+		name  string
+		kind  V4MigrationScope
+		paths func(string) MigratePaths
+		body  string
+		code  string
+	}{
+		{
+			name:  "user marketplace",
+			kind:  V4MigrationUser,
+			paths: func(path string) MigratePaths { return MigratePaths{User: path} },
+			body:  "apiVersion: agent-marketplace/v4\nsources: {market: {marketplace: https://market.example}}\nresources: {market: {include: [registry/skill/review]}}\n",
+			code:  "v4.marketplace-lock-required",
+		},
+		{
+			name:  "repo auxiliary",
+			kind:  V4MigrationRepo,
+			paths: func(path string) MigratePaths { return MigratePaths{Repo: path} },
+			body:  "apiVersion: agent-marketplace/v4\nlogging: {level: debug}\nsources: {shared: {git: https://example.test/agents.git, ref: main}}\n",
+			code:  "v4.layer-field",
+		},
+		{
+			name:  "local harnesses",
+			kind:  V4MigrationLocal,
+			paths: func(path string) MigratePaths { return MigratePaths{Local: path} },
+			body:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {shared: {git: https://example.test/agents.git, ref: main}}\n",
+			code:  "v4.layer-field",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			writeV2Config(t, path, tt.body)
+			before := readConfigString(t, path)
+			_, err := MigrateConfigFilesToV4(tt.paths(path), tt.kind, false)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tt.code {
+				t.Fatalf("error = %v, want %s", err, tt.code)
+			}
+			if got := readConfigString(t, path); got != before {
+				t.Fatalf("already-v4 invalid config was written: %q", got)
+			}
+		})
 	}
 }
 

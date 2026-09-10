@@ -555,7 +555,7 @@ func TestV4IncludeMergesAuxiliaryPolicyByField(t *testing.T) {
 logging: {level: debug, file: child.log, max_size_mb: 4}
 allowed_registries: [child-registry]
 allowed_marketplaces: [child-marketplace]
-materialization: {mode: file}
+materialization: {mode: file, targets: {devin: file, factory: file}}
 telemetry:
   level: basic
   endpoint: https://child.example/otlp
@@ -570,7 +570,7 @@ backup: {max_per_day: 3}
 logging: {max_age_days: 5}
 allowed_registries: [root-registry]
 allowed_marketplaces: [root-marketplace]
-materialization: {mode: symlink}
+materialization: {mode: symlink, targets: {factory: symlink}}
 telemetry:
   endpoint: https://root.example/otlp
   community_reporting: false
@@ -593,6 +593,9 @@ telemetry:
 	}
 	if cfg.Materialization == nil || cfg.Materialization.Mode != "symlink" {
 		t.Fatalf("materialization mode was not overridden: %#v", cfg.Materialization)
+	}
+	if got := cfg.Materialization.Targets; len(got) != 2 || got["devin"] != "file" || got["factory"] != "symlink" {
+		t.Fatalf("materialization target map was not composed field-wise: %#v", got)
 	}
 	if cfg.Telemetry == nil || cfg.Telemetry.Level != "basic" || cfg.Telemetry.Endpoint != "https://root.example/otlp" || cfg.Telemetry.RetentionPolicy != "https://child.example/retention" || cfg.Telemetry.CommunityReporting == nil || *cfg.Telemetry.CommunityReporting || len(cfg.Telemetry.Headers) != 2 {
 		t.Fatalf("telemetry fields were not composed: %#v", cfg.Telemetry)
