@@ -6,9 +6,12 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -36,7 +39,20 @@ const (
 	paneMigrationModal
 	paneHarnessModal
 	paneEditConfigModal
+	paneMarketplaceConsent
 )
+
+type marketplaceSelection struct {
+	Entry config.MarketplaceEntry
+	Pin   config.MarketplaceResourcePin
+}
+
+type marketplaceDiscovery struct {
+	Endpoint   config.MarketplaceEntry
+	Item       mpapi.ResourceListItem
+	CacheState marketplace.DiscoveryCacheState
+	ObservedAt time.Time
+}
 
 type row struct {
 	Artifact     resolver.ResolvedArtifact
@@ -62,6 +78,10 @@ type row struct {
 	RegistryRef   string // ref from the registry entry (for config writes)
 	Harnesses     []string
 	HarnessSource string
+
+	MarketplaceSelections     map[config.Source]marketplaceSelection
+	MarketplaceCollectionOnly bool
+	MarketplaceDiscovery      *marketplaceDiscovery
 
 	// searchableLower is a cached lowercased concatenation of the fields
 	// applyFilter scans (name + tags + registry URL). Populated lazily by
@@ -94,6 +114,22 @@ func (r *row) ensureSearchable() {
 	}
 	b.WriteByte(' ')
 	b.WriteString(r.Artifact.RegistryURL)
+	b.WriteByte(' ')
+	b.WriteString(r.Artifact.Description)
+	if r.MarketplaceDiscovery != nil {
+		b.WriteByte(' ')
+		b.WriteString(marketplaceEndpointDisplay(r.MarketplaceDiscovery.Endpoint))
+		b.WriteByte(' ')
+		b.WriteString(r.MarketplaceDiscovery.Item.RegistrySlug)
+		b.WriteByte(' ')
+		b.WriteString(string(r.MarketplaceDiscovery.Item.Availability))
+		for key, value := range r.MarketplaceDiscovery.Item.Metadata {
+			b.WriteByte(' ')
+			b.WriteString(key)
+			b.WriteByte(' ')
+			b.WriteString(value)
+		}
+	}
 	r.searchableLower = strings.ToLower(b.String())
 	if r.searchableLower == "" {
 		// Guarantee a non-empty sentinel so the cached-check above keeps
@@ -133,6 +169,16 @@ func (r row) StatusText() string {
 		if r.IsExcluded {
 			return "excluded"
 		}
+		if r.MarketplaceDiscovery != nil {
+			status := string(r.MarketplaceDiscovery.Item.Availability)
+			if status == "" {
+				status = "unknown"
+			}
+			if r.MarketplaceDiscovery.CacheState == marketplace.DiscoveryCacheStale {
+				status += ", stale"
+			}
+			return status + " via Marketplace"
+		}
 		return "available"
 	}
 	if r.Artifact.Required {
@@ -152,16 +198,24 @@ func (r row) StatusText() string {
 }
 
 type Model struct {
-	repoRoot      string
-	homeDir       string
-	rows          []row
-	filteredRows  []row
-	filterScratch []row
-	cursor        int
-	filter        string
-	filterActive  bool
-	searchInput   textinput.Model
-	loading       bool
+	repoRoot            string
+	homeDir             string
+	rows                []row
+	authoritativeRows   []row
+	discoveryRows       []row
+	browseDiscoveryRows []row
+	discoveryOutcomes   []marketplace.DiscoveryOutcome
+	discoveryCancel     context.CancelFunc
+	discoveryLoading    bool
+	discoverySequence   uint64
+	discoveryErrs       []error
+	filteredRows        []row
+	filterScratch       []row
+	cursor              int
+	filter              string
+	filterActive        bool
+	searchInput         textinput.Model
+	loading             bool
 
 	pane                pane
 	driftReport         materialize.DriftReport
@@ -206,10 +260,16 @@ type Model struct {
 	// modalSkill is the row whose state is displayed in paneToggleModal.
 	// Captured at modal-open time so rapid reloads can't change what the
 	// user is acting on mid-interaction.
-	modalSkill   row
-	harnessModal harnessModalState
-	initModal    initModalState
-	operations   operationState
+	modalSkill                  row
+	marketplaceInstallOptions   pipeline.InstallOptions
+	marketplacePreparedInstall  *pipeline.PreparedMarketplaceInstall
+	marketplaceInstallOperation operationID
+	marketplaceInstallReload    requestGeneration
+	marketplaceInstallPreview   string
+	harnessModal                harnessModalState
+	initModal                   initModalState
+	migrationPrompt             migrationPrompt
+	operations                  operationState
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
@@ -217,15 +277,14 @@ type Model struct {
 	pendingExcludeAction  *toggleAction
 	selectionAfterDisable string
 
-	migrationPrompt migrationPrompt
-
 	// spinner provides an animated indicator in the footer while
 	// loading, refreshing, or syncing.
 	spinner spinner.Model
 
-	detailViewport viewport.Model
-	helpViewport   viewport.Model
-	errorsViewport viewport.Model
+	detailViewport             viewport.Model
+	helpViewport               viewport.Model
+	errorsViewport             viewport.Model
+	marketplaceConsentViewport viewport.Model
 
 	// detailKey is the stable row identity of the resource whose full detail
 	// pane is open. It keeps an accepted snapshot rebuild anchored to the same

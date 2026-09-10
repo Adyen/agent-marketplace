@@ -163,7 +163,7 @@ the published project endpoint in addition to the primary endpoint.
 An organization config can enforce a minimum level and route:
 
 ```yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses:
   - factory
 telemetry:

@@ -2,7 +2,7 @@
 
 For detailed precedence rules (layer order, excludes, collection behavior, collision/error cases), see [`docs/PRECEDENCE.md`](./PRECEDENCE.md).
 
-The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs (no `apiVersion`). `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical. The loader accepts v3 as a compatibility alias and rejects v1 configs with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated files use canonical v2.
 
 ## 30-second setup
 
@@ -45,7 +45,7 @@ target set. Existing installs and `migrate` do not add it automatically:
 
 ```yaml
 # ~/.agents/config.yaml
-apiVersion: agent-marketplace/v3
+apiVersion: agent-marketplace/v2
 harnesses: [factory, codex]
 ```
 
@@ -82,9 +82,9 @@ allowed_registries:
   - "^gitlab\.example\.com/"
 ```
 
-## Remediating a legacy config
+## Remediating structurally invalid config
 
-v1 configs (no `apiVersion`) are rejected by the loader. Use `migrate` for structural issues such as legacy collection syntax; it preserves the canonical v2 apiVersion:
+v1 configs with no `apiVersion` are rejected and must first be converted to a v2 document. Use `migrate` for structural issues in v2/v3 files, such as legacy collection syntax:
 
 ```bash
 agent-marketplace migrate --harnesses factory,cursor
@@ -112,7 +112,7 @@ registries:
       include: [vm-lifecycle]
 ```
 
-`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config.
+`migrate` does not rewrite valid v2 or v3 files, and project-level `harnesses:` remains in the project config. Structurally remediated output uses canonical v2.
 
 Keep `.agents/skills/` ignored when `codex` is selected; otherwise remove legacy
 ignore entries when they are no longer needed. Do not commit generated

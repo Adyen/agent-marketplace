@@ -49,6 +49,31 @@ func TestSpaceOnSkillRowOpensToggleModal(t *testing.T) {
 	}
 }
 
+func TestSpaceOnMarketplaceCollectionLeafShowsToastNotModal(t *testing.T) {
+	r := mkRow("collection-leaf", withProject)
+	r.Artifact.IsMarketplace = true
+	r.MarketplaceCollectionOnly = true
+	m := helperFlatCursorOnSkill(t, r)
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = mi.(Model)
+
+	if m.pane == paneToggleModal {
+		t.Fatal("collection-selected Marketplace leaf must bypass modal")
+	}
+	if cmd == nil {
+		t.Fatal("expected a toast cmd for collection-selected Marketplace leaf")
+	}
+	msg := cmd()
+	toast, ok := msg.(toastMsg)
+	if !ok {
+		t.Fatalf("expected toastMsg, got %T", msg)
+	}
+	if toast.text != "collection-selected Marketplace items must be toggled through their collection" {
+		t.Fatalf("unexpected toast text: %q", toast.text)
+	}
+}
+
 func TestSpaceOnRequiredSkillShowsToastNotModal(t *testing.T) {
 	r := mkRow("req-skill", withRequired, withProject)
 	m := helperFlatCursorOnSkill(t, r)
@@ -170,6 +195,25 @@ func TestModalLocalCollisionDoesNotScheduleUnsupportedFollowUp(t *testing.T) {
 	}
 }
 
+func TestModalMarketplaceEnableDoesNotScheduleRegistryCollisionExcludes(t *testing.T) {
+	m := NewModel("/repo", "/home")
+	m.pane = paneToggleModal
+	m.modalSkill = mkRow("audit")
+	m.modalSkill.Artifact.Kind = ir.KindSkill
+	m.modalSkill.Artifact.IsMarketplace = true
+	m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries: marketplace, registry`)}
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = mi.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected Marketplace toggle command")
+	}
+	if m.pendingExcludeAction != nil {
+		t.Fatalf("Marketplace toggle scheduled registry collision excludes: %#v", m.pendingExcludeAction)
+	}
+}
+
 func TestModalPkeyTogglesProject(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneToggleModal
@@ -226,6 +270,27 @@ func TestRenderToggleModalDisablesLocalExcludeForMachineScopeSkill(t *testing.T)
 	out := renderToggleModal(m)
 	if !contains(out, "toggle skill exclude (use [g] to toggle at user level)") {
 		t.Fatalf("expected disabled local exclude hint in modal output, got:\n%s", out)
+	}
+}
+
+func TestModalEkeyShowsToastForMarketplaceItem(t *testing.T) {
+	m := NewModel("/repo", "/home")
+	m.pane = paneToggleModal
+	m.modalSkill = mkRow("audit", withProject)
+	m.modalSkill.Artifact.IsMarketplace = true
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = mi.(Model)
+
+	if m.pane != paneToggleModal {
+		t.Fatal("Marketplace modal should stay open when local exclude is blocked")
+	}
+	if cmd == nil {
+		t.Fatal("expected toast cmd for Marketplace local exclude")
+	}
+	toast, ok := cmd().(toastMsg)
+	if !ok || toast.text != "Marketplace items must be toggled by installation scope" {
+		t.Fatalf("unexpected Marketplace exclude result: %#v", toast)
 	}
 }
 
@@ -326,6 +391,127 @@ func TestScopedToggleActionPopulatesRegistryMetadata(t *testing.T) {
 	}
 	if act.registryPath != "skills" {
 		t.Fatalf("expected registryPath=skills, got %q", act.registryPath)
+	}
+}
+
+func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *testing.T) {
+	repoRoot := t.TempDir()
+	configPath := config.ProjectConfigPath(repoRoot)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
+	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, entry.Alias, []config.MarketplaceResourcePin{pin}); err != nil {
+		t.Fatal(err)
+	}
+	r := row{
+		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true},
+		EnabledProject: true,
+		RegistryURL:    entry.URL,
+		MarketplaceSelections: map[config.Source]marketplaceSelection{
+			config.RepoCommitted: {Entry: entry, Pin: pin},
+		},
+	}
+
+	msg := runScopedToggle(repoRoot, scopedToggleAction(r, scopeProject))()
+
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("Marketplace toggle = %#v", msg)
+	}
+	loaded, err := config.LoadConfigFromPath(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Marketplaces) != 1 || len(loaded.Marketplaces[0].Resources) != 0 {
+		t.Fatalf("Marketplace resources after disable = %#v", loaded.Marketplaces)
+	}
+	if len(loaded.Registries) != 0 {
+		t.Fatalf("registries mutated by Marketplace disable: %#v", loaded.Registries)
+	}
+}
+
+func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	digest := "sha256:" + strings.Repeat("b", 64)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
+		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
+	r := row{
+		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true, Source: config.RepoCommitted},
+		EnabledProject: true,
+		MarketplaceSelections: map[config.Source]marketplaceSelection{
+			config.RepoCommitted: {Entry: entry, Pin: pin},
+		},
+	}
+
+	msg := runScopedToggle(repoRoot, scopedToggleAction(r, scopeLocal))()
+
+	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
+		t.Fatalf("Marketplace toggle = %#v", msg)
+	}
+	loaded, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded == nil || len(loaded.Marketplaces) != 1 || len(loaded.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("local Marketplace config = %#v", loaded)
+	}
+	got := loaded.Marketplaces[0].Resources[0]
+	if got.RegistryID != pin.RegistryID || got.Name != pin.Name || got.InstalledName != pin.InstalledName || got.Revision != pin.Revision || got.Digest != pin.Digest || !got.Direct {
+		t.Fatalf("copied Marketplace pin = %#v, want %#v", got, pin)
+	}
+	if len(got.SelectedBy.List()) != 0 {
+		t.Fatalf("copied direct pin retained foreign collection selectors: %#v", got.SelectedBy.List())
+	}
+	if len(loaded.Registries) != 0 {
+		t.Fatalf("registries mutated by Marketplace enable: %#v", loaded.Registries)
+	}
+}
+
+func TestRunScopedToggleRejectsMarketplaceAliasConflictWithoutMutation(t *testing.T) {
+	repoRoot := t.TempDir()
+	localPath := config.LocalConfigPath(repoRoot)
+	digest := "sha256:" + strings.Repeat("f", 64)
+	existingPin := config.MarketplaceResourcePin{
+		RegistryID: "existing-source", Kind: "skill", Name: "existing", Revision: "v1", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+	}
+	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(localPath, "https://other-market.example", "other-id", "public", []config.MarketplaceResourcePin{existingPin}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+	}
+	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
+	r := row{
+		Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, IsMarketplace: true, Source: config.RepoCommitted},
+		MarketplaceSelections: map[config.Source]marketplaceSelection{
+			config.RepoCommitted: {Entry: entry, Pin: pin},
+		},
+	}
+
+	msg := runScopedToggle(repoRoot, scopedToggleAction(r, scopeLocal))()
+
+	written, ok := msg.(configWrittenMsg)
+	if !ok || written.err == nil {
+		t.Fatalf("Marketplace alias conflict toggle = %#v", msg)
+	}
+	after, err := os.ReadFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("alias conflict mutated config:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 

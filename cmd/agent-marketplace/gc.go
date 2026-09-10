@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 func newGCCmd() *cobra.Command {
@@ -36,9 +37,10 @@ func newGCCmd() *cobra.Command {
 func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	started := time.Now()
 	var registryResult cache.GCResult
+	var marketplaceResult marketplace.GCResult
 	slog.Info("cache garbage collection started", "dry_run", dryRun)
 	defer func() {
-		attrs := []any{"dry_run", dryRun, "registry_removed", len(registryResult.Removed), "duration_ms", time.Since(started).Milliseconds()}
+		attrs := []any{"dry_run", dryRun, "registry_removed", len(registryResult.Removed), "marketplace_removed", len(marketplaceResult.Removed), "duration_ms", time.Since(started).Milliseconds()}
 		if resultErr != nil {
 			attrs = append(attrs, "error", resultErr)
 			slog.Error("cache garbage collection failed", attrs...)
@@ -54,6 +56,14 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		RepoRoot:       config.FindRepoRoot(),
 		LocalConfigDir: config.FindLocalConfigDir(),
 	}
+	effective := config.LoadEffective(ctx, loadOptions)
+	if len(effective.Errors) > 0 {
+		return errors.Join(effective.Errors...)
+	}
+	if len(effective.PresentLayers()) == 0 {
+		return errors.New("gc requires at least one effective configuration layer")
+	}
+	marketplaceCache := marketplace.DefaultCache()
 	readReachability := func(readCtx context.Context) (cache.GCReachability, error) {
 		effective := config.LoadEffective(readCtx, loadOptions)
 		if len(effective.Errors) > 0 {
@@ -73,13 +83,25 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 		return cache.GCReachability{Locks: locks, Configs: configs}, nil
 	}
 
-	var registryErr error
+	var registryErr, marketplaceErr error
 	if dryRun {
 		registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability)
-	} else if _, err := cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability); err != nil {
-		registryErr = fmt.Errorf("cache garbage collection preflight: %w", err)
+		marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(true, effective.Merged)
 	} else {
-		registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, false, readReachability)
+		_, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, true, readReachability)
+		if registryErr != nil {
+			registryErr = fmt.Errorf("cache garbage collection preflight: %w", registryErr)
+		}
+		_, marketplaceErr = marketplaceCache.GarbageCollect(true, effective.Merged)
+		if marketplaceErr != nil {
+			marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", marketplaceErr)
+		}
+		if registryErr == nil && marketplaceErr == nil {
+			marketplaceResult, marketplaceErr = marketplaceCache.GarbageCollect(false, effective.Merged)
+			if marketplaceErr == nil {
+				registryResult, registryErr = cache.GarbageCollectWithReachabilityAndContext(ctx, false, readReachability)
+			}
+		}
 	}
 
 	action := "Removed"
@@ -95,8 +117,16 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) (resultErr error) {
 	if _, err := fmt.Fprintf(out, "%s %d cache entries\n", action, len(registryResult.Removed)); err != nil {
 		return err
 	}
+	for _, removed := range marketplaceResult.Removed {
+		if _, err := fmt.Fprintf(out, "%s %s\n", action, removed); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "%s %d marketplace artifact directories\n", action, len(marketplaceResult.Removed)); err != nil {
+		return err
+	}
 
-	return registryErr
+	return errors.Join(registryErr, marketplaceErr)
 }
 
 func loadEffectiveLayerLocks(ctx context.Context, effective config.EffectiveConfig) ([]lockfile.Document, error) {

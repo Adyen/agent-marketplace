@@ -160,13 +160,13 @@ func TestCtrlCQuitsFromInitModal(t *testing.T) {
 	}
 }
 
-func TestCtrlCQuitsFromMigrationModal(t *testing.T) {
+func TestCtrlCQuitsFromEditConfigModal(t *testing.T) {
 	m := newTestModel()
-	m.pane = paneMigrationModal
+	m.pane = paneEditConfigModal
 
 	_, cmd := m.Update(ctrlCKey())
 	if cmd == nil {
-		t.Fatalf("Ctrl+C from migration modal should return a quit command")
+		t.Fatalf("Ctrl+C from edit-config modal should return a quit command")
 	}
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {

@@ -50,9 +50,17 @@ func writeUndocumentedTransportMCP(t *testing.T, repoDir string, names ...string
 
 // TestSyncNamesEachFailingResourceOnTheErrorPath reproduces the beta tester's
 // report from bead agent-marketplace-oc2r end to end, on the ERROR path. Three
-// failing resources used to print three byte-identical diagnostic messages.
-// The presentation now groups that repeated text while retaining every resource,
-// source location, distinct-failure count, and compiler-authored remediation.
+// failing resources used to print three byte-identical lines with nothing to
+// tell them apart:
+//
+//	Error: mcp.devin.transport-unsupported: the MCP server requests a transport Devin does not document; the server entry was skipped
+//	mcp.devin.transport-unsupported: the MCP server requests a transport Devin does not document; the server entry was skipped
+//	mcp.devin.transport-unsupported: the MCP server requests a transport Devin does not document; the server entry was skipped
+//
+// Each line must now name the resource and its source file, the summary must
+// count the distinct failures, and the compiler's hint must be rendered exactly
+// once because on the error path it is DETACHED from the lines it belongs to
+// (cmd/agent-marketplace/sync.go's printRemediations).
 //
 // The original fixture was three skills carrying a scoped allowed-tools
 // specifier. Bead agent-marketplace-pu6b made skill.devin.tool-unknown a
@@ -112,6 +120,12 @@ registries:
 	if !strings.Contains(output, "Errors 3") {
 		t.Errorf("sync summary does not report three distinct errors; output:\n%s", output)
 	}
+	// The compiler already authored remediation; it must reach the user. The
+	// three failures share one hint and on the error path the hint is printed
+	// DETACHED from the error lines, so identical advice is rendered exactly
+	// once — repeating it per resource would add no attribution, while the
+	// three error lines above already name every failing resource. This is the
+	// property the whole test exists for.
 	if got := strings.Count(output, "Devin documents the http and sse remote transports"); got != 1 {
 		t.Errorf("compiler hint rendered %d times, want exactly 1; output:\n%s", got, output)
 	}
@@ -180,9 +194,9 @@ registries:
 		t.Fatalf("two identical diagnostics from one resource printed %d lines, want 1; output:\n%s", lines, output)
 	}
 	// `Errors 1` is gone with the severity: the summary now reports no errors
-	// and the collapse is asserted on the printed warning lines above. Error-path
-	// grouping without changing distinct-failure counts is covered by
-	// TestSyncNamesEachFailingResourceOnTheErrorPath.
+	// and the collapse is asserted on the printed warning lines above. That
+	// the summary count equals the number of ERROR lines the user is about to
+	// read is covered by TestSyncNamesEachFailingResourceOnTheErrorPath.
 	if !strings.Contains(output, "Errors 0") {
 		t.Errorf("sync summary reports errors for a warning-only run; output:\n%s", output)
 	}

@@ -6,8 +6,21 @@
 /.codex
 /.devin
 /.factory
+!/.factory/
+/.factory/*
+!/.factory/threat-model.md
+!/.factory/security-config.json
 /.gemini
 /.windsurf/
+
+# Deployment credentials and local overrides are local-only. Keep checked-in *.example files visible.
+/deploy/**/.env*
+!/deploy/**/.env.example
+/compose.override.yaml
+/deploy/compose/*/compose.override.yaml
+/deploy/compose/*/*.local.yaml
+/deploy/compose/*/*.local.pem
+/deploy/compose/*/*.token
 
 # Dev artifacts
 .DS_Store

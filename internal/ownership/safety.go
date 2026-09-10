@@ -168,16 +168,6 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		return "", "", false, fmt.Errorf("ownership: create safety backup directory: %w", err)
 	}
 	stamp := s.now().UTC().Format("20060102T150405.000000000Z")
-	base := filepath.Join(dir, stamp)
-	backupPath = base + ".000" + backupSuffix
-	for seq := 1; ; seq++ {
-		if _, statErr := os.Lstat(backupPath); os.IsNotExist(statErr) {
-			break
-		} else if statErr != nil {
-			return "", "", false, statErr
-		}
-		backupPath = fmt.Sprintf("%s.%03d%s", base, seq, backupSuffix)
-	}
 
 	// Validate the entries before writing any bytes: invalid entries must not
 	// consume a retention slot or leave a backup file with no manifest beside it.
@@ -187,11 +177,29 @@ func (s *Store) writeSafetyBackup(rel, absFile string, generation uint64, reason
 		}
 	}
 
-	// The raw bytes are written even when the file was absent: a zero-byte .bak
-	// with PriorAbsent=true is what lets recovery and `doctor` distinguish "we
-	// created this file" from "we replaced an empty file".
-	if err := atomicWrite(backupPath, raw, 0o600); err != nil {
-		return "", "", false, err
+	backupFile, err := os.CreateTemp(dir, stamp+"-*"+backupSuffix)
+	if err != nil {
+		return "", "", false, fmt.Errorf("ownership: create safety backup: %w", err)
+	}
+	backupPath = backupFile.Name()
+	removeBackup := func() {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+	}
+	if n, writeErr := backupFile.Write(raw); writeErr != nil {
+		removeBackup()
+		return "", "", false, fmt.Errorf("ownership: write safety backup: %w", writeErr)
+	} else if n != len(raw) {
+		removeBackup()
+		return "", "", false, fmt.Errorf("ownership: write safety backup: short write (%d/%d bytes)", n, len(raw))
+	}
+	if err := backupFile.Sync(); err != nil {
+		removeBackup()
+		return "", "", false, fmt.Errorf("ownership: sync safety backup: %w", err)
+	}
+	if err := backupFile.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return "", "", false, fmt.Errorf("ownership: close safety backup: %w", err)
 	}
 	manifest := BackupManifest{
 		Version:        1,

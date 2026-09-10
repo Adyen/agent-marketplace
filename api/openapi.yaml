@@ -1,0 +1,1023 @@
+openapi: 3.0.3
+info:
+  title: agent-marketplace API
+  version: 1.0.0
+  description: |
+    Public API for discovering, listing, and acquiring agent resources from an
+    agent-marketplace instance.
+
+servers:
+  # Paths below are absolute from the public origin. Keeping the server at the
+  # origin prevents /api/v1 from being prepended to well-known, browser, health,
+  # and already-versioned API paths.
+  - url: /
+    description: Marketplace public origin
+
+paths:
+  /.well-known/agent-marketplace.json:
+    get:
+      operationId: getWellKnown
+      summary: Marketplace instance metadata and capabilities
+      responses:
+        "200":
+          description: Instance metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WellKnown"
+
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Marketplace capabilities
+      responses:
+        "200":
+          description: Capability block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+
+  /api/v1/instance:
+    get:
+      operationId: getInstance
+      summary: Marketplace instance metadata
+      responses:
+        "200":
+          description: Marketplace instance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Marketplace"
+
+  /api/v1/search:
+    get:
+      operationId: searchResources
+      summary: Search selectable resources
+      parameters:
+        - in: query
+          name: kind
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: query
+          name: registry
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated resource search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+
+  /api/v1/registries:
+    get:
+      operationId: listRegistries
+      summary: List registry identifiers for discovery filters
+      responses:
+        "200":
+          description: Registry identifiers sorted by slug
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items:
+                  $ref: "#/components/schemas/RegistrySummary"
+
+  /api/v1/registries/{registry}:
+    get:
+      operationId: getRegistry
+      summary: Get a registry by slug or ID
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+      responses:
+        "200":
+          description: Registry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registry"
+
+  /api/v1/registries/{registry}/occurrences/{commit}:
+    get:
+      operationId: getRegistryOccurrence
+      summary: Get one exact registry occurrence
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: commit
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{40}$"
+      responses:
+        "200":
+          description: Exact registry occurrence and current approved acquisition origin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExactRegistryOccurrence"
+
+  /api/v1/registries/{registry}/history:
+    get:
+      operationId: getRegistryHistory
+      summary: Get registry revision history
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+      responses:
+        "200":
+          description: Registry occurrence history, newest first. The server returns at most 1000 entries and returns [] when no history exists.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items:
+                  $ref: "#/components/schemas/RegistryOccurrence"
+
+  /api/v1/resources/{registry}/{kind}/{name}:
+    get:
+      operationId: getResource
+      summary: Get the latest resource revision
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          description: Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+      responses:
+        "200":
+          description: Resource revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/resources/{registry}/{kind}/{name}/revisions:
+    get:
+      operationId: listResourceRevisions
+      summary: List all resource revisions
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          description: Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+      responses:
+        "200":
+          description: Resource revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}:
+    get:
+      operationId: getResourceRevision
+      summary: Get a specific resource revision
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID; slashes are not accepted because the Go router cannot safely distinguish encoded slashes.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        - in: path
+          name: name
+          required: true
+          description: Route-safe registry-local name; slashes are not accepted because the Go router treats them as path separators.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: revision
+          required: true
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Resource revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceRevision"
+
+  /api/v1/manifests/{registry-revision}:
+    get:
+      operationId: getManifest
+      summary: Download a content-addressed registry or collection manifest
+      parameters:
+        - in: path
+          name: registry-revision
+          required: true
+          description: Canonical registry manifest digest.
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Registry revision manifest JSON
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/assessments/sha256/{digest}:
+    get:
+      operationId: getResourceAssessment
+      summary: Get an immutable resource assessment by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Immutable analyzer-independent resource assessment
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: public, max-age=31536000, immutable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceAssessment"
+        "400": { description: Invalid assessment digest path }
+        "404": { description: Assessment not found }
+
+  /api/v1/inspection/sha256/{digest}:
+    get:
+      operationId: getInspectionManifest
+      summary: Download an immutable inspection manifest by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Immutable inspection manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionManifest"
+
+  /api/v1/content/sha256/{digest}:
+    get:
+      operationId: getInspectionContent
+      summary: Download an allowlisted inspection file by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Bounded text or permitted raster content
+          content:
+            text/markdown:
+              schema: { type: string }
+            text/plain:
+              schema: { type: string }
+            application/json:
+              schema: { type: string }
+            application/yaml:
+              schema: { type: string }
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/gif:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+
+  /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection:
+    get:
+      operationId: getResourceInspection
+      summary: Get the exact immutable inspection manifest
+      parameters:
+        - { in: path, name: registry, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Exact immutable inspection projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionManifest"
+
+  /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content:
+    get:
+      operationId: getResourceInspectionContent
+      summary: Get the primary canonical inspection content
+      parameters:
+        - { in: path, name: registry, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Canonical inspection content
+          content:
+            text/markdown: { schema: { type: string } }
+            text/plain: { schema: { type: string } }
+            application/json: { schema: { type: string } }
+            application/yaml: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+
+  /api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}:
+    get:
+      operationId: getResourceInspectionFile
+      summary: Get one allowlisted inspection file by digest
+      parameters:
+        - { in: path, name: registry, required: true, schema: { type: string } }
+        - { in: path, name: kind, required: true, schema: { type: string, enum: [skill, command, subagent, hook, mcpserver, collection] } }
+        - { in: path, name: name, required: true, schema: { type: string } }
+        - { in: path, name: revision, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+        - { in: path, name: digest, required: true, schema: { type: string, pattern: "^sha256:[0-9a-f]{64}$" } }
+      responses:
+        "200":
+          description: Allowlisted inspection file
+          content:
+            text/markdown: { schema: { type: string } }
+            text/plain: { schema: { type: string } }
+            application/json: { schema: { type: string } }
+            application/yaml: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+
+  /api/v1/artifacts/sha256/{digest}:
+    get:
+      operationId: getArtifact
+      summary: Download a canonical artifact by digest
+      parameters:
+        - in: path
+          name: digest
+          required: true
+          description: Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path).
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Canonical artifact tar.gz
+          content:
+            application/vnd.agent-marketplace.artifact.v1.tar+gzip:
+              schema:
+                type: string
+                format: binary
+
+  /r/{registry}/{kind}/{name}:
+    get:
+      operationId: getBrowserResourceLatest
+      summary: Stable Nuxt-owned browser route for the latest resource revision
+      description: This HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          description: Route-safe registry slug or ID.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [skill, command, subagent, hook, mcpserver, collection]
+        - in: path
+          name: name
+          required: true
+          description: Route-safe registry-local name.
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+      responses:
+        "200":
+          description: HTML latest-revision browser page
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Browser frontend is not deployed or the resource is unavailable
+
+  /r/{registry}/{kind}/{name}/revisions/{revision}:
+    get:
+      operationId: getBrowserResourceRevision
+      summary: Stable Nuxt-owned browser route for an exact resource revision
+      description: This immutable HTML route is served by the separate Nuxt frontend. The API service alone returns 404.
+      parameters:
+        - in: path
+          name: registry
+          required: true
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: kind
+          required: true
+          schema:
+            type: string
+            enum: [skill, command, subagent, hook, mcpserver, collection]
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+            pattern: "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._:@+~ -]{0,254}[A-Za-z0-9._:@+~-])$"
+        - in: path
+          name: revision
+          required: true
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: HTML exact-revision browser page
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Browser frontend is not deployed or the revision is unavailable
+
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Liveness response
+
+components:
+  schemas:
+    Capabilities:
+      type: object
+      required:
+        - api_versions
+        - artifact_schema_versions
+        - resource_kinds
+        - acquisition_modes
+        - features
+      properties:
+        api_versions:
+          type: array
+          items:
+            type: string
+            enum:
+              - v1
+        artifact_schema_versions:
+          type: array
+          items:
+            type: string
+            enum:
+              - v1
+        resource_kinds:
+          type: array
+          items:
+            type: string
+            enum:
+              - skill
+              - command
+              - subagent
+              - hook
+              - mcpserver
+              - collection
+        acquisition_modes:
+          type: array
+          items:
+            type: string
+            enum:
+              - index-only
+              - mirror
+        features:
+          type: array
+          items:
+            type: string
+
+    WellKnown:
+      allOf:
+        - $ref: "#/components/schemas/Capabilities"
+        - type: object
+          required:
+            - instance_id
+            - canonical_url
+            - api_base
+          properties:
+            instance_id:
+              type: string
+            canonical_url:
+              type: string
+              format: uri
+              description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
+            api_base:
+              type: string
+            browser_base:
+              type: string
+              format: uri
+              description: Optional safe HTTP(S) base URL for the Nuxt browser frontend.
+            browser_latest_route_template:
+              type: string
+              description: Present only when browser_base is configured.
+            browser_exact_route_template:
+              type: string
+              description: Present only when browser_base is configured; revision is an exact SHA-256 content digest.
+
+    Marketplace:
+      type: object
+      required:
+        - id
+        - name
+        - canonical_url
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        canonical_url:
+          type: string
+          format: uri
+          description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
+        instance_metadata:
+          type: object
+          additionalProperties: true
+
+    RegistrySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - slug
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+
+    Registry:
+      type: object
+      additionalProperties: false
+      description: Public registry metadata. Origins are sanitized to remove URL userinfo, fragments, and credential/signature-like query values; credentials, policy internals, and refresh diagnostics are never returned.
+      required:
+        - id
+        - slug
+        - ref
+        - origins
+        - acquisition
+        - roots
+        - listed
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        origins:
+          type: array
+          description: Current and historical origins with URL userinfo removed and credential/signature-like query values redacted.
+          items:
+            type: string
+        ref:
+          type: string
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistryRoot"
+        acquisition:
+          type: string
+          enum:
+            - index-only
+            - mirror
+        publisher:
+          $ref: "#/components/schemas/Publisher"
+        license:
+          type: string
+        listed:
+          type: boolean
+
+    RegistryRoot:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+        source_harness:
+          type: string
+
+    Publisher:
+      type: object
+      description: Public publisher metadata; unsafe legacy URLs are omitted.
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: Safe HTTP(S) URL without userinfo, fragments, or credential/signature query parameters.
+
+    RegistryOccurrence:
+      type: object
+      additionalProperties: false
+      description: Immutable registry observation with an exact registry commit and canonical SHA-256 digests.
+      required:
+        - registry_id
+        - ref
+        - roots
+        - commit
+        - registry_revision_manifest_digest
+        - acquisition
+        - occurred_at
+      properties:
+        registry_id:
+          type: string
+        ref:
+          type: string
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistryRoot"
+        commit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+          description: Exact full-length lowercase Git commit identifier.
+        registry_revision_manifest_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        acquisition:
+          type: string
+          enum:
+            - index-only
+            - mirror
+        mirrored_artifact_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        occurred_at:
+          type: string
+          format: date-time
+
+    ExactRegistryOccurrence:
+      type: object
+      additionalProperties: false
+      description: Exact registry occurrence plus the current operator-approved acquisition origin.
+      required:
+        - registry_id
+        - ref
+        - roots
+        - commit
+        - registry_revision_manifest_digest
+        - acquisition
+        - acquisition_origin
+        - occurred_at
+      properties:
+        registry_id:
+          type: string
+        ref:
+          type: string
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistryRoot"
+        commit:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        registry_revision_manifest_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        acquisition:
+          type: string
+          enum: [index-only, mirror]
+        acquisition_origin:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+
+    SearchResult:
+      type: object
+      required:
+        - items
+        - total
+        - offset
+        - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceListItem"
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    ResourceListItem:
+      type: object
+      required:
+        - registry_id
+        - kind
+        - name
+        - revision
+        - content_digest
+      properties:
+        registry_id:
+          type: string
+        registry_slug:
+          type: string
+        kind:
+          type: string
+          enum:
+            - skill
+            - command
+            - subagent
+            - hook
+            - mcpserver
+            - collection
+        name:
+          type: string
+        revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        content_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        description:
+          type: string
+          maxLength: 1024
+          description: >-
+            Author-written one-line summary from the upstream registry.
+            Untrusted content: control characters are stripped, whitespace is
+            collapsed, and the value is truncated to at most 1024 bytes on a
+            UTF-8 boundary before it is stored or served. Omitted when the
+            resource kind declares no description (hooks and MCP servers) or
+            the author left it empty.
+        availability:
+          type: string
+          enum:
+            - available
+            - blocked
+            - revoked
+          description: >-
+            Whether this revision can be installed from this instance, so a
+            list card can show availability without fetching each resource.
+            `available` means installable. `blocked` means the revision is
+            listed for transparency but is not installable, because its current
+            assessment explicitly rejected it or because a mirrored registry
+            published no artifact for it. `revoked` means an
+            operator revoked the revision. Optional: an instance that cannot
+            determine availability omits the field, and clients must treat an
+            absent value as unknown rather than as `available`.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        score:
+          type: number
+          description: Server-assigned relevance score for the query.
+
+    ResourceRevision:
+      type: object
+      additionalProperties: false
+      required: [coordinate, content_digest, assessment, occurrence]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        content_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        archive_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        license:
+          type: string
+        description:
+          type: string
+          maxLength: 1024
+          description: >-
+            Author-written one-line summary from the upstream registry, bounded
+            and normalized identically to ResourceListItem.description.
+        assessment:
+          $ref: "#/components/schemas/ResourceAssessment"
+        occurrence:
+          $ref: "#/components/schemas/ResourceOccurrence"
+        revocation:
+          $ref: "#/components/schemas/Revocation"
+
+    ResourceAssessment:
+      type: object
+      additionalProperties: false
+      required: [coordinate, content_digest, assessment_digest, analyzer_version, policy_digest, decision, inspection_manifest_digest, assessed_at]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        assessment_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        analyzer_version: { type: string, minLength: 1 }
+        policy_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        decision: { type: string, enum: [allow, warn, reject] }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/AssessmentFinding" }
+        inspection_manifest_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        assessed_at: { type: string, format: date-time }
+
+    AssessmentFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity]
+      properties:
+        code: { type: string }
+        severity: { type: string }
+        policy: { type: string }
+        message: { type: string }
+        location:
+          $ref: "#/components/schemas/FindingLocation"
+
+    FindingLocation:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1 }
+        line: { type: integer, minimum: 1 }
+        column: { type: integer, minimum: 1 }
+        start_byte: { type: integer, minimum: 0 }
+        end_byte: { type: integer, minimum: 0 }
+
+    ResourceOccurrence:
+      type: object
+      additionalProperties: false
+      required: [coordinate, content_digest, commit, manifest_digest]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        commit: { type: string, pattern: "^[0-9a-f]{40}$" }
+        manifest_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+
+    Revocation:
+      type: object
+      additionalProperties: false
+      required: [kind, target_id, reason, applied_at]
+      properties:
+        kind: { type: string, enum: [registry, coordinate, revision] }
+        target_id: { type: string }
+        reason: { type: string }
+        applied_at: { type: string, format: date-time }
+
+    InspectionManifest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, coordinate, revision_digest, primary_path, files]
+      properties:
+        schema_version: { type: string, enum: [v1] }
+        coordinate:
+          $ref: "#/components/schemas/ResourceCoordinate"
+        revision_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        primary_path: { type: string, enum: [SKILL.md, COMMAND.md, AGENT.md, HOOK.md, .mcp.json, COLLECTION.json] }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/InspectionFile" }
+
+    InspectionFile:
+      type: object
+      additionalProperties: false
+      required: [path, content_digest, media_type, size, inspection_class]
+      properties:
+        path: { type: string }
+        content_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        media_type: { type: string, enum: [text/markdown, text/plain, application/json, application/yaml, image/png, image/jpeg, image/gif, image/webp, application/octet-stream] }
+        size: { type: integer, format: int64, minimum: 0 }
+        inspection_class: { type: string, enum: [text, image, metadata] }
+
+    ResourceCoordinate:
+      type: object
+      required: [marketplace, registry, kind, name]
+      properties:
+        marketplace: { type: string }
+        registry: { type: string }
+        kind: { type: string }
+        name: { type: string }

@@ -2,8 +2,10 @@ package tui
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -173,6 +175,65 @@ func searchModel() Model {
 	m.loading = false
 	m.recomputeView()
 	return m
+}
+
+func TestSearchInputShowsSpinnerWhileMarketplaceResultsLoad(t *testing.T) {
+	m := searchModel()
+	m.filterActive = true
+	m.discoveryLoading = true
+	m.searchInput.SetValue("audit")
+
+	lines := strings.Split(m.renderBaseScreen(), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("rendered screen has no search line: %q", lines)
+	}
+	searchLine := lines[2]
+	spinnerPosition := strings.Index(searchLine, m.spinner.View())
+	queryPosition := strings.Index(searchLine, "audit")
+	if spinnerPosition < 0 || queryPosition < 0 || spinnerPosition > queryPosition || strings.Contains(searchLine, "/") {
+		t.Fatalf("search spinner should replace the slash before the query: %q", searchLine)
+	}
+	if strings.Contains(lines[len(lines)-1], "Marketplace...") {
+		t.Fatalf("footer should not duplicate the search loading indicator: %q", lines[len(lines)-1])
+	}
+
+	m.discoveryLoading = false
+	lines = strings.Split(m.renderBaseScreen(), "\n")
+	if strings.Contains(lines[2], m.spinner.View()) || !strings.Contains(lines[2], "/ audit") {
+		t.Fatalf("idle search line should restore the slash prompt: %q", lines[2])
+	}
+}
+
+func TestSearchReopenRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	m := searchModel()
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	m.authoritativeRows = slices.Clone(m.rows)
+	browse := mkRow("browse-result", withAvailable, withRegistry("https://market.example", "market"))
+	browse.MarketplaceDiscovery = &marketplaceDiscovery{Endpoint: endpoint}
+	remote := mkRow("remote-result", withAvailable, withRegistry("https://market.example", "market"))
+	remote.MarketplaceDiscovery = &marketplaceDiscovery{Endpoint: endpoint}
+	m.browseDiscoveryRows = []row{browse}
+	m.discoveryRows = []row{remote}
+	m.filter = "remote"
+	m.searchInput.SetValue("remote")
+	m.mergeDiscoveryRows()
+
+	updated, cmd := m.Update(keyPress('/'))
+	m = updated.(Model)
+	if !m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
+		t.Fatalf("reopened search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
+	}
+	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"browse-result"}) {
+		t.Fatalf("visible discovery rows = %v, want browse results", got)
+	}
+	if got := rowNames(m.rows); !slices.Equal(got, []string{"audit", "deploy", "release", "browse-result"}) {
+		t.Fatalf("merged rows = %v", got)
+	}
+	if cmd == nil || !m.discoveryLoading {
+		t.Fatalf("empty-query discovery not scheduled: cmd=%v loading=%t", cmd, m.discoveryLoading)
+	}
 }
 
 func TestSearchInputTypingUpdatesFilter(t *testing.T) {

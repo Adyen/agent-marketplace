@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,18 @@ type ResolvedArtifact struct {
 	// per-entry harnesses if set. Nil means "no harnesses configured"
 	// (v1-style config); empty slice means "explicitly opted out".
 	Harnesses []hcc.Target
+
+	// Marketplace-specific fields.
+	IsMarketplace         bool
+	MarketplaceURL        string
+	MarketplaceInstanceID string
+	MarketplaceAlias      string
+	MarketplaceRegistryID string
+	InstalledName         string // overrides Name for materialization while preserving canonical digest
+	Unresolved            bool   // true when only metadata was fetched (status inspect mode)
+	Revoked               bool   // true when the resolved revision is revoked
+	UpdateAvailable       bool   // true when a newer revision exists (status/update)
+	Stale                 bool   // true when the registry refresh is stale/unavailable
 }
 
 type UnmetRequirementWarning struct {
@@ -70,13 +83,94 @@ func (w *UnmetRequirementWarning) Remediation() string {
 
 // resolveOptions holds optional parameters for Resolve.
 type resolveOptions struct {
-	resources       map[string]map[string]ir.Resource
-	malformed       map[string][]skill.MalformedSkill
-	targetHarnesses []hcc.Target
+	context                     context.Context
+	resources                   map[string]map[string]ir.Resource
+	malformed                   map[string][]skill.MalformedSkill
+	targetHarnesses             []hcc.Target
+	marketplaceResolver         MarketplaceResolver
+	marketplaceMode             MarketplaceResolveMode
+	marketplaceRevocationPolicy MarketplaceRevocationPolicy
 }
 
 // ResolveOption configures optional behavior for Resolve.
 type ResolveOption func(*resolveOptions)
+
+// MarketplaceResolveMode controls how much network work the Marketplace resolver
+// performs.
+type MarketplaceResolveMode int
+
+const (
+	// MarketplaceResolveModeRefresh fetches artifacts when they are missing from cache.
+	MarketplaceResolveModeRefresh MarketplaceResolveMode = iota
+	// MarketplaceResolveModeCached uses only cached artifacts and metadata.
+	MarketplaceResolveModeCached
+	// MarketplaceResolveModeInspect fetches metadata only and leaves Resource nil.
+	MarketplaceResolveModeInspect
+	// MarketplaceResolveModeCachedNoFetch uses only cached metadata and verified
+	// artifacts. It does not construct a client or perform any HTTP request.
+	MarketplaceResolveModeCachedNoFetch
+)
+
+// MarketplaceRevocationIdentity is the exact identity a temporary revoked
+// override is allowed to match. ContentDigest is part of the identity so an
+// override cannot authorize a different revision of the same resource.
+type MarketplaceRevocationIdentity struct {
+	Marketplace   string
+	Registry      string
+	Kind          string
+	Name          string
+	ContentDigest string
+}
+
+// MarketplaceRevocationPolicy authorizes only explicitly approved revoked
+// identities for the current in-memory resolution.
+type MarketplaceRevocationPolicy interface {
+	AllowRevoked(MarketplaceRevocationIdentity) bool
+}
+
+// MarketplaceResolver resolves configured Marketplace pins into ResolvedArtifact
+// values that participate in the same deduplication/collision pipeline as
+// registry resources.
+type MarketplaceResolver interface {
+	Resolve(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode) ([]ResolvedArtifact, []error)
+}
+
+// MarketplaceResolverWithPolicy is an optional extension implemented by
+// Marketplace resolvers that support temporary revocation overrides. Existing
+// MarketplaceResolver implementations remain source-compatible.
+type MarketplaceResolverWithPolicy interface {
+	ResolveWithPolicy(ctx context.Context, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy) ([]ResolvedArtifact, []error)
+}
+
+// WithContext supplies the caller context to Marketplace resolution. It keeps
+// the historical Resolve signature compatible for non-Marketplace callers.
+func WithContext(ctx context.Context) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.context = ctx
+	}
+}
+
+// WithMarketplaceResolver injects a Marketplace resolver.
+func WithMarketplaceResolver(r MarketplaceResolver) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceResolver = r
+	}
+}
+
+// WithMarketplaceResolveMode sets the Marketplace resolve mode.
+func WithMarketplaceResolveMode(m MarketplaceResolveMode) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceMode = m
+	}
+}
+
+// WithMarketplaceRevocationPolicy supplies an optional in-memory policy for
+// exact revoked Marketplace overrides.
+func WithMarketplaceRevocationPolicy(policy MarketplaceRevocationPolicy) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.marketplaceRevocationPolicy = policy
+	}
+}
 
 // WithResources provides IR resources keyed by catalog key and
 // resource-keyed name. When a catalog entry has a nil Resource (legacy
@@ -698,9 +792,12 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	for _, opt := range opts {
 		opt(&ro)
 	}
+	if ro.context == nil {
+		ro.context = context.Background()
+	}
 
-	if cfg == nil || len(cfg.Registries) == 0 {
-		slog.Debug("resolver skipped", "reason", "no_registries")
+	if cfg == nil || (len(cfg.Registries) == 0 && (ro.marketplaceResolver == nil || len(cfg.Marketplaces) == 0)) {
+		slog.Debug("resolver skipped", "reason", "no_registries_or_marketplaces")
 		return []ResolvedArtifact{}, nil
 	}
 
@@ -740,6 +837,17 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
+	// Phase 1b: Add Marketplace pins to the occurrence map.
+	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
+		nextOrder := maxOccurrenceOrder(occurrencesByName)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targetSet, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
+		errs = append(errs, mpErrs...)
+		for sel, occs := range mpOccurrences {
+			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
+		}
+		slog.Debug("resolver marketplace occurrences built", "marketplaces", len(cfg.Marketplaces), "errors", len(mpErrs))
+	}
+
 	// Phase 2: Pick winners (deduplicate, detect collisions).
 	winners, pickErrs := pickWinners(occurrencesByName)
 	errs = append(errs, pickErrs...)
@@ -774,6 +882,44 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
+}
+
+func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrence) int {
+	max := 0
+	for _, occs := range occurrencesByName {
+		for _, occ := range occs {
+			if occ.order >= max {
+				max = occ.order + 1
+			}
+		}
+	}
+	return max
+}
+
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targetSet []hcc.Target, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+	var artifacts []ResolvedArtifact
+	var errs []error
+	if resolverWithPolicy, ok := mpResolver.(MarketplaceResolverWithPolicy); ok {
+		artifacts, errs = resolverWithPolicy.ResolveWithPolicy(ctx, cfg, targetSet, mode, policy)
+	} else {
+		artifacts, errs = mpResolver.Resolve(ctx, cfg, targetSet, mode)
+	}
+	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
+	for i, a := range artifacts {
+		sel := resourceSelection{kind: a.Kind, name: a.Name}
+		source := a.MarketplaceURL
+		if a.MarketplaceRegistryID != "" {
+			source = fmt.Sprintf("marketplace:%s:%s", a.MarketplaceURL, a.MarketplaceRegistryID)
+		}
+		occ := skillOccurrence{
+			resolved: a,
+			source:   source,
+			url:      a.MarketplaceURL,
+			order:    startOrder + i,
+		}
+		occurrencesByName[sel] = append(occurrencesByName[sel], occ)
+	}
+	return occurrencesByName, errs
 }
 
 func validateRequirements(resolved []ResolvedArtifact) []error {
@@ -2439,15 +2585,23 @@ func applyPersonalExcludes(resolved []ResolvedArtifact, excludes resourceSelecti
 	filtered := make([]ResolvedArtifact, 0, len(resolved))
 	for _, s := range resolved {
 		if s.Required || s.Source.IsMachineScope() {
+			reason := "machine_scope"
+			if s.Required {
+				reason = "required"
+			}
+			slog.Debug("resolver skipped personal exclude", "kind", skill.KindLabel(s.Kind), "name", s.Name, "source", s.Source.String(), "required", s.Required, "reason", reason)
 			filtered = append(filtered, s)
 			continue
 		}
 		if hasExcludeAll && excludeAllKinds[s.Kind] {
+			slog.Debug("resolver skipped resource due to personal exclude_all", "kind", skill.KindLabel(s.Kind), "name", s.Name, "source", s.Source.String(), "required", s.Required)
 			continue
 		}
-		if _, excluded := excludeSet[resourceSelection{kind: s.Kind, name: s.Name}]; !excluded {
-			filtered = append(filtered, s)
+		if _, excluded := excludeSet[resourceSelection{kind: s.Kind, name: s.Name}]; excluded {
+			slog.Debug("resolver skipped resource due to personal exclude", "kind", skill.KindLabel(s.Kind), "name", s.Name, "source", s.Source.String(), "required", s.Required)
+			continue
 		}
+		filtered = append(filtered, s)
 	}
 
 	return filtered
@@ -2803,7 +2957,8 @@ func hasExplicitSelection(entry config.RegistryEntry) bool {
 // deduplicateOccurrences merges occurrences from the same logical registry
 // source within one installation scope. Same-URL/ref entries with overlapping
 // paths are merged; unrelated paths and machine/repo scopes remain distinct.
-// Within a merged group, required policy, path specificity, and config
+// Marketplace instance and registry identity are also part of the logical
+// source. Within a merged group, required policy, path specificity, and config
 // precedence choose the surviving occurrence.
 func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 	if len(occurrences) < 2 {
@@ -2811,24 +2966,32 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 	}
 
 	type logicalKey struct {
-		catalogKey    string
-		normalizedURL string
-		ref           string
-		path          string // registry sub-path, keeps different-path entries separate
-		machineScope  bool   // machine and repo occurrences materialize separately
+		catalogKey            string
+		normalizedURL         string
+		ref                   string
+		path                  string // registry sub-path, keeps different-path entries separate
+		machineScope          bool   // machine and repo occurrences materialize separately
+		marketplaceInstanceID string
+		marketplaceRegistryID string
 	}
 
 	byKey := make(map[logicalKey][]skillOccurrence, len(occurrences))
 	for _, occ := range occurrences {
-		// Use CatalogKey as primary identity, but also group by
-		// normalized URL+ref+path for git registries that differ only by .git suffix.
+		// Use CatalogKey as primary identity, but also group by normalized
+		// URL+ref+path (plus Marketplace instance/registry identity) for
+		// equivalent remote entries that differ only by cache-key spelling.
 		// Scope is part of identity: identical physical locations in machine and
-		// repo scopes are complementary outputs, not duplicates.
+		// repo scopes are complementary, not duplicates.
 		lk := logicalKey{catalogKey: occ.resolved.CatalogKey, machineScope: occ.resolved.Source.IsMachineScope()}
 		if !occ.resolved.IsLocal() {
 			lk.normalizedURL = normalizedRegistryURL(occ.url)
 			lk.ref = strings.TrimSpace(occ.resolved.Ref)
 			lk.path = normalizedEntryPath(occ.resolved.RegistryPath)
+			if occ.resolved.IsMarketplace {
+				lk.marketplaceInstanceID = strings.TrimSpace(occ.resolved.MarketplaceInstanceID)
+				lk.marketplaceRegistryID = strings.TrimSpace(occ.resolved.MarketplaceRegistryID)
+			}
+
 		} else {
 			// For local registries, use the URL (file path) as the registry
 			// identity so overlapping-path detection can work.
@@ -2838,15 +3001,17 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		byKey[lk] = append(byKey[lk], occ)
 	}
 
-	// Merge groups that share normalizedURL+ref+path but have different catalogKeys
-	// (e.g. "repo" and "repo.git" producing different cache hashes).
-	// Path is included so that two entries pointing to the same remote but
-	// different sub-directories are NOT merged — each is a distinct registry.
+	// Merge groups that share normalizedURL+ref+path and Marketplace identity
+	// but have different catalogKeys (e.g. "repo" and "repo.git" producing
+	// different cache hashes). Path and Marketplace identity are included so
+	// different sub-directories, sources, or instances remain distinct.
 	type normKey struct {
-		normalizedURL string
-		ref           string
-		path          string
-		machineScope  bool
+		normalizedURL         string
+		ref                   string
+		path                  string
+		machineScope          bool
+		marketplaceInstanceID string
+		marketplaceRegistryID string
 	}
 	compareLogicalKeys := func(a, b logicalKey) int {
 		if a.catalogKey != b.catalogKey {
@@ -2867,7 +3032,10 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			}
 			return -1
 		}
-		return 0
+		if a.marketplaceInstanceID != b.marketplaceInstanceID {
+			return strings.Compare(a.marketplaceInstanceID, b.marketplaceInstanceID)
+		}
+		return strings.Compare(a.marketplaceRegistryID, b.marketplaceRegistryID)
 	}
 	compareNormKeys := func(a, b normKey) int {
 		if a.normalizedURL != b.normalizedURL {
@@ -2885,14 +3053,24 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 			}
 			return -1
 		}
-		return 0
+		if a.marketplaceInstanceID != b.marketplaceInstanceID {
+			return strings.Compare(a.marketplaceInstanceID, b.marketplaceInstanceID)
+		}
+		return strings.Compare(a.marketplaceRegistryID, b.marketplaceRegistryID)
 	}
 	normGroups := make(map[normKey][]logicalKey)
 	for lk := range byKey {
 		if lk.normalizedURL == "" {
 			continue
 		}
-		nk := normKey{normalizedURL: lk.normalizedURL, ref: lk.ref, path: lk.path, machineScope: lk.machineScope}
+		nk := normKey{
+			normalizedURL:         lk.normalizedURL,
+			ref:                   lk.ref,
+			path:                  lk.path,
+			machineScope:          lk.machineScope,
+			marketplaceInstanceID: lk.marketplaceInstanceID,
+			marketplaceRegistryID: lk.marketplaceRegistryID,
+		}
 		normGroups[nk] = append(normGroups[nk], lk)
 	}
 
@@ -2932,8 +3110,10 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 	// installs into the project. These must NOT be merged — the
 	// materializer needs both artifacts.
 	type urlRefKey struct {
-		normalizedURL string
-		ref           string
+		normalizedURL         string
+		ref                   string
+		marketplaceInstanceID string
+		marketplaceRegistryID string
 	}
 	// Collect all logical keys per URL+ref, then find overlapping groups.
 	urlRefGroups := make(map[urlRefKey][]logicalKey)
@@ -2941,7 +3121,12 @@ func deduplicateOccurrences(occurrences []skillOccurrence) []skillOccurrence {
 		if lk.normalizedURL == "" {
 			continue
 		}
-		urk := urlRefKey{normalizedURL: lk.normalizedURL, ref: lk.ref}
+		urk := urlRefKey{
+			normalizedURL:         lk.normalizedURL,
+			ref:                   lk.ref,
+			marketplaceInstanceID: lk.marketplaceInstanceID,
+			marketplaceRegistryID: lk.marketplaceRegistryID,
+		}
 		urlRefGroups[urk] = append(urlRefGroups[urk], lk)
 	}
 	urlRefKeys := make([]urlRefKey, 0, len(urlRefGroups))
@@ -3222,6 +3407,9 @@ func logicalRegistryKey(occ skillOccurrence) string {
 	if occ.resolved.IsLocal() {
 		return occ.resolved.CatalogKey
 	}
+	if occ.resolved.IsMarketplace {
+		return normalizedRegistryURL(occ.resolved.MarketplaceURL) + "\x00" + strings.TrimSpace(occ.resolved.MarketplaceInstanceID) + "\x00" + strings.TrimSpace(occ.resolved.MarketplaceRegistryID) + "\x00" + strings.TrimSpace(occ.resolved.Ref)
+	}
 	return normalizedRegistryURL(occ.url) + "\x00" + strings.TrimSpace(occ.resolved.Ref)
 }
 
@@ -3249,13 +3437,14 @@ func pickCollisionWinner(occurrences []skillOccurrence) skillOccurrence {
 	return winner
 }
 
-// collisionLabelsNeedRef reports whether URL and path alone would collapse two
-// collision participants. Refs are intentionally omitted for the common case,
-// but become part of every label when one URL/path is used at multiple refs.
+// collisionLabelsNeedRef reports whether URL, path, and Marketplace identity
+// alone would collapse two collision participants. Refs are intentionally
+// omitted for the common case, but become part of every label when one
+// location is configured at multiple refs.
 func collisionLabelsNeedRef(occurrences []skillOccurrence) bool {
 	refsByLocation := make(map[string]string, len(occurrences))
 	for _, occ := range occurrences {
-		location := normalizedRegistryURL(occ.url) + "\x00" + normalizedEntryPath(occ.resolved.RegistryPath)
+		location := normalizedRegistryURL(occ.url) + "\x00" + normalizedEntryPath(occ.resolved.RegistryPath) + "\x00" + strings.TrimSpace(occ.resolved.MarketplaceInstanceID) + "\x00" + strings.TrimSpace(occ.resolved.MarketplaceRegistryID)
 		ref := strings.TrimSpace(occ.resolved.Ref)
 		if previous, ok := refsByLocation[location]; ok && previous != ref {
 			return true
@@ -3266,11 +3455,18 @@ func collisionLabelsNeedRef(occurrences []skillOccurrence) bool {
 }
 
 // collisionSourceLabel returns a human-readable label for a collision
-// participant that includes the registry path when set, so that
-// same-URL-different-path entries are distinguishable in the warning. Include
-// refs when the same URL/path is configured at multiple refs.
+// participant that includes Marketplace identity and the registry path when
+// set, so same-URL-different-registry/path entries are distinguishable in the
+// warning. Include refs when the same location is configured at multiple refs.
 func collisionSourceLabel(occ skillOccurrence, includeRef bool) string {
 	label := normalizedRegistryURL(occ.url)
+	if occ.resolved.IsMarketplace {
+		label = fmt.Sprintf("%s [instance_id=%s, registry_id=%s]",
+			normalizedRegistryURL(occ.resolved.MarketplaceURL),
+			occ.resolved.MarketplaceInstanceID,
+			occ.resolved.MarketplaceRegistryID,
+		)
+	}
 	if p := normalizedEntryPath(occ.resolved.RegistryPath); p != "" {
 		label += " (" + p + ")"
 	}

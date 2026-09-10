@@ -26,6 +26,24 @@ func renderFooter(m Model) string {
 		leftParts = append(leftParts, styleDriftPending.Render(fmt.Sprintf("~ %d out of sync", m.driftReport.PendingCount())))
 	}
 
+	var staleEndpoints, truncatedEndpoints int
+	for _, outcome := range m.discoveryOutcomes {
+		if outcome.CacheState == "stale" {
+			staleEndpoints++
+		}
+		if outcome.Truncated {
+			truncatedEndpoints++
+		}
+	}
+	if staleEndpoints > 0 {
+		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d stale", staleEndpoints)))
+	}
+	if truncatedEndpoints > 0 {
+		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d limited", truncatedEndpoints)))
+	}
+	if len(m.discoveryErrs) > 0 {
+		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", len(m.discoveryErrs))))
+	}
 	if len(m.errs) > 0 {
 		leftParts = append(leftParts, styleFooterError.Render(fmt.Sprintf("! %d errors", len(m.errs))))
 	}
@@ -36,7 +54,7 @@ func renderFooter(m Model) string {
 	status := strings.Join(leftParts, "  ")
 	if compactTerminalLayout(m) {
 		actions := "?:help · s:sync · q:quit"
-		if m.failuresOrDrift() {
+		if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
 			actions = "e:errors · r:reload · q:quit"
 		}
 		if m.filterActive {

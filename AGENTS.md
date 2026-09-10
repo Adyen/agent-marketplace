@@ -51,7 +51,11 @@ This project builds the **agent-marketplace** CLI: a Go binary that syncs shared
 - `agent-marketplace list --kind command` — browse one resource kind (skill, command, subagent, hook, mcp, collection)
 - `agent-marketplace list --kind collection` — list available collections from configured registries
 - `agent-marketplace list --from <url> [--ref <ref>] [--path <path>] [--kind <kind>]` — browse resources at an ad-hoc URL without pre-configuring it
+- `agent-marketplace search [query]` — search configured Marketplace endpoints
+- `agent-marketplace search [query] --marketplace <alias|url|all>` — search one or all Marketplace endpoints
+- `agent-marketplace search [query] --output json` — structured search output with per-endpoint errors
 - `agent-marketplace install <resource>` / `install --tag <tag>` / `install --scope {user,repo,local}` — add resource to target config layer and sync
+- `agent-marketplace install <marketplace-endpoint>` — register a Marketplace endpoint; defaults to user scope, honors an explicit scope, and is a no-op when the same identity exists in that scope or a broader one
 - `agent-marketplace install --kind command X` — disambiguate or select a non-skill resource
 - `agent-marketplace install --all [--kind mcp] [--registry URL]` — install every discovered resource
 - `agent-marketplace install <name> --from <url> [--ref <ref>] [--path <path>] [--kind <kind>] [--scope <scope>]` — install from an ad-hoc registry without pre-configuring it; without `<name>` installs all resources (bundle mode)
@@ -96,7 +100,7 @@ Child HOME, XDG roots, CODEX_HOME, cwd, organization config, and Git environment
 
 ## E2E Test Suite
 
-The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. Registry fixtures are local bare Git repositories reached through `file://` URLs, so the full suite runs directly on Ubuntu in CI. Local runs use Docker by default for additional host isolation.
+The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by running the built binary in isolated temp-directory sandboxes. They run directly in CI through `make marketplace-gate`; local runs can optionally use a Docker container for host isolation.
 
 There are **two types** of E2E tests:
 
@@ -106,9 +110,9 @@ There are **two types** of E2E tests:
 ### Running
 
 ```bash
-make e2e                    # run locally inside Docker
-E2E_SKIP_DOCKER=1 make e2e  # run directly on the host, as CI does
-E2E_PARALLEL=8 make e2e     # control concurrency (default 4, set to 1 for serial)
+make e2e                  # runs inside Docker (isolated from host env)
+E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
+E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
 ### Architecture

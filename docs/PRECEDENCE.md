@@ -4,7 +4,7 @@ This document describes how `agent-marketplace` decides which resources are enab
 
 ## Schema requirement
 
-Organization, user, and committed repository root configs use the **v2 schema** (`apiVersion: agent-marketplace/v2`). `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but they must use the same per-layer fields as the root that includes them. The loader still rejects a regular root with no `apiVersion`. `agent-marketplace migrate` performs structural remediation without rewriting valid v2 or v3 files.
+The **v2 schema** (`apiVersion: agent-marketplace/v2`) is canonical for organization, user, and committed repository configs. `agent-marketplace/v3` remains accepted as a compatibility alias. Generated `config.local.yaml` roots use the local-config schema and may omit `apiVersion`; if present, it must be v2 or v3. Included fragments may also omit `apiVersion`, but regular roots without it are rejected. `agent-marketplace migrate` performs structural remediation without rewriting otherwise-valid v2 or v3 files; new or remediated output uses canonical v2.
 
 ## Config includes
 
@@ -34,6 +34,8 @@ Loading the owning layer fails if any include is missing, unreadable, malformed,
 The CLI reads included content when calculating effective configuration, but config-editing commands modify only the selected root. They do not rewrite included fragments. Removing an include-owned named resource or collection records an exclusion in the selected root; whole-registry `remove --from` writes a registry-level `exclude_all` shadow there. The included file remains unchanged, and normal scope boundaries still apply.
 
 When `url` is omitted, a registry entry uses `path` as its location alias (for example, `- path: /opt/agent-skills`). With `url` present, `path` names a subdirectory. Config editors and removals preserve this alias-versus-subdirectory interpretation; use the authored URL/path spelling when targeting an entry. Resolver matching is separate: equivalent registry-path spellings such as `./foo/`, `foo/.`, repeated or mixed separators, and the root aliases `.`/empty are canonicalized to the same path identity; this does not rewrite the authored config.
+
+
 
 ## Layer order
 

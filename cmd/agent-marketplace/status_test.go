@@ -472,7 +472,7 @@ registries:
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")

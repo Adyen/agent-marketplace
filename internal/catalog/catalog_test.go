@@ -777,6 +777,186 @@ func TestLoadRegistriesCachedNoFetchUsesExistingCache(t *testing.T) {
 	}
 }
 
+func TestLoadRegistriesInspectRejectsSymlinkedRemoteCache(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL: "git@example.com:team/skills.git", Ref: "main", Source: config.RepoCommitted,
+	}}}
+	cachePath := cache.RegistryCachePath(cfg.Registries[0].URL, cfg.Registries[0].Ref)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatalf("mkdir cache parent: %v", err)
+	}
+	external := filepath.Join(t.TempDir(), "registry")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatalf("mkdir external registry: %v", err)
+	}
+	if err := os.Symlink(external, cachePath); err != nil {
+		t.Fatalf("symlink cache: %v", err)
+	}
+
+	discoverCalls := 0
+	result := LoadRegistries(cfg, t.TempDir(), LoadModeInspect,
+		WithCloneOrPull(func(url, ref string) (string, error) {
+			t.Fatal("inspect mode called cloneOrPull")
+			return "", nil
+		}),
+		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+			discoverCalls++
+			return LoadedCatalog{}, nil
+		}),
+	)
+	if len(result.Errors) == 0 {
+		t.Fatal("expected symlinked remote cache to fail closed")
+	}
+	if !strings.Contains(result.Errors[0].Error(), "symlink") {
+		t.Fatalf("symlink cache error = %v, want symlink detail", result.Errors[0])
+	}
+	if discoverCalls != 0 {
+		t.Fatalf("discover called %d times for symlinked cache, want 0", discoverCalls)
+	}
+}
+
+func TestLoadRegistriesCachedNoFetchRejectsSymlinkedRemoteCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL: "git@example.com:team/skills.git", Ref: "main", Source: config.RepoCommitted,
+	}}}
+	cachePath := cache.RegistryCachePath(cfg.Registries[0].URL, cfg.Registries[0].Ref)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatalf("mkdir cache parent: %v", err)
+	}
+	external := filepath.Join(t.TempDir(), "registry")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatalf("mkdir external registry: %v", err)
+	}
+	if err := os.Symlink(external, cachePath); err != nil {
+		t.Fatalf("symlink cache: %v", err)
+	}
+
+	discoverCalls := 0
+	result := LoadRegistries(cfg, t.TempDir(), LoadModeCachedNoFetch,
+		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+			discoverCalls++
+			return LoadedCatalog{}, nil
+		}),
+	)
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0].Error(), "symlink") {
+		t.Fatalf("cached no-fetch symlink errors = %v, want symlink failure", result.Errors)
+	}
+	if discoverCalls != 0 {
+		t.Fatalf("discover called %d times for symlinked cache, want 0", discoverCalls)
+	}
+}
+
+func TestLoadRegistriesCachedNoFetchRejectsSymlinkedLocalRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	external := filepath.Join(t.TempDir(), "registry")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatalf("mkdir external registry: %v", err)
+	}
+	localPath := filepath.Join(t.TempDir(), "local-registry")
+	if err := os.Symlink(external, localPath); err != nil {
+		t.Fatalf("symlink local registry: %v", err)
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL: localPath, Source: config.RepoCommitted,
+	}}}
+
+	discoverCalls := 0
+	result := LoadRegistries(cfg, t.TempDir(), LoadModeCachedNoFetch,
+		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+			discoverCalls++
+			return LoadedCatalog{}, nil
+		}),
+	)
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0].Error(), "symlink") {
+		t.Fatalf("cached no-fetch local symlink errors = %v, want symlink failure", result.Errors)
+	}
+	if discoverCalls != 0 {
+		t.Fatalf("discover called %d times for symlinked local registry, want 0", discoverCalls)
+	}
+}
+
+func TestLoadRegistriesCachedNoFetchSkipsMissingLocalRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL: filepath.Join(t.TempDir(), "missing-registry"), Source: config.RepoCommitted,
+	}}}
+
+	discoverCalls := 0
+	result := LoadRegistries(cfg, t.TempDir(), LoadModeCachedNoFetch,
+		WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+			discoverCalls++
+			return LoadedCatalog{}, nil
+		}),
+	)
+	if len(result.Errors) != 0 {
+		t.Fatalf("cached no-fetch missing local registry errors = %v, want none", result.Errors)
+	}
+	if len(result.Catalogs) != 0 || discoverCalls != 0 {
+		t.Fatalf("cached no-fetch missing local registry catalogs = %d, discover calls = %d; want neither", len(result.Catalogs), discoverCalls)
+	}
+}
+
+func TestLoadRegistriesInspectRejectsUnsafeLocalRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T) string
+		wantDetail string
+	}{
+		{
+			name: "symlink",
+			setup: func(t *testing.T) string {
+				external := filepath.Join(t.TempDir(), "registry")
+				if err := os.MkdirAll(external, 0o755); err != nil {
+					t.Fatalf("mkdir external registry: %v", err)
+				}
+				localPath := filepath.Join(t.TempDir(), "local-registry")
+				if err := os.Symlink(external, localPath); err != nil {
+					t.Fatalf("symlink local registry: %v", err)
+				}
+				return localPath
+			},
+			wantDetail: "symlink",
+		},
+		{
+			name: "missing",
+			setup: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "missing-registry")
+			},
+			wantDetail: "no such file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Registries: []config.RegistryEntry{{
+				URL: tt.setup(t), Source: config.RepoCommitted,
+			}}}
+			discoverCalls := 0
+			result := LoadRegistries(cfg, t.TempDir(), LoadModeInspect,
+				WithDiscoverFunc(func(dir, sourceHarness string) (LoadedCatalog, error) {
+					discoverCalls++
+					return LoadedCatalog{}, nil
+				}),
+			)
+			if len(result.Errors) == 0 || !strings.Contains(result.Errors[0].Error(), tt.wantDetail) {
+				t.Fatalf("inspect local %s errors = %v, want %q", tt.name, result.Errors, tt.wantDetail)
+			}
+			if discoverCalls != 0 {
+				t.Fatalf("discover called %d times for unsafe local registry, want 0", discoverCalls)
+			}
+		})
+	}
+}
+
 func TestLoadRegistriesRefreshStillCallsCloneOrPull(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

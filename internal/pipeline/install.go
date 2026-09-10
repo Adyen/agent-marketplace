@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -24,17 +25,23 @@ import (
 
 // InstallOptions holds the arguments for an install operation.
 type InstallOptions struct {
-	RepoRoot   string
-	Args       []string // resource name args (0 or 1)
-	Tag        string   // --tag flag
-	InstallAll bool     // --all flag
-	Registry   string   // --registry filter for --all
-	Kind       ir.ResourceKind
-	HasKind    bool
-	Scope      Scope
-	FromURL    string // --from flag: ad-hoc registry URL
-	FromRef    string // --ref flag: git ref for --from
-	FromPath   string // --path flag: subdirectory for --from
+	RepoRoot                string
+	Args                    []string // resource name args (0 or 1)
+	Tag                     string   // --tag flag
+	InstallAll              bool     // --all flag
+	Registry                string   // --registry filter for --all
+	Kind                    ir.ResourceKind
+	HasKind                 bool
+	Scope                   Scope
+	ScopeSpecified          bool
+	FromURL                 string // --from flag: ad-hoc registry URL
+	FromRef                 string // --ref flag: git ref for --from
+	FromPath                string // --path flag: subdirectory for --from
+	InstalledName           string // --as for Marketplace installs
+	AcceptRisk              bool   // --accept-risk/--yes for Marketplace installs
+	Marketplace             string // --marketplace alias or endpoint selector
+	ExactMarketplaceLocator *marketplace.MarketplaceLocator
+	CatalogOption           []catalog.LoadOption
 
 	// LocalConfigDir overrides the directory where the local config
 	// (config.local.yaml) is written. Set by the Install function when
@@ -53,9 +60,10 @@ type InstallOptions struct {
 // happens in the subdirectory and local entries' relative paths resolve
 // against it.
 func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
-	var syncOpts []silentSyncOpt
-	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		syncOpts = append(syncOpts, withMaterializeRoot(opts.LocalConfigDir), withLocalConfigDir(opts.LocalConfigDir))
+	syncOpts := silentSyncOptsForPaths(opts.RepoRoot, opts.LocalConfigDir, opts.LocalConfigDir)
+	syncOpts = append(syncOpts, withCatalogMode(catalog.LoadModeCached), withMarketplaceMode(resolver.MarketplaceResolveModeRefresh))
+	if len(opts.CatalogOption) > 0 {
+		syncOpts = append(syncOpts, withCatalogOptions(opts.CatalogOption))
 	}
 	if opts.DependencyReconcile != nil {
 		syncOpts = append(syncOpts, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
@@ -65,10 +73,14 @@ func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
 
 // InstallResult holds the outcome of an install operation.
 type InstallResult struct {
-	Installed           []string
-	IsCollection        bool
-	CollectionLabel     string
-	RequirementWarnings []error
+	Installed                    []string
+	IsCollection                 bool
+	CollectionLabel              string
+	RequirementWarnings          []error
+	MarketplacePreview           string
+	MarketplaceEndpoint          string
+	MarketplaceConfigPath        string
+	MarketplaceAlreadyConfigured bool
 }
 
 type resourceIdentity struct {
@@ -79,6 +91,11 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and single-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	marketplaceEndpointRequested := isMarketplaceEndpointRegistration(opts)
+	if marketplaceEndpointRequested && !opts.ScopeSpecified {
+		opts.Scope = ScopeUser
+	}
+
 	tel := telemetry.TelemetryFromContext(ctx)
 	var installSpan telemetry.Span
 	if tel != nil {
@@ -93,11 +110,23 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 
 	kind, hasKind := opts.Kind, opts.HasKind
 	repoRoot := opts.RepoRoot
+	marketplaceInstallRequested := isMarketplaceInstall(opts) && !marketplaceEndpointRequested
+	if marketplaceInstallRequested {
+		prepared, err := PrepareMarketplaceInstall(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := evaluateMarketplaceConsent(prepared.plan, opts.AcceptRisk); err != nil {
+			return nil, &MarketplaceConsentError{Preview: prepared.preview, Prepared: prepared, Err: err}
+		}
+		return CommitPreparedMarketplaceInstall(ctx, prepared)
+	}
 
 	configPath, err := ScopedConfigPath(repoRoot, opts.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("resolve config path: %w", err)
 	}
+	marketplaceMutationRequested := marketplaceEndpointRequested
 
 	// Guard: when the resolved repo root is the home directory and scope is
 	// repo (default), the project config path collapses into the global
@@ -137,6 +166,13 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 			// genuinely absent. A non-NotExist stat error (permission, I/O)
 			// must be surfaced instead of clobbering an existing config.
 			if _, statErr := os.Stat(cwdProjectConfig); errors.Is(statErr, os.ErrNotExist) {
+				if marketplaceMutationRequested {
+					repoRoot = filepath.Clean(cwd)
+					configPath = config.ProjectConfigPath(repoRoot)
+					opts.RepoRoot = repoRoot
+					slog.Info("install: redirecting Marketplace install to cwd without creating a config before preflight", "original_repo_root", originalRepoRoot, "cwd", filepath.Clean(cwd), "install_target", configPath)
+					break
+				}
 				if opts.DependencyReconcile == nil {
 					if err := os.MkdirAll(filepath.Dir(cwdProjectConfig), 0755); err != nil {
 						return nil, fmt.Errorf("create .agents directory: %w", err)
@@ -185,7 +221,7 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		}
 	}
 
-	if opts.DependencyReconcile != nil {
+	if opts.DependencyReconcile != nil && !marketplaceEndpointRequested {
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
 			return nil, err
@@ -207,6 +243,9 @@ func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, r
 		return nil, errors.Join(ec.Errors...)
 	}
 
+	if marketplaceEndpointRequested {
+		return registerMarketplaceEndpoint(ctx, opts, configPath, &ec)
+	}
 	// --from ad-hoc registry path: validate URL, persist entry, then
 	// discover and install resources from the new entry.
 	if fromURL := strings.TrimSpace(opts.FromURL); fromURL != "" {

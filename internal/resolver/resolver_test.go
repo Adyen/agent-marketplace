@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1128,6 +1129,120 @@ func TestResolveLocalExcludesFiltersNonGlobalSkills(t *testing.T) {
 
 	if len(got) != 1 || got[0].Name != "repo-skill-b" {
 		t.Fatalf("expected only repo-skill-b after local exclude, got %#v", got)
+	}
+}
+
+type staticMarketplaceResolver struct {
+	artifacts []ResolvedArtifact
+}
+
+func (r staticMarketplaceResolver) Resolve(context.Context, *config.Config, []hcc.Target, MarketplaceResolveMode) ([]ResolvedArtifact, []error) {
+	return r.artifacts, nil
+}
+
+func TestResolveMarketplaceCollisionsPreserveInstanceAndSourceIdentity(t *testing.T) {
+	const endpoint = "https://market.example"
+
+	for _, tt := range []struct {
+		name       string
+		first      ResolvedArtifact
+		second     ResolvedArtifact
+		wantFirst  string
+		wantSecond string
+	}{
+		{
+			name: "same source at distinct instances",
+			first: ResolvedArtifact{
+				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-one", MarketplaceRegistryID: "source",
+			},
+			second: ResolvedArtifact{
+				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance-two", MarketplaceRegistryID: "source",
+			},
+			wantFirst: "instance-one", wantSecond: "instance-two",
+		},
+		{
+			name: "distinct sources at one instance",
+			first: ResolvedArtifact{
+				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceRegistryID: "source-one",
+			},
+			second: ResolvedArtifact{
+				Entry:      catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				CatalogKey: "intentionally-shared-catalog-key", Ref: "refs/heads/main",
+				IsMarketplace: true, MarketplaceURL: endpoint, MarketplaceInstanceID: "instance", MarketplaceRegistryID: "source-two",
+			},
+			wantFirst: "source-one", wantSecond: "source-two",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mp := staticMarketplaceResolver{artifacts: []ResolvedArtifact{tt.first, tt.second}}
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: endpoint, InstanceID: "configured"}}}
+			resolved, errs := Resolve(cfg, nil, nil, WithMarketplaceResolver(mp))
+			if len(resolved) != 1 {
+				t.Fatalf("resolved %d artifacts, want one deterministic winner: %#v", len(resolved), resolved)
+			}
+			if len(errs) != 1 || !IsNameCollision(errs[0]) {
+				t.Fatalf("errors = %v, want one Marketplace collision warning", errs)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(errs[0], &warning) {
+				t.Fatalf("error = %T, want NameCollisionWarning", errs[0])
+			}
+			for _, label := range []string{endpoint, tt.wantFirst, tt.wantSecond} {
+				if !strings.Contains(warning.Error(), label) {
+					t.Errorf("warning %q does not identify %q", warning.Error(), label)
+				}
+			}
+			if len(warning.RunnersUp) != 1 {
+				t.Fatalf("runners-up = %v, want one distinct Marketplace participant", warning.RunnersUp)
+			}
+			if !strings.Contains(warning.Winner, tt.wantFirst) {
+				t.Fatalf("winner = %q, want identity %q", warning.Winner, tt.wantFirst)
+			}
+			if !strings.Contains(warning.RunnersUp[0], tt.wantSecond) {
+				t.Fatalf("runners-up = %v, want identity %q", warning.RunnersUp, tt.wantSecond)
+			}
+		})
+	}
+}
+
+func TestResolveLocalExcludeRespectsMarketplaceRequiredOwnership(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		source       config.Source
+		required     bool
+		wantResolved bool
+		wantWarnings int
+	}{
+		{name: "organization pin is protected", source: config.Organization, required: true, wantResolved: true, wantWarnings: 1},
+		{name: "user pin remains machine scoped", source: config.UserPersonal, required: false, wantResolved: true, wantWarnings: 1},
+		{name: "repo pin can be excluded", source: config.RepoCommitted, required: false, wantResolved: false, wantWarnings: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "mp"}}}
+			mp := staticMarketplaceResolver{artifacts: []ResolvedArtifact{{
+				Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				Source: tt.source, Required: tt.required, IsMarketplace: true,
+				MarketplaceURL: "https://market.example", MarketplaceRegistryID: "src",
+			}}}
+			resolved, errs := Resolve(cfg, nil, &config.LocalConfig{Skills: kse(nil, []string{"review"})}, WithMarketplaceResolver(mp))
+			if (len(resolved) > 0) != tt.wantResolved {
+				t.Fatalf("resolved = %#v, want present=%t", resolved, tt.wantResolved)
+			}
+			if len(errs) != tt.wantWarnings {
+				t.Fatalf("errors = %v, want %d local-exclude warning(s)", errs, tt.wantWarnings)
+			}
+			for _, err := range errs {
+				if !IsWarning(err) || !strings.Contains(err.Error(), `exclude "review"`) {
+					t.Fatalf("error = %v, want ineffective-exclude warning", err)
+				}
+			}
+		})
 	}
 }
 
@@ -4201,6 +4316,43 @@ func TestResolveTargetHarnesses(t *testing.T) {
 			t.Fatalf("expected member harnesses %v, got %v", want, names["member-skill"].Harnesses)
 		}
 	})
+}
+
+type contextCapturingMarketplaceResolver struct {
+	got context.Context
+}
+
+func (r *contextCapturingMarketplaceResolver) Resolve(ctx context.Context, _ *config.Config, _ []hcc.Target, _ MarketplaceResolveMode) ([]ResolvedArtifact, []error) {
+	r.got = ctx
+	return nil, []error{ctx.Err()}
+}
+
+func TestResolvePassesCallerContextToMarketplaceResolver(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	mpResolver := &contextCapturingMarketplaceResolver{}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	cfg := &config.Config{
+		Marketplaces: []config.MarketplaceEntry{{
+			URL:        "https://marketplace.example",
+			InstanceID: "mp",
+			Resources: []config.MarketplaceResourcePin{{
+				RegistryID: "src",
+				Kind:       "skill",
+				Name:       "review",
+				Revision:   digest,
+				Digest:     digest,
+			}},
+		}},
+	}
+
+	_, errs := Resolve(cfg, nil, nil, WithContext(ctx), WithMarketplaceResolver(mpResolver))
+	if mpResolver.got != ctx {
+		t.Fatalf("Marketplace resolver context = %v, want caller context", mpResolver.got)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
+		t.Fatalf("Resolve errors = %v, want context cancellation", errs)
+	}
 }
 
 // harnessesEqual reports whether two harness target slices are equal, including

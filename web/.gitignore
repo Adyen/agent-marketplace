@@ -1,0 +1,9 @@
+.nuxt
+.output
+node_modules
+.DS_Store
+.env
+.env.*
+!.env.example
+test-results
+playwright-report

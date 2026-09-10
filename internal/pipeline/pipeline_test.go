@@ -5,7 +5,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
+
+func TestMarketplaceResolveModeCachedNoFetchIsExplicit(t *testing.T) {
+	if got := marketplaceResolveMode(catalog.LoadModeCachedNoFetch, false); got != resolver.MarketplaceResolveModeCachedNoFetch {
+		t.Fatalf("marketplaceResolveMode(cached-no-fetch, false) = %v, want %v", got, resolver.MarketplaceResolveModeCachedNoFetch)
+	}
+}
 
 func writeSkill(t *testing.T, root, name, description string, tags []string) {
 	t.Helper()

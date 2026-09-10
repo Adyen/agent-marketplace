@@ -1,3 +1,7 @@
+// Package config implements the agent-marketplace configuration model and
+// loaders. The strict YAML loaders in this package read the v2 canonical
+// schema and accept "agent-marketplace/v3" as a backwards-compatible alias
+// for the same schema; generators and documentation should emit v2.
 package config
 
 import (
@@ -38,59 +42,66 @@ func (k layerKind) name() string {
 // decoding, so unknown keys are also caught.
 var topLevelAllowed = map[layerKind]map[string]bool{
 	organizationLayer: {
-		"include":            true,
-		"apiVersion":         true,
-		"harnesses":          true,
-		"allowed_registries": true,
-		"registries":         true,
-		"collections":        true,
-		"skills":             true,
-		"commands":           true,
-		"subagents":          true,
-		"hooks":              true,
-		"mcp":                true,
-		"tags":               true,
-		"backup":             true,
-		"logging":            true,
-		"telemetry":          true,
+		"include":              true,
+		"apiVersion":           true,
+		"harnesses":            true,
+		"allowed_registries":   true,
+		"allowed_marketplaces": true,
+		"registries":           true,
+		"marketplaces":         true,
+		"collections":          true,
+		"skills":               true,
+		"commands":             true,
+		"subagents":            true,
+		"hooks":                true,
+		"mcp":                  true,
+		"tags":                 true,
+		"backup":               true,
+		"logging":              true,
+		"telemetry":            true,
 	},
 	userLayer: {
-		"include":            true,
-		"apiVersion":         true,
-		"harnesses":          true,
-		"allowed_registries": true,
-		"registries":         true,
-		"collections":        true,
-		"skills":             true,
-		"commands":           true,
-		"subagents":          true,
-		"hooks":              true,
-		"mcp":                true,
-		"tags":               true,
-		"backup":             true,
-		"logging":            true,
-		"telemetry":          true,
-		"materialization":    true,
+		"include":              true,
+		"apiVersion":           true,
+		"harnesses":            true,
+		"allowed_registries":   true,
+		"allowed_marketplaces": true,
+		"registries":           true,
+		"marketplaces":         true,
+		"collections":          true,
+		"skills":               true,
+		"commands":             true,
+		"subagents":            true,
+		"hooks":                true,
+		"mcp":                  true,
+		"tags":                 true,
+		"backup":               true,
+		"logging":              true,
+		"telemetry":            true,
+		"materialization":      true,
 	},
 	repoLayer: {
-		"include":            true,
-		"apiVersion":         true,
-		"harnesses":          true,
-		"allowed_registries": true,
-		"registries":         true,
-		"collections":        true,
-		"skills":             true,
-		"commands":           true,
-		"subagents":          true,
-		"hooks":              true,
-		"mcp":                true,
-		"tags":               true,
-		"materialization":    true,
+		"include":              true,
+		"apiVersion":           true,
+		"harnesses":            true,
+		"allowed_registries":   true,
+		"allowed_marketplaces": true,
+		"registries":           true,
+		"marketplaces":         true,
+		"collections":          true,
+		"skills":               true,
+		"commands":             true,
+		"subagents":            true,
+		"hooks":                true,
+		"mcp":                  true,
+		"tags":                 true,
+		"materialization":      true,
 	},
 	localLayer: {
 		"include":         true,
 		"apiVersion":      true,
 		"registries":      true,
+		"marketplaces":    true,
 		"collections":     true,
 		"skills":          true,
 		"commands":        true,
@@ -258,12 +269,20 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 
 		key := keyNode.Value
 		if !allowed[key] {
-			errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			if key == "harnesses" && (kind == repoLayer || kind == localLayer) {
+				errs = append(errs, fmt.Errorf("line %d: %s configuration cannot declare top-level harnesses; the target harness set is machine-wide and must live in the user-personal config", keyNode.Line, kind.name()))
+			} else {
+				errs = append(errs, fmt.Errorf("line %d: forbidden or unknown top-level field %q in %s configuration", keyNode.Line, key, kind.name()))
+			}
 			continue
 		}
 
-		if key == "registries" && i+1 < len(root.Content) {
-			valNode := resolveAlias(root.Content[i+1])
+		if i+1 >= len(root.Content) {
+			continue
+		}
+		valNode := resolveAlias(root.Content[i+1])
+		switch key {
+		case "registries":
 			if valNode.Kind == yaml.SequenceNode {
 				for _, rawItem := range valNode.Content {
 					item := resolveAlias(rawItem)
@@ -272,15 +291,102 @@ func validateV3ConfigNode(node *yaml.Node, kind layerKind) []error {
 					}
 				}
 			}
+		case "marketplaces":
+			errs = append(errs, validateV3MarketplaceNodes(valNode)...)
 		}
 	}
 
 	return errs
 }
 
+func validateV3MarketplaceNodes(node *yaml.Node) []error {
+	if node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	var errs []error
+	for i, rawEntry := range node.Content {
+		entry := resolveAlias(rawEntry)
+		path := fmt.Sprintf("marketplaces[%d]", i)
+		if entry == nil || entry.Kind != yaml.MappingNode {
+			errs = append(errs, fmt.Errorf("%s must be a mapping", path))
+			continue
+		}
+		if err := validateMarketplaceMapping(entry, path, marketplaceEntryFields); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		resources := findMappingValue(entry, "resources")
+		if resources == nil {
+			continue
+		}
+		resources = resolveAlias(resources)
+		if resources.Kind != yaml.SequenceNode {
+			errs = append(errs, fmt.Errorf("%s.resources must be a sequence", path))
+			continue
+		}
+		for j, rawPin := range resources.Content {
+			pinPath := fmt.Sprintf("%s.resources[%d]", path, j)
+			if err := validateMarketplacePinNode(rawPin, pinPath); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errs
+}
+
+func validateMarketplacePinNode(rawPin *yaml.Node, path string) error {
+	pin := resolveAlias(rawPin)
+	if pin == nil || pin.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must be a mapping", path)
+	}
+	if err := validateMarketplaceMapping(pin, path, marketplacePinFields); err != nil {
+		return err
+	}
+	if err := validateMarketplaceScalarFields(pin, path, map[string]struct{}{
+		"registry_id": {}, "registry_slug": {}, "kind": {}, "name": {}, "revision": {}, "digest": {}, "acquisition": {}, "registry_commit": {}, "registry_manifest_digest": {}, "installed_name": {},
+	}); err != nil {
+		return err
+	}
+	if direct := findMappingValue(pin, "direct"); direct != nil && (direct.Kind != yaml.ScalarNode || direct.Tag != "!!bool") {
+		return fmt.Errorf("%s.direct must be a boolean", path)
+	}
+	if selectedBy := findMappingValue(pin, "selected_by"); selectedBy != nil {
+		if err := validateMarketplaceSelectedByNode(selectedBy, path+".selected_by"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMarketplaceSelectedByNode(rawNode *yaml.Node, path string) error {
+	node := resolveAlias(rawNode)
+	if node == nil || node.Kind != yaml.SequenceNode || node.Tag == "!!null" {
+		return fmt.Errorf("%s must be a non-null sequence", path)
+	}
+	selectionFields := map[string]struct{}{"registry_id": {}, "name": {}, "revision": {}}
+	for i, rawSelection := range node.Content {
+		selectionPath := fmt.Sprintf("%s[%d]", path, i)
+		selection := resolveAlias(rawSelection)
+		if selection == nil || selection.Kind != yaml.MappingNode {
+			return fmt.Errorf("%s must be an exact mapping with registry_id, name, and revision", selectionPath)
+		}
+		if err := validateMarketplaceMapping(selection, selectionPath, selectionFields); err != nil {
+			return err
+		}
+		for _, field := range []string{"registry_id", "name", "revision"} {
+			if findMappingValue(selection, field) == nil {
+				return fmt.Errorf("%s.%s is required", selectionPath, field)
+			}
+		}
+		if err := validateMarketplaceStringFields(selection, selectionPath, selectionFields); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // validateV3RegistryEntryNode validates one registry entry mapping. It checks
-// that every key is allowed for the layer and that required/default are not
-// used in repository personal configs.
+// that every key is allowed for the layer.
 func validateV3RegistryEntryNode(node *yaml.Node, kind layerKind) []error {
 	var errs []error
 	for i := 0; i < len(node.Content); i += 2 {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -15,6 +16,27 @@ import (
 )
 
 const defaultConfigMode os.FileMode = 0o644
+
+var configPathLocks sync.Map
+
+// withConfigPathLock serializes read-modify-write edits for one config path
+// within this process. It does not provide cross-process locking.
+func withConfigPathLock(configPath string, edit func() error) error {
+	resolved, err := filepath.EvalSymlinks(configPath)
+	if err != nil {
+		resolved = configPath
+	}
+	key, err := filepath.Abs(resolved)
+	if err != nil {
+		return fmt.Errorf("resolve config path %q: %w", configPath, err)
+	}
+	lock := &sync.Mutex{}
+	actual, _ := configPathLocks.LoadOrStore(filepath.Clean(key), lock)
+	lock = actual.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	return edit()
+}
 
 // GlobalConfigPath returns the filesystem path of the global config
 // (~/.agents/config.yaml). Returns an error if the home directory cannot

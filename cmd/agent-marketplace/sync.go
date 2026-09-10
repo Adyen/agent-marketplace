@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -33,6 +34,8 @@ func newSyncCmd() *cobra.Command {
 	var verbose bool
 	var offline bool
 	var locked bool
+	var allowRevoked []string
+	var policy resolver.MarketplaceRevocationPolicy
 
 	cmd := &cobra.Command{
 		Use:   "sync",
@@ -44,6 +47,14 @@ func newSyncCmd() *cobra.Command {
 			if locked && pruneStale {
 				return fmt.Errorf("--prune-stale cannot be used with --locked: locked mode forbids config writes")
 			}
+			parsedPolicy, err := marketplace.NewRevocationOverridePolicy(allowRevoked)
+			if err != nil {
+				return fmt.Errorf("invalid --allow-revoked value: %w", err)
+			}
+			policy = parsedPolicy
+			if checkOnly && len(allowRevoked) > 0 {
+				return fmt.Errorf("--allow-revoked cannot be used with --check: revoked overrides are execution-only and checks must remain unhealthy")
+			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -51,7 +62,7 @@ func newSyncCmd() *cobra.Command {
 			if checkOnly {
 				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), offline, locked)
 			}
-			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked})
+			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
 		},
 	}
 
@@ -60,22 +71,24 @@ func newSyncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&strict, "strict", false, "Treat all unresolved-selection warnings — 'selected but not found' and 'found but failed to load' — as hard errors (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
-	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local Git registry caches; never fetch remote endpoints")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use only trusted local registry and Marketplace caches; never fetch or contact remote endpoints")
 	cmd.Flags().BoolVar(&locked, "locked", false, "Require fresh lock files and never update config or locks")
+	cmd.Flags().StringArrayVar(&allowRevoked, "allow-revoked", nil, "Allow one exact revoked Marketplace pin for this invocation: marketplace/source/kind/name@sha256:<64 lowercase hex>")
 
 	return cmd
 }
 
 type lockRunOptions struct {
-	locked bool
-}
-
-func runSync(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool) error {
-	return runSyncWithLocks(ctx, out, noBackup, strict, pruneStale, verbose, false)
+	locked            bool
+	marketplacePolicy resolver.MarketplaceRevocationPolicy
 }
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	var marketplacePolicy resolver.MarketplaceRevocationPolicy
+	if len(lockOpts) > 0 {
+		marketplacePolicy = lockOpts[0].marketplacePolicy
+	}
 	if !offline && !locked {
 		if err := config.EnsureGlobalConfig(); err != nil {
 			slog.Warn("failed to create global config skeleton", "error", err)
@@ -103,7 +116,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale}
+	resolveOpts := pipeline.ResolveOptions{RepoRoot: repoRoot, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy}
 
 	if localDir != "" && localDir != repoRoot {
 		resolveOpts.MaterializeRoot = localDir

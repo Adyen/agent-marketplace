@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	"gopkg.in/yaml.v3"
 )
 
 // fileExists reports whether the given path exists (file or directory).
@@ -77,51 +75,38 @@ func probeGitRoot(dir string) (string, bool) {
 // answer is cached like any other genuine result. Failed probes are not cached
 // so a transient git stall can self-correct on the next call.
 //
-// A per-directory mutex is kept so concurrent calls for the same directory only
-// probe once while calls for different directories do not block each other.
+// sync.Map is used so the fast path never blocks a slow-path probe and so the
+// per-directory lock can be acquired without holding the cache lock, avoiding
+// any lock-ordering inversion.
 var (
-	gitRootMu    sync.Mutex
-	gitRootCache = map[string]string{}
-	gitRootLocks = map[string]*sync.Mutex{}
+	gitRootCache sync.Map
+	gitRootLocks sync.Map
 )
 
 // gitRootFor returns the git worktree root containing dir, resolving it at
 // most once per directory per process for successful probes.
 func gitRootFor(dir string) string {
 	// Fast path: read the cache.
-	gitRootMu.Lock()
-	if root, ok := gitRootCache[dir]; ok {
-		gitRootMu.Unlock()
-		return root
+	if root, ok := gitRootCache.Load(dir); ok {
+		return root.(string)
 	}
 
-	// for other dirs can proceed in parallel. Release the cache lock before
-	// acquiring the per-dir lock to avoid a lock-order inversion: the probing
-	// goroutine later needs the cache lock to publish the result, while waiters
-	// would otherwise hold the cache lock waiting for the per-dir lock.
-	mu, ok := gitRootLocks[dir]
-	if !ok {
-		mu = &sync.Mutex{}
-		gitRootLocks[dir] = mu
-	}
-	gitRootMu.Unlock()
-
+	// Slow path: obtain the per-directory lock so only one goroutine probes
+	// for this directory. Other goroutines for the same dir block here; callers
+	// for other dirs can proceed in parallel.
+	actual, _ := gitRootLocks.LoadOrStore(dir, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
 	mu.Lock()
 	defer mu.Unlock()
 
 	// Double-check the cache now that we hold the per-directory lock.
-	gitRootMu.Lock()
-	if root, ok := gitRootCache[dir]; ok {
-		gitRootMu.Unlock()
-		return root
+	if root, ok := gitRootCache.Load(dir); ok {
+		return root.(string)
 	}
-	gitRootMu.Unlock()
 
 	root, cacheable := gitRootProbe(dir)
 	if cacheable {
-		gitRootMu.Lock()
-		gitRootCache[dir] = root
-		gitRootMu.Unlock()
+		gitRootCache.Store(dir, root)
 	}
 
 	slog.Debug("git root resolved",
@@ -138,9 +123,7 @@ func gitRootFor(dir string) string {
 // needs to, because the git boundary of a working directory does not change
 // during a single CLI invocation.
 func ResetRepoRootCache() {
-	gitRootMu.Lock()
-	defer gitRootMu.Unlock()
-	clear(gitRootCache)
+	gitRootCache.Clear()
 	slog.Debug("repo root cache reset")
 }
 
@@ -553,6 +536,7 @@ func configAsLocal(cfg *Config) *LocalConfig {
 		Include:         cfg.Include,
 		APIVersion:      cfg.APIVersion,
 		Registries:      cfg.Registries,
+		Marketplaces:    cfg.Marketplaces,
 		Skills:          cfg.Skills,
 		Commands:        cfg.Commands,
 		Subagents:       cfg.Subagents,
@@ -764,58 +748,4 @@ func IsHomeDir(path string) bool {
 		return false
 	}
 	return os.SameFile(pStat, hStat)
-}
-
-func loadConfig(path string, requireHarnesses bool) (*Config, error) {
-	layer := "repository committed"
-	if requireHarnesses {
-		layer = "user personal"
-	}
-	return loadConfigGated(path, requireHarnesses, true, layer)
-}
-
-// loadConfigGated reads and validates a Config, with independent control over
-// whether harnesses and apiVersion are required. Local config files
-// (config.local.yaml) are loaded with requireAPIVersion=false because they use
-// the LocalConfig schema and are generated without an apiVersion field.
-func loadConfigGated(path string, requireHarnesses, requireAPIVersion bool, layer string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeConfigHarnessTargets(&cfg)
-
-	if err := cfg.validate(requireHarnesses, requireAPIVersion, layer); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-
-	return &cfg, nil
-}
-
-func loadLocalConfig(path string) (*LocalConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
-
-	var cfg LocalConfig
-	if len(bytes.TrimSpace(data)) == 0 {
-		return &cfg, nil
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
-	}
-	normalizeLocalConfigHarnessTargets(&cfg)
-	if err := cfg.ValidateBasic(); err != nil {
-		return nil, fmt.Errorf("validate config %q: %w", path, err)
-	}
-
-	return &cfg, nil
 }
