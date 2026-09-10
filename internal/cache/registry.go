@@ -303,12 +303,13 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 	cmd.Env = gitEnv()
 	if source, acquisition := gitAcquisition(args); acquisition {
 		var err error
-		cmd.Env, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
+		var resolvedSource string
+		cmd.Env, resolvedSource, err = gitAuthEnvironment(ctx, repoDir, cmd.Env, source)
 		if err != nil {
 			return nil, err
 		}
 		if err := cmd.Run(); err != nil {
-			diagnostic := gitTransportFailureDiagnostic(source)
+			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
 			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
 		}
 		return nil, nil

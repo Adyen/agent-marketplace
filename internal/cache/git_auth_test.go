@@ -129,6 +129,30 @@ func TestGitTransportFailureMessage(t *testing.T) {
 	}
 }
 
+func TestGitTransportFailureUsesResolvedFetchRemote(t *testing.T) {
+	isolatedGitAuth(t)
+	repo := t.TempDir()
+	gitTest(t, "", "init", repo)
+	gitTest(t, repo, "remote", "add", "origin", "git@example.invalid:repo")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUTH_REAL_GIT", realGit)
+	wrapper := authFile(t, "git", "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) echo synthetic-auth-secret >&2; exit 128;; *) exec \"$AUTH_REAL_GIT\" \"$@\";; esac\n", 0o700)
+	t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err = execGit(repo, []string{"fetch", "--", "origin"})
+	const want = "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
+	if err == nil || err.Error() != want {
+		t.Fatalf("execGit() error = %q, want %q", err, want)
+	}
+	if strings.Contains(err.Error(), "synthetic-auth-secret") {
+		t.Fatal("transport diagnostic leaked a secret")
+	}
+}
+
 func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 	for _, transport := range []string{"path", "file"} {
 		t.Run(transport, func(t *testing.T) {
@@ -178,7 +202,7 @@ func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 				t.Fatal("local transport bypassed repository authentication validation")
 			}
 			for _, source := range []string{"ssh://git@example.invalid/repo", "git@example.invalid:repo"} {
-				if _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
+				if _, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -186,7 +210,7 @@ func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 				t.Fatal("non-HTTP transport invoked a trusted authentication reader")
 			}
 			for _, source := range []string{"https://example.invalid/fixture", "http://example.invalid", "https://example.invalid/fixture?query=synthetic"} {
-				if _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
+				if _, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Remove(marker); err != nil {

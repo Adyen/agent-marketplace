@@ -78,13 +78,13 @@ func gitAuthKey(key string) bool {
 	return false
 }
 
-func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, source string) ([]string, error) {
+func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, source string) ([]string, string, error) {
 	if repoDir != "" {
 		cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "config", "--local", "--no-includes", "--null", "--list")
 		cmd.Dir, cmd.Env = repoDir, env
 		output, err := cmd.Output()
 		if err != nil {
-			return nil, ErrGitAuthConfigUntrusted
+			return nil, source, ErrGitAuthConfigUntrusted
 		}
 		remoteURL := ""
 		hasRewrite := false
@@ -95,7 +95,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			}
 			key = strings.ToLower(key)
 			if strings.HasPrefix(key, "credential.") || strings.HasPrefix(key, "http.") || strings.HasPrefix(key, "include.") || strings.HasPrefix(key, "includeif.") || key == "core.askpass" || key == "extensions.worktreeconfig" {
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			hasRewrite = hasRewrite || strings.HasPrefix(key, "url.") && strings.HasSuffix(key, ".insteadof")
 		}
@@ -104,7 +104,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			cmd.Dir, cmd.Env = repoDir, env
 			output, err := cmd.Output()
 			if err != nil {
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			source = strings.TrimSpace(string(output))
 		} else if remoteURL != "" {
@@ -115,12 +115,12 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 	if err != nil {
 		parsed, err := url.Parse(source)
 		if err != nil || parsed.Host == "" {
-			return env, nil
+			return env, source, nil
 		}
 		canonical = strings.ToLower(parsed.Scheme) + "://"
 	}
 	if !strings.HasPrefix(canonical, "https://") && !strings.HasPrefix(canonical, "http://") {
-		return env, nil
+		return env, source, nil
 	}
 
 	count := 0
@@ -131,19 +131,19 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 				continue
 			case "", "0", "false", "no", "off":
 			default:
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 		}
 		configKey := "GIT_CONFIG_" + strings.ToUpper(scope)
 		configuredPath, configured := os.LookupEnv(configKey)
 		if configured && configuredPath == "" {
-			return nil, ErrGitAuthConfigUntrusted
+			return nil, source, ErrGitAuthConfigUntrusted
 		}
 		configPaths := []string{configuredPath}
 		if scope == "global" && configPaths[0] == "" {
 			home, err := os.UserHomeDir()
 			if err != nil || !filepath.IsAbs(home) {
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			xdg := os.Getenv("XDG_CONFIG_HOME")
 			if xdg == "" {
@@ -156,7 +156,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 				continue
 			}
 			if configPath != "" && !filepath.IsAbs(configPath) {
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			var readerEnv []string
 			for _, entry := range env {
@@ -182,39 +182,39 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 				if errors.As(err, &exit) && exit.ExitCode() == 1 && len(output) == 0 {
 					continue
 				}
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			fields := strings.Split(string(output), "\x00")
 			if len(fields)%2 != 1 || fields[len(fields)-1] != "" {
-				return nil, ErrGitAuthConfigUntrusted
+				return nil, source, ErrGitAuthConfigUntrusted
 			}
 			for i := 0; i+1 < len(fields); i += 2 {
 				origin, record := fields[i], fields[i+1]
 				key, value, hasValue := strings.Cut(record, "\n")
 				lower := strings.ToLower(key)
 				if strings.HasPrefix(lower, "include.") || strings.HasPrefix(lower, "includeif.") {
-					return nil, ErrGitAuthConfigUntrusted
+					return nil, source, ErrGitAuthConfigUntrusted
 				}
 				if !gitAuthKey(key) {
 					continue
 				}
 				path, ok := strings.CutPrefix(origin, "file:")
 				if !ok || !filepath.IsAbs(path) {
-					return nil, ErrGitAuthConfigUntrusted
+					return nil, source, ErrGitAuthConfigUntrusted
 				}
 				info, err := os.Stat(path)
 				if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
-					return nil, ErrGitAuthConfigUntrusted
+					return nil, source, ErrGitAuthConfigUntrusted
 				}
 				stat, ok := info.Sys().(*syscall.Stat_t)
 				if !ok || stat.Uid != 0 && stat.Uid != uint32(os.Geteuid()) {
-					return nil, ErrGitAuthConfigUntrusted
+					return nil, source, ErrGitAuthConfigUntrusted
 				}
 				if !hasValue {
 					if strings.HasSuffix(lower, ".usehttppath") || strings.HasSuffix(lower, ".sslcertpasswordprotected") {
 						value = "true"
 					} else {
-						return nil, ErrGitAuthConfigUntrusted
+						return nil, source, ErrGitAuthConfigUntrusted
 					}
 				}
 				env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", count, key), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, value))
@@ -222,5 +222,5 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			}
 		}
 	}
-	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), nil
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", count)), source, nil
 }
