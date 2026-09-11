@@ -47,6 +47,7 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 // WithScope(ScopeUser) drives the machine-scope pass. Devin currently uses it
 // for project hooks.v1.json versus the `hooks` member of user config.json; the
 // option is inert for other targets.
+
 func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bool) []string {
 	t.Helper()
 	outDir := t.TempDir()
