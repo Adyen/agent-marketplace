@@ -68,7 +68,7 @@ func BenchmarkGitAuthEnvironment(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), "https://example.invalid/fixture"); err != nil {
+		if _, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), "https://example.invalid/fixture"); err != nil {
 			b.Fatal(err)
 		}
 	}

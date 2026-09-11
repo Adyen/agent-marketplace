@@ -100,6 +100,59 @@ func TestGitAcquisitionSourceOperands(t *testing.T) {
 	}
 }
 
+func TestGitTransportFailureMessage(t *testing.T) {
+	for _, tt := range []struct {
+		name, source, message string
+	}{
+		{"scp", "git@example.invalid:repo", "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"},
+		{"ssh", "ssh://git@example.invalid/repo", "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"},
+		{"https", "https://example.invalid/repo", "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			isolatedGitAuth(t)
+			realGit, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AUTH_REAL_GIT", realGit)
+			wrapper := authFile(t, "git", "#!/bin/sh\nif [ \"$1\" = config ]; then exec \"$AUTH_REAL_GIT\" \"$@\"; fi\necho synthetic-auth-secret >&2\nexit 128\n", 0o700)
+			t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			err = runGit("", "clone", tt.source, filepath.Join(t.TempDir(), "clone"))
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("runGit() error = %q, want message %q", err, tt.message)
+			}
+			if strings.Contains(err.Error(), "synthetic-auth-secret") {
+				t.Fatal("transport diagnostic leaked a secret")
+			}
+		})
+	}
+}
+
+func TestGitTransportFailureUsesResolvedFetchRemote(t *testing.T) {
+	isolatedGitAuth(t)
+	repo := t.TempDir()
+	gitTest(t, "", "init", repo)
+	gitTest(t, repo, "remote", "add", "origin", "git@example.invalid:repo")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUTH_REAL_GIT", realGit)
+	wrapper := authFile(t, "git", "#!/bin/sh\ncase \" $* \" in *\" fetch \"*) echo synthetic-auth-secret >&2; exit 128;; *) exec \"$AUTH_REAL_GIT\" \"$@\";; esac\n", 0o700)
+	t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err = execGit(repo, []string{"fetch", "--", "origin"})
+	const want = "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
+	if err == nil || err.Error() != want {
+		t.Fatalf("execGit() error = %q, want %q", err, want)
+	}
+	if strings.Contains(err.Error(), "synthetic-auth-secret") {
+		t.Fatal("transport diagnostic leaked a secret")
+	}
+}
+
 func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 	for _, transport := range []string{"path", "file"} {
 		t.Run(transport, func(t *testing.T) {
@@ -149,7 +202,7 @@ func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 				t.Fatal("local transport bypassed repository authentication validation")
 			}
 			for _, source := range []string{"ssh://git@example.invalid/repo", "git@example.invalid:repo"} {
-				if _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
+				if _, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -157,7 +210,7 @@ func TestGitAuthSkipsReadersForLocalTransports(t *testing.T) {
 				t.Fatal("non-HTTP transport invoked a trusted authentication reader")
 			}
 			for _, source := range []string{"https://example.invalid/fixture", "http://example.invalid", "https://example.invalid/fixture?query=synthetic"} {
-				if _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
+				if _, _, err := gitAuthEnvironment(context.Background(), "", gitEnv(), source); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Remove(marker); err != nil {
