@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +13,6 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -111,10 +109,9 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 		matOpts = append(matOpts, hcc.WithDryRun())
 	}
 
-	// A Result carrying error diagnostics is materialized, not refused: the
-	// resources that compiled cleanly are complete and reach disk, while the
-	// resources that failed contributed nothing. Report exactly what landed and
-	// then fail, so a partial conversion can never read as a clean one.
+	// Materialize results with error diagnostics so successful resources reach
+	// disk while failed resources contribute nothing. Report the write and then
+	// return the error so a partial conversion cannot look successful.
 	var writeReport *hcc.WriteReport
 	switch to {
 	case "codex":
@@ -150,93 +147,22 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	return nil
 }
 
-// materializeCodexConversion is the non-owning publication path for one-shot
-// conversion. Sync owns shared configuration and reconciles it entry-by-entry;
-// conversion instead requires an empty shared-file destination, stages a whole
-// result, and publishes complete aggregates without replacement.
+// materializeCodexConversion publishes a one-shot conversion without adopting
+// ownership. Sync reconciles shared configuration entry by entry; conversion
+// requires an empty shared-file destination and publishes a staged result.
 func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
-	materializable, err := codexConversionResult(result)
-	if err != nil {
-		return nil, err
-	}
-
-	// A dry run has no publication race to serialize. Keeping it lock-free is
-	// what preserves the flag's no-filesystem-mutation contract: acquiring the
-	// durable advisory lock would create the lock file even though output is not
-	// being written.
-	if dryRun {
-		if err := preflightCodexConversion(outDir); err != nil {
-			return nil, err
-		}
-		return hcc.Materialize(materializable, outDir, matOpts...)
-	}
-
-	store, err := ownership.Open(outDir)
-	if err != nil {
-		return nil, fmt.Errorf("open Codex conversion destination lock: %w", err)
-	}
-	release, err := store.Lock()
-	if err != nil {
-		return nil, fmt.Errorf("lock Codex conversion destination: %w", err)
-	}
-	defer release()
-
-	slog.Debug("Codex conversion publication started", "out_dir", filepath.Clean(outDir), "root_key", store.RootKey())
-	if err := preflightCodexConversion(outDir); err != nil {
-		slog.Warn("Codex conversion refused by destination preflight", "out_dir", filepath.Clean(outDir), "error", err)
-		return nil, err
-	}
-
-	// Ask the generic materializer for the final-destination report without
-	// allowing it to write. This preserves overwrite/sync/prune and partial-result
-	// reporting while the real bytes are staged elsewhere.
-	planOpts := append([]hcc.WriteOption(nil), matOpts...)
-	planOpts = append(planOpts, hcc.WithDryRun())
-	report, resultErr := hcc.Materialize(materializable, outDir, planOpts...)
-	if resultErr != nil && !errors.Is(resultErr, hcc.ErrPartialResult) {
-		return nil, resultErr
-	}
-
-	stageParent, err := codexConversionStageParent(outDir)
-	if err != nil {
-		return nil, err
-	}
-	stageDir, err := os.MkdirTemp(stageParent, ".agent-marketplace-convert-")
-	if err != nil {
-		return nil, fmt.Errorf("create Codex conversion staging directory: %w", err)
-	}
-	defer func() {
-		if removeErr := os.RemoveAll(stageDir); removeErr != nil {
-			slog.Warn("Codex conversion staging cleanup failed", "stage_dir", stageDir, "error", removeErr)
-		}
-	}()
-
-	if _, stageErr := hcc.Materialize(materializable, stageDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); stageErr != nil && !errors.Is(stageErr, hcc.ErrPartialResult) {
-		return nil, fmt.Errorf("stage Codex conversion: %w", stageErr)
-	}
-	if err := validateCodexConversionStage(stageDir); err != nil {
-		return nil, err
-	}
-	if err := publishCodexConversion(stageDir, outDir, report.Written); err != nil {
-		slog.Error("Codex conversion publication failed", "out_dir", filepath.Clean(outDir), "error", err)
-		return nil, err
-	}
-	return finishCodexConversion(outDir, report, resultErr, pruneCodexConversionStale)
+	return conversionPublisher{
+		target:    "Codex",
+		shared:    codexConversionSharedPaths[:],
+		clone:     codexConversionResult,
+		preflight: func(dir string) error { return preflightCodexConversion(dir) },
+		validate:  func(dir string, _ []string) error { return validateCodexConversionStage(dir) },
+		prune:     pruneCodexConversionStale,
+	}.materialize(result, outDir, matOpts, dryRun)
 }
 
 func finishCodexConversion(outDir string, report *hcc.WriteReport, resultErr error, prune func(string, []string) error) (*hcc.WriteReport, error) {
-	// Publication is the commit boundary. Stale-file pruning follows it and is
-	// deliberately not rolled back: once one stale file has been removed there
-	// is no byte-safe way to recreate it without extending conversion into an
-	// ownership/backup transaction. A prune failure is therefore reported as a
-	// partial operation while the complete published result remains in place.
-	if pruneErr := prune(outDir, report.Removed); pruneErr != nil {
-		slog.Error("Codex conversion published with stale-prune failures", "out_dir", filepath.Clean(outDir), "error", pruneErr)
-		return report, fmt.Errorf("codex conversion output was published, but stale output pruning failed: %w", pruneErr)
-	}
-
-	slog.Info("Codex conversion published", "out_dir", filepath.Clean(outDir), "written", len(report.Written), "removed", len(report.Removed), "partial", report.Partial)
-	return report, resultErr
+	return finishConversion(outDir, report, resultErr, prune)
 }
 
 func codexConversionStageParent(outDir string) (string, error) {
@@ -347,44 +273,16 @@ type codexConversionPublication struct {
 	shared         bool
 }
 
-func publishCodexConversion(stageDir, outDir string, written []string) error {
-	return publishCodexConversionWith(stageDir, outDir, written, publishCodexConversionFile)
-}
-
 func publishCodexConversionWith(stageDir, outDir string, written []string, publishFile func(codexConversionPublication) error) error {
-	publications, err := planCodexConversionPublication(stageDir, outDir, written)
-	if err != nil {
-		return err
-	}
-	defer removeEmptyCodexConversionRecoveryDirs(publications)
-
-	createdDirs := make([]string, 0, 4)
-	published := make([]codexConversionPublication, 0, len(publications))
-	for _, publication := range publications {
-		if err := ensureCodexConversionDirs(outDir, filepath.Dir(publication.dst), &createdDirs); err != nil {
-			return rollbackCodexConversion(fmt.Errorf("prepare destination for %q: %w", publication.rel, err), published, createdDirs)
-		}
-
-		err = publishFile(publication)
-		if err != nil {
-			if publication.shared && os.IsExist(err) {
-				err = codexConversionSharedFileError(publication.rel)
-			} else {
-				err = fmt.Errorf("publish Codex artifact %q: %w", publication.rel, err)
-			}
-			return rollbackCodexConversion(err, published, createdDirs)
-		}
-		published = append(published, publication)
-	}
-	return discardCodexConversionRecovery(publications)
+	return publishConversionWith(stageDir, outDir, written, codexConversionSharedPaths[:], "Codex", publishFile)
 }
 
 func publishCodexConversionFile(publication codexConversionPublication) error {
 	if publication.existed {
 		return replaceCodexConversionFile(publication, os.Link)
 	}
-	// Staging shares the destination filesystem, so a hard link atomically
-	// exposes the complete staged inode and fails if a writer won the path.
+	// Staging shares the destination filesystem, so a hard link exposes the
+	// staged inode atomically and fails if another writer won the path.
 	return os.Link(publication.src, publication.dst)
 }
 
@@ -448,9 +346,8 @@ func planCodexConversionPublication(stageDir, outDir string, written []string) (
 			publication.originalInfo = info
 			publication.originalDigest = digest
 		case os.IsNotExist(err):
-			// Every absent path, not only a shared path, is published without
-			// replacement. This is stronger than the shared-file requirement and
-			// prevents a concurrent ordinary file from being overwritten.
+			// Absent paths are published without replacement, including ordinary
+			// files, so a concurrent writer cannot be overwritten.
 		case err != nil:
 			return nil, fmt.Errorf("inspect Codex conversion destination %q: %w", rel, err)
 		}
@@ -546,8 +443,8 @@ func rollbackCodexConversion(cause error, published []codexConversionPublication
 	}
 	for i := len(createdDirs) - 1; i >= 0; i-- {
 		if err := os.Remove(createdDirs[i]); err != nil && !os.IsNotExist(err) {
-			// A non-empty directory now contains something this conversion did
-			// not create. Preserve it and leave the original failure primary.
+			// Preserve a non-empty directory that now contains another writer's
+			// content and keep the original failure primary.
 			if !errors.Is(err, os.ErrExist) {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove directory %q: %w", createdDirs[i], err))
 			}
@@ -715,72 +612,37 @@ func pruneCodexConversionStale(outDir string, removed []string) error {
 	return pruneCodexConversionStaleWith(outDir, removed, os.Remove)
 }
 
-// materializeDevinConversion is the non-owning conversion publisher for Devin.
-// Shared aggregate paths are discovered from the artifact reconciliation policy,
-// staged and syntax-validated, then exposed by hard link without adoption.
+// materializeDevinConversion publishes a Devin conversion without adopting
+// ownership. Shared aggregate paths come from artifact policies, are staged and
+// syntax-validated, then exposed by hard link.
 func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
+	shared, err := externalConversionPaths(result)
+	if err != nil {
+		return nil, err
+	}
+	return conversionPublisher{
+		target: "Devin",
+		shared: shared,
+		clone: func(input *hcc.Result) (*hcc.Result, error) {
+			return cloneNonOwningConversionResult(input, shared), nil
+		},
+		preflight: func(dir string) error { return preflightConversionPaths(dir, shared, "Devin") },
+		validate:  validateDevinConversionStage,
+		prune:     pruneCodexConversionStale,
+	}.materialize(result, outDir, matOpts, dryRun)
+}
+
+func externalConversionPaths(result *hcc.Result) ([]string, error) {
 	if result == nil {
 		return nil, errors.New("devin conversion result must not be nil")
 	}
-	shared := externalConversionPaths(result)
-	if err := preflightConversionPaths(outDir, shared, "Devin"); err != nil {
-		return nil, err
-	}
-	converted := cloneNonOwningConversionResult(result, shared)
-	if dryRun {
-		return hcc.Materialize(converted, outDir, matOpts...)
-	}
-	store, err := ownership.Open(outDir)
-	if err != nil {
-		return nil, fmt.Errorf("open Devin conversion destination lock: %w", err)
-	}
-	release, err := store.Lock()
-	if err != nil {
-		return nil, fmt.Errorf("lock Devin conversion destination: %w", err)
-	}
-	defer release()
-	if err := preflightConversionPaths(outDir, shared, "Devin"); err != nil {
-		return nil, err
-	}
-	planOpts := append([]hcc.WriteOption(nil), matOpts...)
-	planOpts = append(planOpts, hcc.WithDryRun())
-	report, resultErr := hcc.Materialize(converted, outDir, planOpts...)
-	if resultErr != nil && !errors.Is(resultErr, hcc.ErrPartialResult) {
-		return nil, resultErr
-	}
-	parent, err := codexConversionStageParent(outDir)
-	if err != nil {
-		return nil, err
-	}
-	stage, err := os.MkdirTemp(parent, ".agent-marketplace-convert-")
-	if err != nil {
-		return nil, fmt.Errorf("create Devin conversion staging directory: %w", err)
-	}
-	defer func() {
-		if removeErr := os.RemoveAll(stage); removeErr != nil {
-			slog.Warn("Devin conversion staging cleanup failed", "stage_dir", stage, "error", removeErr)
-		}
-	}()
-	if _, err := hcc.Materialize(converted, stage, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil && !errors.Is(err, hcc.ErrPartialResult) {
-		return nil, fmt.Errorf("stage Devin conversion: %w", err)
-	}
-	if err := validateDevinConversionStage(stage, report.Written); err != nil {
-		return nil, err
-	}
-	if err := publishNonOwningConversion(stage, outDir, report.Written, shared, "Devin"); err != nil {
-		return nil, err
-	}
-	return report, resultErr
-}
-
-func externalConversionPaths(result *hcc.Result) []string {
 	seen := make(map[string]struct{})
 	for _, a := range result.Artifacts {
-		if a.ExternalReconciliationRequired {
-			seen[a.Path] = struct{}{}
-			continue
+		policy, err := a.Policy()
+		if err != nil {
+			return nil, fmt.Errorf("validate Devin conversion artifact %q: %w", a.Path, err)
 		}
-		if policy, err := a.Policy(); err == nil && policy.IsExternal() {
+		if policy.IsExternal() {
 			seen[a.Path] = struct{}{}
 		}
 	}
@@ -789,7 +651,7 @@ func externalConversionPaths(result *hcc.Result) []string {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	return paths
+	return paths, nil
 }
 
 func cloneNonOwningConversionResult(result *hcc.Result, shared []string) *hcc.Result {
@@ -841,56 +703,6 @@ func validateDevinConversionStage(stage string, paths []string) error {
 			return fmt.Errorf("validate staged Devin aggregate %q: %w", rel, err)
 		}
 	}
-	return nil
-}
-
-func publishNonOwningConversion(stage, outDir string, paths, shared []string, target string) error {
-	ordered := append([]string(nil), paths...)
-	sort.Strings(ordered)
-	created, backups, published := []string{}, []string{}, []string{}
-	rollback := func(cause error) error {
-		for i := len(published) - 1; i >= 0; i-- {
-			_ = os.Remove(filepath.Join(outDir, filepath.FromSlash(published[i])))
-		}
-		for i := len(backups) - 1; i >= 0; i-- {
-			_ = os.Rename(backups[i], strings.TrimSuffix(backups[i], ".backup"))
-		}
-		for i := len(created) - 1; i >= 0; i-- {
-			_ = os.Remove(created[i])
-		}
-		return cause
-	}
-	for _, rel := range ordered {
-		src, dst := filepath.Join(stage, filepath.FromSlash(rel)), filepath.Join(outDir, filepath.FromSlash(rel))
-		if err := ensureCodexConversionDirs(outDir, filepath.Dir(dst), &created); err != nil {
-			return rollback(fmt.Errorf("prepare %s destination for %q: %w", target, rel, err))
-		}
-		if containsString(shared, rel) {
-			if _, err := os.Lstat(dst); err == nil {
-				return rollback(fmt.Errorf("%s shared file %q already exists; choose an empty destination", target, rel))
-			} else if !os.IsNotExist(err) {
-				return rollback(err)
-			}
-		} else if _, err := os.Lstat(dst); err == nil {
-			backup := dst + ".backup"
-			if err := os.Rename(dst, backup); err != nil {
-				return rollback(err)
-			}
-			backups = append(backups, backup)
-		} else if !os.IsNotExist(err) {
-			return rollback(err)
-		}
-		if err := os.Link(src, dst); err != nil {
-			return rollback(fmt.Errorf("publish %s artifact %q: %w", target, rel, err))
-		}
-		published = append(published, rel)
-	}
-	for _, backup := range backups {
-		if err := os.Remove(backup); err != nil {
-			return fmt.Errorf("cleanup %s conversion backup: %w", target, err)
-		}
-	}
-	slog.Info("conversion published", "target", target, "out_dir", filepath.Clean(outDir), "written", len(published))
 	return nil
 }
 

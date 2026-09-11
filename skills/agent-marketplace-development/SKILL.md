@@ -200,10 +200,9 @@ Preserve these invariants:
 - **Cache namespaces matter.** If materialization creates derived cache
   entries under `~/.cache/agent-marketplace`, protect that namespace
   from `agent-marketplace gc` or installed symlinks can become broken.
-- **Test one invariant across all targets.** When several beads ask for
-  the same behavior per harness, write a table-driven regression test
-  spanning all affected targets before implementing target-specific
-  branches.
+- **Test one invariant across all targets.** When the same behavior applies to
+  several harnesses, write a table-driven regression test spanning all affected
+  targets before adding target-specific branches.
 
 ## Config Invariants You Must Not Break
 

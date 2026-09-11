@@ -15,12 +15,8 @@ import (
 )
 
 // probeResources returns one resource of every compilable ir.ResourceKind.
-//
-// The map is keyed by kind rather than written as a slice so
-// TestAggregateProbeCoversEveryCompilableKind can prove it is exhaustive: a new
-// kind added to the ir enumeration fails that test, which is what keeps the
-// inventory below from silently losing coverage of the kind that introduces the
-// next aggregate file.
+// The map and its coverage test make adding a new kind require an explicit
+// probe before aggregate inventory can omit it.
 func probeResources() map[ir.ResourceKind]ir.Resource {
 	return map[ir.ResourceKind]ir.Resource{
 		ir.KindSkill:     ir.NewSkill("probe-skill", "probe", "body", nil, nil, ir.SourceRef{}),
@@ -45,19 +41,12 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 // artifact would be written to, relative to the target's install root for that
 // scope, is the answer.
 //
-// Two option choices deserve their justification:
-//
-//   - WithManagedBy is passed for EVERY target, including Devin. In production
-//     internal/materialize deliberately withholds the marker from Devin, whose
-//     aggregates are reconciled through internal/ownership instead. Marker
-//     metadata lets marker-capable compilers identify their shared aggregates;
-//     externally reconciled compilers identify theirs through their policy. The
-//     derived inventory accepts both ownership mechanisms.
-//   - WithScope(ScopeUser) is passed for the machine-scope pass. Only the Devin
-//     compilers read the scope today (project hooks.v1.json versus the `hooks`
-//     member of user config.json); for the other five it is inert, and passing
-//     it uniformly means a future target that starts honouring scope is measured
-//     correctly without anyone remembering to update this list.
+// WithManagedBy is passed for every target. Marker-capable compilers use it to
+// identify shared aggregates; externally reconciled compilers identify theirs
+// through policy, and materialize withholds the marker for Devin.
+// WithScope(ScopeUser) drives the machine-scope pass. Devin currently uses it
+// for project hooks.v1.json versus the `hooks` member of user config.json; the
+// option is inert for other targets.
 func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bool) []string {
 	t.Helper()
 	outDir := t.TempDir()
@@ -293,16 +282,11 @@ func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
 	}
 }
 
-// TestAggregateProtectedPathsKeysOffOwnership retains the bead
-// agent-marketplace-5exj.29 acceptance contract: the prune fence follows
-// harness.TargetInfo.OwnershipReconciledAggregates, not installation mode.
-//
-// Synthetic declarations exercise both reconciliation policies without
-// mutating the global target registry. File and symlink installation share
-// the same aggregate fence; the former SymlinkOnly capability is removed.
-//
-// Ownership-reconciled aggregates must remain protected from marker stripping,
-// while marker-merged aggregates must remain eligible for stale-entry pruning.
+// TestAggregateProtectedPathsKeysOffOwnership exercises both reconciliation
+// policies without mutating the global target registry. File and symlink
+// installation share the same aggregate fence: ownership-reconciled aggregates
+// stay protected from marker stripping, while marker-merged aggregates remain
+// eligible for stale-entry pruning.
 func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 	aggregates := harness.AggregateFileSet{
 		Project: []string{"hooks.v1.json", "mcp_config.json"},
@@ -368,9 +352,9 @@ func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 	}
 }
 
-// TestAggregateFenceFollowsOwnership guards the registry-wide contract:
-// every ownership-reconciled target with declared aggregates is protected,
-// and no other target is. Installation mode is not a target capability.
+// TestAggregateFenceFollowsOwnership checks that the fence follows
+// OwnershipReconciledAggregates for every target with declared aggregates.
+// Installation mode is not a target capability.
 func TestAggregateFenceFollowsOwnership(t *testing.T) {
 	ownership := make([]hcc.Target, 0, len(harness.TargetInfoMap))
 	for _, target := range sortedTargets(t) {
@@ -391,6 +375,6 @@ func TestAggregateFenceFollowsOwnership(t *testing.T) {
 		t.Fatal("no target declares OwnershipReconciledAggregates; the assertions above would be vacuous")
 	}
 	if len(ownership) != 1 || ownership[0] != hcc.TargetDevin {
-		t.Logf("ownership-reconciled targets are now %v; that is expected as the marker-to-ownership migration proceeds", ownership)
+		t.Logf("ownership-reconciled targets are %v", ownership)
 	}
 }

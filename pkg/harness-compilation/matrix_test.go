@@ -352,8 +352,10 @@ func materializeMatrixResult(result *Result, outDir string, target Harness) (*Wr
 	fixtureResult.Artifacts = append([]Artifact(nil), result.Artifacts...)
 	for i := range fixtureResult.Artifacts {
 		artifact := &fixtureResult.Artifacts[i]
-		if artifact.ExternalReconciliationRequired {
+		policy, _ := artifact.Policy()
+		if artifact.ExternalReconciliationRequired || policy.IsExternal() {
 			artifact.ExternalReconciliationRequired = false
+			artifact.Reconciliation = ReconciliationPolicy{}
 			artifact.Fragment = false
 			artifact.MergeWithExisting = false
 		}
