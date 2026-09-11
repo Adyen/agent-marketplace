@@ -550,8 +550,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	return report, nil
 }
 
-// applyPruneFences adds component-level prune protection for selections that
-// were present but malformed during resolution, limited to existing outputs.
+// applyPruneFences adds narrow component or aggregate-file prune protection
+// for selections present but malformed during resolution. It only fences
+// outputs that already exist.
 func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, aggregateFences map[outputKey]map[ir.ResourceKind]bool, fences []PruneFence) {
 	for _, fence := range fences {
 		if fence.Target == "" {
