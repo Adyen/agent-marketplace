@@ -1024,6 +1024,7 @@ func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
 	assertPathExistence(t, stale, false)
 }
 
+
 func TestPruneCodexConversionStaleRejectsParentSymlinkSubstitution(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1188,6 +1189,7 @@ func TestProtectConversionSharedCandidatesExcludesCompleteDevinSet(t *testing.T)
 		t.Fatalf("StaleCandidates = %+v, want stale.txt", report.StaleCandidates)
 	}
 }
+
 
 func TestPublishDevinConversionUsesCollisionSafeRecovery(t *testing.T) {
 	if isolateCommandTest(t) {
