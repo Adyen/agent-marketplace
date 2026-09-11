@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -110,12 +111,21 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 	if w.skill.Resource == nil {
 		return []string{blockedAllComponents}
 	}
+	return blockedComponentsForKind(key, w.skill.Resource.Kind(), false)
+}
+
+func blockedComponentsForKind(key outputKey, kind hccir.ResourceKind, pruneFence bool) []string {
 	info, ok := harness.TargetInfoFor(key.target)
 	if !ok {
 		return []string{blockedAllComponents}
 	}
-	kind := w.skill.Resource.Kind()
 	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
+		if pruneFence {
+			// The aggregate handler has no compiled artifact to mark incomplete;
+			// the empty component denotes its shared root file without fencing
+			// unrelated component directories.
+			return []string{""}
+		}
 		return nil
 	}
 	if info.UsesSkillDir(kind) {

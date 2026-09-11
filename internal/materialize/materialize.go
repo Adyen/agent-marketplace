@@ -391,6 +391,21 @@ type runConfig struct {
 	dryRun      bool
 	scopeFilter *bool // nil = all scopes; true = machine only; false = repo only
 	modes       config.MaterializationModes
+	pruneFences []PruneFence
+}
+
+// PruneFence preserves managed output for one target/scope/resource-kind
+// partition whose selected resource could not be materialized.
+type PruneFence struct {
+	Target       hcc.Target
+	MachineScope bool
+	Kind         ir.ResourceKind
+}
+
+// WithPruneFences preserves affected target/scope/component partitions while
+// allowing unrelated valid partitions to materialize and prune normally.
+func WithPruneFences(fences []PruneFence) RunOption {
+	return func(c *runConfig) { c.pruneFences = append([]PruneFence(nil), fences...) }
 }
 
 // WithMaterializationModes supplies the already-resolved scope policy. Keeping
@@ -491,7 +506,8 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 1: Group skills by target and track all output keys.
 	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
-	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
+	applyPruneFences(allOutputs, blocked, rc.pruneFences)
+	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "prune_fences", len(rc.pruneFences), "diagnostics", len(allDiags))
 
 	// Apply scope filter: remove output keys that don't match the requested scope.
 	if rc.scopeFilter != nil {
@@ -528,8 +544,24 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	return report, nil
 }
 
-// buildWorkItems groups resolved skills by target and identifies output keys
-// that may need pruning.
+// applyPruneFences adds component-level prune protection for selections that
+// were present but malformed during resolution, limited to existing outputs.
+func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, fences []PruneFence) {
+	for _, fence := range fences {
+		if fence.Target == "" {
+			continue
+		}
+		key := outputKey{target: fence.Target, machineScope: fence.MachineScope}
+		// buildWorkItems already discovers existing output roots and native
+		// aggregate keys. A fence must never create a new empty root merely
+		// because a malformed selection named its partition.
+		if !allOutputs[key] {
+			continue
+		}
+		blocked.mark(key, blockedComponentsForKind(key, fence.Kind, true)...)
+	}
+}
+
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic

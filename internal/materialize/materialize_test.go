@@ -306,6 +306,40 @@ func TestRunMixedExplicitEmptyPreservesStalePartition(t *testing.T) {
 	}
 }
 
+func TestRunMalformedSelectionFenceRetainsOnlyAffectedPartition(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resource := ir.NewSkill("prior-output", "Prior", "Body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "prior-output", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory},
+	}}
+	if report, err := Run(context.Background(), repoRoot, initial); err != nil || report.TotalWritten() == 0 {
+		t.Fatalf("positive control materialization: report=%#v err=%v", report, err)
+	}
+
+	validSibling := ir.NewSkill("valid-sibling", "Valid", "Body", nil, nil, ir.SourceRef{})
+	second := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "valid-sibling", Resource: validSibling},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetFactory},
+	}}
+	fenced := []PruneFence{{Target: hcc.TargetClaude, MachineScope: false, Kind: ir.KindSkill}}
+	if _, err := Run(context.Background(), repoRoot, second, WithPruneFences(fenced)); err != nil {
+		t.Fatalf("malformed-selection fenced materialization: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".claude", "skills", "prior-output")); err != nil {
+		t.Fatalf("malformed Claude selection must retain prior managed output: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "prior-output")); !os.IsNotExist(err) {
+		t.Fatalf("valid Factory sibling must still prune prior output, stat error=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "valid-sibling")); err != nil {
+		t.Fatalf("valid Factory sibling did not materialize: %v", err)
+	}
+}
+
 func TestRunMultipleTargets(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()

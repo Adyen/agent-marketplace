@@ -93,6 +93,7 @@ type ResolveResult struct {
 	Warnings              []error
 	TargetHarnesses       []hcc.Target
 	TargetHarnessSource   config.Source
+	MalformedPruneFences  []materialize.PruneFence
 	Managed               bool
 	Diagnostics           config.ManagedInstallationDiagnostics
 }
@@ -179,6 +180,32 @@ func (r SyncResult) CatalogTrusted() bool { return len(r.CatalogTrustErrors) == 
 func (r *SyncResult) addMaterializeError(errs ...error) {
 	r.MaterializeErrors = append(r.MaterializeErrors, errs...)
 	r.Errors = append(r.Errors, errs...)
+}
+
+// malformedPruneFences translates soft malformed selections into narrow
+// target/scope/kind fences for materialization.
+func malformedPruneFences(errs []error) []materialize.PruneFence {
+	seen := make(map[string]struct{})
+	var fences []materialize.PruneFence
+	for _, err := range errs {
+		if !resolver.IsSoftSelectedMalformed(err) {
+			continue
+		}
+		var malformed *resolver.SelectedMalformedError
+		if !errors.As(err, &malformed) {
+			continue
+		}
+		for _, partition := range resolver.MalformedSelectionPartitions(err) {
+			fence := materialize.PruneFence{Target: partition.Target, MachineScope: partition.MachineScope, Kind: malformed.Kind}
+			key := fmt.Sprintf("%s|%t|%s", fence.Target, fence.MachineScope, fence.Kind)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			fences = append(fences, fence)
+		}
+	}
+	return fences
 }
 
 // SoftWarnings derives the advisory warnings implied by a ResolveResult's
@@ -571,7 +598,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
-	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
+	result.MalformedPruneFences = malformedPruneFences(result.ResolveErrors)
+	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors), "malformed_prune_fences", len(result.MalformedPruneFences))
 	for _, resolveErr := range result.ResolveErrors {
 		if opts.Offline && (resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr)) {
 			errs = append(errs, resolveErr)
@@ -804,7 +832,9 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	report, err := materialize.Run(ctx, matRoot, resolved.Resolved,
+		materialize.WithMaterializationModes(resolved.MaterializationModes),
+		materialize.WithPruneFences(resolved.MalformedPruneFences))
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()
