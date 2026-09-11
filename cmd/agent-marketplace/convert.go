@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -115,9 +116,12 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	// resources that failed contributed nothing. Report exactly what landed and
 	// then fail, so a partial conversion can never read as a clean one.
 	var writeReport *hcc.WriteReport
-	if to == "codex" {
+	switch to {
+	case "codex":
 		writeReport, err = materializeCodexConversion(result, outDir, matOpts, dryRun)
-	} else {
+	case "devin":
+		writeReport, err = materializeDevinConversion(result, outDir, matOpts, dryRun)
+	default:
 		writeReport, err = hcc.Materialize(result, outDir, matOpts...)
 	}
 	if err != nil && !errors.Is(err, hcc.ErrPartialResult) {
@@ -267,17 +271,25 @@ func codexConversionResult(result *hcc.Result) (*hcc.Result, error) {
 	clone.Diagnostics = append([]hcc.Diagnostic(nil), result.Diagnostics...)
 	clone.Skipped = append([]hcc.SkippedResource(nil), result.Skipped...)
 	for i := range clone.Artifacts {
-		artifact := &clone.Artifacts[i]
-		if !isCodexConversionSharedPath(artifact.Path) {
-			if artifact.ExternalReconciliationRequired {
-				return nil, fmt.Errorf("unexpected externally reconciled Codex artifact %q", artifact.Path)
+		candidate := &clone.Artifacts[i]
+		policy, policyErr := candidate.Policy()
+		if policyErr != nil {
+			return nil, fmt.Errorf("validate Codex conversion artifact %q: %w", candidate.Path, policyErr)
+		}
+		external := candidate.ExternalReconciliationRequired || policy.IsExternal()
+		if !isCodexConversionSharedPath(candidate.Path) {
+			if external {
+				return nil, fmt.Errorf("unexpected externally reconciled Codex artifact %q", candidate.Path)
 			}
 			continue
 		}
-		artifact.ExternalReconciliationRequired = false
-		artifact.MergeWithExisting = false
-		artifact.ManagedByField = ""
-		artifact.ManagedByValue = ""
+		if external {
+			candidate.ExternalReconciliationRequired = false
+			candidate.Reconciliation = hcc.ReconciliationPolicy{}
+			candidate.MergeWithExisting = false
+			candidate.ManagedByField = ""
+			candidate.ManagedByValue = ""
+		}
 	}
 	return &clone, nil
 }
@@ -701,6 +713,185 @@ func removeEmptyCodexConversionRecoveryDirs(publications []codexConversionPublic
 
 func pruneCodexConversionStale(outDir string, removed []string) error {
 	return pruneCodexConversionStaleWith(outDir, removed, os.Remove)
+}
+
+// materializeDevinConversion is the non-owning conversion publisher for Devin.
+// Shared aggregate paths are discovered from the artifact reconciliation policy,
+// staged and syntax-validated, then exposed by hard link without adoption.
+func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
+	if result == nil {
+		return nil, errors.New("devin conversion result must not be nil")
+	}
+	shared := externalConversionPaths(result)
+	if err := preflightConversionPaths(outDir, shared, "Devin"); err != nil {
+		return nil, err
+	}
+	converted := cloneNonOwningConversionResult(result, shared)
+	if dryRun {
+		return hcc.Materialize(converted, outDir, matOpts...)
+	}
+	store, err := ownership.Open(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("open Devin conversion destination lock: %w", err)
+	}
+	release, err := store.Lock()
+	if err != nil {
+		return nil, fmt.Errorf("lock Devin conversion destination: %w", err)
+	}
+	defer release()
+	if err := preflightConversionPaths(outDir, shared, "Devin"); err != nil {
+		return nil, err
+	}
+	planOpts := append([]hcc.WriteOption(nil), matOpts...)
+	planOpts = append(planOpts, hcc.WithDryRun())
+	report, resultErr := hcc.Materialize(converted, outDir, planOpts...)
+	if resultErr != nil && !errors.Is(resultErr, hcc.ErrPartialResult) {
+		return nil, resultErr
+	}
+	parent, err := codexConversionStageParent(outDir)
+	if err != nil {
+		return nil, err
+	}
+	stage, err := os.MkdirTemp(parent, ".agent-marketplace-convert-")
+	if err != nil {
+		return nil, fmt.Errorf("create Devin conversion staging directory: %w", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(stage); removeErr != nil {
+			slog.Warn("Devin conversion staging cleanup failed", "stage_dir", stage, "error", removeErr)
+		}
+	}()
+	if _, err := hcc.Materialize(converted, stage, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil && !errors.Is(err, hcc.ErrPartialResult) {
+		return nil, fmt.Errorf("stage Devin conversion: %w", err)
+	}
+	if err := validateDevinConversionStage(stage, report.Written); err != nil {
+		return nil, err
+	}
+	if err := publishNonOwningConversion(stage, outDir, report.Written, shared, "Devin"); err != nil {
+		return nil, err
+	}
+	return report, resultErr
+}
+
+func externalConversionPaths(result *hcc.Result) []string {
+	seen := make(map[string]struct{})
+	for _, a := range result.Artifacts {
+		if a.ExternalReconciliationRequired {
+			seen[a.Path] = struct{}{}
+			continue
+		}
+		if policy, err := a.Policy(); err == nil && policy.IsExternal() {
+			seen[a.Path] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func cloneNonOwningConversionResult(result *hcc.Result, shared []string) *hcc.Result {
+	clone := *result
+	clone.Artifacts = append([]hcc.Artifact(nil), result.Artifacts...)
+	for i := range clone.Artifacts {
+		a := &clone.Artifacts[i]
+		if containsString(shared, a.Path) {
+			a.ExternalReconciliationRequired = false
+			a.Reconciliation = hcc.ReconciliationPolicy{}
+			a.MergeWithExisting = false
+			a.ManagedByField, a.ManagedByValue = "", ""
+		}
+	}
+	return &clone
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func preflightConversionPaths(outDir string, shared []string, target string) error {
+	for _, rel := range shared {
+		path := filepath.Join(outDir, filepath.FromSlash(rel))
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("%s shared file %q already exists; in-place conversion to %s is unsupported; choose an empty destination", target, rel, target)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect %s shared file %q: %w", target, rel, err)
+		}
+	}
+	return nil
+}
+
+func validateDevinConversionStage(stage string, paths []string) error {
+	for _, rel := range paths {
+		if filepath.Ext(rel) != ".json" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(stage, filepath.FromSlash(rel)))
+		if err != nil {
+			return fmt.Errorf("read staged Devin aggregate %q: %w", rel, err)
+		}
+		if _, err := jsonc.Parse(rel, raw); err != nil {
+			return fmt.Errorf("validate staged Devin aggregate %q: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+func publishNonOwningConversion(stage, outDir string, paths, shared []string, target string) error {
+	ordered := append([]string(nil), paths...)
+	sort.Strings(ordered)
+	created, backups, published := []string{}, []string{}, []string{}
+	rollback := func(cause error) error {
+		for i := len(published) - 1; i >= 0; i-- {
+			_ = os.Remove(filepath.Join(outDir, filepath.FromSlash(published[i])))
+		}
+		for i := len(backups) - 1; i >= 0; i-- {
+			_ = os.Rename(backups[i], strings.TrimSuffix(backups[i], ".backup"))
+		}
+		for i := len(created) - 1; i >= 0; i-- {
+			_ = os.Remove(created[i])
+		}
+		return cause
+	}
+	for _, rel := range ordered {
+		src, dst := filepath.Join(stage, filepath.FromSlash(rel)), filepath.Join(outDir, filepath.FromSlash(rel))
+		if err := ensureCodexConversionDirs(outDir, filepath.Dir(dst), &created); err != nil {
+			return rollback(fmt.Errorf("prepare %s destination for %q: %w", target, rel, err))
+		}
+		if containsString(shared, rel) {
+			if _, err := os.Lstat(dst); err == nil {
+				return rollback(fmt.Errorf("%s shared file %q already exists; choose an empty destination", target, rel))
+			} else if !os.IsNotExist(err) {
+				return rollback(err)
+			}
+		} else if _, err := os.Lstat(dst); err == nil {
+			backup := dst + ".backup"
+			if err := os.Rename(dst, backup); err != nil {
+				return rollback(err)
+			}
+			backups = append(backups, backup)
+		} else if !os.IsNotExist(err) {
+			return rollback(err)
+		}
+		if err := os.Link(src, dst); err != nil {
+			return rollback(fmt.Errorf("publish %s artifact %q: %w", target, rel, err))
+		}
+		published = append(published, rel)
+	}
+	for _, backup := range backups {
+		if err := os.Remove(backup); err != nil {
+			return fmt.Errorf("cleanup %s conversion backup: %w", target, err)
+		}
+	}
+	slog.Info("conversion published", "target", target, "out_dir", filepath.Clean(outDir), "written", len(published))
+	return nil
 }
 
 func pruneCodexConversionStaleWith(outDir string, removed []string, removePath func(string) error) error {

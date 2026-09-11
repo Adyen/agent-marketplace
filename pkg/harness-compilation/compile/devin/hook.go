@@ -333,14 +333,13 @@ func hookArtifact(event string, rule map[string]any, opts compile.Options) (arti
 	}
 
 	art := artifact.Artifact{
-		Path:                  path,
-		Bytes:                 bytes,
-		Fragment:              true,
-		FragmentKey:           path,
-		DedupeFragmentEntries: true,
+		Path:                           path,
+		Bytes:                          bytes,
+		Fragment:                       true,
+		FragmentKey:                    path,
+		DedupeFragmentEntries:          true,
+		ExternalReconciliationRequired: true,
 	}
-	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
-	art.MergeWithExisting = art.ManagedByField != ""
 	return art, nil
 }
 

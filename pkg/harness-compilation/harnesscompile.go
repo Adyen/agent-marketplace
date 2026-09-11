@@ -154,9 +154,11 @@ type (
 	ResourceKind = ir.ResourceKind
 	Resource     = ir.Resource
 
-	Artifact   = artifact.Artifact
-	Diagnostic = diag.Diagnostic
-	Severity   = diag.Severity
+	Artifact             = artifact.Artifact
+	Diagnostic           = diag.Diagnostic
+	Severity             = diag.Severity
+	ReconciliationMode   = artifact.ReconciliationMode
+	ReconciliationPolicy = artifact.ReconciliationPolicy
 )
 
 // Severity constants re-exported from diag.
@@ -164,6 +166,10 @@ const (
 	SeverityError   = diag.SeverityError
 	SeverityWarning = diag.SeverityWarning
 	SeverityInfo    = diag.SeverityInfo
+
+	ReconciliationReplace  = artifact.ReconciliationReplace
+	ReconciliationMarker   = artifact.ReconciliationMarker
+	ReconciliationExternal = artifact.ReconciliationExternal
 )
 
 // ResourceKind constants re-exported from ir.
@@ -592,14 +598,29 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		}
 	}
 
+	// Refuse legacy externally reconciled artifacts before fragment processing;
+	// this preserves the stable ownership error and guarantees no filesystem
+	// mutation even when an old producer omitted fragment metadata.
+	for _, candidate := range r.Artifacts {
+		if candidate.ExternalReconciliationRequired {
+			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+		}
+	}
+
 	// Merge fragment artifacts before processing.
 	artifacts, err := artifact.MergeFragments(r.Artifacts)
 	if err != nil {
 		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
 	}
 	for _, candidate := range artifacts {
-		if candidate.ExternalReconciliationRequired {
-			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+		if candidate.Reconciliation != (artifact.ReconciliationPolicy{}) {
+			policy, policyErr := candidate.Policy()
+			if policyErr != nil {
+				return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: invalid reconciliation policy: %w", candidate.Path, policyErr)
+			}
+			if policy.IsExternal() {
+				return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
+			}
 		}
 	}
 

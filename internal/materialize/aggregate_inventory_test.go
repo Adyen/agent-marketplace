@@ -32,30 +32,27 @@ func probeResources() map[ir.ResourceKind]ir.Resource {
 	}
 }
 
-// materializedAggregateFiles is the DERIVED inventory: the output-root-relative
-// paths a target actually merges into in the given scope.
+// materializedAggregateFiles is the derived inventory: the output-root-relative
+// paths a target reconciles in the given scope.
 //
-// Nothing here restates a declaration. It compiles a bundle containing one
-// resource of every compilable kind with the real compilers, keeps only the
-// artifacts the compiler marked MergeWithExisting (its own statement that the
-// artifact is a shared aggregate to be merged into whatever is already on
-// disk), and runs the artifacts through materializePlans — the production
-// planner, which is what decides the directory each artifact is written to,
-// including Gemini's ArtifactRootPrefix strip and Windsurf's scope-dependent
-// .windsurf/ nesting. The path each merge artifact would be written to,
-// relative to the target's install root for that scope, is the answer.
+// It compiles a bundle containing one resource of every compilable kind with
+// the production compilers, keeps only the artifacts whose reconciliation
+// policy identifies them as shared aggregates
+// (either marker-reconciled or externally reconciled), and runs the artifacts
+// through materializePlans — the production planner, which is what decides the
+// directory each artifact is written to, including Gemini's ArtifactRootPrefix
+// strip and Windsurf's scope-dependent .windsurf/ nesting. The path each shared
+// artifact would be written to, relative to the target's install root for that
+// scope, is the answer.
 //
 // Two option choices deserve their justification:
 //
 //   - WithManagedBy is passed for EVERY target, including Devin. In production
 //     internal/materialize deliberately withholds the marker from Devin, whose
-//     aggregates are reconciled through internal/ownership instead, and Devin's
-//     compilers gate MergeWithExisting on the marker being configured. That is a
-//     choice of ownership MECHANISM, not a statement about which files are
-//     aggregates: Devin merges into hooks.v1.json / config.json / mcp_config.json
-//     exactly as Claude merges into .mcp.json. Passing the marker asks all six
-//     compilers the same question — "which of your artifacts are shared
-//     aggregates?" — and gets a comparable answer.
+//     aggregates are reconciled through internal/ownership instead. Marker
+//     metadata lets marker-capable compilers identify their shared aggregates;
+//     externally reconciled compilers identify theirs through their policy. The
+//     derived inventory accepts both ownership mechanisms.
 //   - WithScope(ScopeUser) is passed for the machine-scope pass. Only the Devin
 //     compilers read the scope today (project hooks.v1.json versus the `hooks`
 //     member of user config.json); for the other five it is inert, and passing
@@ -89,7 +86,11 @@ func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bo
 		}
 		for _, plan := range materializePlans(target, outDir, result.Artifacts, nil, machineScope) {
 			for _, a := range plan.artifacts {
-				if !a.MergeWithExisting {
+				policy, policyErr := a.Policy()
+				if policyErr != nil {
+					t.Fatalf("artifact %q policy: %v", a.Path, policyErr)
+				}
+				if !a.MergeWithExisting && !policy.IsExternal() {
 					continue
 				}
 				rel, relErr := filepath.Rel(relativeRoot, filepath.Join(plan.outDir, a.Path))
@@ -196,9 +197,9 @@ func TestAggregateProbeCoversEveryCompilableKind(t *testing.T) {
 // an mcp.json nothing writes and omitted the settings.json it does write, and
 // the Project list was empty for all five marker-merge targets.
 //
-// The expectation is measured, never restated: it comes from compiling every
-// resource kind and running the production planner. A test that listed the
-// corrected paths inline would have passed against the broken declarations too,
+// The expectation comes from compiling every resource kind and running the
+// production planner. A test that listed the corrected paths inline would have
+// passed against the broken declarations too,
 // because it would have been the same act of declaration a second time.
 func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 	for _, target := range sortedTargets(t) {
@@ -206,7 +207,7 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/machine_scope=%v", target, machineScope), func(t *testing.T) {
 				want := materializedAggregateFiles(t, target, machineScope)
 				if len(want) == 0 {
-					t.Fatalf("no merge artifact was produced for %s at machine_scope=%v; every current target has at least one, so the probe bundle is broken rather than the declaration", target, machineScope)
+					t.Fatalf("no shared aggregate artifact was produced for %s at machine_scope=%v; every current target has at least one, so the probe bundle is broken rather than the declaration", target, machineScope)
 				}
 
 				declared := append([]string(nil), targetInfoForTest(t, target).AggregateFilesForScope(machineScope)...)
