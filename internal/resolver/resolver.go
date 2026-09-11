@@ -1049,12 +1049,14 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 		if artifact.Harnesses != nil && len(artifact.Harnesses) == 0 {
 			continue
 		}
-		selected[resourceKey{
-			kind:         artifact.Kind,
-			name:         artifact.Name,
-			target:       artifactTarget(artifact),
-			machineScope: artifact.Source.IsMachineScope(),
-		}] = struct{}{}
+		for _, target := range artifactTargets(artifact) {
+			selected[resourceKey{
+				kind:         artifact.Kind,
+				name:         artifact.Name,
+				target:       target,
+				machineScope: artifact.Source.IsMachineScope(),
+			}] = struct{}{}
+		}
 	}
 
 	var warnings []error
@@ -1063,28 +1065,30 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 			continue
 		}
 		for _, requirement := range catalog.RequirementsFromResource(artifact.Resource) {
-			key := resourceKey{
-				kind:         requirement.Kind,
-				name:         requirement.Name,
-				target:       artifactTarget(artifact),
-				machineScope: artifact.Source.IsMachineScope(),
+			for _, target := range artifactTargets(artifact) {
+				key := resourceKey{
+					kind:         requirement.Kind,
+					name:         requirement.Name,
+					target:       target,
+					machineScope: artifact.Source.IsMachineScope(),
+				}
+				if _, ok := selected[key]; ok {
+					continue
+				}
+				slog.Debug("unmet resource requirement",
+					"resource_kind", skill.KindLabel(artifact.Kind),
+					"resource_name", artifact.Name,
+					"requirement_kind", skill.KindLabel(requirement.Kind),
+					"requirement_name", requirement.Name,
+					"target", key.target,
+					"machine_scope", key.machineScope,
+				)
+				warnings = append(warnings, &UnmetRequirementWarning{
+					ResourceKind: artifact.Kind,
+					ResourceName: artifact.Name,
+					Requirement:  requirement,
+				})
 			}
-			if _, ok := selected[key]; ok {
-				continue
-			}
-			slog.Debug("unmet resource requirement",
-				"resource_kind", skill.KindLabel(artifact.Kind),
-				"resource_name", artifact.Name,
-				"requirement_kind", skill.KindLabel(requirement.Kind),
-				"requirement_name", requirement.Name,
-				"target", key.target,
-				"machine_scope", key.machineScope,
-			)
-			warnings = append(warnings, &UnmetRequirementWarning{
-				ResourceKind: artifact.Kind,
-				ResourceName: artifact.Name,
-				Requirement:  requirement,
-			})
 		}
 	}
 	slog.Debug("requirement validation end", "unmet", len(warnings))
@@ -1096,6 +1100,16 @@ func artifactTarget(artifact ResolvedArtifact) hcc.Target {
 		return artifact.Harnesses[0]
 	}
 	return ""
+}
+
+// artifactTargets returns every output partition represented by an artifact.
+// Legacy nil-target artifacts retain the empty target identity for diagnostics;
+// explicit target lists are checked independently.
+func artifactTargets(artifact ResolvedArtifact) []hcc.Target {
+	if len(artifact.Harnesses) > 0 {
+		return artifact.Harnesses
+	}
+	return []hcc.Target{artifactTarget(artifact)}
 }
 
 type resolvedArtifactIdentity struct {
@@ -1262,7 +1276,9 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		if artifact.Kind != ir.KindCollection {
 			memberKey := ViaMapKey(artifact.Kind, artifact.Name)
 			directResolved[memberKey] = struct{}{} // diagnostic suppression compatibility
-			directResolved[artifactPartitionKey(memberKey, artifact.Harnesses, artifact.Source)] = struct{}{}
+			for _, partitionKey := range artifactPartitionKeys(memberKey, artifact.Harnesses, artifact.Source) {
+				directResolved[partitionKey] = struct{}{}
+			}
 		}
 	}
 
@@ -1542,12 +1558,28 @@ func nestedCollectionArtifact(candidate collectionCandidate, parent ResolvedArti
 	return artifact
 }
 
+func nestedCollectionCompatible(candidate collectionCandidate, parent ResolvedArtifact, targetSet []hcc.Target) bool {
+	if parent.Harnesses != nil && len(parent.Harnesses) == 0 {
+		return false
+	}
+	if !candidate.ownerFound {
+		return true
+	}
+	if len(targetSet) == 0 && candidate.owner.Harnesses == nil && parent.Harnesses == nil {
+		return true
+	}
+	return len(effectiveMemberHarnesses(parent.Harnesses, candidate.owner, true, targetSet)) > 0
+}
+
 // chooseNestedCollectionEligible filters definitions before applying authority
 // ordering. Required definitions remain immune because
 // collectionDefinitionExcluded preserves required artifacts.
-func chooseNestedCollectionEligible(candidates []collectionCandidate, parent ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry) (collectionCandidate, bool) {
+func chooseNestedCollectionEligible(candidates []collectionCandidate, parent ResolvedArtifact, excludedResources map[string]struct{}, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, entries []config.RegistryEntry, targetSet []hcc.Target) (collectionCandidate, bool) {
 	eligible := make([]collectionCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
+		if !nestedCollectionCompatible(candidate, parent, targetSet) {
+			continue
+		}
 		if collectionDefinitionExcluded(nestedCollectionArtifact(candidate, parent), excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, entries) {
 			continue
 		}
@@ -1781,7 +1813,7 @@ func expandMembersRecursive(
 			memberEntry = entry
 			memberEntryFound = true
 		} else {
-			if entry, _, found := findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath); found {
+			if entry, _, found := findRegistryEntryForArtifact(cfg, artifact); found {
 				memberEntry = entry
 				memberEntryFound = true
 				// The member inherits the collection's registry location, but
@@ -1855,8 +1887,15 @@ func expandMembersRecursive(
 		// precedence over collection expansion; no duplicates).
 
 		memberNameKey := ViaMapKey(member.Kind, memberName)
-		memberKey := artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)
-		if _, direct := directResolved[memberKey]; direct && !HasAdditiveSources(member.Kind) {
+
+		memberKeys := artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource)
+		direct := false
+		for _, memberKey := range memberKeys {
+			if _, direct = directResolved[memberKey]; direct {
+				break
+			}
+		}
+		if direct && !HasAdditiveSources(member.Kind) {
 
 			continue
 		}
@@ -1870,7 +1909,9 @@ func expandMembersRecursive(
 
 		// Mark as resolved to prevent duplicates from other collections.
 		directResolved[memberNameKey] = struct{}{} // diagnostic suppression compatibility
-		directResolved[memberKey] = struct{}{}
+		for _, memberKey := range memberKeys {
+			directResolved[memberKey] = struct{}{}
+		}
 
 		*out = append(*out, ResolvedArtifact{
 			Entry:          attachResource(catEntry, resources, memberCatalogKey),
@@ -1902,7 +1943,7 @@ func expandMembersRecursive(
 		}
 		branchVisited := cloneVisitedWith(visited, name)
 
-		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries)
+		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries, targetSet)
 		if !found {
 			// A known definition may have been excluded in every eligible
 			// location. That is an intentional no-op, not a missing include.
@@ -2192,6 +2233,22 @@ func anyLocationRequired(candidates []memberEntryCandidate) bool {
 	return false
 }
 
+func findRegistryEntryForArtifact(cfg *config.Config, artifact ResolvedArtifact) (config.RegistryEntry, string, bool) {
+	wantURL := normalizedRegistryURL(artifact.RegistryURL)
+	wantPath := normalizedEntryPath(artifact.RegistryPath)
+	wantRef := strings.TrimSpace(artifact.Ref)
+	for _, entry := range cfg.Registries {
+		if normalizedRegistryURL(entry.URL) == wantURL &&
+			normalizedEntryPath(entry.Path) == wantPath &&
+			strings.TrimSpace(entry.Ref) == wantRef &&
+			entry.Source == artifact.Source &&
+			entry.FilePrecedence == artifact.FilePrecedence {
+			return entry, entry.CatalogKey, true
+		}
+	}
+	return findRegistryEntry(cfg, artifact.RegistryURL, artifact.Ref, artifact.RegistryPath)
+}
+
 // findRegistryEntry finds a config registry entry matching the given URL
 // (and optionally ref and path). Returns the entry, its catalog key, and
 // whether it was found.
@@ -2231,6 +2288,17 @@ func ViaMapKey(kind ir.ResourceKind, name string) string {
 
 func artifactPartitionKey(resourceKey string, harnesses []hcc.Target, source config.Source) string {
 	return resourceKey + "\x00" + string(artifactTarget(ResolvedArtifact{Harnesses: harnesses})) + "\x00" + fmt.Sprint(source.IsMachineScope())
+}
+
+func artifactPartitionKeys(resourceKey string, harnesses []hcc.Target, source config.Source) []string {
+	if len(harnesses) == 0 {
+		return []string{artifactPartitionKey(resourceKey, harnesses, source)}
+	}
+	keys := make([]string, 0, len(harnesses))
+	for _, target := range harnesses {
+		keys = append(keys, artifactPartitionKey(resourceKey, []hcc.Target{target}, source))
+	}
+	return keys
 }
 
 // deferredCollectionError is a per-registry collection resolution failure held

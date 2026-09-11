@@ -456,10 +456,10 @@ func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
 // hcc.Compile per-skill-per-target, merges fragments, then calls hcc.Materialize
 // with WriteModeSync and prune-stale enabled.
 //
-// Skills with Resource==nil are skipped with a warning diagnostic.
+// invalidTargetIntent rejects artifacts whose target partition is unspecified.
 func invalidTargetIntent(resolved []resolver.ResolvedArtifact) *diag.Diagnostic {
 	for _, resource := range resolved {
-		if resource.Unresolved || resource.Harnesses != nil {
+		if resource.Harnesses != nil {
 			continue
 		}
 		return &diag.Diagnostic{
@@ -573,17 +573,19 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 	}
 
 	// Include previously materialized targets for deinitialization when the
-	// resolved list is empty or contains an explicit target intent. A non-empty
-	// resolved list made only of explicit empty target lists is a no-op and must
-	// not revive an unspecified output partition for pruning.
-	emptyIntentOnly := len(resolved) > 0
+	// resolved list is empty or contains a non-empty target intent. Explicit
+	// empty intents fence their scope partitions from pruning in a mixed run.
+	emptyIntentScopes := make(map[bool]bool)
+	hasNonEmptyIntent := false
 	for _, resource := range resolved {
+		if resource.Harnesses != nil && len(resource.Harnesses) == 0 {
+			emptyIntentScopes[resource.Source.IsMachineScope()] = true
+		}
 		if !resource.Unresolved && len(resource.Harnesses) > 0 {
-			emptyIntentOnly = false
-			break
+			hasNonEmptyIntent = true
 		}
 	}
-	if !emptyIntentOnly {
+	if hasNonEmptyIntent || len(resolved) == 0 {
 		addExistingOutputKeys(repoRoot, allOutputs)
 		addExistingNativeAggregateKeys(repoRoot, allOutputs)
 		// A file-mode manifest may be the only remaining record after a harness
@@ -591,6 +593,11 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		// that state instead of silently skipping it.
 		addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
 		addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+		for key := range allOutputs {
+			if emptyIntentScopes[key.machineScope] {
+				blocked.blockAll(key)
+			}
+		}
 	}
 
 	return work, allOutputs, blocked, allDiags
