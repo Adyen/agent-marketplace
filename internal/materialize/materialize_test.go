@@ -211,8 +211,7 @@ func TestRunEmptyHarnessesSkipsSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	// The skill is opted out but the default target may appear for pruning.
-	// The key assertion: no files should be written for this skill.
+	// The explicit empty target list must not materialize this skill.
 	for _, tr := range report.PerTarget {
 		if len(tr.Written) != 0 {
 			t.Fatalf("expected no written files for opted-out skill, got %v", tr.Written)
@@ -4776,7 +4775,6 @@ func TestRunExplicitEmptyFencesOnlyItsTargetAndScope(t *testing.T) {
 		t.Fatalf("initial materialization: %v", err)
 	}
 
-	// These managed symlinks are stale controls in every covered partition.
 	for _, stale := range []struct {
 		root string
 		name string
