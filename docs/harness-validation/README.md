@@ -56,6 +56,16 @@ MCP recognition and transport evidence are separate. Claude and Gemini require t
 
 Artifacts include `compatibility-<target>.json`, `summary.txt`, the test log, and image/release metadata. Command records retain arguments, exit status, bounded-output metrics, allowlisted diagnostics, and asserted observations—not arbitrary native output or credentials. Generated-file snapshots contain only the disposable fixture. PR artifacts expire; the target guides and source code define the continuing contract.
 
+## Required merge gate
+
+The workflow exposes one stable check named **Harness Compatibility**. Its `required` job runs with `always()` and depends on planning, compiler/driver contracts, and the entire harness matrix. It accepts only `success` for all three results; failure, cancellation, skipping, or a missing result fails the gate. The [workflow regression test](../../tools/harness-compat/workflow_test.go) executes that gate's actual shell command against successful and unsuccessful upstream results.
+
+The repository's active `protected-main` ruleset requires this check from GitHub Actions, alongside the existing required checks. A workflow name alone is not a merge requirement: forks or newly configured repositories must also select the stable check in their own branch protection or ruleset. Do not require each matrix-job name individually, because adding a harness should automatically extend the aggregate gate.
+
+Native regressions and image/setup failures now block merging. Documented config-only coverage and expected compiler omissions still count according to the tested contract; the gate does not turn them into native verification. Direct release-job dependencies and the image publication policy are unchanged.
+
+When activating this requirement before the workflow reaches the default branch, other open PRs need the workflow update before they can satisfy the check. Do not bypass protection or weaken assertions to work around a missing or failing result.
+
 ## Isolation and trust
 
 Native executables and containers run in GitHub Actions, not during ordinary local verification. The test container uses `--network none`, drops capabilities, enables `no-new-privileges`, and does not receive vendor credentials. Each subprocess uses an allowlisted environment with isolated HOME/XDG/Codex roots and sanitized Git settings.

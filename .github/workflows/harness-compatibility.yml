@@ -35,7 +35,7 @@ jobs:
           echo "value=$matrix" >> "$GITHUB_OUTPUT"
 
   contracts:
-    name: Compiler and driver contracts (informational)
+    name: Compiler and driver contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -60,7 +60,7 @@ jobs:
         run: shellcheck tools/harness-compat/*.sh
 
   probe:
-    name: ${{ matrix.target }} compatibility (informational)
+    name: ${{ matrix.target }} compatibility
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -206,3 +206,18 @@ jobs:
           path: ${{ runner.temp }}/harness-compatibility-artifacts/
           if-no-files-found: warn
           retention-days: 7
+
+  required:
+    name: Harness Compatibility
+    if: always()
+    needs: [plan, contracts, probe]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Require all compatibility checks
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          CONTRACTS_RESULT: ${{ needs.contracts.result }}
+          PROBES_RESULT: ${{ needs.probe.result }}
+        run: test "$PLAN_RESULT" = success && test "$CONTRACTS_RESULT" = success && test "$PROBES_RESULT" = success
