@@ -2,7 +2,7 @@ name: agent-marketplace-sqlite
 
 x-marketplace-platform: &marketplace-platform ${MARKETPLACE_PLATFORM:-}
 x-marketplace-build-args: &marketplace-build-args
-  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-alpine3.22}
+  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-alpine3.23}
   ALPINE_RUNTIME_IMAGE: ${ALPINE_RUNTIME_IMAGE:-alpine:3.22.1}
 
 services:
