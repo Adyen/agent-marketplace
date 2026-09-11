@@ -214,10 +214,11 @@ type Remediable interface {
 }
 
 type skillOccurrence struct {
-	resolved ResolvedArtifact
-	source   string
-	url      string
-	order    int
+	resolved       ResolvedArtifact
+	source         string
+	url            string
+	order          int
+	partitionOrder int
 }
 
 type IneffectiveExcludeWarning struct {
@@ -848,6 +849,11 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		slog.Debug("resolver marketplace occurrences built", "marketplaces", len(cfg.Marketplaces), "errors", len(mpErrs))
 	}
 
+	// Qualify winner selection by target before deduplicating. The same resource
+	// may legitimately have different winners, requirements, or collection
+	// members in otherwise disjoint output partitions.
+	occurrencesByName = partitionOccurrencesByTarget(occurrencesByName)
+
 	// Phase 2: Pick winners (deduplicate, detect collisions).
 	winners, pickErrs := pickWinners(occurrencesByName)
 	errs = append(errs, pickErrs...)
@@ -879,6 +885,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
 	errs = append(errs, expandErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
+	resolved = mergeTargetQualifiedArtifacts(resolved)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
 	return resolved, errs
@@ -922,41 +929,66 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	return occurrencesByName, errs
 }
 
-func validateRequirements(resolved []ResolvedArtifact) []error {
-	firstRequirementIndex := -1
-	var firstRequirements []catalog.Requirement
-	for i, artifact := range resolved {
-		requirements := catalog.RequirementsFromResource(artifact.Resource)
-		if len(requirements) == 0 {
-			continue
+func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence) map[resourceSelection][]skillOccurrence {
+	partitioned := make(map[resourceSelection][]skillOccurrence, len(input))
+	for selection, occurrences := range input {
+		for _, occurrence := range occurrences {
+			if occurrence.resolved.Harnesses == nil {
+				partitioned[selection] = append(partitioned[selection], occurrence)
+				continue
+			}
+			if len(occurrence.resolved.Harnesses) == 0 {
+				key := selection
+				key.empty = true
+				partitioned[key] = append(partitioned[key], occurrence)
+				continue
+			}
+			for targetIndex, target := range occurrence.resolved.Harnesses {
+				clone := occurrence
+				clone.partitionOrder = targetIndex
+				clone.resolved.Harnesses = []hcc.Target{target}
+				key := resourceSelection{kind: selection.kind, name: selection.name, target: target}
+				partitioned[key] = append(partitioned[key], clone)
+			}
 		}
-		firstRequirementIndex = i
-		firstRequirements = requirements
-		break
 	}
-	if firstRequirementIndex == -1 {
-		return nil
-	}
-	slog.Debug("requirement validation start", "resolved", len(resolved))
+	return partitioned
+}
 
+func validateRequirements(resolved []ResolvedArtifact) []error {
 	type resourceKey struct {
-		kind ir.ResourceKind
-		name string
+		kind         ir.ResourceKind
+		name         string
+		target       hcc.Target
+		machineScope bool
 	}
+
 	selected := make(map[resourceKey]struct{}, len(resolved))
 	for _, artifact := range resolved {
-		selected[resourceKey{kind: artifact.Kind, name: artifact.Name}] = struct{}{}
+		if artifact.Harnesses != nil && len(artifact.Harnesses) == 0 {
+			continue
+		}
+		selected[resourceKey{
+			kind:         artifact.Kind,
+			name:         artifact.Name,
+			target:       artifactTarget(artifact),
+			machineScope: artifact.Source.IsMachineScope(),
+		}] = struct{}{}
 	}
 
 	var warnings []error
-	for i := firstRequirementIndex; i < len(resolved); i++ {
-		artifact := resolved[i]
-		requirements := firstRequirements
-		if i != firstRequirementIndex {
-			requirements = catalog.RequirementsFromResource(artifact.Resource)
+	for _, artifact := range resolved {
+		if artifact.Harnesses != nil && len(artifact.Harnesses) == 0 {
+			continue
 		}
-		for _, requirement := range requirements {
-			if _, ok := selected[resourceKey{kind: requirement.Kind, name: requirement.Name}]; ok {
+		for _, requirement := range catalog.RequirementsFromResource(artifact.Resource) {
+			key := resourceKey{
+				kind:         requirement.Kind,
+				name:         requirement.Name,
+				target:       artifactTarget(artifact),
+				machineScope: artifact.Source.IsMachineScope(),
+			}
+			if _, ok := selected[key]; ok {
 				continue
 			}
 			slog.Debug("unmet resource requirement",
@@ -964,6 +996,8 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 				"resource_name", artifact.Name,
 				"requirement_kind", skill.KindLabel(requirement.Kind),
 				"requirement_name", requirement.Name,
+				"target", key.target,
+				"machine_scope", key.machineScope,
 			)
 			warnings = append(warnings, &UnmetRequirementWarning{
 				ResourceKind: artifact.Kind,
@@ -974,6 +1008,82 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 	}
 	slog.Debug("requirement validation end", "unmet", len(warnings))
 	return warnings
+}
+
+func artifactTarget(artifact ResolvedArtifact) hcc.Target {
+	if len(artifact.Harnesses) == 1 {
+		return artifact.Harnesses[0]
+	}
+	return ""
+}
+
+type resolvedArtifactIdentity struct {
+	kind                  ir.ResourceKind
+	name                  string
+	path                  string
+	registryURL           string
+	registryPath          string
+	ref                   string
+	source                config.Source
+	filePrecedence        int
+	required              bool
+	catalogKey            string
+	via                   string
+	isMarketplace         bool
+	marketplaceURL        string
+	marketplaceInstanceID string
+	marketplaceAlias      string
+	marketplaceRegistryID string
+	installedName         string
+	unresolved            bool
+	revoked               bool
+	updateAvailable       bool
+	stale                 bool
+}
+
+func resolvedArtifactIdentityOf(artifact ResolvedArtifact) resolvedArtifactIdentity {
+	return resolvedArtifactIdentity{
+		kind:                  artifact.Kind,
+		name:                  artifact.Name,
+		path:                  artifact.Path,
+		registryURL:           artifact.RegistryURL,
+		registryPath:          artifact.RegistryPath,
+		ref:                   artifact.Ref,
+		source:                artifact.Source,
+		filePrecedence:        artifact.FilePrecedence,
+		required:              artifact.Required,
+		catalogKey:            artifact.CatalogKey,
+		via:                   artifact.Via,
+		isMarketplace:         artifact.IsMarketplace,
+		marketplaceURL:        artifact.MarketplaceURL,
+		marketplaceInstanceID: artifact.MarketplaceInstanceID,
+		marketplaceAlias:      artifact.MarketplaceAlias,
+		marketplaceRegistryID: artifact.MarketplaceRegistryID,
+		installedName:         artifact.InstalledName,
+		unresolved:            artifact.Unresolved,
+		revoked:               artifact.Revoked,
+		updateAvailable:       artifact.UpdateAvailable,
+		stale:                 artifact.Stale,
+	}
+}
+
+func mergeTargetQualifiedArtifacts(resolved []ResolvedArtifact) []ResolvedArtifact {
+	merged := make([]ResolvedArtifact, 0, len(resolved))
+	indices := make(map[resolvedArtifactIdentity]int, len(resolved))
+	for _, artifact := range resolved {
+		identity := resolvedArtifactIdentityOf(artifact)
+		if index, ok := indices[identity]; ok {
+			for _, target := range artifact.Harnesses {
+				if !slices.Contains(merged[index].Harnesses, target) {
+					merged[index].Harnesses = append(merged[index].Harnesses, target)
+				}
+			}
+			continue
+		}
+		indices[identity] = len(merged)
+		merged = append(merged, artifact)
+	}
+	return merged
 }
 
 // cloneStringsForResolve preserves nil-vs-empty selector semantics while
@@ -1068,7 +1178,9 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 	directResolved := make(map[string]struct{})
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
-			directResolved[ViaMapKey(artifact.Kind, artifact.Name)] = struct{}{}
+			memberKey := ViaMapKey(artifact.Kind, artifact.Name)
+			directResolved[memberKey] = struct{}{} // diagnostic suppression compatibility
+			directResolved[artifactPartitionKey(memberKey, artifact.Harnesses, artifact.Source)] = struct{}{}
 		}
 	}
 
@@ -1608,12 +1720,13 @@ func expandMembersRecursive(
 
 		// Skip if already directly resolved (direct resolution takes
 		// precedence over collection expansion; no duplicates).
-		memberKey := ViaMapKey(member.Kind, memberName)
+		memberNameKey := ViaMapKey(member.Kind, memberName)
+		memberKey := artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)
 		if _, direct := directResolved[memberKey]; direct {
 			continue
 		}
 
-		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
+		if _, excluded := excludedResources[memberNameKey]; excluded && !memberRequired {
 			continue
 		}
 		if localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, memberRequired, memberSource) {
@@ -1621,6 +1734,7 @@ func expandMembersRecursive(
 		}
 
 		// Mark as resolved to prevent duplicates from other collections.
+		directResolved[memberNameKey] = struct{}{} // diagnostic suppression compatibility
 		directResolved[memberKey] = struct{}{}
 
 		*out = append(*out, ResolvedArtifact{
@@ -1979,6 +2093,10 @@ func ViaMapKey(kind ir.ResourceKind, name string) string {
 	return kind.String() + ":" + strings.TrimSpace(name)
 }
 
+func artifactPartitionKey(resourceKey string, harnesses []hcc.Target, source config.Source) string {
+	return resourceKey + "\x00" + string(artifactTarget(ResolvedArtifact{Harnesses: harnesses})) + "\x00" + fmt.Sprint(source.IsMachineScope())
+}
+
 // deferredCollectionError is a per-registry collection resolution failure held
 // back until every registry has been walked, because a top-level
 // collections.include is propagated to all of them and only fails for real
@@ -2140,7 +2258,16 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 		if a.kind != b.kind {
 			return int(a.kind) - int(b.kind)
 		}
-		return strings.Compare(a.name, b.name)
+		if a.name != b.name {
+			return strings.Compare(a.name, b.name)
+		}
+		if a.empty != b.empty {
+			if a.empty {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(string(a.target), string(b.target))
 	})
 
 	for _, key := range keys {
@@ -2197,7 +2324,13 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 	}
 
 	slices.SortFunc(winners, func(a, b skillOccurrence) int {
-		return a.order - b.order
+		if a.order != b.order {
+			return a.order - b.order
+		}
+		if a.partitionOrder != b.partitionOrder {
+			return a.partitionOrder - b.partitionOrder
+		}
+		return strings.Compare(string(artifactTarget(a.resolved)), string(artifactTarget(b.resolved)))
 	})
 
 	return winners, errs
@@ -2334,8 +2467,10 @@ func attachResource(e catalog.Entry, resources map[string]map[string]ir.Resource
 }
 
 type resourceSelection struct {
-	kind ir.ResourceKind
-	name string
+	kind   ir.ResourceKind
+	name   string
+	target hcc.Target // non-empty when this selection belongs to one output partition
+	empty  bool       // true for an explicit empty target intent
 }
 
 type missingResource struct {

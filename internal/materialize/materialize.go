@@ -452,16 +452,33 @@ func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
 }
 
 // Run compiles and materializes the given resolved skills into their
-// per-target install roots. It groups skills by hcc.Target (defaulting
-// to [TargetClaude] when Harnesses is nil), calls hcc.Compile per-skill-
-// per-target, merges fragments, then calls hcc.Materialize with
-// WriteModeSync and prune-stale enabled.
+// explicit per-target install roots. It groups skills by hcc.Target, calls
+// hcc.Compile per-skill-per-target, merges fragments, then calls hcc.Materialize
+// with WriteModeSync and prune-stale enabled.
 //
 // Skills with Resource==nil are skipped with a warning diagnostic.
+func invalidTargetIntent(resolved []resolver.ResolvedArtifact) *diag.Diagnostic {
+	for _, resource := range resolved {
+		if resource.Unresolved || resource.Harnesses != nil {
+			continue
+		}
+		return &diag.Diagnostic{
+			Code:     "materialize.target.nil",
+			Severity: diag.SeverityError,
+			Resource: resource.Name,
+			Message:  fmt.Sprintf("resource %q has no explicit target intent; refusing materialization", resource.Name),
+		}
+	}
+	return nil
+}
+
 func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Report, error) {
 	start := time.Now()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if diagnostic := invalidTargetIntent(resolved); diagnostic != nil {
+		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: []diag.Diagnostic{*diagnostic}}, nil
 	}
 
 	var rc runConfig
@@ -526,9 +543,6 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 			continue
 		}
 		targets := s.Harnesses
-		if targets == nil {
-			targets = []hcc.Target{hcc.TargetClaude}
-		}
 		if len(targets) == 0 {
 			continue
 		}
@@ -558,15 +572,26 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		}
 	}
 
-	// Include previously materialized targets even when they have no
-	// resolved artifacts in this run, so stale managed files get pruned.
-	addExistingOutputKeys(repoRoot, allOutputs)
-	addExistingNativeAggregateKeys(repoRoot, allOutputs)
-	// A file-mode manifest may be the only remaining record after a harness
-	// root is deleted. Include its known targets so deinit can still process
-	// that state instead of silently skipping it.
-	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
-	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+	// Include previously materialized targets for deinitialization when the
+	// resolved list is empty or contains an explicit target intent. A non-empty
+	// resolved list made only of explicit empty target lists is a no-op and must
+	// not revive an unspecified output partition for pruning.
+	emptyIntentOnly := len(resolved) > 0
+	for _, resource := range resolved {
+		if !resource.Unresolved && len(resource.Harnesses) > 0 {
+			emptyIntentOnly = false
+			break
+		}
+	}
+	if !emptyIntentOnly {
+		addExistingOutputKeys(repoRoot, allOutputs)
+		addExistingNativeAggregateKeys(repoRoot, allOutputs)
+		// A file-mode manifest may be the only remaining record after a harness
+		// root is deleted. Include its known targets so deinit can still process
+		// that state instead of silently skipping it.
+		addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
+		addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+	}
 
 	return work, allOutputs, blocked, allDiags
 }
