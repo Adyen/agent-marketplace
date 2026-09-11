@@ -884,6 +884,8 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	var expandErrs []error
 	resolved, expandErrs = expandCollections(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targetSet)
 	errs = append(errs, expandErrs...)
+	resolved, collectionErrs := deduplicateCollectionArtifacts(resolved)
+	errs = append(errs, collectionErrs...)
 	errs = append(errs, validateRequirements(resolved)...)
 	resolved = mergeTargetQualifiedArtifacts(resolved)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
@@ -933,13 +935,17 @@ func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence)
 	partitioned := make(map[resourceSelection][]skillOccurrence, len(input))
 	for selection, occurrences := range input {
 		for _, occurrence := range occurrences {
+			machineScope := occurrence.resolved.Source.IsMachineScope()
 			if occurrence.resolved.Harnesses == nil {
-				partitioned[selection] = append(partitioned[selection], occurrence)
+				key := selection
+				key.machineScope = machineScope
+				partitioned[key] = append(partitioned[key], occurrence)
 				continue
 			}
 			if len(occurrence.resolved.Harnesses) == 0 {
 				key := selection
 				key.empty = true
+				key.machineScope = machineScope
 				partitioned[key] = append(partitioned[key], occurrence)
 				continue
 			}
@@ -947,7 +953,7 @@ func partitionOccurrencesByTarget(input map[resourceSelection][]skillOccurrence)
 				clone := occurrence
 				clone.partitionOrder = targetIndex
 				clone.resolved.Harnesses = []hcc.Target{target}
-				key := resourceSelection{kind: selection.kind, name: selection.name, target: target}
+				key := resourceSelection{kind: selection.kind, name: selection.name, target: target, machineScope: machineScope}
 				partitioned[key] = append(partitioned[key], clone)
 			}
 		}
@@ -1098,6 +1104,39 @@ func mergeTargetQualifiedArtifacts(resolved []ResolvedArtifact) []ResolvedArtifa
 		merged = append(merged, artifact)
 	}
 	return merged
+}
+
+// deduplicateCollectionArtifacts applies the normal target-qualified winner
+// policy after collection expansion. Direct selections have already been
+// subtracted per target and scope; collection members must still contend with
+// one another instead of letting the first collection traversal win.
+func deduplicateCollectionArtifacts(resolved []ResolvedArtifact) ([]ResolvedArtifact, []error) {
+	out := make([]ResolvedArtifact, 0, len(resolved))
+	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
+	order := 0
+	for _, artifact := range resolved {
+		if artifact.Via == "" {
+			out = append(out, artifact)
+			continue
+		}
+		selection := resourceSelection{kind: artifact.Kind, name: artifact.Name}
+		occurrencesByName[selection] = append(occurrencesByName[selection], skillOccurrence{
+			resolved: artifact,
+			source:   artifact.RegistryURL,
+			url:      artifact.RegistryURL,
+			order:    order,
+		})
+		order++
+	}
+	if len(occurrencesByName) == 0 {
+		return out, nil
+	}
+	partitioned := partitionOccurrencesByTarget(occurrencesByName)
+	winners, errs := pickWinners(partitioned)
+	for _, winner := range winners {
+		out = append(out, winner.resolved)
+	}
+	return out, errs
 }
 
 // cloneStringsForResolve preserves nil-vs-empty selector semantics while
@@ -1771,12 +1810,9 @@ func expandMembersRecursive(
 			continue
 		}
 
-		// Mark as resolved to prevent duplicates from other collections.
-		directResolved[memberNameKey] = struct{}{} // diagnostic suppression compatibility
-		for _, memberKey := range memberKeys {
-			directResolved[memberKey] = struct{}{}
-		}
-
+		// Keep every collection contribution until the target-qualified winner
+		// pass below. That pass applies requiredness, precedence, and stable URL
+		// ordering instead of making collection traversal order policy.
 		*out = append(*out, ResolvedArtifact{
 			Entry:          attachResource(catEntry, resources, memberCatalogKey),
 			RegistryURL:    memberRegistryURL,
@@ -2334,7 +2370,16 @@ func pickWinners(occurrencesByName map[resourceSelection][]skillOccurrence) ([]s
 			}
 			return 1
 		}
-		return strings.Compare(string(a.target), string(b.target))
+		if a.target != b.target {
+			return strings.Compare(string(a.target), string(b.target))
+		}
+		if a.machineScope != b.machineScope {
+			if a.machineScope {
+				return 1
+			}
+			return -1
+		}
+		return 0
 	})
 
 	for _, key := range keys {
@@ -2534,10 +2579,11 @@ func attachResource(e catalog.Entry, resources map[string]map[string]ir.Resource
 }
 
 type resourceSelection struct {
-	kind   ir.ResourceKind
-	name   string
-	target hcc.Target // non-empty when this selection belongs to one output partition
-	empty  bool       // true for an explicit empty target intent
+	kind         ir.ResourceKind
+	name         string
+	target       hcc.Target // non-empty when this selection belongs to one output partition
+	machineScope bool       // true for machine-wide output; false for repo output
+	empty        bool       // true for an explicit empty target intent
 }
 
 type missingResource struct {

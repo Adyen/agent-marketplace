@@ -4762,3 +4762,61 @@ func TestRunMaterializationModesAreScopeSpecific(t *testing.T) {
 		t.Fatalf("machine file mode should use local user manifest: %v", err)
 	}
 }
+
+func TestRunExplicitEmptyFencesOnlyItsTargetAndScope(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	resource := ir.NewSkill("partitioned", "partitioned", "body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Name: "partitioned", Resource: resource}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory, hcc.TargetGemini}},
+		{Entry: catalog.Entry{Name: "machine-partitioned", Resource: ir.NewSkill("machine-partitioned", "machine", "body", nil, nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude}},
+	}
+	if _, err := Run(context.Background(), repoRoot, initial); err != nil {
+		t.Fatalf("initial materialization: %v", err)
+	}
+
+	// These managed symlinks are stale controls in every covered partition.
+	for _, stale := range []struct {
+		root string
+		name string
+	}{
+		{filepath.Join(repoRoot, ".claude"), "repo-stale"},
+		{filepath.Join(repoRoot, ".factory"), "factory-stale"},
+		{filepath.Join(repoRoot, ".gemini"), "gemini-stale"},
+		{filepath.Join(homeDir, ".claude"), "machine-stale"},
+	} {
+		path := filepath.Join(stale.root, "skills", stale.name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir stale parent: %v", err)
+		}
+		if err := os.Symlink(filepath.Join(homeDir, ".cache", "agent-marketplace", "stale"), path); err != nil {
+			t.Fatalf("create stale symlink %s: %v", stale.name, err)
+		}
+	}
+
+	second := []resolver.ResolvedArtifact{
+		// Claude and Factory remain active, so their stale siblings must prune.
+		{Entry: catalog.Entry{Name: "partitioned", Resource: resource}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}},
+		// Empty repo scope is explicit, so it must fence only the repo Gemini
+		// partition, not the active repo Claude or Factory partitions.
+		{Entry: catalog.Entry{Name: "repo-opted-out", Resource: ir.NewSkill("repo-opted-out", "empty", "body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{}},
+		// Empty machine scope independently fences machine Claude.
+		{Entry: catalog.Entry{Name: "machine-opted-out", Resource: ir.NewSkill("machine-opted-out", "empty", "body", nil, nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []hcc.Target{}},
+	}
+	if _, err := Run(context.Background(), repoRoot, second); err != nil {
+		t.Fatalf("mixed explicit-empty materialization: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".claude", "skills", "repo-stale")); !os.IsNotExist(err) {
+		t.Fatalf("active repo Claude partition should prune stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".factory", "skills", "factory-stale")); !os.IsNotExist(err) {
+		t.Fatalf("active repo Factory sibling should prune stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".gemini", "skills", "gemini-stale")); err != nil {
+		t.Fatalf("explicit-empty repo Gemini partition should preserve stale output, err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(homeDir, ".claude", "skills", "machine-stale")); err != nil {
+		t.Fatalf("explicit-empty machine Claude partition should preserve stale output, err=%v", err)
+	}
+}
