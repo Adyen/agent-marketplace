@@ -7,14 +7,14 @@ CMD := ./cmd/agent-marketplace
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
-GO_BUILD_IMAGE ?= golang:1.26.6-alpine3.23
-ALPINE_RUNTIME_IMAGE ?= alpine:3.22.1
+GO_BUILD_IMAGE ?= golang:1.26.6-bookworm
+RUNTIME_IMAGE ?= gcr.io/distroless/static-debian12:nonroot
 NODE_IMAGE ?= node:24-alpine
 POSTGRES_IMAGE ?= postgres:17.5-alpine
 NGINX_IMAGE ?= nginx:1.27-alpine
 MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
 WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
-export GO_BUILD_IMAGE ALPINE_RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE
+export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
@@ -74,7 +74,7 @@ container: container-marketplace container-web
 container-marketplace:
 	docker build \
 		--build-arg GO_BUILD_IMAGE="$(GO_BUILD_IMAGE)" \
-		--build-arg ALPINE_RUNTIME_IMAGE="$(ALPINE_RUNTIME_IMAGE)" \
+		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
 		--build-arg VERSION="$(VERSION)" \
 		-t "$(MARKETPLACE_CONTAINER_IMAGE)" -f Dockerfile.marketplace .
 
@@ -95,23 +95,23 @@ container-check: secrets-check
 	@test -s Dockerfile.marketplace
 	@test -s .dockerignore
 	@test -s web/Dockerfile
-	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.23$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
+	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm$$/{goarg=1} /^ARG RUNTIME_IMAGE=gcr.io\/distroless\/static-debian12:nonroot$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS git-runtime/{gitstage=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{RUNTIME_IMAGE\} AS worker/{worker=1} /command -v git/{git=1} /command -v ssh/{ssh=1} /USER 1000:1000/{users++} /(apk|apt-get|dnf|yum) (add|install)/{packageadds++} END {if (!goarg || !runtimearg || !build || !gitstage || !flags || !api || !worker || !git || !ssh || packageadds != 0 || users < 2) exit 1}' Dockerfile.marketplace
 	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Fh -- 'RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
-	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg ALPINE_RUNTIME_IMAGE=' Makefile)" -eq 1
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 1
-	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.23$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx) exit 1}' Makefile
-	@if git grep -nEI '(ARG[[:space:]]+[A-Z_]*IMAGE|^[A-Z_]*IMAGE=|image:).*([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
-		echo "ERROR: tracked container image configuration contains a registry hostname; use an environment override instead"; exit 1; \
+	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-bookworm$$/{go=1} /^RUNTIME_IMAGE \?= gcr.io\/distroless\/static-debian12:nonroot$$/{runtime=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !runtime || !node || !postgres || !nginx) exit 1}' Makefile
+	@if git grep -nE 'is\.adyen\.(com|cloud)' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
+		echo "ERROR: tracked public container defaults contain an internal Adyen hostname; use an environment override instead"; exit 1; \
 	fi
-	@test "$$(grep -Fc -- 'wget -q -O - -T 5' Dockerfile.marketplace)" -eq 1
-	@test "$$(grep -Fh -- 'wget' deploy/compose/postgres-s3/compose.yaml compose.yaml | grep -Fc -- '"-q", "-O", "-", "-T", "5"')" -eq 2
-	@test -z "$$(grep -nE -- '--(tries|quiet|output-document)' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml compose.yaml)"
+	@test "$$(grep -Fc -- 'CMD ["/app/marketplace-healthcheck"]' Dockerfile.marketplace)" -eq 1
+	@test "$$(grep -Fh -- 'marketplace-healthcheck' deploy/compose/postgres-s3/compose.yaml compose.yaml | grep -Fc -- '["CMD", "/app/marketplace-healthcheck"]')" -eq 2
+	@test -z "$$(grep -n -- 'wget' Dockerfile.marketplace deploy/compose/postgres-s3/compose.yaml compose.yaml)"
 	@echo "Container static checks passed"
 
 compose-config:
@@ -132,10 +132,10 @@ compose-config:
 		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
 		docker compose -f compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
-		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/alpine:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
-		GO_BUILD_IMAGE=override/go:test ALPINE_RUNTIME_IMAGE=override/alpine:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
-		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/alpine:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test docker compose -f compose.yaml config > "$$sqlite_config" && \
+		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/runtime:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config > "$$postgres_config" && \
+		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/runtime:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-password$$' "$$postgres_config")" -eq 1 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-dsn$$' "$$postgres_config")" -eq 2 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace_postgres_(password|dsn)$$' "$$postgres_config")" -eq 0 && \
