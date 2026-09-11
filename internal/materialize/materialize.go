@@ -528,8 +528,8 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	return report, nil
 }
 
-// buildWorkItems groups resolved skills by target and identifies all output
-// keys (including empty targets that need pruning).
+// buildWorkItems groups resolved skills by target and identifies output keys
+// that may need pruning.
 func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
@@ -572,7 +572,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		}
 	}
 
-	// Include previously materialized targets for deinitialization when the
+	// Include previously materialized targets for cleanup when the
 	// resolved list is empty or contains a non-empty target intent. Explicit
 	// empty intents fence only the sibling target+scope partitions that have no
 	// non-empty intent in this run; valid non-empty siblings must still prune.
