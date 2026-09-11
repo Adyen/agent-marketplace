@@ -42,6 +42,24 @@ jobs:
       - name: Validate container packaging and Compose files
         run: make container-check compose-config
 
+  container-images:
+    name: Container images (public defaults)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build API image
+        run: docker build --pull --target api --tag agent-marketplace-api:ci --file Dockerfile.marketplace .
+
+      - name: Build worker image
+        run: docker build --pull --target worker --tag agent-marketplace-worker:ci --file Dockerfile.marketplace .
+
   test:
     name: Test
     runs-on: ubuntu-latest
