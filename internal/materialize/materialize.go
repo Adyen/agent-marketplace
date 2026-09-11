@@ -506,8 +506,9 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 	// Phase 1: Group skills by target and track all output keys.
 	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
-	applyPruneFences(allOutputs, blocked, rc.pruneFences)
-	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "prune_fences", len(rc.pruneFences), "diagnostics", len(allDiags))
+	aggregateFences := make(map[outputKey]map[ir.ResourceKind]bool)
+	applyPruneFences(allOutputs, blocked, aggregateFences, rc.pruneFences)
+	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "prune_fences", len(rc.pruneFences), "aggregate_fences", len(aggregateFences), "diagnostics", len(allDiags))
 
 	// Apply scope filter: remove output keys that don't match the requested scope.
 	if rc.scopeFilter != nil {
@@ -521,6 +522,11 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 				delete(blocked, key)
 			}
 		}
+		for key := range aggregateFences {
+			if key.machineScope != *rc.scopeFilter {
+				delete(aggregateFences, key)
+			}
+		}
 		filtered := work[:0]
 		for _, w := range work {
 			if w.machineScope == *rc.scopeFilter {
@@ -531,7 +537,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	}
 
 	// Phase 2: Compile each work item and collect artifacts per target.
-	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
+	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, aggregateFences, repoRoot)
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
 
 	// Phase 3: Materialize per target — write artifacts and sync skill links.
@@ -546,7 +552,7 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 
 // applyPruneFences adds component-level prune protection for selections that
 // were present but malformed during resolution, limited to existing outputs.
-func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, fences []PruneFence) {
+func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, aggregateFences map[outputKey]map[ir.ResourceKind]bool, fences []PruneFence) {
 	for _, fence := range fences {
 		if fence.Target == "" {
 			continue
@@ -559,6 +565,14 @@ func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, fen
 			continue
 		}
 		blocked.mark(key, blockedComponentsForKind(key, fence.Kind, true)...)
+		if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(fence.Kind, key.machineScope)) > 0 {
+			kinds := aggregateFences[key]
+			if kinds == nil {
+				kinds = make(map[ir.ResourceKind]bool)
+				aggregateFences[key] = kinds
+			}
+			kinds[fence.Kind] = true
+		}
 	}
 }
 
@@ -762,13 +776,14 @@ func outputDirExists(path string) bool {
 
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
 // and groups results by output key.
-func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
+func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, aggregateFences map[outputKey]map[ir.ResourceKind]bool, repoRoot string) compilePhaseResult {
 	byTarget := make(map[outputKey]*targetWork)
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
 	hookSupport, supportConflicts := prepareHookSupport(work)
+	markOwnedAggregateFences(ownedAggregates, aggregateFences)
 
 	for index, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
@@ -1012,6 +1027,22 @@ func usesSkillDir(target hcc.Target, kind ir.ResourceKind) bool {
 		return kind == ir.KindSkill
 	}
 	return info.UsesSkillDir(kind)
+}
+
+// markOwnedAggregateFences carries resolver-level malformed selections into
+// the ownership reconciler. Such a selection has no work item to reach the
+// compile-time skip paths, but its aggregate contribution is still incomplete
+// and must not make a stale owned entry look removed from configuration.
+func markOwnedAggregateFences(state ownedAggregateState, fences map[outputKey]map[ir.ResourceKind]bool) {
+	for key, kinds := range fences {
+		handler := ownedAggregateHandlerFor(key.target)
+		if handler == nil {
+			continue
+		}
+		for kind := range kinds {
+			handler.markIncomplete(state, key, kind)
+		}
+	}
 }
 
 // markOwnedAggregateIncomplete records that a skipped resource may have

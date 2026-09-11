@@ -216,7 +216,7 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 		}
 	}
 
-	compiled := compileWorkItems(targetWork, nil, targetOutputs, targetBlocked, repoRoot)
+	compiled := compileWorkItems(targetWork, nil, targetOutputs, targetBlocked, nil, repoRoot)
 
 	keys := make([]outputKey, 0, len(targetOutputs))
 	for key := range targetOutputs {

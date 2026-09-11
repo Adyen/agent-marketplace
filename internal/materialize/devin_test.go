@@ -457,6 +457,64 @@ func TestDevinHandwrittenHooksKeepOrderAndSatisfyIdenticalDesiredEntries(t *test
 	}
 }
 
+// TestMalformedAggregateFenceRetainsOnlyAffectedAggregate proves that a
+// malformed hook selection fences its shared hook file while a valid MCP
+// sibling still reconciles normally. Run both ownership-reconciled targets so
+// the regression covers their distinct aggregate implementations.
+func TestMalformedAggregateFenceRetainsOnlyAffectedAggregate(t *testing.T) {
+	for _, target := range []hcc.Target{hcc.TargetDevin, hcc.TargetCodex} {
+		t.Run(string(target), func(t *testing.T) {
+			repoRoot, home := devinEnv(t)
+			if target == hcc.TargetCodex {
+				t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			}
+			resolved := func(name string, resource ir.Resource) resolver.ResolvedArtifact {
+				return resolver.ResolvedArtifact{
+					Entry:     catalog.Entry{Name: name, Resource: resource},
+					Source:    config.RepoCommitted,
+					Harnesses: []hcc.Target{target},
+				}
+			}
+			hook := ir.NewHook("old-hook", "PostToolUse", "old-hook-command", "command", nil, ir.SourceRef{})
+			if target == hcc.TargetCodex {
+				hook = ir.NewHookWithMatcher("old-hook", "PostToolUse", "Bash", "old-hook-command", "command", nil, ir.SourceRef{})
+			}
+			seed := []resolver.ResolvedArtifact{
+				resolved("old-hook", hook),
+				resolved("old-mcp", ir.NewMcpServer("old-mcp", "old-mcp-command", nil, nil, nil, ir.SourceRef{})),
+			}
+			if report, err := Run(context.Background(), repoRoot, seed); err != nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("seed aggregate materialization: report=%#v err=%v", report, err)
+			}
+
+			validMCP := resolved("new-mcp", ir.NewMcpServer("new-mcp", "new-mcp-command", nil, nil, nil, ir.SourceRef{}))
+			fenced := []PruneFence{{Target: target, Kind: ir.KindHook}}
+			if report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{validMCP}, WithPruneFences(fenced)); err != nil || hasErrorDiagnostics(report.Diags) {
+				t.Fatalf("malformed aggregate fence materialization: report=%#v err=%v", report, err)
+			}
+
+			root := filepath.Join(repoRoot, ".devin")
+			hooksPath := filepath.Join(root, harness.DevinProjectHooksFile)
+			mcpPath := filepath.Join(root, harness.DevinMcpConfigFile)
+			if target == hcc.TargetCodex {
+				root = filepath.Join(repoRoot, ".codex")
+				hooksPath = filepath.Join(root, codexHooksFile)
+				mcpPath = filepath.Join(root, codexMCPFile)
+			}
+			if hooks := readFileString(t, hooksPath); !strings.Contains(hooks, "old-hook-command") {
+				t.Fatalf("malformed hook selection pruned its prior aggregate entry:\n%s", hooks)
+			}
+			mcp := readFileString(t, mcpPath)
+			if strings.Contains(mcp, "old-mcp") {
+				t.Fatalf("valid MCP sibling did not prune its stale aggregate entry:\n%s", mcp)
+			}
+			if !strings.Contains(mcp, "new-mcp") {
+				t.Fatalf("valid MCP sibling did not reconcile its new aggregate entry:\n%s", mcp)
+			}
+		})
+	}
+}
+
 // TestDevinMalformedAggregateBlocksOnlyThatFile pins "Malformed destination JSON
 // blocks that file only" plus "Malformed JSON is safety-backed up before parsing,
 // left unchanged, and reported with a precise parse location".
