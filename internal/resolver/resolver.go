@@ -2261,6 +2261,14 @@ func selectionPartitions(harnesses []hcc.Target, source config.Source) []Selecti
 	return partitions
 }
 
+func selectionPartitionKeys(resourceKey string, partitions []SelectionPartition) []string {
+	keys := make([]string, 0, len(partitions))
+	for _, partition := range partitions {
+		keys = append(keys, partitionKey(resourceKey, partition.Target, partition.MachineScope))
+	}
+	return keys
+}
+
 func selectionPartitionKey(resourceKey string, partition SelectionPartition) string {
 	return partitionKey(resourceKey, partition.Target, partition.MachineScope)
 }
@@ -2350,6 +2358,65 @@ type deferredCollectionError struct {
 	partitionKeys []string
 }
 
+type missingSelectionDiagnostic struct {
+	selection  resourceSelection
+	err        error
+	required   bool
+	partitions []SelectionPartition
+	errIndex   int
+	emitted    bool
+}
+
+// mergeSelectionPartitions appends only new target-and-scope certificates while
+// preserving their first-seen order. Identical selection certificates are still
+// collapsed into one diagnostic, but disjoint partitions cannot hide each other.
+func mergeSelectionPartitions(existing []SelectionPartition, additions []SelectionPartition) []SelectionPartition {
+	for _, addition := range additions {
+		duplicate := false
+		for _, partition := range existing {
+			if partition == addition {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			existing = append(existing, addition)
+		}
+	}
+	return existing
+}
+
+func mergeMissingSelectionDiagnostic(diagnostic *missingSelectionDiagnostic, candidate error, required bool, partitions []SelectionPartition) {
+	diagnostic.required = diagnostic.required || required
+	diagnostic.partitions = mergeSelectionPartitions(diagnostic.partitions, partitions)
+
+	var currentMalformed *SelectedMalformedError
+	var candidateMalformed *SelectedMalformedError
+	if errors.As(diagnostic.err, &currentMalformed) {
+		return
+	}
+	if errors.As(candidate, &candidateMalformed) {
+		// A malformed resource is present upstream but failed ingestion. Prefer
+		// that precise diagnosis over a not-found guess if equivalent selection
+		// certificates came from different catalog aliases.
+		diagnostic.err = candidate
+	}
+}
+
+func applyMissingSelectionMetadata(diagnostic missingSelectionDiagnostic) error {
+	var malformed *SelectedMalformedError
+	if errors.As(diagnostic.err, &malformed) {
+		malformed.Required = diagnostic.required
+		malformed.partitions = append([]SelectionPartition(nil), diagnostic.partitions...)
+		return diagnostic.err
+	}
+	var notFound *SelectedNotFoundError
+	if errors.As(diagnostic.err, &notFound) {
+		notFound.Required = diagnostic.required
+	}
+	return diagnostic.err
+}
+
 func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSelection) ResolvedArtifact {
 	return ResolvedArtifact{
 		Entry:          catalog.Entry{Kind: selected.kind, Name: selected.name},
@@ -2366,7 +2433,8 @@ func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSe
 func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, targetSet []hcc.Target) (map[resourceSelection][]skillOccurrence, []error) {
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
-	reportedNotFound := make(map[missingResource]struct{})
+	reportedNotFound := make(map[missingResource]int)
+	var missingDiagnostics []missingSelectionDiagnostic
 	// Track per-registry collection not-found errors separately so they can be
 	// reconciled after every registry is walked. propagateTopLevelCollections
 	// adds collection includes to every entry, so a miss is suppressible when
@@ -2401,44 +2469,53 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			selectedSkill, found := byName[selected]
 			if !found {
 				notFoundKey := missingResource{resourceSelection: selected, url: entry.URL, path: entry.Path, ref: entry.Ref}
-				if _, reported := reportedNotFound[notFoundKey]; !reported {
-					reportedNotFound[notFoundKey] = struct{}{}
-					// Correlate before blaming. The resource may be absent from
-					// the catalog because the ingester could not load it, in
-					// which case the exact validation failure is already known
-					// and "removed upstream" is a misdiagnosis.
-					var selErr error
+				partitions := selectionPartitions(harnessTargets, entry.Source)
+				if diagnosticIndex, reported := reportedNotFound[notFoundKey]; reported {
+					var duplicateErr error
 					if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
-						entry.URL, entry.Path, entry.Ref, entry.Required, "",
-						selectionPartitions(harnessTargets, entry.Source)); sme != nil {
-						selErr = sme
-					} else {
-						snf := &SelectedNotFoundError{
-							Kind:     selected.kind,
-							Name:     selected.name,
-							URL:      entry.URL,
-							Path:     entry.Path,
-							Ref:      entry.Ref,
-							Required: entry.Required,
-						}
-						// Check if the name exists under a different kind and suggest the correct selector.
-						if hint := kindMismatchHint(byName, selected); hint != "" {
-							snf.Hint = hint
-						}
-						selErr = snf
+						entry.URL, entry.Path, entry.Ref, entry.Required, "", partitions); sme != nil {
+						duplicateErr = sme
 					}
-					// Defer collection errors: they may be false positives if
-					// the collection exists in another registry.
-					if selected.kind == ir.KindCollection {
-						collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{
-							name:          selected.name,
-							err:           selErr,
-							partitionKeys: artifactPartitionKeys(ViaMapKey(selected.kind, selected.name), harnessTargets, entry.Source),
-						})
-					} else {
-						errs = append(errs, selErr)
-					}
+					mergeMissingSelectionDiagnostic(&missingDiagnostics[diagnosticIndex], duplicateErr, entry.Required, partitions)
+					continue
 				}
+
+				// Correlate before blaming. The resource may be absent from
+				// the catalog because the ingester could not load it, in
+				// which case the exact validation failure is already known
+				// and "removed upstream" is a misdiagnosis.
+				var selErr error
+				if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
+					entry.URL, entry.Path, entry.Ref, entry.Required, "", partitions); sme != nil {
+					selErr = sme
+				} else {
+					snf := &SelectedNotFoundError{
+						Kind:     selected.kind,
+						Name:     selected.name,
+						URL:      entry.URL,
+						Path:     entry.Path,
+						Ref:      entry.Ref,
+						Required: entry.Required,
+					}
+					// Check if the name exists under a different kind and suggest the correct selector.
+					if hint := kindMismatchHint(byName, selected); hint != "" {
+						snf.Hint = hint
+					}
+					selErr = snf
+				}
+				diagnostic := missingSelectionDiagnostic{
+					selection:  selected,
+					err:        selErr,
+					required:   entry.Required,
+					partitions: partitions,
+				}
+				if selected.kind != ir.KindCollection {
+					diagnostic.errIndex = len(errs)
+					diagnostic.emitted = true
+					errs = append(errs, selErr)
+				}
+				reportedNotFound[notFoundKey] = len(missingDiagnostics)
+				missingDiagnostics = append(missingDiagnostics, diagnostic)
 				continue
 			}
 
@@ -2460,6 +2537,23 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 			})
 			order++
 		}
+	}
+
+	// Emit one deterministic diagnostic per matching selection location after all
+	// entries have been walked. This lets duplicate certificates contribute
+	// disjoint target/scope partitions and requiredness without repeating exact
+	// duplicates.
+	for _, diagnostic := range missingDiagnostics {
+		selErr := applyMissingSelectionMetadata(diagnostic)
+		if diagnostic.emitted {
+			errs[diagnostic.errIndex] = selErr
+			continue
+		}
+		collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{
+			name:          diagnostic.selection.name,
+			err:           selErr,
+			partitionKeys: selectionPartitionKeys(ViaMapKey(diagnostic.selection.kind, diagnostic.selection.name), diagnostic.partitions),
+		})
 	}
 
 	// Reconcile collection not-found errors only within the same target and
