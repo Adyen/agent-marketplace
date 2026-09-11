@@ -1,7 +1,6 @@
 import type { LocationQuery, LocationQueryRaw } from 'vue-router'
 import { isResourceKind } from '~/lib/api'
-import { ALL_RESOURCE_KINDS } from '~/types/marketplace'
-import type { ResourceKindFilter, SearchParams } from '~/types/marketplace'
+import type { SearchParams } from '~/types/marketplace'
 
 export const DEFAULT_LIMIT = 25
 export const MAX_LIMIT = 100
@@ -31,14 +30,6 @@ export function toLocationQuery(params: SearchParams): LocationQueryRaw {
   if (params.offset > 0) query.offset = String(params.offset)
   query.limit = String(params.limit)
   return query
-}
-
-export function toResourceKindFilter(kind: SearchParams['kind']): ResourceKindFilter {
-  return kind || ALL_RESOURCE_KINDS
-}
-
-export function fromResourceKindFilter(kind: ResourceKindFilter): SearchParams['kind'] {
-  return kind === ALL_RESOURCE_KINDS ? '' : kind
 }
 
 function queryValue(value: LocationQuery[string] | undefined): string {

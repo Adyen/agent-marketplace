@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { isResourceKind } from '~/lib/api'
 import { safeCanonicalUrl } from '~/lib/presentation'
-import { resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, revisionAsyncDataKey, routeParam } from '~/lib/routes'
+import { resourceAsyncDataKey, resourceInspectionAsyncDataKey, resourceInspectionContentAsyncDataKey, revisionAsyncDataKey, routeParam } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 import type { InspectionFile } from '~/types/marketplace'
 
@@ -25,7 +25,7 @@ const { data: resource, pending, error, refresh } = await useAsyncData(
   () => api.getResourceRevision(registry, kind, name, revision),
 )
 const { data: revisions, error: revisionsError } = await useAsyncData(
-  `${revisionAsyncDataKey(registry, kind, name, revision)}:history`,
+  `${resourceAsyncDataKey(registry, kind, name)}:revisions`,
   () => api.listResourceRevisions(registry, kind, name),
 )
 const { data: inspection } = await useAsyncData(
@@ -60,10 +60,9 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-muted/30 text-default">
-    <MarketplaceSkipLink target="resource-content" />
     <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Resource revision' }]" />
 
-    <main id="resource-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
+    <main id="main-content" class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8" tabindex="-1">
       <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-default p-8">
         <h1 class="text-2xl font-semibold text-highlighted">Loading resource revision</h1>
         <p class="mt-3 text-sm text-muted">Fetching this exact verified revision and its metadata.</p>

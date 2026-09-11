@@ -31,6 +31,7 @@ const items = [
     revision: `sha256:${'b'.repeat(64)}`,
     content_digest: `sha256:${'b'.repeat(64)}`,
     description: 'Deploy a preview environment.',
+    availability: 'revoked',
   },
 ]
 
@@ -135,7 +136,11 @@ const server = createServer((request, response) => {
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
   if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin })
-  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [{ id: registry.id, slug: registry.slug }, { id: 'community-tools', slug: 'community-tools' }])
+  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [
+    { id: registry.id, slug: registry.slug },
+    { id: 'community-tools', slug: 'community-tools' },
+    { id: 'registry-with-an-extremely-long-name', slug: 'registry-with-an-extremely-long-name' },
+  ])
   if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
     return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
   }

@@ -55,7 +55,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.text()).toContain('Apache-2.0')
     expect(wrapper.text()).toContain('<script>not markup</script>')
     expect(wrapper.get('code').text()).toContain(`/revisions/sha256%3A${'c'.repeat(64)}`)
-    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').exists()).toBe(true)
     expect(wrapper.find('script').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
     expect(wrapper.find('[aria-live="polite"]').exists()).toBe(true)
@@ -79,9 +79,29 @@ describe('ResourceDetailView', () => {
     })
 
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain(previousDigest)
-    expect(wrapper.get(`a[href="https://market.example/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
+    expect(wrapper.get(`a[href="/r/registry/skill/review/revisions/${encodeURIComponent(previousDigest)}"]`).exists()).toBe(true)
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Revoked')
     expect(wrapper.get('[aria-labelledby="revision-history-heading"]').text()).toContain('Current')
+  })
+
+  it.each([
+    ['an index-only skill', 'index-only', 'skill'],
+    ['a collection', 'mirror', 'collection'],
+  ] as const)('keeps an archive-free revision available for %s', (_, acquisition, kind) => {
+    const { archive_digest: _archiveDigest, ...withoutArchive } = resource
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: withoutArchive,
+        registry: 'registry', kind, name: 'review', canonicalUrl: 'https://market.example',
+        acquisition,
+        revisions: [withoutArchive],
+      },
+      global: { stubs },
+    })
+
+    const history = wrapper.get('[aria-labelledby="revision-history-heading"]')
+    expect(history.text()).toContain('Available')
+    expect(history.text()).not.toContain('No installable artifact')
   })
 
   it('renders only sanitized Markdown and an escaped raw view from the inspection projection', () => {
@@ -209,8 +229,8 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('This revision is revoked')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').exists()).toBe(true)
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').exists()).toBe(true)
-    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').exists()).toBe(true)
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeUndefined()
   })
 
   it('calls a policy-rejected revision blocked and withholds the install command', () => {
@@ -229,7 +249,7 @@ describe('ResourceDetailView', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('Installation is disabled because the current assessment rejects this revision')
     expect(wrapper.get('[role="status"]').text()).toContain('Metadata and inspection remain available.')
     expect(wrapper.get('button[aria-label^="Copy pinned CLI"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button[aria-label^="Copy pinned browser"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[aria-label^="Copy detail URL"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.get('[aria-live="polite"]').text()).toContain('Install status for review: Blocked by policy.')
   })
 

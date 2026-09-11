@@ -520,10 +520,10 @@ export interface components {
         };
         ResourceListItem: {
             /**
-             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `blocked` means the revision is listed for transparency but is not installable, because its current assessment explicitly rejected it or because a mirrored registry published no artifact for it. `revoked` means an operator revoked the revision. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
+             * @description Whether this revision can be installed from this instance, so a list card can show availability without fetching each resource. `available` means installable. `policy-blocked` means the current assessment rejected the revision. `no-artifact` means a mirrored revision has no artifact this instance can serve. `revoked` means an operator revoked the revision. `blocked` is the aggregate value used by older peers that cannot distinguish the reason. Optional: an instance that cannot determine availability omits the field, and clients must treat an absent value as unknown rather than as `available`.
              * @enum {string}
              */
-            availability?: "available" | "blocked" | "revoked";
+            availability?: "available" | "blocked" | "policy-blocked" | "no-artifact" | "revoked";
             content_digest: string;
             /** @description Author-written one-line summary from the upstream registry. Untrusted content: control characters are stripped, whitespace is collapsed, and the value is truncated to at most 1024 bytes on a UTF-8 boundary before it is stored or served. Omitted when the resource kind declares no description (hooks and MCP servers) or the author left it empty. */
             description?: string;

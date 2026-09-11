@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ALL_RESOURCE_KINDS } from '~/types/marketplace'
-import type { ResourceKind, ResourceKindFilter, SearchParams } from '~/types/marketplace'
+import type { ResourceKind, SearchParams } from '~/types/marketplace'
 import { kindLabel } from '~/lib/presentation'
-import { fromResourceKindFilter, toResourceKindFilter } from '~/composables/useSearchQuery'
 
 const props = defineProps<{
   modelValue: SearchParams['kind']
@@ -13,16 +11,22 @@ const emit = defineEmits<{
   'update:modelValue': [value: SearchParams['kind']]
 }>()
 
-const selectedKind = computed<ResourceKindFilter>({
-  get: () => toResourceKindFilter(props.modelValue),
-  set: value => emit('update:modelValue', fromResourceKindFilter(value)),
+const selectedKind = computed<ResourceKind | undefined>({
+  get: () => props.modelValue || undefined,
+  set: value => emit('update:modelValue', value ?? ''),
 })
-const items = computed(() => [
-  { label: 'All resource kinds', value: ALL_RESOURCE_KINDS },
-  ...props.kinds.map(kind => ({ label: kindLabel(kind), value: kind })),
-])
+const items = computed(() => props.kinds.map(kind => ({ label: kindLabel(kind), value: kind })))
 </script>
 
 <template>
-  <USelect v-model="selectedKind" :items="items" value-key="value" />
+  <USelect
+    v-model="selectedKind"
+    :items="items"
+    value-key="value"
+    placeholder="All resource kinds"
+    color="primary"
+    :highlight="Boolean(modelValue)"
+    :content="{ bodyLock: false }"
+    :ui="{ base: 'h-9 w-full px-3 text-sm ring-default focus-visible:ring-primary', value: 'min-w-0 flex-1 truncate text-left', placeholder: 'min-w-0 flex-1 truncate text-left text-dimmed', itemLabel: 'truncate' }"
+  />
 </template>

@@ -2,6 +2,7 @@
 import {
   GITHUB_REPOSITORY_URL,
   INSTALL_COMMAND,
+  MARKETPLACE_PATH,
 } from '../../../shared/site'
 import CommandBar from '../components/CommandBar.vue'
 import TuiPreview from '../components/TuiPreview.vue'
@@ -26,6 +27,13 @@ import TuiPreview from '../components/TuiPreview.vue'
           <CommandBar :command="INSTALL_COMMAND" class="install" />
 
           <div class="actions">
+            <a
+              class="action primary"
+              :href="MARKETPLACE_PATH"
+              target="_self"
+            >
+              Browse Marketplace
+            </a>
             <a
               class="action secondary"
               :href="GITHUB_REPOSITORY_URL"
@@ -155,6 +163,17 @@ h1 {
   outline-offset: 3px;
 }
 
+.primary {
+  border-color: var(--am-color-action-primary);
+  background: var(--am-color-action-primary);
+  color: var(--am-color-text-on-action);
+}
+
+.primary:hover {
+  border-color: var(--am-color-action-hover);
+  background: var(--am-color-action-hover);
+}
+
 .secondary {
   border-color: var(--am-hero-ring);
   background: var(--am-hero-surface);
@@ -173,8 +192,8 @@ h1 {
   margin-top: 30px;
   padding-block: 9px;
   box-shadow:
-    0 20px 50px -30px rgba(0, 0, 0, 0.9),
-    inset 0 1px rgba(255, 255, 255, 0.03);
+    0 20px 50px -30px color-mix(in srgb, var(--am-color-bg-canvas) 90%, transparent),
+    inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 3%, transparent);
 }
 
 .install :deep(.copy) {

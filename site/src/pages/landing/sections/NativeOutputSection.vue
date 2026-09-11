@@ -152,7 +152,7 @@ const legend = computed(() => {
   background: var(--am-code-bg);
   box-shadow:
     0 24px 50px -34px var(--am-code-shadow),
-    inset 0 1px rgba(255, 255, 255, 0.025);
+    inset 0 1px var(--am-color-code-highlight);
   color: var(--am-code-text);
   font-family: var(--vp-font-family-mono);
 }

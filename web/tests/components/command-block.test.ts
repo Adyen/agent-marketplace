@@ -29,6 +29,7 @@ describe('CommandBlock', () => {
 
     const button = wrapper.get('button')
     expect(button.attributes('aria-label')).toBe('Copy pinned CLI install command for foo')
+    expect(button.text()).toBe('Copy command')
     expect(button.attributes('disabled')).toBeUndefined()
   })
 

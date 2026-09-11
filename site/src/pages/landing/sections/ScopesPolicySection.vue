@@ -131,7 +131,7 @@ const installCommand = computed(
   border: 1px solid var(--am-border);
   border-radius: var(--am-radius-lg);
   background: var(--am-surface);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
 }
 
 .tabs {
@@ -260,7 +260,7 @@ h3 {
   background:
     linear-gradient(90deg, var(--am-accent-soft), transparent 55%),
     var(--am-surface);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
 }
 
 .organization-baseline::before {
