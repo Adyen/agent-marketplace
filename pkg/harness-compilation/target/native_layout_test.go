@@ -2,6 +2,7 @@ package target
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -184,6 +185,9 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 		target  Target
 		layout  NativeLayout
 		wantErr bool
+		// wantErrContains, when set, must appear in the validation error so a
+		// case pinned to one check cannot pass on an unrelated rejection.
+		wantErrContains string
 	}{
 		{
 			name:   "valid legacy layout",
@@ -568,19 +572,22 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:   "aggregate ancestor of a declared component",
+			// A component cannot be multi-element, so the declared directory
+			// comes from a ResourcePaths pattern deriving conf/hooks.
+			name:   "aggregate ancestor of a declared resource directory",
 			target: TargetCodex,
 			layout: NativeLayout{Partitions: []NativePartition{{
-				ID:         "a",
-				Prefix:     ".a",
-				Components: []string{"conf/hooks"},
+				ID:            "a",
+				Prefix:        ".a",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "conf/hooks/%s/x.md"},
 				Aggregates: []NativeAggregate{{
 					Kind:    ir.KindHook,
 					Project: NativeAggregateFile{Path: "conf"},
 					User:    NativeAggregateFile{Path: "conf"},
 				}},
 			}}},
-			wantErr: true,
+			wantErr:         true,
+			wantErrContains: `that is or contains the declared directory "conf/hooks"`,
 		},
 		{
 			name:   "aggregate inside a declared component is valid",
@@ -780,6 +787,111 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 			layout:  NativeLayout{Partitions: []NativePartition{{ID: "a", Prefix: ".a"}}},
 			wantErr: true,
 		},
+		{
+			name:   "placeholder suffix in a non-final element",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "units/%s.unit/manifest.json"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "placeholder suffix element followed by deeper file",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "a/%s.md/deep.md"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "placeholder suffix in basename under a directory is valid",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "units/%s.unit"},
+			}}},
+		},
+		{
+			name:   "two partitions declaring installation evidence",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{
+				{ID: "a", Prefix: ".a", Components: []string{"x"}, InstallationEvidence: true},
+				{ID: "b", Prefix: ".b", Components: []string{"y"}, InstallationEvidence: true},
+			}},
+			wantErr: true,
+		},
+		{
+			name:   "single installation evidence partition is valid",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{
+				{ID: "a", Prefix: ".a", Components: []string{"x"}, InstallationEvidence: true},
+				{ID: "b", Prefix: ".b", Components: []string{"y"}},
+			}},
+		},
+		{
+			name:   "aggregate inside a derived resource directory",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "skills/index.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "skills/index.json", Member: "mcpServers"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate nested inside a derived resource directory",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "skills/meta/index.json", Member: "hooks"},
+					User:    NativeAggregateFile{Path: "skills/meta/index.json", Member: "hooks"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate inside a flat resource directory",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "commands/%s.md"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "commands/index.json", Member: "hooks"},
+					User:    NativeAggregateFile{Path: "commands/index.json", Member: "hooks"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate beside a derived resource directory is valid",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "skills-index.json", Member: "mcpServers"},
+					User:    NativeAggregateFile{Path: "skills-index.json", Member: "mcpServers"},
+				}},
+			}}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -787,6 +899,32 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ValidateNativeLayout(%s) error = %v, wantErr %t", tt.target, err, tt.wantErr)
 			}
+			if tt.wantErrContains != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErrContains)) {
+				t.Fatalf("ValidateNativeLayout(%s) error = %v, want error containing %q", tt.target, err, tt.wantErrContains)
+			}
 		})
+	}
+}
+
+// TestIsDirShapedPattern pins the dir-shape contract: a non-final path element
+// that is exactly "%s". A suffixed basename stays flat; a suffixed non-final
+// element is neither, and validation rejects it rather than classify it.
+func TestIsDirShapedPattern(t *testing.T) {
+	for _, tt := range []struct {
+		pattern string
+		want    bool
+	}{
+		{"skills/%s/SKILL.md", true},
+		{"a/b/%s/manifest.json", true},
+		{"commands/%s.md", false},
+		{"units/%s.unit", false},
+		{"%s", false},
+		{"units/%s.unit/manifest.json", false},
+		{"a/%s.md/deep.md", false},
+		{"a/x%s/y.md", false},
+	} {
+		if got := IsDirShapedPattern(tt.pattern); got != tt.want {
+			t.Errorf("IsDirShapedPattern(%q) = %v, want %v", tt.pattern, got, tt.want)
+		}
 	}
 }

@@ -20,6 +20,17 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
+// mustDevinOwnedJSONFile builds a Devin reconcile spec, failing the test on
+// the ambiguity error a shared-envelope declaration would produce.
+func mustDevinOwnedJSONFile(t *testing.T, rel string, machineScope bool) ownedJSONFileSpec {
+	t.Helper()
+	file, err := devinOwnedJSONFile(rel, machineScope)
+	if err != nil {
+		t.Fatalf("devinOwnedJSONFile(%q, machineScope=%v): %v", rel, machineScope, err)
+	}
+	return file
+}
+
 // writeDevinMcp writes a project-scope mcp_config.json verbatim.
 func writeDevinMcp(t *testing.T, repoRoot, body string) string {
 	t.Helper()
@@ -73,10 +84,10 @@ func TestAdversarialConflictReplaceRefusesNonMcpAggregatesAndHooks(t *testing.T)
 	if len(hookCandidates) != 1 {
 		t.Fatalf("ownership nominated %d hook candidates, want 1 (the fence is what must reject it, not the nominator)", len(hookCandidates))
 	}
-	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinProjectHooksFile, false)}).replaceable(hookID) {
+	if (ownedJSONRepairAdapter{file: mustDevinOwnedJSONFile(t, harness.DevinProjectHooksFile, false)}).replaceable(hookID) {
 		t.Fatal("a hook was declared replaceable; the MCP-only replace fence must reject hooks")
 	}
-	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinUserConfigFile, true)}).replaceable(hookID) {
+	if (ownedJSONRepairAdapter{file: mustDevinOwnedJSONFile(t, harness.DevinUserConfigFile, true)}).replaceable(hookID) {
 		t.Fatal("a hook in config.json was declared replaceable")
 	}
 
@@ -87,11 +98,11 @@ func TestAdversarialConflictReplaceRefusesNonMcpAggregatesAndHooks(t *testing.T)
 		IdentityDigest: ownership.McpIdentityDigest("server"),
 	}
 	for _, rel := range []string{harness.DevinProjectHooksFile, harness.DevinUserConfigFile} {
-		if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(rel, rel == harness.DevinUserConfigFile)}).replaceable(mcpID) {
+		if (ownedJSONRepairAdapter{file: mustDevinOwnedJSONFile(t, rel, rel == harness.DevinUserConfigFile)}).replaceable(mcpID) {
 			t.Fatalf("an mcp-server identity was declared replaceable in %q", rel)
 		}
 	}
-	if (ownedJSONRepairAdapter{file: devinOwnedJSONFile(harness.DevinMcpConfigFile, false)}).replaceable(ownership.EntryID{
+	if (ownedJSONRepairAdapter{file: mustDevinOwnedJSONFile(t, harness.DevinMcpConfigFile, false)}).replaceable(ownership.EntryID{
 		Kind: ownership.KindMcpServer, Container: "mcpServers", Key: "",
 		IdentityDigest: ownership.McpIdentityDigest("")}) {
 		t.Fatal("an empty MCP key was declared replaceable")
@@ -471,7 +482,7 @@ func mcpEntryFromBytes(t *testing.T, raw []byte, key, resource string) ownership
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := devinOwnedJSONFile(harness.DevinMcpConfigFile, false)
+	file := mustDevinOwnedJSONFile(t, harness.DevinMcpConfigFile, false)
 	container, _, err := ownedJSONContainerNode(doc, file)
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +637,7 @@ func concurrentConflictReplaceFixture(t *testing.T) (*ownership.Store, *ownedJSO
 	}
 	state, diags := readOwnedJSONRepairState(store,
 		outputKey{target: hcc.TargetDevin, machineScope: false}, outDir,
-		devinOwnedJSONFile(harness.DevinMcpConfigFile, false), devinOwnedJSONOptions())
+		mustDevinOwnedJSONFile(t, harness.DevinMcpConfigFile, false), devinOwnedJSONOptions())
 	if state == nil {
 		t.Fatalf("the aggregate no longer parses after two concurrent repairs: %v", diags)
 	}

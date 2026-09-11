@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // AncestorMaterializedExcludeWarning is emitted when a subdirectory's local
@@ -173,8 +174,14 @@ func skillDir(target hcc.Target, root, name string) string {
 		return ""
 	}
 	installRoot := roots.For(false, root)
+	// The native-layout descriptor is the topology authority for targets that
+	// declare one — Claude deliberately leaves TargetInfo.SkillPathPattern
+	// unset, so the descriptor is where its skill shape lives. The literal
+	// fallback only serves targets with no registered layout.
 	pattern := "skills/%s/SKILL.md"
-	if info, ok := harness.TargetInfoMap[target]; ok && info.SkillPathPattern != "" {
+	if declared, ok := targetmeta.NativeResourcePattern(target, ir.KindSkill); ok {
+		pattern = declared
+	} else if info, ok := harness.TargetInfoMap[target]; ok && info.SkillPathPattern != "" {
 		pattern = info.SkillPathPattern
 	}
 	skillRel := filepath.Dir(fmt.Sprintf(pattern, name))
