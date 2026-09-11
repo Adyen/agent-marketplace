@@ -23,8 +23,6 @@ type Destination struct {
 	Info                 TargetInfo
 }
 
-type resolvedLayoutProvider func(machineScope bool, repoRoot, homeDir string) ([]Destination, error)
-
 // RouteArtifact strips the destination's native prefix after validating that
 // the artifact remains within the destination root.
 func (d Destination) RouteArtifact(path string) (string, error) {
@@ -59,7 +57,7 @@ func (d Destination) RouteArtifact(path string) (string, error) {
 
 // ResolveDestinations returns the native output roots for a target and scope.
 // Legacy targets retain one default destination; partitioned targets resolve
-// their named native roots through a registered application layout provider.
+// their native roots through the application-owned installation adapter registry.
 func ResolveDestinations(target hcc.Target, machineScope bool, repoRoot string) ([]Destination, error) {
 	homeDir := ""
 	if machineScope {
@@ -142,8 +140,12 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 		}
 		slog.Debug("resolve harness destinations complete", "target", target, "machine_scope", machineScope, "count", len(destinations))
 	}()
-	if provider, ok := resolvedLayoutProviders[target]; ok {
-		return provider(machineScope, repoRoot, homeDir)
+	adapters, adapterErr := NewInstallationAdapterRegistry()
+	if adapterErr != nil {
+		return nil, adapterErr
+	}
+	if adapter, ok := adapters.Lookup(target); ok {
+		return adapter.Resolve(machineScope, repoRoot, homeDir)
 	}
 	definition, declared := targetmeta.Lookup(string(target))
 	info, configured := TargetInfoMap[target]
@@ -151,7 +153,7 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 		return nil, fmt.Errorf("unknown harness target %q", target)
 	}
 	if definition.PartitionedRoots {
-		return nil, fmt.Errorf("target %q has no resolved-layout provider", target)
+		return nil, fmt.Errorf("target %q has no installation adapter", target)
 	}
 	info.Roots = Roots{Repo: definition.RepoRoot, Machine: filepath.Join(homeDir, definition.UserRoot)}
 	root, err := canonicalRoot(info.Roots.For(machineScope, repoRoot))

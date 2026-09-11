@@ -1,13 +1,12 @@
 // Package harness maps harness target names to their install-root paths
 // for both repo-scoped and machine-scoped skill materialization.
 //
-// internal/materialize consumes TargetInfoMap, ResolveDestinations, the
-// install roots, and the Devin aggregate file names to drive
-// hcc.Materialize into the correct per-target output directories;
-// internal/pipeline consumes the same metadata for managed-path and
-// safety-backup coverage. The TUI and CLI surfaces (status, doctor,
-// backup, init, migrate) consume install-root and detection info such as
-// DetectInstalled for informational output.
+// internal/materialize uses the adapter registry for migrated targets and
+// legacy TargetInfo metadata for the remaining targets, plus ResolveDestinations
+// and install roots to drive hcc.Materialize. internal/pipeline uses the same
+// metadata for managed-path and safety-backup coverage. TUI and CLI surfaces
+// (status, doctor, backup, init, migrate) use install-root and detection info
+// such as DetectInstalled for informational output.
 package harness
 
 import (
@@ -463,6 +462,11 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 }
 
 func MachineRoot(target hcc.Target) (string, bool) {
+	if registry, err := NewInstallationAdapterRegistry(); err == nil {
+		if adapter, ok := registry.Lookup(target); ok && adapter.Info().Roots.Machine != "" {
+			return adapter.Info().Roots.Machine, true
+		}
+	}
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
 }

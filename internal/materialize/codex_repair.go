@@ -47,7 +47,11 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 			if !destination.Info.OwnershipReconciledAggregates {
 				continue
 			}
-			previewCodexRoot(preview, key, destination.Root, compiled.codexAggregates[key], compiled.codexMCP[key])
+			state, _ := compiled.ownedState[key].(*codexOwnedAggregateState)
+			if state == nil {
+				state = &codexOwnedAggregateState{}
+			}
+			previewCodexRoot(preview, key, destination.Root, state.hooks, state.mcps)
 		}
 	}
 

@@ -179,10 +179,10 @@ func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputK
 	if len(entries) == 0 {
 		return rest, nil
 	}
-	aggregate := state.devin[key]
+	aggregate, _ := state.get(key).(*ownedJSONAggregateWork)
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.devin[key] = aggregate
+		state.put(key, aggregate)
 	}
 	for _, entry := range entries {
 		aggregate.add(entry)
@@ -195,10 +195,10 @@ func (devinOwnedAggregateHandler) markIncomplete(state ownedAggregateState, key 
 	if len(rels) == 0 {
 		return
 	}
-	aggregate := state.devin[key]
+	aggregate, _ := state.get(key).(*ownedJSONAggregateWork)
 	if aggregate == nil {
 		aggregate = &ownedJSONAggregateWork{}
-		state.devin[key] = aggregate
+		state.put(key, aggregate)
 	}
 	for _, rel := range rels {
 		aggregate.markIncomplete(rel)
@@ -220,14 +220,15 @@ func (devinOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 }
 
 func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, _ []harness.Destination, dryRun bool) *Report {
-	return reconcileDevinAggregates(ctx, report, key, outDir, state.devin[key], dryRun)
+	work, _ := state.get(key).(*ownedJSONAggregateWork)
+	return reconcileDevinAggregates(ctx, report, key, outDir, work, dryRun)
 }
 
 func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
 	if key.target != hcc.TargetDevin {
 		return report
 	}
-	info, ok := harness.TargetInfoMap[key.target]
+	info, ok := harness.TargetInfoFor(key.target)
 	if !ok {
 		return report
 	}
@@ -258,7 +259,7 @@ func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, 
 // isDevinAggregatePath reports whether an artifact path is one of the Devin
 // shared aggregate files for the given scope.
 func isDevinAggregatePath(path string, machineScope bool) bool {
-	info, ok := harness.TargetInfoMap[hcc.TargetDevin]
+	info, ok := harness.TargetInfoFor(hcc.TargetDevin)
 	if !ok {
 		return false
 	}

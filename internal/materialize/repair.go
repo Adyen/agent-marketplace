@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -180,22 +182,30 @@ type TargetRepairPreview struct {
 	Preview *RepairPreview
 }
 
-// RepairPreviews enumerates the ownership-reconciled targets in stable order.
+// RepairPreviews enumerates the materialization adapters in stable target order.
 func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact) ([]TargetRepairPreview, error) {
-	providers := []struct {
-		target  hcc.Target
-		preview func(context.Context, string, []resolver.ResolvedArtifact) (*RepairPreview, error)
-	}{
-		{target: hcc.TargetDevin, preview: DevinRepairPreview},
-		{target: hcc.TargetCodex, preview: CodexRepairPreview},
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return nil, err
 	}
-	out := make([]TargetRepairPreview, 0, len(providers))
-	for _, provider := range providers {
-		preview, err := provider.preview(ctx, repoRoot, resolved)
+	targets := registry.Targets()
+	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
+	bindings := materializeAdapters()
+	out := make([]TargetRepairPreview, 0, len(targets))
+	for _, target := range targets {
+		adapter, ok := registry.Lookup(target)
+		if !ok {
+			continue
+		}
+		binding, ok := bindings[adapter.AggregateHandlerKey()]
+		if !ok || binding.repair == nil || binding.repairKey != adapter.RepairKey() {
+			continue
+		}
+		preview, err := binding.repair(ctx, repoRoot, resolved)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, TargetRepairPreview{Target: provider.target, Preview: preview})
+		out = append(out, TargetRepairPreview{Target: target, Preview: preview})
 	}
 	return out, nil
 }

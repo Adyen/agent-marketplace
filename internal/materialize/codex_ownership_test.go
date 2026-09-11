@@ -28,11 +28,9 @@ func TestCodexAggregateReportsResolvedDestinationID(t *testing.T) {
 		work.add(entry)
 	}
 	key := outputKey{target: targetmeta.TargetCodex}
-	state := ownedAggregateState{
-		codex:           map[outputKey]*ownedJSONAggregateWork{key: work},
-		codexMCP:        map[outputKey][]codexMCPEntry{},
-		codexMCPBlocked: map[outputKey]bool{},
-	}
+	state := ownedAggregateState{values: map[outputKey]any{
+		key: &codexOwnedAggregateState{hooks: work},
+	}}
 	report := &Report{PerTarget: map[targetmeta.Target]TargetReport{}}
 	destinations := []harness.Destination{{
 		ID:   "resolved-config-root",

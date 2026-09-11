@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -141,14 +142,23 @@ func ownedAggregateIDKey(id ownership.EntryID) string {
 	return string(id.Kind) + "\x00" + id.Container + "\x00" + id.Key + "\x00" + id.IdentityDigest
 }
 
-// ownedAggregateState keeps format-specific desired state behind the common
-// ownership-reconciliation boundary. JSON hook arrays and TOML MCP tables keep
-// their native patch models.
+// ownedAggregateState stores adapter-specific desired state outside generic
+// orchestration. JSON hooks and TOML MCP entries retain their native patch models.
 type ownedAggregateState struct {
-	devin           map[outputKey]*ownedJSONAggregateWork
-	codex           map[outputKey]*ownedJSONAggregateWork
-	codexMCP        map[outputKey][]codexMCPEntry
-	codexMCPBlocked map[outputKey]bool
+	values map[outputKey]any
+}
+
+func (s ownedAggregateState) get(key outputKey) any {
+	if s.values == nil {
+		return nil
+	}
+	return s.values[key]
+}
+
+func (s ownedAggregateState) put(key outputKey, value any) {
+	if s.values != nil {
+		s.values[key] = value
+	}
 }
 
 // ownedAggregateHandler lets the materializer orchestrate owned aggregate
@@ -161,15 +171,38 @@ type ownedAggregateHandler interface {
 	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
 }
 
+type materializeAdapter struct {
+	handler   ownedAggregateHandler
+	repairKey string
+	repair    func(context.Context, string, []resolver.ResolvedArtifact) (*RepairPreview, error)
+}
+
+func materializeAdapters() map[string]materializeAdapter {
+	return map[string]materializeAdapter{
+		harness.AdapterDevinOwnedJSON:     {handler: devinOwnedAggregateHandler{}, repairKey: harness.AdapterDevinRepair, repair: DevinRepairPreview},
+		harness.AdapterCodexOwnedJSONTOML: {handler: codexOwnedAggregateHandler{}, repairKey: harness.AdapterCodexRepair, repair: CodexRepairPreview},
+	}
+}
+
+func materializeAdapterFor(target hcc.Target) (materializeAdapter, bool) {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return materializeAdapter{}, false
+	}
+	adapter, ok := registry.Lookup(target)
+	if !ok {
+		return materializeAdapter{}, false
+	}
+	binding, ok := materializeAdapters()[adapter.AggregateHandlerKey()]
+	return binding, ok
+}
+
 func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
-	switch target {
-	case hcc.TargetDevin:
-		return devinOwnedAggregateHandler{}
-	case hcc.TargetCodex:
-		return codexOwnedAggregateHandler{}
-	default:
+	adapter, ok := materializeAdapterFor(target)
+	if !ok {
 		return nil
 	}
+	return adapter.handler
 }
 
 type ownedJSONReconcileOptions struct {

@@ -93,7 +93,7 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 			return nil, err
 		}
 		outDir := roots.For(key.machineScope, repoRoot)
-		info, ok := harness.TargetInfoMap[hcc.TargetDevin]
+		info, ok := harness.TargetInfoFor(hcc.TargetDevin)
 		if !ok {
 			continue
 		}
@@ -160,7 +160,13 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 // make "exact match" mean two different things in two commands.
 func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifact) (map[outputKey]*ownedJSONAggregateWork, []outputKey, []diag.Diagnostic) {
 	compiled, keys := compileRepairTarget(repoRoot, resolved, hcc.TargetDevin)
-	return compiled.devinAggregates, keys, compiled.allDiags
+	aggregates := make(map[outputKey]*ownedJSONAggregateWork)
+	for key, value := range compiled.ownedState {
+		if work, ok := value.(*ownedJSONAggregateWork); ok {
+			aggregates[key] = work
+		}
+	}
+	return aggregates, keys, compiled.allDiags
 }
 
 // compileRepairTarget reuses sync's compile phases for one repair provider.

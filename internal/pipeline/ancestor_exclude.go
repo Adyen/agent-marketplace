@@ -181,7 +181,7 @@ func skillDir(target hcc.Target, root, name string) string {
 	pattern := "skills/%s/SKILL.md"
 	if declared, ok := targetmeta.NativeResourcePattern(target, ir.KindSkill); ok {
 		pattern = declared
-	} else if info, ok := harness.TargetInfoMap[target]; ok && info.SkillPathPattern != "" {
+	} else if info, ok := harness.TargetInfoFor(target); ok && info.SkillPathPattern != "" {
 		pattern = info.SkillPathPattern
 	}
 	skillRel := filepath.Dir(fmt.Sprintf(pattern, name))
