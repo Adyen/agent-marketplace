@@ -45,8 +45,16 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 			Components:           []string{"agents"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
-				{Kind: ir.KindHook, Path: "hooks.json"},
-				{Kind: ir.KindMcpServer, Path: "config.toml"},
+				{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					User:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+				},
+				{
+					Kind:    ir.KindMcpServer,
+					Project: NativeAggregateFile{Path: "config.toml", Member: "mcp_servers"},
+					User:    NativeAggregateFile{Path: "config.toml", Member: "mcp_servers"},
+				},
 			},
 		},
 	}}

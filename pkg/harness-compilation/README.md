@@ -129,6 +129,15 @@ and its compiler/ingester/conversion/UI capabilities — is
 target list; `ValidateTargetRegistrations()` checks the registry and the actual
 compiler/ingester registrations against each other in both directions.
 
+Codex, Devin, and Claude register a validated, scope-neutral topology
+descriptor in [`target/native_layout.go`](target/native_layout.go): the
+target's partitions, per-kind resource path patterns, and the shared
+aggregate file each kind merges into per scope. A scope-variant aggregate
+declares a different file per scope, like Devin's project `hooks.v1.json`
+versus the `hooks` member of user `config.json`.
+`ValidateTargetRegistrations()` validates every declared layout at the same
+boundary, and rejects a partitioned-root target that registers none.
+
 Devin-specific notes:
 
 - Scope matters. `WithScope` selects project or user scope (project is the

@@ -81,11 +81,13 @@ func canonicalCodexRoot(path string) (string, error) {
 }
 
 func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
-	aggregates := make([]string, 0, len(partition.Aggregates))
+	var project, user []string
 	for _, aggregate := range partition.Aggregates {
-		aggregates = append(aggregates, aggregate.Path)
+		project = appendUnique(project, aggregate.Project.Path)
+		user = appendUnique(user, aggregate.User.Path)
 	}
-	slices.Sort(aggregates)
+	slices.Sort(project)
+	slices.Sort(user)
 	var resourceDirs map[ir.ResourceKind]string
 	for kind, pattern := range partition.ResourcePaths {
 		if kind == ir.KindSkill || kind == ir.KindCommand {
@@ -103,10 +105,10 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 		SkillPathPattern: partition.ResourcePaths[ir.KindSkill],
 		SkillDirKinds:    partition.SkillDirKinds,
 		AggregateFiles: AggregateFileSet{
-			Project: slices.Clone(aggregates),
-			User:    aggregates,
+			Project: project,
+			User:    user,
 		},
-		OwnershipReconciledAggregates: len(aggregates) > 0,
+		OwnershipReconciledAggregates: len(project) > 0,
 	}
 }
 
@@ -131,10 +133,11 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 			info.SkillDirKinds[kind] = directory
 		}
 		for _, aggregate := range partition.Aggregates {
-			info.AggregateFiles.Project = append(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Path))
+			info.AggregateFiles.Project = appendUnique(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Project.Path))
+			info.AggregateFiles.User = appendUnique(info.AggregateFiles.User, path.Join(partition.Prefix, aggregate.User.Path))
 		}
 	}
 	slices.Sort(info.AggregateFiles.Project)
-	info.AggregateFiles.User = slices.Clone(info.AggregateFiles.Project)
+	slices.Sort(info.AggregateFiles.User)
 	return info, nil
 }

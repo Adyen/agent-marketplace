@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Validated native-layout descriptors now cover Codex, Devin, and Claude
+
+`target/native_layout.go` now carries a complete `NativeLayout` descriptor for
+Devin and Claude alongside Codex's existing one: scope-neutral partitions,
+per-kind resource path patterns, and the shared aggregate files each kind
+merges into. `NativeAggregate` gains per-scope `Project` and `User`
+`NativeAggregateFile{Path, Member}` fields, which let Devin's hook aggregate
+be declared per scope (project `hooks.v1.json` versus the `hooks` member of
+user `config.json`); the single `Path` field is gone. `NativeAggregatePath`
+now refuses a scope-variant aggregate rather than answering for one scope;
+`NativeAggregateFileForScope` is the scope-aware accessor.
+
+`ValidateTargetRegistrations()` runs the new `ValidateNativeLayouts` at the
+registration boundary, rejecting duplicate partition IDs or prefixes,
+invalid or escaping paths, malformed `%s` patterns, and declarations
+inconsistent with the target's declared root model, and rejects a
+partitioned-root target that registers no layout. No emitted bytes change:
+the descriptors describe the layout the compilers already emit, pinned
+against real compiler output by the descriptor pin tests in `target` and the
+consumer-side `internal/materialize` artifact-path test.
+
 ### Codex is a first-class native target
 
 Codex is the seventh bidirectional compiler/ingester/conversion target. It
