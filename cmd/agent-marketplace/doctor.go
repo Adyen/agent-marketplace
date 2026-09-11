@@ -190,7 +190,7 @@ func writeDoctorInstallRoots(out io.Writer, repoRoot string) error {
 	for _, target := range targets {
 		definition, _ := targetmeta.Lookup(target)
 		repoRootSummary, machineRootSummary := "-", "-"
-		if definition.PartitionedRoots {
+		if definition.PartitionedRoots || len(harness.NativeAggregateInstalls(hcc.Target(target))) > 0 {
 			var err error
 			repoRootSummary, machineRootSummary, err = harnessRootSummaries(hcc.Target(target), repoRoot)
 			if err != nil {

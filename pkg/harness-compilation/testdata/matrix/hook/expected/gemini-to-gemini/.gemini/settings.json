@@ -2,8 +2,12 @@
   "hooks": {
     "BeforeTool": [
       {
-        "command": "${extensionPath}/scripts/check.sh",
-        "type": "command"
+        "hooks": [
+          {
+            "command": "${extensionPath}/scripts/check.sh",
+            "type": "command"
+          }
+        ]
       }
     ]
   }

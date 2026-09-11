@@ -47,8 +47,8 @@ import (
 // element sits FIRST and the managed element sits second.
 const (
 	devinTwinHandMarker  = "USER-WROTE-THIS"
-	devinTwinHandElement = `{"type":"command","command":"echo beta","prompt":"` + devinTwinHandMarker + `"}`
-	devinTwinManagedElem = `{"command":"echo beta","type":"command"}`
+	devinTwinHandElement = `{"hooks":[{"type":"command","command":"echo beta","prompt":"` + devinTwinHandMarker + `"}]}`
+	devinTwinManagedElem = `{"hooks":[{"command":"echo beta","type":"command"}]}`
 )
 
 // prepareDevinHookIdentityTwins produces a project hooks.v1.json holding two

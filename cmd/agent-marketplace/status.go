@@ -590,7 +590,7 @@ func buildHarnessTargetRows(repoRoot string, harnesses []string) ([]harnessTarge
 		row := harnessTargetRow{Target: name, Capabilities: targetCapabilities(name), RepoRoot: "-", MachineRoot: "-"}
 		if definition, ok := targetmeta.Lookup(name); ok {
 			row.Target = targetDisplayName(name)
-			if definition.PartitionedRoots {
+			if definition.PartitionedRoots || len(harness.NativeAggregateInstalls(hcc.Target(name))) > 0 {
 				repoSummary, machineSummary, err := harnessRootSummaries(hcc.Target(name), repoRoot)
 				if err != nil {
 					return nil, err
@@ -626,7 +626,11 @@ func destinationSummary(destinations []harness.Destination) string {
 	}
 	parts := make([]string, 0, len(destinations))
 	for _, destination := range destinations {
-		parts = append(parts, destination.ID+"="+destination.Root)
+		root := destination.Root
+		if destination.AggregateFile != "" {
+			root = filepath.Join(root, destination.AggregateFile)
+		}
+		parts = append(parts, destination.ID+"="+root)
 	}
 	return strings.Join(parts, ", ")
 }

@@ -113,14 +113,22 @@ func bundleErrorCases() []bundleErrorCase {
 				"hooks.v1.json": `{
   "PreToolUse": [
     {
-      "command": "read-guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "read-guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "edit-guard.sh",
-      "matcher": "Edit",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "edit-guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Edit"
     }
   ]
 }`,
