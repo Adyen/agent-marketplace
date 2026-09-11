@@ -7,6 +7,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -58,6 +59,125 @@ func TestCollectionMemberMissNotSuppressedAcrossTargetPartitions(t *testing.T) {
 	if miss == nil || miss.Kind != ir.KindSkill || miss.Name != "shared" || miss.Via == "" {
 		t.Fatalf("errors = %v, want missing Factory collection member diagnostic", errs)
 	}
+}
+
+func TestDirectArtifactSuppressesSamePartitionCollectionMissingMember(t *testing.T) {
+	const (
+		directURL = "git@example.com:direct.git"
+		memberURL = "git@example.com:member.git"
+	)
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: directURL, Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}},
+		{URL: "git@example.com:collections.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude)}},
+		{URL: memberURL, Ref: "main", Path: "skills", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}},
+	}}
+	setCatalogKeys(cfg)
+	collection := ir.NewCollection("tools", "", "", []ir.CollectionMember{{
+		Name: "shared", Kind: ir.KindSkill, Registry: memberURL, Path: "skills",
+	}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared"}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "tools", Resource: collection}},
+		cfg.Registries[2].CatalogKey: {},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("same-partition direct winner should suppress collection miss, got %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "shared" || resolved[0].Via != "" {
+		t.Fatalf("resolved = %#v, want only direct shared artifact", resolved)
+	}
+}
+
+func TestDirectArtifactSuppressesSamePartitionCollectionMalformedMember(t *testing.T) {
+	const (
+		directURL = "git@example.com:direct-malformed.git"
+		memberURL = "git@example.com:member-malformed.git"
+	)
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: directURL, Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}},
+		{URL: "git@example.com:collections-malformed.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude)}},
+		{URL: memberURL, Ref: "main", Path: "skills", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}},
+	}}
+	setCatalogKeys(cfg)
+	collection := ir.NewCollection("tools", "", "", []ir.CollectionMember{{
+		Name: "shared", Kind: ir.KindSkill, Registry: memberURL, Path: "skills",
+	}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {{Kind: ir.KindSkill, Name: "shared"}},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "tools", Resource: collection}},
+		cfg.Registries[2].CatalogKey: {},
+	}
+	malformed := malformedFixture(cfg.Registries[2].CatalogKey, skill.MalformedSkill{
+		DirName: "shared", Path: "/cache/member-malformed/skills/shared", Error: errors.New("invalid frontmatter"),
+	})
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed))
+	if len(errs) != 0 {
+		t.Fatalf("same-partition direct winner should suppress collection malformed diagnostic, got %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "shared" || resolved[0].Via != "" {
+		t.Fatalf("resolved = %#v, want only direct shared artifact", resolved)
+	}
+}
+
+func TestDeferredCollectionMissRetainedAcrossTargetPartitions(t *testing.T) {
+	const (
+		missingURL = "git@example.com:missing-target-collection.git"
+		foundURL   = "git@example.com:found-target-collection.git"
+	)
+	cfg := &config.Config{
+		Collections: ks("tools"),
+		Registries: []config.RegistryEntry{
+			{URL: missingURL, Ref: "main", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}},
+			{URL: foundURL, Ref: "main", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetFactory)}},
+		},
+	}
+	setCatalogKeys(cfg)
+	collection := ir.NewCollection("tools", "", "", nil, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "tools", Resource: collection}},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
+	var miss *SelectedNotFoundError
+	for _, err := range errs {
+		if errors.As(err, &miss) && miss.Kind == ir.KindCollection && miss.Name == "tools" {
+			return
+		}
+	}
+	t.Fatalf("collection miss in Claude partition was suppressed by Factory collection: %v", errs)
+}
+
+func TestDeferredCollectionMissRetainedAcrossScopePartitions(t *testing.T) {
+	const (
+		missingURL = "git@example.com:missing-scope-collection.git"
+		foundURL   = "git@example.com:found-scope-collection.git"
+	)
+	cfg := &config.Config{
+		Collections: ks("tools"),
+		Registries: []config.RegistryEntry{
+			{URL: missingURL, Ref: "main", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}},
+			{URL: foundURL, Ref: "main", Source: config.UserPersonal, Harnesses: []string{string(hcc.TargetClaude)}},
+		},
+	}
+	setCatalogKeys(cfg)
+	collection := ir.NewCollection("tools", "", "", nil, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {},
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindCollection, Name: "tools", Resource: collection}},
+	}
+
+	_, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude}))
+	var miss *SelectedNotFoundError
+	for _, err := range errs {
+		if errors.As(err, &miss) && miss.Kind == ir.KindCollection && miss.Name == "tools" {
+			return
+		}
+	}
+	t.Fatalf("collection miss in repo partition was suppressed by machine collection: %v", errs)
 }
 
 func TestCollisionRunnersUpAreOrderIndependent(t *testing.T) {
