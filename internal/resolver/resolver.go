@@ -1716,6 +1716,7 @@ func expandMembersRecursive(
 		memberRequired := artifact.Required
 		memberEntry := config.RegistryEntry{}
 		memberEntryFound := false
+		var ambiguity *AmbiguousCollectionMemberWarning
 
 		sel := resourceSelection{kind: member.Kind, name: memberName}
 
@@ -1732,7 +1733,7 @@ func expandMembersRecursive(
 			requestedRef := strings.TrimSpace(member.Ref)
 			candidates := candidatesAtRef(forURL, requestedRef)
 			if len(candidates) == 0 {
-				*errs = append(*errs, &SelectedNotFoundError{
+				err := &SelectedNotFoundError{
 					Kind:           member.Kind,
 					Name:           memberName,
 					URL:            memberRegistry,
@@ -1742,7 +1743,8 @@ func expandMembersRecursive(
 					Hint:           fmt.Sprintf("no configured entry for this repository uses ref %q", requestedRef),
 					CandidatePaths: candidateLocationLabels(forURL),
 					partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, forURL, targetSet),
-				})
+				}
+				appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 				continue
 			}
 
@@ -1791,7 +1793,7 @@ func expandMembersRecursive(
 					// severity as a path-less miss: soft unless any
 					// configured location for the repository is required,
 					// which keeps `required: true` policy unbypassable.
-					*errs = append(*errs, &SelectedNotFoundError{
+					err := &SelectedNotFoundError{
 						Kind:           member.Kind,
 						Name:           memberName,
 						URL:            memberRegistry,
@@ -1801,12 +1803,13 @@ func expandMembersRecursive(
 						RequestedPath:  requestedPath,
 						CandidatePaths: candidateLocationLabels(candidates),
 						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
-					})
+					}
+					appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 					continue
 				}
 				chosen = preferRequired(atPath)
 				if strings.TrimSpace(member.Ref) == "" && distinctLocations(atPath) > 1 {
-					*errs = append(*errs, &AmbiguousCollectionMemberWarning{
+					ambiguity = &AmbiguousCollectionMemberWarning{
 						Kind:       member.Kind,
 						Name:       memberName,
 						URL:        memberRegistry,
@@ -1815,7 +1818,7 @@ func expandMembersRecursive(
 						Path:       requestedPath,
 						Chosen:     locationLabel(chosen.entry, spansMultipleRefs(atPath)),
 						Candidates: candidateLocationLabels(atPath),
-					})
+					}
 				}
 			} else {
 				// A path-less member means "this repository, wherever the
@@ -1836,7 +1839,7 @@ func expandMembersRecursive(
 					if len(allContaining) > 0 {
 						continue
 					}
-					*errs = append(*errs, &SelectedNotFoundError{
+					err := &SelectedNotFoundError{
 						Kind:           member.Kind,
 						Name:           memberName,
 						URL:            memberRegistry,
@@ -1845,7 +1848,8 @@ func expandMembersRecursive(
 						Via:            viaLabel,
 						CandidatePaths: candidateLocationLabels(candidates),
 						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
-					})
+					}
+					appendCollectionDiagnostic(errs, err, ViaMapKey(member.Kind, memberName), directResolved)
 					continue
 				}
 				if len(targetSet) > 0 {
@@ -1864,7 +1868,7 @@ func expandMembersRecursive(
 				}
 				chosen = preferRequired(containing)
 				if distinctLocations(containing) > 1 {
-					*errs = append(*errs, &AmbiguousCollectionMemberWarning{
+					ambiguity = &AmbiguousCollectionMemberWarning{
 						Kind:       member.Kind,
 						Name:       memberName,
 						URL:        memberRegistry,
@@ -1872,7 +1876,7 @@ func expandMembersRecursive(
 						Via:        viaLabel,
 						Chosen:     locationLabel(chosen.entry, spansMultipleRefs(containing)),
 						Candidates: candidateLocationLabels(containing),
-					})
+					}
 				}
 			}
 
@@ -1933,6 +1937,20 @@ func expandMembersRecursive(
 		}
 
 		memberNameKey := ViaMapKey(member.Kind, memberName)
+		if len(memberHarnesses) == 0 {
+			if _, direct := directResolved[artifactPartitionKey(memberNameKey, memberHarnesses, memberSource)]; direct {
+				continue
+			}
+		} else {
+			unresolved := unresolvedMemberTargets(memberNameKey, memberHarnesses, memberSource, directResolved)
+			if len(unresolved) == 0 {
+				continue
+			}
+			memberHarnesses = unresolved
+		}
+		if ambiguity != nil {
+			*errs = append(*errs, ambiguity)
+		}
 
 		// Look up the member in the catalog.
 		idx, ok := catalogIndex[memberCatalogKey]
@@ -1949,10 +1967,10 @@ func expandMembersRecursive(
 			if sme := malformedSelectionError(malformed, memberCatalogKey, member.Kind, memberName,
 				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel,
 				selectionPartitions(memberHarnesses, memberSource)); sme != nil {
-				*errs = append(*errs, sme)
+				appendCollectionDiagnostic(errs, sme, memberNameKey, directResolved)
 				continue
 			}
-			*errs = append(*errs, &SelectedNotFoundError{
+			appendCollectionDiagnostic(errs, &SelectedNotFoundError{
 				Kind:          member.Kind,
 				Name:          memberName,
 				URL:           memberRegistryURL,
@@ -1961,27 +1979,7 @@ func expandMembersRecursive(
 				Required:      memberRequired,
 				Via:           viaLabel,
 				partitionKeys: artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource),
-			})
-			continue
-		}
-
-		// Skip if already directly resolved (direct resolution takes
-		// precedence over collection expansion; no duplicates).
-
-
-		memberNameKey := ViaMapKey(member.Kind, memberName)
-
-
-
-		memberKeys := artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource)
-		direct := false
-		for _, memberKey := range memberKeys {
-			if _, direct = directResolved[memberKey]; direct {
-				break
-			}
-		}
-		if direct && !HasAdditiveSources(member.Kind) {
-
+			}, memberNameKey, directResolved)
 			continue
 		}
 
@@ -2368,8 +2366,12 @@ func ViaMapKey(kind ir.ResourceKind, name string) string {
 	return kind.String() + ":" + strings.TrimSpace(name)
 }
 
+func partitionKey(resourceKey string, target hcc.Target, machineScope bool) string {
+	return resourceKey + "\x00" + string(target) + "\x00" + fmt.Sprint(machineScope)
+}
+
 func artifactPartitionKey(resourceKey string, harnesses []hcc.Target, source config.Source) string {
-	return resourceKey + "\x00" + string(artifactTarget(ResolvedArtifact{Harnesses: harnesses})) + "\x00" + fmt.Sprint(source.IsMachineScope())
+	return partitionKey(resourceKey, artifactTarget(ResolvedArtifact{Harnesses: harnesses}), source.IsMachineScope())
 }
 
 func artifactPartitionKeys(resourceKey string, harnesses []hcc.Target, source config.Source) []string {
@@ -2392,6 +2394,61 @@ func selectionPartitions(harnesses []hcc.Target, source config.Source) []Selecti
 		partitions = append(partitions, SelectionPartition{Target: target, MachineScope: source.IsMachineScope()})
 	}
 	return partitions
+}
+
+func selectionPartitionKey(resourceKey string, partition SelectionPartition) string {
+	return partitionKey(resourceKey, partition.Target, partition.MachineScope)
+}
+
+// unresolvedMemberTargets removes target partitions already covered by a direct
+// artifact. Collection expansion remains responsible for every other target.
+func unresolvedMemberTargets(resourceKey string, harnesses []hcc.Target, source config.Source, directResolved map[string]struct{}) []hcc.Target {
+	if len(harnesses) == 0 {
+		if _, direct := directResolved[artifactPartitionKey(resourceKey, harnesses, source)]; direct {
+			return nil
+		}
+		return harnesses
+	}
+	unresolved := make([]hcc.Target, 0, len(harnesses))
+	for _, target := range harnesses {
+		if _, direct := directResolved[partitionKey(resourceKey, target, source.IsMachineScope())]; !direct {
+			unresolved = append(unresolved, target)
+		}
+	}
+	return unresolved
+}
+
+// appendCollectionDiagnostic retains only collection diagnostics for partitions
+// not already covered by a direct artifact. Errors can describe several owner
+// partitions (notably path-less members), so filtering is done before append.
+func appendCollectionDiagnostic(errs *[]error, err error, resourceKey string, directResolved map[string]struct{}) {
+	var snf *SelectedNotFoundError
+	if errors.As(err, &snf) && len(snf.partitionKeys) > 0 {
+		remaining := snf.partitionKeys[:0]
+		for _, key := range snf.partitionKeys {
+			if _, direct := directResolved[key]; !direct {
+				remaining = append(remaining, key)
+			}
+		}
+		snf.partitionKeys = remaining
+		if len(remaining) == 0 {
+			return
+		}
+	}
+	var sme *SelectedMalformedError
+	if errors.As(err, &sme) && len(sme.partitions) > 0 {
+		remaining := sme.partitions[:0]
+		for _, partition := range sme.partitions {
+			if _, direct := directResolved[selectionPartitionKey(resourceKey, partition)]; !direct {
+				remaining = append(remaining, partition)
+			}
+		}
+		sme.partitions = remaining
+		if len(remaining) == 0 {
+			return
+		}
+	}
+	*errs = append(*errs, err)
 }
 
 // collectionMemberPartitionKeys returns every target-and-scope partition in
@@ -2423,8 +2480,9 @@ func collectionMemberPartitionKeys(resourceKey string, parentHarnesses []hcc.Tar
 // collections.include is propagated to all of them and only fails for real
 // when no registry provides it.
 type deferredCollectionError struct {
-	name string
-	err  error
+	name          string
+	err           error
+	partitionKeys []string
 }
 
 func unresolvedSelectionArtifact(entry config.RegistryEntry, selected resourceSelection) ResolvedArtifact {
@@ -2466,13 +2524,13 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 	var errs []error
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence)
 	reportedNotFound := make(map[missingResource]struct{})
-	// Track per-registry collection not-found errors separately so they
-	// can be suppressed when the collection is found in another registry.
-	// propagateTopLevelCollections adds collection includes to every entry,
-	// so "not found in registry X" is only a real error if the collection
-	// isn't found in ANY registry. Malformed correlation does not change that:
-	// a per-registry "failed to load" for a collection resolved elsewhere is
-	// the same false positive, and it is a HARD error, so it must defer too.
+	// Track per-registry collection not-found errors separately so they can be
+	// reconciled after every registry is walked. propagateTopLevelCollections
+	// adds collection includes to every entry, so a miss is suppressible when
+	// another registry provides the collection in the same target and scope.
+	// Malformed correlation does not change that: a per-registry "failed to
+	// load" for a collection resolved in the same partition is the same false
+	// positive, and it is a HARD error, so it must defer too.
 	var collectionNotFoundErrs []deferredCollectionError
 	order := 0
 
@@ -2529,7 +2587,11 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					// Defer collection errors: they may be false positives if
 					// the collection exists in another registry.
 					if selected.kind == ir.KindCollection {
-						collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{name: selected.name, err: selErr})
+						collectionNotFoundErrs = append(collectionNotFoundErrs, deferredCollectionError{
+							name:          selected.name,
+							err:           selErr,
+							partitionKeys: artifactPartitionKeys(ViaMapKey(selected.kind, selected.name), harnessTargets, entry.Source),
+						})
 					} else {
 						errs = append(errs, selErr)
 					}
@@ -2542,16 +2604,25 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 		}
 	}
 
-	// Reconcile collection not-found errors: if the collection was found in
-	// at least one registry, suppress per-registry "not found" errors from
-	// other registries. A collection referenced in top-level
-	// collections.include is virtual — it doesn't belong to any specific
-	// registry, so "not found in registry X" is only a real error if the
-	// collection doesn't exist anywhere.
+	// Reconcile collection not-found errors only within the same target and
+	// scope. Top-level collection includes are propagated to every registry,
+	// but a collection found for one output partition does not satisfy a miss in
+	// another partition.
 	for _, deferred := range collectionNotFoundErrs {
 		key := resourceSelection{kind: ir.KindCollection, name: deferred.name}
-		if _, found := occurrencesByName[key]; found {
-			// Collection exists in another registry — suppress.
+		foundPartitions := make(map[string]struct{})
+		for _, occurrence := range occurrencesByName[key] {
+			for _, partition := range artifactPartitionKeys(ViaMapKey(key.kind, key.name), occurrence.resolved.Harnesses, occurrence.resolved.Source) {
+				foundPartitions[partition] = struct{}{}
+			}
+		}
+		remaining := deferred.partitionKeys[:0]
+		for _, partition := range deferred.partitionKeys {
+			if _, found := foundPartitions[partition]; !found {
+				remaining = append(remaining, partition)
+			}
+		}
+		if len(remaining) == 0 {
 			continue
 		}
 		errs = append(errs, deferred.err)
