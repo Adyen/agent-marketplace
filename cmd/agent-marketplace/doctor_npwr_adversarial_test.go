@@ -55,8 +55,8 @@ func prepareDoctorHookIdentityTwins(t *testing.T, repoRoot string) (hooksPath st
 	outDir := filepath.Join(repoRoot, ".devin")
 	hooksPath = filepath.Join(outDir, harness.DevinProjectHooksFile)
 	body := "{\n  \"PostToolUse\": [\n" +
-		"    {\"type\":\"command\",\"command\":\"echo beta\",\"prompt\":\"" + doctorTwinHandMarker + "\"},\n" +
-		"    {\"command\":\"echo beta\",\"type\":\"command\"}\n  ]\n}\n"
+		"    {\"hooks\":[{\"type\":\"command\",\"command\":\"echo beta\",\"prompt\":\"" + doctorTwinHandMarker + "\"}]},\n" +
+		"    {\"hooks\":[{\"command\":\"echo beta\",\"type\":\"command\"}]}\n  ]\n}\n"
 	if err := os.WriteFile(hooksPath, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

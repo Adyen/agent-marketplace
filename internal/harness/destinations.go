@@ -18,6 +18,8 @@ type Destination struct {
 	Root                 string
 	Prefix               string
 	InstallationEvidence bool
+	AggregateRoutes      []AggregateRoute
+	AggregateFile        string
 	Info                 TargetInfo
 }
 
@@ -29,6 +31,17 @@ func (d Destination) RouteArtifact(path string) (string, error) {
 	path = filepath.ToSlash(path)
 	if err := ValidateRelPath(path); err != nil {
 		return "", err
+	}
+	if len(d.AggregateRoutes) > 0 {
+		for _, route := range d.AggregateRoutes {
+			if route.ArtifactPath == path {
+				if err := ValidateRelPath(d.AggregateFile); err != nil || d.AggregateFile == "" {
+					return "", fmt.Errorf("invalid native aggregate destination")
+				}
+				return d.AggregateFile, nil
+			}
+		}
+		return "", fmt.Errorf("artifact %q is not an allowed native aggregate", path)
 	}
 	if d.Prefix == "" {
 		return path, nil
@@ -145,7 +158,7 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 	if err != nil {
 		return nil, err
 	}
-	return []Destination{{ID: "default", Root: root, InstallationEvidence: true, Info: info}}, nil
+	return nativeAggregateDestinations(target, machineScope, repoRoot, homeDir, Destination{ID: "default", Root: root, InstallationEvidence: true, Info: info})
 }
 
 func canonicalRoot(path string) (string, error) {

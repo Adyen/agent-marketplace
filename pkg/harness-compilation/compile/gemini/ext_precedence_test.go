@@ -181,7 +181,12 @@ func TestGeminiHookExtPrecedence(t *testing.T) {
 	if err := json.Unmarshal(result.Artifacts[0].Bytes, &settings); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	entry := settings["hooks"].(map[string]any)["BeforeTool"].([]any)[0].(map[string]any)
+	group := settings["hooks"].(map[string]any)["BeforeTool"].([]any)[0].(map[string]any)
+	entries, ok := group["hooks"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("native group hooks = %#v", group["hooks"])
+	}
+	entry := entries[0].(map[string]any)
 	if entry["name"] != "friendly-name" {
 		t.Fatalf("hook name = %#v, want %q", entry["name"], "friendly-name")
 	}

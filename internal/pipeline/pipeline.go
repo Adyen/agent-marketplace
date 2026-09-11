@@ -888,6 +888,24 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 		// Gemini's settings.json was merged into on every sync with no backup at
 		// all, because it is not inside any Gemini component directory.
 		machineAggregates := info.AggregateFilesForScope(true)
+		mappedFiles, mappingErr := harness.NativeAggregateBackupFiles(t)
+		if mappingErr != nil {
+			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
+			continue
+		}
+		if len(harness.NativeAggregateInstalls(t)) > 0 {
+			destinations, err := harness.ResolveDestinations(t, true, ".")
+			if err != nil {
+				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)
+				continue
+			}
+			machineAggregates = nil
+			for _, destination := range destinations {
+				if destination.Root == root {
+					machineAggregates = append(machineAggregates, destination.Info.AggregateFilesForScope(true)...)
+				}
+			}
+		}
 		relPaths := make([]string, 0, len(machineComponents)+len(machineAggregates))
 		relPaths = append(relPaths, machineComponents...)
 		for _, rel := range machineAggregates {
@@ -900,7 +918,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			}
 			relPaths = append(relPaths, rel)
 		}
-		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths}
+		result[t] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
 	}
 	return result
 }

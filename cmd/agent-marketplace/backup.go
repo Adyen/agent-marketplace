@@ -181,7 +181,11 @@ func runBackupRestore(out io.Writer, target string) error {
 		}
 	}
 
-	timestamp, err := backup.Restore(t, dstDir)
+	mappedFiles, err := harness.NativeAggregateBackupFiles(t)
+	if err != nil {
+		return err
+	}
+	timestamp, err := backup.Restore(t, dstDir, mappedFiles)
 	if err != nil {
 		return err
 	}
