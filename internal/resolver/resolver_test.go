@@ -4783,3 +4783,85 @@ func TestResolveCollectionExpansionRetainsDisjointTargets(t *testing.T) {
 		t.Fatalf("collection member was not retained per target: %v", seen)
 	}
 }
+
+func TestResolvePartitionsCollisionsByTargetAndScope(t *testing.T) {
+	machine := config.RegistryEntry{
+		URL: "git@example.com:machine.git", Ref: "main", Source: config.UserPersonal,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	repo := config.RegistryEntry{
+		URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted,
+		Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{machine, repo}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(machine.URL, machine.Ref): {{Name: "shared", Resource: ir.NewSkill("shared", "machine", "", nil, nil, ir.SourceRef{})}},
+		ck(repo.URL, repo.Ref):       {{Name: "shared", Resource: ir.NewSkill("shared", "repo", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("target+scope-disjoint resources emitted collision diagnostics: %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want one per scope, got %#v", len(resolved), resolved)
+	}
+	for _, artifact := range resolved {
+		if !harnessesEqual(artifact.Harnesses, []hcc.Target{hcc.TargetClaude}) {
+			t.Fatalf("artifact lost target qualification: %#v", artifact)
+		}
+	}
+}
+
+func TestResolveCollectionDuplicateUsesDeterministicPartitionWinner(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:z-collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("z-tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:a-collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("a-tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref): {
+			{Kind: ir.KindCollection, Name: "z-tools", Resource: ir.NewCollection("z-tools", "", "", []ir.CollectionMember{{Name: "duplicate", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "duplicate", Resource: ir.NewSkill("duplicate", "z", "", nil, nil, ir.SourceRef{})},
+		},
+		ck(second.URL, second.Ref): {
+			{Kind: ir.KindCollection, Name: "a-tools", Resource: ir.NewCollection("a-tools", "", "", []ir.CollectionMember{{Name: "duplicate", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "duplicate", Resource: ir.NewSkill("duplicate", "a", "", nil, nil, ir.SourceRef{})},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].Name != "duplicate" || resolved[0].RegistryURL != second.URL {
+		t.Fatalf("collection duplicate winner = %#v, want deterministic URL winner %q", resolved, second.URL)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("collection duplicate diagnostics = %v, want one collision warning", errs)
+	}
+}
+
+func TestResolveCollectionDirectOverlapSubtractsOnlyOverlappingTarget(t *testing.T) {
+	direct := config.RegistryEntry{URL: "git@example.com:direct.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	collectionOwner := config.RegistryEntry{URL: "git@example.com:collection.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude), string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{direct, collectionOwner}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(direct.URL, direct.Ref): {{Name: "shared", Resource: ir.NewSkill("shared", "direct", "", nil, nil, ir.SourceRef{})}},
+		ck(collectionOwner.URL, collectionOwner.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: ir.NewCollection("tools", "", "", []ir.CollectionMember{{Name: "shared", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})},
+			{Name: "shared", Resource: ir.NewSkill("shared", "collection", "", nil, nil, ir.SourceRef{})},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("direct/collection overlap errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want Claude direct plus Factory collection member: %#v", len(resolved), resolved)
+	}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected overlap artifact %#v", artifact)
+		}
+		if artifact.Harnesses[0] == hcc.TargetClaude && artifact.Via != "" {
+			t.Fatalf("collection member was not subtracted from direct Claude partition: %#v", artifact)
+		}
+	}
+}

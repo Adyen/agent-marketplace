@@ -574,15 +574,21 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 
 	// Include previously materialized targets for deinitialization when the
 	// resolved list is empty or contains a non-empty target intent. Explicit
-	// empty intents fence their scope partitions from pruning in a mixed run.
-	emptyIntentScopes := make(map[bool]bool)
+	// empty intents fence only the sibling target+scope partitions that have no
+	// non-empty intent in this run; valid non-empty siblings must still prune.
+	nonEmptyIntentKeys := make(map[outputKey]bool)
 	hasNonEmptyIntent := false
+	emptyIntentScopes := make(map[bool]bool)
 	for _, resource := range resolved {
 		if resource.Harnesses != nil && len(resource.Harnesses) == 0 {
 			emptyIntentScopes[resource.Source.IsMachineScope()] = true
 		}
-		if !resource.Unresolved && len(resource.Harnesses) > 0 {
-			hasNonEmptyIntent = true
+		if resource.Unresolved || len(resource.Harnesses) == 0 {
+			continue
+		}
+		hasNonEmptyIntent = true
+		for _, target := range resource.Harnesses {
+			nonEmptyIntentKeys[outputKey{target: target, machineScope: resource.Source.IsMachineScope()}] = true
 		}
 	}
 	if hasNonEmptyIntent || len(resolved) == 0 {
@@ -594,7 +600,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
 		addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
 		for key := range allOutputs {
-			if emptyIntentScopes[key.machineScope] {
+			if emptyIntentScopes[key.machineScope] && !nonEmptyIntentKeys[key] {
 				blocked.blockAll(key)
 			}
 		}
