@@ -124,8 +124,9 @@ func Dir() (string, error) {
 // ManagedPaths describes which paths within a machine-scope harness root
 // should be backed up.
 type ManagedPaths struct {
-	Root     string
-	RelPaths []string
+	Root        string
+	RelPaths    []string
+	MappedFiles map[string]string
 }
 
 // Create backs up the given managed paths into timestamped tar.gz archives
@@ -144,7 +145,11 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 		if err != nil {
 			return fmt.Errorf("backup: scan %s: %w", string(target), err)
 		}
-		if len(existing) == 0 {
+		mapped, err := existingMappedFiles(mp.MappedFiles)
+		if err != nil {
+			return fmt.Errorf("backup: scan mapped %s: %w", target, err)
+		}
+		if len(existing) == 0 && len(mapped) == 0 {
 			continue
 		}
 		targetBackupDir := filepath.Join(dir, string(target))
@@ -155,7 +160,7 @@ func Create(managed map[hcc.Target]ManagedPaths) error {
 		if err != nil {
 			return err
 		}
-		if err := createArchive(mp.Root, existing, archivePath); err != nil {
+		if err := createArchive(mp.Root, existing, archivePath, mapped); err != nil {
 			return fmt.Errorf("backup: archive %s: %w", string(target), err)
 		}
 	}
@@ -269,7 +274,7 @@ func archiveDay(name string) string {
 // The destination directory must exist. Files created after the backup are
 // left in place. Returns the timestamp of the restored backup, or an error if
 // no backup exists.
-func Restore(target hcc.Target, dstDir string) (string, error) {
+func Restore(target hcc.Target, dstDir string, mapped ...map[string]string) (string, error) {
 	dir, err := Dir()
 	if err != nil {
 		return "", err
@@ -286,7 +291,7 @@ func Restore(target hcc.Target, dstDir string) (string, error) {
 	latest := archives[len(archives)-1]
 	timestamp := strings.TrimSuffix(filepath.Base(latest), ".tar.gz")
 
-	if err := extractArchive(latest, dstDir); err != nil {
+	if err := extractArchive(latest, dstDir, mapped...); err != nil {
 		return "", fmt.Errorf("backup: restore %s: %w", string(target), err)
 	}
 	return timestamp, nil
@@ -353,8 +358,8 @@ func existingPaths(root string, relPaths []string) ([]string, error) {
 	return out, nil
 }
 
-func createArchive(root string, relPaths []string, archivePath string) (err error) {
-	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+func createArchive(root string, relPaths []string, archivePath string, mapped ...map[string]string) (err error) {
+	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
@@ -391,6 +396,25 @@ func createArchive(root string, relPaths []string, archivePath string) (err erro
 		}
 	}
 
+	for _, files := range mapped {
+		keys := make([]string, 0, len(files))
+		for key := range files {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			info, err := os.Lstat(files[key])
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("backup: mapped file is not regular")
+			}
+			if err := writeTarEntry(tw, files[key], key, info); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -502,7 +526,7 @@ func writeTarEntry(tw *tar.Writer, fullPath, rel string, info fs.FileInfo) error
 	return nil
 }
 
-func extractArchive(archivePath, dstDir string) error {
+func extractArchive(archivePath, dstDir string, mapped ...map[string]string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -529,6 +553,12 @@ func extractArchive(archivePath, dstDir string) error {
 		target, err := archiveTarget(dstDir, hdr.Name)
 		if err != nil {
 			return err
+		}
+		if strings.HasPrefix(hdr.Name, ".agent-marketplace-native/") {
+			if err := restoreMappedFile(tr, hdr, mapped); err != nil {
+				return err
+			}
+			continue
 		}
 
 		switch hdr.Typeflag {

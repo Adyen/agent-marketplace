@@ -1,5 +1,6 @@
-ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22
-ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1
+ARG GO_BUILD_IMAGE=golang:1.26.6-bookworm
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
+ARG BUILD_CA_CERT_PATH=/etc/ssl/certs/ca-certificates.crt
 
 FROM --platform=$BUILDPLATFORM ${GO_BUILD_IMAGE} AS build
 
@@ -12,29 +13,54 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
-    -o /out/agent-marketplace ./cmd/agent-marketplace
+    -o /out/agent-marketplace ./cmd/agent-marketplace \
+    && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -trimpath -buildvcs=false -ldflags "-s -w" \
+    -o /out/marketplace-healthcheck ./cmd/marketplace-healthcheck \
+    && mkdir -p /out/runtime/var/lib/agent-marketplace /out/runtime/tmp \
+    && chmod 1777 /out/runtime/tmp
 
-FROM ${ALPINE_RUNTIME_IMAGE} AS api
-RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
-    && apk add --no-cache ca-certificates wget \
-    && mkdir -p /var/lib/agent-marketplace /tmp \
-    && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
+FROM ${GO_BUILD_IMAGE} AS git-runtime
+RUN set -eux; \
+    root=/git-root; \
+    copy_path() { destination="$root$(dirname "$1")"; mkdir -p "$destination"; cp -a "$1" "$destination/"; }; \
+    git_bin="$(command -v git)"; \
+    git_exec="$(git --exec-path)"; \
+    mkdir -p "$root"; \
+    copy_path "$git_bin"; \
+    copy_path "$git_exec"; \
+    if ssh_bin="$(command -v ssh)"; then copy_path "$ssh_bin"; fi; \
+    for path in /usr/local/share/git-core/templates /usr/share/git-core/templates /usr/share/crypto-policies /etc/ssh /etc/crypto-policies; do \
+        if [ -e "$path" ]; then copy_path "$path"; fi; \
+    done; \
+    find "$root" -type f -perm /111 -exec ldd {} \; 2>/dev/null \
+        | awk '/=> \/.* \(/{print $3} $1 ~ /^\//{print $1}' \
+        | sort -u > /tmp/runtime-libraries; \
+    while IFS= read -r library; do mkdir -p "$root$(dirname "$library")"; cp -L "$library" "$root$library"; done < /tmp/runtime-libraries; \
+    find "$root" -type f -exec strip --strip-unneeded {} \; 2>/dev/null || true
+
+FROM ${RUNTIME_IMAGE} AS api
+ARG BUILD_CA_CERT_PATH
+COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
+COPY --from=build --chown=1000:1000 /out/runtime/ /
 WORKDIR /app
-COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
-USER marketplace
+COPY --from=build --chown=1000:1000 /out/agent-marketplace /app/agent-marketplace
+COPY --from=build --chown=1000:1000 /out/marketplace-healthcheck /app/marketplace-healthcheck
+USER 1000:1000
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q -O - -T 5 http://127.0.0.1:9090/readyz >/dev/null || exit 1
+    CMD ["/app/marketplace-healthcheck"]
 ENTRYPOINT ["/app/agent-marketplace"]
 CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
 
-FROM ${ALPINE_RUNTIME_IMAGE} AS worker
-RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
-    && apk add --no-cache ca-certificates git wget \
-    && mkdir -p /var/lib/agent-marketplace /tmp \
-    && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
+FROM ${RUNTIME_IMAGE} AS worker
+ARG BUILD_CA_CERT_PATH
+COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
+COPY --from=git-runtime /git-root /
+COPY --from=build --chown=1000:1000 /out/runtime/ /
 WORKDIR /app
-COPY --from=build --chown=marketplace:marketplace /out/agent-marketplace /app/agent-marketplace
-USER marketplace
+COPY --from=build --chown=1000:1000 /out/agent-marketplace /app/agent-marketplace
+USER 1000:1000
+ENV GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["/app/agent-marketplace"]
 CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "worker"]

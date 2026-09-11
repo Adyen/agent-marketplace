@@ -82,6 +82,14 @@ func (c *claudeIngester) DetectStrict(src fs.FS) bool {
 
 // hasClaudeWorkspaceForm checks for .claude/ directory with resource subdirs.
 func hasClaudeWorkspaceForm(src fs.FS) bool {
+	if _, err := fs.Stat(src, ".claude"); err == nil {
+		if _, err := fs.Stat(src, ".mcp.json"); err == nil {
+			return true
+		}
+	}
+	if _, err := fs.Stat(src, ".claude.json"); err == nil {
+		return true
+	}
 	requiredDirs := []string{".claude/skills", ".claude/agents", ".claude/commands", ".claude/hooks"}
 	for _, d := range requiredDirs {
 		if entries, err := fs.ReadDir(src, d); err == nil && len(entries) > 0 {
@@ -160,7 +168,7 @@ func (c *claudeIngester) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 	if _, err := fs.ReadFile(src, claudePluginManifest); err == nil {
 		return loadPluginForm(src)
 	}
-	if hasBarePluginForm(src) {
+	if hasBarePluginForm(src) && !hasClaudeWorkspaceForm(src) {
 		return loadPluginForm(src)
 	}
 	// Try workspace form
@@ -350,9 +358,16 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 	}
 
 	// 5. MCP servers
-	servers, err := bundle.LoadMcpServers(src, ".claude/.mcp.json")
+	mcpPath := ".claude/.mcp.json"
+	for _, candidate := range []string{".mcp.json", ".claude.json"} {
+		if _, err := fs.Stat(src, candidate); err == nil {
+			mcpPath = candidate
+			break
+		}
+	}
+	servers, err := bundle.LoadMcpServers(src, mcpPath)
 	if err != nil && !isNotExist(err) {
-		return nil, fmt.Errorf("ingest/claude: load .claude/.mcp.json: %w", err)
+		return nil, fmt.Errorf("ingest/claude: load %s: %w", mcpPath, err)
 	}
 	if err == nil {
 		for _, s := range servers {

@@ -33,8 +33,9 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 
 	// Build the hook entry without inventing command for prompt hooks.
 	rule := map[string]any{"type": h.Type}
+	group := make(map[string]any)
 	if h.Matcher != "" {
-		rule["matcher"] = h.Matcher
+		group["matcher"] = h.Matcher
 	}
 	if mappedCommand != "" {
 		rule["command"] = mappedCommand
@@ -66,11 +67,19 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	for _, k := range extraKeys {
 		rule[k] = h.Extra[k]
 	}
+	group["hooks"] = []any{rule}
+	if sidecar := h.Ext.Gemini; sidecar != nil {
+		keys, groupDiags := compile.ExtraKeys(sidecar.HookGroupExtra, compile.PresentFields(map[string]bool{"hooks": true, "matcher": h.Matcher != ""}), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
+		diags = append(diags, groupDiags...)
+		for _, key := range keys {
+			group[key] = sidecar.HookGroupExtra[key]
+		}
+	}
 
 	// Wrap in the settings.json envelope.
 	fragment := map[string]any{
 		"hooks": map[string]any{
-			geminiEvent: []any{rule},
+			geminiEvent: []any{group},
 		},
 	}
 
