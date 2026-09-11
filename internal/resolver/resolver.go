@@ -483,6 +483,12 @@ type SelectedNotFoundError struct {
 	// to fail their sync on its own; CandidatePaths then holds the paths that
 	// are configured.
 	RequestedPath string
+
+	// partitionKeys identifies the target-and-scope partitions in which a
+	// collection member was actually searched. It is intentionally unexported:
+	// partition identity is diagnostic correlation state, not user-facing error
+	// data. Suppression must not use the kind/name alone across partitions.
+	partitionKeys []string
 }
 
 func (e *SelectedNotFoundError) Error() string {
@@ -1225,14 +1231,15 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 	var out []ResolvedArtifact
 	var errs []error
 
-	// Build a set of directly-resolved resource names (kind:name) from
-	// non-collection artifacts. Collection members that are already directly
-	// resolved should NOT be duplicated — the direct resolution takes precedence.
+	// Build a set of directly-resolved resource partitions from non-collection
+	// artifacts. Collection members that are already directly resolved in the
+	// same target and scope should NOT be duplicated — direct resolution takes
+	// precedence. Keep the partition qualification here because the same name
+	// can legitimately be missing in another target or scope.
 	directResolved := make(map[string]struct{})
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
 			memberKey := ViaMapKey(artifact.Kind, artifact.Name)
-			directResolved[memberKey] = struct{}{} // diagnostic suppression compatibility
 			for _, partitionKey := range artifactPartitionKeys(memberKey, artifact.Harnesses, artifact.Source) {
 				directResolved[partitionKey] = struct{}{}
 			}
@@ -1324,22 +1331,26 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 }
 
 // suppressResolvedMemberMisses drops "selected but not found" errors raised
-// while expanding a collection member when that exact (kind, name) was in fact
-// resolved — directly from a config entry, or from another registry through
-// another collection. Reporting the miss then is a false positive, and with an
-// all-required candidate set it would fail a sync for a resource that is
-// present. This mirrors the cross-registry suppression already applied to
-// collection lookups themselves in buildOccurrences.
-func suppressResolvedMemberMisses(errs []error, resolvedNames map[string]struct{}) []error {
-	if len(errs) == 0 || len(resolvedNames) == 0 {
+// while expanding a collection member when that member was resolved in one of
+// the exact target-and-scope partitions searched by the collection. Reporting
+// that miss then is a false positive, but kind:name alone is not sufficient:
+// the same resource may be directly resolved in another target or scope.
+func suppressResolvedMemberMisses(errs []error, resolvedPartitions map[string]struct{}) []error {
+	if len(errs) == 0 || len(resolvedPartitions) == 0 {
 		return errs
 	}
 	filtered := errs[:0]
 	for _, err := range errs {
 		var snf *SelectedNotFoundError
 		if errors.As(err, &snf) && snf.Via != "" {
-			if _, resolved := resolvedNames[ViaMapKey(snf.Kind, snf.Name)]; resolved {
-				slog.Debug("collection member miss suppressed: resolved elsewhere",
+			resolved := false
+			for _, partitionKey := range snf.partitionKeys {
+				if _, resolved = resolvedPartitions[partitionKey]; resolved {
+					break
+				}
+			}
+			if resolved {
+				slog.Debug("collection member miss suppressed: resolved in same partition",
 					"kind", snf.Kind.String(), "name", snf.Name, "via", snf.Via)
 				continue
 			}
@@ -1576,6 +1587,7 @@ func expandMembersRecursive(
 					Via:            viaLabel,
 					Hint:           fmt.Sprintf("no configured entry for this repository uses ref %q", requestedRef),
 					CandidatePaths: candidateLocationLabels(forURL),
+					partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, forURL, targetSet),
 				})
 				continue
 			}
@@ -1634,6 +1646,7 @@ func expandMembersRecursive(
 						Via:            viaLabel,
 						RequestedPath:  requestedPath,
 						CandidatePaths: candidateLocationLabels(candidates),
+						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
 					})
 					continue
 				}
@@ -1677,6 +1690,7 @@ func expandMembersRecursive(
 						Required:       anyLocationRequired(candidates),
 						Via:            viaLabel,
 						CandidatePaths: candidateLocationLabels(candidates),
+						partitionKeys:  collectionMemberPartitionKeys(ViaMapKey(member.Kind, memberName), artifact.Harnesses, artifact.Source, candidates, targetSet),
 					})
 					continue
 				}
@@ -1760,6 +1774,8 @@ func expandMembersRecursive(
 			continue
 		}
 
+		memberNameKey := ViaMapKey(member.Kind, memberName)
+
 		// Look up the member in the catalog.
 		idx, ok := catalogIndex[memberCatalogKey]
 		if !ok {
@@ -1778,20 +1794,20 @@ func expandMembersRecursive(
 				continue
 			}
 			*errs = append(*errs, &SelectedNotFoundError{
-				Kind:     member.Kind,
-				Name:     memberName,
-				URL:      memberRegistryURL,
-				Path:     memberRegistryPath,
-				Ref:      memberRef,
-				Required: memberRequired,
-				Via:      viaLabel,
+				Kind:          member.Kind,
+				Name:          memberName,
+				URL:           memberRegistryURL,
+				Path:          memberRegistryPath,
+				Ref:           memberRef,
+				Required:      memberRequired,
+				Via:           viaLabel,
+				partitionKeys: artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource),
 			})
 			continue
 		}
 
 		// Skip if already directly resolved (direct resolution takes
 		// precedence over collection expansion; no duplicates).
-		memberNameKey := ViaMapKey(member.Kind, memberName)
 		memberKeys := artifactPartitionKeys(memberNameKey, memberHarnesses, memberSource)
 		direct := false
 		for _, memberKey := range memberKeys {
@@ -2196,6 +2212,30 @@ func artifactPartitionKeys(resourceKey string, harnesses []hcc.Target, source co
 	keys := make([]string, 0, len(harnesses))
 	for _, target := range harnesses {
 		keys = append(keys, artifactPartitionKey(resourceKey, []hcc.Target{target}, source))
+	}
+	return keys
+}
+
+// collectionMemberPartitionKeys returns every target-and-scope partition in
+// which a member miss could have been searched. Aggregate diagnostics (for
+// example, a path-less member) may cover multiple configured owners, so retain
+// all of their qualified partitions rather than collapsing them to kind:name.
+func collectionMemberPartitionKeys(resourceKey string, parentHarnesses []hcc.Target, parentSource config.Source, candidates []memberEntryCandidate, targetSet []hcc.Target) []string {
+	if len(candidates) == 0 {
+		return artifactPartitionKeys(resourceKey, parentHarnesses, parentSource)
+	}
+
+	seen := make(map[string]struct{})
+	var keys []string
+	for _, candidate := range candidates {
+		harnesses := effectiveMemberHarnesses(parentHarnesses, candidate.entry, true, targetSet)
+		for _, key := range artifactPartitionKeys(resourceKey, harnesses, candidate.entry.Source) {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
 	}
 	return keys
 }
@@ -3743,5 +3783,6 @@ func collisionRunnersUpByPath(occurrences []skillOccurrence, winner skillOccurre
 		seen[label] = struct{}{}
 		runnersUp = append(runnersUp, label)
 	}
+	slices.Sort(runnersUp)
 	return runnersUp
 }
