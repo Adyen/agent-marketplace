@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -59,7 +60,7 @@ func TestResolveSelectedButMalformedReportsParseErrorInsteadOfRemovalGuess(t *te
 
 	setCatalogKeys(cfg)
 
-	resolved, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed))
+	resolved, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed), WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
 	if len(resolved) != 0 {
 		t.Fatalf("expected no resolved artifacts, got %#v", resolved)
 	}
@@ -79,6 +80,15 @@ func TestResolveSelectedButMalformedReportsParseErrorInsteadOfRemovalGuess(t *te
 	}
 	if !IsSelectedMalformed(errs[0]) || !IsSoftSelectedMalformed(errs[0]) {
 		t.Fatalf("expected a soft selected-malformed classification for a non-required registry, got %v", errs[0])
+	}
+	partitions := MalformedSelectionPartitions(errs[0])
+	if len(partitions) != 2 || partitions[0].Target != hcc.TargetClaude || partitions[1].Target != hcc.TargetFactory {
+		t.Fatalf("malformed selection partitions = %#v, want Claude and Factory repo partitions", partitions)
+	}
+	for _, partition := range partitions {
+		if partition.MachineScope {
+			t.Fatalf("direct repo selection unexpectedly fenced machine scope: %#v", partition)
+		}
 	}
 
 	full := errs[0].Error() + "\n" + sme.Remediation()

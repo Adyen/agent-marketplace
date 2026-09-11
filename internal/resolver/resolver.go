@@ -601,13 +601,19 @@ func IsSelectedNotFound(err error) bool {
 // alone). A malformed selection is correct and the fix is to repair the file
 // named here — dropping it would delete a working selection over a syntax error
 // the tool has already read and already has an exact message for.
+type SelectionPartition struct {
+	Target       hcc.Target
+	MachineScope bool
+}
+
 type SelectedMalformedError struct {
-	Kind     ir.ResourceKind
-	Name     string
-	URL      string
-	Path     string
-	Ref      string
-	Required bool
+	Kind       ir.ResourceKind
+	Name       string
+	URL        string
+	Path       string
+	Ref        string
+	Required   bool
+	partitions []SelectionPartition
 	// Via is set when the selection originated from a collection expansion
 	// rather than a direct config entry. Format: "collection:<name>@<version>".
 	Via string
@@ -663,6 +669,17 @@ func (e *SelectedMalformedError) Remediation() string {
 func IsSelectedMalformed(err error) bool {
 	var sme *SelectedMalformedError
 	return errors.As(err, &sme)
+}
+
+// MalformedSelectionPartitions returns the target-and-scope partitions whose
+// output may contain stale materialization for a malformed selection. The copy
+// keeps diagnostic correlation state private and immutable to callers.
+func MalformedSelectionPartitions(err error) []SelectionPartition {
+	var sme *SelectedMalformedError
+	if !errors.As(err, &sme) {
+		return nil
+	}
+	return append([]SelectionPartition(nil), sme.partitions...)
 }
 
 // IsSoftSelectedMalformed reports whether err is a SelectedMalformedError that
@@ -759,22 +776,24 @@ func malformedSelectionError(
 	url, path, ref string,
 	required bool,
 	via string,
+	partitions []SelectionPartition,
 ) *SelectedMalformedError {
 	match, found := malformed.lookup(catalogKey, kind, name)
 	if !found {
 		return nil
 	}
 	return &SelectedMalformedError{
-		Kind:     kind,
-		Name:     name,
-		URL:      url,
-		Path:     path,
-		Ref:      ref,
-		Required: required,
-		Via:      via,
-		DirName:  strings.TrimSpace(match.DirName),
-		File:     skill.MalformedSourceFile(match),
-		Err:      match.Error,
+		Kind:       kind,
+		Name:       name,
+		URL:        url,
+		Path:       path,
+		Ref:        ref,
+		Required:   required,
+		Via:        via,
+		partitions: append([]SelectionPartition(nil), partitions...),
+		DirName:    strings.TrimSpace(match.DirName),
+		File:       skill.MalformedSourceFile(match),
+		Err:        match.Error,
 	}
 }
 
@@ -1406,7 +1425,7 @@ func expandCollections(resolved []ResolvedArtifact, cfg *config.Config, catalogs
 		viaLabel := "collection:" + irCol.Label()
 
 		// Expand members recursively (handles Includes via depth-first walk).
-		visited := map[string]struct{}{irCol.Label(): {}}
+		visited := map[string]struct{}{canonicalCollectionName(irCol.Name()): {}}
 		expandMembersRecursive(irCol, viaLabel, artifact, cfg, catalogIndex, resources, malformed, allCollectionsByName, directResolved, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &errs, targetSet)
 	}
 
@@ -1639,6 +1658,11 @@ func chooseNestedCollectionEligible(candidates []collectionCandidate, parent Res
 	return chooseNestedCollection(eligible, parent)
 }
 
+// canonicalCollectionName is the one ancestry key used for collection seed,
+// comparison, and branch extension. Collection labels include @version, while
+// Includes and catalog names use the raw collection name.
+func canonicalCollectionName(name string) string { return strings.TrimSpace(name) }
+
 // cloneVisitedWith extends a collection's include ancestry for one branch.
 // Keeping a separate map per branch allows a shared DAG node to expand once
 // under each sibling while still detecting cycles along either path.
@@ -1647,7 +1671,7 @@ func cloneVisitedWith(visited map[string]struct{}, name string) map[string]struc
 	for seen := range visited {
 		branch[seen] = struct{}{}
 	}
-	branch[name] = struct{}{}
+	branch[canonicalCollectionName(name)] = struct{}{}
 	return branch
 }
 
@@ -1923,7 +1947,8 @@ func expandMembersRecursive(
 			// is present upstream, so reporting it as removed would send the
 			// user to edit a collection definition that is correct.
 			if sme := malformedSelectionError(malformed, memberCatalogKey, member.Kind, memberName,
-				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel); sme != nil {
+				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel,
+				selectionPartitions(memberHarnesses, memberSource)); sme != nil {
 				*errs = append(*errs, sme)
 				continue
 			}
@@ -1987,14 +2012,14 @@ func expandMembersRecursive(
 
 	// Expand includes (nested collections) recursively.
 	for _, includedName := range col.Includes {
-		name := strings.TrimSpace(includedName)
+		name := canonicalCollectionName(includedName)
 		if name == "" {
 			continue
 		}
 
 		// Cycle detection is path-local: a collection shared by sibling branches
 		// is valid, while an include repeated along one branch is a cycle.
-		if _, seen := visited[name]; seen {
+		if _, seen := visited[canonicalCollectionName(name)]; seen {
 			*errs = append(*errs, fmt.Errorf("collection %q: cycle detected including %q", col.Label(), name))
 			continue
 		}
@@ -2358,6 +2383,17 @@ func artifactPartitionKeys(resourceKey string, harnesses []hcc.Target, source co
 	return keys
 }
 
+func selectionPartitions(harnesses []hcc.Target, source config.Source) []SelectionPartition {
+	if len(harnesses) == 0 {
+		return []SelectionPartition{{MachineScope: source.IsMachineScope()}}
+	}
+	partitions := make([]SelectionPartition, 0, len(harnesses))
+	for _, target := range harnesses {
+		partitions = append(partitions, SelectionPartition{Target: target, MachineScope: source.IsMachineScope()})
+	}
+	return partitions
+}
+
 // collectionMemberPartitionKeys returns every target-and-scope partition in
 // which a member miss could have been searched. Aggregate diagnostics (for
 // example, a path-less member) may cover multiple configured owners, so retain
@@ -2472,7 +2508,8 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					// and "removed upstream" is a misdiagnosis.
 					var selErr error
 					if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
-						entry.URL, entry.Path, entry.Ref, entry.Required, ""); sme != nil {
+						entry.URL, entry.Path, entry.Ref, entry.Required, "",
+						selectionPartitions(harnessTargets, entry.Source)); sme != nil {
 						selErr = sme
 					} else {
 						snf := &SelectedNotFoundError{
