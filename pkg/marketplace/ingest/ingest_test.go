@@ -146,6 +146,16 @@ func TestBuildRegistryRevisionRecursivelyIngestsNestedBundles(t *testing.T) {
 			t.Errorf("missing recursively discovered resource %q: %v", want, got)
 		}
 	}
+	foundCollection := false
+	for _, occurrence := range rev.ResourceOccurrences {
+		if occurrence.Coordinate.Kind == "collection" && occurrence.Coordinate.Name == "nested-defaults" &&
+			occurrence.SourcePath == "plugins/alpha/collections/nested-defaults/COLLECTION.yaml" {
+			foundCollection = true
+		}
+	}
+	if !foundCollection {
+		t.Fatalf("missing nested collection provenance in %#v", rev.ResourceOccurrences)
+	}
 }
 
 func TestBuildRegistryRevisionRejectsNestedBundleDiagnostics(t *testing.T) {

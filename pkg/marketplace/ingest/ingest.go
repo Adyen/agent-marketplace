@@ -616,7 +616,11 @@ func registryEntryPath(dir string, root store.RegistryRoot, entry catalog.Entry)
 		return "", fmt.Errorf("resource has no source file")
 	}
 	if !filepath.IsAbs(sourcePath) {
-		sourcePath = filepath.Join(dir, root.Path, sourcePath)
+		base := root.Path
+		if collection, ok := entry.Resource.(*hccir.Collection); ok && collection.SourcePath != "" {
+			base = collection.SourcePath
+		}
+		sourcePath = filepath.Join(dir, base, sourcePath)
 	}
 	rel, err := filepath.Rel(dir, sourcePath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {

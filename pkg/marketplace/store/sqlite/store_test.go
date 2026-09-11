@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,19 @@ VALUES ('legacy-collection', 'reg-1', 'sha256:legacy', '[]', 0);
 	}
 	if len(collection.Includes) != 0 {
 		t.Fatalf("migrated legacy collection includes = %+v, want empty", collection.Includes)
+	}
+	includes := []store.ResourceCoordinate{{Marketplace: "mp", Registry: "reg-1", Kind: "collection", Name: "base"}}
+	if err := s.PutCollectionRevision(ctx, store.CollectionRevision{
+		ID: "legacy-collection", RegistryID: "reg-1", ManifestDigest: "sha256:legacy", Members: []store.ResourceCoordinate{}, Includes: includes,
+	}); err != nil {
+		t.Fatalf("enrich migrated collection includes: %v", err)
+	}
+	collection, err = s.GetCollectionRevision(ctx, "legacy-collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(collection.Includes, includes) {
+		t.Fatalf("enriched legacy collection includes = %+v, want %+v", collection.Includes, includes)
 	}
 }
 

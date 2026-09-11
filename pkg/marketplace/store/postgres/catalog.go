@@ -35,6 +35,26 @@ func (s *Store) advanceCatalogVersion(ctx context.Context) error {
 }
 
 func (s *Store) ReadCatalogProjectionPage(ctx context.Context, req store.CatalogProjectionPageRequest) (store.CatalogProjectionPage, error) {
+	if s.tx != nil {
+		return s.readCatalogProjectionPage(ctx, req)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return store.CatalogProjectionPage{}, fmt.Errorf("begin catalog projection snapshot: %w", err)
+	}
+	txStore := &Store{q: tx, tx: tx}
+	page, err := txStore.readCatalogProjectionPage(ctx, req)
+	if err != nil {
+		_ = tx.Rollback()
+		return store.CatalogProjectionPage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return store.CatalogProjectionPage{}, fmt.Errorf("commit catalog projection snapshot: %w", err)
+	}
+	return page, nil
+}
+
+func (s *Store) readCatalogProjectionPage(ctx context.Context, req store.CatalogProjectionPageRequest) (store.CatalogProjectionPage, error) {
 	if req.Marketplace == "" {
 		return store.CatalogProjectionPage{}, fmt.Errorf("catalog projection requires a marketplace")
 	}

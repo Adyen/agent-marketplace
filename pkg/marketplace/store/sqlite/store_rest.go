@@ -255,7 +255,30 @@ func (s *Store) putCollectionRevision(ctx context.Context, cr store.CollectionRe
 		return err
 	}
 	if !cr.Equal(existing) {
-		return fmt.Errorf("%w: collection revision %q already has different immutable metadata", store.ErrConflict, cr.ID)
+		legacy := existing
+		legacy.Includes = cr.Includes
+		if len(existing.Includes) == 0 && len(cr.Includes) > 0 && cr.Equal(legacy) {
+			update, err := s.q.ExecContext(ctx, `UPDATE collection_revisions SET includes=? WHERE id=? AND includes='[]'`, includesJSON, cr.ID)
+			if err != nil {
+				return err
+			}
+			updated, err := update.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if updated == 1 {
+				if err := s.advanceCatalogVersion(ctx); err != nil {
+					return err
+				}
+				existing, err = s.GetCollectionRevision(ctx, cr.ID)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if !cr.Equal(existing) {
+			return fmt.Errorf("%w: collection revision %q already has different immutable metadata", store.ErrConflict, cr.ID)
+		}
 	}
 	inserted, err := result.RowsAffected()
 	if err != nil {
