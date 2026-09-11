@@ -125,7 +125,7 @@ type TargetInfo struct {
 	SkillDirKinds map[ir.ResourceKind]bool
 
 	// AggregateFiles names the shared aggregate configuration FILES the target
-	// merges into, per scope, as paths relative to that scope's install root.
+	// reconciles, per scope, as paths relative to that scope's install root.
 	// They are real files that coexist with handwritten content, so they are
 	// neither components (which are directories) nor ResourceDirs entries (which
 	// are per-resource files). A path may name a file inside a component
@@ -140,8 +140,10 @@ type TargetInfo struct {
 	// hooks.v1.json, config.json, and mcp_config.json outside backup coverage.
 	//
 	// The authoritative definition of the set is behavioural, not editorial:
-	// "every compiled artifact with MergeWithExisting == true, at the
-	// output-root-relative path materialization writes it to, in that scope".
+	// "every compiled artifact whose reconciliation policy identifies a shared
+	// aggregate, at the output-root-relative path materialization writes it to,
+	// in that scope". Shared aggregates may use marker reconciliation or external
+	// ownership reconciliation; the declaration does not choose between them.
 	// The declaration below is not the derivation of that set, because the
 	// artifact-path-to-output-path mapping lives in internal/materialize's
 	// planner and the compilers live in pkg/harness-compilation; a copy of

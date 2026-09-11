@@ -51,6 +51,29 @@ func TestArtifactValidate(t *testing.T) {
 	}
 }
 
+func TestReconciliationPolicyValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact Artifact
+		wantErr  bool
+	}{
+		{name: "replace", artifact: Artifact{Path: "out.txt"}},
+		{name: "marker", artifact: Artifact{Path: "out.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by", MarkerValue: "marketplace"}}},
+		{name: "external", artifact: Artifact{Path: "shared.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}}},
+		{name: "marker without fragment", artifact: Artifact{Path: "out.json", Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by", MarkerValue: "marketplace"}}, wantErr: true},
+		{name: "external with marker", artifact: Artifact{Path: "shared.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal, MarkerField: "_managed_by", MarkerValue: "marketplace"}}, wantErr: true},
+		{name: "partial marker metadata", artifact: Artifact{Path: "out.json", Fragment: true, Reconciliation: ReconciliationPolicy{Mode: ReconciliationMarker, MarkerField: "_managed_by"}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.artifact.ValidatePolicy()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidatePolicy() = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestMergeFragments_PassThrough(t *testing.T) {
 	input := []Artifact{
 		{Path: "skills/a.md", Bytes: []byte("skill-a")},

@@ -247,7 +247,7 @@ func machineScopeSkill(target hcc.Target) []resolver.ResolvedArtifact {
 
 // TestCollectManagedPathsCoversEveryDeclaredAggregate is the backup-coverage
 // half of bead agent-marketplace-5exj.27. Every machine-scope file a target
-// merges into must be recoverable, either because the collector names it
+// reconciles must be recoverable, either because the collector names it
 // directly (Gemini's settings.json, which sits at the Gemini machine root and
 // belongs to no component directory) or because it lives inside a component
 // directory that is archived whole (Claude's hooks/hooks.json inside hooks/).
@@ -269,7 +269,7 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 
 			aggregates := expectedMachineRootAggregates(target)
 			if len(aggregates) == 0 {
-				t.Fatalf("%s declares no machine-scope aggregate files; every current target merges into at least one", target)
+				t.Fatalf("%s declares no machine-scope aggregate files; every current target reconciles at least one", target)
 			}
 			for _, rel := range aggregates {
 				if !coveredByAncestor(rel, mp.RelPaths) {

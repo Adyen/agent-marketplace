@@ -129,7 +129,9 @@ Preserve these invariants:
 - **Skills link by default; file mode copies.** Default-mode harness skill
   entries are symlinks to files/directories under
   `~/.cache/agent-marketplace`. File mode writes regular files/trees for
-  every target through the generic materializer.
+  every target through the generic materializer, including Devin regular
+  skill/command trees and subagent files; aggregate ownership reconciliation
+  remains independent of installation mode.
 - **Non-skills are compiled artifacts, unless a target declares
   otherwise.** Commands, subagents, hooks, and MCP servers are selected
   like skills and are normally materialized through HCC into the target
@@ -161,18 +163,19 @@ Preserve these invariants:
   measures that set from real compilation and fails on any difference in
   either direction — never satisfy it by restating a list. An
   undeclared aggregate is a file mutated with no safety backup.
-- **Shared aggregate files are ownership-reconciled, not
-  marker-merged.** Devin and Codex declare
-  `harness.TargetInfo.OwnershipReconciledAggregates` and are fenced out of
-  the marker-strip prune walk by `aggregateProtectedPaths` on that field
-  alone. They go through `internal/ownership` plus their format-preserving
-  JSONC/TOML patchers, in the sequence the `ownership` package doc names
-  (`Open`, `Recover` once before any mutation, `Proof`, `Classify`, patch,
-  `Apply`). Never inject a `_managed_by` marker into such a file and never
-  infer ownership from its bytes: ownership is proven from durable state
-  under `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state
-  must fail closed (every entry unmanaged; preserve everything, prune
-  nothing).
+- **Shared aggregate files use an explicit reconciliation policy.**
+  Marker-reconciled targets use their declared marker metadata and remain
+  eligible for marker-based stale-entry pruning. Devin and Codex instead
+  declare `harness.TargetInfo.OwnershipReconciledAggregates` and are fenced
+  out of the marker-strip prune walk by `aggregateProtectedPaths` on that
+  field alone. They go through `internal/ownership` plus their
+  format-preserving JSONC/TOML patchers, in the sequence the `ownership`
+  package doc names (`Open`, `Recover` once before any mutation, `Proof`,
+  `Classify`, patch, `Apply`). Never inject a `_managed_by` marker into an
+  externally reconciled file and never infer its ownership from bytes:
+  ownership is proven from durable state under
+  `$XDG_STATE_HOME/agent-marketplace`, and missing or corrupt state must
+  fail closed (every entry unmanaged; preserve everything, prune nothing).
 - **Codex has two resolved destinations per scope.** Repo output splits
   between `<repo>/.agents` and `<repo>/.codex`; machine output splits
   between `~/.agents` and an absolute `$CODEX_HOME` (default `~/.codex`).
