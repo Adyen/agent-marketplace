@@ -70,13 +70,13 @@ When activating this requirement before the workflow reaches the default branch,
 
 Native executables and containers run in GitHub Actions, not during ordinary local verification. The test container uses `--network none`, drops capabilities, enables `no-new-privileges`, and does not receive vendor credentials. Each subprocess uses an allowlisted environment with isolated HOME/XDG/Codex roots and sanitized Git settings.
 
-Trust belongs to the execution workspace, not to a resource's installation scope. For example, Gemini suppresses user-level MCP connections in an untrusted workspace. The [trust helper](../../e2e/harness_compatibility_trust_test.go) confines writes to a real disposable repository/home pair. Claude and Cursor approval is restricted to the two fixture MCP names; no broad approval switch is used.
+Trust belongs to the execution workspace, not to a resource's installation scope. For example, Gemini suppresses user-level MCP connections in an untrusted workspace. Native CI enables `HARNESS_COMPAT_TRUST_FIXTURE=1`; the [trust helper](../../e2e/harness_compatibility_trust_test.go) confines writes to a real disposable repository/home pair. Claude and Cursor approval is restricted to the two fixture MCP names; no broad approval switch is used.
 
 These are test setup actions. Agent Marketplace synchronization never grants workspace trust or server approval. Hook discovery is not hook execution.
 
 ## Images and versions
 
-[Daily image publishing](../../.github/workflows/harness-images.yml) resolves newest stable releases immediately; it does not change the repository's normal dependency-age policy. Only trusted default-branch jobs publish to GHCR after an offline version smoke check. Compatibility results do not prevent a newly built, runnable CLI image from surfacing upstream regressions.
+[Daily image publishing](../../.github/workflows/harness-images.yml) builds Linux/amd64 images daily and on manual dispatch from the default branch. It resolves newest stable releases immediately without changing the repository's normal dependency-age policy. Only trusted default-branch jobs publish to GHCR after an offline version smoke check. Version/run tags are immutable by convention; the moving `ci` tag advances only after that smoke check, independently of compiler compatibility results. Compatibility results do not prevent a newly built, runnable CLI image from surfacing upstream regressions.
 
 [PR compatibility](../../.github/workflows/harness-compatibility.yml) verifies target, recipe, and Go-version labels before reusing a published image. It executes the immutable image ID, or builds an unpublished candidate when an image is missing or the recipe changed. Reports show the source, actual version, image identity, age, and stale-image warning.
 
@@ -101,7 +101,7 @@ make harness-compat-check
 make harness-compat-config
 ```
 
-The first checks metadata, helper/transport boundaries, and shell scripts without vendor executables. The second runs all target/scope/mode fixture combinations in explicit configuration-only mode. Neither is a substitute for native CI. `HARNESS_COMPAT_TARGET` being unset keeps ordinary E2E runs from invoking vendor CLIs.
+The first checks metadata, helper/transport boundaries, and shell scripts without vendor executables. The second runs all target/scope/mode fixture combinations in explicit configuration-only mode. Neither is a substitute for native CI. `HARNESS_COMPAT_TARGET` being unset keeps ordinary E2E runs from invoking vendor CLIs. `HARNESS_COMPAT_REPORT_DIR` selects where the driver retains structured evidence.
 
 ## Target guides
 
