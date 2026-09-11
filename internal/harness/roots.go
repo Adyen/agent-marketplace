@@ -1,12 +1,12 @@
 // Package harness maps harness target names to their install-root paths
 // for both repo-scoped and machine-scoped skill materialization.
 //
-// internal/materialize uses the adapter registry for migrated targets and
-// legacy TargetInfo metadata for the remaining targets, plus ResolveDestinations
-// and install roots to drive hcc.Materialize. internal/pipeline uses the same
-// metadata for managed-path and safety-backup coverage. TUI and CLI surfaces
-// (status, doctor, backup, init, migrate) use install-root and detection info
-// such as DetectInstalled for informational output.
+// internal/materialize uses the adapter registry as the final authority for
+// migrated targets and legacy TargetInfo metadata for the remaining targets.
+// internal/pipeline uses the same metadata for managed-path and safety-backup
+// coverage. TUI and CLI surfaces (status, doctor, backup, init, migrate) use
+// install-root and detection info such as DetectInstalled for informational
+// output.
 package harness
 
 import (
@@ -323,11 +323,15 @@ func containsDriveLetter(path string) bool {
 		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))
 }
 
-// InstallRoots maps each harness target to its per-scope install-root paths.
-// The Machine paths are computed at init time from the user's home directory.
+// InstallRoots maps non-partitioned targets to their per-scope install-root
+// paths for legacy consumers. Migrated materialization and repair resolve
+// through InstallationAdapter instead. Machine paths are computed at init time
+// from the user's home directory.
 var InstallRoots = MakeInstallRoots()
 
-// TargetInfoMap maps each harness target to its consolidated metadata.
+// TargetInfoMap maps legacy harness targets to their consolidated metadata.
+// Migrated targets intentionally have no entries here; TargetInfoFor resolves
+// them through the validated InstallationAdapterRegistry.
 var TargetInfoMap map[hcc.Target]TargetInfo
 var targetInfoErr error
 
@@ -462,10 +466,16 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 }
 
 func MachineRoot(target hcc.Target) (string, bool) {
-	if registry, err := NewInstallationAdapterRegistry(); err == nil {
-		if adapter, ok := registry.Lookup(target); ok && adapter.Info().Roots.Machine != "" {
-			return adapter.Info().Roots.Machine, true
+	if isInstallationAdapterTarget(target) {
+		registry, err := NewInstallationAdapterRegistry()
+		if err != nil {
+			return "", false
 		}
+		adapter, ok := registry.Lookup(target)
+		if !ok || adapter.Info().Roots.Machine == "" {
+			return "", false
+		}
+		return adapter.Info().Roots.Machine, true
 	}
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
@@ -473,11 +483,6 @@ func MachineRoot(target hcc.Target) (string, bool) {
 
 func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	roots := InstallRoots
-	codex := hcc.Target(targetmeta.TargetCodex)
-	codexInfo, err := codexVirtualTargetInfo()
-	if err != nil {
-		return nil, err
-	}
 	claudeInfo, err := targetInfoFromLayout(targetmeta.TargetClaude)
 	if err != nil {
 		return nil, err
@@ -486,22 +491,8 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 	// Claude deliberately leaves SkillPathPattern unset: materialize
 	// activates frontmatter injection when a pattern is declared, and the
 	// Claude compiler already renders it.
-	devinInfo, err := targetInfoFromLayout(targetmeta.TargetDevin)
-	if err != nil {
-		return nil, err
-	}
-	devinInfo.Roots = roots[hcc.TargetDevin]
-	devinInfo.SkillPathPattern = mustNativeResourcePattern(targetmeta.TargetDevin, ir.KindSkill)
-	// Devin's aggregates go through internal/ownership (see
-	// internal/materialize/devin.go): no `_managed_by` marker is ever
-	// written into a Devin file, so the marker-strip walk must not touch
-	// them. This applies in both file and symlink materialization modes.
-	// The original plan's "no real-file fallback" was delivery scope,
-	// not a limitation on Devin's ability to read regular files.
-	devinInfo.OwnershipReconciledAggregates = true
 
 	m := map[hcc.Target]TargetInfo{
-		codex:            codexInfo,
 		hcc.TargetClaude: claudeInfo,
 		hcc.TargetFactory: {
 			Roots:            roots[hcc.TargetFactory],
@@ -587,11 +578,6 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 				User:    []string{"gemini-extension.json", "settings.json"},
 			},
 		},
-		// Devin's topology is derived from its native-layout descriptor; its
-		// aggregates are scope-variant, with project hooks in a root-level
-		// hooks.v1.json file and user hooks under config.json's `hooks`
-		// member.
-		hcc.TargetDevin: devinInfo,
 	}
 
 	// Validate every declared aggregate path before it is ever joined onto an
@@ -610,10 +596,14 @@ func MakeTargetInfo() (map[hcc.Target]TargetInfo, error) {
 		}
 	}
 
-	// Verify every key in InstallRoots has a corresponding TargetInfo.
-	// If a future target is added to InstallRoots but omitted here,
-	// materialize would silently fall back to incomplete defaults.
+	// Verify every legacy key in InstallRoots has a corresponding TargetInfo.
+	// Migrated targets are validated by the adapter composition root instead;
+	// if a future legacy target is omitted here, materialize would silently
+	// fall back to incomplete defaults.
 	for target := range InstallRoots {
+		if isInstallationAdapterTarget(target) {
+			continue
+		}
 		if _, ok := m[target]; !ok {
 			return nil, fmt.Errorf("harness: TargetInfoMap missing entry for target %q present in InstallRoots", target)
 		}

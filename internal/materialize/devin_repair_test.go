@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -54,6 +55,20 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 // halves of the preview contract: "`doctor --repair` previews exact adoption
 // matches and evidence-backed orphan candidates" and "off-TTY, `doctor --repair`
 // is preview-only".
+func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
+	repoRoot := t.TempDir()
+	previews, err := RepairPreviews(context.Background(), repoRoot, nil)
+	if err != nil {
+		t.Fatalf("repair previews: %v", err)
+	}
+	if len(previews) != 2 {
+		t.Fatalf("repair previews = %d, want one preview per migrated adapter", len(previews))
+	}
+	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin {
+		t.Fatalf("repair targets = %#v, want [codex devin]", []hcc.Target{previews[0].Target, previews[1].Target})
+	}
+}
+
 func TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)

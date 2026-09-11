@@ -582,9 +582,13 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 		return
 	}
 	roots := harness.MakeInstallRoots()
+	adapters, adapterErr := harness.NewInstallationAdapterRegistry()
 	for _, entry := range state.entries {
 		target := hcc.Target(entry.Target)
-		if _, ok := roots[target]; ok || target == hcc.Target(targetmeta.TargetCodex) {
+		_, legacy := roots[target]
+		legacy = legacy && !harness.IsInstallationAdapterTarget(target)
+		_, migrated := adapters.Lookup(target)
+		if legacy || (adapterErr == nil && migrated) {
 			allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 		}
 	}
@@ -592,6 +596,9 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 
 func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 	for target, roots := range harness.MakeInstallRoots() {
+		if harness.IsInstallationAdapterTarget(target) {
+			continue
+		}
 		repoDir := repoOutputDir(target, roots, repoRoot)
 		machineDir := roots.For(true, repoRoot)
 		// When repoRoot is the home directory the repo-scope path is the same
@@ -606,25 +613,30 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			allOutputs[outputKey{target: target, machineScope: true}] = true
 		}
 	}
-	codex := hcc.Target(targetmeta.TargetCodex)
-	for _, machineScope := range []bool{false, true} {
-		destinations, err := harness.ResolveDestinations(codex, machineScope, repoRoot)
-		if err != nil {
-			continue
-		}
-		for _, destination := range destinations {
-			// Shared native partitions are not installation markers, but durable
-			// managed-link evidence must still revive their output key for prune.
-			if !destination.InstallationEvidence {
-				if destinationHasManagedSymlink(destination, machineScope) {
-					allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
-					break
+	// Adapter-owned destinations cover migrated targets (including Codex's
+	// partitioned roots) without maintaining a second target-specific walk.
+	if adapters, err := harness.NewInstallationAdapterRegistry(); err == nil {
+		for _, target := range adapters.Targets() {
+			for _, machineScope := range []bool{false, true} {
+				destinations, err := harness.ResolveDestinations(target, machineScope, repoRoot)
+				if err != nil {
+					continue
 				}
-				continue
-			}
-			if outputDirExists(destination.Root) {
-				allOutputs[outputKey{target: codex, machineScope: machineScope}] = true
-				break
+				for _, destination := range destinations {
+					// Shared native partitions are not installation markers, but durable
+					// managed-link evidence must still revive their output key for prune.
+					if !destination.InstallationEvidence {
+						if destinationHasManagedSymlink(destination, machineScope) {
+							allOutputs[outputKey{target: target, machineScope: machineScope}] = true
+							break
+						}
+						continue
+					}
+					if outputDirExists(destination.Root) {
+						allOutputs[outputKey{target: target, machineScope: machineScope}] = true
+						break
+					}
+				}
 			}
 		}
 	}
@@ -689,7 +701,16 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 	for _, w := range work {
 		key := outputKey{target: w.target, machineScope: w.machineScope}
-		aggregateHandler := ownedAggregateHandlerFor(w.target)
+		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
+		if bindingErr != nil {
+			blocked.blockResource(key, w)
+			allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.adapter.error", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: bindingErr.Error()})
+			continue
+		}
+		var aggregateHandler ownedAggregateHandler
+		if hasBinding {
+			aggregateHandler = binding.handler
+		}
 		compileOptions := []hcc.Option{}
 		if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
 			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
@@ -768,7 +789,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		// relative path at materialization time, the hook command works
 		// without the env var. Factory Droid runs hooks from the repo root,
 		// so ".factory/hooks/script.sh" resolves correctly.
-		if resourceKind == ir.KindHook {
+		if resourceKind == ir.KindHook && !harness.IsInstallationAdapterTarget(w.target) {
 			if roots, ok := harness.MakeInstallRoots()[w.target]; ok {
 				pluginRoot := roots.For(w.machineScope, repoRoot)
 				if pluginRoot != "" {
@@ -941,6 +962,17 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		return report
 	}
 
+	composition, adapterErr := newMaterializeAdapterComposition()
+	if adapterErr != nil {
+		for key := range compileResult.allOutputs {
+			if harness.IsInstallationAdapterTarget(key.target) {
+				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.adapter.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("construct installation adapter registry: %v", adapterErr)})
+			}
+		}
+		return report
+	}
+	adapters := composition.registry
+
 	// Sort output keys for deterministic PerRoot ordering.
 	sortedOutputs := make([]outputKey, 0, len(compileResult.allOutputs))
 	for key := range compileResult.allOutputs {
@@ -960,19 +992,30 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 	})
 
 	for _, key := range sortedOutputs {
-		roots, ok := harness.MakeInstallRoots()[key.target]
-		isCodex := key.target == hcc.Target(targetmeta.TargetCodex)
-		var codexDestinations []harness.Destination
-		if isCodex {
+		var roots harness.Roots
+		var ok bool
+		var adapterDestinations []harness.Destination
+		if adapter, migrated := adapters.Lookup(key.target); migrated {
+			var home string
+			if key.machineScope {
+				var err error
+				home, err = os.UserHomeDir()
+				if err != nil {
+					report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: fmt.Sprintf("resolve home directory: %v", err)})
+					continue
+				}
+			}
 			var err error
-			codexDestinations, err = harness.ResolveDestinations(key.target, key.machineScope, repoRoot)
+			adapterDestinations, err = adapter.Resolve(key.machineScope, repoRoot, home)
 			if err != nil {
-				slog.Error("Codex destination preflight failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.destination.error", "error", err)
+				slog.Error("adapter destination resolution failed", "target", key.target, "machine_scope", key.machineScope, "code", "materialize.destination.error", "error", err)
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: err.Error()})
 				continue
 			}
+		} else {
+			roots, ok = harness.MakeInstallRoots()[key.target]
 		}
-		if !ok && !isCodex {
+		if !ok && len(adapterDestinations) == 0 {
 			report.Diags = append(report.Diags, diag.Diagnostic{
 				Code:     "materialize.target.unknown",
 				Severity: diag.SeverityError,
@@ -982,15 +1025,16 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			continue
 		}
 		outDir := repoRoot
-		if !isCodex {
-			outDir = roots.For(key.machineScope, repoRoot)
-		} else if key.machineScope {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: string(key.target), Message: "resolve home directory for Codex destinations"})
-				continue
+		if len(adapterDestinations) > 0 {
+			// A single destination owns the whole output root (Devin); multiple
+			// destinations are partitions under the scope base (Codex).
+			if len(adapterDestinations) == 1 {
+				outDir = adapterDestinations[0].Root
+			} else if key.machineScope {
+				outDir, _ = os.UserHomeDir()
 			}
-			outDir = home
+		} else {
+			outDir = roots.For(key.machineScope, repoRoot)
 		}
 
 		if !dryRun {
@@ -1035,8 +1079,8 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		slog.Debug("materialize target", "target", key.target, "machine_scope", key.machineScope, "mode", mode, "out_dir", outDir)
 		artifacts = materializeNativeAggregates(ctx, report, key, repoRoot, artifacts, compileResult.blocked.componentsFor(key), dryRun)
 		report = executeTargetPlans(report, key, outDir, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions)
-		if aggregateHandler := ownedAggregateHandlerFor(key.target); aggregateHandler != nil {
-			report = aggregateHandler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, codexDestinations, dryRun)
+		if binding, ok := composition.bindings[key.target]; ok {
+			report = binding.handler.reconcile(ctx, report, compileResult.ownedAggregateState(), key, outDir, adapterDestinations, dryRun)
 		}
 	}
 

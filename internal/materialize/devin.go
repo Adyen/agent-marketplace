@@ -219,31 +219,48 @@ func (devinOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 	}
 }
 
-func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, _ []harness.Destination, dryRun bool) *Report {
-	work, _ := state.get(key).(*ownedJSONAggregateWork)
-	return reconcileDevinAggregates(ctx, report, key, outDir, work, dryRun)
+// reconcileDevinAggregates preserves the format-specific test and benchmark
+// seam while routing production reconciliation through adapter destinations.
+func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", err.Error()))
+		return report
+	}
+	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	if !ok {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", "Devin installation adapter is not registered"))
+		return report
+	}
+	destination := harness.Destination{ID: "default", Root: outDir, Info: adapter.Info(), InstallationEvidence: true}
+	return (devinOwnedAggregateHandler{}).reconcile(ctx, report, ownedAggregateState{values: map[outputKey]any{key: work}}, key, outDir, []harness.Destination{destination}, dryRun)
 }
 
-func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
+func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, destinations []harness.Destination, dryRun bool) *Report {
+	work, _ := state.get(key).(*ownedJSONAggregateWork)
 	if key.target != hcc.TargetDevin {
 		return report
 	}
-	info, ok := harness.TargetInfoFor(key.target)
-	if !ok {
+	if len(destinations) == 0 {
+		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", "no Devin adapter destination was resolved"))
 		return report
 	}
-	rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
-	options := devinOwnedJSONOptions()
-	files := make([]ownedJSONFileSpec, 0, len(rels))
-	for _, rel := range rels {
-		file, err := devinOwnedJSONFile(rel, key.machineScope)
-		if err != nil {
-			report.Diags = append(report.Diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, err))
-			continue
+	for _, destination := range destinations {
+		info := destination.Info
+		rels := append([]string(nil), info.AggregateFilesForScope(key.machineScope)...)
+		options := devinOwnedJSONOptions()
+		files := make([]ownedJSONFileSpec, 0, len(rels))
+		for _, rel := range rels {
+			file, err := devinOwnedJSONFile(rel, key.machineScope)
+			if err != nil {
+				report.Diags = append(report.Diags, ownedJSONShapeDiag(options.shapeCode, key, destination.Root, rel, err))
+				continue
+			}
+			files = append(files, file)
 		}
-		files = append(files, file)
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options, dryRun)
 	}
-	return reconcileOwnedJSONAggregates(ctx, report, key, outDir, files, work, options, dryRun)
+	return report
 }
 
 func reconcileDevinAggregateFile(store *ownership.Store, key outputKey, outDir, rel string, desired []ownedJSONEntry, incomplete, dryRun bool) ownedJSONAggregateReport {

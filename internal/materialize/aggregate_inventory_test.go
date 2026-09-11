@@ -118,22 +118,42 @@ func sortedKinds(m map[ir.ResourceKind]ir.Resource) []ir.ResourceKind {
 	return kinds
 }
 
-// sortedTargets returns every target that has TargetInfo, so a target added to
-// the registry is covered by the tests below without being listed here.
+// sortedTargets returns every legacy target plus every validated installation
+// adapter target, so the inventory tests cover the one final topology authority.
 func sortedTargets(t *testing.T) []hcc.Target {
 	t.Helper()
 	if err := harness.TargetInfoError(); err != nil {
 		t.Fatalf("harness.TargetInfoError: %v", err)
 	}
-	targets := make([]hcc.Target, 0, len(harness.TargetInfoMap))
+	seen := make(map[hcc.Target]bool)
 	for target := range harness.TargetInfoMap {
+		seen[target] = true
+	}
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		t.Fatalf("installation adapter registry: %v", err)
+	}
+	for _, target := range registry.Targets() {
+		seen[target] = true
+	}
+	targets := make([]hcc.Target, 0, len(seen))
+	for target := range seen {
 		targets = append(targets, target)
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
 	if len(targets) == 0 {
-		t.Fatal("harness.TargetInfoMap is empty; the inventory tests would be vacuous")
+		t.Fatal("no target metadata or adapters; the inventory tests would be vacuous")
 	}
 	return targets
+}
+
+func targetInfoForTest(t *testing.T, target hcc.Target) harness.TargetInfo {
+	t.Helper()
+	info, ok := harness.TargetInfoFor(target)
+	if !ok {
+		t.Fatalf("target %q has no validated TargetInfo", target)
+	}
+	return info
 }
 
 // TestAggregateProbeCoversEveryCompilableKind keeps materializedAggregateFiles
@@ -188,7 +208,7 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 					t.Fatalf("no merge artifact was produced for %s at machine_scope=%v; every current target has at least one, so the probe bundle is broken rather than the declaration", target, machineScope)
 				}
 
-				declared := append([]string(nil), harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)...)
+				declared := append([]string(nil), targetInfoForTest(t, target).AggregateFilesForScope(machineScope)...)
 				for i, rel := range declared {
 					declared[i] = filepath.ToSlash(rel)
 				}
@@ -210,7 +230,7 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
-			rels := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
+			rels := targetInfoForTest(t, target).AggregateFilesForScope(machineScope)
 			if !sort.StringsAreSorted(rels) {
 				t.Errorf("%s (machine_scope=%v): AggregateFiles %v is not sorted", target, machineScope, rels)
 			}
@@ -244,7 +264,7 @@ func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 		for _, machineScope := range []bool{false, true} {
 			protected := aggregateProtectedPaths(target, machineScope)
 			if target == hcc.TargetDevin || target == codex {
-				declared := harness.TargetInfoMap[target].AggregateFilesForScope(machineScope)
+				declared := targetInfoForTest(t, target).AggregateFilesForScope(machineScope)
 				if len(protected) != len(declared) {
 					t.Errorf("%s (machine_scope=%v): protected %v does not cover declared %v", target, machineScope, protected, declared)
 				}
@@ -265,7 +285,7 @@ func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 func TestOwnedAggregateHandlerInventoryMatchesOwnershipTargets(t *testing.T) {
 	for _, target := range sortedTargets(t) {
 		hasHandler := ownedAggregateHandlerFor(target) != nil
-		wantHandler := harness.TargetInfoMap[target].OwnershipReconciledAggregates
+		wantHandler := targetInfoForTest(t, target).OwnershipReconciledAggregates
 		if hasHandler != wantHandler {
 			t.Errorf("%s: owned aggregate handler = %v, ownership-reconciled metadata = %v", target, hasHandler, wantHandler)
 		}
@@ -353,7 +373,7 @@ func TestAggregateProtectedPathsKeysOffOwnership(t *testing.T) {
 func TestAggregateFenceFollowsOwnership(t *testing.T) {
 	ownership := make([]hcc.Target, 0, len(harness.TargetInfoMap))
 	for _, target := range sortedTargets(t) {
-		info := harness.TargetInfoMap[target]
+		info := targetInfoForTest(t, target)
 		if info.OwnershipReconciledAggregates {
 			ownership = append(ownership, target)
 		}

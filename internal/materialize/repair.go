@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -184,22 +183,17 @@ type TargetRepairPreview struct {
 
 // RepairPreviews enumerates the materialization adapters in stable target order.
 func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact) ([]TargetRepairPreview, error) {
-	registry, err := harness.NewInstallationAdapterRegistry()
+	composition, err := newMaterializeAdapterComposition()
 	if err != nil {
 		return nil, err
 	}
-	targets := registry.Targets()
+	targets := composition.registry.Targets()
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
-	bindings := materializeAdapters()
 	out := make([]TargetRepairPreview, 0, len(targets))
 	for _, target := range targets {
-		adapter, ok := registry.Lookup(target)
+		binding, ok := composition.bindings[target]
 		if !ok {
-			continue
-		}
-		binding, ok := bindings[adapter.AggregateHandlerKey()]
-		if !ok || binding.repair == nil || binding.repairKey != adapter.RepairKey() {
-			continue
+			return nil, fmt.Errorf("installation adapter %q has no repair binding", target)
 		}
 		preview, err := binding.repair(ctx, repoRoot, resolved)
 		if err != nil {

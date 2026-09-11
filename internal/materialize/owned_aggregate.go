@@ -177,29 +177,57 @@ type materializeAdapter struct {
 	repair    func(context.Context, string, []resolver.ResolvedArtifact) (*RepairPreview, error)
 }
 
-func materializeAdapters() map[string]materializeAdapter {
+func materializeBindingCatalog() map[string]materializeAdapter {
 	return map[string]materializeAdapter{
 		harness.AdapterDevinOwnedJSON:     {handler: devinOwnedAggregateHandler{}, repairKey: harness.AdapterDevinRepair, repair: DevinRepairPreview},
 		harness.AdapterCodexOwnedJSONTOML: {handler: codexOwnedAggregateHandler{}, repairKey: harness.AdapterCodexRepair, repair: CodexRepairPreview},
 	}
 }
 
-func materializeAdapterFor(target hcc.Target) (materializeAdapter, bool) {
+type materializeAdapterComposition struct {
+	registry harness.InstallationAdapterRegistry
+	bindings map[hcc.Target]materializeAdapter
+}
+
+// newMaterializeAdapterComposition is the sole application binding boundary:
+// every validated installation adapter must have a complete aggregate and
+// repair binding before generic materialization or repair can select it.
+func newMaterializeAdapterComposition() (materializeAdapterComposition, error) {
 	registry, err := harness.NewInstallationAdapterRegistry()
 	if err != nil {
-		return materializeAdapter{}, false
+		return materializeAdapterComposition{}, err
 	}
-	adapter, ok := registry.Lookup(target)
-	if !ok {
-		return materializeAdapter{}, false
+	catalog := materializeBindingCatalog()
+	bindings := make(map[hcc.Target]materializeAdapter, len(registry.Targets()))
+	for _, target := range registry.Targets() {
+		adapter, ok := registry.Lookup(target)
+		if !ok {
+			return materializeAdapterComposition{}, fmt.Errorf("installation adapter %q disappeared during composition", target)
+		}
+		binding, ok := catalog[adapter.AggregateHandlerKey()]
+		if !ok || binding.handler == nil || binding.repair == nil || binding.repairKey != adapter.RepairKey() {
+			return materializeAdapterComposition{}, fmt.Errorf("installation adapter %q has incomplete materialization binding", target)
+		}
+		bindings[target] = binding
 	}
-	binding, ok := materializeAdapters()[adapter.AggregateHandlerKey()]
-	return binding, ok
+	return materializeAdapterComposition{registry: registry, bindings: bindings}, nil
+}
+
+func materializeAdapterFor(target hcc.Target) (materializeAdapter, bool, error) {
+	composition, err := newMaterializeAdapterComposition()
+	if err != nil {
+		if harness.IsInstallationAdapterTarget(target) {
+			return materializeAdapter{}, false, fmt.Errorf("construct installation adapter registry for %s: %w", target, err)
+		}
+		return materializeAdapter{}, false, nil
+	}
+	binding, ok := composition.bindings[target]
+	return binding, ok, nil
 }
 
 func ownedAggregateHandlerFor(target hcc.Target) ownedAggregateHandler {
-	adapter, ok := materializeAdapterFor(target)
-	if !ok {
+	adapter, ok, err := materializeAdapterFor(target)
+	if err != nil || !ok {
 		return nil
 	}
 	return adapter.handler

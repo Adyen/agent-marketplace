@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"errors"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
@@ -16,7 +18,6 @@ func TestInstallationAdapterRegistryCoverage(t *testing.T) {
 	}
 	want := []hcc.Target{hcc.TargetCodex, hcc.TargetDevin}
 	got := registry.Targets()
-	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapter targets = %v, want %v", got, want)
 	}
@@ -75,4 +76,41 @@ func joinDescriptorPath(prefix, rel string) string {
 		return rel
 	}
 	return prefix + "/" + rel
+}
+
+func TestRegistryFailsClosedOnDescriptorValidationError(t *testing.T) {
+	sentinel := errors.New("invalid native descriptor")
+	_, err := newInstallationAdapterRegistry(func() error { return sentinel })
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("registry error = %v, want descriptor validation cause", err)
+	}
+}
+
+func TestMigratedTargetsHaveNoLegacyMetadataFallback(t *testing.T) {
+	for _, target := range []hcc.Target{hcc.TargetDevin, hcc.TargetCodex} {
+		if _, ok := TargetInfoMap[target]; ok {
+			t.Fatalf("migrated target %q is duplicated in TargetInfoMap", target)
+		}
+		if _, ok := TargetInfoFor(target); !ok {
+			t.Fatalf("migrated target %q has no validated adapter metadata", target)
+		}
+	}
+}
+
+func TestAdapterBackedMigratedRootRouting(t *testing.T) {
+	repoRoot := filepath.Join("/tmp", "adapter-routing-repo")
+	devin, err := ResolveDestinations(hcc.TargetDevin, false, repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devin) != 1 || devin[0].Root != filepath.Join(repoRoot, ".devin") {
+		t.Fatalf("Devin destinations = %#v, want one adapter root under .devin", devin)
+	}
+	codex, err := ResolveDestinations(hcc.TargetCodex, false, repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codex) != 2 || codex[0].Root == codex[1].Root {
+		t.Fatalf("Codex destinations = %#v, want two distinct descriptor partitions", codex)
+	}
 }
