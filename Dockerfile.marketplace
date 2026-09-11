@@ -17,10 +17,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 
 FROM ${ALPINE_RUNTIME_IMAGE} AS api
 ARG BUILD_CA_CERT_PATH
-COPY --from=build ${BUILD_CA_CERT_PATH} /tmp/build-ca-certificates.crt
-RUN mkdir -p /etc/ssl/certs && cp /tmp/build-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
-    && rm /tmp/build-ca-certificates.crt \
-    && addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
+COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
+RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
     && mkdir -p /var/lib/agent-marketplace /tmp \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
 WORKDIR /app
@@ -34,10 +32,8 @@ CMD ["serve", "--config", "/app/marketplace.yaml", "--role", "api"]
 
 FROM ${ALPINE_RUNTIME_IMAGE} AS worker
 ARG BUILD_CA_CERT_PATH
-COPY --from=build ${BUILD_CA_CERT_PATH} /tmp/build-ca-certificates.crt
-RUN mkdir -p /etc/ssl/certs && cp /tmp/build-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
-    && rm /tmp/build-ca-certificates.crt \
-    && addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
+COPY --from=build ${BUILD_CA_CERT_PATH} /etc/ssl/certs/ca-certificates.crt
+RUN addgroup -S marketplace && adduser -S -u 1000 -G marketplace marketplace \
     && apk add --no-cache git \
     && mkdir -p /var/lib/agent-marketplace /tmp \
     && chown -R marketplace:marketplace /var/lib/agent-marketplace /tmp
