@@ -74,6 +74,46 @@ func TestReconciliationPolicyValidation(t *testing.T) {
 	}
 }
 
+func TestPolicy_ExplicitPolicyWinsOverLegacyFields(t *testing.T) {
+	a := Artifact{
+		Path:                           "shared.json",
+		Fragment:                       true,
+		MergeWithExisting:              true,
+		ExternalReconciliationRequired: false,
+		ManagedByField:                 "_managed_by",
+		ManagedByValue:                 "legacy",
+		Reconciliation:                 ReconciliationPolicy{Mode: ReconciliationExternal},
+	}
+	policy, err := a.Policy()
+	if err != nil {
+		t.Fatalf("Policy() = %v", err)
+	}
+	if !policy.IsExternal() {
+		t.Fatalf("Policy() = %+v, want external", policy)
+	}
+}
+
+func TestMergeFragments_PreservesExplicitExternalPolicy(t *testing.T) {
+	input := []Artifact{
+		{Path: "shared.json", Bytes: []byte(`{"one":1}`), Fragment: true, FragmentKey: "shared", MergeWithExisting: true, ManagedByField: "_managed_by", ManagedByValue: "legacy", Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}},
+		{Path: "shared.json", Bytes: []byte(`{"two":2}`), Fragment: true, FragmentKey: "shared", Reconciliation: ReconciliationPolicy{Mode: ReconciliationExternal}},
+	}
+	merged, err := MergeFragments(input)
+	if err != nil {
+		t.Fatalf("MergeFragments: %v", err)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("merged artifacts = %d, want 1", len(merged))
+	}
+	policy, err := merged[0].Policy()
+	if err != nil {
+		t.Fatalf("merged Policy() = %v", err)
+	}
+	if !policy.IsExternal() {
+		t.Fatalf("merged policy = %+v, want external", policy)
+	}
+}
+
 func TestMergeFragments_PassThrough(t *testing.T) {
 	input := []Artifact{
 		{Path: "skills/a.md", Bytes: []byte("skill-a")},

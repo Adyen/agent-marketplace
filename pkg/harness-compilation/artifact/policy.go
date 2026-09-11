@@ -63,10 +63,18 @@ func (p ReconciliationPolicy) Validate(fragment bool) error {
 func (p ReconciliationPolicy) IsExternal() bool { return p.Mode == ReconciliationExternal }
 
 // Policy returns the validated policy, translating legacy fields for callers
-// that still construct Artifact literals. A new artifact cannot accidentally
-// combine external and marker ownership: Validate rejects that combination.
+// that still construct Artifact literals. An explicit non-zero policy is
+// authoritative: compatibility fields are ignored so an old producer cannot
+// override a typed ownership decision (or turn external reconciliation into a
+// marker conflict).
 func (a Artifact) Policy() (ReconciliationPolicy, error) {
-	p := a.Reconciliation
+	if a.Reconciliation != (ReconciliationPolicy{}) {
+		if err := a.Reconciliation.Validate(a.Fragment || a.MergeWithExisting); err != nil {
+			return ReconciliationPolicy{}, err
+		}
+		return a.Reconciliation, nil
+	}
+
 	legacy := ReconciliationPolicy{Mode: ReconciliationReplace}
 	if a.ExternalReconciliationRequired {
 		legacy.Mode = ReconciliationExternal
@@ -76,15 +84,10 @@ func (a Artifact) Policy() (ReconciliationPolicy, error) {
 	} else if a.ManagedByField != "" || a.ManagedByValue != "" {
 		legacy.MarkerField, legacy.MarkerValue = a.ManagedByField, a.ManagedByValue
 	}
-	if p == (ReconciliationPolicy{}) && legacy != (ReconciliationPolicy{}) {
-		p = legacy
-	} else if p != (ReconciliationPolicy{}) && legacy != (ReconciliationPolicy{}) && legacy != (ReconciliationPolicy{Mode: ReconciliationReplace}) && p != legacy {
-		return ReconciliationPolicy{}, fmt.Errorf("reconciliation policy conflicts with legacy ownership fields")
-	}
-	if err := p.Validate(a.Fragment || a.MergeWithExisting); err != nil {
+	if err := legacy.Validate(a.Fragment || a.MergeWithExisting); err != nil {
 		return ReconciliationPolicy{}, err
 	}
-	return p, nil
+	return legacy, nil
 }
 
 // Validate checks the path and closed reconciliation policy before any

@@ -659,6 +659,83 @@ func TestFinishCodexConversionReportsFailedPruneAfterCommit(t *testing.T) {
 	}
 }
 
+func TestConvertCommandToDevinPublishesCompleteSharedAggregates(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	stateRoot := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "demo-skill")
+	writeClaudePluginSharedConfig(t, srcDir,
+		`{"hooks":{"PreToolUse":[{"type":"command","command":"lint"}]}}`,
+		`{"mcpServers":{"docs":{"command":"docs-server"}}}`,
+	)
+	outDir := filepath.Join(t.TempDir(), "devin-out")
+	output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, srcDir)
+	if err != nil {
+		t.Fatalf("convert to Devin: %v\\n%s", err, output)
+	}
+	assertFileExists(t, filepath.Join(outDir, "skills", "demo-skill", "SKILL.md"))
+	assertFileExists(t, filepath.Join(outDir, "hooks.v1.json"))
+	assertFileExists(t, filepath.Join(outDir, "mcp_config.json"))
+	if _, err := os.Stat(filepath.Join(stateRoot, "agent-marketplace", "ownership")); !os.IsNotExist(err) {
+		t.Fatalf("conversion created durable ownership state: %v", err)
+	}
+}
+
+func TestConvertCommandToDevinSyncPrunesStaleOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	srcDir := t.TempDir()
+	writeClaudePluginSkill(t, srcDir, "stale-skill")
+	outDir := filepath.Join(t.TempDir(), "devin-out")
+	if output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, srcDir); err != nil {
+		t.Fatalf("initial Devin conversion: %v\\n%s", err, output)
+	}
+	stale := filepath.Join(outDir, "stale.txt")
+	writeFile(t, stale, "stale\\n")
+	if err := os.RemoveAll(filepath.Join(srcDir, "skills", "stale-skill")); err != nil {
+		t.Fatalf("remove source skill: %v", err)
+	}
+	output, err := executeCommand("convert", "--from", "claude", "--to", "devin", "--out", outDir, "--sync", srcDir)
+	if err != nil {
+		t.Fatalf("sync Devin conversion: %v\\n%s", err, output)
+	}
+	assertPathExistence(t, filepath.Join(outDir, "skills", "stale-skill", "SKILL.md"), false)
+	assertPathExistence(t, stale, false)
+}
+
+func TestPublishDevinConversionUsesCollisionSafeRecovery(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	stageDir, outDir := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(stageDir, "a.txt"), "replacement\n")
+	writeFile(t, filepath.Join(stageDir, "b.txt"), "second\n")
+	writeFile(t, filepath.Join(outDir, "a.txt"), "original\n")
+	const userBackup = "user backup must survive\n"
+	writeFile(t, filepath.Join(outDir, "a.txt.backup"), userBackup)
+
+	injected := errors.New("injected Devin publication failure")
+	calls := 0
+	err := publishConversionWith(stageDir, outDir, []string{"a.txt", "b.txt"}, nil, "Devin", func(publication codexConversionPublication) error {
+		calls++
+		if calls == 2 {
+			return injected
+		}
+		return publishCodexConversionFile(publication)
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("publish error = %v, want injected failure", err)
+	}
+	assertFileContents(t, filepath.Join(outDir, "a.txt"), "original\n")
+	assertFileContents(t, filepath.Join(outDir, "a.txt.backup"), userBackup)
+	assertPathExistence(t, filepath.Join(outDir, "b.txt"), false)
+}
+
 func writeClaudePluginSkill(t *testing.T, root, name string) {
 	t.Helper()
 	writeFile(t, filepath.Join(root, ".claude-plugin", "plugin.json"), `{"name":"test-plugin","version":"1.0.0"}`)

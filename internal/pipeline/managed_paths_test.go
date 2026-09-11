@@ -62,13 +62,9 @@ func machineScopeResolved(t *testing.T, sourceRoot string, target hcc.Target) []
 	}
 }
 
-// TestCollectManagedPathsCoversMachineScopeOutputs is a regression test for the
-// machine-scope Windsurf backup path divergence: materialization writes
-// machine-wide workflows under <machine root>/global_workflows, while
-// CollectManagedPaths used to derive relative paths from the repo-scope
-// component list (which contains "workflows"). Any top-level path that
-// machine-scope materialization actually writes must be covered by the managed
-// (backed up) path set.
+// TestCollectManagedPathsCoversMachineScopeOutputs checks that every top-level
+// path written by machine-scope materialization is included in the managed
+// (backed-up) path set. Windsurf uses global_workflows rather than workflows.
 func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 	for _, target := range []hcc.Target{
 		hcc.TargetWindsurf,
@@ -245,17 +241,12 @@ func machineScopeSkill(target hcc.Target) []resolver.ResolvedArtifact {
 	}}
 }
 
-// TestCollectManagedPathsCoversEveryDeclaredAggregate is the backup-coverage
-// half of bead agent-marketplace-5exj.27. Every machine-scope file a target
-// reconciles must be recoverable, either because the collector names it
-// directly (Gemini's settings.json, which sits at the Gemini machine root and
-// belongs to no component directory) or because it lives inside a component
-// directory that is archived whole (Claude's hooks/hooks.json inside hooks/).
-//
-// The expectation is the declared aggregate set, which
-// materialize.TestAggregateFilesMatchMaterializedMergeArtifacts independently
-// pins against what the compilers really emit. The two together are the proof
-// that every MUTATED aggregate is backed up.
+// TestCollectManagedPathsCoversEveryDeclaredAggregate checks backup coverage for
+// every machine-scope aggregate. The collector names root-level files directly
+// (such as Gemini's settings.json) and archives component directories that
+// contain aggregates (such as Claude's hooks/hooks.json). The declared set is
+// independently derived from compiled artifacts by
+// materialize.TestAggregateFilesMatchMaterializedMergeArtifacts.
 func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 	for _, target := range declaredTargets(t) {
 		t.Run(string(target), func(t *testing.T) {
@@ -273,7 +264,7 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 			}
 			for _, rel := range aggregates {
 				if !coveredByAncestor(rel, mp.RelPaths) {
-					t.Errorf("machine-scope aggregate %q of %s is MUTATED WITH NO SAFETY BACKUP: managed paths are %v", rel, target, mp.RelPaths)
+					t.Errorf("machine-scope aggregate %q of %s has no safety backup: managed paths are %v", rel, target, mp.RelPaths)
 				}
 			}
 			for i, rel := range mp.RelPaths {
@@ -290,9 +281,8 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 // aggregate file is destroyed after the backup is taken and must come back
 // byte-identical from backup.Restore.
 //
-// Before this bead, the Gemini subtest failed — settings.json is not inside any
-// Gemini component directory and was not declared, so nothing archived it while
-// every hook sync merged into it.
+// Gemini's settings.json is not inside a component directory, so this also
+// covers the root-level aggregate that hook sync updates.
 func TestDeclaredAggregatesAreRecoverableFromBackup(t *testing.T) {
 	for _, target := range declaredTargets(t) {
 		t.Run(string(target), func(t *testing.T) {

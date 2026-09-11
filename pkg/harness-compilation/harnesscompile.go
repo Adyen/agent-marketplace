@@ -598,21 +598,16 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		}
 	}
 
-	// Refuse legacy externally reconciled artifacts before fragment processing;
-	// this preserves the stable ownership error and guarantees no filesystem
-	// mutation even when an old producer omitted fragment metadata.
+	// Resolve ownership before fragment processing. Policy() translates old
+	// Artifact literals, while an explicit typed policy remains authoritative;
+	// refusing here guarantees no filesystem mutation for either representation.
 	for _, candidate := range r.Artifacts {
-		if candidate.ExternalReconciliationRequired {
+		// Keep the stable external refusal ahead of policy shape validation:
+		// legacy Artifact literals may omit fragment metadata, but they still
+		// must fail closed with ErrExternalReconciliationRequired.
+		if candidate.ExternalReconciliationRequired || (candidate.Reconciliation != (artifact.ReconciliationPolicy{}) && candidate.Reconciliation.IsExternal()) {
 			return nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: %w", candidate.Path, ErrExternalReconciliationRequired)
 		}
-	}
-
-	// Merge fragment artifacts before processing.
-	artifacts, err := artifact.MergeFragments(r.Artifacts)
-	if err != nil {
-		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
-	}
-	for _, candidate := range artifacts {
 		if candidate.Reconciliation != (artifact.ReconciliationPolicy{}) {
 			policy, policyErr := candidate.Policy()
 			if policyErr != nil {
@@ -624,6 +619,11 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (*WriteReport, e
 		}
 	}
 
+	// Merge fragment artifacts before processing.
+	artifacts, err := artifact.MergeFragments(r.Artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("harnesscompile.Materialize: merge fragments: %w", err)
+	}
 	// Validate all artifact paths and reject symlinked destination parents
 	// before any reads, writes, or stale-file discovery can follow them.
 	if err := rejectSymlinkedPathComponents(outDir); err != nil {
@@ -825,6 +825,7 @@ func sameArtifact(a, b Artifact) bool {
 		a.FragmentKey == b.FragmentKey &&
 		a.FragmentOrderKey == b.FragmentOrderKey &&
 		a.MergeWithExisting == b.MergeWithExisting &&
+		a.Reconciliation == b.Reconciliation &&
 		a.ExternalReconciliationRequired == b.ExternalReconciliationRequired &&
 		a.ManagedByField == b.ManagedByField &&
 		a.ManagedByValue == b.ManagedByValue &&
@@ -835,7 +836,11 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 	var regular []Artifact
 	var merged []Artifact
 	for _, a := range artifacts {
-		if !a.MergeWithExisting {
+		policy, err := a.Policy()
+		if err != nil {
+			return nil, nil, fmt.Errorf("harnesscompile.Materialize: artifact %q: invalid reconciliation policy: %w", a.Path, err)
+		}
+		if policy.Mode != artifact.ReconciliationMarker {
 			regular = append(regular, a)
 			continue
 		}
@@ -844,7 +849,7 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 		if err != nil && !os.IsNotExist(err) {
 			return nil, nil, fmt.Errorf("harnesscompile.Materialize: read %s: %w", a.Path, err)
 		}
-		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, a.ManagedByField, a.ManagedByValue)
+		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, policy.MarkerField, policy.MarkerValue)
 		if err != nil {
 			// The merge layer only sees bytes, so the destination path is added
 			// here — both to the error and to the log. The duplicated value is

@@ -245,7 +245,16 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 	if err != nil {
 		return nil, nil, err
 	}
-	return []artifact.Artifact{{Path: path, Bytes: raw, Fragment: true, FragmentKey: "hooks", FragmentOrderKey: h.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true, DedupeFragmentEntries: true}}, diagnostics, nil
+	return []artifact.Artifact{{
+		Path:                           path,
+		Bytes:                          raw,
+		Fragment:                       true,
+		FragmentKey:                    "hooks",
+		FragmentOrderKey:               h.Name(),
+		DedupeFragmentEntries:          true,
+		Reconciliation:                 artifact.ReconciliationPolicy{Mode: artifact.ReconciliationExternal},
+		ExternalReconciliationRequired: true,
+	}}, diagnostics, nil
 }
 
 func mcp(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -352,7 +361,15 @@ func mcp(m *ir.McpServer, opts compile.Options) ([]artifact.Artifact, []diag.Dia
 	if err != nil {
 		return nil, nil, err
 	}
-	return []artifact.Artifact{{Path: path, Bytes: raw, Fragment: true, FragmentKey: "mcp_servers", FragmentOrderKey: m.Name(), MergeWithExisting: true, ExternalReconciliationRequired: true}}, diagnostics, nil
+	return []artifact.Artifact{{
+		Path:                           path,
+		Bytes:                          raw,
+		Fragment:                       true,
+		FragmentKey:                    "mcp_servers",
+		FragmentOrderKey:               m.Name(),
+		Reconciliation:                 artifact.ReconciliationPolicy{Mode: artifact.ReconciliationExternal},
+		ExternalReconciliationRequired: true,
+	}}, diagnostics, nil
 }
 
 func codexResourcePath(kind ir.ResourceKind, name string) (string, error) {
