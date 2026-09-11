@@ -101,10 +101,10 @@ type AggregateFileSet struct {
 	User []string
 }
 
-// TargetInfo holds per-target metadata needed for materialization.
-// Consolidating this in one place means adding a new harness target
-// only requires updating the TargetInfo registry, not scattering
-// switch statements across the materialize package.
+// TargetInfo holds per-target metadata for legacy targets backed by
+// TargetInfoMap. Migrated Devin and Codex targets are composed through the
+// validated InstallationAdapterRegistry and use adapter-owned routing instead
+// of entries in this legacy registry.
 type TargetInfo struct {
 	Roots              Roots
 	Components         []string                   // subdirectory names within the install root (e.g. "skills", "commands")

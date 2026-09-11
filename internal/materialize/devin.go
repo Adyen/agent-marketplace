@@ -220,7 +220,8 @@ func (devinOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 }
 
 // reconcileDevinAggregates preserves the format-specific test and benchmark
-// seam while routing production reconciliation through adapter destinations.
+// seam while keeping its adapter-owned destination metadata aligned with the
+// production reconciliation path.
 func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey, outDir string, work *ownedJSONAggregateWork, dryRun bool) *Report {
 	registry, err := harness.NewInstallationAdapterRegistry()
 	if err != nil {

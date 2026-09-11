@@ -155,21 +155,24 @@ func skillMaterializedAt(root, name string, targets []hcc.Target) (hcc.Target, b
 // materialized for target under root (repo scope). Returns "" if the target is
 // unknown.
 func skillDir(target hcc.Target, root, name string) string {
-	if registry, err := harness.NewInstallationAdapterRegistry(); err == nil {
-		if _, migrated := registry.Lookup(target); migrated {
-			destinations, err := harness.ResolveDestinations(target, false, root)
-			if err != nil {
-				return ""
-			}
-			for _, destination := range destinations {
-				if destination.Info.SkillPathPattern == "" {
-					continue
-				}
-				skillRel := filepath.Dir(fmt.Sprintf(destination.Info.SkillPathPattern, name))
-				return filepath.Join(destination.Root, skillRel)
-			}
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		if harness.IsInstallationAdapterTarget(target) {
 			return ""
 		}
+	} else if _, migrated := registry.Lookup(target); migrated {
+		destinations, err := harness.ResolveDestinations(target, false, root)
+		if err != nil {
+			return ""
+		}
+		for _, destination := range destinations {
+			if destination.Info.SkillPathPattern == "" {
+				continue
+			}
+			skillRel := filepath.Dir(fmt.Sprintf(destination.Info.SkillPathPattern, name))
+			return filepath.Join(destination.Root, skillRel)
+		}
+		return ""
 	}
 	roots, ok := harness.InstallRoots[target]
 	if !ok {

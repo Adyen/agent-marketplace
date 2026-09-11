@@ -51,10 +51,6 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 	return nil
 }
 
-// TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly pins the two
-// halves of the preview contract: "`doctor --repair` previews exact adoption
-// matches and evidence-backed orphan candidates" and "off-TTY, `doctor --repair`
-// is preview-only".
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
 	previews, err := RepairPreviews(context.Background(), repoRoot, nil)
@@ -69,6 +65,10 @@ func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	}
 }
 
+// TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly pins the two
+// halves of the preview contract: "`doctor --repair` previews exact adoption
+// matches and evidence-backed orphan candidates" and "off-TTY, `doctor --repair`
+// is preview-only".
 func TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)

@@ -56,8 +56,9 @@ func (d Destination) RouteArtifact(path string) (string, error) {
 }
 
 // ResolveDestinations returns the native output roots for a target and scope.
-// Legacy targets retain one default destination; partitioned targets resolve
-// their native roots through the application-owned installation adapter registry.
+// Legacy targets retain one default destination; migrated targets resolve
+// through the application-owned installation adapter registry, regardless of
+// whether their native layout uses one root or multiple partitions.
 func ResolveDestinations(target hcc.Target, machineScope bool, repoRoot string) ([]Destination, error) {
 	homeDir := ""
 	if machineScope {

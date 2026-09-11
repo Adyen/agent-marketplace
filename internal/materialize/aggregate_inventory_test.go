@@ -119,7 +119,7 @@ func sortedKinds(m map[ir.ResourceKind]ir.Resource) []ir.ResourceKind {
 }
 
 // sortedTargets returns every legacy target plus every validated installation
-// adapter target, so the inventory tests cover the one final topology authority.
+// adapter target.
 func sortedTargets(t *testing.T) []hcc.Target {
 	t.Helper()
 	if err := harness.TargetInfoError(); err != nil {
@@ -185,11 +185,12 @@ func TestAggregateProbeCoversEveryCompilableKind(t *testing.T) {
 // TestAggregateFilesMatchMaterializedMergeArtifacts is the regression guard for
 // bead agent-marketplace-5exj.27.
 //
-// harness.TargetInfo.AggregateFiles is documented as the single source of truth
-// for the files a target merges into, and both safety-backup collection
-// (pipeline.CollectManagedPaths) and Devin's marker-strip fence
-// (aggregateProtectedPaths) read it. Four of six declarations had drifted from
-// what the compilers actually emit: Claude omitted hooks/hooks.json and
+// The TargetInfo returned by either the legacy map or an installation adapter
+// carries AggregateFiles as the single source of truth for the files a target
+// merges into. Both safety-backup collection (pipeline.CollectManagedPaths) and
+// the ownership-reconciled aggregate fence (aggregateProtectedPaths) read it.
+// Four of six declarations had drifted from what the compilers actually emit:
+// Claude omitted hooks/hooks.json and
 // .claude-plugin/plugin.json, Cursor omitted hooks/hooks.json, Factory declared
 // a settings.json nothing writes and omitted hooks/hooks.json, Gemini declared
 // an mcp.json nothing writes and omitted the settings.json it does write, and
@@ -215,7 +216,7 @@ func TestAggregateFilesMatchMaterializedMergeArtifacts(t *testing.T) {
 				sort.Strings(declared)
 
 				if !reflect.DeepEqual(declared, want) {
-					t.Errorf("harness.TargetInfoMap[%q].AggregateFiles (machine_scope=%v):\n declared = %v\n produced = %v\nDeclare exactly the files the compilers merge into: undeclared files are mutated with no safety backup, and declared files nothing emits are backed up for no reason.",
+					t.Errorf("target metadata for %q has incorrect AggregateFiles (machine_scope=%v):\n declared = %v\n produced = %v\nDeclare exactly the files the compilers merge into: undeclared files are mutated with no safety backup, and declared files nothing emits are backed up for no reason.",
 						target, machineScope, declared, want)
 				}
 			})
@@ -245,19 +246,18 @@ func TestAggregateFilesDeclarationIsCanonical(t *testing.T) {
 	}
 }
 
-// TestAggregateProtectedPathsStaysDevinOnly pins the fence against the REAL
-// registry: aggregateProtectedPaths keeps a target's aggregates out of the
-// marker-strip prune walk, and today exactly one target — Devin — is fenced.
-// Widening AggregateFiles for the five marker-merge targets (bead
-// agent-marketplace-5exj.27) must NOT widen that fence: excluding their
-// aggregates from the walk would silently stop pruning stale managed entries out
-// of hooks.json, mcp.json, plugin.json and settings.json.
+// aggregateProtectedPaths keeps a target's aggregates out of the marker-strip
+// prune walk, and today Devin and Codex are fenced. Widening AggregateFiles for
+// the five marker-merge targets (bead agent-marketplace-5exj.27) must NOT widen
+// that fence: excluding their aggregates from the walk would silently stop
+// pruning stale managed entries out of hooks.json, mcp.json, plugin.json and
+// settings.json.
 //
-// Bead agent-marketplace-5exj.29 changed WHY Devin is the only fenced target:
-// the predicate is now harness.TargetInfo.OwnershipReconciledAggregates rather
-// than SymlinkOnly. This test stays a statement about the registry as it stands;
-// TestAggregateProtectedPathsKeysOffOwnership below is the statement about the
-// predicate itself, over targets that do not exist yet.
+// Bead agent-marketplace-5exj.29 changed why ownership-reconciled targets are
+// fenced: the predicate is now harness.TargetInfo.OwnershipReconciledAggregates
+// rather than SymlinkOnly. This test stays a statement about the registry as it
+// stands; TestAggregateProtectedPathsKeysOffOwnership below is the statement
+// about the predicate itself, over targets that do not exist yet.
 func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 	codex := hcc.Target(targetmeta.TargetCodex)
 	for _, target := range sortedTargets(t) {
