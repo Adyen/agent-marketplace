@@ -3,10 +3,12 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -163,6 +165,98 @@ func TestValidateRelPath(t *testing.T) {
 			err := ValidateRelPath(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateRelPath(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestTargetInfoFromPartitionResourceDirs pins the scope-neutral ResourceDirs
+// derivation: flat resource patterns contribute their parent directory; a kind
+// with no per-resource path gets its install dir from an aggregate file only
+// when the project and user paths share one directory — a scope-variant
+// aggregate with divergent directories contributes no entry rather than
+// borrowing the project directory for user scope.
+func TestTargetInfoFromPartitionResourceDirs(t *testing.T) {
+	tests := []struct {
+		name      string
+		partition targetmeta.NativePartition
+		want      map[ir.ResourceKind]string
+	}{
+		{
+			name: "flat patterns derive their parent dirs; dir-shaped kinds do not",
+			partition: targetmeta.NativePartition{ResourcePaths: map[ir.ResourceKind]string{
+				ir.KindSkill:    "skills/%s/SKILL.md",
+				ir.KindCommand:  "commands/%s.md",
+				ir.KindSubagent: "agents/%s.md",
+			}},
+			want: map[ir.ResourceKind]string{
+				ir.KindCommand:  "commands",
+				ir.KindSubagent: "agents",
+			},
+		},
+		{
+			name: "aggregate under a component supplies the kind's dir",
+			partition: targetmeta.NativePartition{
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				Aggregates: []targetmeta.NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: targetmeta.NativeAggregateFile{Path: "hooks/hooks.json"},
+					User:    targetmeta.NativeAggregateFile{Path: "hooks/hooks.json"},
+				}},
+			},
+			want: map[ir.ResourceKind]string{ir.KindHook: "hooks"},
+		},
+		{
+			name: "scope-variant aggregate with divergent dirs contributes none",
+			partition: targetmeta.NativePartition{
+				Aggregates: []targetmeta.NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: targetmeta.NativeAggregateFile{Path: "hooks/hooks.v1.json"},
+					User:    targetmeta.NativeAggregateFile{Path: "settings/config.json", Member: "hooks"},
+				}},
+			},
+			want: nil,
+		},
+		{
+			name: "scope-variant file name in one directory still derives",
+			partition: targetmeta.NativePartition{
+				Aggregates: []targetmeta.NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: targetmeta.NativeAggregateFile{Path: "conf/hooks.v1.json"},
+					User:    targetmeta.NativeAggregateFile{Path: "conf/config.json", Member: "hooks"},
+				}},
+			},
+			want: map[ir.ResourceKind]string{ir.KindHook: "conf"},
+		},
+		{
+			name: "root-level aggregates contribute none",
+			partition: targetmeta.NativePartition{
+				Aggregates: []targetmeta.NativeAggregate{{
+					Kind:    ir.KindMcpServer,
+					Project: targetmeta.NativeAggregateFile{Path: "mcp_config.json"},
+					User:    targetmeta.NativeAggregateFile{Path: "mcp_config.json"},
+				}},
+			},
+			want: nil,
+		},
+		{
+			name: "kind with a resource path ignores its aggregate dir",
+			partition: targetmeta.NativePartition{
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.md"},
+				Aggregates: []targetmeta.NativeAggregate{{
+					Kind:    ir.KindSubagent,
+					Project: targetmeta.NativeAggregateFile{Path: "manifest/plugin.json"},
+					User:    targetmeta.NativeAggregateFile{Path: "manifest/plugin.json"},
+				}},
+			},
+			want: map[ir.ResourceKind]string{ir.KindSubagent: "agents"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := targetInfoFromPartition(tt.partition).ResourceDirs
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("targetInfoFromPartition().ResourceDirs = %v, want %v", got, tt.want)
 			}
 		})
 	}

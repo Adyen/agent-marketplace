@@ -42,7 +42,11 @@ type NativePartition struct {
 	// ResourcePaths maps a resource kind to the root-relative path pattern
 	// emitted for a named resource. Every pattern contains exactly one %s name
 	// placeholder; when the placeholder is itself a directory element
-	// (skills/%s/SKILL.md) the resource materializes as a directory.
+	// (skills/%s/SKILL.md) the resource materializes as a directory. The
+	// placeholder must begin a path element (commands/%s.md is valid; %s.md
+	// or a%sb.md are not) so the text before it names a real resource
+	// directory rather than deriving "." — the partition root — which
+	// consumers would register as a cleanup directory.
 	ResourcePaths map[ir.ResourceKind]string
 	// SkillDirKinds lists the kinds besides KindSkill that materialize as a
 	// resource directory rather than a flat file. Every listed kind must
@@ -56,7 +60,11 @@ type NativePartition struct {
 // NativeAggregateFile locates the shared file that carries one resource
 // kind's compiled entries within a single scope.
 type NativeAggregateFile struct {
-	// Path is the file path relative to the partition root.
+	// Path is the file path relative to the partition root. It names a file,
+	// never the partition root itself (".") or a directory the partition
+	// declares — equal to or an ancestor of a component or resource
+	// directory is rejected, because a file cannot occupy a path a declared
+	// directory needs.
 	Path string
 	// Member names the top-level member that carries the kind's entries when
 	// the file is a shared envelope rather than a file dedicated to the kind.
@@ -360,6 +368,10 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 // partitions is rejected as ambiguous.
 func validatePartitionContent(t Target, partition NativePartition, resourceKinds, aggregateKinds map[ir.ResourceKind]string) []error {
 	var errs []error
+	// dirClaims collects every directory the partition declares — its
+	// components and the resource directories its patterns derive — so an
+	// aggregate file path that equals or contains one is rejected.
+	dirClaims := make(map[string]bool)
 	seenComponents := make(map[string]bool, len(partition.Components))
 	for _, component := range partition.Components {
 		if !fs.ValidPath(component) {
@@ -368,6 +380,7 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 			errs = append(errs, fmt.Errorf("target %q partition %q declares component %q more than once", t, partition.ID, component))
 		}
 		seenComponents[component] = true
+		dirClaims[component] = true
 	}
 	for _, kind := range slices.Sorted(maps.Keys(partition.ResourcePaths)) {
 		pattern := partition.ResourcePaths[kind]
@@ -387,6 +400,15 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		}
 		if !fs.ValidPath(strings.Replace(pattern, "%s", "name", 1)) {
 			errs = append(errs, fmt.Errorf("target %q partition %q resource path for %s is not a valid relative path: %q", t, partition.ID, kind, pattern))
+		}
+		// The placeholder must begin a path element: a prefix not ending at
+		// a "/" boundary ("%s.md", "a%sb.md") derives a resource root of "."
+		// or a partial element, and consumers join that onto the install
+		// root as a cleanup directory.
+		if prefix, _, _ := strings.Cut(pattern, "%s"); strings.HasSuffix(prefix, "/") {
+			dirClaims[strings.TrimSuffix(prefix, "/")] = true
+		} else {
+			errs = append(errs, fmt.Errorf("target %q partition %q resource path for %s must start the %%s name placeholder at a path element boundary: %q", t, partition.ID, kind, pattern))
 		}
 	}
 	for _, kind := range slices.Sorted(maps.Keys(partition.SkillDirKinds)) {
@@ -419,6 +441,15 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		}{{"project", aggregate.Project}, {"user", aggregate.User}} {
 			if !fs.ValidPath(scope.file.Path) {
 				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid path %q", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path))
+			} else if scope.file.Path == "." {
+				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q naming the partition root, not a file", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path))
+			} else {
+				for _, dir := range slices.Sorted(maps.Keys(dirClaims)) {
+					if dir == scope.file.Path || strings.HasPrefix(dir, scope.file.Path+"/") {
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q that is or contains the declared directory %q", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path, dir))
+						break
+					}
+				}
 			}
 			if member := scope.file.Member; member != "" && (strings.ContainsAny(member, `/\`) || member == "." || member == "..") {
 				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid member %q", t, partition.ID, scope.name, aggregate.Kind, member))

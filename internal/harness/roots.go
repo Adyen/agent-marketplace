@@ -394,6 +394,12 @@ func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
 	if partition.Prefix != "." {
 		return TargetInfo{}, fmt.Errorf("harness: %s native layout partition %q has prefix %q; a legacy single-root partition covers the whole root", t, partition.ID, partition.Prefix)
 	}
+	return targetInfoFromPartition(partition), nil
+}
+
+// targetInfoFromPartition derives a TargetInfo's compiler-topology fields from
+// one whole-root native-layout partition.
+func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 	info := TargetInfo{
 		Components:    slices.Clone(partition.Components),
 		PlanStrategy:  PlanSubtree,
@@ -415,16 +421,22 @@ func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
 	// aggregate file lives under a component (Claude's hooks/hooks.json keeps
 	// hook resources under the hooks/ component). An aggregate at the
 	// partition root, like Devin's hooks.v1.json, contributes none.
+	// ResourceDirs is scope-neutral, so the fallback derives only when the
+	// project and user paths share one directory: a scope-variant aggregate
+	// whose directories diverge has no single install dir to describe, and
+	// borrowing the project directory would mis-describe user scope.
 	for _, aggregate := range partition.Aggregates {
 		if _, ok := partition.ResourcePaths[aggregate.Kind]; ok {
 			continue
 		}
-		if dir := path.Dir(aggregate.Project.Path); dir != "." {
-			if info.ResourceDirs == nil {
-				info.ResourceDirs = make(map[ir.ResourceKind]string)
-			}
-			info.ResourceDirs[aggregate.Kind] = dir
+		dir := path.Dir(aggregate.Project.Path)
+		if dir == "." || dir != path.Dir(aggregate.User.Path) {
+			continue
 		}
+		if info.ResourceDirs == nil {
+			info.ResourceDirs = make(map[ir.ResourceKind]string)
+		}
+		info.ResourceDirs[aggregate.Kind] = dir
 	}
 	for _, aggregate := range partition.Aggregates {
 		info.AggregateFiles.Project = appendUnique(info.AggregateFiles.Project, aggregate.Project.Path)
@@ -432,7 +444,7 @@ func targetInfoFromLayout(t targetmeta.Target) (TargetInfo, error) {
 	}
 	slices.Sort(info.AggregateFiles.Project)
 	slices.Sort(info.AggregateFiles.User)
-	return info, nil
+	return info
 }
 
 func MachineRoot(target hcc.Target) (string, bool) {

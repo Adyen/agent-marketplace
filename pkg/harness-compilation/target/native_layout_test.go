@@ -352,6 +352,45 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:   "flat resource pattern with placeholder suffix is valid",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "commands/%s.md"},
+			}}},
+		},
+		{
+			name:   "resource path placeholder in root element",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "a",
+				Prefix:        ".a",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "%s.md"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "resource path placeholder mid-element",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "a",
+				Prefix:        ".a",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "a%sb.md"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "resource path placeholder mid-element under a directory",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "a",
+				Prefix:        ".a",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "flat/cmd-%s.md"},
+			}}},
+			wantErr: true,
+		},
+		{
 			name:   "same resource kind in two partitions",
 			target: TargetCodex,
 			layout: NativeLayout{Partitions: []NativePartition{
@@ -466,6 +505,93 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 				}},
 			}}},
 			wantErr: true,
+		},
+		{
+			name:   "aggregate naming the partition root",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "a",
+				Prefix: ".a",
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "."},
+					User:    NativeAggregateFile{Path: "."},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate naming the partition root in one scope",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "a",
+				Prefix: ".a",
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "hooks.json"},
+					User:    NativeAggregateFile{Path: "."},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate equal to a declared component",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:         "a",
+				Prefix:     ".a",
+				Components: []string{"skills"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "skills"},
+					User:    NativeAggregateFile{Path: "skills"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate equal to a resource directory",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "a",
+				Prefix:        ".a",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "skills"},
+					User:    NativeAggregateFile{Path: "skills"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate ancestor of a declared component",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:         "a",
+				Prefix:     ".a",
+				Components: []string{"conf/hooks"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "conf"},
+					User:    NativeAggregateFile{Path: "conf"},
+				}},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate inside a declared component is valid",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:         "default",
+				Prefix:     ".",
+				Components: []string{"hooks"},
+				Aggregates: []NativeAggregate{{
+					Kind:    ir.KindHook,
+					Project: NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+					User:    NativeAggregateFile{Path: "hooks/hooks.json", Member: "hooks"},
+				}},
+			}}},
 		},
 		{
 			name:   "scope-variant aggregate is valid",
