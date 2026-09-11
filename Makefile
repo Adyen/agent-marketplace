@@ -7,7 +7,7 @@ CMD := ./cmd/agent-marketplace
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror.
-GO_BUILD_IMAGE ?= golang:1.26.6-alpine3.22
+GO_BUILD_IMAGE ?= golang:1.26.6-alpine3.23
 ALPINE_RUNTIME_IMAGE ?= alpine:3.22.1
 NODE_IMAGE ?= node:24-alpine
 POSTGRES_IMAGE ?= postgres:17.5-alpine
@@ -95,7 +95,7 @@ container-check: secrets-check
 	@test -s Dockerfile.marketplace
 	@test -s .dockerignore
 	@test -s web/Dockerfile
-	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
+	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.23$$/{goarg=1} /^ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{ALPINE_RUNTIME_IMAGE\} AS worker/{worker=1} /apk add --no-cache ca-certificates git/{git=1} /USER marketplace/{users++} END {if (!goarg || !runtimearg || !build || !flags || !api || !worker || !git || users < 2) exit 1}' Dockerfile.marketplace
 	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !build || !runtime || !workspace || !install || !user || !health) exit 1}' web/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'ALPINE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
@@ -105,7 +105,7 @@ container-check: secrets-check
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg GO_BUILD_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg ALPINE_RUNTIME_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 1
-	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.22$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx) exit 1}' Makefile
+	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.6-alpine3.23$$/{go=1} /^ALPINE_RUNTIME_IMAGE \?= alpine:3.22.1$$/{alpine=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} END {if (!go || !alpine || !node || !postgres || !nginx) exit 1}' Makefile
 	@if git grep -nEI '(ARG[[:space:]]+[A-Z_]*IMAGE|^[A-Z_]*IMAGE=|image:).*([[:alnum:]-]+\.)+[[:alnum:]-]+(:[0-9]+)?/' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
 		echo "ERROR: tracked container image configuration contains a registry hostname; use an environment override instead"; exit 1; \
 	fi
@@ -211,6 +211,18 @@ devin-probe:
 	@echo "Running local Devin runtime probes (isolated HOME; read-only commands) ..."
 	@AGENT_MARKETPLACE_DEVIN_PROBES=1 DEVIN_PROBE_REQUIRE=$(DEVIN_PROBE_REQUIRE) \
 		$(GO) test -v -count=1 -timeout 10m ./internal/devinprobe/
+
+.PHONY: harness-compat-check harness-compat-config
+
+harness-compat-check:
+	$(GO) test ./tools/harness-compat
+	HARNESS_COMPAT_TARGET= $(GO) -C e2e test -count=1 -run '^TestCompatibility' .
+	shellcheck tools/harness-compat/*.sh
+
+harness-compat-config:
+	HARNESS_COMPAT_TARGET=all HARNESS_COMPAT_NATIVE_MODE=unavailable \
+		HARNESS_COMPAT_NATIVE_REASON="Configuration-only verification; native probes run in CI" \
+		$(GO) -C e2e test -count=1 -timeout 15m -run '^TestHarnessCompatibility$$' .
 
 TUI_QA_PNPM_VERSION := 11.20.0
 TUI_QA_BINARY := $(CURDIR)/.local/agent-marketplace/bin/agent-marketplace-tui-qa

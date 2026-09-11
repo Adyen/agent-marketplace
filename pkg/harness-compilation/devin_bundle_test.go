@@ -552,27 +552,43 @@ func TestDevinBundleMergesHookFragments(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "read-guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "read-guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "edit-guard.sh",
-      "matcher": "Edit",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "edit-guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Edit"
     }
   ],
   "SessionStart": [
     {
-      "command": "seed.sh",
-      "timeout": 30,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "seed.sh",
+          "timeout": 30,
+          "type": "command"
+        }
+      ]
     }
   ],
   "UserPromptSubmit": [
     {
-      "prompt": "Summarize the diff",
-      "type": "prompt"
+      "hooks": [
+        {
+          "prompt": "Summarize the diff",
+          "type": "prompt"
+        }
+      ]
     }
   ]
 }`,
@@ -585,27 +601,43 @@ func TestDevinBundleMergesHookFragments(t *testing.T) {
   "hooks": {
     "PreToolUse": [
       {
-        "command": "read-guard.sh",
-        "matcher": "Read",
-        "type": "command"
+        "hooks": [
+          {
+            "command": "read-guard.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Read"
       },
       {
-        "command": "edit-guard.sh",
-        "matcher": "Edit",
-        "type": "command"
+        "hooks": [
+          {
+            "command": "edit-guard.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit"
       }
     ],
     "SessionStart": [
       {
-        "command": "seed.sh",
-        "timeout": 30,
-        "type": "command"
+        "hooks": [
+          {
+            "command": "seed.sh",
+            "timeout": 30,
+            "type": "command"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
       {
-        "prompt": "Summarize the diff",
-        "type": "prompt"
+        "hooks": [
+          {
+            "prompt": "Summarize the diff",
+            "type": "prompt"
+          }
+        ]
       }
     ]
   }
@@ -665,9 +697,13 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -681,14 +717,22 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "guard.sh",
-      "matcher": "Edit",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Edit"
     }
   ]
 }`,
@@ -702,14 +746,22 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "other.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "other.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -723,16 +775,24 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "timeout": 30,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "timeout": 30,
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "timeout": 60,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "timeout": 60,
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -746,15 +806,23 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "timeout": 0,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "timeout": 0,
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -768,16 +836,24 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "showOutput": true,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "showOutput": true,
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "showOutput": false,
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "showOutput": false,
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -791,8 +867,12 @@ func TestDevinBundleCollapsesDuplicateHookBehaviorTuples(t *testing.T) {
 			wantBytes: `{
   "SessionStart": [
     {
-      "command": "seed.sh",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "seed.sh",
+          "type": "command"
+        }
+      ]
     }
   ]
 }`,
@@ -829,14 +909,22 @@ func TestDevinBundleDuplicateCollapseIsOrderIndependent(t *testing.T) {
 	want := `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     },
     {
-      "command": "other.sh",
-      "matcher": "Edit",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "other.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Edit"
     }
   ]
 }`
@@ -904,9 +992,13 @@ func TestDevinBundleBadHookDoesNotSuppressGoodOnes(t *testing.T) {
 		"hooks.v1.json": `{
   "PreToolUse": [
     {
-      "command": "guard.sh",
-      "matcher": "Read",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "guard.sh",
+          "type": "command"
+        }
+      ],
+      "matcher": "Read"
     }
   ]
 }`,
@@ -1124,8 +1216,12 @@ func TestDevinBundleValidMcpServersSurviveSiblingFailures(t *testing.T) {
 		"hooks.v1.json": `{
   "PreToolUse": [
     {
-      "command": "check.sh",
-      "type": "command"
+      "hooks": [
+        {
+          "command": "check.sh",
+          "type": "command"
+        }
+      ]
     }
   ]
 }`,
