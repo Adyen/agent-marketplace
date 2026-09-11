@@ -1,4 +1,4 @@
-ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.22
+ARG GO_BUILD_IMAGE=golang:1.26.6-alpine3.23
 ARG ALPINE_RUNTIME_IMAGE=alpine:3.22.1
 ARG BUILD_CA_CERT_PATH=/etc/ssl/certs/ca-certificates.crt
 
