@@ -169,28 +169,28 @@ func TestRunIdempotentSecondRunSkips(t *testing.T) {
 	}
 }
 
-func TestRunNilHarnessesDefaultsToClaude(t *testing.T) {
+func TestRunNilHarnessesRejectedWithoutClaudeOutput(t *testing.T) {
 	repoRoot := t.TempDir()
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	t.Setenv("HOME", t.TempDir())
 
-	irSkill := ir.NewSkill("default-target-skill", "Default target", "Body", nil, nil, ir.SourceRef{})
+	irSkill := ir.NewSkill("unspecified-target-skill", "Unspecified target", "Body", nil, nil, ir.SourceRef{})
 	resolved := []resolver.ResolvedArtifact{
 		{
-			Entry:     catalog.Entry{Name: "default-target-skill", Resource: irSkill},
+			Entry:     catalog.Entry{Name: "unspecified-target-skill", Resource: irSkill},
 			Source:    config.RepoCommitted,
-			Harnesses: nil, // nil defaults to [TargetClaude]
+			Harnesses: nil,
 		},
 	}
 
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("expected diagnostic report, got error %v", err)
 	}
-
-	_, ok := report.PerTarget[hcc.TargetClaude]
-	if !ok {
-		t.Fatal("expected Claude target report when Harnesses is nil")
+	if !hasDiagCode(report.Diags, "materialize.target.nil") {
+		t.Fatalf("expected nil target diagnostic, got %#v", report.Diags)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("nil target intent must not create Claude output, stat error=%v", err)
 	}
 }
 
@@ -217,6 +217,35 @@ func TestRunEmptyHarnessesSkipsSkill(t *testing.T) {
 		if len(tr.Written) != 0 {
 			t.Fatalf("expected no written files for opted-out skill, got %v", tr.Written)
 		}
+	}
+}
+
+func TestRunEmptyHarnessesIsIntentionalNoOp(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	resource := ir.NewSkill("retained-skill", "Retained", "Body", nil, nil, ir.SourceRef{})
+	selected := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "retained-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude},
+	}}
+	first, err := Run(context.Background(), repoRoot, selected)
+	if err != nil || first.TotalWritten() == 0 {
+		t.Fatalf("positive control should materialize before no-op: report=%#v err=%v", first, err)
+	}
+
+	noOp := selected
+	noOp[0].Harnesses = []hcc.Target{}
+	second, err := Run(context.Background(), repoRoot, noOp)
+	if err != nil {
+		t.Fatalf("explicit empty target list: %v", err)
+	}
+	if second.TotalWritten() != 0 || second.TotalRemoved() != 0 {
+		t.Fatalf("explicit empty target list must not write or prune: written=%d removed=%d", second.TotalWritten(), second.TotalRemoved())
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); err != nil {
+		t.Fatalf("explicit empty target list must preserve prior output: %v", err)
 	}
 }
 

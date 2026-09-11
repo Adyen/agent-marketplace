@@ -4553,3 +4553,145 @@ func resolvedNames(got []ResolvedArtifact) map[string]bool {
 	}
 	return names
 }
+
+func TestResolveRequirementsAreTargetAndScopeQualified(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		provider     config.RegistryEntry
+		providerKind config.KindSelector
+	}{
+		{
+			name: "different target",
+			provider: config.RegistryEntry{
+				URL:       "git@example.com:provider.git",
+				Ref:       "main",
+				Source:    config.RepoCommitted,
+				Harnesses: []string{string(hcc.TargetFactory)},
+			},
+			providerKind: config.KindSelector{Include: []string{"provider"}},
+		},
+		{
+			name: "different scope",
+			provider: config.RegistryEntry{
+				URL:       "git@example.com:provider.git",
+				Ref:       "main",
+				Source:    config.UserPersonal,
+				Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			providerKind: config.KindSelector{Include: []string{"provider"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			consumer := config.RegistryEntry{
+				URL:       "git@example.com:consumer.git",
+				Ref:       "main",
+				Source:    config.RepoCommitted,
+				Skills:    ks("consumer"),
+				Harnesses: []string{string(hcc.TargetClaude)},
+			}
+			test.provider.MCP = test.providerKind
+			cfg := &config.Config{Registries: []config.RegistryEntry{consumer, test.provider}}
+			setCatalogKeys(cfg)
+			catalogs := map[string][]catalog.Entry{
+				ck(consumer.URL, consumer.Ref):           {{Kind: ir.KindSkill, Name: "consumer", Resource: requirementTestSkillNamed("consumer", "provider")}},
+				ck(test.provider.URL, test.provider.Ref): {{Kind: ir.KindMcpServer, Name: "provider"}},
+			}
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(resolved) != 2 {
+				t.Fatalf("resolved %d artifacts, want consumer and provider", len(resolved))
+			}
+			var found bool
+			for _, err := range errs {
+				var warning *UnmetRequirementWarning
+				if errors.As(err, &warning) && warning.ResourceName == "consumer" && warning.Requirement.Name == "provider" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected target/scope-qualified unmet requirement, got %v", errs)
+			}
+		})
+	}
+}
+
+func TestResolveDisjointTargetResourcesRemainAvailable(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref):   {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "first", "", nil, nil, ir.SourceRef{})}},
+		ck(second.URL, second.Ref): {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "second", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("disjoint target resolution errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("resolved %d artifacts, want one per target-qualified source", len(resolved))
+	}
+	seen := map[hcc.Target]bool{}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected resolved artifact %#v", artifact)
+		}
+		seen[artifact.Harnesses[0]] = true
+	}
+	if !seen[hcc.TargetClaude] || !seen[hcc.TargetFactory] {
+		t.Fatalf("disjoint target resources lost a partition: %v", seen)
+	}
+}
+
+func TestResolveSamePartitionRetainsCollisionWinnerPolicy(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref):   {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "first", "", nil, nil, ir.SourceRef{})}},
+		ck(second.URL, second.Ref): {{Kind: ir.KindSkill, Name: "shared", Resource: ir.NewSkill("shared", "second", "", nil, nil, ir.SourceRef{})}},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(resolved) != 1 || resolved[0].RegistryURL != first.URL || !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) {
+		t.Fatalf("same-partition winner = %#v, want first source in Claude partition", resolved)
+	}
+	if len(errs) != 1 || !IsNameCollision(errs[0]) {
+		t.Fatalf("same-partition collision diagnostics = %v, want one collision warning", errs)
+	}
+}
+
+func TestResolveCollectionExpansionRetainsDisjointTargets(t *testing.T) {
+	first := config.RegistryEntry{URL: "git@example.com:first.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetClaude)}}
+	second := config.RegistryEntry{URL: "git@example.com:second.git", Ref: "main", Source: config.RepoCommitted, Collections: ks("tools"), Harnesses: []string{string(hcc.TargetFactory)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{first, second}}
+	setCatalogKeys(cfg)
+	member := ir.NewSkill("shared", "member", "", nil, nil, ir.SourceRef{})
+	collection := ir.NewCollection("tools", "", "", []ir.CollectionMember{{Name: "shared", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(first.URL, first.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: collection},
+			{Kind: ir.KindSkill, Name: "shared", Resource: member},
+		},
+		ck(second.URL, second.Ref): {
+			{Kind: ir.KindCollection, Name: "tools", Resource: collection},
+			{Kind: ir.KindSkill, Name: "shared", Resource: member},
+		},
+	}
+	resolved, errs := Resolve(cfg, catalogs, nil)
+	if len(errs) != 0 {
+		t.Fatalf("disjoint collection errors = %v", errs)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("expanded %d artifacts, want one member per target partition", len(resolved))
+	}
+	seen := map[hcc.Target]bool{}
+	for _, artifact := range resolved {
+		if artifact.Name != "shared" || artifact.Via == "" || len(artifact.Harnesses) != 1 {
+			t.Fatalf("unexpected expanded artifact %#v", artifact)
+		}
+		seen[artifact.Harnesses[0]] = true
+	}
+	if !seen[hcc.TargetClaude] || !seen[hcc.TargetFactory] {
+		t.Fatalf("collection member was not retained per target: %v", seen)
+	}
+}
