@@ -4681,3 +4681,128 @@ func TestResolveCollectionDirectOverlapSubtractsOnlyOverlappingTarget(t *testing
 		}
 	}
 }
+
+func TestResolveSameTargetScopesAndCollisionsAreOrderIndependent(t *testing.T) {
+	type artifactView struct {
+		Name        string
+		Description string
+		URL         string
+		Path        string
+		Source      config.Source
+		Harnesses   []hcc.Target
+	}
+
+	build := func(reverseRegistries, reverseCatalogs bool) (*config.Config, map[string][]catalog.Entry) {
+		registries := []config.RegistryEntry{
+			{
+				URL: "git@example.com:machine-z.git", Ref: "main", Source: config.UserPersonal,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			{
+				URL: "git@example.com:machine-a.git", Ref: "main", Source: config.UserPersonal,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+			{
+				URL: "git@example.com:repo.git", Ref: "main", Source: config.RepoCommitted,
+				Skills: ks("shared"), Harnesses: []string{string(hcc.TargetClaude)},
+			},
+		}
+		if reverseRegistries {
+			slices.Reverse(registries)
+		}
+		cfg := &config.Config{Registries: registries}
+		setCatalogKeys(cfg)
+
+		catalogs := make(map[string][]catalog.Entry, len(cfg.Registries))
+		for _, entry := range cfg.Registries {
+			entries := []catalog.Entry{
+				{
+					Kind: ir.KindSkill, Name: "shared", Description: entry.URL,
+					Path:     "/cache/" + strings.TrimSuffix(strings.TrimPrefix(entry.URL, "git@example.com:"), ".git") + "/shared",
+					Resource: ir.NewSkill("shared", "order-independent resource", "", nil, nil, ir.SourceRef{}),
+				},
+				{Kind: ir.KindSkill, Name: "catalog-order-control", Path: "/cache/control"},
+			}
+			if reverseCatalogs {
+				slices.Reverse(entries)
+			}
+			catalogs[entry.CatalogKey] = entries
+		}
+		return cfg, catalogs
+	}
+
+	view := func(t *testing.T, resolved []ResolvedArtifact) map[config.Source]artifactView {
+		t.Helper()
+		if len(resolved) != 2 {
+			t.Fatalf("resolved %d artifacts, want machine and repository occurrences: %#v", len(resolved), resolved)
+		}
+		got := make(map[config.Source]artifactView, len(resolved))
+		for _, artifact := range resolved {
+			if artifact.Name != "shared" {
+				t.Fatalf("unexpected resolved artifact: %#v", artifact)
+			}
+			if artifact.Resource == nil {
+				t.Fatalf("resolved artifact lost its machine/repository resource: %#v", artifact)
+			}
+			if _, exists := got[artifact.Source]; exists {
+				t.Fatalf("resolved duplicate scope %s: %#v", artifact.Source, resolved)
+			}
+			got[artifact.Source] = artifactView{
+				Name: artifact.Name, Description: artifact.Description, URL: artifact.RegistryURL, Path: artifact.Path,
+				Source: artifact.Source, Harnesses: artifact.Harnesses,
+			}
+		}
+		return got
+	}
+
+	want := map[config.Source]artifactView{
+		config.UserPersonal: {
+			Name: "shared", Description: "git@example.com:machine-a.git", URL: "git@example.com:machine-a.git", Path: "/cache/machine-a/shared",
+			Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude},
+		},
+		config.RepoCommitted: {
+			Name: "shared", Description: "git@example.com:repo.git", URL: "git@example.com:repo.git", Path: "/cache/repo/shared",
+			Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude},
+		},
+	}
+
+	var first map[config.Source]artifactView
+	for _, tc := range []struct {
+		name              string
+		reverseRegistries bool
+		reverseCatalogs   bool
+	}{
+		{name: "declared order", reverseRegistries: false, reverseCatalogs: false},
+		{name: "reversed registries", reverseRegistries: true, reverseCatalogs: false},
+		{name: "reversed catalogs", reverseRegistries: false, reverseCatalogs: true},
+		{name: "reversed registries and catalogs", reverseRegistries: true, reverseCatalogs: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, catalogs := build(tc.reverseRegistries, tc.reverseCatalogs)
+			resolved, errs := Resolve(cfg, catalogs, nil)
+			if len(errs) != 1 {
+				t.Fatalf("Resolve() errors = %v, want one same-scope collision warning", errs)
+			}
+			var warning *NameCollisionWarning
+			if !errors.As(errs[0], &warning) {
+				t.Fatalf("Resolve() error = %T, want NameCollisionWarning: %v", errs[0], errs[0])
+			}
+			if warning.Name != "shared" || warning.Winner != "git@example.com:machine-a" {
+				t.Fatalf("same-scope collision winner = %#v, want machine-a", warning)
+			}
+			if !slices.Equal(warning.RunnersUp, []string{"git@example.com:machine-z"}) {
+				t.Fatalf("same-scope collision runners-up = %v, want machine-z", warning.RunnersUp)
+			}
+
+			got := view(t, resolved)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("resolved machine/repository artifacts = %#v, want %#v", got, want)
+			}
+			if first == nil {
+				first = got
+			} else if !reflect.DeepEqual(got, first) {
+				t.Fatalf("resolved artifacts changed with input order: %#v vs %#v", got, first)
+			}
+		})
+	}
+}
