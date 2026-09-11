@@ -249,6 +249,64 @@ func TestRunEmptyHarnessesIsIntentionalNoOp(t *testing.T) {
 	}
 }
 
+func TestRunNilHarnessesRejectedForUnresolvedInput(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:      catalog.Entry{Name: "unresolved-target-skill", Resource: ir.NewSkill("unresolved-target-skill", "Unresolved", "Body", nil, nil, ir.SourceRef{})},
+		Source:     config.RepoCommitted,
+		Harnesses:  nil,
+		Unresolved: true,
+	}}
+
+	report, err := Run(context.Background(), repoRoot, resolved)
+	if err != nil {
+		t.Fatalf("expected diagnostic report, got error %v", err)
+	}
+	if !hasDiagCode(report.Diags, "materialize.target.nil") {
+		t.Fatalf("expected nil target diagnostic for unresolved input, got %#v", report.Diags)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("unresolved nil target must not create Claude output, stat error=%v", err)
+	}
+}
+
+func TestRunMixedExplicitEmptyPreservesStalePartition(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	resource := ir.NewSkill("partitioned-skill", "Partitioned", "Body", nil, nil, ir.SourceRef{})
+	initial := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "partitioned-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory},
+	}}
+	first, err := Run(context.Background(), repoRoot, initial)
+	if err != nil || first.TotalWritten() == 0 {
+		t.Fatalf("positive control should materialize both partitions: report=%#v err=%v", first, err)
+	}
+
+	claudeOnly := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Name: "partitioned-skill", Resource: resource},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{hcc.TargetClaude},
+	}, {
+		Entry:     catalog.Entry{Name: "opted-out", Resource: ir.NewSkill("opted-out", "Opted out", "Body", nil, nil, ir.SourceRef{})},
+		Source:    config.RepoCommitted,
+		Harnesses: []hcc.Target{},
+	}}
+	second, err := Run(context.Background(), repoRoot, claudeOnly)
+	if err != nil {
+		t.Fatalf("mixed explicit-empty run: %v", err)
+	}
+	factorySkill := filepath.Join(repoRoot, ".factory", "skills", "partitioned-skill")
+	if _, err := os.Lstat(factorySkill); err != nil {
+		t.Fatalf("explicit-empty intent must preserve Factory partition, got err=%v report=%#v", err, second)
+	}
+	if len(second.PerTarget[hcc.TargetFactory].Removed) != 0 {
+		t.Fatalf("explicit-empty Factory partition must not prune: %v", second.PerTarget[hcc.TargetFactory].Removed)
+	}
+}
+
 func TestRunMultipleTargets(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()

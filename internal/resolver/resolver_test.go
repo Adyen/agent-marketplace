@@ -4318,6 +4318,94 @@ func TestResolveTargetHarnesses(t *testing.T) {
 	})
 }
 
+func TestResolveNestedCollectionFiltersIncompatibleOwnersBeforePrecedence(t *testing.T) {
+	parent := config.RegistryEntry{
+		URL:         "git@example.com:parent.git",
+		Ref:         "main",
+		Source:      config.RepoCommitted,
+		Collections: ks("root"),
+		Harnesses:   []string{string(hcc.TargetClaude)},
+	}
+	factoryOwner := config.RegistryEntry{
+		URL:       "git@example.com:nested.git",
+		Ref:       "main",
+		Source:    config.UserPersonal,
+		Harnesses: []string{string(hcc.TargetFactory)},
+	}
+	claudeOwner := config.RegistryEntry{
+		URL:       "git@example.com:nested.git",
+		Ref:       "main",
+		Source:    config.RepoCommitted,
+		Harnesses: []string{string(hcc.TargetClaude)},
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{parent, factoryOwner, claudeOwner}}
+	setCatalogKeys(cfg)
+	root := ir.NewCollection("root", "", "", nil, []string{"nested"}, nil, ir.SourceRef{})
+	nested := ir.NewCollection("nested", "", "", []ir.CollectionMember{{Name: "nested-skill", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(parent.URL, parent.Ref):             {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+		ck(factoryOwner.URL, factoryOwner.Ref): {{Kind: ir.KindCollection, Name: "nested", Resource: nested}, {Kind: ir.KindSkill, Name: "nested-skill", Resource: ir.NewSkill("nested-skill", "Factory", "", nil, nil, ir.SourceRef{})}},
+		ck(claudeOwner.URL, claudeOwner.Ref):   {{Kind: ir.KindCollection, Name: "nested", Resource: nested}, {Kind: ir.KindSkill, Name: "nested-skill", Resource: ir.NewSkill("nested-skill", "Claude", "", nil, nil, ir.SourceRef{})}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
+	if len(errs) != 0 {
+		t.Fatalf("nested target qualification errors = %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "nested-skill" {
+		t.Fatalf("resolved nested artifacts = %#v, want Claude-compatible member", resolved)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) || resolved[0].RegistryURL != claudeOwner.URL {
+		t.Fatalf("nested winner = %#v, want compatible Claude owner", resolved[0])
+	}
+}
+
+func TestResolveCollectionMemberBindingUsesParentTargetBeforeOwnerPrecedence(t *testing.T) {
+	parent := config.RegistryEntry{
+		URL:         "git@example.com:parent-members.git",
+		Ref:         "main",
+		Source:      config.RepoCommitted,
+		Collections: ks("root"),
+		Harnesses:   []string{string(hcc.TargetClaude)},
+	}
+	high := config.RegistryEntry{URL: "git@example.com:member-owner.git", Ref: "main", Source: config.UserPersonal, Harnesses: []string{string(hcc.TargetFactory)}}
+	low := config.RegistryEntry{URL: "git@example.com:member-owner.git", Ref: "main", Source: config.RepoCommitted, Harnesses: []string{string(hcc.TargetClaude)}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{parent, high, low}}
+	setCatalogKeys(cfg)
+	root := ir.NewCollection("root", "", "", []ir.CollectionMember{{Registry: high.URL, Name: "member", Kind: ir.KindSkill}}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		ck(parent.URL, parent.Ref): {{Kind: ir.KindCollection, Name: "root", Resource: root}},
+		ck(high.URL, high.Ref):     {{Kind: ir.KindSkill, Name: "member", Resource: ir.NewSkill("member", "Factory", "", nil, nil, ir.SourceRef{})}},
+		ck(low.URL, low.Ref):       {{Kind: ir.KindSkill, Name: "member", Resource: ir.NewSkill("member", "Claude", "", nil, nil, ir.SourceRef{})}},
+	}
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithTargetHarnesses([]hcc.Target{hcc.TargetClaude, hcc.TargetFactory}))
+	if len(errs) != 0 {
+		t.Fatalf("member target qualification errors = %v", errs)
+	}
+	if len(resolved) != 1 || resolved[0].Name != "member" || resolved[0].RegistryURL != low.URL {
+		t.Fatalf("resolved member = %#v, want compatible owner", resolved)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) || resolved[0].Resource == nil {
+		t.Fatalf("resolved member target/resource = %#v, want Claude member", resolved[0])
+	}
+}
+
+func TestValidateRequirementsChecksEveryExplicitTarget(t *testing.T) {
+	resolved := []ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindMcpServer, Name: "provider", Resource: ir.NewMcpServer("provider", "", nil, nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude}},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "consumer", Resource: requirementTestSkillNamed("consumer", "provider")}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetClaude, hcc.TargetFactory}},
+	}
+	warnings := validateRequirements(resolved)
+	if len(warnings) != 1 {
+		t.Fatalf("multi-target requirements = %v, want one unmet Factory partition", warnings)
+	}
+	var unmet *UnmetRequirementWarning
+	if !errors.As(warnings[0], &unmet) || unmet.ResourceName != "consumer" || unmet.Requirement.Name != "provider" {
+		t.Fatalf("unexpected requirement warning = %v", warnings[0])
+	}
+}
+
 type contextCapturingMarketplaceResolver struct {
 	got context.Context
 }
