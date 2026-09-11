@@ -297,7 +297,10 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 		{
 			name:   "valid machine root env",
 			target: TargetCodex,
-			layout: NativeLayout{Partitions: []NativePartition{{ID: "a", Prefix: ".a", MachineRootEnv: "CODEX_HOME"}}},
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID: "a", Prefix: ".a", MachineRootEnv: "CODEX_HOME",
+				Components: []string{"agents"},
+			}}},
 		},
 		{
 			name:    "invalid component",
@@ -605,6 +608,177 @@ func TestValidateNativeLayoutRejectsInvalidDeclarations(t *testing.T) {
 					User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
 				}},
 			}}},
+		},
+		{
+			name:    "component naming the partition root",
+			target:  TargetClaude,
+			layout:  NativeLayout{Partitions: []NativePartition{{ID: "default", Prefix: ".", Components: []string{"."}}}},
+			wantErr: true,
+		},
+		{
+			name:    "multi-element component",
+			target:  TargetClaude,
+			layout:  NativeLayout{Partitions: []NativePartition{{ID: "default", Prefix: ".", Components: []string{"a/b"}}}},
+			wantErr: true,
+		},
+		{
+			name:   "nested partition prefixes",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{
+				{ID: "a", Prefix: ".a", Components: []string{"x"}},
+				{ID: "b", Prefix: ".a/b", Components: []string{"y"}},
+			}},
+			wantErr: true,
+		},
+		{
+			name:   "nested partition prefixes reversed",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{
+				{ID: "a", Prefix: ".a/b", Components: []string{"x"}},
+				{ID: "b", Prefix: ".a", Components: []string{"y"}},
+			}},
+			wantErr: true,
+		},
+		{
+			name:   "directory-shaped pattern without skill directory declaration",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindCommand: "commands/%s/main.md"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "flat skill pattern",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s.md"},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate ancestor of another aggregate",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "default",
+				Prefix: ".",
+				Aggregates: []NativeAggregate{
+					{
+						Kind:    ir.KindHook,
+						Project: NativeAggregateFile{Path: "conf"},
+						User:    NativeAggregateFile{Path: "conf"},
+					},
+					{
+						Kind:    ir.KindMcpServer,
+						Project: NativeAggregateFile{Path: "conf/hooks.json"},
+						User:    NativeAggregateFile{Path: "conf/hooks.json"},
+					},
+				},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "aggregate ancestor of another aggregate in user scope only",
+			target: TargetDevin,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "default",
+				Prefix: ".",
+				Aggregates: []NativeAggregate{
+					{
+						Kind:    ir.KindHook,
+						Project: NativeAggregateFile{Path: "hooks.v1.json"},
+						User:    NativeAggregateFile{Path: "conf"},
+					},
+					{
+						Kind:    ir.KindMcpServer,
+						Project: NativeAggregateFile{Path: "mcp_config.json", Member: "mcpServers"},
+						User:    NativeAggregateFile{Path: "conf/mcp.json", Member: "mcpServers"},
+					},
+				},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "two kinds claiming the same path and member",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "default",
+				Prefix: ".",
+				Aggregates: []NativeAggregate{
+					{
+						Kind:    ir.KindHook,
+						Project: NativeAggregateFile{Path: "config.json", Member: "hooks"},
+						User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+					},
+					{
+						Kind:    ir.KindMcpServer,
+						Project: NativeAggregateFile{Path: "config.json", Member: "hooks"},
+						User:    NativeAggregateFile{Path: "config.json", Member: "hooks"},
+					},
+				},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:   "same path different members is a legal shared envelope",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:     "default",
+				Prefix: ".",
+				Aggregates: []NativeAggregate{
+					{
+						Kind:    ir.KindHook,
+						Project: NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
+						User:    NativeAggregateFile{Path: "plugin.json", Member: "hooks"},
+					},
+					{
+						Kind:    ir.KindMcpServer,
+						Project: NativeAggregateFile{Path: "plugin.json", Member: "mcp"},
+						User:    NativeAggregateFile{Path: "plugin.json", Member: "mcp"},
+					},
+				},
+			}}},
+		},
+		{
+			name:    "machine root env on a legacy single-root target",
+			target:  TargetClaude,
+			layout:  NativeLayout{Partitions: []NativePartition{{ID: "default", Prefix: ".", MachineRootEnv: "SOME_HOME", Components: []string{"skills"}}}},
+			wantErr: true,
+		},
+		{
+			name:    "installation evidence on a legacy single-root target",
+			target:  TargetClaude,
+			layout:  NativeLayout{Partitions: []NativePartition{{ID: "default", Prefix: ".", InstallationEvidence: true, Components: []string{"skills"}}}},
+			wantErr: true,
+		},
+		{
+			name:   "duplicate machine root env across partitions",
+			target: TargetCodex,
+			layout: NativeLayout{Partitions: []NativePartition{
+				{ID: "a", Prefix: ".a", MachineRootEnv: "X_HOME", Components: []string{"x"}},
+				{ID: "b", Prefix: ".b", MachineRootEnv: "X_HOME", Components: []string{"y"}},
+			}},
+			wantErr: true,
+		},
+		{
+			name:   "kind skill listed in skill dir kinds",
+			target: TargetClaude,
+			layout: NativeLayout{Partitions: []NativePartition{{
+				ID:            "default",
+				Prefix:        ".",
+				ResourcePaths: map[ir.ResourceKind]string{ir.KindSkill: "skills/%s/SKILL.md"},
+				SkillDirKinds: map[ir.ResourceKind]bool{ir.KindSkill: true},
+			}}},
+			wantErr: true,
+		},
+		{
+			name:    "wholly empty partition",
+			target:  TargetCodex,
+			layout:  NativeLayout{Partitions: []NativePartition{{ID: "a", Prefix: ".a"}}},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {

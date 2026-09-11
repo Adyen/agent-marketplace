@@ -47,7 +47,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateW
 		if err != nil {
 			b.Fatal(err)
 		}
-		entries, err := devinFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, name)
+		entries, err := devinFragmentEntries(result.Artifacts[0].Path, result.Artifacts[0].Bytes, machineScope, name)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func devinBenchWork(b *testing.B, n int, machineScope bool) *ownedJSONAggregateW
 		if err != nil {
 			b.Fatal(err)
 		}
-		mcpEntries, err := devinFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, server)
+		mcpEntries, err := devinFragmentEntries(mcpResult.Artifacts[0].Path, mcpResult.Artifacts[0].Bytes, machineScope, server)
 		if err != nil {
 			b.Fatal(err)
 		}

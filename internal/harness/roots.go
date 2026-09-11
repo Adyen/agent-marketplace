@@ -374,6 +374,25 @@ func appendUnique(list []string, rel string) []string {
 	return append(list, rel)
 }
 
+// appendAggregateFiles collects every aggregate's per-scope file path into
+// set, deduplicated via appendUnique and sorted for a stable,
+// declaration-independent order. prefix roots each path under a partition
+// sub-root (Codex's .agents/.codex split); an empty prefix records the path
+// exactly as the descriptor declares it.
+func appendAggregateFiles(set *AggregateFileSet, prefix string, aggregates []targetmeta.NativeAggregate) {
+	for _, aggregate := range aggregates {
+		project, user := aggregate.Project.Path, aggregate.User.Path
+		if prefix != "" {
+			project = path.Join(prefix, project)
+			user = path.Join(prefix, user)
+		}
+		set.Project = appendUnique(set.Project, project)
+		set.User = appendUnique(set.User, user)
+	}
+	slices.Sort(set.Project)
+	slices.Sort(set.User)
+}
+
 // targetInfoFromLayout derives a TargetInfo's compiler-topology fields from
 // the target's registered native-layout descriptor: Components, ResourceDirs,
 // SkillDirKinds, and AggregateFiles. The consumer-side table then cannot
@@ -407,9 +426,10 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 	}
 	// A kind whose name placeholder is a directory element (skills/%s/SKILL.md)
 	// materializes as a resource directory, not under a flat install dir, so it
-	// contributes no ResourceDirs entry.
+	// contributes no ResourceDirs entry. The shape predicate is the
+	// descriptor's own — validation guarantees it agrees with SkillDirKinds.
 	for kind, pattern := range partition.ResourcePaths {
-		if strings.Contains(pattern, "%s/") {
+		if targetmeta.IsDirShapedPattern(pattern) {
 			continue
 		}
 		if info.ResourceDirs == nil {
@@ -438,12 +458,7 @@ func targetInfoFromPartition(partition targetmeta.NativePartition) TargetInfo {
 		}
 		info.ResourceDirs[aggregate.Kind] = dir
 	}
-	for _, aggregate := range partition.Aggregates {
-		info.AggregateFiles.Project = appendUnique(info.AggregateFiles.Project, aggregate.Project.Path)
-		info.AggregateFiles.User = appendUnique(info.AggregateFiles.User, aggregate.User.Path)
-	}
-	slices.Sort(info.AggregateFiles.Project)
-	slices.Sort(info.AggregateFiles.User)
+	appendAggregateFiles(&info.AggregateFiles, "", partition.Aggregates)
 	return info
 }
 

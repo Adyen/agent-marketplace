@@ -28,29 +28,41 @@ type NativePartition struct {
 	// partitioned-root model names each root here (".agents", ".codex"); a
 	// target on the legacy single-root model declares exactly one partition
 	// with Prefix "." covering the whole root, whose concrete name the target
-	// Definition already owns.
+	// Definition already owns. Partition prefixes must be pairwise
+	// element-boundary disjoint: nested roots would let one partition's
+	// cleanup sweep another partition's files.
 	Prefix string
 	// MachineRootEnv names the environment variable that relocates this
 	// partition's machine-scope root (CODEX_HOME). Resolving it is consumer
-	// policy; the descriptor only declares the name.
+	// policy; the descriptor only declares the name. Only a partitioned-root
+	// target may declare it, and each partition's value must be unique so
+	// every machine root resolves independently.
 	MachineRootEnv string
 	// InstallationEvidence marks the partition whose presence proves the
-	// target is installed on the machine.
+	// target is installed on the machine. Only a partitioned-root target may
+	// declare it: a legacy single-root target's evidence is its one root.
 	InstallationEvidence bool
 	// Components are the root-relative directories the layout writes into.
+	// Each is a single path element: materialization routes artifacts by
+	// first path element only, so a multi-element component could never be
+	// populated and "." would claim the whole partition root as prunable.
 	Components []string
 	// ResourcePaths maps a resource kind to the root-relative path pattern
 	// emitted for a named resource. Every pattern contains exactly one %s name
 	// placeholder; when the placeholder is itself a directory element
-	// (skills/%s/SKILL.md) the resource materializes as a directory. The
-	// placeholder must begin a path element (commands/%s.md is valid; %s.md
-	// or a%sb.md are not) so the text before it names a real resource
-	// directory rather than deriving "." — the partition root — which
-	// consumers would register as a cleanup directory.
+	// (skills/%s/SKILL.md — see IsDirShapedPattern) the resource materializes
+	// as a directory, which requires the kind to be KindSkill or declared in
+	// SkillDirKinds. The placeholder must begin a path element
+	// (commands/%s.md is valid; %s.md or a%sb.md are not) so the text before
+	// it names a real resource directory rather than deriving "." — the
+	// partition root — which consumers would register as a cleanup directory.
 	ResourcePaths map[ir.ResourceKind]string
 	// SkillDirKinds lists the kinds besides KindSkill that materialize as a
 	// resource directory rather than a flat file. Every listed kind must
-	// declare a ResourcePaths pattern whose %s is a directory element.
+	// declare a ResourcePaths pattern whose %s is a directory element, and
+	// every non-skill kind with a directory-shaped pattern must be listed
+	// here: IsDirShapedPattern(pattern) and membership in this set must agree
+	// exactly. Listing KindSkill itself is rejected — it is implied.
 	SkillDirKinds map[ir.ResourceKind]bool
 	// Aggregates are the shared target files resource kinds contribute
 	// entries to.
@@ -70,6 +82,10 @@ type NativeAggregateFile struct {
 	// the file is a shared envelope rather than a file dedicated to the kind.
 	// Devin's user-scope hooks live under the `hooks` member of config.json.
 	// An empty Member means the file's top level carries the entries directly.
+	// Consumers key entries under this member, so it is load-bearing: two
+	// kinds claiming the same (Path, Member) in one scope would share an
+	// entry keyspace and are rejected; the same Path under different members
+	// is a legal shared envelope.
 	Member string
 }
 
@@ -185,6 +201,16 @@ var nativeLayouts = map[Target]NativeLayout{
 			},
 		},
 	}},
+}
+
+// IsDirShapedPattern reports whether the pattern's %s name placeholder
+// occupies a directory element ("skills/%s/SKILL.md"), meaning a named
+// resource materializes as a directory rather than a flat file. It is the
+// single dir-shape predicate: ValidateNativeLayout requires it to hold for a
+// ResourcePaths entry exactly when the kind is ir.KindSkill or declared in
+// SkillDirKinds, and consumers read it instead of re-deriving the shape.
+func IsDirShapedPattern(pattern string) bool {
+	return strings.Contains(pattern, "%s/")
 }
 
 // LookupNativeLayout returns a defensive copy of target's native layout.
@@ -331,6 +357,11 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 	}
 	seenIDs := make(map[string]bool, len(layout.Partitions))
 	seenPrefixes := make(map[string]bool, len(layout.Partitions))
+	// prefixes collects the valid prefixes in declaration order so nesting is
+	// rejected in either order: prefixes partition one scope base, so an
+	// ancestor root's cleanup would sweep a descendant root's files.
+	var prefixes []string
+	seenMachineEnv := make(map[string]string, len(layout.Partitions))
 	resourceKinds := make(map[ir.ResourceKind]string)
 	aggregateKinds := make(map[ir.ResourceKind]string)
 	for _, partition := range layout.Partitions {
@@ -347,6 +378,13 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 				errs = append(errs, fmt.Errorf("target %q declares partition prefix %q more than once", t, partition.Prefix))
 			}
 			seenPrefixes[partition.Prefix] = true
+			for _, other := range prefixes {
+				if isPathPrefix(other, partition.Prefix) || isPathPrefix(partition.Prefix, other) {
+					errs = append(errs, fmt.Errorf("target %q declares partition prefixes %q and %q that nest inside each other; partition roots must be element-boundary disjoint", t, other, partition.Prefix))
+					break
+				}
+			}
+			prefixes = append(prefixes, partition.Prefix)
 			switch {
 			case definition.PartitionedRoots && partition.Prefix == ".":
 				errs = append(errs, fmt.Errorf("target %q uses the partitioned-root model; partition %q must name a sub-root, not the scope base", t, partition.ID))
@@ -354,12 +392,30 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 				errs = append(errs, fmt.Errorf("target %q uses the legacy single-root model; partition %q must cover the whole root (prefix %q), not %q", t, partition.ID, ".", partition.Prefix))
 			}
 		}
-		if partition.MachineRootEnv != "" && !isEnvName(partition.MachineRootEnv) {
-			errs = append(errs, fmt.Errorf("target %q partition %q has invalid machine root env name %q", t, partition.ID, partition.MachineRootEnv))
+		if partition.MachineRootEnv != "" {
+			switch {
+			case !definition.PartitionedRoots:
+				errs = append(errs, fmt.Errorf("target %q uses the legacy single-root model; partition %q cannot declare machine root env %q — a single-root target has no per-partition machine root to relocate", t, partition.ID, partition.MachineRootEnv))
+			case !isEnvName(partition.MachineRootEnv):
+				errs = append(errs, fmt.Errorf("target %q partition %q has invalid machine root env name %q", t, partition.ID, partition.MachineRootEnv))
+			}
+			if other, dup := seenMachineEnv[partition.MachineRootEnv]; dup {
+				errs = append(errs, fmt.Errorf("target %q partitions %q and %q share machine root env %q; each partition's machine root must resolve independently", t, other, partition.ID, partition.MachineRootEnv))
+			}
+			seenMachineEnv[partition.MachineRootEnv] = partition.ID
+		}
+		if partition.InstallationEvidence && !definition.PartitionedRoots {
+			errs = append(errs, fmt.Errorf("target %q uses the legacy single-root model; partition %q cannot declare installation evidence — the single root's presence is the evidence", t, partition.ID))
 		}
 		errs = append(errs, validatePartitionContent(t, partition, resourceKinds, aggregateKinds)...)
 	}
 	return errors.Join(errs...)
+}
+
+// isPathPrefix reports whether ancestor is a strict element-boundary ancestor
+// of descendant ("a" of "a/b", not "a" of "ab").
+func isPathPrefix(ancestor, descendant string) bool {
+	return strings.HasPrefix(descendant, ancestor+"/")
 }
 
 // validatePartitionContent checks one partition's components, resource
@@ -368,6 +424,9 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 // partitions is rejected as ambiguous.
 func validatePartitionContent(t Target, partition NativePartition, resourceKinds, aggregateKinds map[ir.ResourceKind]string) []error {
 	var errs []error
+	if len(partition.Components) == 0 && len(partition.ResourcePaths) == 0 && len(partition.Aggregates) == 0 {
+		errs = append(errs, fmt.Errorf("target %q partition %q is empty: a declared root must populate at least one component, resource path, or aggregate", t, partition.ID))
+	}
 	// dirClaims collects every directory the partition declares — its
 	// components and the resource directories its patterns derive — so an
 	// aggregate file path that equals or contains one is rejected.
@@ -376,7 +435,17 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 	for _, component := range partition.Components {
 		if !fs.ValidPath(component) {
 			errs = append(errs, fmt.Errorf("target %q partition %q has invalid component %q", t, partition.ID, component))
-		} else if seenComponents[component] {
+			continue
+		}
+		// A component must be a single path element: materialization routes
+		// artifacts by first path element only, so a multi-element component
+		// is unpopulatable — it degrades to a pure prune plan — and "." would
+		// register the whole partition root as a prunable directory.
+		if component == "." || strings.Contains(component, "/") {
+			errs = append(errs, fmt.Errorf("target %q partition %q declares component %q; a component must be a single path element", t, partition.ID, component))
+			continue
+		}
+		if seenComponents[component] {
 			errs = append(errs, fmt.Errorf("target %q partition %q declares component %q more than once", t, partition.ID, component))
 		}
 		seenComponents[component] = true
@@ -410,23 +479,40 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 		} else {
 			errs = append(errs, fmt.Errorf("target %q partition %q resource path for %s must start the %%s name placeholder at a path element boundary: %q", t, partition.ID, kind, pattern))
 		}
+		// The pattern's declared shape and the kind's declared materialization
+		// must agree in both directions: a directory-shaped pattern for a kind
+		// that is neither KindSkill nor in SkillDirKinds derives a resource
+		// directory no consumer registers, and a skill-directory kind with a
+		// flat pattern would materialize through the wrong shape.
+		skillDir := kind == ir.KindSkill || partition.SkillDirKinds[kind]
+		switch {
+		case IsDirShapedPattern(pattern) && !skillDir:
+			errs = append(errs, fmt.Errorf("target %q partition %q resource path for %s places the %%s name in a directory element: %q; a directory-shaped pattern requires the kind to be a skill or be declared in SkillDirKinds", t, partition.ID, kind, pattern))
+		case !IsDirShapedPattern(pattern) && skillDir:
+			errs = append(errs, fmt.Errorf("target %q partition %q resource path for %s does not place the %%s name in a directory element: %q; a kind materialized as a resource directory requires a directory-shaped pattern", t, partition.ID, kind, pattern))
+		}
 	}
 	for _, kind := range slices.Sorted(maps.Keys(partition.SkillDirKinds)) {
 		if !compilableKind(kind) {
 			errs = append(errs, fmt.Errorf("target %q partition %q declares non-compilable kind %s a skill directory", t, partition.ID, kind))
 		}
+		if kind == ir.KindSkill {
+			errs = append(errs, fmt.Errorf("target %q partition %q lists kind %s in SkillDirKinds; %s is always a resource directory and the field covers kinds besides it", t, partition.ID, kind, kind))
+		}
 		if !partition.SkillDirKinds[kind] {
 			errs = append(errs, fmt.Errorf("target %q partition %q lists kind %s in SkillDirKinds with a false value; only true entries are meaningful", t, partition.ID, kind))
 		}
-		pattern, ok := partition.ResourcePaths[kind]
-		if !ok {
+		if _, ok := partition.ResourcePaths[kind]; !ok {
 			errs = append(errs, fmt.Errorf("target %q partition %q declares kind %s a skill directory without a resource path", t, partition.ID, kind))
-			continue
-		}
-		if !strings.Contains(pattern, "%s/") {
-			errs = append(errs, fmt.Errorf("target %q partition %q declares kind %s a skill directory but its pattern %q does not place the name in a directory", t, partition.ID, kind, pattern))
 		}
 	}
+	// fileClaims records each scope's (path, member) tuples: two kinds
+	// claiming the same tuple would share one entry keyspace, while a strict
+	// ancestor relation between two claimed paths would mean a file claim
+	// contains another file claim. The same path under different members is
+	// a legal shared envelope.
+	fileClaims := map[string]map[string]ir.ResourceKind{"project": {}, "user": {}}
+	claimPaths := map[string][]string{"project": {}, "user": {}}
 	for _, aggregate := range partition.Aggregates {
 		if !compilableKind(aggregate.Kind) {
 			errs = append(errs, fmt.Errorf("target %q partition %q declares an aggregate for non-compilable kind %s", t, partition.ID, aggregate.Kind))
@@ -445,11 +531,23 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q naming the partition root, not a file", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path))
 			} else {
 				for _, dir := range slices.Sorted(maps.Keys(dirClaims)) {
-					if dir == scope.file.Path || strings.HasPrefix(dir, scope.file.Path+"/") {
+					if dir == scope.file.Path || isPathPrefix(scope.file.Path, dir) {
 						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has path %q that is or contains the declared directory %q", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path, dir))
 						break
 					}
 				}
+				for _, claimed := range claimPaths[scope.name] {
+					if isPathPrefix(claimed, scope.file.Path) || isPathPrefix(scope.file.Path, claimed) {
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate paths %q and %q are in an ancestor relation; a file claim cannot contain another file claim", t, partition.ID, scope.name, claimed, scope.file.Path))
+						break
+					}
+				}
+				tuple := scope.file.Path + "\x00" + scope.file.Member
+				if other, dup := fileClaims[scope.name][tuple]; dup {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s claims the same file member (path %q, member %q) as kind %s; two kinds would share one entry keyspace", t, partition.ID, scope.name, aggregate.Kind, scope.file.Path, scope.file.Member, other))
+				}
+				fileClaims[scope.name][tuple] = aggregate.Kind
+				claimPaths[scope.name] = append(claimPaths[scope.name], scope.file.Path)
 			}
 			if member := scope.file.Member; member != "" && (strings.ContainsAny(member, `/\`) || member == "." || member == "..") {
 				errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid member %q", t, partition.ID, scope.name, aggregate.Kind, member))

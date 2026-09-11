@@ -102,7 +102,7 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 		var fileDiags []diag.Diagnostic
 		switch rel {
 		case codexHooksFile:
-			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: ownedHooksContainer, rawValueDigest: true}
+			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 			file, fileDiags = previewOwnedJSONAggregateFile(store, key, root, hookFile, codexHookJSONOptions(), true, desiredHooks)
 		case codexMCPFile:
 			file, fileDiags = previewCodexMCPFile(store, key, root, mcps)

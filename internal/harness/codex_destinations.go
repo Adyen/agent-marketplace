@@ -5,7 +5,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -81,16 +80,15 @@ func canonicalCodexRoot(path string) (string, error) {
 }
 
 func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
-	var project, user []string
-	for _, aggregate := range partition.Aggregates {
-		project = appendUnique(project, aggregate.Project.Path)
-		user = appendUnique(user, aggregate.User.Path)
-	}
-	slices.Sort(project)
-	slices.Sort(user)
+	var files AggregateFileSet
+	appendAggregateFiles(&files, "", partition.Aggregates)
 	var resourceDirs map[ir.ResourceKind]string
 	for kind, pattern := range partition.ResourcePaths {
-		if kind == ir.KindSkill || kind == ir.KindCommand {
+		// A directory-shaped pattern (the %s placeholder is a directory
+		// element) materializes as a resource directory, so it contributes
+		// no flat ResourceDirs entry — the same predicate the validator
+		// enforces against SkillDirKinds.
+		if targetmeta.IsDirShapedPattern(pattern) {
 			continue
 		}
 		if resourceDirs == nil {
@@ -99,16 +97,13 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 		resourceDirs[kind] = path.Dir(pattern)
 	}
 	return TargetInfo{
-		Components:       partition.Components,
-		PlanStrategy:     PlanSubtree,
-		ResourceDirs:     resourceDirs,
-		SkillPathPattern: partition.ResourcePaths[ir.KindSkill],
-		SkillDirKinds:    partition.SkillDirKinds,
-		AggregateFiles: AggregateFileSet{
-			Project: project,
-			User:    user,
-		},
-		OwnershipReconciledAggregates: len(project) > 0,
+		Components:                    partition.Components,
+		PlanStrategy:                  PlanSubtree,
+		ResourceDirs:                  resourceDirs,
+		SkillPathPattern:              partition.ResourcePaths[ir.KindSkill],
+		SkillDirKinds:                 partition.SkillDirKinds,
+		AggregateFiles:                files,
+		OwnershipReconciledAggregates: len(files.Project) > 0,
 	}
 }
 
@@ -132,12 +127,7 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 		for kind, directory := range partition.SkillDirKinds {
 			info.SkillDirKinds[kind] = directory
 		}
-		for _, aggregate := range partition.Aggregates {
-			info.AggregateFiles.Project = appendUnique(info.AggregateFiles.Project, path.Join(partition.Prefix, aggregate.Project.Path))
-			info.AggregateFiles.User = appendUnique(info.AggregateFiles.User, path.Join(partition.Prefix, aggregate.User.Path))
-		}
+		appendAggregateFiles(&info.AggregateFiles, partition.Prefix, partition.Aggregates)
 	}
-	slices.Sort(info.AggregateFiles.Project)
-	slices.Sort(info.AggregateFiles.User)
 	return info, nil
 }
