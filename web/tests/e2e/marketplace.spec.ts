@@ -7,6 +7,8 @@ const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>
 const mockURL = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '4311'}`
 const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
+const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
+const sharedAppearanceKey = 'vitepress-theme-appearance'
 
 function searchResult() {
   return {
@@ -27,18 +29,202 @@ function searchResult() {
 
 test.describe('Marketplace browser discovery', () => {
   test('uses the same brand font treatment on homepage and detail pages', async ({ page }) => {
-    const getBrandStyle = () => page.locator('.am-site-nav__brand').evaluate(element => {
+    const getBrandStyle = (selector: string) => page.locator(selector).first().evaluate(element => {
       const style = getComputedStyle(element)
       return { fontFamily: style.fontFamily, fontWeight: style.fontWeight, letterSpacing: style.letterSpacing }
     })
 
     await page.goto('/')
-    const homepageStyle = await getBrandStyle()
+    const homepageStyle = await getBrandStyle('.am-site-nav__brand')
 
     await page.goto('/r/team-tools/skill/secure-review')
-    const detailStyle = await getBrandStyle()
+    const detailStyle = await getBrandStyle('.am-site-nav__brand')
 
     expect(detailStyle).toEqual(homepageStyle)
+  })
+
+  test('shares navigation and appearance across both frontends', async ({ page }) => {
+    const fontStatus = () => page.evaluate(() => {
+      const bodyStyle = getComputedStyle(document.body)
+      return {
+        bodyFamily: bodyStyle.fontFamily,
+        fontSmoothing: bodyStyle.getPropertyValue('-webkit-font-smoothing'),
+        textRendering: bodyStyle.textRendering,
+        downloadedFonts: performance.getEntriesByType('resource')
+          .filter(entry => /\.(?:woff2?|ttf|otf)(?:\?|$)/.test(entry.name))
+          .length,
+      }
+    })
+
+    await page.goto(sharedOriginURL)
+    await page.evaluate(key => localStorage.setItem(key, 'light'), sharedAppearanceKey)
+    await page.reload()
+
+    await expect(page.locator('.VPNav')).toHaveCount(1)
+    const landingNav = page.getByRole('navigation', { name: 'Main Navigation' })
+    await expect(page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
+    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '../marketplace/')
+    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.locator('link[rel="prefetch"][href="/marketplace/"]')).toHaveCount(1)
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect.poll(fontStatus).toEqual({
+      bodyFamily: 'system-ui, sans-serif',
+      fontSmoothing: 'antialiased',
+      textRendering: 'optimizelegibility',
+      downloadedFonts: 0,
+    })
+
+    await page.goto(`${sharedOriginURL}/README`)
+    await expect(page.locator('.VPNav')).toHaveCount(1)
+    expect(await page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true }).getAttribute('aria-current')).toBeNull()
+    await page.goto(sharedOriginURL)
+
+    const landingSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
+    await expect(landingSwitch).toHaveAttribute('title', 'Switch to dark theme')
+    await expect(landingSwitch).toHaveAttribute('aria-checked', 'false')
+    await landingSwitch.click()
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
+
+    await landingNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
+    await expect(page).toHaveURL(`${sharedOriginURL}/marketplace/`)
+
+    const marketplaceNav = page.getByRole('navigation', { name: 'Product navigation' })
+    await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/#install')
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
+    await expect.poll(fontStatus).toEqual({
+      bodyFamily: 'system-ui, sans-serif',
+      fontSmoothing: 'antialiased',
+      textRendering: 'optimizelegibility',
+      downloadedFonts: 0,
+    })
+
+    const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to light theme' })
+    await expect(marketplaceSwitch).toHaveAttribute('aria-checked', 'true')
+    await expect(marketplaceSwitch).toHaveCSS('cursor', 'pointer')
+    await marketplaceSwitch.click()
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('light')
+
+    await marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true }).click()
+    await expect(page).toHaveURL(`${sharedOriginURL}/`)
+    await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
+    await expect(page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).resolves.toBe('light')
+  })
+
+  test('keeps Nuxt color scales ordered in both themes', async ({ page }) => {
+    const scales = ['ink', 'focus', 'ready', 'withheld', 'revoked']
+
+    await page.goto('/')
+    for (const preference of ['light', 'dark']) {
+      await page.evaluate(
+        ({ key, value }) => localStorage.setItem(key, value),
+        { key: sharedAppearanceKey, value: preference },
+      )
+      await page.reload()
+
+      const luminances = await page.evaluate((names) => {
+        const probe = document.createElement('span')
+        document.body.appendChild(probe)
+
+        const result = Object.fromEntries(names.map((name) => {
+          const shades = [50, 500, 950].map((shade) => {
+            probe.style.color = `var(--color-${name}-${shade})`
+            const rendered = getComputedStyle(probe).color
+            const channels = (rendered.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number)
+            const divisor = channels.some(channel => channel > 1) ? 255 : 1
+            return channels.reduce((sum, channel) => sum + channel / divisor, 0) / 3
+          })
+          return [name, shades]
+        }))
+
+        probe.remove()
+        return result
+      }, scales)
+
+      for (const scale of scales) {
+        const [light, middle, dark] = luminances[scale] as number[]
+        expect(light, `${scale}-50 should be lighter in ${preference} mode`).toBeGreaterThan(middle)
+        expect(middle, `${scale}-500 should be lighter than ${scale}-950 in ${preference} mode`).toBeGreaterThan(dark)
+      }
+    }
+  })
+
+  test('keeps dense Marketplace copy readable in dark mode', async ({ page }) => {
+    await page.goto('/')
+    await page.evaluate(key => localStorage.setItem(key, 'dark'), sharedAppearanceKey)
+    await page.reload()
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+
+    const typography = await page.evaluate(() => {
+      const metrics = (selector: string) => {
+        const element = document.querySelector(selector)
+        if (!element) throw new Error(`Missing typography probe: ${selector}`)
+        const style = getComputedStyle(element)
+        return {
+          size: Number.parseFloat(style.fontSize),
+          weight: Number.parseInt(style.fontWeight, 10),
+        }
+      }
+
+      return {
+        kind: metrics('article:first-of-type span.font-mono'),
+        coordinate: metrics('article:first-of-type h2'),
+        description: metrics('article:first-of-type p.text-toned'),
+        copyAction: metrics('article:first-of-type button'),
+      }
+    })
+
+    expect(typography.kind.size).toBeGreaterThanOrEqual(13)
+    expect(typography.coordinate.size).toBeGreaterThanOrEqual(15)
+    expect(typography.description.size).toBeGreaterThanOrEqual(15)
+    expect(typography.copyAction.size).toBeGreaterThanOrEqual(13)
+    expect(typography.kind.weight).toBeGreaterThanOrEqual(450)
+    expect(typography.coordinate.weight).toBeGreaterThanOrEqual(450)
+    expect(typography.description.weight).toBeGreaterThanOrEqual(450)
+  })
+
+  test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+
+    for (const path of ['/', '/marketplace/']) {
+      await page.goto(`${sharedOriginURL}${path}`)
+      const isLanding = path === '/'
+      const nav = page.getByRole('navigation', { name: isLanding ? 'Main Navigation' : 'Product navigation' })
+      const menuButton = page.getByRole('button', { name: isLanding ? 'mobile navigation' : 'Toggle navigation' })
+      const marketplaceLink = isLanding
+        ? page.locator('#VPNavScreen').getByRole('link', { name: 'Marketplace', exact: true })
+        : nav.getByRole('link', { name: 'Marketplace', exact: true })
+
+      const viewport = await page.evaluate(() => ({
+        width: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      }))
+      expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.width)
+
+      await expect(menuButton).toBeVisible()
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+      await expect(marketplaceLink).not.toBeVisible()
+
+      await menuButton.focus()
+      await menuButton.press('Enter')
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+      await expect(marketplaceLink).toBeVisible()
+      if (isLanding) {
+        await menuButton.press('Enter')
+      }
+      else {
+        await menuButton.press('Escape')
+        await expect(menuButton).toBeFocused()
+      }
+      await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+      await expect(marketplaceLink).not.toBeVisible()
+    }
   })
 
   test('explains direct resource installation without requiring Marketplace registration', async ({ page, context }) => {

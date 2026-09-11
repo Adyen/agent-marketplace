@@ -11,6 +11,7 @@ export function useMarketplaceApi() {
   const internalApiBase = import.meta.server ? config.apiBaseInternal : undefined
   const apiBase = selectMarketplaceApiBase(import.meta.server, publicApiBase, internalApiBase)
   const requestFetcher = import.meta.server ? useRequestFetch() : $fetch
-  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, $fetch)
+  const clientFetcher = import.meta.client ? $fetch.create({ baseURL: window.location.origin }) : $fetch
+  const fetcher = selectMarketplaceFetcher(import.meta.server, apiBase, requestFetcher, clientFetcher)
   return createMarketplaceApi(fetcher, apiBase)
 }
