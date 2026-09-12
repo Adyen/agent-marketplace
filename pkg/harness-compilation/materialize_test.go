@@ -189,6 +189,52 @@ func TestMaterialize_RefusesExternalReconciliationArtifact(t *testing.T) {
 	}
 }
 
+func TestMaterialize_ExplicitPolicyOverridesLegacyOwnershipFields(t *testing.T) {
+	t.Run("replace ignores stale external and marker fields", func(t *testing.T) {
+		outDir := t.TempDir()
+		result := &Result{Artifacts: []Artifact{{
+			Path:                           "config.json",
+			Bytes:                          []byte("replacement\\n"),
+			ExternalReconciliationRequired: true,
+			MergeWithExisting:              true,
+			ManagedByField:                 "_managed_by",
+			ManagedByValue:                 "stale",
+			Reconciliation:                 ReconciliationPolicy{Mode: ReconciliationReplace},
+		}}}
+		if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+			t.Fatalf("Materialize replacement: %v", err)
+		}
+		if got, err := os.ReadFile(filepath.Join(outDir, "config.json")); err != nil || string(got) != "replacement\\n" {
+			t.Fatalf("replacement output = %q, %v", got, err)
+		}
+	})
+
+	t.Run("marker ignores stale external field", func(t *testing.T) {
+		outDir := t.TempDir()
+		result := &Result{Artifacts: []Artifact{{
+			Path:                           "hooks.json",
+			Bytes:                          []byte(`{"hooks":[{"name":"generated"}]}`),
+			Fragment:                       true,
+			FragmentKey:                    "hooks",
+			ExternalReconciliationRequired: true,
+			MergeWithExisting:              true,
+			ManagedByField:                 "_legacy",
+			ManagedByValue:                 "stale",
+			Reconciliation: ReconciliationPolicy{
+				Mode:        ReconciliationMarker,
+				MarkerField: "_managed_by",
+				MarkerValue: "marketplace",
+			},
+		}}}
+		if _, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite)); err != nil {
+			t.Fatalf("Materialize marker: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(outDir, "hooks.json")); err != nil {
+			t.Fatalf("marker output: %v", err)
+		}
+	})
+}
+
 func TestMaterialize_DeduplicatesIdenticalArtifacts(t *testing.T) {
 	outDir := t.TempDir()
 	result := &Result{
@@ -260,6 +306,40 @@ func TestMaterialize_RejectsConflictingDuplicateArtifacts(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestSameArtifactUsesExplicitPolicyOverLegacyFields(t *testing.T) {
+	replace := Artifact{
+		Path:           "config.json",
+		Bytes:          []byte("same"),
+		Reconciliation: ReconciliationPolicy{Mode: ReconciliationReplace},
+	}
+	staleReplace := replace
+	staleReplace.ExternalReconciliationRequired = true
+	staleReplace.MergeWithExisting = true
+	staleReplace.ManagedByField = "_managed_by"
+	staleReplace.ManagedByValue = "stale"
+	if !sameArtifact(replace, staleReplace) {
+		t.Fatal("explicit replacement should ignore stale legacy ownership fields")
+	}
+
+	marker := Artifact{
+		Path:        "hooks.json",
+		Bytes:       []byte(`{"hooks":[]}`),
+		Fragment:    true,
+		FragmentKey: "hooks",
+		Reconciliation: ReconciliationPolicy{
+			Mode:        ReconciliationMarker,
+			MarkerField: "_managed_by",
+			MarkerValue: "marketplace",
+		},
+	}
+	staleMarker := marker
+	staleMarker.ExternalReconciliationRequired = true
+	staleMarker.MergeWithExisting = true
+	if !sameArtifact(marker, staleMarker) {
+		t.Fatal("explicit marker policy should ignore stale legacy ownership fields")
 	}
 }
 

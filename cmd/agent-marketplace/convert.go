@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -28,6 +27,17 @@ var (
 var codexConversionSharedPaths = [...]string{
 	codexConversionHooksPath,
 	codexConversionMCPPath,
+}
+
+// Devin conversion protects every native aggregate destination even when this
+// source produces no fragment for one of them. In particular, config.json is
+// the user-scope hook aggregate while the other two paths are project-scope
+// aggregates; all three are unsafe stale-prune candidates in a conversion
+// output root.
+var devinConversionSharedPaths = [...]string{
+	"config.json",
+	"hooks.v1.json",
+	"mcp_config.json",
 }
 
 func mustNativeAggregatePath(kind ir.ResourceKind) string {
@@ -75,9 +85,8 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	}
 
 	srcHarness := hcc.Harness(from)
-	srcFS := os.DirFS(srcPath)
 	if autodetect {
-		detected, ok := hcc.Autodetect(srcFS)
+		detected, ok := hcc.Autodetect(os.DirFS(srcPath))
 		if !ok {
 			return fmt.Errorf("autodetect: could not identify source harness")
 		}
@@ -94,6 +103,10 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	if outDir == "" {
 		outDir = srcPath + "-" + to
 	}
+	if err := rejectConversionSourceOutputOverlap(srcPath, outDir); err != nil {
+		return err
+	}
+	srcFS := os.DirFS(srcPath)
 
 	result, err := hcc.Convert(srcFS, srcHarness, hcc.Harness(to), hcc.WithPluginRoot(srcPath))
 	if err != nil {
@@ -147,17 +160,81 @@ func runConvert(out io.Writer, srcPath, from, to, outDir string, autodetect, syn
 	return nil
 }
 
+// rejectConversionSourceOutputOverlap compares canonical filesystem paths
+// before compilation or publication. The output may not equal, contain, or be
+// an ancestor of the source: all three relationships can cause a conversion
+// to read its own generated files or overwrite its input.
+func rejectConversionSourceOutputOverlap(source, output string) error {
+	canonicalSource, err := canonicalConversionPath(source)
+	if err != nil {
+		return fmt.Errorf("resolve conversion source path %q: %w", source, err)
+	}
+	canonicalOutput, err := canonicalConversionPath(output)
+	if err != nil {
+		return fmt.Errorf("resolve conversion output path %q: %w", output, err)
+	}
+	if conversionPathsOverlap(canonicalSource, canonicalOutput) {
+		return fmt.Errorf("conversion source and output paths overlap: source %q, output %q; choose a separate destination", canonicalSource, canonicalOutput)
+	}
+	return nil
+}
+
+func canonicalConversionPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return "", err
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(resolveErr) {
+			return "", resolveErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func conversionPathsOverlap(source, output string) bool {
+	for _, root := range []string{source, output} {
+		other := output
+		if root == output {
+			other = source
+		}
+		rel, err := filepath.Rel(root, other)
+		if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+			return true
+		}
+	}
+	return false
+}
+
 // materializeCodexConversion publishes a one-shot conversion without adopting
 // ownership. Sync reconciles shared configuration entry by entry; conversion
 // requires an empty shared-file destination and publishes a staged result.
 func materializeCodexConversion(result *hcc.Result, outDir string, matOpts []hcc.WriteOption, dryRun bool) (*hcc.WriteReport, error) {
 	return conversionPublisher{
-		target:    "Codex",
-		shared:    codexConversionSharedPaths[:],
-		clone:     codexConversionResult,
-		preflight: func(dir string) error { return preflightCodexConversion(dir) },
-		validate:  func(dir string, _ []string) error { return validateCodexConversionStage(dir) },
-		prune:     pruneCodexConversionStale,
+		target:          "Codex",
+		shared:          codexConversionSharedPaths[:],
+		clone:           codexConversionResult,
+		preflight:       func(dir string) error { return preflightCodexConversion(dir) },
+		validate:        func(dir string, _ []string) error { return validateCodexConversionStage(dir) },
+		pruneCandidates: pruneCodexConversionStaleCandidates,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 
@@ -608,8 +685,45 @@ func removeEmptyCodexConversionRecoveryDirs(publications []codexConversionPublic
 	}
 }
 
-func pruneCodexConversionStale(outDir string, removed []string) error {
-	return pruneCodexConversionStaleWith(outDir, removed, os.Remove)
+func pruneCodexConversionStaleCandidates(outDir string, candidates []hcc.StaleFileCandidate) error {
+	return pruneCodexConversionStaleCandidatesWith(outDir, candidates, os.Remove)
+}
+
+func pruneCodexConversionStaleCandidatesWith(outDir string, candidates []hcc.StaleFileCandidate, removePath func(string) error) error {
+	root := filepath.Clean(outDir)
+	var pruneErrors []error
+	for _, candidate := range candidates {
+		rel := filepath.FromSlash(candidate.Path)
+		if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			pruneErrors = append(pruneErrors, fmt.Errorf("stale candidate %q escapes output root", candidate.Path))
+			continue
+		}
+		path := filepath.Join(root, rel)
+		unchanged, err := hcc.RevalidateStaleFileCandidate(path, candidate)
+		if err != nil {
+			pruneErrors = append(pruneErrors, fmt.Errorf("revalidate stale file %q: %w", candidate.Path, err))
+			continue
+		}
+		if !unchanged {
+			pruneErrors = append(pruneErrors, fmt.Errorf("%w: %s", hcc.ErrStalePruneConflict, candidate.Path))
+			continue
+		}
+		if err := removePath(path); err != nil && !os.IsNotExist(err) {
+			pruneErrors = append(pruneErrors, fmt.Errorf("remove stale file %q: %w", candidate.Path, err))
+			continue
+		}
+		for dir := filepath.Dir(path); dir != root; {
+			if err := removePath(dir); err != nil {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return errors.Join(pruneErrors...)
 }
 
 // materializeDevinConversion publishes a Devin conversion without adopting
@@ -626,9 +740,9 @@ func materializeDevinConversion(result *hcc.Result, outDir string, matOpts []hcc
 		clone: func(input *hcc.Result) (*hcc.Result, error) {
 			return cloneNonOwningConversionResult(input, shared), nil
 		},
-		preflight: func(dir string) error { return preflightConversionPaths(dir, shared, "Devin") },
-		validate:  validateDevinConversionStage,
-		prune:     pruneCodexConversionStale,
+		preflight:       func(dir string) error { return preflightConversionPaths(dir, shared, "Devin") },
+		validate:        validateDevinConversionStage,
+		pruneCandidates: pruneCodexConversionStaleCandidates,
 	}.materialize(result, outDir, matOpts, dryRun)
 }
 
@@ -636,22 +750,12 @@ func externalConversionPaths(result *hcc.Result) ([]string, error) {
 	if result == nil {
 		return nil, errors.New("devin conversion result must not be nil")
 	}
-	seen := make(map[string]struct{})
 	for _, a := range result.Artifacts {
-		policy, err := a.Policy()
-		if err != nil {
+		if _, err := a.Policy(); err != nil {
 			return nil, fmt.Errorf("validate Devin conversion artifact %q: %w", a.Path, err)
 		}
-		if policy.IsExternal() {
-			seen[a.Path] = struct{}{}
-		}
 	}
-	paths := make([]string, 0, len(seen))
-	for path := range seen {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths, nil
+	return append([]string(nil), devinConversionSharedPaths[:]...), nil
 }
 
 func cloneNonOwningConversionResult(result *hcc.Result, shared []string) *hcc.Result {
