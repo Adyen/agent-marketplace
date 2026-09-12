@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -46,6 +47,73 @@ func TestResolveCollectionMalformedInOneRegistryIsSuppressedWhenFoundInAnother(t
 	}
 	if _, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed)); len(errs) != 0 {
 		t.Fatalf("a collection resolved from another registry must stay suppressed, got: %v", errs)
+	}
+}
+
+// TestDeferredMalformedCollectionNarrowsToUnresolvedPartitions proves that a
+// valid same-partition collection materializes its member while only the
+// unresolved target remains fenced by the malformed sibling.
+func TestDeferredMalformedCollectionNarrowsToUnresolvedPartitions(t *testing.T) {
+	const (
+		malformedURL = "git@example.com:malformed-collection.git"
+		validURL     = "git@example.com:valid-collection.git"
+	)
+	cfg := &config.Config{
+		Collections: config.KindSelector{Include: []string{"tools"}},
+		Registries: []config.RegistryEntry{
+			{
+				URL:       malformedURL,
+				Ref:       "main",
+				Harnesses: []string{string(hcc.TargetClaude), string(hcc.TargetFactory)},
+			},
+			{
+				URL:         validURL,
+				Ref:         "main",
+				Collections: ks("tools"),
+				Harnesses:   []string{string(hcc.TargetClaude)},
+			},
+		},
+	}
+	setCatalogKeys(cfg)
+	validCollection := ir.NewCollection("tools", "1.0.0", "Tools", []ir.CollectionMember{
+		{Name: "healthy-skill", Kind: ir.KindSkill},
+	}, nil, nil, ir.SourceRef{})
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: {},
+		cfg.Registries[1].CatalogKey: {
+			{Kind: ir.KindCollection, Name: "tools", Resource: validCollection},
+			{Kind: ir.KindSkill, Name: "healthy-skill", Resource: ir.NewSkill("healthy-skill", "Healthy", "", nil, nil, ir.SourceRef{})},
+		},
+	}
+	malformed := malformedFixture(cfg.Registries[0].CatalogKey, skill.MalformedSkill{
+		DirName: "tools",
+		Path:    "/cache/malformed/collections/tools",
+		Error:   errors.New("yaml: invalid collection"),
+	})
+
+	resolved, errs := Resolve(cfg, catalogs, nil, WithMalformed(malformed), WithTargetHarnesses([]hcc.Target{
+		hcc.TargetClaude,
+		hcc.TargetFactory,
+	}))
+	if len(resolved) != 1 || resolved[0].Name != "healthy-skill" {
+		t.Fatalf("valid sibling must resolve in its Claude partition, got %#v", resolved)
+	}
+	if !harnessesEqual(resolved[0].Harnesses, []hcc.Target{hcc.TargetClaude}) {
+		t.Fatalf("valid sibling harnesses = %v, want Claude only", resolved[0].Harnesses)
+	}
+
+	var malformedErr *SelectedMalformedError
+	for _, err := range errs {
+		if errors.As(err, &malformedErr) {
+			break
+		}
+	}
+	if malformedErr == nil {
+		t.Fatalf("expected unresolved Factory partition to remain fenced, got %v", errs)
+	}
+	partitions := MalformedSelectionPartitions(malformedErr)
+	if len(partitions) != 1 || partitions[0] != (SelectionPartition{Target: hcc.TargetFactory}) {
+		t.Fatalf("malformed collection partitions = %#v, want unresolved Factory only", partitions)
 	}
 }
 
