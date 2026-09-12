@@ -317,12 +317,9 @@ func TestCodexInvalidHomePreflightDoesNotPruneRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "demo", Resource: ir.NewSkill("demo", "demo", "body", nil, nil, ir.SourceRef{})}, Source: config.UserPersonal, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
-	report, err := Run(context.Background(), repo, selection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hasErrorDiagnostics(report.Diags) {
-		t.Fatal("expected invalid CODEX_HOME diagnostic")
+	_, err := Run(context.Background(), repo, selection)
+	if err == nil {
+		t.Fatal("expected invalid CODEX_HOME planning error")
 	}
 	got, err := os.ReadFile(unrelated)
 	if err != nil {

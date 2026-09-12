@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/backup"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
@@ -99,6 +100,10 @@ This is the body.
 	if resolved[0].Resource == nil {
 		t.Fatal("expected Resource to be populated")
 	}
+	// Exercise machine-scope output so the stale-only removal below crosses
+	// the configured backup boundary, rather than relying on ownership safety
+	// backups for repo-scope output.
+	resolved[0].Source = config.UserPersonal
 
 	// Step 4: materialize.Run → assert both targets have correct files.
 	report, err := Run(context.Background(), repoRoot, resolved)
@@ -128,13 +133,32 @@ This is the body.
 		t.Fatalf("second run: expected some skipped, got %d", report2.TotalSkipped())
 	}
 
-	// Step 6: Remove skill from list, Run again → stale files Removed.
-	report3, err := Run(context.Background(), repoRoot, nil) // no skills
+	// Step 6: Remove the final selected resource. BuildPlan must revive the
+	// existing machine output, and its inventory must be archived before the
+	// same plan executes stale pruning.
+	plan, err := BuildPlan(context.Background(), repoRoot, nil)
 	if err != nil {
-		t.Fatalf("third materialize.Run: %v", err)
+		t.Fatalf("BuildPlan stale-only removal: %v", err)
+	}
+	if len(plan.ManagedPaths) == 0 {
+		t.Fatal("stale-only plan omitted configured machine backup inventory")
+	}
+	if err := backup.Create(plan.ManagedPaths); err != nil {
+		t.Fatalf("backup stale output: %v", err)
+	}
+	report3, err := plan.Execute(context.Background())
+	if err != nil {
+		t.Fatalf("execute stale-only plan: %v", err)
 	}
 	totalRemoved := report3.TotalRemoved()
 	if totalRemoved == 0 {
 		t.Fatal("expected stale files to be removed when no skills are resolved")
+	}
+	backups, err := backup.ListBackups()
+	if err != nil {
+		t.Fatalf("list stale-output backups: %v", err)
+	}
+	if len(backups[hcc.TargetClaude]) == 0 {
+		t.Fatal("configured backup omitted the stale Claude output")
 	}
 }

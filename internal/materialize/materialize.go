@@ -35,6 +35,7 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"gopkg.in/yaml.v3"
 
+	"github.com/Adyen/agent-marketplace/internal/backup"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -466,11 +467,6 @@ func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
 	return ownedAggregateState{values: r.ownedState}
 }
 
-// Run compiles and materializes the given resolved skills into their
-// explicit per-target install roots. It groups skills by hcc.Target, calls
-// hcc.Compile per-skill-per-target, merges fragments, then calls hcc.Materialize
-// with WriteModeSync and prune-stale enabled.
-//
 // invalidTargetIntent rejects artifacts whose target partition is unspecified.
 func invalidTargetIntent(resolved []resolver.ResolvedArtifact) *diag.Diagnostic {
 	for _, resource := range resolved {
@@ -487,15 +483,26 @@ func invalidTargetIntent(resolved []resolver.ResolvedArtifact) *diag.Diagnostic 
 	return nil
 }
 
-func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Report, error) {
-	start := time.Now()
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if diagnostic := invalidTargetIntent(resolved); diagnostic != nil {
-		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: []diag.Diagnostic{*diagnostic}}, nil
-	}
+// Plan is the immutable, no-write result of materialization discovery and
+// compilation. The same plan is used for configured backups and execution so
+// stale-only outputs cannot fall outside the backup boundary.
+type Plan struct {
+	compileResult compilePhaseResult
+	repoRoot      string
+	dryRun        bool
+	modes         config.MaterializationModes
+	ManagedPaths  map[hcc.Target]backup.ManagedPaths
+	CodexParts    []backup.CodexPartition
+}
 
+// Plan discovers resolved and previously managed output keys, native aggregate
+// and portable-manifest state, routes, prune fences, and writes without
+// mutating the filesystem. Compilation is included because it determines the
+// exact writes and fences execution will use.
+func BuildPlan(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var rc runConfig
 	rc.modes = config.DefaultMaterializationModes()
 	for _, o := range opts {
@@ -505,7 +512,10 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)
 
 	// Phase 1: Group skills by target and track all output keys.
-	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
+	work, allOutputs, blocked, allDiags, err := buildWorkItems(resolved, repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("discover materialization outputs: %w", err)
+	}
 	aggregateFences := make(map[outputKey]map[ir.ResourceKind]bool)
 	applyPruneFences(allOutputs, blocked, aggregateFences, rc.pruneFences)
 	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "prune_fences", len(rc.pruneFences), "aggregate_fences", len(aggregateFences), "diagnostics", len(allDiags))
@@ -535,18 +545,40 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 		}
 		work = filtered
 	}
-
+	if err := validatePlanOutputs(allOutputs, repoRoot); err != nil {
+		return nil, fmt.Errorf("validate materialization destinations: %w", err)
+	}
 	// Phase 2: Compile each work item and collect artifacts per target.
 	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, aggregateFences, repoRoot)
 	slog.Debug("materialize compile complete", "targets", len(compileResult.byTarget), "diagnostics", len(compileResult.allDiags))
+	managed, codexParts, err := backupInventory(allOutputs, repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve configured backup inventory: %w", err)
+	}
+	return &Plan{
+		compileResult: compileResult,
+		repoRoot:      repoRoot,
+		dryRun:        rc.dryRun,
+		modes:         rc.modes,
+		ManagedPaths:  managed,
+		CodexParts:    codexParts,
+	}, nil
+}
 
-	// Phase 3: Materialize per target — write artifacts and sync skill links.
-	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes)
-	slog.Info("materialize end",
-		"duration_ms", time.Since(start).Milliseconds(),
-		"targets", len(report.PerRoot),
-		"diagnostics", len(report.Diags),
-	)
+// Execute applies a previously inspected plan. It is intentionally separate
+// from Plan so callers can complete pre-mutation backups before any writes.
+func (p *Plan) Execute(ctx context.Context) (*Report, error) {
+	if p == nil {
+		return nil, errors.New("nil materialization plan")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	slog.Debug("materialize execute start", "repo_root", p.repoRoot, "outputs", len(p.compileResult.allOutputs), "dry_run", p.dryRun,
+		"machine_mode", p.modes.Machine, "project_mode", p.modes.Project)
+	report := executeMaterializePlans(ctx, p.compileResult, p.dryRun, p.repoRoot, p.modes)
+	slog.Info("materialize end", "duration_ms", time.Since(start).Milliseconds(), "targets", len(report.PerRoot), "diagnostics", len(report.Diags))
 	return report, nil
 }
 
@@ -577,7 +609,25 @@ func applyPruneFences(allOutputs map[outputKey]bool, blocked blockedOutputs, agg
 	}
 }
 
-func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
+// Run preserves the one-shot API for callers that do not need to interpose a
+// backup. Planning remains no-write and execution consumes that same plan.
+func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Report, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if diagnostic := invalidTargetIntent(resolved); diagnostic != nil {
+		return &Report{PerTarget: make(map[hcc.Target]TargetReport), Diags: []diag.Diagnostic{*diagnostic}}, nil
+	}
+	plan, err := BuildPlan(ctx, repoRoot, resolved, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Execute(ctx)
+}
+
+// buildWorkItems groups resolved skills by target and identifies all output
+// keys (including empty targets that need pruning).
+func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic, error) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
@@ -639,32 +689,40 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		}
 	}
 	if hasNonEmptyIntent || len(resolved) == 0 {
-		addExistingOutputKeys(repoRoot, allOutputs)
-		addExistingNativeAggregateKeys(repoRoot, allOutputs)
+		seededOutputs := make(map[outputKey]bool, len(allOutputs))
+		for key := range allOutputs {
+			seededOutputs[key] = true
+		}
+		if err := addExistingOutputKeys(repoRoot, allOutputs, seededOutputs); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if err := addExistingNativeAggregateKeys(repoRoot, allOutputs); err != nil {
+			return nil, nil, nil, nil, err
+		}
 		// A file-mode manifest may be the only remaining record after a harness
 		// root is deleted. Include its known targets so deinit can still process
 		// that state instead of silently skipping it.
-		addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
-		addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
+		if err := addPortableManifestOutputKeys(repoRoot, false, allOutputs); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if err := addPortableManifestOutputKeys(repoRoot, true, allOutputs); err != nil {
+			return nil, nil, nil, nil, err
+		}
 		for key := range allOutputs {
 			if emptyIntentScopes[key.machineScope] && !nonEmptyIntentKeys[key] {
 				blocked.blockAll(key)
 			}
 		}
+
 	}
 
-	return work, allOutputs, blocked, allDiags
+	return work, allOutputs, blocked, allDiags, nil
 }
 
-func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutputs map[outputKey]bool, diags *[]diag.Diagnostic) {
+func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutputs map[outputKey]bool) error {
 	state, err := loadPortableState(repoRoot, machineScope)
 	if err != nil {
-		*diags = append(*diags, diag.Diagnostic{
-			Code:     "materialize.manifest.error",
-			Severity: diag.SeverityError,
-			Message:  fmt.Sprintf("load materialization manifest: %v", err),
-		})
-		return
+		return fmt.Errorf("load %s materialization manifest: %w", scopeName(machineScope), err)
 	}
 	roots := harness.MakeInstallRoots()
 	adapters, adapterErr := harness.NewInstallationAdapterRegistry()
@@ -677,9 +735,17 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 			allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 		}
 	}
+	return nil
 }
 
-func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
+func scopeName(machineScope bool) string {
+	if machineScope {
+		return "machine-scope"
+	}
+	return "repo-scope"
+}
+
+func addExistingOutputKeys(repoRoot string, allOutputs, seededOutputs map[outputKey]bool) error {
 	for target, roots := range harness.MakeInstallRoots() {
 		if harness.IsInstallationAdapterTarget(target) {
 			continue
@@ -705,6 +771,9 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 			for _, machineScope := range []bool{false, true} {
 				destinations, err := harness.ResolveDestinations(target, machineScope, repoRoot)
 				if err != nil {
+					if seededOutputs[outputKey{target: target, machineScope: machineScope}] {
+						return fmt.Errorf("resolve %s %s destinations: %w", scopeName(machineScope), target, err)
+					}
 					continue
 				}
 				for _, destination := range destinations {
@@ -721,10 +790,12 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 						allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 						break
 					}
+
 				}
 			}
 		}
 	}
+	return nil
 }
 
 func destinationHasManagedSymlink(destination harness.Destination, machineScope bool) bool {
@@ -773,6 +844,108 @@ func outputDirExists(path string) bool {
 		return false
 	}
 	return info.IsDir()
+}
+
+func validatePlanOutputs(outputs map[outputKey]bool, repoRoot string) error {
+	roots := harness.MakeInstallRoots()
+	for key := range outputs {
+		if key.target == hcc.Target(targetmeta.TargetCodex) {
+			if _, err := harness.ResolveDestinations(key.target, key.machineScope, repoRoot); err != nil {
+				return fmt.Errorf("resolve %s %s destinations: %w", scopeName(key.machineScope), key.target, err)
+			}
+			continue
+		}
+		targetRoots, ok := roots[key.target]
+		if !ok {
+			return fmt.Errorf("target %q has no install roots", key.target)
+		}
+		if dir := targetRoots.For(key.machineScope, repoRoot); dir == "" {
+			return fmt.Errorf("target %q has no %s output root", key.target, scopeName(key.machineScope))
+		}
+	}
+	return nil
+}
+
+func backupPathCoveredByAncestor(rel string, collected []string) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	for _, candidate := range collected {
+		candidate = filepath.ToSlash(filepath.Clean(candidate))
+		if rel == candidate || strings.HasPrefix(rel, candidate+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// backupInventory derives configured machine-scope coverage from the exact
+// output keys in a plan, including keys revived from stale output and manifests.
+func backupInventory(outputs map[outputKey]bool, repoRoot string) (map[hcc.Target]backup.ManagedPaths, []backup.CodexPartition, error) {
+	managed := make(map[hcc.Target]backup.ManagedPaths)
+	keys := make([]outputKey, 0, len(outputs))
+	for key := range outputs {
+		if key.machineScope {
+			keys = append(keys, key)
+		}
+	}
+	slices.SortFunc(keys, func(a, b outputKey) int { return strings.Compare(string(a.target), string(b.target)) })
+	for _, key := range keys {
+		if key.target == hcc.Target(targetmeta.TargetCodex) {
+			continue
+		}
+		root, ok := harness.MachineRoot(key.target)
+		if !ok || root == "" {
+			return nil, nil, fmt.Errorf("target %q has no machine root", key.target)
+		}
+		info, ok := harness.TargetInfoFor(key.target)
+		if !ok {
+			return nil, nil, fmt.Errorf("target %q has no target metadata", key.target)
+		}
+		mappedFiles, err := harness.NativeAggregateBackupFiles(key.target)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve %s aggregate backup mapping: %w", key.target, err)
+		}
+		relPaths := append([]string(nil), info.ComponentsForScope(true)...)
+		aggregates := info.AggregateFilesForScope(true)
+		if len(harness.NativeAggregateInstalls(key.target)) > 0 {
+			destinations, err := harness.ResolveDestinations(key.target, true, repoRoot)
+			if err != nil {
+				return nil, nil, fmt.Errorf("resolve %s native destinations: %w", key.target, err)
+			}
+			aggregates = nil
+			found := false
+			for _, destination := range destinations {
+				if destination.Root == root {
+					aggregates = append(aggregates, destination.Info.AggregateFilesForScope(true)...)
+					found = true
+				}
+			}
+			if !found {
+				return nil, nil, fmt.Errorf("resolve %s native destination: machine root %q is not mapped", key.target, root)
+			}
+		}
+		for _, rel := range aggregates {
+			if !backupPathCoveredByAncestor(rel, relPaths) {
+				relPaths = append(relPaths, rel)
+			}
+		}
+		managed[key.target] = backup.ManagedPaths{Root: root, RelPaths: relPaths, MappedFiles: mappedFiles}
+	}
+	if outputs[outputKey{target: hcc.Target(targetmeta.TargetCodex), machineScope: true}] {
+		paths, err := CodexMachineManagedPaths(repoRoot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve Codex machine backup paths: %w", err)
+		}
+		destinations, err := harness.ResolveDestinations(hcc.Target(targetmeta.TargetCodex), true, repoRoot)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve Codex machine destinations: %w", err)
+		}
+		parts := make([]backup.CodexPartition, 0, len(destinations))
+		for _, destination := range destinations {
+			parts = append(parts, backup.CodexPartition{ID: destination.ID, Root: destination.Root, RelPaths: paths[destination.ID]})
+		}
+		return managed, parts, nil
+	}
+	return managed, nil, nil
 }
 
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,

@@ -57,7 +57,10 @@ func TestCollectManagedPathsIsMachineScopeOnlyByDecision(t *testing.T) {
 			t.Run(string(target)+"/"+tt.name, func(t *testing.T) {
 				t.Setenv("HOME", t.TempDir())
 
-				managed := CollectManagedPaths(scopedSkill(target, tt.source))
+				managed, err := CollectManagedPaths(scopedSkill(target, tt.source))
+				if err != nil {
+					t.Fatalf("CollectManagedPaths: %v", err)
+				}
 				mp, ok := managed[target]
 				if tt.wantCollect {
 					if !ok || len(mp.RelPaths) == 0 {

@@ -38,7 +38,10 @@ func TestClaudeNativeMCPBackupCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	resources := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "probe"}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude}}}
-	managed := CollectManagedPaths(resources)
+	managed, err := CollectManagedPaths(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := backup.Create(managed); err != nil {
 		t.Fatal(err)
 	}

@@ -374,18 +374,21 @@ func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]
 	return protected
 }
 
-func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool) {
+func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool) error {
 	for _, target := range hcc.Targets() {
 		if len(harness.NativeAggregateInstalls(target)) == 0 {
 			continue
 		}
 		for _, machine := range []bool{false, true} {
 			key := outputKey{target: target, machineScope: machine}
-			if outputs[key] {
-				continue
-			}
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
+				if outputs[key] {
+					return fmt.Errorf("resolve %s %s native aggregate destinations: %w", scopeName(machine), target, err)
+				}
+				continue
+			}
+			if outputs[key] {
 				continue
 			}
 			for _, destination := range destinations {
@@ -404,4 +407,5 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			}
 		}
 	}
+	return nil
 }

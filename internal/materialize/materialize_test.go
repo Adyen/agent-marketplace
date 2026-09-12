@@ -4606,10 +4606,8 @@ func TestCodexPortableManifestAloneSchedulesReconciliation(t *testing.T) {
 	}
 
 	outputs := make(map[outputKey]bool)
-	var diagnostics []diag.Diagnostic
-	addPortableManifestOutputKeys(repoRoot, false, outputs, &diagnostics)
-	if len(diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	if err := addPortableManifestOutputKeys(repoRoot, false, outputs); err != nil {
+		t.Fatalf("addPortableManifestOutputKeys: %v", err)
 	}
 	if !outputs[outputKey{target: hcc.TargetCodex}] {
 		t.Fatalf("Codex manifest did not schedule reconciliation: %#v", outputs)

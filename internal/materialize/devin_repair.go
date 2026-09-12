@@ -191,7 +191,10 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 	// for every target). It is dropped rather than reported: those warnings
 	// belong to sync, and repeating another target's warning in a target-local
 	// repair preview would be noise the user cannot act on here.
-	work, allOutputs, blocked, _ := buildWorkItems(resolved, repoRoot)
+	work, allOutputs, blocked, _, err := buildWorkItems(resolved, repoRoot)
+	if err != nil {
+		return compilePhaseResult{allDiags: []diag.Diagnostic{{Code: "materialize.plan.error", Severity: diag.SeverityError, Target: string(target), Message: err.Error()}}}, nil
+	}
 
 	targetWork := work[:0:0]
 	for _, item := range work {

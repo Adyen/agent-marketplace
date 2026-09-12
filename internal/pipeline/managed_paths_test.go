@@ -85,7 +85,10 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 				t.Fatalf("materialize.Run: %v", err)
 			}
 
-			managed := CollectManagedPaths(resolved)
+			managed, err := CollectManagedPaths(resolved)
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
 			mp, ok := managed[target]
 			if !ok {
 				t.Fatalf("CollectManagedPaths has no entry for %s", target)
@@ -127,7 +130,10 @@ func TestCollectManagedPathsWindsurfMachineComponents(t *testing.T) {
 		},
 	}
 
-	managed := CollectManagedPaths(resolved)
+	managed, err := CollectManagedPaths(resolved)
+	if err != nil {
+		t.Fatalf("CollectManagedPaths: %v", err)
+	}
 	mp, ok := managed[hcc.TargetWindsurf]
 	if !ok {
 		t.Fatal("CollectManagedPaths has no entry for windsurf")
@@ -252,7 +258,10 @@ func TestCollectManagedPathsCoversEveryDeclaredAggregate(t *testing.T) {
 		t.Run(string(target), func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 
-			managed := CollectManagedPaths(machineScopeSkill(target))
+			managed, err := CollectManagedPaths(machineScopeSkill(target))
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
 			mp, ok := managed[target]
 			if !ok {
 				t.Fatalf("CollectManagedPaths has no entry for %s", target)
@@ -307,7 +316,11 @@ func TestDeclaredAggregatesAreRecoverableFromBackup(t *testing.T) {
 				handwritten[rel] = content
 			}
 
-			if err := backup.Create(CollectManagedPaths(machineScopeSkill(target))); err != nil {
+			managed, err := CollectManagedPaths(machineScopeSkill(target))
+			if err != nil {
+				t.Fatalf("CollectManagedPaths: %v", err)
+			}
+			if err := backup.Create(managed); err != nil {
 				t.Fatalf("backup.Create: %v", err)
 			}
 			for rel := range handwritten {

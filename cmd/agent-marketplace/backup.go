@@ -75,7 +75,10 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 		return nil
 	}
 
-	managed := pipeline.CollectManagedPaths(resolved.Resolved)
+	managed, err := pipeline.CollectManagedPaths(resolved.Resolved)
+	if err != nil {
+		return fmt.Errorf("resolve managed backup paths: %w", err)
+	}
 	codexPartitions, err := pipeline.CollectCodexBackupPartitions(resolved.Resolved)
 	if err != nil {
 		return fmt.Errorf("resolve Codex backup partitions: %w", err)

@@ -219,6 +219,8 @@ The generated paths are `/etc/agent-marketplace/lock.yaml`, `~/.agents/lock.yaml
 
 Resolves selected resources from exact Git snapshots and reconciles native harness output with configuration. Organization requirements use mutable acquisition when that externally managed layer intentionally has no lock.
 
+Before a writing sync mutates output, it builds one deterministic, no-write materialization plan. The plan includes resolved resources and stale output recovered from existing managed roots or file-mode manifests, so configured pre-sync backups cover machine-scope output even when the run only removes stale materialization. Configured archives remain machine-scope only; repo-scope output is not added to that archive, and mandatory raw-byte safety backups for ownership-reconciled shared aggregates remain separate and are unaffected by `--no-backup`.
+
 ```text
 agent-marketplace sync [flags]
 ```
