@@ -2426,6 +2426,24 @@ func unresolvedMemberTargets(resourceKey string, harnesses []hcc.Target, source 
 	return unresolved
 }
 
+// retainMalformedPartitions narrows a malformed diagnostic to the partition
+// keys that remain unresolved. It returns false when all embedded certificates
+// were satisfied and the diagnostic must be dropped.
+func retainMalformedPartitions(err error, resourceKey string, keep func(string) bool) bool {
+	var sme *SelectedMalformedError
+	if !errors.As(err, &sme) || len(sme.partitions) == 0 {
+		return true
+	}
+	remaining := sme.partitions[:0]
+	for _, partition := range sme.partitions {
+		if keep(selectionPartitionKey(resourceKey, partition)) {
+			remaining = append(remaining, partition)
+		}
+	}
+	sme.partitions = remaining
+	return len(remaining) > 0
+}
+
 // appendCollectionDiagnostic retains only collection diagnostics for partitions
 // not already covered by a direct artifact. Errors can describe several owner
 // partitions (notably path-less members), so filtering is done before append.
@@ -2443,18 +2461,11 @@ func appendCollectionDiagnostic(errs *[]error, err error, resourceKey string, di
 			return
 		}
 	}
-	var sme *SelectedMalformedError
-	if errors.As(err, &sme) && len(sme.partitions) > 0 {
-		remaining := sme.partitions[:0]
-		for _, partition := range sme.partitions {
-			if _, direct := directResolved[selectionPartitionKey(resourceKey, partition)]; !direct {
-				remaining = append(remaining, partition)
-			}
-		}
-		sme.partitions = remaining
-		if len(remaining) == 0 {
-			return
-		}
+	if !retainMalformedPartitions(err, resourceKey, func(key string) bool {
+		_, direct := directResolved[key]
+		return !direct
+	}) {
+		return
 	}
 	*errs = append(*errs, err)
 }
@@ -2716,7 +2727,19 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 				remaining = append(remaining, partition)
 			}
 		}
+		deferred.partitionKeys = remaining
 		if len(remaining) == 0 {
+			continue
+		}
+		remainingPartitions := make(map[string]struct{}, len(remaining))
+		for _, partition := range remaining {
+			remainingPartitions[partition] = struct{}{}
+		}
+		resourceKey := ViaMapKey(key.kind, key.name)
+		if !retainMalformedPartitions(deferred.err, resourceKey, func(partitionKey string) bool {
+			_, unresolved := remainingPartitions[partitionKey]
+			return unresolved
+		}) {
 			continue
 		}
 		errs = append(errs, deferred.err)
